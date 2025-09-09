@@ -1041,15 +1041,19 @@ class Twopayment extends PaymentModule
                         
                         if (isset($response['id']) && $response['id']) {
                             PrestaShopLogger::addLog('TwoPayment: Fulfillment successful for Two order ID: ' . $two_order_id . ', Fulfillment ID: ' . $response['id'], 1);
-                            $payment_data = array(
-                                'two_order_id' => $response['id'],
-                                'two_order_reference' => $response['merchant_reference'],
-                                'two_order_state' => $response['state'],
-                                'two_order_status' => $response['status'],
-                                'two_day_on_invoice' => (string)$this->getSelectedPaymentTerm(), // Selected payment term
-                                'two_invoice_url' => $response['invoice_url'],
-                            );
-                            $this->setTwoOrderPaymentData($id_order, $payment_data);
+                            // Refresh order data from Two to avoid overwriting the stored Two order ID with fulfillment ID
+                            $order_after = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
+                            if (isset($order_after['id']) && $order_after['id']) {
+                                $payment_data = array(
+                                    'two_order_id' => $two_order_id,
+                                    'two_order_reference' => isset($order_after['merchant_reference']) ? $order_after['merchant_reference'] : (isset($orderpaymentdata['two_order_reference']) ? $orderpaymentdata['two_order_reference'] : ''),
+                                    'two_order_state' => isset($order_after['state']) ? $order_after['state'] : (isset($orderpaymentdata['two_order_state']) ? $orderpaymentdata['two_order_state'] : ''),
+                                    'two_order_status' => isset($order_after['status']) ? $order_after['status'] : (isset($orderpaymentdata['two_order_status']) ? $orderpaymentdata['two_order_status'] : ''),
+                                    'two_day_on_invoice' => (string)$this->getSelectedPaymentTerm(), // Selected payment term
+                                    'two_invoice_url' => isset($order_after['invoice_url']) ? $order_after['invoice_url'] : (isset($orderpaymentdata['two_invoice_url']) ? $orderpaymentdata['two_invoice_url'] : ''),
+                                );
+                                $this->setTwoOrderPaymentData($id_order, $payment_data);
+                            }
                         } else {
                             // Log fulfillment failure with detailed error information
                             $error_message = 'Unknown error';
@@ -1068,22 +1072,26 @@ class Twopayment extends PaymentModule
                         PrestaShopLogger::addLog('TwoPayment: Exception during fulfillment for Two order ID: ' . $two_order_id . ', Exception: ' . $e->getMessage(), 3);
                     }
                 } else if ($new_order_status->id == Configuration::get('PS_TWO_OS_REFUNDED_MAP')) {
-                    $paymentdata = $this->getTwoNewRefundData($order);
-                    $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/refund', $paymentdata, 'POST');
+                    // Full refund: issue refund call with no request body
+                    $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/refund', [], 'POST');
                     if (isset($response['id']) && $response['id']) {
-                        $payment_data = array(
-                            'two_order_id' => $response['id'],
-                            'two_order_reference' => $response['merchant_reference'],
-                            'two_order_state' => $response['state'],
-                            'two_order_status' => $response['status'],
-                            'two_day_on_invoice' => (string)$this->getSelectedPaymentTerm(), // Selected payment term
-                            'two_invoice_url' => $response['invoice_url'],
-                        );
-                        $this->setTwoOrderPaymentData($id_order, $payment_data);
+                        // Fetch latest order snapshot to update local state/status
+                        $order_after = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
+                        if (isset($order_after['id']) && $order_after['id']) {
+                            $payment_data = array(
+                                'two_order_id' => $two_order_id,
+                                'two_order_reference' => isset($order_after['merchant_reference']) ? $order_after['merchant_reference'] : (isset($orderpaymentdata['two_order_reference']) ? $orderpaymentdata['two_order_reference'] : ''),
+                                'two_order_state' => isset($order_after['state']) ? $order_after['state'] : (isset($orderpaymentdata['two_order_state']) ? $orderpaymentdata['two_order_state'] : ''),
+                                'two_order_status' => isset($order_after['status']) ? $order_after['status'] : (isset($orderpaymentdata['two_order_status']) ? $orderpaymentdata['two_order_status'] : ''),
+                                'two_day_on_invoice' => (string)$this->getSelectedPaymentTerm(), // Selected payment term
+                                'two_invoice_url' => isset($order_after['invoice_url']) ? $order_after['invoice_url'] : (isset($orderpaymentdata['two_invoice_url']) ? $orderpaymentdata['two_invoice_url'] : ''),
+                            );
+                            $this->setTwoOrderPaymentData($id_order, $payment_data);
+                        }
                     } else {
-                        // Log fulfillment failure
-                        $error_message = isset($response['error']) ? $response['error'] : 'Unknown error';
-                        PrestaShopLogger::addLog('TwoPayment: Fulfillment failed for Two order ID: ' . $two_order_id . ', Error: ' . $error_message, 3);
+                        // Log refund failure
+                        $error_message = isset($response['error']) ? (is_array($response['error']) ? json_encode($response['error']) : $response['error']) : 'Unknown error';
+                        PrestaShopLogger::addLog('TwoPayment: Refund failed for Two order ID: ' . $two_order_id . ', Error: ' . $error_message . ', Response: ' . json_encode($response), 3);
                     }
                 }
             }
@@ -1593,15 +1601,29 @@ class Twopayment extends PaymentModule
         return $request_data;
     }
 
-    public function getTwoNewRefundData($order)
+    public function getTwoNewRefundData($order, $two_order_snapshot = null)
     {
         $cart = new Cart($order->id_cart);
         $currency = new Currency($cart->id_currency);
 
-        // For full refunds, use simplified payload
+        // Determine full refund amount based on Two order snapshot or fallback to PrestaShop totals
+        $amount = null;
+        $currency_iso = $currency->iso_code;
+        if (is_array($two_order_snapshot) && isset($two_order_snapshot['gross_amount'])) {
+            $amount = (string)$two_order_snapshot['gross_amount'];
+        } else {
+            // Fallback: use cart/order gross total in current currency
+            $amount = (string)$this->getTwoRoundAmount($cart->getOrderTotal(true, Cart::BOTH));
+        }
+        if (is_array($two_order_snapshot) && isset($two_order_snapshot['currency'])) {
+            $currency_iso = $two_order_snapshot['currency'];
+        }
+
+        // For full refunds, explicitly set amount to total gross and flag as full refund via reason
         $request_data = [
             'reason' => $this->l('Full refund issued from PrestaShop'),
-            'currency' => $currency->iso_code,
+            'currency' => $currency_iso,
+            'amount' => $amount,
         ];
 
         return $request_data;

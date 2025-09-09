@@ -506,22 +506,26 @@ class TwoCompanySearch {
         }
         
         if (countryField) {
-            if (this.countryListener) {
-                countryField.removeEventListener('change', this.countryListener);
+            if (this.countryListener && this._boundCountrySelector) {
+                this._boundCountrySelector.removeEventListener('change', this.countryListener);
             }
             this.countryListener = () => {
-                console.log('TwoCompanySearch: Country changed, clearing company fields');
-                // Clear any existing autocomplete cache
-                if (this.companyField.hasClass('ui-autocomplete-input')) {
-                    this.companyField.autocomplete('close');
-                    // Clear the company field when country changes as it may no longer be valid
-                    this.companyField.val('');
-                    if (this.organizationField) {
-                        this.organizationField.val('');
+                try { sessionStorage.setItem('two_country_changed', '1'); } catch (e) {}
+                console.log('TwoCompanySearch: Country changed, clearing company fields and reinitializing autocomplete');
+                if (this.companyField && this.companyField.length > 0) {
+                    if (this.companyField.hasClass('ui-autocomplete-input')) {
+                        this.companyField.autocomplete('close');
                     }
+                    this.companyField.val('');
                 }
+                if (this.organizationField) {
+                    this.organizationField.val('');
+                }
+                // Recreate autocomplete to ensure new country is used immediately
+                this.setupAutocomplete();
             };
             countryField.addEventListener('change', this.countryListener);
+            this._boundCountrySelector = countryField;
         } else {
             console.warn('TwoCompanySearch: No country field found with any selector, trying delayed setup');
             // Log all select elements to help debugging
@@ -539,13 +543,9 @@ class TwoCompanySearch {
         // Also listen for PrestaShop address form updates
         if (typeof prestashop !== 'undefined' && prestashop.on) {
             prestashop.on('updatedAddressForm', () => {
-                // Clear company fields when address form is updated
-                if (this.companyField.length > 0) {
-                    this.companyField.val('');
-                    if (this.organizationField) {
-                        this.organizationField.val('');
-                    }
-                }
+                // Address form was re-rendered; re-bind country listener and autocomplete
+                this.setupCountryChangeListener(0);
+                this.setupAutocomplete();
             });
         }
     }

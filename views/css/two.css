@@ -9,10 +9,10 @@
   background: white url("../img/loader.gif") right center no-repeat;
 }*/
 
-/* Two Payment Option Styling */
+/* Remove custom styling that modifies core radio/checkbox visuals for consistency */
 .two-payment-option .custom-radio  {
-    border: 2px solid #fff;
-    background: #7a7a7a;
+    border: none;
+    background: transparent;
 }
 
 .two-additional-information {
@@ -59,39 +59,36 @@
 
 /* Order Intent Result States - Only affect loading state on container */
 .two-payment-container.loading {
-    background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
-    border: 2px solid #ffc107;
-    box-shadow: 0 4px 16px rgba(255, 193, 7, 0.15);
+    border-color: #ffc107;
 }
 
 /* Payment Option States - Applied to payment option element */
 [data-module-name="twopayment"].two-payment-loading {
-    background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
-    border: 2px solid #ffc107 !important;
-    box-shadow: 0 4px 16px rgba(255, 193, 7, 0.15);
-    transition: all 0.3s ease;
+    background: inherit;
+    border: 1px solid #ffc107 !important;
+    box-shadow: none;
+    transition: all 0.2s ease;
 }
 
 [data-module-name="twopayment"].two-payment-approved {
-    background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
-    border: 2px solid #28a745 !important;
-    box-shadow: 0 4px 16px rgba(40, 167, 69, 0.15);
-    transition: all 0.3s ease;
+    background: inherit;
+    border: 1px solid #28a745 !important;
+    box-shadow: none;
+    transition: all 0.2s ease;
 }
 
 [data-module-name="twopayment"].two-payment-declined {
-    background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
-    border: 2px solid #dc3545 !important;
-    box-shadow: 0 4px 16px rgba(220, 53, 69, 0.15);
-    transition: all 0.3s ease;
+    background: inherit;
+    border: 1px solid #dc3545 !important;
+    box-shadow: none;
+    transition: all 0.2s ease;
 }
 
 [data-module-name="twopayment"].two-payment-error {
-    background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
-    border: 2px solid #dc3545 !important;
-    box-shadow: 0 4px 16px rgba(220, 53, 69, 0.15);
-    opacity: 0.8;
-    transition: all 0.3s ease;
+    background: inherit;
+    border: 1px solid #dc3545 !important;
+    opacity: 1;
+    transition: all 0.2s ease;
 }
 
 
@@ -330,12 +327,12 @@
 }
 
 .two-loading-spinner {
-    width: 24px;
-    height: 24px;
-    border: 3px solid #e9ecef;
-    border-top: 3px solid #0E113A;
+    width: 20px;
+    height: 20px;
+    border: 2px solid #e9ecef;
+    border-top: 2px solid #ffc107;
     border-radius: 50%;
-    animation: two-spin 1s linear infinite;
+    animation: two-spin 0.9s linear infinite;
 }
 
 .two-loading-text {
@@ -347,6 +344,31 @@
 @keyframes two-spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
+}
+
+/* Overlay for eligibility checking - same footprint as payment card */
+.two-overlay-parent {
+    position: relative;
+}
+
+.two-loading-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 193, 7, 0.08);
+    border: 1px solid #ffe08a;
+    border-radius: 8px;
+    z-index: 5;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms ease;
+}
+
+.two-loading-overlay.show {
+    opacity: 1;
+    pointer-events: auto;
 }
 
 /* Payment Info Section - Card Style */
@@ -416,16 +438,16 @@
 /* Order Intent Message Alerts - In payment option card */
 #two-order-intent-messages .alert {
     border-radius: 6px;
-    border: none;
+    border: 1px solid #e9ecef;
     padding: 12px 16px;
-    margin: 8px 0 0 0;
+    margin: 12px 0 0 0;
     font-size: 13px;
     font-weight: 500;
-    transition: all 0.3s ease;
+    transition: all 0.2s ease;
     display: flex;
     align-items: center;
     gap: 8px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    box-shadow: none;
 }
 
 #two-order-intent-messages .alert i {
@@ -434,26 +456,26 @@
 }
 
 #two-order-intent-messages .alert-info {
-    background: linear-gradient(135deg, #d1ecf1 0%, #bee5eb 100%);
-    color: #0c5460;
-    border-left: 4px solid #17a2b8;
+    background: #f8f9fa;
+    color: #343a40;
+    border-left: 4px solid #adb5bd;
 }
 
 #two-order-intent-messages .alert-success {
-    background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
-    color: #155724;
+    background: #e9f7ef;
+    color: #0f5132;
     border-left: 4px solid #28a745;
 }
 
 #two-order-intent-messages .alert-warning {
-    background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+    background: #fff3cd; /* close to #ffc107 family */
     color: #856404;
     border-left: 4px solid #ffc107;
 }
 
 #two-order-intent-messages .alert-danger {
-    background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
-    color: #721c24;
+    background: #fdecec;
+    color: #842029;
     border-left: 4px solid #dc3545;
 }
 

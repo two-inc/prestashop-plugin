@@ -55,6 +55,9 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             case 'getCompany':
                 $this->ajaxProcessGetCompany();
                 break;
+            case 'savePaymentTerm':
+                $this->ajaxProcessSavePaymentTerm();
+                break;
             case 'checkOrderIntent':
                 $this->ajaxProcessCheckOrderIntent();
                 break;
@@ -64,6 +67,30 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
                     'error' => 'Unknown action: ' . $action
                 ]));
         }
+    }
+
+    /**
+     * Persist selected payment term (days) into PrestaShop cookie
+     */
+    public function ajaxProcessSavePaymentTerm()
+    {
+        if (!$this->validateAjaxToken()) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => 'Invalid token']));
+            return;
+        }
+        if (!$this->isPost()) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => 'Only POST requests allowed']));
+            return;
+        }
+        $days = (int)Tools::getValue('days');
+        if ($days <= 0) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => 'Invalid days']));
+            return;
+        }
+        $this->context->cookie->two_payment_term = $days;
+        $this->context->cookie->setExpire(time() + 3600);
+        PrestaShopLogger::addLog('TwoPayment: Saved selected payment term ' . $days . ' days in cookie', 1);
+        $this->sendJsonResponse(json_encode(['success' => true]));
     }
 
     /**

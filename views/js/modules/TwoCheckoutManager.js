@@ -22,6 +22,9 @@ class TwoCheckoutManager {
         this.isBusinessAccount = false;
         this.isInitialized = false;
         this.twoPaymentOption = null;
+        this.isLoadingUIShown = false;
+        this._intentCooldownMs = 800;
+        this._lastIntentRunAt = 0;
         
         this.init();
     }
@@ -163,6 +166,7 @@ class TwoCheckoutManager {
             const value = accountTypeField.value;
             const wasBusiness = this.isBusinessAccount;
             this.isBusinessAccount = (value === 'business');
+            try { sessionStorage.setItem('two_account_type', value); } catch (e) {}
             // Re-init company search accordingly
             if (this.config.companySearchEnabled) {
                 if (this.isBusinessAccount && !this.companySearch) {
@@ -267,9 +271,29 @@ class TwoCheckoutManager {
             return;
         }
         
+        // Prevent duplicate or rapid calls
+        if (this.orderIntent && this.orderIntent.isProcessing) {
+            this.showOrderIntentLoading();
+            return;
+        }
+        const now = Date.now();
+        if (now - this._lastIntentRunAt < this._intentCooldownMs) {
+            return;
+        }
+        this._lastIntentRunAt = now;
+
         // Show loading state
         this.showOrderIntentLoading();
-        
+
+        // If order intent isn't ready to run yet, keep showing loading and retry shortly
+        if (this.orderIntent && typeof this.orderIntent.shouldRunOrderIntent === 'function' && !this.orderIntent.shouldRunOrderIntent()) {
+            clearTimeout(this._intentRetryTimeout);
+            this._intentRetryTimeout = setTimeout(() => {
+                this.triggerOrderIntentForSelection();
+            }, 400);
+            return;
+        }
+
         this.orderIntent.checkOrderIntent().then(result => {
             this.handleOrderIntentResult(result);
         }).catch(error => {
@@ -282,6 +306,12 @@ class TwoCheckoutManager {
      */
     handleOrderIntentResult(result) {
         if (!result.success) {
+            // If order intent was skipped (e.g., not ready), keep loading UI instead of showing error
+            const err = (result && result.error) ? String(result.error).toLowerCase() : '';
+            if (err.includes('skipped')) {
+                this.showOrderIntentLoading();
+                return;
+            }
             this.showOrderIntentError(result.error || 'Order intent check failed');
             return;
         }
@@ -322,21 +352,32 @@ class TwoCheckoutManager {
      * Show order intent loading state (theme-independent)
      */
     showOrderIntentLoading() {
-        const messageContainer = this.getOrCreateMessageContainer();
-        messageContainer.innerHTML = `
-            <div class="alert alert-info" role="alert">
+        if (!this.twoPaymentOption) return;
+        const parent = this.twoPaymentOption.querySelector('.payment-option-content') || this.twoPaymentOption;
+        parent.classList.add('two-overlay-parent');
+        let overlay = parent.querySelector('#two-loading-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'two-loading-overlay';
+            overlay.className = 'two-loading-overlay';
+            overlay.innerHTML = `
                 <div class="two-loading-container">
                     <div class="two-loading-spinner"></div>
-                    <span class="two-loading-text">Verifying payment eligibility...</span>
+                    <span class="two-loading-text">Checking Two payment eligibility...</span>
                 </div>
-            </div>
-        `;
-        messageContainer.style.display = 'block';
-        
-        // Add loading class to payment option for visual feedback
-        if (this.twoPaymentOption) {
-            this.twoPaymentOption.classList.add('two-payment-loading');
+            `;
+            parent.appendChild(overlay);
         }
+        overlay.classList.add('show');
+        this.isLoadingUIShown = true;
+
+        // Also show template loader if present (for themes using paymentinfo.tpl container)
+        try {
+            const templateLoader = document.querySelector('.two-payment-container .two-loading-container');
+            if (templateLoader) {
+                templateLoader.style.display = 'flex';
+            }
+        } catch (e) { /* noop */ }
     }
 
     /**
@@ -364,9 +405,7 @@ class TwoCheckoutManager {
         
         // Remove loading state and add approved state to payment option
         this.clearLoadingState();
-        if (this.twoPaymentOption) {
-            this.twoPaymentOption.classList.add('two-payment-approved');
-        }
+        this.hideLoadingOverlay();
         
         // Show payment terms selector
         console.log('TwoCheckoutManager: About to show payment terms');
@@ -397,9 +436,7 @@ class TwoCheckoutManager {
         
         // Remove loading state and add declined state to payment option
         this.clearLoadingState();
-        if (this.twoPaymentOption) {
-            this.twoPaymentOption.classList.add('two-payment-declined');
-        }
+        this.hideLoadingOverlay();
     }
     
     /**
@@ -427,11 +464,9 @@ class TwoCheckoutManager {
         messageContainer.classList.add('show');
         messageContainer.style.display = 'block';
         
-        // Remove loading state and add error state to payment option
+        // Remove loading state
         this.clearLoadingState();
-        if (this.twoPaymentOption) {
-            this.twoPaymentOption.classList.add('two-payment-error');
-        }
+        this.isLoadingUIShown = false;
     }
 
     /**
@@ -479,14 +514,25 @@ class TwoCheckoutManager {
      * Clear loading state from payment option
      */
     clearLoadingState() {
-        if (this.twoPaymentOption) {
-            this.twoPaymentOption.classList.remove(
-                'two-payment-loading', 
-                'two-payment-approved', 
-                'two-payment-declined', 
-                'two-payment-error'
-            );
+        // No-op: we no longer toggle visual state classes on the payment option
+    }
+
+    hideLoadingOverlay() {
+        this.isLoadingUIShown = false;
+        if (!this.twoPaymentOption) return;
+        const parent = this.twoPaymentOption.querySelector('.payment-option-content') || this.twoPaymentOption;
+        const overlay = parent.querySelector('#two-loading-overlay');
+        if (overlay) {
+            overlay.classList.remove('show');
         }
+
+        // Hide template loader if present
+        try {
+            const templateLoader = document.querySelector('.two-payment-container .two-loading-container');
+            if (templateLoader) {
+                templateLoader.style.display = 'none';
+            }
+        } catch (e) { /* noop */ }
     }
 
     /**
@@ -656,6 +702,19 @@ class TwoCheckoutManager {
                 if (selectedDays) {
                     selectedDays.textContent = days;
                 }
+
+                // Persist selection in cookie via backend (10s timeout)
+                try {
+                    if (window.twopayment && window.twopayment.order_intent_url && window.twopayment.ajax_token) {
+                        $.ajax({
+                            url: window.twopayment.order_intent_url,
+                            type: 'POST',
+                            dataType: 'json',
+                            data: { ajax: 1, action: 'savePaymentTerm', token: window.twopayment.ajax_token, days: days },
+                            timeout: 10000
+                        });
+                    }
+                } catch (e) { /* noop */ }
             });
             
             termsSlider.appendChild(termOption);
@@ -672,12 +731,9 @@ class TwoCheckoutManager {
      * Disable Two payment option (theme-independent)
      */
     disableTwoPayment() {
+        // Keep functionality minimal: avoid adding custom styles/classes to payment option
         if (this.twoPaymentRadio) {
             this.twoPaymentRadio.disabled = true;
-        }
-        if (this.twoPaymentOption) {
-            this.twoPaymentOption.classList.add('payment-option-disabled');
-            this.twoPaymentOption.style.opacity = '0.5';
         }
     }
     
@@ -747,6 +803,21 @@ class TwoCheckoutManager {
 
         // Re-initialize company search when address form updates
         if (this.config.companySearchEnabled) {
+            // Attach fresh listener to new select element after DOM replacement
+            this._accountTypeListenerAdded = false;
+            this.setupAccountTypeChangeListener();
+
+            // Restore previously selected account type if we have it
+            try {
+                const saved = sessionStorage.getItem('two_account_type');
+                const accountTypeField = document.querySelector("select[name='account_type']");
+                if (saved && accountTypeField && accountTypeField.value !== saved) {
+                    accountTypeField.value = saved;
+                    accountTypeField.dispatchEvent(new Event('change', { bubbles: true }));
+                    this.isBusinessAccount = (saved === 'business');
+                }
+            } catch (e) {}
+
             if (this.companySearch && this.companySearch.destroy) {
                 this.companySearch.destroy();
                 this.companySearch = null;
@@ -796,9 +867,16 @@ class TwoCheckoutManager {
      */
     handlePaymentConfirmation(event) {
         if (this.isTwoPaymentSelected() && this.orderIntent && this.config.orderIntentEnabled) {
-            // Ensure an order intent check is triggered on confirm
-            this.triggerOrderIntentForSelection();
-            // Optional: block only if we already know it's declined
+            // If processing or no result yet, block and show loading
+            if (this.orderIntent.isProcessing || !this.orderIntent.lastResult) {
+                if (event && typeof event.preventDefault === 'function') {
+                    event.preventDefault();
+                }
+                this.showOrderIntentLoading();
+                this.triggerOrderIntentForSelection();
+                return;
+            }
+            // If declined, block with message
             if (this.orderIntent.lastResult && !this.orderIntent.lastResult.approved) {
                 if (event && typeof event.preventDefault === 'function') {
                     event.preventDefault();

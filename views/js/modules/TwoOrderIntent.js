@@ -15,6 +15,7 @@ class TwoOrderIntent {
         this.lastResult = null;
         this.isProcessing = false;
         this.checkIntervalId = null;
+        this.lastCompany = null;
     }
     
     shouldRunOrderIntent() {
@@ -152,6 +153,8 @@ class TwoOrderIntent {
             rawResponse: response.rawResponse || response
         };
         this.lastResult = result;
+        const companyField = document.querySelector("input[name='company']");
+        this.lastCompany = companyField && companyField.value ? companyField.value : null;
         this.updateUI(result);
         return result;
     }
@@ -198,10 +201,19 @@ class TwoOrderIntent {
             $messageContainer = $('<div class="two-order-intent-message"></div>');
             $twoPaymentOption.find('.payment-option-content, .payment-form, .additional-information').append($messageContainer);
         }
+        let messageText = result.message;
+        if (this.lastCompany && typeof this.lastCompany === 'string' && this.lastCompany.trim().length > 0) {
+            if (result.approved) {
+                messageText = `Your invoice with Two is likely to be accepted for ${this.lastCompany}`;
+            } else {
+                messageText = `Your invoice with Two cannot be approved at this time for ${this.lastCompany}`;
+            }
+        }
+
         $messageContainer
             .removeClass('approved declined loading')
             .addClass(result.approved ? 'approved' : 'declined')
-            .html(result.message);
+            .html(messageText);
         if (result.approved) {
             $twoPaymentOption.removeClass('disabled');
             $twoPaymentOption.find('input[type="radio"]').prop('disabled', false);
