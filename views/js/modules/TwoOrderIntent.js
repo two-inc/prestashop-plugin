@@ -63,6 +63,8 @@ class TwoOrderIntent {
                     if (res && res.success) {
                         formData.company = company || (res.company || '');
                         formData.companyid = companyid || (res.companyid || '');
+                        // Persist last company for messaging
+                        this.lastCompany = formData.company;
                     } else {
                         formData.company = company;
                         formData.companyid = companyid;
@@ -85,6 +87,7 @@ class TwoOrderIntent {
             }
             formData.company = company;
             formData.companyid = companyid;
+            this.lastCompany = company;
             const addressDeliveryField = document.querySelector("input[name='id_address_delivery']");
             if (addressDeliveryField) {
                 formData.id_address_delivery = addressDeliveryField.value;
@@ -152,9 +155,17 @@ class TwoOrderIntent {
             message: response.message || (response.approved ? 'Your invoice with Two is likely to be accepted' : 'Your invoice with Two cannot be approved at this time'),
             rawResponse: response.rawResponse || response
         };
-        this.lastResult = result;
         const companyField = document.querySelector("input[name='company']");
-        this.lastCompany = companyField && companyField.value ? companyField.value : null;
+        if (!this.lastCompany || (companyField && companyField.value)) {
+            this.lastCompany = companyField && companyField.value ? companyField.value : this.lastCompany;
+        }
+        // Inject company into message immediately to ensure UI gets the contextual string
+        if (this.lastCompany && this.lastCompany.trim().length > 0) {
+            result.message = result.approved
+                ? `Your invoice with Two is likely to be accepted for ${this.lastCompany}`
+                : `Your invoice with Two cannot be approved at this time for ${this.lastCompany}`;
+        }
+        this.lastResult = result;
         this.updateUI(result);
         return result;
     }

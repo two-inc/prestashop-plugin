@@ -25,6 +25,7 @@ class TwoCheckoutManager {
         this.isLoadingUIShown = false;
         this._intentCooldownMs = 800;
         this._lastIntentRunAt = 0;
+        this._initialIntentTriggered = false;
         
         this.init();
     }
@@ -220,9 +221,15 @@ class TwoCheckoutManager {
         // Check if Two payment is selected using various patterns
         const isTwoSelected = this.isTwoPaymentSelected(radioButton);
         
-        if (isTwoSelected && this.orderIntent && this.config.orderIntentEnabled) {
-            // Two payment selected - trigger order intent validation
-            this.triggerOrderIntentForSelection();
+        if (isTwoSelected && this.config.orderIntentEnabled) {
+            // Ensure orderIntent is initialized even after dynamic DOM changes
+            if (!this.orderIntent && window.TwoOrderIntent) {
+                this.initializeOrderIntent();
+            }
+            if (this.orderIntent) {
+                // Two payment selected - trigger order intent validation
+                this.triggerOrderIntentForSelection();
+            }
         } else if (this.orderIntent) {
             // Different payment selected - clear any Two-specific UI
             this.clearOrderIntentUI();
@@ -252,8 +259,13 @@ class TwoCheckoutManager {
      * Handle Two payment selection specifically
      */
     handleTwoPaymentSelection() {
-        if (this.orderIntent && this.config.orderIntentEnabled) {
-            this.triggerOrderIntentForSelection();
+        if (this.config.orderIntentEnabled) {
+            if (!this.orderIntent && window.TwoOrderIntent) {
+                this.initializeOrderIntent();
+            }
+            if (this.orderIntent) {
+                this.triggerOrderIntentForSelection();
+            }
         }
     }
     
@@ -315,19 +327,39 @@ class TwoCheckoutManager {
             this.showOrderIntentError(result.error || 'Order intent check failed');
             return;
         }
-        
+
+        // Build company-aware message for display
+        const companyName = this.getSelectedCompanyName();
         if (result.approved) {
-            this.showOrderIntentApproval(result.message);
+            const approvedMsg = companyName ? `Your invoice with Two is likely to be accepted for ${companyName}` : (result.message || 'Your invoice with Two is likely to be accepted');
+            this.showOrderIntentApproval(approvedMsg);
         } else {
             // For declined results, also check if the decline reason should be treated as an error
-            const declineMessage = result.message || 'Payment declined';
-            if (this.isDeclineReasonAnError(declineMessage)) {
+            const baseDecline = result.message || 'Payment declined';
+            const declineMessage = companyName ? `Your invoice with Two cannot be approved at this time for ${companyName}` : baseDecline;
+            if (this.isDeclineReasonAnError(baseDecline)) {
                 this.showOrderIntentError(declineMessage);
             } else {
                 this.showOrderIntentDecline(declineMessage);
                 this.disableTwoPayment();
             }
         }
+    }
+
+    /**
+     * Get selected company name from latest intent state or input field
+     */
+    getSelectedCompanyName() {
+        try {
+            if (this.orderIntent && this.orderIntent.lastCompany) {
+                return this.orderIntent.lastCompany;
+            }
+            const companyField = document.querySelector("input[name='company']");
+            if (companyField && companyField.value && companyField.value.trim().length > 0) {
+                return companyField.value.trim();
+            }
+        } catch (e) {}
+        return '';
     }
 
     /**
@@ -901,6 +933,11 @@ class TwoCheckoutManager {
         // Initialize order intent for payment step with business accounts
         if (this.config.orderIntentEnabled && this.currentStep === 'payment' && this.isBusinessAccount) {
             this.initializeOrderIntent();
+            // If Two is already selected by default (only payment method), trigger intent once
+            if (this.isTwoPaymentSelected() && !this._initialIntentTriggered) {
+                this._initialIntentTriggered = true;
+                this.triggerOrderIntentForSelection();
+            }
         }
     }
     

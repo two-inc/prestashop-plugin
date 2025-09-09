@@ -40,7 +40,7 @@
         </div>
         <div class="two-benefit-item">
             <span class="two-benefit-icon">✓</span>
-            <span>Instant Buy Now Pay Later</span>
+            <span>Instant approval check</span>
         </div>
     </div>
     

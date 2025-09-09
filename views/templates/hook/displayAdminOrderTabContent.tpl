@@ -12,27 +12,6 @@
     </div>
     
     <div class="two-tab-content">
-        {* State & Status Section *}
-        {if $twopaymentdata.two_order_state || $twopaymentdata.two_order_status}
-        <div class="two-section">
-            <h4 class="two-section-title">{l s='State & Status' mod='twopayment'}</h4>
-            <div class="two-status-cards">
-                {if $twopaymentdata.two_order_state}
-                <div class="two-status-card">
-                    <span class="two-status-label">{l s='State' mod='twopayment'}</span>
-                    <span class="two-order-state two-order-state-{$twopaymentdata.two_order_state|lower} two-status-highlight">{$twopaymentdata.two_order_state}</span>
-                </div>
-                {/if}
-                {if $twopaymentdata.two_order_status}
-                <div class="two-status-card">
-                    <span class="two-status-label">{l s='Status' mod='twopayment'}</span>
-                    <span class="two-order-status two-status-highlight">{$twopaymentdata.two_order_status}</span>
-                </div>
-                {/if}
-            </div>
-        </div>
-        {/if}
-
         {* Order Information Section *}
         <div class="two-section">
             <h4 class="two-section-title">{l s='Order Information' mod='twopayment'}</h4>
