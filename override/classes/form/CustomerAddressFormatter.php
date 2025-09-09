@@ -5,8 +5,6 @@
  * @license Two Commercial License
  */
 
-use Symfony\Component\Translation\TranslatorInterface;
-
 class CustomerAddressFormatter extends CustomerAddressFormatterCore
 {
 
@@ -15,7 +13,7 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
     private $availableCountries;
     private $definition;
 
-    public function __construct(Country $country, TranslatorInterface $translator, array $availableCountries)
+    public function __construct(Country $country, $translator, array $availableCountries)
     {
         $this->country = $country;
         $this->translator = $translator;
@@ -61,9 +59,25 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
                     ),
             ];
 
-            //insert new fileds
-            $inserted = array('companyid', 'department', 'project');
-            array_splice($fields, 3, 0, $inserted);
+            //insert new fileds - conditionally based on admin settings
+            $inserted = array();
+            
+            // Department field - only add if enabled in admin settings
+            if (Configuration::get('PS_TWO_ENABLE_DEPARTMENT')) {
+                $inserted[] = 'department';
+            }
+            
+            // Project field - only add if enabled in admin settings  
+            if (Configuration::get('PS_TWO_ENABLE_PROJECT')) {
+                $inserted[] = 'project';
+            }
+            
+            // Note: companyid field is handled via hidden JavaScript field only
+            // No database persistence - form-first approach like old tillit.js
+            
+            if (!empty($inserted)) {
+                array_splice($fields, 3, 0, $inserted);
+            }
 
             //move country fileds
             $out = array_splice($fields, array_search('Country:name', $fields), 1);
@@ -78,10 +92,16 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
                     $formField->setType('number');
                 }
 
-                if (Configuration::get('PS_TWO_ENABLE_COMPANY_NAME')) {
-                    if ($field === 'company') {
-                        $formField->addAvailableValue('placeholder', $this->translator->trans('Search your company name', [], 'Shop.Forms.Labels'));
-                    }
+                // CRITICAL: Company field handling for Two payment functionality
+                if ($field === 'company') {
+                    $formField->addAvailableValue('placeholder', $this->translator->trans('Search your company name', [], 'Shop.Forms.Labels'));
+                    // Make company field conditionally visible and required via JavaScript
+                    $formField->addAvailableValue('data-conditional-field', 'business');
+                    $formField->addAvailableValue('data-conditional-required', 'business');
+                    // Initially hidden - will be shown when business account is selected
+                    $formField->addAvailableValue('data-initial-state', 'hidden');
+                    // Debug: Log that company field is being processed
+                    PrestaShopLogger::addLog('TwoPayment: Company field configured as conditional business field', 1);
                 }
                 if (count($fieldParts) === 1) {
                     if ($field === 'postcode') {

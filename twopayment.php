@@ -33,14 +33,38 @@ class Twopayment extends PaymentModule
         $this->description = $this->l('This module allows any merchant to accept payments with Two payment gateway.');
         $this->merchant_short_name = Configuration::get('PS_TWO_MERACHANT_SHORT_NAME');
         $this->api_key = Configuration::get('PS_TWO_MERACHANT_API_KEY');
-        $this->payment_mode = Configuration::get('PS_TWO_PAYMENT_MODE');
         $this->enable_company_name = Configuration::get('PS_TWO_ENABLE_COMPANY_NAME');
         $this->enable_company_id = Configuration::get('PS_TWO_ENABLE_COMPANY_ID');
-        $this->product_type = Configuration::get('PS_TWO_PRODUCT_TYPE');
+        $this->enable_department = Configuration::get('PS_TWO_ENABLE_DEPARTMENT');
+        $this->enable_project = Configuration::get('PS_TWO_ENABLE_PROJECT');
         $this->enable_order_intent = Configuration::get('PS_TWO_ENABLE_ORDER_INTENT');
-        $this->day_on_invoice = Configuration::get('PS_TWO_DAY_ON_INVOICE');
-        $this->finalize_purchase_shipping = Configuration::get('PS_TWO_FANILIZE_PURCHASE');
-        $this->enable_buyer_refund = Configuration::get('PS_TWO_ENABLE_BUYER_REFUND');
+        $this->finalize_purchase_shipping = Configuration::get('PS_TWO_FINALIZE_PURCHASE');
+        
+        // Ensure custom Two states exist (for existing installations)
+        $this->ensureCustomStatesExist();
+    }
+    
+    /**
+     * Ensure custom Two order states exist, create them if they don't
+     * This handles existing installations that didn't have custom states
+     */
+    private function ensureCustomStatesExist()
+    {
+        // Check if the main custom state exists
+        if (!Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION')) {
+            // Create custom states and set up default mappings
+            $this->createTwoOrderState();
+            
+            // Set up default mappings if they don't exist
+            if (!Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION_MAP')) {
+                Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', Configuration::get('PS_OS_PREPARATION'));
+                Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', Configuration::get('PS_OS_PREPARATION'));
+                Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', Configuration::get('PS_OS_SHIPPING'));
+                Configuration::updateValue('PS_TWO_OS_PAYMENT_ERROR_MAP', Configuration::get('PS_OS_ERROR'));
+                Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', Configuration::get('PS_OS_CANCELED'));
+                Configuration::updateValue('PS_TWO_OS_REFUNDED_MAP', Configuration::get('PS_OS_REFUND'));
+            }
+        }
     }
 
     public function install()
@@ -62,6 +86,7 @@ class Twopayment extends PaymentModule
             $this->registerHook('actionOrderSlipAdd') &&
             $this->registerHook('actionOrderEdited') &&
             $this->registerHook('actionAdminOrdersTrackingNumberUpdate') &&
+            $this->registerHook('actionCustomerAddressSave') &&
             $this->installTwoSettings() &&
             $this->createTwoOrderState() &&
             $this->createTwoTables();
@@ -77,51 +102,121 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_TAB_VALUE', 1);
         Configuration::updateValue('PS_TWO_TITLE', $installData['PS_TWO_TITLE']);
         Configuration::updateValue('PS_TWO_SUB_TITLE', $installData['PS_TWO_SUB_TITLE']);
-        Configuration::updateValue('PS_TWO_PAYMENT_MODE', 'test');
-        Configuration::updateValue('PS_TWO_PAYMENT_DEV_MODE', 'https://staging.api.two.inc');
+        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'development'); // Default to development for safety
         Configuration::updateValue('PS_TWO_MERACHANT_SHORT_NAME', '');
         Configuration::updateValue('PS_TWO_MERACHANT_API_KEY', '');
-        Configuration::updateValue('PS_TWO_PRODUCT_TYPE', 'FUNDED_INVOICE');
-        Configuration::updateValue('PS_TWO_DAY_ON_INVOICE', 14);
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', 1);
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_ID', 1);
-        Configuration::updateValue('PS_TWO_FANILIZE_PURCHASE', 1);
+        Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', 1);
         Configuration::updateValue('PS_TWO_ENABLE_ORDER_INTENT', 1);
-        Configuration::updateValue('PS_TWO_ENABLE_BUYER_REFUND', 1);
-        Configuration::updateValue('PS_TWO_OS_PREPARATION', Configuration::get('PS_OS_PREPARATION'));
-        Configuration::updateValue('PS_TWO_OS_SHIPPING', Configuration::get('PS_OS_SHIPPING'));
-        Configuration::updateValue('PS_TWO_OS_DELIVERED', Configuration::get('PS_OS_DELIVERED'));
-        Configuration::updateValue('PS_TWO_OS_ERROR', Configuration::get('PS_OS_ERROR'));
-        Configuration::updateValue('PS_TWO_OS_CANCELED', Configuration::get('PS_OS_CANCELED'));
-        Configuration::updateValue('PS_TWO_OS_REFUND', Configuration::get('PS_OS_REFUND'));
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1); // Default: 30 days enabled
+        // Custom Two order states will be created by createTwoOrderState()
+        // Set sensible default mappings to standard PrestaShop states
+        Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', Configuration::get('PS_OS_PREPARATION')); // "Preparation in progress"
+        Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', Configuration::get('PS_OS_PREPARATION')); // "Preparation in progress"  
+        Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', Configuration::get('PS_OS_SHIPPING')); // "Shipped"
+        Configuration::updateValue('PS_TWO_OS_PAYMENT_ERROR_MAP', Configuration::get('PS_OS_ERROR')); // "Payment error"
+        Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', Configuration::get('PS_OS_CANCELED')); // "Canceled"
+        Configuration::updateValue('PS_TWO_OS_REFUNDED_MAP', Configuration::get('PS_OS_REFUND')); // "Refunded"
         return true;
     }
-
+    
+    /**
+     * Clean approach: No modifications to core PrestaShop tables
+     * Company data is handled through form fields and session state
+     */
+    
     protected function createTwoOrderState()
     {
-        if (!Configuration::get('PS_TWO_OS_AWAITING')) {
-            $orderStateObj = new OrderState();
-            $orderStateObj->send_email = 0;
-            $orderStateObj->module_name = $this->name;
-            $orderStateObj->invoice = 0;
-            $orderStateObj->color = '#4169E1';
-            $orderStateObj->logable = 1;
-            $orderStateObj->shipped = 0;
-            $orderStateObj->unremovable = 1;
-            $orderStateObj->delivery = 0;
-            $orderStateObj->hidden = 0;
-            $orderStateObj->paid = 0;
-            $orderStateObj->pdf_delivery = 0;
-            $orderStateObj->pdf_invoice = 0;
-            $orderStateObj->deleted = 0;
-            foreach ($this->languages as $language) {
-                $orderStateObj->name[$language['id_lang']] = 'Awaiting two payment';
-            }
-            if ($orderStateObj->add()) {
-                Configuration::updateValue('PS_TWO_OS_AWAITING', (int) $orderStateObj->id);
-                return true;
-            } else {
-                return false;
+        $orderStates = [
+            [
+                'config_key' => 'PS_TWO_OS_AWAITING_VERIFICATION',
+                'name' => 'Two: Awaiting Buyer Verification',
+                'color' => '#FF9500',
+                'paid' => 0,
+                'invoice' => 0,
+                'shipped' => 0,
+                'delivery' => 0,
+                'logable' => 1,
+            ],
+            [
+                'config_key' => 'PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT',
+                'name' => 'Two: Verified - Ready for Fulfillment',
+                'color' => '#007CFF',
+                'paid' => 1,
+                'invoice' => 1,
+                'shipped' => 0,
+                'delivery' => 0,
+                'logable' => 1,
+            ],
+            [
+                'config_key' => 'PS_TWO_OS_FULFILLED',
+                'name' => 'Two: Order Fulfilled - Payment Terms Active',
+                'color' => '#34C759',
+                'paid' => 1,
+                'invoice' => 1,
+                'shipped' => 1,
+                'delivery' => 0,
+                'logable' => 1,
+            ],
+            [
+                'config_key' => 'PS_TWO_OS_PAYMENT_ERROR',
+                'name' => 'Two: Payment Processing Error',
+                'color' => '#FF3B30',
+                'paid' => 0,
+                'invoice' => 0,
+                'shipped' => 0,
+                'delivery' => 0,
+                'logable' => 1,
+            ],
+            [
+                'config_key' => 'PS_TWO_OS_CANCELLED',
+                'name' => 'Two: Order Cancelled',
+                'color' => '#8E8E93',
+                'paid' => 0,
+                'invoice' => 0,
+                'shipped' => 0,
+                'delivery' => 0,
+                'logable' => 1,
+            ],
+            [
+                'config_key' => 'PS_TWO_OS_REFUNDED',
+                'name' => 'Two: Order Refunded',
+                'color' => '#AF52DE',
+                'paid' => 0,
+                'invoice' => 1,
+                'shipped' => 0,
+                'delivery' => 0,
+                'logable' => 1,
+            ],
+        ];
+
+        foreach ($orderStates as $stateConfig) {
+            if (!Configuration::get($stateConfig['config_key'])) {
+                $orderStateObj = new OrderState();
+                $orderStateObj->send_email = 0;
+                $orderStateObj->module_name = $this->name;
+                $orderStateObj->invoice = $stateConfig['invoice'];
+                $orderStateObj->color = $stateConfig['color'];
+                $orderStateObj->logable = $stateConfig['logable'];
+                $orderStateObj->shipped = $stateConfig['shipped'];
+                $orderStateObj->unremovable = 1;
+                $orderStateObj->delivery = $stateConfig['delivery'];
+                $orderStateObj->hidden = 0;
+                $orderStateObj->paid = $stateConfig['paid'];
+                $orderStateObj->pdf_delivery = 0;
+                $orderStateObj->pdf_invoice = $stateConfig['invoice'];
+                $orderStateObj->deleted = 0;
+                
+                foreach ($this->languages as $language) {
+                    $orderStateObj->name[$language['id_lang']] = $stateConfig['name'];
+                }
+                
+                if ($orderStateObj->add()) {
+                    Configuration::updateValue($stateConfig['config_key'], (int) $orderStateObj->id);
+                } else {
+                    return false;
+                }
             }
         }
         return true;
@@ -129,26 +224,9 @@ class Twopayment extends PaymentModule
 
     protected function createTwoTables()
     {
+        // Only create our own payment tracking table - no modifications to core PrestaShop tables
         $sql = array();
-        $columns = Db::getInstance()->executeS('DESCRIBE `' . _DB_PREFIX_ . 'address`');
-        $fileds = array();
-        foreach ($columns as $column) {
-            $fileds[] = $column['Field'];
-        }
-
-        if (!in_array('account_type', $fileds)) {
-            $sql[] = 'ALTER TABLE `' . _DB_PREFIX_ . 'address` ADD COLUMN `account_type` VARCHAR(255)';
-        }
-        if (!in_array('companyid', $fileds)) {
-            $sql[] = 'ALTER TABLE `' . _DB_PREFIX_ . 'address` ADD COLUMN `companyid` VARCHAR(255)';
-        }
-        if (!in_array('department', $fileds)) {
-            $sql[] = 'ALTER TABLE `' . _DB_PREFIX_ . 'address` ADD COLUMN `department` VARCHAR(255)';
-        }
-        if (!in_array('project', $fileds)) {
-            $sql[] = 'ALTER TABLE `' . _DB_PREFIX_ . 'address` ADD COLUMN `project` VARCHAR(255)';
-        }
-
+        
         $sql[] = 'CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'twopayment` (
             `id_two` int(11) NOT NULL AUTO_INCREMENT,
             `id_order` INT( 11 ) UNSIGNED,
@@ -184,6 +262,7 @@ class Twopayment extends PaymentModule
             $this->unregisterHook('actionOrderSlipAdd') &&
             $this->unregisterHook('actionOrderEdited') &&
             $this->unregisterHook('actionAdminOrdersTrackingNumberUpdate') &&
+            $this->unregisterHook('actionCustomerAddressSave') &&
             $this->uninstallTwoSettings() &&
             $this->deleteTwoTables();
     }
@@ -193,17 +272,14 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_TAB_VALUE');
         Configuration::deleteByName('PS_TWO_TITLE');
         Configuration::deleteByName('PS_TWO_SUB_TITLE');
-        Configuration::deleteByName('PS_TWO_PAYMENT_MODE');
         Configuration::deleteByName('PS_TWO_MERACHANT_SHORT_NAME');
         Configuration::deleteByName('PS_TWO_MERACHANT_API_KEY');
-        Configuration::deleteByName('PS_TWO_MERACHANT_LOGO');
-        Configuration::deleteByName('PS_TWO_PRODUCT_TYPE');
-        Configuration::deleteByName('PS_TWO_DAY_ON_INVOICE');
         Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_NAME');
         Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_ID');
-        Configuration::deleteByName('PS_TWO_FANILIZE_PURCHASE');
+        Configuration::deleteByName('PS_TWO_ENABLE_DEPARTMENT');
+        Configuration::deleteByName('PS_TWO_ENABLE_PROJECT');
+        Configuration::deleteByName('PS_TWO_FINALIZE_PURCHASE');
         Configuration::deleteByName('PS_TWO_ENABLE_ORDER_INTENT');
-        Configuration::deleteByName('PS_TWO_ENABLE_BUYER_REFUND');
         return true;
     }
 
@@ -220,15 +296,6 @@ class Twopayment extends PaymentModule
 
     public function getContent()
     {
-        if (((bool) Tools::isSubmit('deleteLogo')) == true) {
-            Configuration::updateValue('PS_TWO_TAB_VALUE', 1);
-            $file_name = dirname(__FILE__) . DIRECTORY_SEPARATOR . 'views/img' . DIRECTORY_SEPARATOR . Configuration::get('PS_TWO_MERACHANT_LOGO');
-            if (file_exists($file_name) && unlink($file_name)) {
-                Configuration::updateValue('PS_TWO_MERACHANT_LOGO', '');
-                $this->sendTwoLogoToMerchant();
-                $this->output .= $this->displayConfirmation($this->l('General settings are updated.'));
-            }
-        }
         if (((bool) Tools::isSubmit('submitTwoGeneralForm')) == true) {
             Configuration::updateValue('PS_TWO_TAB_VALUE', 1);
             $this->validTwoGeneralFormValues();
@@ -332,32 +399,66 @@ class Twopayment extends PaymentModule
                         'desc' => $this->l('Enter your api key which is provided by Two.'),
                     ),
                     array(
-                        'type' => 'file',
-                        'label' => $this->l('Logo'),
-                        'name' => 'PS_TWO_MERACHANT_LOGO',
-                        'desc' => $this->l('Upload your merchant logo.'),
-                    ),
-                    array(
                         'type' => 'select',
-                        'name' => 'PS_TWO_PRODUCT_TYPE',
-                        'label' => $this->l('Choose your product'),
-                        'desc' => $this->l('Choose your product funded invoice, merchant invoice and administered invoice depend on Two account.'),
+                        'label' => $this->l('Environment'),
+                        'name' => 'PS_TWO_ENVIRONMENT',
+                        'desc' => $this->l('Select the Two API environment to use. Production for live transactions, Development for testing.'),
                         'required' => true,
                         'options' => array(
                             'query' => array(
-                                array('id_option' => 'FUNDED_INVOICE', 'name' => $this->l('Funded Invoice')),
-                                array('id_option' => 'DIRECT_INVOICE', 'name' => $this->l('Direct Invoice')),
+                                array('id_option' => 'development', 'name' => $this->l('Development')),
+                                array('id_option' => 'production', 'name' => $this->l('Production')),
                             ),
                             'id' => 'id_option',
                             'name' => 'name'
                         )
                     ),
                     array(
-                        'type' => 'text',
-                        'label' => $this->l('Number of days on invoice'),
-                        'name' => 'PS_TWO_DAY_ON_INVOICE',
-                        'required' => true,
-                        'desc' => $this->l('Enter a number of days on invoice.'),
+                        'type' => 'checkbox',
+                        'label' => $this->l('Available Payment Terms'),
+                        'name' => 'PS_TWO_PAYMENT_TERMS',
+                        'desc' => $this->l('Select which payment terms you want to offer to your customers at checkout. If only one term is selected, it will be used as the default. Multiple terms will show a selector.'),
+                        'values' => array(
+                            'query' => array(
+                                array(
+                                    'id' => '7',
+                                    'name' => $this->l('7 days'),
+                                    'val' => '1'
+                                ),
+                                array(
+                                    'id' => '15',
+                                    'name' => $this->l('15 days'),
+                                    'val' => '1'
+                                ),
+                                array(
+                                    'id' => '20',
+                                    'name' => $this->l('20 days'),
+                                    'val' => '1'
+                                ),
+                                array(
+                                    'id' => '30',
+                                    'name' => $this->l('30 days'),
+                                    'val' => '1'
+                                ),
+                                array(
+                                    'id' => '45',
+                                    'name' => $this->l('45 days'),
+                                    'val' => '1'
+                                ),
+                                array(
+                                    'id' => '60',
+                                    'name' => $this->l('60 days'),
+                                    'val' => '1'
+                                ),
+                                array(
+                                    'id' => '90',
+                                    'name' => $this->l('90 days'),
+                                    'val' => '1'
+                                ),
+                            ),
+                            'id' => 'id',
+                            'name' => 'name'
+                        )
                     ),
                 ),
                 'submit' => array(
@@ -377,9 +478,13 @@ class Twopayment extends PaymentModule
         }
         $fields_values['PS_TWO_MERACHANT_SHORT_NAME'] = Tools::getValue('PS_TWO_MERACHANT_SHORT_NAME', Configuration::get('PS_TWO_MERACHANT_SHORT_NAME'));
         $fields_values['PS_TWO_MERACHANT_API_KEY'] = Tools::getValue('PS_TWO_MERACHANT_API_KEY', Configuration::get('PS_TWO_MERACHANT_API_KEY'));
-        $fields_values['PS_TWO_MERACHANT_LOGO'] = Tools::getValue('PS_TWO_MERACHANT_LOGO', Configuration::get('PS_TWO_MERACHANT_LOGO'));
-        $fields_values['PS_TWO_PRODUCT_TYPE'] = Tools::getValue('PS_TWO_PRODUCT_TYPE', Configuration::get('PS_TWO_PRODUCT_TYPE'));
-        $fields_values['PS_TWO_DAY_ON_INVOICE'] = Tools::getValue('PS_TWO_DAY_ON_INVOICE', Configuration::get('PS_TWO_DAY_ON_INVOICE'));
+        $fields_values['PS_TWO_ENVIRONMENT'] = Tools::getValue('PS_TWO_ENVIRONMENT', Configuration::get('PS_TWO_ENVIRONMENT'));
+        
+        // Payment terms checkboxes
+        $payment_terms = array('7', '15', '20', '30', '45', '60', '90');
+        foreach ($payment_terms as $term) {
+            $fields_values['PS_TWO_PAYMENT_TERMS_' . $term] = Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term, Configuration::get('PS_TWO_PAYMENT_TERMS_' . $term));
+        }
         return $fields_values;
     }
 
@@ -399,39 +504,29 @@ class Twopayment extends PaymentModule
         if (Tools::isEmpty(Tools::getValue('PS_TWO_MERACHANT_API_KEY'))) {
             $this->errors[] = $this->l('Enter a api key.');
         }
-        if (Tools::isEmpty(Tools::getValue('PS_TWO_DAY_ON_INVOICE'))) {
-            $this->errors[] = $this->l('Enter a number of days on invoice.');
+        
+        // Validate environment
+        $environment = Tools::getValue('PS_TWO_ENVIRONMENT');
+        if (Tools::isEmpty($environment) || !in_array($environment, array('production', 'development'))) {
+            $this->errors[] = $this->l('Please select a valid environment (Production or Development).');
+        }
+        
+        // Validate payment terms
+        $payment_terms = array('7', '15', '20', '30', '45', '60', '90');
+        $selected_terms = array();
+        foreach ($payment_terms as $term) {
+            if (Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term)) {
+                $selected_terms[] = $term;
+            }
+        }
+        
+        if (empty($selected_terms)) {
+            $this->errors[] = $this->l('You must select at least one payment term.');
         }
     }
 
     protected function saveTwoGeneralFormValues()
     {
-        $imagefile = "";
-        $update_images_values = false;
-        if (isset($_FILES['PS_TWO_MERACHANT_LOGO']) && isset($_FILES['PS_TWO_MERACHANT_LOGO']['tmp_name']) && !empty($_FILES['PS_TWO_MERACHANT_LOGO']['tmp_name'])) {
-            if ($error = ImageManager::validateUpload($_FILES['PS_TWO_MERACHANT_LOGO'], 4000000)) {
-                return $error;
-            } else {
-                $ext = Tools::substr($_FILES['PS_TWO_MERACHANT_LOGO']['name'], Tools::substr($_FILES['PS_TWO_MERACHANT_LOGO']['name'], '.') + 1);
-                $file_name = md5($_FILES['PS_TWO_MERACHANT_LOGO']['name']) . '.' . $ext;
-
-                if (!move_uploaded_file($_FILES['PS_TWO_MERACHANT_LOGO']['tmp_name'], dirname(__FILE__) . DIRECTORY_SEPARATOR . 'views/img' . DIRECTORY_SEPARATOR . $file_name)) {
-                    return $this->displayError($this->l('An error occurred while attempting to upload the file.'));
-                } else {
-                    if (Configuration::get('PS_TWO_MERACHANT_LOGO') != $file_name) {
-                        @unlink(dirname(__FILE__) . DIRECTORY_SEPARATOR . 'views/img' . DIRECTORY_SEPARATOR . Configuration::get('PS_TWO_MERACHANT_LOGO'));
-                    }
-                    $imagefile = $file_name;
-                }
-            }
-
-            $update_images_values = true;
-        }
-
-        if ($update_images_values) {
-            Configuration::updateValue('PS_TWO_MERACHANT_LOGO', $imagefile);
-            $this->sendTwoLogoToMerchant();
-        }
 
         $values = array();
         foreach ($this->languages as $language) {
@@ -442,8 +537,13 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_SUB_TITLE', $values['PS_TWO_SUB_TITLE']);
         Configuration::updateValue('PS_TWO_MERACHANT_SHORT_NAME', trim(Tools::getValue('PS_TWO_MERACHANT_SHORT_NAME')));
         Configuration::updateValue('PS_TWO_MERACHANT_API_KEY', trim(Tools::getValue('PS_TWO_MERACHANT_API_KEY')));
-        Configuration::updateValue('PS_TWO_PRODUCT_TYPE', Tools::getValue('PS_TWO_PRODUCT_TYPE'));
-        Configuration::updateValue('PS_TWO_DAY_ON_INVOICE', Tools::getValue('PS_TWO_DAY_ON_INVOICE'));
+        Configuration::updateValue('PS_TWO_ENVIRONMENT', Tools::getValue('PS_TWO_ENVIRONMENT'));
+        
+        // Save payment terms checkboxes
+        $payment_terms = array('7', '15', '20', '30', '45', '60', '90');
+        foreach ($payment_terms as $term) {
+            Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . $term, Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term) ? 1 : 0);
+        }
 
         $this->output .= $this->displayConfirmation($this->l('General settings are updated.'));
     }
@@ -471,32 +571,6 @@ class Twopayment extends PaymentModule
 
     protected function getTwoOtherForm()
     {
-        if ($this->isTwoCheckoutDevelopment()) {
-            $payment_mode = array(
-                'type' => 'text',
-                'name' => 'PS_TWO_PAYMENT_DEV_MODE',
-                'label' => $this->l('Two test server'),
-                'desc' => $this->l('Enter your stagiing development url.'),
-                'required' => true,
-            );
-        } else {
-            $payment_mode = array(
-                'type' => 'select',
-                'name' => 'PS_TWO_PAYMENT_MODE',
-                'label' => $this->l('Payment mode'),
-                'desc' => $this->l('Choose your payment mode production and test.'),
-                'required' => true,
-                'options' => array(
-                    'query' => array(
-                        array('id_option' => 'prod', 'name' => $this->l('Production')),
-                        array('id_option' => 'test', 'name' => $this->l('Test')),
-                    ),
-                    'id' => 'id_option',
-                    'name' => 'name'
-                )
-            );
-        }
-
         $fields_form = array(
             'form' => array(
                 'legend' => array(
@@ -504,7 +578,6 @@ class Twopayment extends PaymentModule
                     'icon' => 'icon-cogs',
                 ),
                 'input' => array(
-                    $payment_mode,
                     array(
                         'type' => 'switch',
                         'label' => $this->l('Activate company name auto-complete'),
@@ -547,19 +620,59 @@ class Twopayment extends PaymentModule
                     ),
                     array(
                         'type' => 'switch',
+                        'label' => $this->l('Show Department field'),
+                        'name' => 'PS_TWO_ENABLE_DEPARTMENT',
+                        'is_bool' => true,
+                        'desc' => $this->l('If you choose YES then customers will see department field in checkout.'),
+                        'required' => true,
+                        'values' => array(
+                            array(
+                                'id' => 'PS_TWO_ENABLE_DEPARTMENT_ON',
+                                'value' => 1,
+                                'label' => $this->l('Yes')
+                            ),
+                            array(
+                                'id' => 'PS_TWO_ENABLE_DEPARTMENT_OFF',
+                                'value' => 0,
+                                'label' => $this->l('No')
+                            ),
+                        ),
+                    ),
+                    array(
+                        'type' => 'switch',
+                        'label' => $this->l('Show Project field'),
+                        'name' => 'PS_TWO_ENABLE_PROJECT',
+                        'is_bool' => true,
+                        'desc' => $this->l('If you choose YES then customers will see project field in checkout.'),
+                        'required' => true,
+                        'values' => array(
+                            array(
+                                'id' => 'PS_TWO_ENABLE_PROJECT_ON',
+                                'value' => 1,
+                                'label' => $this->l('Yes')
+                            ),
+                            array(
+                                'id' => 'PS_TWO_ENABLE_PROJECT_OFF',
+                                'value' => 0,
+                                'label' => $this->l('No')
+                            ),
+                        ),
+                    ),
+                    array(
+                        'type' => 'switch',
                         'label' => $this->l('Finalize purchase when order is shipped'),
-                        'name' => 'PS_TWO_FANILIZE_PURCHASE',
+                        'name' => 'PS_TWO_FINALIZE_PURCHASE',
                         'is_bool' => true,
                         'desc' => $this->l('If you choose YES then order status of shipped to be passed to Two.'),
                         'required' => true,
                         'values' => array(
                             array(
-                                'id' => 'PS_TWO_FANILIZE_PURCHASE_ON',
+                                'id' => 'PS_TWO_FINALIZE_PURCHASE_ON',
                                 'value' => 1,
                                 'label' => $this->l('Yes')
                             ),
                             array(
-                                'id' => 'PS_TWO_FANILIZE_PURCHASE_OFF',
+                                'id' => 'PS_TWO_FINALIZE_PURCHASE_OFF',
                                 'value' => 0,
                                 'label' => $this->l('No')
                             ),
@@ -585,26 +698,6 @@ class Twopayment extends PaymentModule
                             ),
                         ),
                     ),
-                    array(
-                        'type' => 'switch',
-                        'label' => $this->l('Initiate payment to buyer on refund'),
-                        'name' => 'PS_TWO_ENABLE_BUYER_REFUND',
-                        'is_bool' => true,
-                        'desc' => $this->l('If you choose YES then allow to initiate payment buyer on refund.'),
-                        'required' => true,
-                        'values' => array(
-                            array(
-                                'id' => 'PS_TWO_ENABLE_BUYER_REFUND_ON',
-                                'value' => 1,
-                                'label' => $this->l('Yes')
-                            ),
-                            array(
-                                'id' => 'PS_TWO_ENABLE_BUYER_REFUND_OFF',
-                                'value' => 0,
-                                'label' => $this->l('No')
-                            ),
-                        ),
-                    ),
                 ),
                 'submit' => array(
                     'title' => $this->l('Save'),
@@ -617,44 +710,30 @@ class Twopayment extends PaymentModule
     protected function getTwoOtherFormValues()
     {
         $fields_values = array();
-        if ($this->isTwoCheckoutDevelopment()) {
-            $fields_values['PS_TWO_PAYMENT_DEV_MODE'] = Tools::getValue('PS_TWO_PAYMENT_DEV_MODE', Configuration::get('PS_TWO_PAYMENT_DEV_MODE'));
-        } else {
-            $fields_values['PS_TWO_PAYMENT_MODE'] = Tools::getValue('PS_TWO_PAYMENT_MODE', Configuration::get('PS_TWO_PAYMENT_MODE'));
-        }
         $fields_values['PS_TWO_ENABLE_COMPANY_NAME'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME', Configuration::get('PS_TWO_ENABLE_COMPANY_NAME'));
         $fields_values['PS_TWO_ENABLE_COMPANY_ID'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_ID', Configuration::get('PS_TWO_ENABLE_COMPANY_ID'));
-        $fields_values['PS_TWO_FANILIZE_PURCHASE'] = Tools::getValue('PS_TWO_FANILIZE_PURCHASE', Configuration::get('PS_TWO_FANILIZE_PURCHASE'));
+        $fields_values['PS_TWO_ENABLE_DEPARTMENT'] = Tools::getValue('PS_TWO_ENABLE_DEPARTMENT', Configuration::get('PS_TWO_ENABLE_DEPARTMENT'));
+        $fields_values['PS_TWO_ENABLE_PROJECT'] = Tools::getValue('PS_TWO_ENABLE_PROJECT', Configuration::get('PS_TWO_ENABLE_PROJECT'));
+        $fields_values['PS_TWO_FINALIZE_PURCHASE'] = Tools::getValue('PS_TWO_FINALIZE_PURCHASE', Configuration::get('PS_TWO_FINALIZE_PURCHASE'));
         $fields_values['PS_TWO_ENABLE_ORDER_INTENT'] = Tools::getValue('PS_TWO_ENABLE_ORDER_INTENT', Configuration::get('PS_TWO_ENABLE_ORDER_INTENT'));
         $fields_values['PS_TWO_ENABLE_B2B_B2C'] = Tools::getValue('PS_TWO_ENABLE_B2B_B2C', Configuration::get('PS_TWO_ENABLE_B2B_B2C'));
-        $fields_values['PS_TWO_ENABLE_BUYER_REFUND'] = Tools::getValue('PS_TWO_ENABLE_BUYER_REFUND', Configuration::get('PS_TWO_ENABLE_BUYER_REFUND'));
         return $fields_values;
     }
 
     protected function validTwoOtherFormValues()
     {
-        if ($this->isTwoCheckoutDevelopment()) {
-            if (Tools::isEmpty(Tools::getValue('PS_TWO_PAYMENT_DEV_MODE'))) {
-                $this->errors[] = $this->l('Enter a two test server url.');
-            } elseif (!Validate::isUrl(Tools::getValue('PS_TWO_PAYMENT_DEV_MODE'))) {
-                $this->errors[] = $this->l('Enter a valid two test server url.');
-            }
-        }
+        // No validation needed for current Other Settings
     }
 
     protected function saveTwoOtherFormValues()
     {
-        if ($this->isTwoCheckoutDevelopment()) {
-            Configuration::updateValue('PS_TWO_PAYMENT_DEV_MODE', Tools::getValue('PS_TWO_PAYMENT_DEV_MODE'));
-        } else {
-            Configuration::updateValue('PS_TWO_PAYMENT_MODE', Tools::getValue('PS_TWO_PAYMENT_MODE'));
-        }
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME'));
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_ID', Tools::getValue('PS_TWO_ENABLE_COMPANY_ID'));
-        Configuration::updateValue('PS_TWO_FANILIZE_PURCHASE', Tools::getValue('PS_TWO_FANILIZE_PURCHASE'));
+        Configuration::updateValue('PS_TWO_ENABLE_DEPARTMENT', Tools::getValue('PS_TWO_ENABLE_DEPARTMENT'));
+        Configuration::updateValue('PS_TWO_ENABLE_PROJECT', Tools::getValue('PS_TWO_ENABLE_PROJECT'));
+        Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', Tools::getValue('PS_TWO_FINALIZE_PURCHASE'));
         Configuration::updateValue('PS_TWO_ENABLE_ORDER_INTENT', Tools::getValue('PS_TWO_ENABLE_ORDER_INTENT'));
         Configuration::updateValue('PS_TWO_ENABLE_B2B_B2C', Tools::getValue('PS_TWO_ENABLE_B2B_B2C'));
-        Configuration::updateValue('PS_TWO_ENABLE_BUYER_REFUND', Tools::getValue('PS_TWO_ENABLE_BUYER_REFUND'));
 
         $this->output .= $this->displayConfirmation($this->l('Other settings are updated.'));
     }
@@ -682,18 +761,28 @@ class Twopayment extends PaymentModule
 
     protected function getTwoOrderStatusForm()
     {
+        // Get all available PrestaShop order states for mapping
         $orderStates = OrderState::getOrderStates($this->context->language->id);
+        
         $fields_form = array(
             'form' => array(
                 'legend' => array(
-                    'title' => $this->l('Order Status Settings'),
+                    'title' => $this->l('Two Order Status Mapping'),
                     'icon' => 'icon-cogs',
                 ),
+                'description' => $this->l('Map Two payment states to PrestaShop order states for workflow integration. Two creates its own branded order states automatically, but you can map them to existing PrestaShop states if needed.') . '<br><br><strong>' . $this->l('Default Mappings:') . '</strong><br>' . 
+                    '• ' . $this->l('Awaiting Verification → Preparation in progress') . '<br>' .
+                    '• ' . $this->l('Verified - Ready for Fulfillment → Preparation in progress') . '<br>' .
+                    '• ' . $this->l('Order Fulfilled → Shipped') . '<br>' .
+                    '• ' . $this->l('Payment Error → Payment error') . '<br>' .
+                    '• ' . $this->l('Order Cancelled → Canceled') . '<br>' .
+                    '• ' . $this->l('Order Refunded → Refunded'),
                 'input' => array(
                     array(
                         'type' => 'select',
-                        'name' => 'PS_TWO_OS_AWAITING',
-                        'label' => $this->l('Order status when order is unverify'),
+                        'name' => 'PS_TWO_OS_AWAITING_VERIFICATION_MAP',
+                        'label' => $this->l('Two: Awaiting Buyer Verification'),
+                        'desc' => $this->l('When buyer needs to complete order verification with Two before payment processing can begin. Default: Preparation in progress'),
                         'required' => true,
                         'options' => array(
                             'query' => $orderStates,
@@ -703,8 +792,9 @@ class Twopayment extends PaymentModule
                     ),
                     array(
                         'type' => 'select',
-                        'name' => 'PS_TWO_OS_PREPARATION',
-                        'label' => $this->l('Order status when order is verify'),
+                        'name' => 'PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP',
+                        'label' => $this->l('Two: Verified - Ready for Fulfillment'),
+                        'desc' => $this->l('Payment is verified and order is ready for merchant fulfillment. Merchant can now process and ship the order. Default: Preparation in progress'),
                         'required' => true,
                         'options' => array(
                             'query' => $orderStates,
@@ -714,8 +804,9 @@ class Twopayment extends PaymentModule
                     ),
                     array(
                         'type' => 'select',
-                        'name' => 'PS_TWO_OS_SHIPPING',
-                        'label' => $this->l('Order status when order is shipped'),
+                        'name' => 'PS_TWO_OS_FULFILLED_MAP',
+                        'label' => $this->l('Two: Order Fulfilled - Payment Terms Active'),
+                        'desc' => $this->l('Order has been fulfilled with Two. Buyer payment terms are now active and payout cycle begins for merchant. Default: Shipped'),
                         'required' => true,
                         'options' => array(
                             'query' => $orderStates,
@@ -725,8 +816,9 @@ class Twopayment extends PaymentModule
                     ),
                     array(
                         'type' => 'select',
-                        'name' => 'PS_TWO_OS_DELIVERED',
-                        'label' => $this->l('Order status when order is delivered'),
+                        'name' => 'PS_TWO_OS_PAYMENT_ERROR_MAP',
+                        'label' => $this->l('Two: Payment Processing Error'),
+                        'desc' => $this->l('Payment processing failed. Merchant should investigate and contact Two support if needed. Default: Payment error'),
                         'required' => true,
                         'options' => array(
                             'query' => $orderStates,
@@ -736,8 +828,9 @@ class Twopayment extends PaymentModule
                     ),
                     array(
                         'type' => 'select',
-                        'name' => 'PS_TWO_OS_ERROR',
-                        'label' => $this->l('Order status when order is payment error'),
+                        'name' => 'PS_TWO_OS_CANCELLED_MAP',
+                        'label' => $this->l('Two: Order Cancelled'),
+                        'desc' => $this->l('Order has been cancelled with Two. This prevents fulfillment and stops the payment process. Default: Canceled'),
                         'required' => true,
                         'options' => array(
                             'query' => $orderStates,
@@ -747,19 +840,9 @@ class Twopayment extends PaymentModule
                     ),
                     array(
                         'type' => 'select',
-                        'name' => 'PS_TWO_OS_CANCELED',
-                        'label' => $this->l('Order status when order is canceled'),
-                        'required' => true,
-                        'options' => array(
-                            'query' => $orderStates,
-                            'id' => 'id_order_state',
-                            'name' => 'name'
-                        )
-                    ),
-                    array(
-                        'type' => 'select',
-                        'name' => 'PS_TWO_OS_REFUND',
-                        'label' => $this->l('Order status when order is refunded'),
+                        'name' => 'PS_TWO_OS_REFUNDED_MAP',
+                        'label' => $this->l('Two: Order Refunded'),
+                        'desc' => $this->l('Order has been refunded through Two. A credit note is issued to the buyer immediately. Default: Refunded'),
                         'required' => true,
                         'options' => array(
                             'query' => $orderStates,
@@ -779,27 +862,51 @@ class Twopayment extends PaymentModule
     protected function getTwoOrderStatusFormValues()
     {
         $fields_values = array();
-        $fields_values['PS_TWO_OS_AWAITING'] = Tools::getValue('PS_TWO_OS_AWAITING', Configuration::get('PS_TWO_OS_AWAITING'));
-        $fields_values['PS_TWO_OS_PREPARATION'] = Tools::getValue('PS_TWO_OS_PREPARATION', Configuration::get('PS_TWO_OS_PREPARATION'));
-        $fields_values['PS_TWO_OS_SHIPPING'] = Tools::getValue('PS_TWO_OS_SHIPPING', Configuration::get('PS_TWO_OS_SHIPPING'));
-        $fields_values['PS_TWO_OS_DELIVERED'] = Tools::getValue('PS_TWO_OS_DELIVERED', Configuration::get('PS_TWO_OS_DELIVERED'));
-        $fields_values['PS_TWO_OS_ERROR'] = Tools::getValue('PS_TWO_OS_ERROR', Configuration::get('PS_TWO_OS_ERROR'));
-        $fields_values['PS_TWO_OS_CANCELED'] = Tools::getValue('PS_TWO_OS_CANCELED', Configuration::get('PS_TWO_OS_CANCELED'));
-        $fields_values['PS_TWO_OS_REFUND'] = Tools::getValue('PS_TWO_OS_REFUND', Configuration::get('PS_TWO_OS_REFUND'));
+        $fields_values['PS_TWO_OS_AWAITING_VERIFICATION_MAP'] = Tools::getValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION_MAP'));
+        $fields_values['PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'] = Tools::getValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'));
+        $fields_values['PS_TWO_OS_FULFILLED_MAP'] = Tools::getValue('PS_TWO_OS_FULFILLED_MAP', Configuration::get('PS_TWO_OS_FULFILLED_MAP'));
+        $fields_values['PS_TWO_OS_PAYMENT_ERROR_MAP'] = Tools::getValue('PS_TWO_OS_PAYMENT_ERROR_MAP', Configuration::get('PS_TWO_OS_PAYMENT_ERROR_MAP'));
+        $fields_values['PS_TWO_OS_CANCELLED_MAP'] = Tools::getValue('PS_TWO_OS_CANCELLED_MAP', Configuration::get('PS_TWO_OS_CANCELLED_MAP'));
+        $fields_values['PS_TWO_OS_REFUNDED_MAP'] = Tools::getValue('PS_TWO_OS_REFUNDED_MAP', Configuration::get('PS_TWO_OS_REFUNDED_MAP'));
         return $fields_values;
     }
 
     protected function saveTwoOrderStatusFormValues()
     {
-        Configuration::updateValue('PS_TWO_OS_AWAITING', Tools::getValue('PS_TWO_OS_AWAITING'));
-        Configuration::updateValue('PS_TWO_OS_PREPARATION', Tools::getValue('PS_TWO_OS_PREPARATION'));
-        Configuration::updateValue('PS_TWO_OS_SHIPPING', Tools::getValue('PS_TWO_OS_SHIPPING'));
-        Configuration::updateValue('PS_TWO_OS_DELIVERED', Tools::getValue('PS_TWO_OS_DELIVERED'));
-        Configuration::updateValue('PS_TWO_OS_ERROR', Tools::getValue('PS_TWO_OS_ERROR'));
-        Configuration::updateValue('PS_TWO_OS_CANCELED', Tools::getValue('PS_TWO_OS_CANCELED'));
-        Configuration::updateValue('PS_TWO_OS_REFUND', Tools::getValue('PS_TWO_OS_REFUND'));
+        Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', Tools::getValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP'));
+        Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', Tools::getValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'));
+        Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', Tools::getValue('PS_TWO_OS_FULFILLED_MAP'));
+        Configuration::updateValue('PS_TWO_OS_PAYMENT_ERROR_MAP', Tools::getValue('PS_TWO_OS_PAYMENT_ERROR_MAP'));
+        Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', Tools::getValue('PS_TWO_OS_CANCELLED_MAP'));
+        Configuration::updateValue('PS_TWO_OS_REFUNDED_MAP', Tools::getValue('PS_TWO_OS_REFUNDED_MAP'));
 
-        $this->output .= $this->displayConfirmation($this->l('Order status settings are updated.'));
+        $this->output .= $this->displayConfirmation($this->l('Two order status mapping updated successfully.'));
+    }
+
+    /**
+     * Set order to Two custom state and optionally apply mapping to PrestaShop state
+     */
+    protected function setTwoOrderState($order_id, $two_state_key, $apply_mapping = true)
+    {
+        $two_state_id = Configuration::get($two_state_key);
+        if ($two_state_id) {
+            // First set the Two custom state
+            $history = new OrderHistory();
+            $history->id_order = $order_id;
+            $history->changeIdOrderState($two_state_id, $order_id, true);
+            $history->addWithemail();
+            
+            // Then optionally apply the mapped PrestaShop state
+            if ($apply_mapping) {
+                $mapped_state_id = Configuration::get($two_state_key . '_MAP');
+                if ($mapped_state_id && $mapped_state_id != $two_state_id) {
+                    $history2 = new OrderHistory();
+                    $history2->id_order = $order_id;
+                    $history2->changeIdOrderState($mapped_state_id, $order_id, true);
+                    $history2->addWithemail();
+                }
+            }
+        }
     }
 
     public function hookActionOrderEdited($params)
@@ -832,7 +939,7 @@ class Twopayment extends PaymentModule
             if ($orderpaymentdata && isset($orderpaymentdata['two_order_id'])) {
                 $two_order_id = $orderpaymentdata['two_order_id'];
 
-                if ($new_order_status->id == Configuration::get('PS_TWO_OS_CANCELED')) {
+                if ($new_order_status->id == Configuration::get('PS_TWO_OS_CANCELLED_MAP')) {
                     $this->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/cancel', [], 'POST');
                     $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
                     if (isset($response['id']) && $response['id']) {
@@ -841,39 +948,61 @@ class Twopayment extends PaymentModule
                             'two_order_reference' => $response['merchant_reference'],
                             'two_order_state' => $response['state'],
                             'two_order_status' => $response['status'],
-                            'two_day_on_invoice' => $this->day_on_invoice,
+                            'two_day_on_invoice' => (string)$this->getSelectedPaymentTerm(), // Selected payment term
                             'two_invoice_url' => $response['invoice_url'],
                         );
                         $this->setTwoOrderPaymentData($id_order, $payment_data);
                     }
-                } else if ($new_order_status->id == Configuration::get('PS_TWO_OS_DELIVERED')) {
-                    $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/delivered', [], 'POST');
-                    $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
-                    if (isset($response['id']) && $response['id']) {
-                        $payment_data = array(
-                            'two_order_id' => $response['id'],
-                            'two_order_reference' => $response['merchant_reference'],
-                            'two_order_state' => $response['state'],
-                            'two_order_status' => $response['status'],
-                            'two_day_on_invoice' => $this->day_on_invoice,
-                            'two_invoice_url' => $response['invoice_url'],
-                        );
-                        $this->setTwoOrderPaymentData($id_order, $payment_data);
+                } else if (($new_order_status->id == Configuration::get('PS_TWO_OS_FULFILLED_MAP')) && $this->finalize_purchase_shipping) {
+                    // Complete fulfillment using the new fulfillments endpoint - wrapped in try-catch for safety
+                    try {
+                        PrestaShopLogger::addLog('TwoPayment: Initiating complete fulfillment for Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order, 1);
+                        
+                        // Validate order state before attempting fulfillment
+                        $current_two_order = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
+                        if (!$current_two_order || !isset($current_two_order['state'])) {
+                            PrestaShopLogger::addLog('TwoPayment: Cannot retrieve Two order state for fulfillment. Two order ID: ' . $two_order_id, 3);
+                            return;
+                        }
+                        
+                        // Only attempt fulfillment if order is in a fulfillable state
+                        // Both VERIFIED and CONFIRMED orders can be fulfilled according to Two API
+                        if (!in_array($current_two_order['state'], ['VERIFIED', 'CONFIRMED'])) {
+                            PrestaShopLogger::addLog('TwoPayment: Two order not in fulfillable state. Current state: ' . $current_two_order['state'] . ', Two order ID: ' . $two_order_id, 2);
+                            return;
+                        }
+                        
+                        $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/fulfillments', [], 'POST');
+                        
+                        if (isset($response['id']) && $response['id']) {
+                            PrestaShopLogger::addLog('TwoPayment: Fulfillment successful for Two order ID: ' . $two_order_id . ', Fulfillment ID: ' . $response['id'], 1);
+                            $payment_data = array(
+                                'two_order_id' => $response['id'],
+                                'two_order_reference' => $response['merchant_reference'],
+                                'two_order_state' => $response['state'],
+                                'two_order_status' => $response['status'],
+                                'two_day_on_invoice' => (string)$this->getSelectedPaymentTerm(), // Selected payment term
+                                'two_invoice_url' => $response['invoice_url'],
+                            );
+                            $this->setTwoOrderPaymentData($id_order, $payment_data);
+                        } else {
+                            // Log fulfillment failure with detailed error information
+                            $error_message = 'Unknown error';
+                            if (isset($response['error'])) {
+                                $error_message = is_array($response['error']) ? json_encode($response['error']) : $response['error'];
+                            } elseif (isset($response['message'])) {
+                                $error_message = $response['message'];
+                            }
+                            PrestaShopLogger::addLog('TwoPayment: Fulfillment failed for Two order ID: ' . $two_order_id . ', Error: ' . $error_message . ', Response: ' . json_encode($response), 3);
+                            
+                            // Don't interfere with PrestaShop's status change process
+                            // Just log the error - admin can check logs for fulfillment issues
+                        }
+                    } catch (Exception $e) {
+                        // Catch any exceptions to prevent breaking the order status change
+                        PrestaShopLogger::addLog('TwoPayment: Exception during fulfillment for Two order ID: ' . $two_order_id . ', Exception: ' . $e->getMessage(), 3);
                     }
-                } else if (($new_order_status->id == Configuration::get('PS_TWO_OS_SHIPPING')) && $this->finalize_purchase_shipping) {
-                    $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/fulfilled', [], 'POST');
-                    if (isset($response['id']) && $response['id']) {
-                        $payment_data = array(
-                            'two_order_id' => $response['id'],
-                            'two_order_reference' => $response['merchant_reference'],
-                            'two_order_state' => $response['state'],
-                            'two_order_status' => $response['status'],
-                            'two_day_on_invoice' => $this->day_on_invoice,
-                            'two_invoice_url' => $response['invoice_url'],
-                        );
-                        $this->setTwoOrderPaymentData($id_order, $payment_data);
-                    }
-                } else if (($new_order_status->id == Configuration::get('PS_TWO_OS_REFUND')) && $this->enable_buyer_refund) {
+                } else if ($new_order_status->id == Configuration::get('PS_TWO_OS_REFUNDED_MAP')) {
                     $paymentdata = $this->getTwoNewRefundData($order);
                     $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/refund', $paymentdata, 'POST');
                     if (isset($response['id']) && $response['id']) {
@@ -882,10 +1011,14 @@ class Twopayment extends PaymentModule
                             'two_order_reference' => $response['merchant_reference'],
                             'two_order_state' => $response['state'],
                             'two_order_status' => $response['status'],
-                            'two_day_on_invoice' => $this->day_on_invoice,
+                            'two_day_on_invoice' => (string)$this->getSelectedPaymentTerm(), // Selected payment term
                             'two_invoice_url' => $response['invoice_url'],
                         );
                         $this->setTwoOrderPaymentData($id_order, $payment_data);
+                    } else {
+                        // Log fulfillment failure
+                        $error_message = isset($response['error']) ? $response['error'] : 'Unknown error';
+                        PrestaShopLogger::addLog('TwoPayment: Fulfillment failed for Two order ID: ' . $two_order_id . ', Error: ' . $error_message, 3);
                     }
                 }
             }
@@ -904,15 +1037,28 @@ class Twopayment extends PaymentModule
                 'checkout_host' => $this->getTwoCheckoutHostUrl(),
                 'company_name_search' => $this->enable_company_name,
                 'company_id_search' => $this->enable_company_id,
+                'enable_department' => $this->enable_department,
+                'enable_project' => $this->enable_project,
+                'enable_order_intent' => $this->enable_order_intent,
+                'order_intent_url' => $this->context->link->getModuleLink($this->name, 'orderintent'),
+                'ajax_token' => Tools::getToken(false),
+                'module_dir' => $this->_path,
                 'client' => 'PS',
                 'client_version' => $this->version,
                 'countries' => $param_countries,
+                'available_payment_terms' => $this->getAvailablePaymentTerms(),
+                'default_payment_term' => $this->getDefaultPaymentTerm(),
         )));
+        // Register Two payment CSS and JavaScript files
         $this->context->controller->addJqueryUI('ui.autocomplete');
-        $this->context->controller->registerStylesheet('two-intl-tel-css', 'modules/twopayment/views/css/intlTelInput.css', array('priority' => 200, 'media' => 'all'));
         $this->context->controller->registerStylesheet('two-css', 'modules/twopayment/views/css/two.css', array('priority' => 200, 'media' => 'all'));
-        $this->context->controller->registerJavascript('two-intl-tel-script', 'modules/twopayment/views/js/intlTelInput.min.js', array('priority' => 200, 'attribute' => 'async'));
-        $this->context->controller->registerJavascript('two-script', 'modules/twopayment/views/js/twopayment.js', array('priority' => 200, 'attribute' => 'async'));
+        
+        // Register modular Two payment JavaScript files in correct loading order
+        $this->context->controller->registerJavascript('two-company-search', 'modules/twopayment/views/js/modules/TwoCompanySearch.js', array('priority' => 201));
+        $this->context->controller->registerJavascript('two-order-intent', 'modules/twopayment/views/js/modules/TwoOrderIntent.js', array('priority' => 202));
+        $this->context->controller->registerJavascript('two-field-validation', 'modules/twopayment/views/js/modules/TwoFieldValidation.js', array('priority' => 203));
+        $this->context->controller->registerJavascript('two-checkout-manager', 'modules/twopayment/views/js/modules/TwoCheckoutManager.js', array('priority' => 204));
+        $this->context->controller->registerJavascript('two-script', 'modules/twopayment/views/js/twopayment.js', array('priority' => 205, 'attribute' => 'async'));
     }
 
     public function hookPaymentOptions($params)
@@ -925,6 +1071,27 @@ class Twopayment extends PaymentModule
             return;
         }
 
+        // BUSINESS ACCOUNT RESTRICTION: Only show Two for business accounts
+        $cart = $this->context->cart;
+        if (!Validate::isLoadedObject($cart) || $cart->id_address_invoice == 0) {
+            PrestaShopLogger::addLog('TwoPayment: No valid cart or billing address found for payment options', 2);
+            return [];
+        }
+
+        $billing_address = new Address($cart->id_address_invoice);
+        if (!Validate::isLoadedObject($billing_address)) {
+            PrestaShopLogger::addLog('TwoPayment: Invalid billing address for payment options', 2);
+            return [];
+        }
+
+        // Check account type - only show Two for business accounts
+        if (empty($billing_address->account_type) || $billing_address->account_type !== 'business') {
+            PrestaShopLogger::addLog('TwoPayment: Payment option hidden - account type is not business (current: ' . ($billing_address->account_type ?: 'not set') . ')', 1);
+            return [];
+        }
+
+        PrestaShopLogger::addLog('TwoPayment: Payment option shown for business account', 1);
+        
         $payment_options = [
             $this->getTwoPaymentOption(),
         ];
@@ -938,108 +1105,93 @@ class Twopayment extends PaymentModule
         $subtitle = Configuration::get('PS_TWO_SUB_TITLE', $this->context->language->id);
 
         if (Tools::isEmpty($title)) {
-            $title = $this->l('Business invoice 30 days');
+            $title = $this->l('Pay with Two');
         }
         if (Tools::isEmpty($subtitle)) {
-            $subtitle = $this->l('Receive the invoice via EHF and PDF');
+            $subtitle = $this->l('Get 30 days to pay your invoice via EHF and PDF');
         }
 
-        //check Pre-approve buyer for enable payment method
-        if ($this->enable_order_intent) {
-            $approval_data = $this->getTwoApprovalBuyer();
-
-            $this->context->smarty->assign(array(
-                'subtitle' => $subtitle,
-                'enable_order_intent' => true,
-                'payment_enable' => $approval_data['approval'],
-                'message' => $approval_data['message'],
-            ));
-        } else {
-            $this->context->smarty->assign(array(
-                'subtitle' => $subtitle,
-                'enable_order_intent' => false,
-                'payment_enable' => false,
-                'message' => '',
-            ));
-        }
+        // Order intent is now handled on frontend via AJAX
+        $this->context->smarty->assign(array(
+            'subtitle' => $subtitle,
+            'enable_order_intent' => $this->enable_order_intent,
+            'payment_enable' => true, // Always enable, frontend will handle approval
+            'message' => '',
+            'module_dir' => $this->_path, // Module directory path for assets
+            'two_portal_url' => $this->getTwoPortalUrl(), // Dynamic portal URL based on environment
+        ));
 
         $preTwoOption = new PaymentOption();
         $preTwoOption->setModuleName($this->name)
             ->setCallToActionText($title)
             ->setAction($this->context->link->getModuleLink($this->name, 'payment', array(), true))
             ->setInputs(['token' => ['name' => 'token', 'type' => 'hidden', 'value' => Tools::getToken(false)]])
-            ->setLogo(Media::getMediaPath(_PS_MODULE_DIR_ . 'twopayment/views/img/two.png'))
             ->setAdditionalInformation($this->context->smarty->fetch('module:twopayment/views/templates/hook/paymentinfo.tpl'));
 
         return $preTwoOption;
     }
 
-    public function sendTwoLogoToMerchant()
-    {
-        $image_logo = Configuration::get('PS_TWO_MERACHANT_LOGO');
-        if ($image_logo && file_exists(_PS_MODULE_DIR_ . $this->name . DIRECTORY_SEPARATOR . 'views/img' . DIRECTORY_SEPARATOR . $image_logo)) {
-            $logo_path = $this->context->link->protocol_content . Tools::getMediaServer($image_logo) . $this->_path . 'views/img/' . $image_logo;
-            $this->setTwoPaymentRequest("/v1/merchant/update", [
-                'merchant_short_name' => $this->merchant_short_name,
-                'logo_path' => $logo_path
-                ], 'POST');
-        } else {
-            $this->setTwoPaymentRequest("/v1/merchant/update", [
-                'merchant_short_name' => $this->merchant_short_name,
-                'logo_path' => ''
-                ], 'POST');
-        }
-    }
 
-    public function getTwoApprovalBuyer()
-    {
-        $cart = $this->context->cart;
-        $cutomer = new Customer($cart->id_customer);
-        $currency = new Currency($cart->id_currency);
-        $address = new Address($cart->id_address_invoice);
-
-        if ($address->account_type == 'personal') {
-            $data = array(
-                'approval' => false,
-                'message' => $this->l('Enter company name to pay on invoice.'),
-            );
-        } else {
-            $paymentdata = $this->getTwoIntentOrderData($cart, $cutomer, $currency, $address);
-            $response = $this->setTwoPaymentRequest("/v1/order_intent", $paymentdata, 'POST');
-
-            $two_err = $this->getTwoErrorMessage($response);
-
-            if ($two_err) {
-                if ($this->checkTwoStartsWithString($two_err, '1 validation error for CreateOrderIntentRequestSchema: buyer -> company -> organization_number')) {
-                    $error = $this->l('Your Complanay organization number is not valid. Please check your address.');
-                } else if ($this->checkTwoStartsWithString($two_err, '1 validation error for CreateOrderIntentRequestSchema: buyer -> representative -> phone_number')) {
-                    $error = $this->l('Phone number is invalid');
-                } else if ($this->checkTwoStartsWithString($two_err, 'Minimum Payment using Two')) {
-                    $error = $this->l('Minimum Payment using Two is 200 NOK');
-                } else if ($this->checkTwoStartsWithString($two_err, 'Maximum Payment using Two')) {
-                    $error = $this->l('Maximum Payment using Two is 250,000 NOK');
-                } else {
-                    $error = $two_err;
-                }
-                $data = array(
-                    'approval' => false,
-                    'message' => $error,
-                );
-            } else {
-                $data = array(
-                    'approval' => true,
-                    'message' => sprintf($this->l('By completing the purchase, you verify that you have the legal right to purchase on behalf of %s'), '<strong>' . $address->company . '</strong>'),
-                );
-            }
-        }
-
-        return $data;
-    }
 
     public function getTwoIntentOrderData($cart, $cutomer, $currency, $address)
     {
+        // Get detailed line items for proper validation
+        $line_items = $this->getTwoProductItems($cart);
+        
+        // Calculate totals from line items to ensure accuracy
+        $calculated_gross = 0;
+        $calculated_net = 0;
+        $calculated_tax = 0;
+        $calculated_discount = 0;
+        
+        foreach ($line_items as $item) {
+            $calculated_gross += (float)$item['gross_amount'];
+            $calculated_net += (float)$item['net_amount'];
+            $calculated_tax += (float)$item['tax_amount'];
+            $calculated_discount += (float)$item['discount_amount'];
+        }
+        
+        // Get PrestaShop cart totals for validation
+        $cart_gross = $cart->getOrderTotal(true, Cart::BOTH);
+        $cart_net = $cart->getOrderTotal(false, Cart::BOTH);
+        $cart_tax = $cart_gross - $cart_net;
+        $cart_discount = $cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS);
+        
+        // STREAMLINED ORDER VALIDATION: Use line item totals (built with Two API compliance)
+        $final_gross = $calculated_gross;
+        $final_net = $calculated_net;
+        $final_tax = $calculated_tax;
+        $final_discount = abs($calculated_discount); // Two API expects positive discount amount at order level
+        
+        // Simple validation against PrestaShop cart totals (for monitoring only)
+        $net_diff = abs($cart_net - $calculated_net);
+        $gross_diff = abs($cart_gross - $calculated_gross);
+        
+        // Only log significant discrepancies
+        if ($net_diff > 0.50 || $gross_diff > 0.50) {
+            PrestaShopLogger::addLog(
+                'TwoPayment Order Intent - Notable difference from PrestaShop totals. ' .
+                'Cart Net: ' . $cart_net . ' → Two Net: ' . $calculated_net . ' (diff: ' . $net_diff . '), ' .
+                'Cart Gross: ' . $cart_gross . ' → Two Gross: ' . $calculated_gross . ' (diff: ' . $gross_diff . ')',
+                1
+            );
+        }
+        
+        // Calculate tax subtotals for enhanced validation
+        $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
+        
+        // Validate all line items against Two API formulas
+        $validation_passed = $this->validateTwoLineItems($line_items);
+        if (!$validation_passed) {
+            PrestaShopLogger::addLog('TwoPayment Order Intent - Line item validation failed, but proceeding with request', 2);
+        }
+        
         $request_data = array(
-            'gross_amount' => (string)($this->getTwoRoundAmount($cart->getOrderTotal(true, Cart::BOTH))),
+            'gross_amount' => (string)($this->getTwoRoundAmount($final_gross)),
+            'net_amount' => (string)($this->getTwoRoundAmount($final_net)),
+            'tax_amount' => (string)($this->getTwoRoundAmount($final_tax)),
+            'discount_amount' => (string)($this->getTwoRoundAmount($final_discount)),
+            'tax_subtotals' => $tax_subtotals,
             'buyer' => array(
                 'company' => array(
                     'company_name' => $address->company,
@@ -1056,30 +1208,8 @@ class Twopayment extends PaymentModule
             ),
             'currency' => $currency->iso_code,
             'merchant_short_name' => $this->merchant_short_name,
-            'invoice_type' => $this->product_type,
-            'line_items' => array(
-                array(
-                    'name' => 'Cart',
-                    'description' => '',
-                    'gross_amount' => (string)($this->getTwoRoundAmount($cart->getOrderTotal(true, Cart::BOTH))),
-                    'net_amount' => (string)($this->getTwoRoundAmount($cart->getOrderTotal(false, Cart::BOTH))),
-                    'discount_amount' => (string)($this->getTwoRoundAmount($cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS))),
-                    'tax_amount' => (string)($this->getTwoRoundAmount($cart->getOrderTotal(true, Cart::BOTH) - $cart->getOrderTotal(false, Cart::BOTH))),
-                    'tax_class_name' => 'VAT ' . Tools::ps_round($cart->getAverageProductsTaxRate() * 100) . '%',
-                    'tax_rate' => (string)($cart->getAverageProductsTaxRate() * 100),
-                    'unit_price' => (string)($this->getTwoRoundAmount($cart->getOrderTotal(false, Cart::BOTH))),
-                    'quantity' => 1,
-                    'quantity_unit' => 'item',
-                    'image_url' => '',
-                    'product_page_url' => '',
-                    'type' => 'PHYSICAL',
-                    'details' => array(
-                        'brand' => '',
-                        'categories' => [],
-                        'barcodes' => [],
-                    ),
-                )
-            ),
+            'invoice_type' => 'FUNDED_INVOICE', // Default product type
+            'line_items' => $line_items,
         );
 
         return $request_data;
@@ -1099,15 +1229,111 @@ class Twopayment extends PaymentModule
             $carrier_name = $carrier->name;
         }
 
+        // Get line items first for validation
+        $line_items = $this->getTwoProductItems($cart);
+        
+        // Calculate totals from line items to ensure accuracy
+        $calculated_gross = 0;
+        $calculated_net = 0;
+        $calculated_tax = 0;
+        $calculated_discount = 0;
+        
+        foreach ($line_items as $item) {
+            $calculated_gross += (float)$item['gross_amount'];
+            $calculated_net += (float)$item['net_amount'];
+            $calculated_tax += (float)$item['tax_amount'];
+            $calculated_discount += (float)$item['discount_amount'];
+        }
+        
+        // Get PrestaShop cart totals
+        $cart_gross = $cart->getOrderTotal(true, Cart::BOTH);
+        $cart_net = $cart->getOrderTotal(false, Cart::BOTH);
+        $cart_tax = $cart_gross - $cart_net;
+        $cart_discount = $cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS);
+        
+        // ROUNDING ALIGNMENT: Ensure perfect match with PrestaShop cart totals
+        $net_diff = abs($cart_net - $calculated_net);
+        $gross_diff = abs($cart_gross - $calculated_gross);
+        
+        // If difference is minimal (rounding issue), use PrestaShop cart totals
+        if ($net_diff <= 0.02 && $gross_diff <= 0.02) {
+            PrestaShopLogger::addLog(
+                'TwoPayment Create Order - Minor rounding difference detected, aligning with PrestaShop totals. ' .
+                'Cart Net: ' . $cart_net . ' → Line Items Net: ' . $calculated_net . ' (diff: ' . $net_diff . '), ' .
+                'Cart Gross: ' . $cart_gross . ' → Line Items Gross: ' . $calculated_gross . ' (diff: ' . $gross_diff . ')',
+                1
+            );
+            
+            // Use PrestaShop cart totals for perfect alignment
+            $final_gross = $cart_gross;
+            $final_net = $cart_net;
+            $final_tax = $cart_tax;
+            $final_discount = abs($cart_discount);
+        } else {
+            // Use line item totals for larger discrepancies (indicates possible data issue)
+            $final_gross = $calculated_gross;
+            $final_net = $calculated_net;
+            $final_tax = $calculated_tax;
+            $final_discount = abs($calculated_discount);
+            
+            if ($net_diff > 0.50 || $gross_diff > 0.50) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment Create Order - Significant difference from PrestaShop totals. ' .
+                    'Cart Net: ' . $cart_net . ' → Line Items Net: ' . $calculated_net . ' (diff: ' . $net_diff . '), ' .
+                    'Cart Gross: ' . $cart_gross . ' → Line Items Gross: ' . $calculated_gross . ' (diff: ' . $gross_diff . ')',
+                    2
+                );
+            }
+        }
+
+        // Calculate tax subtotals - align with final tax amount if using cart totals
+        $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
+        
+        // If we're using cart totals, adjust tax subtotals to match
+        if ($net_diff <= 0.02 && $gross_diff <= 0.02 && !empty($tax_subtotals)) {
+            $calculated_tax_total = 0;
+            foreach ($tax_subtotals as $subtotal) {
+                $calculated_tax_total += (float)$subtotal['tax_amount'];
+            }
+            
+            $tax_diff = abs($final_tax - $calculated_tax_total);
+            if ($tax_diff > 0.01) {
+                // Adjust the largest tax subtotal to match final tax amount
+                $largest_index = 0;
+                $largest_amount = 0;
+                foreach ($tax_subtotals as $index => $subtotal) {
+                    if ((float)$subtotal['tax_amount'] > $largest_amount) {
+                        $largest_amount = (float)$subtotal['tax_amount'];
+                        $largest_index = $index;
+                    }
+                }
+                
+                $adjustment = $final_tax - $calculated_tax_total;
+                $tax_subtotals[$largest_index]['tax_amount'] = (string)$this->getTwoRoundAmount($largest_amount + $adjustment);
+                
+                PrestaShopLogger::addLog(
+                    'TwoPayment Create Order - Adjusted tax subtotal by €' . number_format($adjustment, 2) . ' to align with cart total',
+                    1
+                );
+            }
+        }
+
+        // Validate all line items against Two API formulas
+        $validation_passed = $this->validateTwoLineItems($line_items);
+        if (!$validation_passed) {
+            PrestaShopLogger::addLog('TwoPayment Create Order - Line item validation failed, but proceeding with request', 2);
+        }
+
         $request_data = array(
-            'gross_amount' => (string)($this->getTwoRoundAmount($cart->getOrderTotal(true, Cart::BOTH))),
-            'net_amount' => (string)($this->getTwoRoundAmount($cart->getOrderTotal(false, Cart::BOTH))),
+            'gross_amount' => (string)($this->getTwoRoundAmount($final_gross)),
+            'net_amount' => (string)($this->getTwoRoundAmount($final_net)),
             'currency' => $currency->iso_code,
-            'discount_amount' => (string)($this->getTwoRoundAmount($cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS))),
+            'discount_amount' => (string)($this->getTwoRoundAmount($final_discount)),
             'discount_rate' => '0',
-            'invoice_type' => $this->product_type,
-            'tax_amount' => (string)($this->getTwoRoundAmount($cart->getOrderTotal(true, Cart::BOTH) - $cart->getOrderTotal(false, Cart::BOTH))),
+            'invoice_type' => 'FUNDED_INVOICE', // Default product type
+            'tax_amount' => (string)($this->getTwoRoundAmount($final_tax)),
             'tax_rate' => (string)($cart->getAverageProductsTaxRate()),
+            'tax_subtotals' => $tax_subtotals,
             'buyer' => array(
                 'company' => array(
                     'company_name' => $invoice_address->company,
@@ -1158,9 +1384,15 @@ class Twopayment extends PaymentModule
             ),
             'recurring' => false,
             'order_note' => '',
-            'line_items' => $this->getTwoProductItems($cart),
+            'line_items' => $line_items,
+            'terms' => array(
+                'type' => 'NET_TERMS',
+                'duration_days' => $this->getSelectedPaymentTerm()
+            ),
         );
 
+        PrestaShopLogger::addLog('TwoPayment: Order creation with terms - duration_days: ' . $request_data['terms']['duration_days'], 1);
+        
         return $request_data;
     }
 
@@ -1177,15 +1409,67 @@ class Twopayment extends PaymentModule
             $carrier_name = $carrier->name;
         }
 
+        // Get line items first for validation
+        $line_items = $this->getTwoProductItems($cart);
+        
+        // Calculate totals from line items to ensure accuracy
+        $calculated_gross = 0;
+        $calculated_net = 0;
+        $calculated_tax = 0;
+        $calculated_discount = 0;
+        
+        foreach ($line_items as $item) {
+            $calculated_gross += (float)$item['gross_amount'];
+            $calculated_net += (float)$item['net_amount'];
+            $calculated_tax += (float)$item['tax_amount'];
+            $calculated_discount += (float)$item['discount_amount'];
+        }
+        
+        // Get PrestaShop cart totals
+        $cart_gross = $cart->getOrderTotal(true, Cart::BOTH);
+        $cart_net = $cart->getOrderTotal(false, Cart::BOTH);
+        $cart_tax = $cart_gross - $cart_net;
+        $cart_discount = $cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS);
+        
+        // STREAMLINED ORDER VALIDATION: Use line item totals (built with Two API compliance)
+        $final_gross = $calculated_gross;
+        $final_net = $calculated_net;
+        $final_tax = $calculated_tax;
+        $final_discount = abs($calculated_discount); // Two API expects positive discount amount at order level
+        
+        // Simple validation against PrestaShop cart totals (for monitoring only)
+        $net_diff = abs($cart_net - $calculated_net);
+        $gross_diff = abs($cart_gross - $calculated_gross);
+        
+        // Only log significant discrepancies
+        if ($net_diff > 0.50 || $gross_diff > 0.50) {
+            PrestaShopLogger::addLog(
+                'TwoPayment Update Order - Notable difference from PrestaShop totals. ' .
+                'Cart Net: ' . $cart_net . ' → Two Net: ' . $calculated_net . ' (diff: ' . $net_diff . '), ' .
+                'Cart Gross: ' . $cart_gross . ' → Two Gross: ' . $calculated_gross . ' (diff: ' . $gross_diff . ')',
+                1
+            );
+        }
+
+        // Calculate tax subtotals for enhanced validation
+        $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
+
+        // Validate all line items against Two API formulas
+        $validation_passed = $this->validateTwoLineItems($line_items);
+        if (!$validation_passed) {
+            PrestaShopLogger::addLog('TwoPayment Update Order - Line item validation failed, but proceeding with request', 2);
+        }
+
         $request_data = array(
-            'gross_amount' => (string)($this->getTwoRoundAmount($cart->getOrderTotal(true, Cart::BOTH))),
-            'net_amount' => (string)($this->getTwoRoundAmount($cart->getOrderTotal(false, Cart::BOTH))),
+            'gross_amount' => (string)($this->getTwoRoundAmount($final_gross)),
+            'net_amount' => (string)($this->getTwoRoundAmount($final_net)),
             'currency' => $currency->iso_code,
-            'discount_amount' => (string)($this->getTwoRoundAmount($cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS))),
+            'discount_amount' => (string)($this->getTwoRoundAmount($final_discount)),
             'discount_rate' => '0',
-            'invoice_type' => $this->product_type,
-            'tax_amount' => (string)($this->getTwoRoundAmount($cart->getOrderTotal(true, Cart::BOTH) - $cart->getOrderTotal(false, Cart::BOTH))),
+            'invoice_type' => 'FUNDED_INVOICE', // Default product type
+            'tax_amount' => (string)($this->getTwoRoundAmount($final_tax)),
             'tax_rate' => (string)($cart->getAverageProductsTaxRate()),
+            'tax_subtotals' => $tax_subtotals,
             'buyer_department' => $invoice_address->department,
             'buyer_project' => $invoice_address->project,
             'merchant_additional_info' => '',
@@ -1213,7 +1497,7 @@ class Twopayment extends PaymentModule
             ),
             'recurring' => false,
             'order_note' => '',
-            'line_items' => $this->getTwoProductItems($cart),
+            'line_items' => $line_items,
         );
 
         return $request_data;
@@ -1224,11 +1508,10 @@ class Twopayment extends PaymentModule
         $cart = new Cart($order->id_cart);
         $currency = new Currency($cart->id_currency);
 
+        // For full refunds, use simplified payload
         $request_data = [
-            'amount' => (string)($this->getTwoRoundAmount($cart->getOrderTotal(true, Cart::BOTH))),
+            'reason' => $this->l('Full refund issued from PrestaShop'),
             'currency' => $currency->iso_code,
-            'initiate_payment_to_buyer' => $this->enable_buyer_refund === '1',
-            'line_items' => $this->getTwoProductItems($cart),
         ];
 
         return $request_data;
@@ -1239,22 +1522,144 @@ class Twopayment extends PaymentModule
         $items = [];
         $carrier = new Carrier($cart->id_carrier, $cart->id_lang);
         $line_items = $cart->getProducts(true);
+        
         foreach ($line_items as $line_item) {
             $categories = Product::getProductCategoriesFull($line_item['id_product'], $cart->id_lang);
             $image = Image::getCover($line_item['id_product']);
             $imagePath = $this->context->link->getImageLink($line_item['link_rewrite'], $image['id_image'], ImageType::getFormattedName('home'));
+            
+            // Get base prices (PrestaShop provides these accurately)
+            $unit_price_net = (float)$line_item['price']; // Price without tax per unit
+            $unit_price_gross = (float)$line_item['price_wt']; // Price with tax per unit
+            $quantity = (int)$line_item['cart_quantity'];
+            $unit_tax_rate = (float)$line_item['rate']; // Tax rate percentage
+            
+            // CONSERVATIVE APPROACH: Only use discount if we can verify it exists
+            // The validation error shows phantom discounts, so let's be more careful
+            $line_discount_amount = 0; // Start with no discount
+            
+            // Only apply line-level discount if there's clear evidence of it
+            if (isset($line_item['reduction']) && (float)$line_item['reduction'] > 0) {
+                // Check if this reduction makes mathematical sense
+                $ps_unit_price_net = (float)$line_item['price'];
+                $ps_total_net = (float)$line_item['total'];
+                $quantity = (int)$line_item['cart_quantity'];
+                
+                // Calculate what the total SHOULD be without discount
+                $expected_total_without_discount = $ps_unit_price_net * $quantity;
+                
+                // If PrestaShop's total is less than expected, there might be a real discount
+                if ($expected_total_without_discount > $ps_total_net) {
+                    $calculated_discount = $expected_total_without_discount - $ps_total_net;
+                    
+                    // Only use the discount if it matches PrestaShop's reduction field (within tolerance)
+                    if (abs($calculated_discount - (float)$line_item['reduction']) < 0.01) {
+                        $line_discount_amount = $calculated_discount;
+                    }
+                }
+            }
+            
+            
+            // Calculate amounts following Two's API requirements:
+            // net_amount = (quantity * unit_price_net) - discount_amount
+            $calculated_net_before_discount = $unit_price_net * $quantity;
+            $calculated_net_amount = $calculated_net_before_discount - $line_discount_amount;
+            
+            // Calculate tax amount based on net amount after discount
+            $calculated_tax_amount = $calculated_net_amount * ($unit_tax_rate / 100);
+            
+            // Calculate gross amount = net amount + tax amount
+            $calculated_gross_amount = $calculated_net_amount + $calculated_tax_amount;
+            
+            // Validate against PrestaShop's calculations (with tolerance for rounding)
+            $ps_total_net = (float)$line_item['total'];
+            $ps_total_gross = (float)$line_item['total_wt'];
+            $ps_total_tax = $ps_total_gross - $ps_total_net;
+            
+            
+            // STREAMLINED APPROACH: Always use PrestaShop's actual totals as the source of truth
+            // Then adjust only what's necessary for Two API compliance
+            
+            $final_net_amount = $ps_total_net;
+            $final_gross_amount = $ps_total_gross;
+            $final_discount_amount = $line_discount_amount;
+            
+            // Calculate the effective unit price to ensure Two API formula compliance
+            // net_amount = (quantity * unit_price) - discount_amount
+            // Therefore: unit_price = (net_amount + discount_amount) / quantity
+            $calculated_unit_price_net = ($final_net_amount + $final_discount_amount) / $quantity;
+            $unit_price_net = $calculated_unit_price_net;
+            
+            // CRITICAL: Calculate tax amount using Two's exact formula for API compliance
+            // This ensures tax_amount = net_amount * tax_rate validation passes
+            $final_tax_amount = $final_net_amount * ($unit_tax_rate / 100);
+            
+            // Update gross amount to match the recalculated tax
+            $final_gross_amount = $final_net_amount + $final_tax_amount;
+            
+            // Log significant differences for debugging (but don't fail the process)
+            $ps_tax_diff = abs($ps_total_tax - $final_tax_amount);
+            $ps_gross_diff = abs($ps_total_gross - $final_gross_amount);
+            
+            if ($ps_tax_diff > 0.01 || $ps_gross_diff > 0.01) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment Line Item Adjustment - Product: ' . $line_item['name'] . 
+                    ', PS Tax: ' . $ps_total_tax . ' → Two Tax: ' . $final_tax_amount . 
+                    ', PS Gross: ' . $ps_total_gross . ' → Two Gross: ' . $final_gross_amount . 
+                    ', Tax Rate: ' . $unit_tax_rate . '%', 
+                    1
+                );
+            }
+            
+            // Validation: Ensure Two API formulas will pass
+            $two_net_formula_check = ($quantity * $unit_price_net) - $final_discount_amount;
+            $two_tax_formula_check = $final_net_amount * ($unit_tax_rate / 100); // Still calculate with percentage internally
+            
+            
+            // Create a simple debug file for easier access
+            $debug_data = [
+                'product' => $line_item['name'],
+                'unit_price_net' => $unit_price_net,
+                'quantity' => $quantity,
+                'discount_amount' => $final_discount_amount,
+                'calculated_net' => $two_net_formula_check,
+                'actual_net' => $final_net_amount,
+                'ps_price' => $line_item['price'],
+                'ps_total' => $line_item['total'],
+                'ps_reduction' => $line_item['reduction'] ?? 0
+            ];
+            
+            file_put_contents('/tmp/two_debug.json', json_encode($debug_data, JSON_PRETTY_PRINT) . "\n", FILE_APPEND);
+            
+            // Only log if there are significant formula violations
+            if (abs($two_net_formula_check - $final_net_amount) > 0.02) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment Net Formula Issue - Product: ' . $line_item['name'] . 
+                    ', Expected: ' . $two_net_formula_check . ', Actual: ' . $final_net_amount, 
+                    2
+                );
+            }
+            
+            if (abs($two_tax_formula_check - $final_tax_amount) > 0.001) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment Tax Formula Issue - Product: ' . $line_item['name'] . 
+                    ', Expected: ' . $two_tax_formula_check . ', Actual: ' . $final_tax_amount, 
+                    2
+                );
+            }
+            
             $product = array(
                 'name' => $line_item['name'],
                 'description' => Tools::substr(strip_tags($line_item['description_short']), 0, 255),
-                'gross_amount' => (string)($this->getTwoRoundAmount($line_item['total_wt'])),
-                'net_amount' => (string)($this->getTwoRoundAmount($line_item['total'])),
-                'discount_amount' => (string)($this->getTwoRoundAmount($line_item['reduction'])),
-                'tax_amount' => (string)($this->getTwoRoundAmount($line_item['total_wt'] - $line_item['total'])),
-                'tax_class_name' => 'VAT ' . $line_item['rate'] . '%',
-                'tax_rate' => (string)($this->getTwoRoundAmount($line_item['rate'] / 100)),
-                'unit_price' => (string)($this->getTwoRoundAmount($line_item['price_wt'])),
-                'quantity' => $line_item['cart_quantity'],
-                'quantity_unit' => 'item',
+                'gross_amount' => (string)($this->getTwoRoundAmount($final_gross_amount)),
+                'net_amount' => (string)($this->getTwoRoundAmount($final_net_amount)),
+                'discount_amount' => (string)($this->getTwoRoundAmount($final_discount_amount)),
+                'tax_amount' => (string)($this->getTwoRoundAmount($final_tax_amount)),
+                'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($unit_tax_rate) . '%',
+                'tax_rate' => (string)($this->getTwoRoundAmount($unit_tax_rate / 100)), // Convert percentage to decimal
+                'unit_price' => (string)($this->getTwoRoundAmount($unit_price_net)), // Two API expects net unit price
+                'quantity' => $quantity,
+                'quantity_unit' => 'pcs',
                 'image_url' => $imagePath,
                 'product_page_url' => $this->context->link->getProductLink($line_item['id_product']),
                 'type' => 'PHYSICAL',
@@ -1282,20 +1687,72 @@ class Twopayment extends PaymentModule
             $items[] = $product;
         }
 
+        // Add shipping as a line item if applicable
         if (Validate::isLoadedObject($carrier) && $cart->getOrderTotal(true, Cart::ONLY_SHIPPING) > 0) {
-            $tax_rate = $carrier->getTaxesRate(new Address((int) $cart->{Configuration::get('PS_TAX_ADDRESS_TYPE')}));
+            $shipping_gross = (float)$cart->getOrderTotal(true, Cart::ONLY_SHIPPING);
+            $shipping_net = (float)$cart->getOrderTotal(false, Cart::ONLY_SHIPPING);
+            $shipping_tax = $shipping_gross - $shipping_net;
+            
+            // STREAMLINED SHIPPING: Use PrestaShop totals, recalculate tax for Two API compliance
+            $shipping_tax_rate = 0;
+            if ($shipping_net > 0) {
+                $shipping_tax_rate = ($shipping_tax / $shipping_net) * 100;
+            }
+            
+            // Shipping line item structure
+            $shipping_discount = 0;
+            $shipping_quantity = 1;
+            $shipping_unit_price_net = $shipping_net;
+            
+            // Calculate tax using Two's exact formula (percentage to decimal conversion happens in API output)
+            $final_shipping_tax = $shipping_net * ($shipping_tax_rate / 100);
+            $final_shipping_gross = $shipping_net + $final_shipping_tax;
+            
+            // Verify Two API formula for shipping
+            $shipping_formula_check = ($shipping_quantity * $shipping_unit_price_net) - $shipping_discount;
+            if (abs($shipping_formula_check - $shipping_net) > 0.001) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment Shipping Formula Validation - Formula Result: ' . $shipping_formula_check . 
+                    ', Net Amount: ' . $shipping_net . ', Difference: ' . abs($shipping_formula_check - $shipping_net), 
+                    2
+                );
+            }
+            
+            // Get proper shipping name and description from PrestaShop
+            $shipping_name = $carrier->name ? $carrier->name : $this->l('Shipping');
+            
+            // Get shipping delay/description in the correct language
+            $shipping_delay = '';
+            if ($carrier->delay && is_array($carrier->delay)) {
+                $shipping_delay = isset($carrier->delay[$cart->id_lang]) ? 
+                    $carrier->delay[$cart->id_lang] : 
+                    reset($carrier->delay); // Fallback to first available language
+            } elseif ($carrier->delay) {
+                $shipping_delay = $carrier->delay;
+            }
+            
+            // Create meaningful description
+            $shipping_description = $shipping_delay ? $shipping_delay : $this->l('Shipping cost for order');
+            
+            // Add shipping cost information if available
+            if ($carrier->shipping_method == Carrier::SHIPPING_METHOD_WEIGHT) {
+                $shipping_description .= ' ' . sprintf($this->l('(by weight)'));
+            } elseif ($carrier->shipping_method == Carrier::SHIPPING_METHOD_PRICE) {
+                $shipping_description .= ' ' . sprintf($this->l('(by price)'));
+            }
+            
             $shipping_line = array(
-                'name' => 'Shipping - ' . $carrier->name,
-                'description' => '',
-                'gross_amount' => (string)($this->getTwoRoundAmount($cart->getOrderTotal(true, Cart::ONLY_SHIPPING))),
-                'net_amount' => (string)($this->getTwoRoundAmount($cart->getOrderTotal(false, Cart::ONLY_SHIPPING))),
-                'discount_amount' => '0',
-                'tax_amount' => (string)($this->getTwoRoundAmount($cart->getOrderTotal(true, Cart::ONLY_SHIPPING) - $cart->getOrderTotal(false, Cart::ONLY_SHIPPING))),
-                'tax_class_name' => 'VAT ' . $tax_rate . '%',
-                'tax_rate' => (string)($cart->getAverageProductsTaxRate()),
-                'unit_price' => (string)($this->getTwoRoundAmount($cart->getOrderTotal(false, Cart::ONLY_SHIPPING))),
-                'quantity' => 1,
-                'quantity_unit' => 'sc', // shipment charge
+                'name' => $shipping_name,
+                'description' => Tools::substr(strip_tags($shipping_description), 0, 255),
+                'gross_amount' => (string)($this->getTwoRoundAmount($final_shipping_gross)),
+                'net_amount' => (string)($this->getTwoRoundAmount($shipping_net)),
+                'discount_amount' => (string)($this->getTwoRoundAmount($shipping_discount)),
+                'tax_amount' => (string)($this->getTwoRoundAmount($final_shipping_tax)),
+                'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($shipping_tax_rate) . '%',
+                'tax_rate' => (string)($this->getTwoRoundAmount($shipping_tax_rate / 100)), // Convert percentage to decimal
+                'unit_price' => (string)($this->getTwoRoundAmount($shipping_unit_price_net)), // Two API expects net unit price
+                'quantity' => $shipping_quantity,
+                'quantity_unit' => 'pcs',
                 'image_url' => '',
                 'product_page_url' => '',
                 'type' => 'SHIPPING_FEE'
@@ -1304,29 +1761,198 @@ class Twopayment extends PaymentModule
             $items[] = $shipping_line;
         }
 
-        if ($cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS) > 0) {
-            $tax_rate = ($cart->getAverageProductsTaxRate() * 100);
+        // CONSERVATIVE CART-LEVEL DISCOUNT HANDLING
+        $discount_gross_total = (float)$cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS);
+        $cart_rules = $cart->getCartRules();
+        
+        if ($discount_gross_total > 0) {
+            $discount_net_total = (float)$cart->getOrderTotal(false, Cart::ONLY_DISCOUNTS);
+            $discount_tax_total = $discount_gross_total - $discount_net_total;
+            
+            // Calculate average tax rate for discounts
+            $discount_tax_rate = 0;
+            if ($discount_net_total > 0) {
+                $discount_tax_rate = ($discount_tax_total / $discount_net_total) * 100;
+            }
+            
+            // STREAMLINED DISCOUNT: Negative amounts for discount line item
+            $discount_quantity = 1;
+            $discount_unit_price_net = -$discount_net_total; // Negative unit price
+            $discount_discount_amount = 0; // No additional discount on discount line
+            $discount_net_amount = -$discount_net_total; // Negative net amount
+            
+            // Calculate tax using Two's exact formula (percentage to decimal conversion happens in API output)
+            $final_discount_tax = $discount_net_amount * ($discount_tax_rate / 100);
+            $final_discount_gross = $discount_net_amount + $final_discount_tax;
+            
+            // Verify Two API formula for discount
+            $discount_formula_check = ($discount_quantity * $discount_unit_price_net) - $discount_discount_amount;
+            $expected_discount_net = -$discount_net_total; // Should be negative
+            
+            if (abs($discount_formula_check - $expected_discount_net) > 0.001) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment Discount Formula Validation - Formula Result: ' . $discount_formula_check . 
+                    ', Expected Net: ' . $expected_discount_net . ', Difference: ' . abs($discount_formula_check - $expected_discount_net), 
+                    2
+                );
+            }
+            
+            // Get actual discount information from PrestaShop cart rules
+            $cart_rules = $cart->getCartRules();
+            $discount_name = $this->l('Discount');
+            $discount_description = $this->l('Order discount');
+            
+            if (!empty($cart_rules)) {
+                // Use the first cart rule name as the primary discount name
+                $primary_rule = reset($cart_rules);
+                $discount_name = $primary_rule['name'];
+                
+                // Build comprehensive description
+                $discount_parts = [];
+                foreach ($cart_rules as $rule) {
+                    $rule_desc = $rule['name'];
+                    if ($rule['code']) {
+                        $rule_desc .= ' (' . $rule['code'] . ')';
+                    }
+                    if ($rule['value']) {
+                        if ($rule['reduction_percent'] > 0) {
+                            $rule_desc .= ' - ' . $rule['reduction_percent'] . '%';
+                        } elseif ($rule['reduction_amount'] > 0) {
+                            $rule_desc .= ' - ' . Tools::displayPrice($rule['reduction_amount']);
+                        }
+                    }
+                    $discount_parts[] = $rule_desc;
+                }
+                
+                $discount_description = implode(', ', $discount_parts);
+                
+                // If description is too long, use primary rule description or fallback
+                if (strlen($discount_description) > 200) {
+                    $discount_description = $primary_rule['description'] ? 
+                        Tools::substr(strip_tags($primary_rule['description']), 0, 200) : 
+                        sprintf($this->l('Discount: %s'), $primary_rule['name']);
+                }
+                
+                // If multiple cart rules, update name to show count
+                if (count($cart_rules) > 1) {
+                    $discount_name = sprintf($this->l('%s (+%d more)'), $primary_rule['name'], count($cart_rules) - 1);
+                }
+            }
+            
             $discount_line = array(
-                'name' => 'Discount',
-                'description' => '',
-                'gross_amount' => (string)($this->getTwoRoundAmount($cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS))),
-                'net_amount' => (string)($this->getTwoRoundAmount($cart->getOrderTotal(false, Cart::ONLY_DISCOUNTS))),
-                'discount_amount' => '0',
-                'tax_amount' => (string)($this->getTwoRoundAmount($cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS) - $cart->getOrderTotal(false, Cart::ONLY_DISCOUNTS))),
-                'tax_class_name' => 'VAT ' . $tax_rate . '%',
-                'tax_rate' => (string)($cart->getAverageProductsTaxRate()),
-                'unit_price' => (string)($this->getTwoRoundAmount($cart->getOrderTotal(false, Cart::ONLY_DISCOUNTS))),
-                'quantity' => 1,
+                'name' => $discount_name,
+                'description' => Tools::substr(strip_tags($discount_description), 0, 255),
+                'gross_amount' => (string)($this->getTwoRoundAmount($final_discount_gross)), // Use recalculated gross
+                'net_amount' => (string)($this->getTwoRoundAmount($discount_net_amount)), // Negative net amount
+                'discount_amount' => (string)($this->getTwoRoundAmount($discount_discount_amount)),
+                'tax_amount' => (string)($this->getTwoRoundAmount($final_discount_tax)), // Use recalculated tax
+                'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($discount_tax_rate) . '%',
+                'tax_rate' => (string)($this->getTwoRoundAmount($discount_tax_rate / 100)), // Convert percentage to decimal
+                'unit_price' => (string)($this->getTwoRoundAmount($discount_unit_price_net)), // Two API expects net unit price (negative)
+                'quantity' => $discount_quantity,
                 'quantity_unit' => 'item',
                 'image_url' => '',
                 'product_page_url' => '',
-                'type' => 'PHYSICAL'
+                'type' => 'DIGITAL'
             );
 
             $items[] = $discount_line;
         }
 
         return $items;
+    }
+
+    /**
+     * Calculate tax subtotals for Two API compliance
+     * Groups line items by tax rate and calculates taxable_amount and tax_amount per rate
+     *
+     * @param array $line_items Array of line items with tax_rate, net_amount, and tax_amount
+     * @return array Tax subtotals array for Two API
+     */
+    public function getTwoTaxSubtotals($line_items)
+    {
+        $tax_subtotals = [];
+        $tax_groups = [];
+        
+        // Group line items by tax rate
+        foreach ($line_items as $item) {
+            $tax_rate = (string)$item['tax_rate'];
+            $net_amount = (float)$item['net_amount'];
+            $tax_amount = (float)$item['tax_amount'];
+            
+            
+            if (!isset($tax_groups[$tax_rate])) {
+                $tax_groups[$tax_rate] = [
+                    'taxable_amount' => 0,
+                    'tax_amount' => 0,
+                    'tax_rate' => $tax_rate
+                ];
+            }
+            
+            $tax_groups[$tax_rate]['taxable_amount'] += $net_amount;
+            $tax_groups[$tax_rate]['tax_amount'] += $tax_amount;
+        }
+        
+        // Convert to Two API format
+        foreach ($tax_groups as $rate => $group) {
+            $tax_subtotals[] = [
+                'tax_rate' => (string)($this->getTwoRoundAmount((float)$rate)), // Rate is already in decimal format
+                'taxable_amount' => (string)($this->getTwoRoundAmount($group['taxable_amount'])),
+                'tax_amount' => (string)($this->getTwoRoundAmount($group['tax_amount']))
+            ];
+        }
+        
+        // Sort by tax rate for consistency
+        usort($tax_subtotals, function($a, $b) {
+            return (float)$a['tax_rate'] <=> (float)$b['tax_rate'];
+        });
+        
+        return $tax_subtotals;
+    }
+
+    /**
+     * Validate all line items against Two API formulas (streamlined)
+     * Only logs critical validation failures
+     *
+     * @param array $line_items Array of line items to validate
+     * @return bool True if all validations pass, false otherwise
+     */
+    public function validateTwoLineItems($line_items)
+    {
+        $validation_issues = 0;
+        
+        foreach ($line_items as $item) {
+            $net_amount = (float)$item['net_amount'];
+            $tax_amount = (float)$item['tax_amount'];
+            $tax_rate = (float)$item['tax_rate'];
+            $unit_price = (float)$item['unit_price'];
+            $quantity = (int)$item['quantity'];
+            $discount_amount = (float)$item['discount_amount'];
+            
+            // Critical validation: tax_amount = net_amount * tax_rate (tax_rate is now decimal)
+            $expected_tax_amount = $net_amount * $tax_rate;
+            if (abs($tax_amount - $expected_tax_amount) > 0.001) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment CRITICAL Tax Formula Error - Item: ' . $item['name'] . 
+                    ', Got: ' . $tax_amount . ', Expected: ' . $expected_tax_amount, 
+                    3
+                );
+                $validation_issues++;
+            }
+            
+            // Critical validation: net_amount = (quantity * unit_price) - discount_amount
+            $expected_net_amount = ($quantity * $unit_price) - $discount_amount;
+            if (abs($net_amount - $expected_net_amount) > 0.02) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment CRITICAL Net Formula Error - Item: ' . $item['name'] . 
+                    ', Got: ' . $net_amount . ', Expected: ' . $expected_net_amount, 
+                    3
+                );
+                $validation_issues++;
+            }
+        }
+        
+        return $validation_issues === 0;
     }
 
     public function getTwoRoundAmount($amount)
@@ -1336,25 +1962,241 @@ class Twopayment extends PaymentModule
 
     public function getTwoCheckoutHostUrl()
     {
-        $two_checkout_url = 'https://api.two.inc';
-        if ($this->isTwoCheckoutDevelopment()) {
-            $two_checkout_url = Configuration::get('PS_TWO_PAYMENT_DEV_MODE');
-        } else if ($this->payment_mode == 'test') {
-            $two_checkout_url = 'https://sandbox.api.two.inc';
+        $environment = Configuration::get('PS_TWO_ENVIRONMENT');
+        
+        if ($environment === 'production') {
+            return 'https://api.two.inc';
+        } else {
+            // Development environment (default)
+            return 'https://api.sandbox.two.inc';
         }
-        return $two_checkout_url;
     }
 
-    public function isTwoCheckoutDevelopment()
+    /**
+     * Get the Two portal URL based on environment configuration
+     * @return string Portal URL for the current environment
+     */
+    public function getTwoPortalUrl()
     {
-        $hostname = str_replace(array('http://', 'https://'), '', $_SERVER['SERVER_NAME']);
-
-        if (in_array($hostname, array('tillit.ps.local', 'localhost')) || Tools::substr($hostname, -8) === '.two.inc') {
-            return true;
+        $environment = Configuration::get('PS_TWO_ENVIRONMENT');
+        
+        if ($environment === 'production') {
+            return 'https://portal.two.inc';
+        } else {
+            // Development environment (default)
+            return 'https://portal.sandbox.two.inc';
         }
-
-        return false;
     }
+
+    /**
+     * Get the PDF invoice URL for a Two order
+     * @param string $two_order_id The Two order ID
+     * @param string $lang Language code (optional, defaults to null)
+     * @param bool $generate Whether to generate a new PDF (optional, defaults to false)
+     * @param string $version Version parameter (optional, defaults to null)
+     * @return string PDF URL for the order
+     */
+    public function getTwoPdfUrl($two_order_id, $lang = null, $generate = false, $version = null)
+    {
+        $pdf_url = $this->getTwoCheckoutHostUrl() . '/v1/invoice/' . urlencode($two_order_id) . '/pdf';
+        
+        $params = array();
+        if ($generate) {
+            $params['generate'] = 'true';
+        }
+        if ($lang) {
+            $params['lang'] = $lang;
+        }
+        if ($version) {
+            $params['v'] = $version;
+        }
+        
+        if (!empty($params)) {
+            $pdf_url .= '?' . http_build_query($params);
+        }
+        
+        return $pdf_url;
+    }
+
+    /**
+     * Confirm a Two order that is in VERIFIED state to move it to CONFIRMED state
+     * This signals that the buyer has returned to the merchant site after verification
+     * @param string $two_order_id The Two order ID
+     * @return array Result array with success status and final state
+     */
+    public function confirmTwoOrder($two_order_id)
+    {
+        PrestaShopLogger::addLog('TwoPayment: Attempting to confirm Two order ID: ' . $two_order_id, 1);
+        
+        $confirm_response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/confirm', [], 'POST');
+        $confirm_err = $this->getTwoErrorMessage($confirm_response);
+        
+        if ($confirm_err) {
+            PrestaShopLogger::addLog('TwoPayment: Order confirmation failed for Two order ID: ' . $two_order_id . ', Error: ' . $confirm_err, 2);
+            return array(
+                'success' => false,
+                'error' => $confirm_err,
+                'state' => null
+            );
+        } else {
+            PrestaShopLogger::addLog('TwoPayment: Order successfully confirmed for Two order ID: ' . $two_order_id, 1);
+            return array(
+                'success' => true,
+                'error' => null,
+                'state' => isset($confirm_response['state']) ? $confirm_response['state'] : 'CONFIRMED',
+                'status' => isset($confirm_response['status']) ? $confirm_response['status'] : null,
+                'response' => $confirm_response
+            );
+        }
+    }
+
+    /**
+     * Get available payment terms configured by the merchant
+     * @return array Array of available payment terms in days
+     */
+    public function getAvailablePaymentTerms()
+    {
+        $payment_terms = array('7', '15', '20', '30', '45', '60', '90');
+        $available_terms = array();
+        
+        foreach ($payment_terms as $term) {
+            if (Configuration::get('PS_TWO_PAYMENT_TERMS_' . $term)) {
+                $available_terms[] = (int)$term;
+            }
+        }
+        
+        // If no terms are configured, default to 30 days
+        if (empty($available_terms)) {
+            $available_terms = array(30);
+        }
+        
+        sort($available_terms); // Ensure they're in ascending order
+        return $available_terms;
+    }
+
+    /**
+     * Get the default payment term (first available term or 30 days)
+     * @return int Default payment term in days
+     */
+    public function getDefaultPaymentTerm()
+    {
+        $available_terms = $this->getAvailablePaymentTerms();
+        
+        // If only one term is available, use it as default
+        if (count($available_terms) === 1) {
+            return $available_terms[0];
+        }
+        
+        // If 30 days is available, use it as default
+        if (in_array(30, $available_terms)) {
+            return 30;
+        }
+        
+        // Otherwise, use the first available term
+        return !empty($available_terms) ? $available_terms[0] : 30;
+    }
+
+    /**
+     * SHARED UTILITY: Restore duplicate cart for failed orders
+     * Used across multiple controllers to maintain consistency
+     */
+    public function restoreDuplicateCart($id_order, $id_customer)
+    {
+        try {
+            $oldCart = new Cart(Order::getCartIdStatic($id_order, $id_customer));
+            if (!Validate::isLoadedObject($oldCart)) {
+                PrestaShopLogger::addLog('TwoPayment: Cannot restore cart - original cart not found for order ' . $id_order, 2);
+                return false;
+            }
+            
+            $duplication = $oldCart->duplicate();
+            if (!$duplication || !isset($duplication['cart']) || !Validate::isLoadedObject($duplication['cart'])) {
+                PrestaShopLogger::addLog('TwoPayment: Cart duplication failed for order ' . $id_order, 2);
+                return false;
+            }
+            
+            $this->context->cookie->id_cart = $duplication['cart']->id;
+            $context = $this->context;
+            $context->cart = $duplication['cart'];
+            CartRule::autoAddToCart($context);
+            $this->context->cookie->write();
+            
+            PrestaShopLogger::addLog('TwoPayment: Cart restored successfully for order ' . $id_order . ', new cart ID: ' . $duplication['cart']->id, 1);
+            return true;
+            
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Exception during cart restoration for order ' . $id_order . ': ' . $e->getMessage(), 3);
+            return false;
+        }
+    }
+
+    /**
+     * SHARED UTILITY: Change order status with proper validation
+     * Used across multiple controllers to maintain consistency
+     */
+    public function changeOrderStatus($id_order, $id_order_status)
+    {
+        try {
+            if (!$id_order || !$id_order_status) {
+                PrestaShopLogger::addLog('TwoPayment: Invalid parameters for order status change - Order: ' . $id_order . ', Status: ' . $id_order_status, 2);
+                return false;
+            }
+            
+            $order = new Order((int) $id_order);
+            if (!Validate::isLoadedObject($order)) {
+                PrestaShopLogger::addLog('TwoPayment: Order not found for status change: ' . $id_order, 2);
+                return false;
+            }
+            
+            // Only change status if it's different
+            if ($order->current_state == (int) $id_order_status) {
+                PrestaShopLogger::addLog('TwoPayment: Order ' . $id_order . ' already in target status ' . $id_order_status, 1);
+                return true;
+            }
+            
+            $history = new OrderHistory();
+            $history->id_order = (int) $order->id;
+            $history->changeIdOrderState((int) $id_order_status, $order, true);
+            $history->addWithemail(true);
+            
+            PrestaShopLogger::addLog('TwoPayment: Order status changed successfully for order ' . $id_order . ' to status ' . $id_order_status, 1);
+            return true;
+            
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Exception during order status change for order ' . $id_order . ': ' . $e->getMessage(), 3);
+            return false;
+        }
+    }
+
+    /**
+     * Get the selected payment term for the current order
+     * @return int Selected payment term in days
+     */
+    public function getSelectedPaymentTerm()
+    {
+        $available_terms = $this->getAvailablePaymentTerms();
+        $default_term = $this->getDefaultPaymentTerm();
+        
+        // Try to get from PrestaShop context cookie first
+        $selected_term = (int)$this->context->cookie->two_payment_term;
+        
+        // If not found, try to get from browser cookies
+        if (!$selected_term && isset($_COOKIE['two_payment_term'])) {
+            $selected_term = (int)$_COOKIE['two_payment_term'];
+        }
+        
+        PrestaShopLogger::addLog('TwoPayment: Getting payment term - Context Cookie: ' . $this->context->cookie->two_payment_term . ', Browser Cookie: ' . (isset($_COOKIE['two_payment_term']) ? $_COOKIE['two_payment_term'] : 'not set') . ', Selected: ' . $selected_term . ', Available: ' . implode(',', $available_terms) . ', Default: ' . $default_term, 1);
+        
+        if ($selected_term && in_array($selected_term, $available_terms)) {
+            PrestaShopLogger::addLog('TwoPayment: Using selected payment term: ' . $selected_term . ' days', 1);
+            return $selected_term;
+        }
+        
+        // Fallback to default payment term
+        PrestaShopLogger::addLog('TwoPayment: Using default payment term: ' . $default_term . ' days', 1);
+        return $default_term;
+    }
+
 
     public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST')
     {
@@ -1480,8 +2322,42 @@ class Twopayment extends PaymentModule
         $id_order = $params['order']->id;
         $twopaymentdata = $this->getTwoOrderPaymentData($id_order);
         if ($twopaymentdata) {
+            // Check if order is in VERIFIED state and try to confirm it
+            if (!empty($twopaymentdata['two_order_id']) && $twopaymentdata['two_order_state'] == 'VERIFIED') {
+                PrestaShopLogger::addLog('TwoPayment: Payment return page - attempting to confirm VERIFIED order ID: ' . $twopaymentdata['two_order_id'], 1);
+                
+                $confirm_result = $this->confirmTwoOrder($twopaymentdata['two_order_id']);
+                
+                if ($confirm_result['success']) {
+                    // Update the database with the new confirmed state
+                    $payment_data = array(
+                        'two_order_id' => $twopaymentdata['two_order_id'],
+                        'two_order_reference' => $twopaymentdata['two_order_reference'],
+                        'two_order_state' => $confirm_result['state'],
+                        'two_order_status' => $confirm_result['status'] ?: $twopaymentdata['two_order_status'],
+                        'two_day_on_invoice' => $twopaymentdata['two_day_on_invoice'],
+                        'two_invoice_url' => $twopaymentdata['two_invoice_url'],
+                    );
+                    $this->setTwoOrderPaymentData($id_order, $payment_data);
+                    
+                    // Update local data for template
+                    $twopaymentdata['two_order_state'] = $confirm_result['state'];
+                    if ($confirm_result['status']) {
+                        $twopaymentdata['two_order_status'] = $confirm_result['status'];
+                    }
+                }
+            }
+            
+            // Generate PDF URL if Two order ID is available
+            $pdf_url = null;
+            if (!empty($twopaymentdata['two_order_id'])) {
+                $pdf_url = $this->getTwoPdfUrl($twopaymentdata['two_order_id']);
+            }
+            
             $this->context->smarty->assign(array(
                 'twopaymentdata' => $twopaymentdata,
+                'two_portal_url' => $this->getTwoPortalUrl(), // Dynamic portal URL based on environment
+                'two_pdf_url' => $pdf_url, // PDF invoice URL if available
             ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayPaymentReturn.tpl');
         }
@@ -1492,8 +2368,16 @@ class Twopayment extends PaymentModule
         $id_order = $params['order']->id;
         $twopaymentdata = $this->getTwoOrderPaymentData($id_order);
         if ($twopaymentdata) {
+            // Generate PDF URL if Two order ID is available
+            $pdf_url = null;
+            if (!empty($twopaymentdata['two_order_id'])) {
+                $pdf_url = $this->getTwoPdfUrl($twopaymentdata['two_order_id']);
+            }
+            
             $this->context->smarty->assign(array(
                 'twopaymentdata' => $twopaymentdata,
+                'two_portal_url' => $this->getTwoPortalUrl(),
+                'two_pdf_url' => $pdf_url,
             ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayOrderDetail.tpl');
         }
@@ -1504,8 +2388,16 @@ class Twopayment extends PaymentModule
         $id_order = $params['id_order'];
         $twopaymentdata = $this->getTwoOrderPaymentData($id_order);
         if ($twopaymentdata) {
+            // Generate PDF URL if Two order ID is available
+            $pdf_url = null;
+            if (!empty($twopaymentdata['two_order_id'])) {
+                $pdf_url = $this->getTwoPdfUrl($twopaymentdata['two_order_id']);
+            }
+            
             $this->context->smarty->assign(array(
                 'twopaymentdata' => $twopaymentdata,
+                'two_portal_url' => $this->getTwoPortalUrl(), // Dynamic portal URL based on environment
+                'two_pdf_url' => $pdf_url, // PDF invoice URL if available
             ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayAdminOrderLeft.tpl');
         }
@@ -1526,10 +2418,53 @@ class Twopayment extends PaymentModule
         $twopaymentdata = $this->getTwoOrderPaymentData($id_order);
 
         if ($twopaymentdata) {
+            // Generate PDF URL if Two order ID is available
+            $pdf_url = null;
+            if (!empty($twopaymentdata['two_order_id'])) {
+                $pdf_url = $this->getTwoPdfUrl($twopaymentdata['two_order_id']);
+            }
+            
             $this->context->smarty->assign(array(
                 'twopaymentdata' => $twopaymentdata,
+                'two_portal_url' => $this->getTwoPortalUrl(), // Dynamic portal URL based on environment
+                'two_pdf_url' => $pdf_url, // PDF invoice URL if available
             ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayAdminOrderTabContent.tpl');
         }
     }
+
+    /**
+     * Hook: actionCustomerAddressSave
+     * Capture company data when customer saves address for session persistence
+     */
+    public function hookActionCustomerAddressSave($params)
+    {
+        if (!isset($params['address']) || !is_object($params['address'])) {
+            return;
+        }
+        
+        $address = $params['address'];
+        
+        // Only process if this address has company information
+        if (empty($address->company)) {
+            return;
+        }
+        
+        // Store company data in session for persistence across checkout steps
+        if (isset($this->context->cookie)) {
+            $this->context->cookie->two_company_name = $address->company;
+            
+            // Try to get organization number from form data if available
+            $companyId = Tools::getValue('companyid', '');
+            if (!empty($companyId)) {
+                $this->context->cookie->two_company_id = $companyId;
+            }
+            
+            // Set cookie expiration (1 hour)
+            $this->context->cookie->setExpire(time() + 3600);
+            
+            PrestaShopLogger::addLog('TwoPayment: Company data captured from address save - Company: ' . $address->company, 1);
+        }
+    }
 }
+

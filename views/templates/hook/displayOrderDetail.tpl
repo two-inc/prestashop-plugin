@@ -21,6 +21,15 @@
                 {if $twopaymentdata.two_invoice_url}
                     <tr><td><strong>{l s='Two Invoice Url' mod='twopayment'}</strong></td> <td><a href="{$twopaymentdata.two_invoice_url}" target="_blank">{$twopaymentdata.two_invoice_url}</a></td></tr>
                 {/if}
+                {if $twopaymentdata.two_order_id && $two_portal_url}
+                    <tr><td><strong>{l s='View Order on Portal' mod='twopayment'}</strong></td> <td><a href="{$two_portal_url}/merchant/orders/{$twopaymentdata.two_order_id}" target="_blank" rel="noopener noreferrer">{l s='View order details' mod='twopayment'}</a></td></tr>
+                {/if}
+                {if $two_pdf_url}
+                    <tr><td><strong>{l s='Download PDF Invoice' mod='twopayment'}</strong></td> <td><a href="{$two_pdf_url}" target="_blank" rel="noopener noreferrer">{l s='Download invoice PDF' mod='twopayment'}</a></td></tr>
+                {/if}
+                {if $two_portal_url}
+                    <tr><td><strong>{l s='Two Portal' mod='twopayment'}</strong></td> <td><a href="{$two_portal_url}" target="_blank" rel="noopener noreferrer">{l s='Manage your Two account' mod='twopayment'}</a></td></tr>
+                {/if}
             </tbody>
         </table>
     </div>
