@@ -17,7 +17,7 @@
         <div class="two-logo-container">
             <img src="{$module_dir}views/img/TwoLogo.svg" alt="Two" class="two-logo" />
             <p class="two-tagline">
-                Business payments made simple 
+                {l s='Business payments made simple' mod='twopayment'} 
                 <span class="two-info-tooltip">
                     <span class="two-info-icon">?</span>
                     <span class="two-tooltip-content">
@@ -36,18 +36,18 @@
     <div class="two-benefits">
         <div class="two-benefit-item">
             <span class="two-benefit-icon">✓</span>
-            <span>No upfront costs</span>
+            <span>{l s='No upfront costs' mod='twopayment'}</span>
         </div>
         <div class="two-benefit-item">
             <span class="two-benefit-icon">✓</span>
-            <span>Instant approval check</span>
+            <span>{l s='Instant approval check' mod='twopayment'}</span>
         </div>
     </div>
     
     {* Loading State - Initially Hidden *}
     <div class="two-loading-container" style="display: none;">
         <div class="two-loading-spinner"></div>
-        <span class="two-loading-text">Checking availability...</span>
+        <span class="two-loading-text">{l s='Checking availability...' mod='twopayment'}</span>
     </div>
     
     {* Payment Info Section - Dynamically populated by JavaScript *}

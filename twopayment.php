@@ -1105,6 +1105,26 @@ class Twopayment extends PaymentModule
         foreach ($countries as $country) {
             $param_countries[$country['id_country']] = Tools::strtolower($country['iso_code']);
         }
+        // Build FE i18n (strings are translated by PrestaShop according to current language)
+        $i18n = array(
+            'checking_eligibility' => $this->l('Checking Two payment eligibility...'),
+            'checking_subtext' => $this->l('Please wait a moment while we verify your company details.'),
+            'payment_approved_title' => $this->l('Payment Approved'),
+            'payment_not_available_title' => $this->l('Payment Not Available'),
+            'action_required_title' => $this->l('Action Required'),
+            'payment_approved_message' => $this->l('Payment approved! Choose your payment terms below.'),
+            'payment_not_available_message' => $this->l('Two payment is not available for this order.'),
+            'generic_error' => $this->l('There was an issue processing your Two payment request. Please try again or choose another payment method.'),
+            'invoice_likely_accepted_for' => $this->l('Your invoice with Two is likely to be accepted for %s'),
+            'invoice_cannot_be_approved_for' => $this->l('Your invoice with Two cannot be approved at this time for %s'),
+            'company_name_required' => $this->l('Please enter your company name to continue with Two payment.'),
+            'organization_number_required' => $this->l('Please search and select a valid company to continue with Two payment.'),
+            'invalid_company' => $this->l('The company information provided is not valid. Please search and select a valid company.'),
+            'company_not_found' => $this->l('We could not find your company. Please try a different company name or contact support.'),
+            'credit_unavailable' => $this->l('Two payment is not available for this order. Please choose another payment method.'),
+            'network_issue' => $this->l('There was a temporary issue verifying your payment. Please try again or choose another payment method.'),
+        );
+
         Media::addJsDef(array('twopayment' => array(
                 'search_empty_text' => $this->l('No result found'),
                 'checkout_host' => $this->getTwoCheckoutHostUrl(),
@@ -1121,6 +1141,7 @@ class Twopayment extends PaymentModule
                 'countries' => $param_countries,
                 'available_payment_terms' => $this->getAvailablePaymentTerms(),
                 'default_payment_term' => $this->getDefaultPaymentTerm(),
+                'i18n' => $i18n,
         )));
         // Register Two payment CSS and JavaScript files
         $this->context->controller->addJqueryUI('ui.autocomplete');

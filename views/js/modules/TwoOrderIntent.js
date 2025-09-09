@@ -215,9 +215,11 @@ class TwoOrderIntent {
         let messageText = result.message;
         if (this.lastCompany && typeof this.lastCompany === 'string' && this.lastCompany.trim().length > 0) {
             if (result.approved) {
-                messageText = `Your invoice with Two is likely to be accepted for ${this.lastCompany}`;
+                const t = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.invoice_likely_accepted_for) || 'Your invoice with Two is likely to be accepted for %s';
+                messageText = t.replace('%s', this.lastCompany);
             } else {
-                messageText = `Your invoice with Two cannot be approved at this time for ${this.lastCompany}`;
+                const t = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.invoice_cannot_be_approved_for) || 'Your invoice with Two cannot be approved at this time for %s';
+                messageText = t.replace('%s', this.lastCompany);
             }
         }
 

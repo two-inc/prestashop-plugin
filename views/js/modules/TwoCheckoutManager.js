@@ -328,15 +328,21 @@ class TwoCheckoutManager {
             return;
         }
 
-        // Build company-aware message for display
+        // Build company-aware message for display (translated)
         const companyName = this.getSelectedCompanyName();
         if (result.approved) {
-            const approvedMsg = companyName ? `Your invoice with Two is likely to be accepted for ${companyName}` : (result.message || 'Your invoice with Two is likely to be accepted');
+            let approvedMsg = result.message || ((window.twopayment && window.twopayment.i18n && window.twopayment.i18n.payment_approved_message) || 'Payment approved! Choose your payment terms below.');
+            if (companyName && window.twopayment && window.twopayment.i18n && window.twopayment.i18n.invoice_likely_accepted_for) {
+                approvedMsg = window.twopayment.i18n.invoice_likely_accepted_for.replace('%s', companyName);
+            }
             this.showOrderIntentApproval(approvedMsg);
         } else {
             // For declined results, also check if the decline reason should be treated as an error
-            const baseDecline = result.message || 'Payment declined';
-            const declineMessage = companyName ? `Your invoice with Two cannot be approved at this time for ${companyName}` : baseDecline;
+            const baseDecline = result.message || ((window.twopayment && window.twopayment.i18n && window.twopayment.i18n.payment_not_available_message) || 'Two payment is not available for this order.');
+            let declineMessage = baseDecline;
+            if (companyName && window.twopayment && window.twopayment.i18n && window.twopayment.i18n.invoice_cannot_be_approved_for) {
+                declineMessage = window.twopayment.i18n.invoice_cannot_be_approved_for.replace('%s', companyName);
+            }
             if (this.isDeclineReasonAnError(baseDecline)) {
                 this.showOrderIntentError(declineMessage);
             } else {
@@ -395,7 +401,7 @@ class TwoCheckoutManager {
             overlay.innerHTML = `
                 <div class="two-loading-container">
                     <div class="two-loading-spinner"></div>
-                    <span class="two-loading-text">Checking Two payment eligibility...</span>
+                    <span class="two-loading-text">${(window.twopayment && window.twopayment.i18n && window.twopayment.i18n.checking_eligibility) || 'Checking Two payment eligibility...'}</span>
                 </div>
             `;
             parent.appendChild(overlay);
@@ -422,11 +428,11 @@ class TwoCheckoutManager {
         // Update the payment info section with success message
         const messageElement = messageContainer.querySelector('.two-payment-message') || messageContainer;
         if (messageElement !== messageContainer) {
-            messageElement.innerHTML = message || 'Payment approved! Choose your payment terms below.';
+            messageElement.innerHTML = message || ((window.twopayment && window.twopayment.i18n && window.twopayment.i18n.payment_approved_message) || 'Payment approved! Choose your payment terms below.');
         } else {
             messageContainer.innerHTML = `
-                <p class="two-subtitle">Payment Approved</p>
-                <p class="two-payment-message">${message || 'Payment approved! Choose your payment terms below.'}</p>
+                <p class="two-subtitle">${(window.twopayment && window.twopayment.i18n && window.twopayment.i18n.payment_approved_title) || 'Payment Approved'}</p>
+                <p class="two-payment-message">${message || ((window.twopayment && window.twopayment.i18n && window.twopayment.i18n.payment_approved_message) || 'Payment approved! Choose your payment terms below.')}</p>
             `;
         }
         
@@ -453,11 +459,11 @@ class TwoCheckoutManager {
         // Update the payment info section with decline message
         const messageElement = messageContainer.querySelector('.two-payment-message') || messageContainer;
         if (messageElement !== messageContainer) {
-            messageElement.innerHTML = message || 'Two payment is not available for this order.';
+            messageElement.innerHTML = message || ((window.twopayment && window.twopayment.i18n && window.twopayment.i18n.payment_not_available_message) || 'Two payment is not available for this order.');
         } else {
             messageContainer.innerHTML = `
-                <p class="two-subtitle">Payment Not Available</p>
-                <p class="two-payment-message">${message || 'Two payment is not available for this order.'}</p>
+                <p class="two-subtitle">${(window.twopayment && window.twopayment.i18n && window.twopayment.i18n.payment_not_available_title) || 'Payment Not Available'}</p>
+                <p class="two-payment-message">${message || ((window.twopayment && window.twopayment.i18n && window.twopayment.i18n.payment_not_available_message) || 'Two payment is not available for this order.')}</p>
             `;
         }
         
@@ -486,7 +492,7 @@ class TwoCheckoutManager {
             messageElement.innerHTML = userFriendlyError;
         } else {
             messageContainer.innerHTML = `
-                <p class="two-subtitle">Action Required</p>
+                <p class="two-subtitle">${(window.twopayment && window.twopayment.i18n && window.twopayment.i18n.action_required_title) || 'Action Required'}</p>
                 <p class="two-payment-message">${userFriendlyError}</p>
             `;
         }
@@ -913,7 +919,8 @@ class TwoCheckoutManager {
                 if (event && typeof event.preventDefault === 'function') {
                     event.preventDefault();
                 }
-                this.showOrderIntentError('Payment approval required before proceeding');
+                const msg = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.approval_required) || 'Payment approval required before proceeding';
+                this.showOrderIntentError(msg);
             }
         }
     }
