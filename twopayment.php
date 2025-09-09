@@ -16,6 +16,8 @@ class Twopayment extends PaymentModule
 
     protected $output = '';
     protected $errors = array();
+    protected $verifiedMerchantId = null;
+    protected $verifiedMerchantShortName = null;
 
     public function __construct()
     {
@@ -31,7 +33,7 @@ class Twopayment extends PaymentModule
         $this->languages = Language::getLanguages(false);
         $this->displayName = $this->l('Two - BNPL for businesses');
         $this->description = $this->l('This module allows any merchant to accept payments with Two payment gateway.');
-        $this->merchant_short_name = Configuration::get('PS_TWO_MERACHANT_SHORT_NAME');
+        $this->merchant_short_name = Configuration::get('PS_TWO_MERCHANT_SHORT_NAME');
         $this->api_key = Configuration::get('PS_TWO_MERACHANT_API_KEY');
         $this->enable_company_name = Configuration::get('PS_TWO_ENABLE_COMPANY_NAME');
         $this->enable_company_id = Configuration::get('PS_TWO_ENABLE_COMPANY_ID');
@@ -103,8 +105,10 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_TITLE', $installData['PS_TWO_TITLE']);
         Configuration::updateValue('PS_TWO_SUB_TITLE', $installData['PS_TWO_SUB_TITLE']);
         Configuration::updateValue('PS_TWO_ENVIRONMENT', 'development'); // Default to development for safety
-        Configuration::updateValue('PS_TWO_MERACHANT_SHORT_NAME', '');
+        Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', '');
         Configuration::updateValue('PS_TWO_MERACHANT_API_KEY', '');
+        Configuration::updateValue('PS_TWO_MERCHANT_ID', '');
+        Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 0);
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', 1);
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_ID', 1);
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', 1);
@@ -273,8 +277,10 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_TAB_VALUE');
         Configuration::deleteByName('PS_TWO_TITLE');
         Configuration::deleteByName('PS_TWO_SUB_TITLE');
-        Configuration::deleteByName('PS_TWO_MERACHANT_SHORT_NAME');
+        Configuration::deleteByName('PS_TWO_MERCHANT_SHORT_NAME');
         Configuration::deleteByName('PS_TWO_MERACHANT_API_KEY');
+        Configuration::deleteByName('PS_TWO_MERCHANT_ID');
+        Configuration::deleteByName('PS_TWO_API_KEY_VERIFIED');
         Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_NAME');
         Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_ID');
         Configuration::deleteByName('PS_TWO_ENABLE_DEPARTMENT');
@@ -332,6 +338,10 @@ class Twopayment extends PaymentModule
                 'renderTwoOtherForm' => $this->renderTwoOtherForm(),
                 'renderTwoOrderStatusForm' => $this->renderTwoOrderStatusForm(),
                 'twotabvalue' => Configuration::get('PS_TWO_TAB_VALUE'),
+                'two_api_verified' => (int) Configuration::get('PS_TWO_API_KEY_VERIFIED'),
+                'two_merchant_id' => Configuration::get('PS_TWO_MERCHANT_ID'),
+                'two_merchant_short_name' => Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'),
+                'two_env' => Configuration::get('PS_TWO_ENVIRONMENT'),
             )
         );
 
@@ -385,13 +395,7 @@ class Twopayment extends PaymentModule
                         'required' => true,
                         'lang' => true,
                     ),
-                    array(
-                        'type' => 'text',
-                        'label' => $this->l('Merchant short name'),
-                        'name' => 'PS_TWO_MERACHANT_SHORT_NAME',
-                        'required' => true,
-                        'desc' => $this->l('Enter your merchant short name which is provided by Two.'),
-                    ),
+                    
                     array(
                         'type' => 'password',
                         'label' => $this->l('Api key'),
@@ -477,7 +481,7 @@ class Twopayment extends PaymentModule
             $fields_values['PS_TWO_TITLE'][$language['id_lang']] = Tools::getValue('PS_TWO_TITLE_' . (int) $language['id_lang'], Configuration::get('PS_TWO_TITLE', (int) $language['id_lang']));
             $fields_values['PS_TWO_SUB_TITLE'][$language['id_lang']] = Tools::getValue('PS_TWO_SUB_TITLE_' . (int) $language['id_lang'], Configuration::get('PS_TWO_SUB_TITLE', (int) $language['id_lang']));
         }
-        $fields_values['PS_TWO_MERACHANT_SHORT_NAME'] = Tools::getValue('PS_TWO_MERACHANT_SHORT_NAME', Configuration::get('PS_TWO_MERACHANT_SHORT_NAME'));
+        $fields_values['PS_TWO_MERCHANT_SHORT_NAME'] = Tools::getValue('PS_TWO_MERCHANT_SHORT_NAME', Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'));
         $fields_values['PS_TWO_MERACHANT_API_KEY'] = Tools::getValue('PS_TWO_MERACHANT_API_KEY', Configuration::get('PS_TWO_MERACHANT_API_KEY'));
         $fields_values['PS_TWO_ENVIRONMENT'] = Tools::getValue('PS_TWO_ENVIRONMENT', Configuration::get('PS_TWO_ENVIRONMENT'));
         
@@ -499,11 +503,8 @@ class Twopayment extends PaymentModule
                 $this->errors[] = $this->l('Enter a sub title.');
             }
         }
-        if (Tools::isEmpty(Tools::getValue('PS_TWO_MERACHANT_SHORT_NAME'))) {
-            $this->errors[] = $this->l('Enter a merchant short name.');
-        }
         if (Tools::isEmpty(Tools::getValue('PS_TWO_MERACHANT_API_KEY'))) {
-            $this->errors[] = $this->l('Enter a api key.');
+            $this->errors[] = $this->l('Enter an API key.');
         }
         
         // Validate environment
@@ -524,6 +525,22 @@ class Twopayment extends PaymentModule
         if (empty($selected_terms)) {
             $this->errors[] = $this->l('You must select at least one payment term.');
         }
+        // Verify API key with Two against selected environment and capture merchant id and short name
+        $apiKey = trim(Tools::getValue('PS_TWO_MERACHANT_API_KEY'));
+        $env = Tools::getValue('PS_TWO_ENVIRONMENT');
+        if (!empty($apiKey) && in_array($env, array('production','development'))) {
+            $verify = $this->verifyTwoApiKey($apiKey, $env);
+            if ($verify === false) {
+                $this->errors[] = $this->l('API key verification failed. Please check your API key.');
+            } else {
+                if (!isset($verify['id']) || !isset($verify['short_name'])) {
+                    $this->errors[] = $this->l('Invalid verification response from Two.');
+                } else {
+                    $this->verifiedMerchantId = $verify['id'];
+                    $this->verifiedMerchantShortName = $verify['short_name'];
+                }
+            }
+        }
     }
 
     protected function saveTwoGeneralFormValues()
@@ -536,9 +553,18 @@ class Twopayment extends PaymentModule
         }
         Configuration::updateValue('PS_TWO_TITLE', $values['PS_TWO_TITLE']);
         Configuration::updateValue('PS_TWO_SUB_TITLE', $values['PS_TWO_SUB_TITLE']);
-        Configuration::updateValue('PS_TWO_MERACHANT_SHORT_NAME', trim(Tools::getValue('PS_TWO_MERACHANT_SHORT_NAME')));
+        // If verification succeeded, use verified short name; else fallback to form (kept for safety)
+        $shortNameToSave = $this->verifiedMerchantShortName ? $this->verifiedMerchantShortName : trim(Tools::getValue('PS_TWO_MERCHANT_SHORT_NAME'));
+        Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', $shortNameToSave);
         Configuration::updateValue('PS_TWO_MERACHANT_API_KEY', trim(Tools::getValue('PS_TWO_MERACHANT_API_KEY')));
         Configuration::updateValue('PS_TWO_ENVIRONMENT', Tools::getValue('PS_TWO_ENVIRONMENT'));
+        if ($this->verifiedMerchantId) {
+            Configuration::updateValue('PS_TWO_MERCHANT_ID', $this->verifiedMerchantId);
+            Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 1);
+        } else {
+            // Ensure flag not stale when verification fails/non-run
+            Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 0);
+        }
         
         // Save payment terms checkboxes
         $payment_terms = array('7', '15', '20', '30', '45', '60', '90');
@@ -2034,6 +2060,52 @@ class Twopayment extends PaymentModule
             // Development environment (default)
             return 'https://api.sandbox.two.inc';
         }
+    }
+
+    /**
+     * Get base API host for a specific environment value (without relying on saved config)
+     */
+    private function getTwoCheckoutHostUrlForEnvironment($environment)
+    {
+        return ($environment === 'production') ? 'https://api.two.inc' : 'https://api.sandbox.two.inc';
+    }
+
+    /**
+     * Verify API key directly against selected environment using submitted API key
+     * Returns decoded response array on success, or false on failure
+     */
+    private function verifyTwoApiKey($apiKey, $environment)
+    {
+        $base = $this->getTwoCheckoutHostUrlForEnvironment($environment);
+        $url = $base . '/v1/merchant/verify_api_key?client=PS&client_v=' . $this->version;
+        $headers = [
+            'Content-Type: application/json; charset=utf-8',
+            'X-API-Key:' . $apiKey,
+        ];
+        PrestaShopLogger::addLog('TwoPayment: Verifying API key against ' . $base, 1);
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0);
+        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'GET');
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($httpCode !== 200 || !$response) {
+            PrestaShopLogger::addLog('TwoPayment: API key verification failed. HTTP ' . (int)$httpCode . ' Response: ' . (is_string($response) ? $response : ''), 2);
+            return false;
+        }
+        $decoded = json_decode($response, true);
+        if (!is_array($decoded)) {
+            PrestaShopLogger::addLog('TwoPayment: API key verification returned invalid JSON', 2);
+            return false;
+        }
+        PrestaShopLogger::addLog('TwoPayment: API key verified. Merchant ID: ' . (isset($decoded['id']) ? $decoded['id'] : 'N/A') . ', Short name: ' . (isset($decoded['short_name']) ? $decoded['short_name'] : 'N/A'), 1);
+        return $decoded;
     }
 
     /**
