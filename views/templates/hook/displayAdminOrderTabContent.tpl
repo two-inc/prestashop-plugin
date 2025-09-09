@@ -58,37 +58,33 @@
             </div>
         </div>
 
-        {* Actions Section *}
+        {* Actions Section - now styled like info cards *}
         <div class="two-section">
             <h4 class="two-section-title">{l s='Actions' mod='twopayment'}</h4>
-            <div class="two-actions-grid">
+            <div class="two-info-cards">
                 {if $twopaymentdata.two_order_id && $two_portal_url}
-                <a href="{$two_portal_url}/merchant/orders/{$twopaymentdata.two_order_id}" target="_blank" rel="noopener noreferrer" class="two-action-card two-action-primary">
-                    <i class="icon-external-link"></i>
-                    <span class="two-action-title">{l s='View in Two Portal' mod='twopayment'}</span>
-                    <span class="two-action-desc">{l s='Manage order in Two merchant portal' mod='twopayment'}</span>
-                </a>
+                <div class="two-info-card">
+                    <span class="two-info-label">{l s='View in Two Portal' mod='twopayment'}</span>
+                    <span class="two-info-value"><a href="{$two_portal_url}/merchant/orders/{$twopaymentdata.two_order_id}" target="_blank" rel="noopener noreferrer">{l s='Open' mod='twopayment'}</a></span>
+                </div>
                 {/if}
                 {if $two_pdf_url}
-                <a href="{$two_pdf_url}" target="_blank" rel="noopener noreferrer" class="two-action-card two-action-secondary">
-                    <i class="icon-download"></i>
-                    <span class="two-action-title">{l s='Download Invoice PDF' mod='twopayment'}</span>
-                    <span class="two-action-desc">{l s='Get the Two-generated invoice' mod='twopayment'}</span>
-                </a>
+                <div class="two-info-card">
+                    <span class="two-info-label">{l s='Invoice PDF' mod='twopayment'}</span>
+                    <span class="two-info-value"><a href="{$two_pdf_url}" target="_blank" rel="noopener noreferrer">{l s='Download' mod='twopayment'}</a></span>
+                </div>
                 {/if}
                 {if $twopaymentdata.two_invoice_url}
-                <a href="{$twopaymentdata.two_invoice_url}" target="_blank" class="two-action-card two-action-secondary">
-                    <i class="icon-link"></i>
-                    <span class="two-action-title">{l s='Invoice URL' mod='twopayment'}</span>
-                    <span class="two-action-desc">{l s='Direct link to invoice' mod='twopayment'}</span>
-                </a>
+                <div class="two-info-card">
+                    <span class="two-info-label">{l s='Invoice URL' mod='twopayment'}</span>
+                    <span class="two-info-value"><a href="{$twopaymentdata.two_invoice_url}" target="_blank" rel="noopener noreferrer">{l s='Open link' mod='twopayment'}</a></span>
+                </div>
                 {/if}
                 {if $two_portal_url}
-                <a href="{$two_portal_url}" target="_blank" rel="noopener noreferrer" class="two-action-card two-action-tertiary">
-                    <i class="icon-cog"></i>
-                    <span class="two-action-title">{l s='Two Portal' mod='twopayment'}</span>
-                    <span class="two-action-desc">{l s='Manage your Two account' mod='twopayment'}</span>
-                </a>
+                <div class="two-info-card">
+                    <span class="two-info-label">{l s='Two Portal' mod='twopayment'}</span>
+                    <span class="two-info-value"><a href="{$two_portal_url}" target="_blank" rel="noopener noreferrer">{l s='Open' mod='twopayment'}</a></span>
+                </div>
                 {/if}
             </div>
         </div>

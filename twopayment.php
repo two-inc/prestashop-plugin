@@ -112,8 +112,9 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1); // Default: 30 days enabled
         // Custom Two order states will be created by createTwoOrderState()
         // Set sensible default mappings to standard PrestaShop states
-        Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', Configuration::get('PS_OS_PREPARATION')); // "Preparation in progress"
-        Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', Configuration::get('PS_OS_PREPARATION')); // "Preparation in progress"  
+        // Processing states default to their Two-branded states out-of-the-box
+        Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION'));
+        Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT'));
         Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', Configuration::get('PS_OS_SHIPPING')); // "Shipped"
         Configuration::updateValue('PS_TWO_OS_PAYMENT_ERROR_MAP', Configuration::get('PS_OS_ERROR')); // "Payment error"
         Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', Configuration::get('PS_OS_CANCELED')); // "Canceled"
@@ -764,6 +765,44 @@ class Twopayment extends PaymentModule
         // Get all available PrestaShop order states for mapping
         $orderStates = OrderState::getOrderStates($this->context->language->id);
         
+        // Build a filtered list excluding Two custom states (for Group A mapping selects)
+        $twoCustomStateIds = array_values(array_filter(array(
+            (int) Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION'),
+            (int) Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT'),
+            (int) Configuration::get('PS_TWO_OS_FULFILLED'),
+            (int) Configuration::get('PS_TWO_OS_PAYMENT_ERROR'),
+            (int) Configuration::get('PS_TWO_OS_CANCELLED'),
+            (int) Configuration::get('PS_TWO_OS_REFUNDED'),
+        ), function ($v) { return $v > 0; }));
+        
+        $orderStatesNoTwo = array_values(array_filter($orderStates, function ($state) use ($twoCustomStateIds) {
+            return !in_array((int) $state['id_order_state'], $twoCustomStateIds);
+        }));
+
+        // Build restricted lists for processing states: allow only the matching Two state + non-Two states
+        $awaitingId = (int) Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION');
+        $verifiedId = (int) Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT');
+
+        $awaitingState = null;
+        $verifiedState = null;
+        foreach ($orderStates as $st) {
+            if ((int) $st['id_order_state'] === $awaitingId) {
+                $awaitingState = $st;
+            } elseif ((int) $st['id_order_state'] === $verifiedId) {
+                $verifiedState = $st;
+            }
+        }
+
+        $orderStatesAwaitingOnly = $orderStatesNoTwo;
+        if ($awaitingState) {
+            $orderStatesAwaitingOnly[] = $awaitingState;
+        }
+
+        $orderStatesVerifiedOnly = $orderStatesNoTwo;
+        if ($verifiedState) {
+            $orderStatesVerifiedOnly[] = $verifiedState;
+        }
+        
         $fields_form = array(
             'form' => array(
                 'legend' => array(
@@ -771,8 +810,8 @@ class Twopayment extends PaymentModule
                     'icon' => 'icon-cogs',
                 ),
                 'description' => $this->l('Map Two payment states to PrestaShop order states for workflow integration. Two creates its own branded order states automatically, but you can map them to existing PrestaShop states if needed.') . '<br><br><strong>' . $this->l('Default Mappings:') . '</strong><br>' . 
-                    '• ' . $this->l('Awaiting Verification → Preparation in progress') . '<br>' .
-                    '• ' . $this->l('Verified - Ready for Fulfillment → Preparation in progress') . '<br>' .
+                    '• ' . $this->l('Awaiting Buyer Verification → Two: Awaiting Buyer Verification') . '<br>' .
+                    '• ' . $this->l('Verified - Ready for Fulfillment → Two: Verified - Ready for Fulfillment') . '<br>' .
                     '• ' . $this->l('Order Fulfilled → Shipped') . '<br>' .
                     '• ' . $this->l('Payment Error → Payment error') . '<br>' .
                     '• ' . $this->l('Order Cancelled → Canceled') . '<br>' .
@@ -782,10 +821,10 @@ class Twopayment extends PaymentModule
                         'type' => 'select',
                         'name' => 'PS_TWO_OS_AWAITING_VERIFICATION_MAP',
                         'label' => $this->l('Two: Awaiting Buyer Verification'),
-                        'desc' => $this->l('When buyer needs to complete order verification with Two before payment processing can begin. Default: Preparation in progress'),
+                        'desc' => $this->l('When the buyer needs to complete order verification with Two before payment processing can begin. Default: Preparation in progress'),
                         'required' => true,
                         'options' => array(
-                            'query' => $orderStates,
+                            'query' => $orderStatesAwaitingOnly,
                             'id' => 'id_order_state',
                             'name' => 'name'
                         )
@@ -797,7 +836,7 @@ class Twopayment extends PaymentModule
                         'desc' => $this->l('Payment is verified and order is ready for merchant fulfillment. Merchant can now process and ship the order. Default: Preparation in progress'),
                         'required' => true,
                         'options' => array(
-                            'query' => $orderStates,
+                            'query' => $orderStatesVerifiedOnly,
                             'id' => 'id_order_state',
                             'name' => 'name'
                         )
@@ -809,7 +848,7 @@ class Twopayment extends PaymentModule
                         'desc' => $this->l('Order has been fulfilled with Two. Buyer payment terms are now active and payout cycle begins for merchant. Default: Shipped'),
                         'required' => true,
                         'options' => array(
-                            'query' => $orderStates,
+                            'query' => $orderStatesNoTwo,
                             'id' => 'id_order_state',
                             'name' => 'name'
                         )
@@ -821,7 +860,7 @@ class Twopayment extends PaymentModule
                         'desc' => $this->l('Payment processing failed. Merchant should investigate and contact Two support if needed. Default: Payment error'),
                         'required' => true,
                         'options' => array(
-                            'query' => $orderStates,
+                            'query' => $orderStatesNoTwo,
                             'id' => 'id_order_state',
                             'name' => 'name'
                         )
@@ -833,7 +872,7 @@ class Twopayment extends PaymentModule
                         'desc' => $this->l('Order has been cancelled with Two. This prevents fulfillment and stops the payment process. Default: Canceled'),
                         'required' => true,
                         'options' => array(
-                            'query' => $orderStates,
+                            'query' => $orderStatesNoTwo,
                             'id' => 'id_order_state',
                             'name' => 'name'
                         )
@@ -845,7 +884,7 @@ class Twopayment extends PaymentModule
                         'desc' => $this->l('Order has been refunded through Two. A credit note is issued to the buyer immediately. Default: Refunded'),
                         'required' => true,
                         'options' => array(
-                            'query' => $orderStates,
+                            'query' => $orderStatesNoTwo,
                             'id' => 'id_order_state',
                             'name' => 'name'
                         )
@@ -1186,6 +1225,14 @@ class Twopayment extends PaymentModule
             PrestaShopLogger::addLog('TwoPayment Order Intent - Line item validation failed, but proceeding with request', 2);
         }
         
+        // Fallback organization number from DNI if companyid is not available
+        $org_number = '';
+        if (!empty($address->companyid)) {
+            $org_number = $address->companyid;
+        } elseif (!empty($address->dni)) {
+            $org_number = $address->dni;
+        }
+
         $request_data = array(
             'gross_amount' => (string)($this->getTwoRoundAmount($final_gross)),
             'net_amount' => (string)($this->getTwoRoundAmount($final_net)),
@@ -1196,7 +1243,7 @@ class Twopayment extends PaymentModule
                 'company' => array(
                     'company_name' => $address->company,
                     'country_prefix' => Country::getIsoById($address->id_country),
-                    'organization_number' => $address->companyid,
+                    'organization_number' => $org_number,
                     'website' => '',
                 ),
                 'representative' => array(
@@ -1324,6 +1371,23 @@ class Twopayment extends PaymentModule
             PrestaShopLogger::addLog('TwoPayment Create Order - Line item validation failed, but proceeding with request', 2);
         }
 
+        // COMPANY DATA FALLBACKS: ensure company and organization number are present when creating the Two order
+        $cookie = $this->context->cookie;
+        $cookieCompanyName = isset($cookie->two_company_name) ? trim($cookie->two_company_name) : '';
+        $cookieCompanyId = isset($cookie->two_company_id) ? trim($cookie->two_company_id) : '';
+
+        $buyerCompanyName = !empty($invoice_address->company) ? $invoice_address->company : $cookieCompanyName;
+        $organizationNumber = '';
+        if (!empty($invoice_address->companyid)) {
+            $organizationNumber = $invoice_address->companyid;
+        } elseif (!empty($cookieCompanyId)) {
+            $organizationNumber = $cookieCompanyId;
+        } elseif (!empty($invoice_address->dni)) {
+            $organizationNumber = $invoice_address->dni;
+        }
+
+        $shippingOrgName = !empty($delivery_address->company) ? $delivery_address->company : $buyerCompanyName;
+
         $request_data = array(
             'gross_amount' => (string)($this->getTwoRoundAmount($final_gross)),
             'net_amount' => (string)($this->getTwoRoundAmount($final_net)),
@@ -1336,9 +1400,9 @@ class Twopayment extends PaymentModule
             'tax_subtotals' => $tax_subtotals,
             'buyer' => array(
                 'company' => array(
-                    'company_name' => $invoice_address->company,
+                    'company_name' => $buyerCompanyName,
                     'country_prefix' => Country::getIsoById($invoice_address->id_country),
-                    'organization_number' => $invoice_address->companyid,
+                    'organization_number' => $organizationNumber,
                     'website' => '',
                 ),
                 'representative' => array(
@@ -1364,7 +1428,7 @@ class Twopayment extends PaymentModule
             'billing_address' => array(
                 'city' => $invoice_address->city,
                 'country' => Country::getIsoById($invoice_address->id_country),
-                'organization_name' => $invoice_address->company,
+                'organization_name' => $buyerCompanyName,
                 'postal_code' => $invoice_address->postcode,
                 'region' => $invoice_address->id_state ? State::getNameById($invoice_address->id_state) : "",
                 'street_address' => $invoice_address->address1 . (isset($invoice_address->address2) ? $invoice_address->address2 : "")
@@ -1372,7 +1436,7 @@ class Twopayment extends PaymentModule
             'shipping_address' => array(
                 'city' => $delivery_address->city,
                 'country' => Country::getIsoById($delivery_address->id_country),
-                'organization_name' => $delivery_address->company,
+                'organization_name' => $shippingOrgName,
                 'postal_code' => $delivery_address->postcode,
                 'region' => $delivery_address->id_state ? State::getNameById($delivery_address->id_state) : "",
                 'street_address' => $delivery_address->address1 . (isset($delivery_address->address2) ? $delivery_address->address2 : "")
@@ -1989,6 +2053,16 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Get the Two buyer portal login URL based on environment
+     * @return string Buyer portal login URL for the current environment
+     */
+    public function getTwoBuyerPortalUrl()
+    {
+        $base = $this->getTwoPortalUrl();
+        return rtrim($base, '/') . '/auth/buyer/login';
+    }
+
+    /**
      * Get the PDF invoice URL for a Two order
      * @param string $two_order_id The Two order ID
      * @param string $lang Language code (optional, defaults to null)
@@ -2356,10 +2430,9 @@ class Twopayment extends PaymentModule
             
             $this->context->smarty->assign(array(
                 'twopaymentdata' => $twopaymentdata,
-                'two_portal_url' => $this->getTwoPortalUrl(), // Dynamic portal URL based on environment
-                'two_pdf_url' => $pdf_url, // PDF invoice URL if available
+                'two_buyer_portal_url' => $this->getTwoBuyerPortalUrl(),
             ));
-            return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayPaymentReturn.tpl');
+            return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayPaymentReturnBuyer.tpl');
         }
     }
 

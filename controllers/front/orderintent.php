@@ -46,6 +46,15 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $action = Tools::getValue('action');
         
         switch ($action) {
+            case 'buildPayload':
+                $this->ajaxProcessBuildPayload();
+                break;
+            case 'saveCompany':
+                $this->ajaxProcessSaveCompany();
+                break;
+            case 'getCompany':
+                $this->ajaxProcessGetCompany();
+                break;
             case 'checkOrderIntent':
                 $this->ajaxProcessCheckOrderIntent();
                 break;
@@ -55,6 +64,49 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
                     'error' => 'Unknown action: ' . $action
                 ]));
         }
+    }
+
+    /**
+     * Persist company data into PrestaShop cookie (no secrets)
+     */
+    public function ajaxProcessSaveCompany()
+    {
+        if (!$this->validateAjaxToken()) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => 'Invalid token']));
+            return;
+        }
+
+        $company = trim(Tools::getValue('company', ''));
+        $companyId = trim(Tools::getValue('companyid', ''));
+
+        if (empty($company) || empty($companyId)) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => 'Missing company data']));
+            return;
+        }
+
+        $this->context->cookie->two_company_name = $company;
+        $this->context->cookie->two_company_id = $companyId;
+        $this->context->cookie->setExpire(time() + 3600);
+        PrestaShopLogger::addLog('TwoPayment: Saved company in cookie for session', 1);
+        $this->sendJsonResponse(json_encode(['success' => true]));
+    }
+
+    /**
+     * Retrieve company data from PrestaShop cookie
+     */
+    public function ajaxProcessGetCompany()
+    {
+        if (!$this->validateAjaxToken()) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => 'Invalid token']));
+            return;
+        }
+        $company = isset($this->context->cookie->two_company_name) ? $this->context->cookie->two_company_name : '';
+        $companyId = isset($this->context->cookie->two_company_id) ? $this->context->cookie->two_company_id : '';
+        $this->sendJsonResponse(json_encode([
+            'success' => true,
+            'company' => $company,
+            'companyid' => $companyId
+        ]));
     }
 
     /**
@@ -180,60 +232,31 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             // Get order intent data
             $paymentdata = $this->module->getTwoIntentOrderData($cart, $customer, $currency, $address);
 
-            // Make order intent API call
-            $response = $this->module->setTwoPaymentRequest("/v1/order_intent", $paymentdata, 'POST');
-
-            // Check for API errors first
-            $two_err = $this->module->getTwoErrorMessage($response);
-
-            if ($two_err) {
-                // API error occurred - log and return error
-                PrestaShopLogger::addLog('TwoPayment Order Intent API Error: ' . $two_err, 2);
-                
-                $this->sendJsonResponse(json_encode([
-                    'success' => false,
-                    'error' => 'API Error: ' . $two_err
-                ]));
-                return;
-            }
-
-            // API call succeeded, now check the actual approval status
-            $isApproved = isset($response['approved']) && $response['approved'] === true;
-            
-            if ($isApproved) {
-                // Provide approval message as per Two's best practices
-                $approvalMessage = sprintf(
-                    $this->module->l('Your invoice with Two is likely to be accepted subject to additional checks. By completing the purchase, you verify that you have the legal right to purchase on behalf of %s'),
-                    '<strong>' . Tools::safeOutput($address->company) . '</strong>'
-                );
-                
-                $this->sendJsonResponse(json_encode([
-                    'success' => true,
-                    'approval' => true,
-                    'message' => $approvalMessage
-                ]));
-                return;
-            } else {
-                // Provide user-friendly decline message
-                $declineMessage = $this->module->l('Your invoice with Two cannot be approved at this time. Please select an alternative payment method.');
-                
-                $this->sendJsonResponse(json_encode([
-                    'success' => true,
-                    'approval' => false,
-                    'message' => $declineMessage
-                ]));
-                return;
-            }
+            // Return payload only (frontend will call Two API directly)
+            $this->sendJsonResponse(json_encode([
+                'success' => true,
+                'payload' => $paymentdata
+            ]));
+            return;
         } catch (Exception $e) {
             // Log exception for debugging
-            PrestaShopLogger::addLog('TwoPayment  v Exception: ' . $e->getMessage(), 3);
+            PrestaShopLogger::addLog('TwoPayment: Build order intent payload exception - ' . $e->getMessage(), 3);
             
             $this->sendJsonResponse(json_encode([
                 'success' => false,
-                'error' => 'An error occurred while processing the order intent'
+                'error' => 'Failed to build order intent payload'
             ]));
             return;
         }
+    }
+
+    /**
+     * New action that mirrors ajaxProcessCheckOrderIntent behavior: build payload only
+     */
+    public function ajaxProcessBuildPayload()
+    {
+        // Reuse the same logic path
+        $this->ajaxProcessCheckOrderIntent();
     }
 
     /**
@@ -304,22 +327,24 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
      */
     public function sendJsonResponse($content)
     {
-        // Security headers
-        header('Content-Type: application/json; charset=utf-8');
-        header('Cache-Control: no-cache, no-store, must-revalidate');
-        header('Pragma: no-cache');
-        header('Expires: 0');
-        header('X-Content-Type-Options: nosniff');
-        header('X-Frame-Options: DENY');
-        
         // Validate that content is valid JSON
         $decoded = json_decode($content);
         if (json_last_error() !== JSON_ERROR_NONE) {
-            echo json_encode(['success' => false, 'error' => 'Invalid response format']);
+            $payload = json_encode(['success' => false, 'error' => 'Invalid response format']);
+            if (is_callable([$this, 'ajaxDie'])) {
+                call_user_func([$this, 'ajaxDie'], $payload);
+            } else {
+                echo $payload;
+                exit;
+            }
         } else {
-            echo $content;
+            if (is_callable([$this, 'ajaxDie'])) {
+                call_user_func([$this, 'ajaxDie'], $content);
+            } else {
+                echo $content;
+                exit;
+            }
         }
-        exit;
     }
 
     /**

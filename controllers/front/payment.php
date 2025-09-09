@@ -63,56 +63,8 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             $this->redirectWithNotifications('index.php?controller=order');
         }
 
-        // SECURITY CHECK: Verify order intent approval before processing payment
-        if ($this->module->enable_order_intent) {
-            $billing_address = new Address($cart->id_address_invoice);
-            if (!Validate::isLoadedObject($billing_address)) {
-                $message = $this->module->l('Invalid billing address.');
-                $this->errors[] = $message;
-                $this->redirectWithNotifications('index.php?controller=order');
-            }
-
-            // Double-check business account restriction
-            if (empty($billing_address->account_type) || $billing_address->account_type !== 'business') {
-                PrestaShopLogger::addLog('TwoPayment: Payment attempt blocked - non-business account', 2);
-                $message = $this->module->l('Two payment is only available for business accounts.');
-                $this->errors[] = $message;
-                $this->redirectWithNotifications('index.php?controller=order');
-            }
-
-            // Verify order intent approval
-            PrestaShopLogger::addLog('TwoPayment: Performing server-side order intent verification before payment processing', 1);
-            
-            try {
-                $intent_data = $this->module->getTwoIntentOrderData($cart, $customer, $currency, $billing_address);
-                $intent_response = $this->module->setTwoPaymentRequest("/v1/order_intent", $intent_data, 'POST');
-                
-                $intent_error = $this->module->getTwoErrorMessage($intent_response);
-                if ($intent_error) {
-                    PrestaShopLogger::addLog('TwoPayment: Server-side order intent failed - ' . $intent_error, 2);
-                    $message = $this->module->l('Your order cannot be processed with Two at this time. Please select an alternative payment method.');
-                    $this->errors[] = $message;
-                    $this->redirectWithNotifications('index.php?controller=order');
-                }
-
-                $is_approved = isset($intent_response['approved']) && $intent_response['approved'] === true;
-                if (!$is_approved) {
-                    $decline_reason = isset($intent_response['decline_reason']) ? $intent_response['decline_reason'] : 'UNKNOWN';
-                    PrestaShopLogger::addLog('TwoPayment: Server-side order intent declined - reason: ' . $decline_reason, 2);
-                    $message = $this->module->l('Your invoice with Two cannot be approved at this time. Please select an alternative payment method.');
-                    $this->errors[] = $message;
-                    $this->redirectWithNotifications('index.php?controller=order');
-                }
-                
-                PrestaShopLogger::addLog('TwoPayment: Server-side order intent approved, proceeding with payment', 1);
-                
-            } catch (Exception $e) {
-                PrestaShopLogger::addLog('TwoPayment: Server-side order intent verification exception - ' . $e->getMessage(), 3);
-                $message = $this->module->l('Unable to verify payment eligibility. Please try again or select an alternative payment method.');
-                $this->errors[] = $message;
-                $this->redirectWithNotifications('index.php?controller=order');
-            }
-        }
+        // NOTE: Order intent approval is handled client-side prior to order placement.
+        // We avoid re-calling /v1/order_intent here to prevent mismatches and duplicate checks.
 
         //Two Create order
         $initial_status = Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION');
@@ -143,7 +95,8 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
         if (isset($response['result']) && $response['result'] === 'failure') {
             $this->module->restoreDuplicateCart($this->module->currentOrder, $customer->id);
             $this->module->changeOrderStatus($this->module->currentOrder, Configuration::get('PS_TWO_OS_PAYMENT_ERROR_MAP'));
-            $message = $response;
+            PrestaShopLogger::addLog('TwoPayment: Two /v1/order failure response: ' . json_encode($response), 3);
+            $message = $this->module->l('Your order cannot be processed with Two at this time. Please select an alternative payment method.');
             $this->errors[] = $message;
             $this->redirectWithNotifications('index.php?controller=order');
         }

@@ -102,6 +102,14 @@ class TwoCheckoutManager {
         // SIMPLE & RELIABLE: If Two payment option is visible, PrestaShop determined it's a business account
         this.twoPaymentOption = document.querySelector('[data-module-name="twopayment"]');
         this.isBusinessAccount = !!this.twoPaymentOption;
+
+        // Fallback for address step: use account_type select value
+        if (!this.isBusinessAccount) {
+            const accountTypeField = document.querySelector("select[name='account_type']");
+            if (accountTypeField) {
+                this.isBusinessAccount = accountTypeField.value === 'business';
+            }
+        }
         
         // Also store reference to payment radio for easy access
         if (this.twoPaymentOption) {
@@ -139,8 +147,32 @@ class TwoCheckoutManager {
         // CRITICAL: Listen for payment option selection (theme-independent)
         this.setupPaymentOptionSelectionListener();
         
+        // Listen for account type changes to re-init company search
+        this.setupAccountTypeChangeListener();
+
         // Listen for DOM mutations for dynamic content
         this.setupMutationObserver();
+    }
+
+    setupAccountTypeChangeListener() {
+        if (this._accountTypeListenerAdded) return;
+        const accountTypeField = document.querySelector("select[name='account_type']");
+        if (!accountTypeField) return;
+        this._accountTypeListenerAdded = true;
+        accountTypeField.addEventListener('change', () => {
+            const value = accountTypeField.value;
+            const wasBusiness = this.isBusinessAccount;
+            this.isBusinessAccount = (value === 'business');
+            // Re-init company search accordingly
+            if (this.config.companySearchEnabled) {
+                if (this.isBusinessAccount && !this.companySearch) {
+                    this.initializeCompanySearch();
+                } else if (!this.isBusinessAccount && this.companySearch && this.companySearch.destroy) {
+                    this.companySearch.destroy();
+                    this.companySearch = null;
+                }
+            }
+        });
     }
     
     /**
@@ -172,7 +204,7 @@ class TwoCheckoutManager {
                 'button[name="confirmDeliveryOption"]',
                 'button[type="submit"][form*="payment"]'
             ].join(', '))) {
-                this.handlePaymentConfirmation();
+                this.handlePaymentConfirmation(event);
             }
         });
     }
@@ -709,9 +741,19 @@ class TwoCheckoutManager {
      * Handle PrestaShop address form updates
      */
     handleAddressFormUpdate() {
-        // Re-initialize company search if needed
-        if (this.config.companySearchEnabled && !this.companySearch) {
-            this.initializeCompanySearch();
+        // Re-detect context
+        this.detectCheckoutStep();
+        this.detectAccountType();
+
+        // Re-initialize company search when address form updates
+        if (this.config.companySearchEnabled) {
+            if (this.companySearch && this.companySearch.destroy) {
+                this.companySearch.destroy();
+                this.companySearch = null;
+            }
+            if (this.isBusinessAccount) {
+                this.initializeCompanySearch();
+            }
         }
     }
     
@@ -752,14 +794,15 @@ class TwoCheckoutManager {
     /**
      * Handle payment confirmation
      */
-    handlePaymentConfirmation() {
-        // If Two is selected and order intent is enabled, do final validation
+    handlePaymentConfirmation(event) {
         if (this.isTwoPaymentSelected() && this.orderIntent && this.config.orderIntentEnabled) {
-            // This could be used for final pre-submission validation
-            // For now, just ensure order intent was successful
+            // Ensure an order intent check is triggered on confirm
+            this.triggerOrderIntentForSelection();
+            // Optional: block only if we already know it's declined
             if (this.orderIntent.lastResult && !this.orderIntent.lastResult.approved) {
-                // Prevent submission if not approved
-                event.preventDefault();
+                if (event && typeof event.preventDefault === 'function') {
+                    event.preventDefault();
+                }
                 this.showOrderIntentError('Payment approval required before proceeding');
             }
         }
