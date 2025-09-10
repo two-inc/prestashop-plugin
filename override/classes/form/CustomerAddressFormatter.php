@@ -45,19 +45,36 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
                 'token' => (new FormField())
                     ->setName('token')
                     ->setType('hidden'),
-                'account_type' => (new FormField())
-                    ->setName('account_type')
-                    ->setType('select')
-                    ->setRequired(true)
-                    ->addAvailableValue('personal', $this->getFieldLabel('personal_type'))
-                    ->addAvailableValue('business', $this->getFieldLabel('business_type'))
-                    ->setLabel($this->getFieldLabel('account_type')),
                 'alias' => (new FormField())
                     ->setName('alias')
                     ->setLabel(
                         $this->getFieldLabel('alias')
                     ),
             ];
+
+            // Conditionally insert account_type when merchant wants account type selection
+            if ((int) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE')) {
+                $format = [
+                    'back' => (new FormField())
+                        ->setName('back')
+                        ->setType('hidden'),
+                    'token' => (new FormField())
+                        ->setName('token')
+                        ->setType('hidden'),
+                    'account_type' => (new FormField())
+                        ->setName('account_type')
+                        ->setType('select')
+                        ->setRequired(true)
+                        ->addAvailableValue('personal', $this->getFieldLabel('personal_type'))
+                        ->addAvailableValue('business', $this->getFieldLabel('business_type'))
+                        ->setLabel($this->getFieldLabel('account_type')),
+                    'alias' => (new FormField())
+                        ->setName('alias')
+                        ->setLabel(
+                            $this->getFieldLabel('alias')
+                        ),
+                ];
+            }
 
             //insert new fileds - conditionally based on admin settings
             $inserted = array();
@@ -95,13 +112,13 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
                 // CRITICAL: Company field handling for Two payment functionality
                 if ($field === 'company') {
                     $formField->addAvailableValue('placeholder', $this->translator->trans('Search your company name', [], 'Shop.Forms.Labels'));
-                    // Make company field conditionally visible and required via JavaScript
-                    $formField->addAvailableValue('data-conditional-field', 'business');
-                    $formField->addAvailableValue('data-conditional-required', 'business');
-                    // Initially hidden - will be shown when business account is selected
-                    $formField->addAvailableValue('data-initial-state', 'hidden');
-                    // Debug: Log that company field is being processed
-                    PrestaShopLogger::addLog('TwoPayment: Company field configured as conditional business field', 1);
+                    if ((int) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE')) {
+                        // Make company field conditionally visible and required via JavaScript when using account type
+                        $formField->addAvailableValue('data-conditional-field', 'business');
+                        $formField->addAvailableValue('data-conditional-required', 'business');
+                        // Initially hidden - will be shown when business account is selected
+                        $formField->addAvailableValue('data-initial-state', 'hidden');
+                    }
                 }
                 if (count($fieldParts) === 1) {
                     if ($field === 'postcode') {

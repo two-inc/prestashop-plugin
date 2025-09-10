@@ -23,8 +23,8 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '1.2.0';
-        $this->ps_versions_compliancy = array('min' => '1.7', 'max' => _PS_VERSION_);
+        $this->version = '2.0.0';
+        $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
         $this->module_key = '0dff0a98ae080e510d4e23d22abcfe9c';
@@ -40,6 +40,7 @@ class Twopayment extends PaymentModule
         $this->enable_department = Configuration::get('PS_TWO_ENABLE_DEPARTMENT');
         $this->enable_project = Configuration::get('PS_TWO_ENABLE_PROJECT');
         $this->enable_order_intent = Configuration::get('PS_TWO_ENABLE_ORDER_INTENT');
+        $this->use_account_type = Configuration::get('PS_TWO_USE_ACCOUNT_TYPE');
         $this->finalize_purchase_shipping = Configuration::get('PS_TWO_FINALIZE_PURCHASE');
         
         // Ensure custom Two states exist (for existing installations)
@@ -113,6 +114,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_ID', 1);
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', 1);
         Configuration::updateValue('PS_TWO_ENABLE_ORDER_INTENT', 1);
+        Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', 0);
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1); // Default: 30 days enabled
         // Custom Two order states will be created by createTwoOrderState()
         // Set sensible default mappings to standard PrestaShop states
@@ -287,6 +289,7 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_ENABLE_PROJECT');
         Configuration::deleteByName('PS_TWO_FINALIZE_PURCHASE');
         Configuration::deleteByName('PS_TWO_ENABLE_ORDER_INTENT');
+        Configuration::deleteByName('PS_TWO_USE_ACCOUNT_TYPE');
         return true;
     }
 
@@ -607,6 +610,26 @@ class Twopayment extends PaymentModule
                 'input' => array(
                     array(
                         'type' => 'switch',
+                        'label' => $this->l('Use Account Type selection'),
+                        'name' => 'PS_TWO_USE_ACCOUNT_TYPE',
+                        'is_bool' => true,
+                        'desc' => $this->l('If Yes, the address form will show Account Type and company fields become required for business. If No, the address form will not show Account Type and Two will prompt for company only at payment time.'),
+                        'required' => true,
+                        'values' => array(
+                            array(
+                                'id' => 'PS_TWO_USE_ACCOUNT_TYPE_ON',
+                                'value' => 1,
+                                'label' => $this->l('Yes')
+                            ),
+                            array(
+                                'id' => 'PS_TWO_USE_ACCOUNT_TYPE_OFF',
+                                'value' => 0,
+                                'label' => $this->l('No')
+                            ),
+                        ),
+                    ),
+                    array(
+                        'type' => 'switch',
                         'label' => $this->l('Activate company name auto-complete'),
                         'name' => 'PS_TWO_ENABLE_COMPANY_NAME',
                         'is_bool' => true,
@@ -737,6 +760,7 @@ class Twopayment extends PaymentModule
     protected function getTwoOtherFormValues()
     {
         $fields_values = array();
+        $fields_values['PS_TWO_USE_ACCOUNT_TYPE'] = Tools::getValue('PS_TWO_USE_ACCOUNT_TYPE', Configuration::get('PS_TWO_USE_ACCOUNT_TYPE'));
         $fields_values['PS_TWO_ENABLE_COMPANY_NAME'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME', Configuration::get('PS_TWO_ENABLE_COMPANY_NAME'));
         $fields_values['PS_TWO_ENABLE_COMPANY_ID'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_ID', Configuration::get('PS_TWO_ENABLE_COMPANY_ID'));
         $fields_values['PS_TWO_ENABLE_DEPARTMENT'] = Tools::getValue('PS_TWO_ENABLE_DEPARTMENT', Configuration::get('PS_TWO_ENABLE_DEPARTMENT'));
@@ -754,6 +778,7 @@ class Twopayment extends PaymentModule
 
     protected function saveTwoOtherFormValues()
     {
+        Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', Tools::getValue('PS_TWO_USE_ACCOUNT_TYPE'));
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME'));
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_ID', Tools::getValue('PS_TWO_ENABLE_COMPANY_ID'));
         Configuration::updateValue('PS_TWO_ENABLE_DEPARTMENT', Tools::getValue('PS_TWO_ENABLE_DEPARTMENT'));
@@ -1119,6 +1144,7 @@ class Twopayment extends PaymentModule
             'invoice_cannot_be_approved_for' => $this->l('Your invoice with Two cannot be approved at this time for %s'),
             'company_name_required' => $this->l('Please enter your company name to continue with Two payment.'),
             'organization_number_required' => $this->l('Please search and select a valid company to continue with Two payment.'),
+            'select_company_to_use_two' => $this->l('To pay with Two, please select your company from the search results so we can verify your business and offer invoice terms.'),
             'invalid_company' => $this->l('The company information provided is not valid. Please search and select a valid company.'),
             'company_not_found' => $this->l('We could not find your company. Please try a different company name or contact support.'),
             'credit_unavailable' => $this->l('Two payment is not available for this order. Please choose another payment method.'),
@@ -1133,6 +1159,7 @@ class Twopayment extends PaymentModule
                 'enable_department' => $this->enable_department,
                 'enable_project' => $this->enable_project,
                 'enable_order_intent' => $this->enable_order_intent,
+                'use_account_type' => (int) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE'),
                 'order_intent_url' => $this->context->link->getModuleLink($this->name, 'orderintent'),
                 'ajax_token' => Tools::getToken(false),
                 'module_dir' => $this->_path,
@@ -1165,7 +1192,7 @@ class Twopayment extends PaymentModule
             return;
         }
 
-        // BUSINESS ACCOUNT RESTRICTION: Only show Two for business accounts
+        // BUSINESS ACCOUNT RESTRICTION: Only show Two for business accounts (when account type is enabled)
         $cart = $this->context->cart;
         if (!Validate::isLoadedObject($cart) || $cart->id_address_invoice == 0) {
             PrestaShopLogger::addLog('TwoPayment: No valid cart or billing address found for payment options', 2);
@@ -1178,13 +1205,17 @@ class Twopayment extends PaymentModule
             return [];
         }
 
-        // Check account type - only show Two for business accounts
-        if (empty($billing_address->account_type) || $billing_address->account_type !== 'business') {
-            PrestaShopLogger::addLog('TwoPayment: Payment option hidden - account type is not business (current: ' . ($billing_address->account_type ?: 'not set') . ')', 1);
-            return [];
+        // If merchant uses account type selection, gate payment option to business accounts
+        if ((int) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE')) {
+            if (empty($billing_address->account_type) || $billing_address->account_type !== 'business') {
+                PrestaShopLogger::addLog('TwoPayment: Payment option hidden - account type is not business (current: ' . ($billing_address->account_type ?: 'not set') . ')', 1);
+                return [];
+            }
+            PrestaShopLogger::addLog('TwoPayment: Payment option shown for business account', 1);
+        } else {
+            // When account type selection is disabled, allow showing Two option; FE will prompt for company selection as needed
+            PrestaShopLogger::addLog('TwoPayment: Payment option shown (account type disabled)', 1);
         }
-
-        PrestaShopLogger::addLog('TwoPayment: Payment option shown for business account', 1);
         
         $payment_options = [
             $this->getTwoPaymentOption(),
@@ -1280,11 +1311,13 @@ class Twopayment extends PaymentModule
             PrestaShopLogger::addLog('TwoPayment Order Intent - Line item validation failed, but proceeding with request', 2);
         }
         
-        // Fallback organization number from DNI if companyid is not available
+        // Organization number resolution with country-aware fallback
         $org_number = '';
+        $buyer_country_iso = Country::getIsoById($address->id_country);
         if (!empty($address->companyid)) {
             $org_number = $address->companyid;
-        } elseif (!empty($address->dni)) {
+        } elseif ($buyer_country_iso === 'ES' && !empty($address->dni)) {
+            // Only use DNI fallback for Spain
             $org_number = $address->dni;
         }
 
@@ -1297,7 +1330,7 @@ class Twopayment extends PaymentModule
             'buyer' => array(
                 'company' => array(
                     'company_name' => $address->company,
-                    'country_prefix' => Country::getIsoById($address->id_country),
+                    'country_prefix' => $buyer_country_iso,
                     'organization_number' => $org_number,
                     'website' => '',
                 ),
@@ -2397,7 +2430,7 @@ class Twopayment extends PaymentModule
                 'Content-Type: application/json; charset=utf-8',
                 'X-API-Key:' . $this->api_key,
             ];
-            //echo "<pre>";print_r($params);echo "</pre>";die;
+            
             $ch = curl_init();
             curl_setopt($ch, CURLOPT_URL, $url);
             curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);

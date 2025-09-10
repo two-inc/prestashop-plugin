@@ -28,9 +28,21 @@ class TwoFieldValidation {
             return;
         }
         
-        this.setupValidationListeners();
-        this.initializeCompanyFieldVisibility();
-        this.updateCompanyFieldVisibility();
+        const useAccountType = !!(window.twopayment && String(window.twopayment.use_account_type) === '1');
+        if (useAccountType) {
+            this.setupValidationListeners();
+            this.initializeCompanyFieldVisibility();
+            this.updateCompanyFieldVisibility();
+        } else {
+            // Hide account type group entirely and relax company requirements
+            const accountTypeGroup = this.accountTypeField.closest('.form-group, .form-field, .field-wrapper');
+            if (accountTypeGroup && accountTypeGroup.length) {
+                accountTypeGroup.hide();
+            }
+            this.companyField.removeAttr('required');
+            this.companyField.attr('aria-required', 'false');
+            this.clearCompanyFieldError();
+        }
         this.isInitialized = true;
         
         // Field validation initialized

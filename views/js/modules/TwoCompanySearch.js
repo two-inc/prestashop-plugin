@@ -54,7 +54,7 @@ class TwoCompanySearch {
      */
     setupAutocomplete() {
         if (!this.config.checkoutHost) {
-            console.error('TwoCompanySearch: No checkout host configured');
+            
             return;
         }
 
@@ -86,10 +86,10 @@ class TwoCompanySearch {
             });
 
             if (!this.companyField.hasClass('ui-autocomplete-input')) {
-                console.warn('TwoCompanySearch: jQuery UI present but autocomplete class missing');
+                
             }
         } else {
-            console.warn('TwoCompanySearch: jQuery UI autocomplete not available, using custom autocomplete');
+            
             this.setupCustomAutocomplete(cache, TTL_MS, now);
         }
     }
@@ -213,12 +213,7 @@ class TwoCompanySearch {
                 responseCallback(formattedResults);
             },
             error: (xhr, status, error) => {
-                console.error('TwoCompanySearch: API request failed:', {
-                    status: status,
-                    error: error,
-                    responseText: xhr.responseText,
-                    url: searchUrl
-                });
+                
                 responseCallback([]);
             }
         });
@@ -329,6 +324,9 @@ class TwoCompanySearch {
                     // Silently fail - address auto-fill is not critical
                 });
         }
+
+        // Country change has been resolved by a fresh company selection
+        try { sessionStorage.removeItem('two_country_changed'); } catch (e) {}
 
         // If user already selected Two payment, re-run order intent with new company
         try {
@@ -471,7 +469,7 @@ class TwoCompanySearch {
             sessionStorage.setItem('two_company_data', JSON.stringify(companyData));
             // Company data stored in session storage
         } catch (e) {
-            console.error('TwoCompanySearch: Failed to store company data in session:', e);
+            
         }
     }
 
@@ -500,7 +498,7 @@ class TwoCompanySearch {
         for (const selector of possibleSelectors) {
             countryField = document.querySelector(selector);
             if (countryField) {
-                console.log('TwoCompanySearch: Found country field with selector:', selector);
+                
                 break;
             }
         }
@@ -511,7 +509,7 @@ class TwoCompanySearch {
             }
             this.countryListener = () => {
                 try { sessionStorage.setItem('two_country_changed', '1'); } catch (e) {}
-                console.log('TwoCompanySearch: Country changed, clearing company fields and reinitializing autocomplete');
+                
                 if (this.companyField && this.companyField.length > 0) {
                     if (this.companyField.hasClass('ui-autocomplete-input')) {
                         this.companyField.autocomplete('close');
@@ -527,10 +525,9 @@ class TwoCompanySearch {
             countryField.addEventListener('change', this.countryListener);
             this._boundCountrySelector = countryField;
         } else {
-            console.warn('TwoCompanySearch: No country field found with any selector, trying delayed setup');
+            
             // Log all select elements to help debugging
-            const allSelects = document.querySelectorAll('select');
-            console.log('TwoCompanySearch: All select elements found:', Array.from(allSelects).map(s => s.name || s.id || s.className));
+            
             
             // Try again after a delay (DOM might not be fully ready) - max 3 retries
             if (retryCount < 3) {
@@ -589,7 +586,8 @@ class TwoCompanySearch {
                     action: 'saveCompany',
                     token: window.twopayment.ajax_token,
                     company: data.company,
-                    companyid: data.companyid
+                    companyid: data.companyid,
+                    country: this.getCurrentCountry()
                 },
                 timeout: 10000
             });

@@ -105,6 +105,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
 
         $company = trim(Tools::getValue('company', ''));
         $companyId = trim(Tools::getValue('companyid', ''));
+        $country = trim(Tools::getValue('country', ''));
 
         if (empty($company) || empty($companyId)) {
             $this->sendJsonResponse(json_encode(['success' => false, 'error' => 'Missing company data']));
@@ -113,6 +114,9 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
 
         $this->context->cookie->two_company_name = $company;
         $this->context->cookie->two_company_id = $companyId;
+        if (!empty($country)) {
+            $this->context->cookie->two_company_country = $country;
+        }
         $this->context->cookie->setExpire(time() + 3600);
         PrestaShopLogger::addLog('TwoPayment: Saved company in cookie for session', 1);
         $this->sendJsonResponse(json_encode(['success' => true]));
@@ -129,10 +133,12 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         }
         $company = isset($this->context->cookie->two_company_name) ? $this->context->cookie->two_company_name : '';
         $companyId = isset($this->context->cookie->two_company_id) ? $this->context->cookie->two_company_id : '';
+        $companyCountry = isset($this->context->cookie->two_company_country) ? $this->context->cookie->two_company_country : '';
         $this->sendJsonResponse(json_encode([
             'success' => true,
             'company' => $company,
-            'companyid' => $companyId
+            'companyid' => $companyId,
+            'country' => $companyCountry
         ]));
     }
 
@@ -144,7 +150,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         
         // If this is a direct access (not AJAX), return simple response
         if (!Tools::getValue('ajax')) {
-            echo 'TwoPayment OrderIntent Controller - Direct Access Test';
+            die;
             exit;
         }
         
@@ -215,7 +221,9 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $companyData = $this->getCompanyDataWithFallbacks();
         $companyName = $companyData['company'];
         $companyId = $companyData['companyid'];
-        $accountType = 'business'; // Always business for Two payments
+        // Determine account type. When admin disabled account type, treat as business at payment step but relax earlier steps on FE.
+        $useAccountType = (int)Configuration::get('PS_TWO_USE_ACCOUNT_TYPE');
+        $accountType = $useAccountType ? 'business' : 'business';
         
         // Store company data in PrestaShop session for future use
         $this->storeCompanyDataInSession($companyData);
@@ -241,7 +249,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         }
         
 
-        // SECURITY LAYER: Verify account type
+        // SECURITY LAYER: Verify account type (kept for defense-in-depth)
         if (empty($accountType) || $accountType !== 'business') {
             PrestaShopLogger::addLog('TwoPayment: Order intent blocked - non-business account type: ' . $accountType, 2);
             $this->sendJsonResponse(json_encode([
@@ -361,14 +369,14 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             if (is_callable([$this, 'ajaxDie'])) {
                 call_user_func([$this, 'ajaxDie'], $payload);
             } else {
-                echo $payload;
+                die;
                 exit;
             }
         } else {
             if (is_callable([$this, 'ajaxDie'])) {
                 call_user_func([$this, 'ajaxDie'], $content);
             } else {
-                echo $content;
+                die;
                 exit;
             }
         }

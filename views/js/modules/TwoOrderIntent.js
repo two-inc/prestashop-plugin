@@ -32,7 +32,18 @@ class TwoOrderIntent {
         this.isProcessing = true;
         
         return this.collectFormData()
-            .then(formData => this.fetchOrderIntentPayload(formData))
+            .then(formData => {
+                const useAccountType = !!(window.twopayment && String(window.twopayment.use_account_type) === '1');
+                if (!useAccountType) {
+                    const hasCompany = !!(formData.company && String(formData.company).trim().length > 0);
+                    const hasCompanyId = !!(formData.companyid && String(formData.companyid).trim().length > 0);
+                    if (!hasCompany || !hasCompanyId) {
+                        // Skip without calling server; UI will prompt
+                        throw new Error('skipped');
+                    }
+                }
+                return this.fetchOrderIntentPayload(formData);
+            })
             .then(payload => this.callTwoOrderIntent(payload))
             .then(result => this.processResult(result))
             .catch(error => this.handleError(error))
@@ -51,6 +62,15 @@ class TwoOrderIntent {
             const companyIdField = document.querySelector("input[name='companyid']");
             let company = companyField ? (companyField.value || '') : '';
             let companyid = companyIdField ? (companyIdField.value || '') : '';
+
+            // If country changed since last selection, invalidate any existing values until a new selection is made
+            let countryChanged = false;
+            try { countryChanged = (sessionStorage.getItem('two_country_changed') === '1'); } catch (e) {}
+            if (countryChanged) {
+                company = '';
+                companyid = '';
+            }
+
             // If fields are empty (e.g., only payment step visible), try cookie fallback
             if ((!company || !companyid) && window.twopayment && window.twopayment.order_intent_url && window.twopayment.ajax_token) {
                 $.ajax({
@@ -63,6 +83,12 @@ class TwoOrderIntent {
                     if (res && res.success) {
                         formData.company = company || (res.company || '');
                         formData.companyid = companyid || (res.companyid || '');
+                        // If stored company country mismatches address country or country changed, invalidate stored company
+                        const addressCountryIso = this.getCurrentAddressCountryISO();
+                        if (countryChanged || (res.country && addressCountryIso && res.country.toUpperCase() !== addressCountryIso.toUpperCase())) {
+                            formData.company = company; // keep whatever is in the field (likely empty)
+                            formData.companyid = companyid;
+                        }
                         // Persist last company for messaging
                         this.lastCompany = formData.company;
                     } else {
@@ -94,6 +120,18 @@ class TwoOrderIntent {
             }
             resolve(formData);
         });
+    }
+
+    getCurrentAddressCountryISO() {
+        try {
+            const countryField = document.querySelector("select[name='id_country']");
+            if (countryField && countryField.selectedOptions.length > 0) {
+                const selectedOption = countryField.selectedOptions[0];
+                const iso = selectedOption.getAttribute('data-iso-code') || selectedOption.getAttribute('data-iso');
+                if (iso) return iso.toUpperCase();
+            }
+        } catch (e) {}
+        return '';
     }
 
     fetchOrderIntentPayload(formData) {
@@ -160,7 +198,7 @@ class TwoOrderIntent {
             this.lastCompany = companyField && companyField.value ? companyField.value : this.lastCompany;
         }
         // Inject company into message immediately to ensure UI gets the contextual string
-        if (this.lastCompany && this.lastCompany.trim().length > 0) {
+        if (this.lastCompany && typeof this.lastCompany === 'string' && this.lastCompany.trim().length > 0) {
             result.message = result.approved
                 ? `Your invoice with Two is likely to be accepted for ${this.lastCompany}`
                 : `Your invoice with Two cannot be approved at this time for ${this.lastCompany}`;
@@ -191,10 +229,11 @@ class TwoOrderIntent {
     }
 
     handleError(error) {
+        const isSkip = (error && typeof error.message === 'string' && error.message.toLowerCase().includes('skipped'));
         const result = {
             success: false,
             approved: false,
-            message: this.getErrorMessage(error && error.message ? error.message : ''),
+            message: isSkip ? 'Order intent check skipped' : this.getErrorMessage(error && error.message ? error.message : ''),
             error: error && error.message ? error.message : ''
         };
         this.lastResult = result;
@@ -237,6 +276,12 @@ class TwoOrderIntent {
     }
 
     setupOrderPrevention() {
+        // Respect config: do not prevent order globally when account type is disabled
+        if (!this.config.enablePaymentPreventionOnDecline) {
+            $(document).off('submit.twoOrderPrevention');
+            $('.btn[type="submit"]').off('click.twoOrderPrevention');
+            return;
+        }
         $(document).off('submit.twoOrderPrevention');
         $('.btn[type="submit"]').off('click.twoOrderPrevention');
         $(document).on('submit.twoOrderPrevention', 'form', (e) => {
@@ -283,6 +328,24 @@ class TwoOrderIntent {
                 return $(this).find('[data-module-name="twopayment"]').length > 0;
             });
             if ($twoPaymentOption.length > 0 && $twoPaymentOption.is(':visible')) {
+                // If account type is disabled and company data is missing, show gentle prompt instead of calling intent
+                const useAccountType = !!(window.twopayment && String(window.twopayment.use_account_type) === '1');
+                if (!useAccountType) {
+                    let countryChanged = false;
+                    try { countryChanged = (sessionStorage.getItem('two_country_changed') === '1'); } catch (e) {}
+                    const companyField = document.querySelector("input[name='company']");
+                    const companyIdField = document.querySelector("input[name='companyid']");
+                    const hasCompany = companyField && companyField.value && companyField.value.trim().length > 0;
+                    const hasCompanyId = companyIdField && companyIdField.value && companyIdField.value.trim().length > 0;
+                    if (countryChanged || !hasCompany || !hasCompanyId) {
+                        const $msg = $twoPaymentOption.find('.two-order-intent-message');
+                        if ($msg.length > 0) {
+                            const t = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.select_company_to_use_two) || 'To pay with Two, please select your company from the search results so we can verify your business and offer invoice terms.';
+                            $msg.removeClass('approved declined loading').html(t).show();
+                        }
+                        return;
+                    }
+                }
                 this.checkOrderIntent();
             }
         }, 5000);

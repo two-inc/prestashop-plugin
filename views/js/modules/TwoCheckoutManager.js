@@ -13,7 +13,7 @@ class TwoCheckoutManager {
             ...config
         };
         
-        console.log('TwoCheckoutManager: Constructor config:', this.config);
+        
         
         this.companySearch = null;
         this.orderIntent = null;
@@ -105,7 +105,14 @@ class TwoCheckoutManager {
     detectAccountType() {
         // SIMPLE & RELIABLE: If Two payment option is visible, PrestaShop determined it's a business account
         this.twoPaymentOption = document.querySelector('[data-module-name="twopayment"]');
-        this.isBusinessAccount = !!this.twoPaymentOption;
+
+        // When account type is disabled, treat Two as available regardless of business/personal at address step
+        const useAccountType = !!(window.twopayment && String(window.twopayment.use_account_type) === '1');
+        if (!useAccountType) {
+            this.isBusinessAccount = true; // allow company search & Two flow; we will gate order intent later by company presence
+        } else {
+            this.isBusinessAccount = !!this.twoPaymentOption;
+        }
 
         // Fallback for address step: use account_type select value
         if (!this.isBusinessAccount) {
@@ -318,10 +325,25 @@ class TwoCheckoutManager {
      */
     handleOrderIntentResult(result) {
         if (!result.success) {
-            // If order intent was skipped (e.g., not ready), keep loading UI instead of showing error
+            // If order intent was skipped (e.g., missing company data), show a gentle prompt when account type is disabled
             const err = (result && result.error) ? String(result.error).toLowerCase() : '';
-            if (err.includes('skipped')) {
-                this.showOrderIntentLoading();
+            const useAccountType = !!(window.twopayment && String(window.twopayment.use_account_type) === '1');
+            if (err.includes('skipped') && !useAccountType) {
+                const messageContainer = this.getOrCreateMessageContainer();
+                const requiredMsg = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.select_company_to_use_two) || 'To pay with Two, please select your company from the search results so we can verify your business and offer invoice terms.';
+                const messageElement = messageContainer.querySelector('.two-payment-message') || messageContainer;
+                if (messageElement !== messageContainer) {
+                    messageElement.innerHTML = requiredMsg;
+                } else {
+                    messageContainer.innerHTML = `
+                        <p class="two-subtitle">${(window.twopayment && window.twopayment.i18n && window.twopayment.i18n.action_required_title) || 'Action Required'}</p>
+                        <p class="two-payment-message">${requiredMsg}</p>
+                    `;
+                }
+                messageContainer.classList.remove('approved', 'loading');
+                messageContainer.classList.add('show');
+                messageContainer.style.display = 'block';
+                this.hideLoadingOverlay();
                 return;
             }
             this.showOrderIntentError(result.error || 'Order intent check failed');
@@ -422,7 +444,7 @@ class TwoCheckoutManager {
      * Show order intent approval message and payment terms (theme-independent)
      */
     showOrderIntentApproval(message) {
-        console.log('TwoCheckoutManager: Showing order intent approval');
+        
         const messageContainer = this.getOrCreateMessageContainer();
         
         // Update the payment info section with success message
@@ -446,7 +468,7 @@ class TwoCheckoutManager {
         this.hideLoadingOverlay();
         
         // Show payment terms selector
-        console.log('TwoCheckoutManager: About to show payment terms');
+        
         this.showPaymentTerms();
     }
     
@@ -662,12 +684,12 @@ class TwoCheckoutManager {
             
             // Initialize payment terms if not already done
             this.initializePaymentTerms();
-            console.log('TwoCheckoutManager: Payment terms container shown and initialized');
+            
         } else {
-            console.error('TwoCheckoutManager: Payment terms container (#two-payment-terms) not found in DOM');
+            
             // Try to find it in the entire document
             const allTermsElements = document.querySelectorAll('[id*="payment-terms"], [class*="payment-terms"]');
-            console.log('TwoCheckoutManager: Found payment terms elements:', allTermsElements);
+            
         }
     }
 
@@ -678,19 +700,19 @@ class TwoCheckoutManager {
         const termsSlider = document.querySelector('#two-terms-slider');
         const selectedDays = document.querySelector('#two-selected-days');
         
-        console.log('TwoCheckoutManager: Initializing payment terms', {
+        
             termsSlider: !!termsSlider,
             selectedDays: !!selectedDays,
             hasChildNodes: termsSlider ? termsSlider.hasChildNodes() : false
         });
         
         if (!termsSlider) {
-            console.error('TwoCheckoutManager: Terms slider (#two-terms-slider) not found');
+            
             return;
         }
         
         if (termsSlider.hasChildNodes()) {
-            console.log('TwoCheckoutManager: Payment terms already have content, clearing and reinitializing');
+            
             // Clear existing content to reinitialize
             termsSlider.innerHTML = '';
         }
@@ -699,7 +721,7 @@ class TwoCheckoutManager {
         const availableTerms = this.config.available_payment_terms;
         const defaultTerm = this.config.default_payment_term;
         
-        console.log('TwoCheckoutManager: Payment terms config', {
+        
             availableTerms,
             defaultTerm,
             configAvailable: !!this.config.available_payment_terms,
@@ -708,7 +730,7 @@ class TwoCheckoutManager {
         
         // If no terms configured, don't show payment terms
         if (!availableTerms || !Array.isArray(availableTerms) || availableTerms.length === 0) {
-            console.error('TwoCheckoutManager: No payment terms configured in admin');
+            
             return;
         }
         
@@ -863,6 +885,10 @@ class TwoCheckoutManager {
             if (this.isBusinessAccount) {
                 this.initializeCompanySearch();
             }
+            // Clear cached intent state when address is edited so a new selection can trigger intent
+            if (this.orderIntent && this.orderIntent.reset) {
+                this.orderIntent.reset();
+            }
         }
     }
     
@@ -973,10 +999,12 @@ class TwoCheckoutManager {
      */
     initializeOrderIntent() {
         if (!this.orderIntent && window.TwoOrderIntent) {
+            const useAccountType = !!(window.twopayment && String(window.twopayment.use_account_type) === '1');
             this.orderIntent = new TwoOrderIntent({
                 enabled: true,
                 orderIntentUrl: this.config.orderIntentUrl,
-                ajaxToken: this.config.ajaxToken
+                ajaxToken: this.config.ajaxToken,
+                enablePaymentPreventionOnDecline: useAccountType // do not globally block when account type is disabled
             });
         }
     }

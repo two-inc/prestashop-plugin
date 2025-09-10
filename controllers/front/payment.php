@@ -17,6 +17,25 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
     public function postProcess()
     {
         parent::postProcess();
+        // Guard: Require company details when placing order with Two
+        $address = new Address($cart->id_address_invoice);
+        $companyName = isset($address->company) ? trim($address->company) : '';
+        $companyId = '';
+        // Prefer companyid if present; fallback for ES to dni
+        if (!empty($address->companyid)) {
+            $companyId = trim($address->companyid);
+        } else {
+            $iso = Country::getIsoById($address->id_country);
+            if ($iso === 'ES' && !empty($address->dni)) {
+                $companyId = trim($address->dni);
+            }
+        }
+        if (Tools::isEmpty($companyName) || Tools::isEmpty($companyId)) {
+            $msg = $this->module->l('To pay with Two, please select your company so we can verify your business and offer invoice terms.');
+            $this->errors[] = $msg;
+            $this->redirectWithNotifications('index.php?controller=order');
+        }
+
 
         $cart = $this->context->cart;
         $currency = new Currency($cart->id_currency);
@@ -82,7 +101,7 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
 
         $response = $this->module->setTwoPaymentRequest('/v1/order', $paymentdata, 'POST');
 
-        //echo "<pre>";print_r($response);echo "</pre>";
+        
 
         if (!isset($response)) {
             $this->module->restoreDuplicateCart($this->module->currentOrder, $customer->id);
