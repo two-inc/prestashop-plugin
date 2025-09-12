@@ -23,8 +23,16 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
         if (isset($id_order) && !Tools::isEmpty($id_order)) {
             $order = new Order((int) $id_order);
 
-            $this->restoreDuplicateCart($order->id, $order->id_customer);
-            $this->chnageOrderStatus($order->id, Configuration::get('PS_TWO_OS_CANCELED'));
+            $this->module->restoreDuplicateCart($order->id, $order->id_customer);
+            // Use custom Two state if available, fallback to mapped state  
+            $cancelled_status = Configuration::get('PS_TWO_OS_CANCELLED');
+            if (!$cancelled_status) {
+                $cancelled_status = Configuration::get('PS_TWO_OS_CANCELLED_MAP');
+                if (!$cancelled_status) {
+                    $cancelled_status = Configuration::get('PS_OS_CANCELED');
+                }
+            }
+            $this->module->changeOrderStatus($order->id, $cancelled_status);
 
             $orderpaymentdata = $this->module->getTwoOrderPaymentData($id_order);
             if ($orderpaymentdata && isset($orderpaymentdata['two_order_id'])) {
@@ -44,7 +52,7 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
                         'two_order_reference' => $response['merchant_reference'],
                         'two_order_state' => $response['state'],
                         'two_order_status' => $response['status'],
-                        'two_day_on_invoice' => $this->module->day_on_invoice,
+                        'two_day_on_invoice' => (string)$this->module->getSelectedPaymentTerm(), // Selected payment term
                         'two_invoice_url' => $response['invoice_url'],
                     );
                     $this->module->setTwoOrderPaymentData($order->id, $payment_data);
@@ -60,25 +68,4 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
         }
     }
 
-    protected function restoreDuplicateCart($id_order, $id_customer)
-    {
-        $oldCart = new Cart(Order::getCartIdStatic($id_order, $id_customer));
-        $duplication = $oldCart->duplicate();
-        $this->context->cookie->id_cart = $duplication['cart']->id;
-        $context = $this->context;
-        $context->cart = $duplication['cart'];
-        CartRule::autoAddToCart($context);
-        $this->context->cookie->write();
-    }
-
-    protected function chnageOrderStatus($id_order, $id_order_status)
-    {
-        $order = new Order((int) $id_order);
-        $history = new OrderHistory();
-        $history->id_order = (int) $order->id;
-        if ($order->current_state != (int) $id_order_status) {
-            $history->changeIdOrderState((int) $id_order_status, $order, true);
-            $history->addWithemail(true);
-        }
-    }
 }

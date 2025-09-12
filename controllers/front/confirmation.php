@@ -31,26 +31,41 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
                 $response = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
                 $two_err = $this->module->getTwoErrorMessage($response);
                 if ($two_err) {
-                    $this->restoreDuplicateCart($order->id, $customer->id);
-                    $this->chnageOrderStatus($order->id, Configuration::get('PS_TWO_OS_ERROR'));
+                    $this->module->restoreDuplicateCart($order->id, $customer->id);
+                    $this->module->changeOrderStatus($order->id, Configuration::get('PS_TWO_OS_PAYMENT_ERROR_MAP'));
                     $message = ($two_err != '') ? $two_err : $this->module->l('Unable to retrieve the order payment information please contact store owner.');
                     $this->errors[] = $message;
                     $this->redirectWithNotifications('index.php?controller=order');
                 }
 
                 if (isset($response['state']) && $response['state'] == 'VERIFIED') {
+                    // Order is verified, now confirm it to move to CONFIRMED state
+                    $confirm_result = $this->module->confirmTwoOrder($two_order_id);
+                    
+                    // Use the confirmation result or fallback to original state
+                    $final_state = $confirm_result['success'] ? $confirm_result['state'] : $response['state'];
+                    $final_status = ($confirm_result['success'] && $confirm_result['status']) ? $confirm_result['status'] : $response['status'];
+                    
                     $payment_data = array(
                         'two_order_id' => $response['id'],
                         'two_order_reference' => $response['merchant_reference'],
-                        'two_order_state' => $response['state'],
-                        'two_order_status' => $response['status'],
-                        'two_day_on_invoice' => $this->module->day_on_invoice,
+                        'two_order_state' => $final_state,
+                        'two_order_status' => $final_status,
+                        'two_day_on_invoice' => (string)$this->module->getSelectedPaymentTerm(), // Selected payment term
                         'two_invoice_url' => $response['invoice_url'],
                     );
                     $this->module->setTwoOrderPaymentData($order->id, $payment_data);
                 }
             }
-            $this->chnageOrderStatus($order->id, Configuration::get('PS_TWO_OS_PREPARATION'));
+            // Use custom Two state if available, fallback to mapped state
+            $verified_status = Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT');
+            if (!$verified_status) {
+                $verified_status = Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP');
+                if (!$verified_status) {
+                    $verified_status = Configuration::get('PS_OS_PREPARATION');
+                }
+            }
+            $this->module->changeOrderStatus($order->id, $verified_status);
             Tools::redirect('index.php?controller=order-confirmation&id_cart=' . $order->id_cart . '&id_module=' . $this->module->id . '&id_order=' . $order->id . '&key=' . $customer->secure_key);
         } else {
             $message = $this->module->l('Unable to find the requested order please contact store owner.');
@@ -59,25 +74,4 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
         }
     }
 
-    protected function restoreDuplicateCart($id_order, $id_customer)
-    {
-        $oldCart = new Cart(Order::getCartIdStatic($id_order, $id_customer));
-        $duplication = $oldCart->duplicate();
-        $this->context->cookie->id_cart = $duplication['cart']->id;
-        $context = $this->context;
-        $context->cart = $duplication['cart'];
-        CartRule::autoAddToCart($context);
-        $this->context->cookie->write();
-    }
-
-    protected function chnageOrderStatus($id_order, $id_order_status)
-    {
-        $order = new Order((int) $id_order);
-        $history = new OrderHistory();
-        $history->id_order = (int) $order->id;
-        if ($order->current_state != (int) $id_order_status) {
-            $history->changeIdOrderState((int) $id_order_status, $order, true);
-            $history->addWithemail(true);
-        }
-    }
 }

@@ -1,41 +1,60 @@
-# two-prestshop-extension: Two - BNPL for businesses 
+# Two for PrestaShop — B2B Buy Now, Pay Later
 
 ## Synopsis
 ### Overview
-**Two is the world's first pure-B2B online payment method** 
-Sell to your business customers in one click. The Two payment Module simplifies B2B shopping, making it easy and safe for Merchants to offer invoices as payment method.
+Two is a B2B payment method that lets your business customers pay by invoice with instant credit decisioning. This module integrates Two with PrestaShop 1.7.6+ following PrestaShop best practices.
 
-### Benefits for Merchants
-Hurry! For a limited time Two will reimburse merchants for the cost of deploying this plugin from the Prestashop App Store.
+### What this module provides
+- Two payment option visible for business accounts at checkout
+- Company search and select (frontend) against Two’s Company API
+- Hidden organization number capture (`companyid`) from the selection
+- Frontend Order Intent check against Two before payment confirmation
+- Server-side verification of Order Intent at payment submit (defense-in-depth)
+- Payment terms UI (configurable) after approval
+- Admin order info (Two order id, state, status, invoice URL)
 
-Two allows you to offer a seamless Buy now, Pay later option for your business customers which will enhance the buyer journey and reduce the manual work related to doing business with other Businesses.
+### Requirements
+- PrestaShop 1.7.6+
+- PHP 7.2+
+- Classic theme (or 1.7-compatible themes)
+- Store must support B2B (business account type at address step)
 
-Two will:
-- Run an instant credit check on your customers
-- Allow you to enable a B2B Guest Checkout - increases conversion by up to 36%
-- Offer customers flexible invoice payment terms from 14 to 90 days
-- Automatically issue an invoice - already integrated with PEPPOL e-invoicing network
-- Handle partial capture and refunds in a click
-- You get paid instantly on fulfilment of an order
+### Configuration (Back Office)
+1. Install and enable the module.
+2. In module settings, choose environment (Sandbox/Production) and configure payment terms (e.g., 7/15/30/45/60/90 days and default).
+3. Set your API key against your chosen environment and save your configuration to validate your credentials.
 
-Completely remove any credit risk - if the customer doesn't repay, it's Two's problem, and not yours.
+### How it works (Checkout)
+1. Address step (business accounts):
+   - Type at least 3 characters in the `Company` field to search Two’s Company API (frontend).
+   - Select a company. The module stores its organization number in a hidden `companyid` field and autofills address when available.
+   - Selection is persisted in a cookie to survive step changes.
+2. Payment step:
+   - When the Two payment option is selected, the module runs an Order Intent check (frontend) against Two.
+   - If approved, the Two payment info shows success and payment terms UI.
+   - If declined, a helpful message is shown and the method is blocked.
+3. Confirming payment:
+   - On clicking Place Order with Two selected, the module verifies Order Intent again server-side, then creates the order and redirects to Two if required.
 
-### Benefit for customers
-**Two Buy now, Pay later** offers your business customers the option to pay with a frictionless invoice solution that will send the invoice directly to their accountant through electronic invoicing. 
+Notes:
+- Company search and order intent are called from the browser.
+- The server uses the same company data for a final verification at submit time.
 
-- Total flexibility on repayment terms - customers can choose to repay on any timescale they like
-- Instantly checkout without any burdensome onboarding
-- PDF + Electronic invoicing using the [PEPPOL](https://peppol.eu/) framework - invoices flow straight to the ERP
+### What you can and cannot do
+Can:
+- Offer Two to business customers with instant approval checks
+- Search and select companies across supported countries (using selected country ISO when available)
+- Configure available and default payment terms
+- See Two status and links in Admin Order pages
 
-**How to get your Two keys:** 
+Cannot (by design):
+- Use Two for personal non business accounts
 
-1. Go to [two.inc](http://two.inc) and sign up your company
-2. You will receive an e-mail with your test keys. And as soon as you are ready, your production keys as well. 
-3. Once you have changed out your test keys with the production ones - you are ready to offer your B2B customers the Two solution.
+### Troubleshooting
+- Company search not showing results: ensure you type 3+ chars; check browser console/network for calls to `.../companies/v2/company`.
+- Order intent not firing: verify the Two payment radio is selected; check console for `TwoOrderIntent` errors; ensure the payment section isn’t being re-rendered by a theme without events (module listens to PrestaShop `updatedPaymentForm`).
+- “Your order cannot be processed with Two”: check PrestaShop logs for server-side intent errors; verify the selected company is persisted (cookie and hidden `companyid`).
 
-### Features
 
-- Dynamic and user-friendly merchant portal
-- Order fulfilment in the Prestashop backoffice
-- All Two Buy now, Pay Later offerings to you business customers
-- Automatic updates
+### Support
+For onboarding and production enablement, contact Two support at support@two.inc.

@@ -4,17 +4,1116 @@
  * @license Two Commercial License
  */
 
+/* Legacy autocomplete loader (commented out) */
 /* .js-address-form .ui-autocomplete-loading {
   background: white url("../img/loader.gif") right center no-repeat;
 }*/
 
+/* Remove custom styling that modifies core radio/checkbox visuals for consistency */
 .two-payment-option .custom-radio  {
-    border: 2px solid #fff;
-    background: #7a7a7a;
+    border: none;
+    background: transparent;
 }
+
 .two-additional-information {
     display: block !important;
 }
+
+/* Order Prevention Highlight Animation */
+.pulse-highlight {
+    animation: pulseHighlight 2s ease-in-out;
+    border: 2px solid #dc3545 !important;
+}
+
+@keyframes pulseHighlight {
+    0%, 100% { 
+        box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.4);
+        border-color: #dc3545;
+    }
+    50% { 
+        box-shadow: 0 0 0 10px rgba(220, 53, 69, 0);
+        border-color: #dc3545;
+    }
+}
+
+/* International Tel Input */
 .iti.iti--allow-dropdown {
     width: 100%;
+}
+
+/* Two Payment Container - Modern Card Design */
+.two-payment-container {
+    background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+    border: 1px solid #e9ecef;
+    border-radius: 12px;
+    padding: 20px;
+    margin-top: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    transition: all 0.3s ease;
+    position: relative;
+}
+
+.two-payment-container:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* Order Intent Result States - Only affect loading state on container */
+.two-payment-container.loading {
+    border-color: #ffc107;
+}
+
+/* Payment Option States - Applied to payment option element */
+[data-module-name="twopayment"].two-payment-loading {
+    background: inherit;
+    border: 1px solid #ffc107 !important;
+    box-shadow: none;
+    transition: all 0.2s ease;
+}
+
+[data-module-name="twopayment"].two-payment-approved {
+    background: inherit;
+    border: 1px solid #28a745 !important;
+    box-shadow: none;
+    transition: all 0.2s ease;
+}
+
+[data-module-name="twopayment"].two-payment-declined {
+    background: inherit;
+    border: 1px solid #dc3545 !important;
+    box-shadow: none;
+    transition: all 0.2s ease;
+}
+
+[data-module-name="twopayment"].two-payment-error {
+    background: inherit;
+    border: 1px solid #dc3545 !important;
+    opacity: 1;
+    transition: all 0.2s ease;
+}
+
+
+/* Result Status Indicator */
+.two-result-status {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 10px;
+    border-radius: 20px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    opacity: 0;
+    transform: translateY(-10px);
+    transition: all 0.3s ease;
+}
+
+.two-result-status.show {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.two-result-status.approved {
+    background: rgba(40, 167, 69, 0.1);
+    color: #155724;
+    border: 1px solid rgba(40, 167, 69, 0.3);
+}
+
+.two-result-status.declined {
+    background: rgba(220, 53, 69, 0.1);
+    color: #721c24;
+    border: 1px solid rgba(220, 53, 69, 0.3);
+}
+
+.two-result-status.loading {
+    background: rgba(255, 193, 7, 0.1);
+    color: #856404;
+    border: 1px solid rgba(255, 193, 7, 0.3);
+}
+
+.two-result-icon {
+    font-size: 14px;
+    font-weight: bold;
+}
+
+/* Header Section with Logo and Tagline */
+.two-header {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    padding-right: 80px; /* Make room for result status badge */
+    border-bottom: 1px solid #e9ecef;
+    position: relative;
+}
+
+.two-logo-container {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.two-logo {
+    height: 32px;
+    width: auto;
+}
+
+.two-tagline {
+    font-size: 13px;
+    color: #6c757d;
+    font-weight: 500;
+    margin: 0;
+}
+
+/* Info Tooltip - Inline Style */
+.two-info-tooltip {
+    position: relative;
+    display: inline-block;
+    margin-left: 6px;
+    vertical-align: middle;
+}
+
+.two-info-icon {
+    width: 16px;
+    height: 16px;
+    background: #6c757d;
+    color: #fff;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    user-select: none;
+    vertical-align: middle;
+}
+
+.two-info-icon:hover {
+    background: #495057;
+    transform: scale(1.1);
+}
+
+.two-tooltip-content {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%) translateY(-10px);
+    background: #fff;
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    padding: 16px;
+    width: 280px;
+    z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease;
+    pointer-events: none;
+    margin-top: 8px;
+}
+
+.two-info-tooltip:hover .two-tooltip-content {
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(-50%) translateY(0);
+    pointer-events: auto;
+}
+
+.two-tooltip-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #212529;
+    margin: 0 0 8px 0;
+}
+
+.two-tooltip-text {
+    font-size: 13px;
+    color: #6c757d;
+    line-height: 1.4;
+    margin: 0 0 12px 0;
+}
+
+.two-tooltip-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #0E113A;
+    text-decoration: none;
+    transition: all 0.2s ease;
+}
+
+.two-tooltip-link:hover {
+    color: #1a1f4a;
+    text-decoration: none;
+    transform: translateX(2px);
+}
+
+/* Tooltip Arrow - Centered */
+.two-tooltip-content::before {
+    content: '';
+    position: absolute;
+    top: -6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0;
+    height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-bottom: 6px solid #e9ecef;
+}
+
+.two-tooltip-content::after {
+    content: '';
+    position: absolute;
+    top: -5px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0;
+    height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-bottom: 6px solid #fff;
+}
+
+
+
+/* Benefits Section */
+.two-benefits {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.two-benefit-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: #495057;
+}
+
+.two-benefit-icon {
+    width: 16px;
+    height: 16px;
+    background: #28a745;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    color: white;
+    font-weight: bold;
+}
+
+/* Loading Container - Elegant Design */
+.two-loading-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 16px 20px;
+    background: transparent;
+    border-radius: 6px;
+    margin: 0;
+}
+
+.two-loading-spinner {
+    width: 20px;
+    height: 20px;
+    border: 2px solid #e9ecef;
+    border-top: 2px solid #ffc107;
+    border-radius: 50%;
+    animation: two-spin 0.9s linear infinite;
+}
+
+.two-loading-text {
+    color: #495057;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+@keyframes two-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Overlay for eligibility checking - same footprint as payment card */
+.two-overlay-parent {
+    position: relative;
+}
+
+.two-loading-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 193, 7, 0.08);
+    border: 1px solid #ffe08a;
+    border-radius: 8px;
+    z-index: 5;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms ease;
+}
+
+.two-loading-overlay.show {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* Payment Info Section - Card Style */
+.two-payment-info {
+    background: #fff;
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+    padding: 16px;
+    margin-top: 12px;
+    transition: all 0.3s ease;
+    opacity: 0;
+    transform: translateY(-8px);
+}
+
+.two-payment-info.show {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* Approval/Decline state styling for payment info */
+.two-payment-info.approved {
+    background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+    border: 2px solid #28a745;
+    box-shadow: 0 4px 16px rgba(40, 167, 69, 0.15);
+}
+
+.two-payment-info.declined {
+    background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
+    border: 2px solid #dc3545;
+    box-shadow: 0 4px 16px rgba(220, 53, 69, 0.15);
+}
+
+.two-subtitle {
+    margin: 0 0 12px 0;
+    color: #495057;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.two-payment-message {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.4;
+}
+
+/* Message text colors based on approval state */
+.two-payment-info.approved .two-payment-message {
+    color: #155724;
+}
+
+.two-payment-info.declined .two-payment-message {
+    color: #721c24;
+}
+
+/* Enhanced Alert Styling - Keep for backward compatibility */
+.two-payment-info .alert {
+    border-radius: 6px;
+    border: none;
+    padding: 12px 16px;
+    margin-bottom: 0;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+/* Order Intent Message Alerts - In payment option card */
+#two-order-intent-messages .alert {
+    border-radius: 6px;
+    border: 1px solid #e9ecef;
+    padding: 12px 16px;
+    margin: 12px 0 0 0;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    box-shadow: none;
+}
+
+#two-order-intent-messages .alert i {
+    font-size: 16px;
+    flex-shrink: 0;
+}
+
+#two-order-intent-messages .alert-info {
+    background: #f8f9fa;
+    color: #343a40;
+    border-left: 4px solid #adb5bd;
+}
+
+#two-order-intent-messages .alert-success {
+    background: #e9f7ef;
+    color: #0f5132;
+    border-left: 4px solid #28a745;
+}
+
+#two-order-intent-messages .alert-warning {
+    background: #fff3cd; /* close to #ffc107 family */
+    color: #856404;
+    border-left: 4px solid #ffc107;
+}
+
+#two-order-intent-messages .alert-danger {
+    background: #fdecec;
+    color: #842029;
+    border-left: 4px solid #dc3545;
+}
+
+.two-payment-info .alert-success {
+    background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+    color: #155724;
+    border-left: 4px solid #28a745;
+}
+
+.two-payment-info .alert-danger {
+    background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
+    color: #721c24;
+    border-left: 4px solid #dc3545;
+}
+
+/* Payment Method States - Removed disabled styling since we keep payment option enabled */
+
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .two-payment-container {
+        padding: 16px;
+        margin-top: 8px;
+    }
+    
+    .two-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+    
+    .two-benefits {
+        flex-direction: column;
+        gap: 8px;
+    }
+    
+    .two-logo {
+        height: 28px;
+    }
+    
+    .two-loading-container {
+        padding: 20px;
+    }
+    
+    /* Mobile tooltip adjustments */
+    .two-tooltip-content {
+        width: 260px;
+        left: -120px; /* Adjust positioning for smaller screens */
+        transform: translateY(-10px); /* Remove translateX for mobile */
+    }
+    
+    .two-info-tooltip:hover .two-tooltip-content {
+        transform: translateY(0); /* Remove translateX for mobile */
+    }
+    
+    .two-tooltip-content::before,
+    .two-tooltip-content::after {
+        left: 130px; /* Position arrow relative to smaller width */
+        transform: none;
+    }
+    
+    /* Adjust header padding for mobile */
+    .two-header {
+        padding-right: 60px;
+    }
+}
+
+/* Payment Terms Selector Styles */
+.two-payment-terms {
+    margin-top: 12px;
+    padding: 12px 16px;
+    background: #fafbfc;
+    border-radius: 6px;
+    border: 1px solid #f0f2f5;
+}
+
+.two-terms-header {
+    text-align: center;
+    margin-bottom: 12px;
+}
+
+.two-terms-title {
+    margin: 0 0 2px 0;
+    font-size: 13px;
+    font-weight: 500;
+    color: #374151;
+    line-height: 1.3;
+}
+
+.two-terms-description {
+    margin: 0;
+    font-size: 11px;
+    color: #6b7280;
+    line-height: 1.4;
+}
+
+.two-terms-slider-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+.two-terms-slider {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    width: 100%;
+    max-width: 350px;
+}
+
+.two-term-option {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 40px;
+    height: 32px;
+    padding: 6px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 16px;
+    background: white;
+    color: #6b7280;
+    font-size: 12px;
+    font-weight: 400;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    user-select: none;
+    position: relative;
+}
+
+.two-term-option:hover {
+    border-color: #9ca3af;
+    color: #374151;
+    background: #f9fafb;
+}
+
+.two-term-option.active {
+    border-color: #374151;
+    background: #374151;
+    color: white;
+    font-weight: 500;
+}
+
+.two-term-option.active::after {
+    content: '';
+    position: absolute;
+    bottom: -6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 4px solid #374151;
+}
+
+.two-terms-selected {
+    display: flex;
+    align-items: baseline;
+    gap: 3px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #374151;
+    text-align: center;
+}
+
+.two-terms-selected-days {
+    font-size: 16px;
+    color: #374151;
+    font-weight: 600;
+}
+
+.two-terms-selected-unit {
+    color: #6b7280;
+    font-weight: 400;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .two-payment-terms {
+        padding: 12px;
+        margin-top: 12px;
+    }
+    
+    .two-terms-slider {
+        gap: 6px;
+    }
+    
+    .two-term-option {
+        min-width: 40px;
+        height: 32px;
+        padding: 6px 10px;
+        font-size: 12px;
+    }
+    
+    .two-terms-title {
+        font-size: 13px;
+    }
+    
+    .two-terms-description {
+        font-size: 11px;
+    }
+}
+
+/* Animation for showing/hiding terms */
+.two-payment-terms {
+    opacity: 0;
+    transform: translateY(-10px);
+    transition: all 0.3s ease;
+}
+
+.two-payment-terms.show {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* Admin Two Payment Info Styles */
+.two-admin-panel {
+    border: 1px solid #e5e5e5;
+    border-radius: 4px;
+    margin-bottom: 20px;
+}
+
+.two-panel-heading {
+    background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+    border-bottom: 1px solid #e9ecef;
+    padding: 12px 15px;
+}
+
+.two-admin-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+
+.two-admin-title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: #374151;
+}
+
+.two-section-subtitle {
+    margin: 0 0 8px 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: #374151;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.two-status-items {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.two-status-highlight {
+    font-weight: 700 !important;
+    font-size: 13px !important;
+}
+
+.two-admin-content {
+    padding: 15px;
+}
+
+/* Status Section */
+.two-status-section {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+    flex-wrap: wrap;
+}
+
+.two-info-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 120px;
+}
+
+.two-info-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.two-info-value {
+    font-size: 13px;
+    color: #374151;
+    font-weight: 500;
+}
+
+.two-order-id {
+    font-family: monospace;
+    font-size: 12px;
+    background: #f3f4f6;
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+
+.two-payment-terms {
+    color: #059669;
+    font-weight: 600;
+}
+
+/* Order State Styles */
+.two-order-state {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.two-order-state-pending {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.two-order-state-verified {
+    background: #d1fae5;
+    color: #065f46;
+}
+
+.two-order-state-confirmed {
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+.two-order-state-fulfilled {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.two-order-state-cancelled {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.two-order-status {
+    font-size: 12px;
+    color: #6b7280;
+    font-weight: 500;
+}
+
+/* Details Section */
+.two-details-section {
+    margin-bottom: 15px;
+}
+
+/* Actions Section */
+.two-actions-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.two-action-link {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    border-radius: 4px;
+    text-decoration: none;
+    font-size: 12px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.two-action-primary {
+    background: #374151;
+    color: white;
+}
+
+.two-action-primary:hover {
+    background: #1f2937;
+    color: white;
+    text-decoration: none;
+}
+
+.two-action-secondary {
+    background: #f3f4f6;
+    color: #374151;
+    border: 1px solid #d1d5db;
+}
+
+.two-action-secondary:hover {
+    background: #e5e7eb;
+    color: #374151;
+    text-decoration: none;
+}
+
+/* Tab Content Styles */
+.two-admin-tab {
+    padding: 20px 0;
+}
+
+.two-tab-header {
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 1px solid #e5e5e5;
+}
+
+.two-tab-content {
+    max-width: 800px;
+}
+
+.two-section {
+    margin-bottom: 25px;
+}
+
+.two-section-title {
+    margin: 0 0 12px 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: #374151;
+}
+
+/* Status Cards */
+.two-status-cards {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.two-status-card {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 12px;
+    min-width: 140px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.two-status-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Info Cards */
+.two-info-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+}
+
+.two-info-card {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+/* Action Cards */
+.two-actions-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.two-action-card {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 15px;
+    text-decoration: none;
+    transition: all 0.2s ease;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.two-action-card i {
+    font-size: 18px;
+    margin-bottom: 6px;
+}
+
+.two-action-title {
+    font-weight: 600;
+    font-size: 13px;
+    color: #374151;
+}
+
+.two-action-desc {
+    font-size: 11px;
+    color: #6b7280;
+    line-height: 1.4;
+}
+
+.two-action-primary {
+    background: #374151;
+    border-color: #374151;
+}
+
+.two-action-primary .two-action-title,
+.two-action-primary i {
+    color: white;
+}
+
+.two-action-primary .two-action-desc {
+    color: #d1d5db;
+}
+
+.two-action-primary:hover {
+    background: #1f2937;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.two-action-secondary:hover,
+.two-action-tertiary:hover {
+    border-color: #9ca3af;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+
+.two-action-card:hover {
+    text-decoration: none;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .two-status-section {
+        flex-direction: column;
+    }
+    
+    .two-actions-section .two-action-link {
+        justify-content: center;
+    }
+    
+    .two-status-cards {
+        grid-template-columns: 1fr;
+    }
+    
+    .two-info-cards {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Field Validation Styles */
+.required-field label {
+    font-weight: 600;
+}
+
+/* Initially hide company field - will be shown by JavaScript when business account is selected */
+.company-field-hidden {
+    display: none !important;
+}
+
+.required-indicator {
+    color: #dc3545 !important;
+    font-weight: bold;
+}
+
+.company-field-error {
+    margin-top: 8px !important;
+    font-size: 12px !important;
+    padding: 8px 12px !important;
+}
+
+.form-group.has-error .form-control,
+.form-control.is-invalid {
+    border-color: #dc3545 !important;
+    box-shadow: 0 0 0 0.2rem rgba(220, 53, 69, 0.25) !important;
+}
+
+.form-group.has-error label {
+    color: #dc3545;
+}
+
+/* Autocomplete Loading Indicator */
+.ui-autocomplete-loading {
+    background: white url("../img/loader.gif") right center no-repeat !important;
+    padding-right: 25px !important;
+}
+
+/* Autocomplete Dropdown Styling */
+.ui-autocomplete {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #ccc !important;
+    border-radius: 4px !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
+    background: white !important;
+    z-index: 9999 !important;
+}
+
+.ui-autocomplete .ui-menu-item {
+    padding: 0 !important;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.ui-autocomplete .ui-menu-item:last-child {
+    border-bottom: none;
+}
+
+.ui-autocomplete .ui-menu-item-wrapper {
+    padding: 8px 12px !important;
+    font-size: 13px !important;
+    line-height: 1.4 !important;
+    color: #333 !important;
+    text-decoration: none !important;
+    display: block !important;
+    border: none !important;
+    background: none !important;
+}
+
+.ui-autocomplete .ui-menu-item-wrapper:hover,
+.ui-autocomplete .ui-menu-item-wrapper.ui-state-active {
+    background: #f8f9fa !important;
+    color: #333 !important;
+}
+
+.ui-autocomplete .ui-menu-item-wrapper.ui-state-focus {
+    background: #e3f2fd !important;
+    color: #1976d2 !important;
+}
+
+/* Clean up unused styles */
+.two-payment-loading,
+.payment-option img[src*="TwoLogo.svg"],
+.payment-option.two-loading,
+.payment-option.two-loading::after {
+    display: none !important;
 }
