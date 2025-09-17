@@ -23,7 +23,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.0.0';
+        $this->version = '2.1.0';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -1169,6 +1169,13 @@ class Twopayment extends PaymentModule
                 'available_payment_terms' => $this->getAvailablePaymentTerms(),
                 'default_payment_term' => $this->getDefaultPaymentTerm(),
                 'i18n' => $i18n,
+                'phone_i18n' => array(
+                    'invalid_number' => $this->l('Invalid phone number'),
+                    'invalid_country_code' => $this->l('Invalid country code'),
+                    'too_short' => $this->l('Too short'),
+                    'too_long' => $this->l('Too long'),
+                    'must_match_country' => $this->l('Phone must match the selected country'),
+                ),
         )));
         // Register Two payment CSS and JavaScript files
         $this->context->controller->addJqueryUI('ui.autocomplete');
@@ -1178,8 +1185,9 @@ class Twopayment extends PaymentModule
         $this->context->controller->registerJavascript('two-company-search', 'modules/twopayment/views/js/modules/TwoCompanySearch.js', array('priority' => 201));
         $this->context->controller->registerJavascript('two-order-intent', 'modules/twopayment/views/js/modules/TwoOrderIntent.js', array('priority' => 202));
         $this->context->controller->registerJavascript('two-field-validation', 'modules/twopayment/views/js/modules/TwoFieldValidation.js', array('priority' => 203));
-        $this->context->controller->registerJavascript('two-checkout-manager', 'modules/twopayment/views/js/modules/TwoCheckoutManager.js', array('priority' => 204));
-        $this->context->controller->registerJavascript('two-script', 'modules/twopayment/views/js/twopayment.js', array('priority' => 205, 'attribute' => 'async'));
+        $this->context->controller->registerJavascript('two-phone-validation', 'modules/twopayment/views/js/modules/TwoPhoneValidation.js', array('priority' => 204));
+        $this->context->controller->registerJavascript('two-checkout-manager', 'modules/twopayment/views/js/modules/TwoCheckoutManager.js', array('priority' => 205));
+        $this->context->controller->registerJavascript('two-script', 'modules/twopayment/views/js/twopayment.js', array('priority' => 206, 'attribute' => 'async'));
     }
 
     public function hookPaymentOptions($params)
@@ -1319,6 +1327,9 @@ class Twopayment extends PaymentModule
         } elseif ($buyer_country_iso === 'ES' && !empty($address->dni)) {
             // Only use DNI fallback for Spain
             $org_number = $address->dni;
+        } elseif (!empty($this->context->cookie->two_company_id)) {
+            // Fallback to cookie where FE saved selected org number (e.g., GB)
+            $org_number = trim($this->context->cookie->two_company_id);
         }
 
         $request_data = array(
@@ -1329,7 +1340,7 @@ class Twopayment extends PaymentModule
             'tax_subtotals' => $tax_subtotals,
             'buyer' => array(
                 'company' => array(
-                    'company_name' => $address->company,
+                    'company_name' => (!empty($address->company) ? $address->company : (isset($this->context->cookie->two_company_name) ? trim($this->context->cookie->two_company_name) : '')),
                     'country_prefix' => $buyer_country_iso,
                     'organization_number' => $org_number,
                     'website' => '',

@@ -247,19 +247,24 @@ class TwoCheckoutManager {
      * Check if Two payment is selected (theme-independent)
      */
     isTwoPaymentSelected(radioButton) {
+        // Prefer currently checked radio
         if (!radioButton) {
-            // Check current selection
-            const checkedRadio = document.querySelector('input[type="radio"][name*="payment"]:checked');
-            radioButton = checkedRadio;
+            radioButton = document.querySelector('input[type="radio"][name="payment-option"]:checked') ||
+                           document.querySelector('input[type="radio"][name*="payment"]:checked');
         }
-        
         if (!radioButton) return false;
-        
-        // Various ways Two payment can be identified
-        return radioButton.value === 'twopayment' ||
-               radioButton.id === 'payment-option-twopayment' ||
-               radioButton.closest('[data-module-name="twopayment"]') !== null ||
-               (radioButton.name && radioButton.name.includes('twopayment'));
+
+        // Locate the Two payment option container
+        const twoOption = this.twoPaymentOption || document.querySelector('[data-module-name="twopayment"]');
+        if (twoOption) {
+            return twoOption.contains(radioButton);
+        }
+
+        // Fallback heuristics
+        if (radioButton.value === 'twopayment' || radioButton.id === 'payment-option-twopayment') {
+            return true;
+        }
+        return false;
     }
     
     /**
@@ -701,11 +706,6 @@ class TwoCheckoutManager {
         const selectedDays = document.querySelector('#two-selected-days');
         
         
-            termsSlider: !!termsSlider,
-            selectedDays: !!selectedDays,
-            hasChildNodes: termsSlider ? termsSlider.hasChildNodes() : false
-        });
-        
         if (!termsSlider) {
             
             return;
@@ -721,12 +721,6 @@ class TwoCheckoutManager {
         const availableTerms = this.config.available_payment_terms;
         const defaultTerm = this.config.default_payment_term;
         
-        
-            availableTerms,
-            defaultTerm,
-            configAvailable: !!this.config.available_payment_terms,
-            configDefaultTerm: !!this.config.default_payment_term
-        });
         
         // If no terms configured, don't show payment terms
         if (!availableTerms || !Array.isArray(availableTerms) || availableTerms.length === 0) {
@@ -890,6 +884,11 @@ class TwoCheckoutManager {
                 this.orderIntent.reset();
             }
         }
+
+        // Initialize phone validation on updated form
+        if (window.TwoPhoneValidation) {
+            try { new TwoPhoneValidation(); } catch (e) {}
+        }
     }
     
     /**
@@ -906,6 +905,15 @@ class TwoCheckoutManager {
     handlePaymentFormUpdate() {
         this.detectAccountType();
         this.handleDynamicContentChange();
+        // If Two is available and selected after payment form refresh, ensure order intent runs
+        if (this.config.orderIntentEnabled) {
+            if (!this.orderIntent && window.TwoOrderIntent) {
+                this.initializeOrderIntent();
+            }
+            if (this.orderIntent && this.isTwoPaymentSelected()) {
+                this.triggerOrderIntentForSelection();
+            }
+        }
     }
     
     /**
@@ -963,6 +971,11 @@ class TwoCheckoutManager {
             this.initializeCompanySearch();
         }
         
+        // Initialize phone validation on address step
+        if (this.currentStep === 'address' && window.TwoPhoneValidation) {
+            try { new TwoPhoneValidation(); } catch (e) {}
+        }
+
         // Initialize order intent for payment step with business accounts
         if (this.config.orderIntentEnabled && this.currentStep === 'payment' && this.isBusinessAccount) {
             this.initializeOrderIntent();

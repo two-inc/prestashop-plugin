@@ -199,9 +199,17 @@ class TwoCompanySearch {
             success: (data) => {
                 const companies = data.items || [];
                 const formattedResults = companies.map(company => {
-                    const orgNumber = company.national_identifier ? company.national_identifier.id : '';
+                    // Prefer various keys for broader country support (GB, etc.)
+                    let orgNumber = '';
+                    if (company.national_identifier) {
+                        const ni = company.national_identifier;
+                        orgNumber = ni.id || ni.value || ni.organisationNumber || ni.organizationNumber || ni.registration_number || ni.company_number || '';
+                    }
+                    // Fallbacks commonly used in GB payloads
+                    if (!orgNumber) {
+                        orgNumber = company.registration_number || company.company_number || '';
+                    }
                     const displayLabel = orgNumber ? `${company.name} (${orgNumber})` : company.name;
-                    
                     return {
                         label: displayLabel,
                         value: company.name,
@@ -372,8 +380,14 @@ class TwoCompanySearch {
     autoFillAddressIfNeeded(details) {
         try {
             // Update organization number if we have a more authoritative one
-            const natId = (details && (details.national_identifier || details.nationalIdentifier));
-            const natIdVal = natId ? (natId.id || natId.value || natId.organisationNumber || natId.organizationNumber) : null;
+            const natId = (details && (details.national_identifier || details.nationalIdentifier)) ||
+                          (details && details.company && (details.company.national_identifier || details.company.nationalIdentifier));
+            let natIdVal = natId ? (natId.id || natId.value || natId.organisationNumber || natId.organizationNumber || natId.registration_number || natId.company_number) : null;
+            // Additional common fallbacks (GB)
+            if (!natIdVal) {
+                natIdVal = details.registration_number || details.company_number ||
+                           (details.company && (details.company.registration_number || details.company.company_number)) || null;
+            }
             if (natIdVal) {
                 const currentOrgNumber = this.organizationField.val();
                 if (!currentOrgNumber || currentOrgNumber !== natIdVal) {
@@ -382,6 +396,11 @@ class TwoCompanySearch {
                     if (dniField.length > 0) {
                         dniField.val(natIdVal);
                     }
+                    // Persist to cookie so backend can use it during order placement
+                    this.persistCompanyToCookie({
+                        company: this.companyField ? this.companyField.val() : '',
+                        companyid: natIdVal
+                    });
                 }
             }
             // Find addresses list in various shapes

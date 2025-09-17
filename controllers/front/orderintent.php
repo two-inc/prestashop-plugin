@@ -362,24 +362,18 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
      */
     public function sendJsonResponse($content)
     {
-        // Validate that content is valid JSON
-        $decoded = json_decode($content);
+        // Ensure valid JSON; if invalid, wrap in error envelope
+        $decoded = json_decode($content, true);
         if (json_last_error() !== JSON_ERROR_NONE) {
-            $payload = json_encode(['success' => false, 'error' => 'Invalid response format']);
-            if (is_callable([$this, 'ajaxDie'])) {
-                call_user_func([$this, 'ajaxDie'], $payload);
-            } else {
-                die;
-                exit;
-            }
-        } else {
-            if (is_callable([$this, 'ajaxDie'])) {
-                call_user_func([$this, 'ajaxDie'], $content);
-            } else {
-                die;
-                exit;
-            }
+            $content = json_encode(['success' => false, 'error' => 'Invalid response format']);
         }
+        // Send as JSON consistently (avoid empty responses on some PS versions)
+        header('Content-Type: application/json; charset=utf-8');
+        if (method_exists($this, 'ajaxDie')) {
+            $this->ajaxDie($content);
+        }
+        echo $content;
+        exit;
     }
 
     /**

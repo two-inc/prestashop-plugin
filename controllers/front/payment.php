@@ -18,7 +18,14 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
     {
         parent::postProcess();
         // Guard: Require company details when placing order with Two
-        $address = new Address($cart->id_address_invoice);
+
+        //We check if the cart exists; if it doesn’t, we get it from the context
+        if (isset($cart) && !empty($cart)) {
+            $address = new Address($cart->id_address_invoice);    
+        } else {
+            $address = new Address(Context::getContext()->cart->id_address_invoice);    
+        }
+
         $companyName = isset($address->company) ? trim($address->company) : '';
         $companyId = '';
         // Prefer companyid if present; fallback for ES to dni
@@ -30,6 +37,14 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                 $companyId = trim($address->dni);
             }
         }
+        // Fallback to cookie values saved during company selection (handles GB and others)
+        if (Tools::isEmpty($companyName) && isset($this->context->cookie->two_company_name)) {
+            $companyName = trim($this->context->cookie->two_company_name);
+        }
+        if (Tools::isEmpty($companyId) && isset($this->context->cookie->two_company_id)) {
+            $companyId = trim($this->context->cookie->two_company_id);
+        }
+
         if (Tools::isEmpty($companyName) || Tools::isEmpty($companyId)) {
             $msg = $this->module->l('To pay with Two, please select your company so we can verify your business and offer invoice terms.');
             $this->errors[] = $msg;
