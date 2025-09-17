@@ -1187,7 +1187,7 @@ class Twopayment extends PaymentModule
         $this->context->controller->registerJavascript('two-field-validation', 'modules/twopayment/views/js/modules/TwoFieldValidation.js', array('priority' => 203));
         $this->context->controller->registerJavascript('two-phone-validation', 'modules/twopayment/views/js/modules/TwoPhoneValidation.js', array('priority' => 204));
         $this->context->controller->registerJavascript('two-checkout-manager', 'modules/twopayment/views/js/modules/TwoCheckoutManager.js', array('priority' => 205));
-        $this->context->controller->registerJavascript('two-script', 'modules/twopayment/views/js/twopayment.js', array('priority' => 206, 'attribute' => 'async'));
+        $this->context->controller->registerJavascript('two-script', 'modules/twopayment/views/js/twopayment.js', array('priority' => 206));
     }
 
     public function hookPaymentOptions($params)
