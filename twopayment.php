@@ -23,7 +23,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.1.0';
+        $this->version = '2.1.1';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -1125,11 +1125,28 @@ class Twopayment extends PaymentModule
 
     public function hookActionFrontControllerSetMedia()
     {
+        // CRITICAL FIX: Only load Two assets on checkout pages to prevent conflicts and improve performance
+        $controller_name = Tools::getValue('controller');
+        $is_checkout_page = in_array($controller_name, ['order', 'orderopc']) || 
+                           (isset($this->context->controller->php_self) && 
+                            in_array($this->context->controller->php_self, ['order', 'order-opc']));
+        
+        // Additional check for module controllers (payment, confirmation, orderintent)
+        $is_two_module_page = (isset($this->context->controller) && 
+                              $this->context->controller instanceof ModuleFrontController &&
+                              $this->context->controller->module->name === $this->name);
+        
+        if (!$is_checkout_page && !$is_two_module_page) {
+            // Don't load Two assets on non-checkout pages
+            return;
+        }
+
         $countries = Country::getCountries($this->context->language->id, false, false, false);
         $param_countries = array();
         foreach ($countries as $country) {
             $param_countries[$country['id_country']] = Tools::strtolower($country['iso_code']);
         }
+        
         // Build FE i18n (strings are translated by PrestaShop according to current language)
         $i18n = array(
             'checking_eligibility' => $this->l('Checking Two payment eligibility...'),
@@ -1149,6 +1166,7 @@ class Twopayment extends PaymentModule
             'company_not_found' => $this->l('We could not find your company. Please try a different company name or contact support.'),
             'credit_unavailable' => $this->l('Two payment is not available for this order. Please choose another payment method.'),
             'network_issue' => $this->l('There was a temporary issue verifying your payment. Please try again or choose another payment method.'),
+            'approval_required' => $this->l('Payment approval required before proceeding'),
         );
 
         Media::addJsDef(array('twopayment' => array(
@@ -1177,17 +1195,18 @@ class Twopayment extends PaymentModule
                     'must_match_country' => $this->l('Phone must match the selected country'),
                 ),
         )));
+        
         // Register Two payment CSS and JavaScript files
         $this->context->controller->addJqueryUI('ui.autocomplete');
         $this->context->controller->registerStylesheet('two-css', 'modules/twopayment/views/css/two.css', array('priority' => 200, 'media' => 'all'));
         
-        // Register modular Two payment JavaScript files in correct loading order
-        $this->context->controller->registerJavascript('two-company-search', 'modules/twopayment/views/js/modules/TwoCompanySearch.js', array('priority' => 201));
-        $this->context->controller->registerJavascript('two-order-intent', 'modules/twopayment/views/js/modules/TwoOrderIntent.js', array('priority' => 202));
-        $this->context->controller->registerJavascript('two-field-validation', 'modules/twopayment/views/js/modules/TwoFieldValidation.js', array('priority' => 203));
-        $this->context->controller->registerJavascript('two-phone-validation', 'modules/twopayment/views/js/modules/TwoPhoneValidation.js', array('priority' => 204));
-        $this->context->controller->registerJavascript('two-checkout-manager', 'modules/twopayment/views/js/modules/TwoCheckoutManager.js', array('priority' => 205));
-        $this->context->controller->registerJavascript('two-script', 'modules/twopayment/views/js/twopayment.js', array('priority' => 206));
+        // CRITICAL FIX: Remove async loading and ensure proper load order for reliable initialization
+        $this->context->controller->registerJavascript('two-company-search', 'modules/twopayment/views/js/modules/TwoCompanySearch.js', array('priority' => 201, 'async' => false));
+        $this->context->controller->registerJavascript('two-order-intent', 'modules/twopayment/views/js/modules/TwoOrderIntent.js', array('priority' => 202, 'async' => false));
+        $this->context->controller->registerJavascript('two-field-validation', 'modules/twopayment/views/js/modules/TwoFieldValidation.js', array('priority' => 203, 'async' => false));
+        $this->context->controller->registerJavascript('two-phone-validation', 'modules/twopayment/views/js/modules/TwoPhoneValidation.js', array('priority' => 204, 'async' => false));
+        $this->context->controller->registerJavascript('two-checkout-manager', 'modules/twopayment/views/js/modules/TwoCheckoutManager.js', array('priority' => 205, 'async' => false));
+        $this->context->controller->registerJavascript('two-script', 'modules/twopayment/views/js/twopayment.js', array('priority' => 206, 'async' => false));
     }
 
     public function hookPaymentOptions($params)

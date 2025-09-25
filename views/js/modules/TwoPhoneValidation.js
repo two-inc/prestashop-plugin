@@ -58,14 +58,47 @@ class TwoPhoneValidation {
     }
 
     init() {
-        const phoneField = document.querySelector(this.config.phoneSelector);
-        if (!phoneField) return;
+        // ENHANCED: More flexible phone field detection for different themes
+        const phoneFieldSelectors = [
+            this.config.phoneSelector,
+            "input[name='phone']",
+            "input[name='phone_mobile']", 
+            "#phone", 
+            "#phone_mobile",
+            ".phone-field input",
+            "input[type='tel']"
+        ];
+        
+        let phoneField = null;
+        for (const selector of phoneFieldSelectors) {
+            phoneField = document.querySelector(selector);
+            if (phoneField) break;
+        }
+        
+        if (!phoneField) {
+            // Retry after DOM might be loaded by AJAX (some themes load forms dynamically)
+            setTimeout(() => {
+                for (const selector of phoneFieldSelectors) {
+                    phoneField = document.querySelector(selector);
+                    if (phoneField) break;
+                }
+                if (phoneField && !phoneField.hasAttribute('data-intl-tel-input-id')) {
+                    this.lazyLoadAssets().then(() => {
+                        this.initializePlugin(phoneField);
+                    }).catch(() => {});
+                }
+            }, 500);
+            return;
+        }
+        
         // Guard: already initialized by intl-tel-input
         if (phoneField.hasAttribute('data-intl-tel-input-id')) return;
 
         this.lazyLoadAssets().then(() => {
             this.initializePlugin(phoneField);
-        }).catch(() => {});
+        }).catch((error) => {
+            console.warn('Two Phone Validation: Failed to load assets:', error);
+        });
     }
 
     lazyLoadAssets() {
@@ -228,8 +261,25 @@ class TwoPhoneValidation {
                 // Debounce scans
                 clearTimeout(this._scanTimeout);
                 this._scanTimeout = setTimeout(() => {
-                    const field = document.querySelector(this.config.phoneSelector);
-                    if (field && !field.hasAttribute('data-intl-tel-input-id')) {
+                    // ENHANCED: Use same flexible phone field detection as init()
+                    const phoneFieldSelectors = [
+                        this.config.phoneSelector,
+                        "input[name='phone']",
+                        "input[name='phone_mobile']", 
+                        "#phone", 
+                        "#phone_mobile",
+                        ".phone-field input",
+                        "input[type='tel']"
+                    ];
+                    
+                    let field = null;
+                    for (const selector of phoneFieldSelectors) {
+                        field = document.querySelector(selector);
+                        if (field && !field.hasAttribute('data-intl-tel-input-id')) break;
+                        field = null; // Reset if already initialized
+                    }
+                    
+                    if (field) {
                         if (typeof window.intlTelInput === 'function') {
                             this.isInitialized = false;
                             this.initializePlugin(field);
@@ -238,14 +288,18 @@ class TwoPhoneValidation {
                             this.lazyLoadAssets().then(() => {
                                 this.isInitialized = false;
                                 this.initializePlugin(field);
-                            }).catch(() => {});
+                            }).catch((error) => {
+                                console.warn('Two Phone Validation: Failed to load assets in observer:', error);
+                            });
                         }
                     }
                 }, 50);
             });
             observer.observe(document.body, { childList: true, subtree: true });
             window.__TwoPhoneValidationObserverAttached = true;
-        } catch (e) {}
+        } catch (e) {
+            console.warn('Two Phone Validation: Failed to setup DOM observer:', e);
+        }
     }
 
     createErrorEl() {
