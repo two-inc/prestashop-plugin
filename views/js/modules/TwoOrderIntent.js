@@ -69,6 +69,8 @@ class TwoOrderIntent {
             if (countryChanged) {
                 company = '';
                 companyid = '';
+                // CRITICAL FIX: Clear the flag after handling country change to prevent it from persisting
+                try { sessionStorage.removeItem('two_country_changed'); } catch (e) {}
             }
 
             // If fields are empty (e.g., only payment step visible), try cookie fallback
@@ -79,13 +81,22 @@ class TwoOrderIntent {
                     dataType: 'json',
                     data: { ajax: 1, action: 'getCompany', token: window.twopayment.ajax_token },
                     timeout: 8000
-                }).then((res) => {
+                }).done((res) => {
                     if (res && res.success) {
                         formData.company = company || (res.company || '');
                         formData.companyid = companyid || (res.companyid || '');
                         // If stored company country mismatches address country or country changed, invalidate stored company
                         const addressCountryIso = this.getCurrentAddressCountryISO();
-                        if (countryChanged || (res.country && addressCountryIso && res.country.toUpperCase() !== addressCountryIso.toUpperCase())) {
+                        const storedCountryMismatch = res.country && addressCountryIso && res.country.toUpperCase() !== addressCountryIso.toUpperCase();
+                        if (countryChanged || storedCountryMismatch) {
+                            // DEBUG: Log country change details for troubleshooting
+                            console.log('Two Order Intent: Country change detected.', {
+                                countryChanged: countryChanged,
+                                storedCountryMismatch: storedCountryMismatch,
+                                storedCompanyCountry: res.country,
+                                currentAddressCountry: addressCountryIso,
+                                invalidatingCompany: res.company
+                            });
                             formData.company = company; // keep whatever is in the field (likely empty)
                             formData.companyid = companyid;
                         }
@@ -100,7 +111,7 @@ class TwoOrderIntent {
                         formData.id_address_delivery = addressDeliveryField.value;
                     }
                     resolve(formData);
-                }).catch(() => {
+                }).fail(() => {
                     formData.company = company;
                     formData.companyid = companyid;
                     const addressDeliveryField = document.querySelector("input[name='id_address_delivery']");
@@ -124,13 +135,49 @@ class TwoOrderIntent {
 
     getCurrentAddressCountryISO() {
         try {
-            const countryField = document.querySelector("select[name='id_country']");
+            // ENHANCED: Try multiple country field selectors for better theme compatibility
+            const countrySelectors = [
+                "select[name='id_country']",
+                "select[name='country']", 
+                "#id_country",
+                ".js-country",
+                "select.country"
+            ];
+            
+            let countryField = null;
+            for (const selector of countrySelectors) {
+                countryField = document.querySelector(selector);
+                if (countryField && countryField.selectedOptions && countryField.selectedOptions.length > 0) {
+                    break;
+                }
+            }
+            
             if (countryField && countryField.selectedOptions.length > 0) {
                 const selectedOption = countryField.selectedOptions[0];
-                const iso = selectedOption.getAttribute('data-iso-code') || selectedOption.getAttribute('data-iso');
+                // Try multiple attribute patterns for ISO code
+                const iso = selectedOption.getAttribute('data-iso-code') || 
+                           selectedOption.getAttribute('data-iso') ||
+                           selectedOption.getAttribute('data-country-iso');
                 if (iso) return iso.toUpperCase();
+                
+                // Fallback: try to get ISO from value if it's a 2-letter code
+                const value = countryField.value;
+                if (value && value.length === 2 && /^[A-Z]{2}$/i.test(value)) {
+                    return value.toUpperCase();
+                }
             }
-        } catch (e) {}
+            
+            // Additional fallback: check if there's a country ISO in the twopayment configuration
+            if (window.twopayment && window.twopayment.countries && countryField) {
+                const countryId = countryField.value;
+                const isoFromConfig = window.twopayment.countries[countryId];
+                if (isoFromConfig) {
+                    return isoFromConfig.toUpperCase();
+                }
+            }
+        } catch (e) {
+            console.warn('Two Order Intent: Failed to get current address country ISO:', e);
+        }
         return '';
     }
 
@@ -338,6 +385,10 @@ class TwoOrderIntent {
                     const hasCompany = companyField && companyField.value && companyField.value.trim().length > 0;
                     const hasCompanyId = companyIdField && companyIdField.value && companyIdField.value.trim().length > 0;
                     if (countryChanged || !hasCompany || !hasCompanyId) {
+                        // ADDITIONAL FIX: Clear country changed flag here as well when detected
+                        if (countryChanged) {
+                            try { sessionStorage.removeItem('two_country_changed'); } catch (e) {}
+                        }
                         const $msg = $twoPaymentOption.find('.two-order-intent-message');
                         if ($msg.length > 0) {
                             const t = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.select_company_to_use_two) || 'To pay with Two, please select your company from the search results so we can verify your business and offer invoice terms.';

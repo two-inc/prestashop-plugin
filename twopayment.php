@@ -23,7 +23,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.0.0';
+        $this->version = '2.1.2';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -121,7 +121,7 @@ class Twopayment extends PaymentModule
         // Processing states default to their Two-branded states out-of-the-box
         Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION'));
         Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT'));
-        Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', Configuration::get('PS_OS_SHIPPING')); // "Shipped"
+        Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', json_encode(array((int)Configuration::get('PS_OS_SHIPPING')))); // "Shipped" - stored as JSON array
         Configuration::updateValue('PS_TWO_OS_PAYMENT_ERROR_MAP', Configuration::get('PS_OS_ERROR')); // "Payment error"
         Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', Configuration::get('PS_OS_CANCELED')); // "Canceled"
         Configuration::updateValue('PS_TWO_OS_REFUNDED_MAP', Configuration::get('PS_OS_REFUND')); // "Refunded"
@@ -895,9 +895,11 @@ class Twopayment extends PaymentModule
                     array(
                         'type' => 'select',
                         'name' => 'PS_TWO_OS_FULFILLED_MAP',
-                        'label' => $this->l('Two: Order Fulfilled - Payment Terms Active'),
-                        'desc' => $this->l('Order has been fulfilled with Two. Buyer payment terms are now active and payout cycle begins for merchant. Default: Shipped'),
+                        'label' => $this->l('Two: Order Fulfilled - Trigger Statuses'),
+                        'desc' => $this->l('Select one or more order statuses that should trigger Two fulfillment. When any of these statuses are set, the order will be marked as fulfilled with Two. Buyer payment terms become active and payout cycle begins. You can select multiple statuses (Hold Ctrl/Cmd to select multiple. Default: Shipped'),
                         'required' => true,
+                        'multiple' => true,
+                        'size' => 8,
                         'options' => array(
                             'query' => $orderStatesNoTwo,
                             'id' => 'id_order_state',
@@ -954,7 +956,22 @@ class Twopayment extends PaymentModule
         $fields_values = array();
         $fields_values['PS_TWO_OS_AWAITING_VERIFICATION_MAP'] = Tools::getValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION_MAP'));
         $fields_values['PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'] = Tools::getValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'));
-        $fields_values['PS_TWO_OS_FULFILLED_MAP'] = Tools::getValue('PS_TWO_OS_FULFILLED_MAP', Configuration::get('PS_TWO_OS_FULFILLED_MAP'));
+        
+        // Handle multi-select for fulfillment statuses
+        $fulfilled_map = Configuration::get('PS_TWO_OS_FULFILLED_MAP');
+        if ($fulfilled_map) {
+            // Decode JSON array or split comma-separated values
+            $fulfilled_ids = json_decode($fulfilled_map, true);
+            if (!is_array($fulfilled_ids)) {
+                // Backward compatibility: if it's a single ID, convert to array
+                $fulfilled_ids = array($fulfilled_map);
+            }
+            $fields_values['PS_TWO_OS_FULFILLED_MAP'] = $fulfilled_ids;
+        } else {
+            // Default to Shipped status
+            $fields_values['PS_TWO_OS_FULFILLED_MAP'] = array(Configuration::get('PS_OS_SHIPPING'));
+        }
+        
         $fields_values['PS_TWO_OS_PAYMENT_ERROR_MAP'] = Tools::getValue('PS_TWO_OS_PAYMENT_ERROR_MAP', Configuration::get('PS_TWO_OS_PAYMENT_ERROR_MAP'));
         $fields_values['PS_TWO_OS_CANCELLED_MAP'] = Tools::getValue('PS_TWO_OS_CANCELLED_MAP', Configuration::get('PS_TWO_OS_CANCELLED_MAP'));
         $fields_values['PS_TWO_OS_REFUNDED_MAP'] = Tools::getValue('PS_TWO_OS_REFUNDED_MAP', Configuration::get('PS_TWO_OS_REFUNDED_MAP'));
@@ -965,7 +982,17 @@ class Twopayment extends PaymentModule
     {
         Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', Tools::getValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP'));
         Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', Tools::getValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'));
-        Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', Tools::getValue('PS_TWO_OS_FULFILLED_MAP'));
+        
+        // Handle multi-select for fulfillment statuses - store as JSON array
+        $fulfilled_statuses = Tools::getValue('PS_TWO_OS_FULFILLED_MAP');
+        if (is_array($fulfilled_statuses) && !empty($fulfilled_statuses)) {
+            // Store as JSON array for multiple selections
+            Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', json_encode(array_map('intval', $fulfilled_statuses)));
+        } else {
+            // Fallback to default Shipped status if nothing selected
+            Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', json_encode(array((int)Configuration::get('PS_OS_SHIPPING'))));
+        }
+        
         Configuration::updateValue('PS_TWO_OS_PAYMENT_ERROR_MAP', Tools::getValue('PS_TWO_OS_PAYMENT_ERROR_MAP'));
         Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', Tools::getValue('PS_TWO_OS_CANCELLED_MAP'));
         Configuration::updateValue('PS_TWO_OS_REFUNDED_MAP', Tools::getValue('PS_TWO_OS_REFUNDED_MAP'));
@@ -973,6 +1000,33 @@ class Twopayment extends PaymentModule
         $this->output .= $this->displayConfirmation($this->l('Two order status mapping updated successfully.'));
     }
 
+    /**
+     * Check if a status ID is in the fulfillment trigger list
+     * 
+     * @param int $status_id The order status ID to check
+     * @return bool True if this status should trigger fulfillment
+     */
+    protected function isFulfillmentTriggerStatus($status_id)
+    {
+        $fulfilled_map = Configuration::get('PS_TWO_OS_FULFILLED_MAP');
+        
+        if (empty($fulfilled_map)) {
+            // Default to standard Shipped status
+            return ($status_id == Configuration::get('PS_OS_SHIPPING'));
+        }
+        
+        // Try to decode as JSON array (new multi-select format)
+        $fulfilled_ids = json_decode($fulfilled_map, true);
+        
+        if (is_array($fulfilled_ids)) {
+            // Multi-select format - check if status is in array
+            return in_array((int)$status_id, array_map('intval', $fulfilled_ids));
+        }
+        
+        // Backward compatibility: single status ID (old format)
+        return ($status_id == $fulfilled_map);
+    }
+    
     /**
      * Set order to Two custom state and optionally apply mapping to PrestaShop state
      */
@@ -1043,10 +1097,10 @@ class Twopayment extends PaymentModule
                         );
                         $this->setTwoOrderPaymentData($id_order, $payment_data);
                     }
-                } else if (($new_order_status->id == Configuration::get('PS_TWO_OS_FULFILLED_MAP')) && $this->finalize_purchase_shipping) {
+                } else if ($this->isFulfillmentTriggerStatus($new_order_status->id) && $this->finalize_purchase_shipping) {
                     // Complete fulfillment using the new fulfillments endpoint - wrapped in try-catch for safety
                     try {
-                        PrestaShopLogger::addLog('TwoPayment: Initiating complete fulfillment for Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order, 1);
+                        PrestaShopLogger::addLog('TwoPayment: Initiating complete fulfillment for Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Triggered by status: ' . $new_order_status->name . ' (ID: ' . $new_order_status->id . ')', 1);
                         
                         // Validate order state before attempting fulfillment
                         $current_two_order = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
@@ -1064,8 +1118,8 @@ class Twopayment extends PaymentModule
                         
                         $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/fulfillments', [], 'POST');
                         
-                        if (isset($response['id']) && $response['id']) {
-                            PrestaShopLogger::addLog('TwoPayment: Fulfillment successful for Two order ID: ' . $two_order_id . ', Fulfillment ID: ' . $response['id'], 1);
+                        if (isset($response['fulfilled_order']['id']) && $response['fulfilled_order']['id']) {
+                            PrestaShopLogger::addLog('TwoPayment: Fulfillment successful for Two order ID: ' . $two_order_id . ', Fulfilled order ID: ' . $response['fulfilled_order']['id'], 1);
                             // Refresh order data from Two to avoid overwriting the stored Two order ID with fulfillment ID
                             $order_after = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
                             if (isset($order_after['id']) && $order_after['id']) {
@@ -1125,11 +1179,80 @@ class Twopayment extends PaymentModule
 
     public function hookActionFrontControllerSetMedia()
     {
+        // CRITICAL FIX: Only load Two assets on checkout pages to prevent conflicts and improve performance
+        $controller_name = Tools::getValue('controller');
+        $is_checkout_page = in_array($controller_name, ['order', 'orderopc']) || 
+                           (isset($this->context->controller->php_self) && 
+                            in_array($this->context->controller->php_self, ['order', 'order-opc']));
+        
+        // Additional check for module controllers (payment, confirmation, orderintent)
+        $is_two_module_page = (isset($this->context->controller) && 
+                              $this->context->controller instanceof ModuleFrontController &&
+                              $this->context->controller->module->name === $this->name);
+        
+        if (!$is_checkout_page && !$is_two_module_page) {
+            // Don't load Two assets on non-checkout pages
+            return;
+        }
+
+        // CRITICAL FIX FOR PRESTASHOP 1.7.6.5: Multi-layer jQuery loading strategy
+        // Issue: addJquery() may exist but not output jQuery to HTML on some installations
+        // Solution: Triple-layer approach ensures jQuery is ALWAYS available
+        
+        // Layer 1: Try PrestaShop's native jQuery (works on most installations)
+        try {
+            if (method_exists($this->context->controller, 'addJquery')) {
+                $this->context->controller->addJquery();
+            }
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog(
+                'Two Payment: PrestaShop addJquery() failed - ' . $e->getMessage(),
+                2,
+                null,
+                'Module',
+                $this->id
+            );
+        }
+        
+        // Layer 2: Try jQuery UI (includes jQuery as dependency)
+        try {
+            if (method_exists($this->context->controller, 'addJqueryUI')) {
+                $this->context->controller->addJqueryUI('ui.core');
+            }
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog(
+                'Two Payment: PrestaShop addJqueryUI() failed - ' . $e->getMessage(),
+                2,
+                null,
+                'Module',
+                $this->id
+            );
+        }
+        
+        // Layer 3: GUARANTEED CDN fallback (critical for PrestaShop 1.7.6.5 compatibility)
+        // This ensures jQuery loads even when PrestaShop's methods fail silently
+        // Uses official jQuery CDN with crossorigin for security
+        try {
+            $this->context->controller->addJS(
+                'https://code.jquery.com/jquery-3.6.0.min.js',
+                false // Load in HEAD before other scripts
+            );
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog(
+                'Two Payment: CDN jQuery fallback failed - ' . $e->getMessage(),
+                3, // Error level - this is critical
+                null,
+                'Module',
+                $this->id
+            );
+        }
+
         $countries = Country::getCountries($this->context->language->id, false, false, false);
         $param_countries = array();
         foreach ($countries as $country) {
             $param_countries[$country['id_country']] = Tools::strtolower($country['iso_code']);
         }
+        
         // Build FE i18n (strings are translated by PrestaShop according to current language)
         $i18n = array(
             'checking_eligibility' => $this->l('Checking Two payment eligibility...'),
@@ -1149,6 +1272,7 @@ class Twopayment extends PaymentModule
             'company_not_found' => $this->l('We could not find your company. Please try a different company name or contact support.'),
             'credit_unavailable' => $this->l('Two payment is not available for this order. Please choose another payment method.'),
             'network_issue' => $this->l('There was a temporary issue verifying your payment. Please try again or choose another payment method.'),
+            'approval_required' => $this->l('Payment approval required before proceeding'),
         );
 
         Media::addJsDef(array('twopayment' => array(
@@ -1169,17 +1293,26 @@ class Twopayment extends PaymentModule
                 'available_payment_terms' => $this->getAvailablePaymentTerms(),
                 'default_payment_term' => $this->getDefaultPaymentTerm(),
                 'i18n' => $i18n,
+                'phone_i18n' => array(
+                    'invalid_number' => $this->l('Invalid phone number'),
+                    'invalid_country_code' => $this->l('Invalid country code'),
+                    'too_short' => $this->l('Too short'),
+                    'too_long' => $this->l('Too long'),
+                    'must_match_country' => $this->l('Phone must match the selected country'),
+                ),
         )));
+        
         // Register Two payment CSS and JavaScript files
-        $this->context->controller->addJqueryUI('ui.autocomplete');
         $this->context->controller->registerStylesheet('two-css', 'modules/twopayment/views/css/two.css', array('priority' => 200, 'media' => 'all'));
         
-        // Register modular Two payment JavaScript files in correct loading order
-        $this->context->controller->registerJavascript('two-company-search', 'modules/twopayment/views/js/modules/TwoCompanySearch.js', array('priority' => 201));
-        $this->context->controller->registerJavascript('two-order-intent', 'modules/twopayment/views/js/modules/TwoOrderIntent.js', array('priority' => 202));
-        $this->context->controller->registerJavascript('two-field-validation', 'modules/twopayment/views/js/modules/TwoFieldValidation.js', array('priority' => 203));
-        $this->context->controller->registerJavascript('two-checkout-manager', 'modules/twopayment/views/js/modules/TwoCheckoutManager.js', array('priority' => 204));
-        $this->context->controller->registerJavascript('two-script', 'modules/twopayment/views/js/twopayment.js', array('priority' => 205, 'attribute' => 'async'));
+        // CRITICAL FIX: Remove async loading and ensure proper load order for reliable initialization
+        // Ensures they load AFTER jQuery
+        $this->context->controller->registerJavascript('two-company-search', 'modules/twopayment/views/js/modules/TwoCompanySearch.js', array('priority' => 201, 'async' => false));
+        $this->context->controller->registerJavascript('two-order-intent', 'modules/twopayment/views/js/modules/TwoOrderIntent.js', array('priority' => 202, 'async' => false));
+        $this->context->controller->registerJavascript('two-field-validation', 'modules/twopayment/views/js/modules/TwoFieldValidation.js', array('priority' => 203, 'async' => false));
+        $this->context->controller->registerJavascript('two-phone-validation', 'modules/twopayment/views/js/modules/TwoPhoneValidation.js', array('priority' => 204, 'async' => false));
+        $this->context->controller->registerJavascript('two-checkout-manager', 'modules/twopayment/views/js/modules/TwoCheckoutManager.js', array('priority' => 205, 'async' => false));
+        $this->context->controller->registerJavascript('two-script', 'modules/twopayment/views/js/twopayment.js', array('priority' => 206, 'async' => false));
     }
 
     public function hookPaymentOptions($params)
@@ -1319,6 +1452,9 @@ class Twopayment extends PaymentModule
         } elseif ($buyer_country_iso === 'ES' && !empty($address->dni)) {
             // Only use DNI fallback for Spain
             $org_number = $address->dni;
+        } elseif (!empty($this->context->cookie->two_company_id)) {
+            // Fallback to cookie where FE saved selected org number (e.g., GB)
+            $org_number = trim($this->context->cookie->two_company_id);
         }
 
         $request_data = array(
@@ -1329,7 +1465,7 @@ class Twopayment extends PaymentModule
             'tax_subtotals' => $tax_subtotals,
             'buyer' => array(
                 'company' => array(
-                    'company_name' => $address->company,
+                    'company_name' => (!empty($address->company) ? $address->company : (isset($this->context->cookie->two_company_name) ? trim($this->context->cookie->two_company_name) : '')),
                     'country_prefix' => $buyer_country_iso,
                     'organization_number' => $org_number,
                     'website' => '',
@@ -1780,22 +1916,6 @@ class Twopayment extends PaymentModule
             // Validation: Ensure Two API formulas will pass
             $two_net_formula_check = ($quantity * $unit_price_net) - $final_discount_amount;
             $two_tax_formula_check = $final_net_amount * ($unit_tax_rate / 100); // Still calculate with percentage internally
-            
-            
-            // Create a simple debug file for easier access
-            $debug_data = [
-                'product' => $line_item['name'],
-                'unit_price_net' => $unit_price_net,
-                'quantity' => $quantity,
-                'discount_amount' => $final_discount_amount,
-                'calculated_net' => $two_net_formula_check,
-                'actual_net' => $final_net_amount,
-                'ps_price' => $line_item['price'],
-                'ps_total' => $line_item['total'],
-                'ps_reduction' => $line_item['reduction'] ?? 0
-            ];
-            
-            file_put_contents('/tmp/two_debug.json', json_encode($debug_data, JSON_PRETTY_PRINT) . "\n", FILE_APPEND);
             
             // Only log if there are significant formula violations
             if (abs($two_net_formula_check - $final_net_amount) > 0.02) {

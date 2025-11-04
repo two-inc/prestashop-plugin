@@ -91,6 +91,11 @@ $_MODULE['<{twopayment}prestashop>twopayment_be89e29be0122074a933bea5d3813084'] 
 $_MODULE['<{twopayment}prestashop>twopayment_ccf1aa7d0f1291cb8179d4434f85abb4'] = 'El pago con Two no está disponible para este pedido. Por favor, selecciona otro método de pago.';
 $_MODULE['<{twopayment}prestashop>twopayment_70121086cdb2e52ce9ac069b1781dc76'] = 'Se produjo un problema temporal al verificar tu pago. Inténtalo de nuevo o elige otro método de pago.';
 $_MODULE['<{twopayment}prestashop>twopayment_03ac21a9797a06114f0aedd391a1e2a3'] = 'No se encontraron resultados';
+$_MODULE['<{twopayment}prestashop>twopayment_00589e3bb6d7bbb598f17fe9bfe70052'] = 'Número de teléfono no válido';
+$_MODULE['<{twopayment}prestashop>twopayment_06e96958c3ac68d916db7da58cdbb5c9'] = 'Código de país no válido';
+$_MODULE['<{twopayment}prestashop>twopayment_c012e2a8b9e129403f8b93547086500a'] = 'Demasiado corto';
+$_MODULE['<{twopayment}prestashop>twopayment_b2df7887a34999a0fee743420750a9ec'] = 'Demasiado largo';
+$_MODULE['<{twopayment}prestashop>twopayment_c050bd52ad0af81cf819fbcf2863357f'] = 'El teléfono debe coincidir con el país seleccionado';
 $_MODULE['<{twopayment}prestashop>twopayment_b5839392828299ece730863dd367893f'] = 'Pagar con Two';
 $_MODULE['<{twopayment}prestashop>twopayment_94c18d9e2f6f3cad490a47ff7c8e512f'] = 'Obtén 30 días para pagar tu factura a través de EHF y PDF';
 $_MODULE['<{twopayment}prestashop>twopayment_7e13e4b7dc934c4f24deede7949d856b'] = 'Reembolso completo emitido desde PrestaShop';

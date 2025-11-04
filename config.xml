@@ -2,11 +2,10 @@
 <module>
     <name>twopayment</name>
     <displayName><![CDATA[Two - BNPL for businesses]]></displayName>
-    <version><![CDATA[2.0.0]]></version>
+    <version><![CDATA[2.1.2]]></version>
     <description><![CDATA[This module allows any merchant to accept payments with Two payment gateway.]]></description>
     <author><![CDATA[Two]]></author>
     <tab><![CDATA[payments_gateways]]></tab>
     <is_configurable>1</is_configurable>
     <need_instance>1</need_instance>
-	<limited_countries></limited_countries>
 </module>

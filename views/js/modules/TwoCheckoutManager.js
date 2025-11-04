@@ -100,11 +100,11 @@ class TwoCheckoutManager {
     }
     
     /**
-     * SIMPLIFIED: Account type detection using PrestaShop payment option visibility
+     * ENHANCED: Account type detection with extensive fallback chain for compatibility
      */
     detectAccountType() {
-        // SIMPLE & RELIABLE: If Two payment option is visible, PrestaShop determined it's a business account
-        this.twoPaymentOption = document.querySelector('[data-module-name="twopayment"]');
+        // ENHANCED: Try multiple methods to find Two payment option for better compatibility
+        this.twoPaymentOption = this.detectTwoPaymentOption();
 
         // When account type is disabled, treat Two as available regardless of business/personal at address step
         const useAccountType = !!(window.twopayment && String(window.twopayment.use_account_type) === '1');
@@ -126,6 +126,72 @@ class TwoCheckoutManager {
         if (this.twoPaymentOption) {
             this.twoPaymentRadio = this.twoPaymentOption.querySelector('input[type="radio"]');
         }
+    }
+    
+    /**
+     * ENHANCED: Detect Two payment option using multiple strategies for maximum compatibility
+     */
+    detectTwoPaymentOption() {
+        // Strategy 1: Direct data-module-name attribute (most reliable)
+        let paymentOption = document.querySelector('[data-module-name="twopayment"]');
+        if (paymentOption) {
+            return paymentOption;
+        }
+        
+        // Strategy 2: Look for payment option containing twopayment input
+        paymentOption = document.querySelector('.payment-option input[data-module-name="twopayment"]');
+        if (paymentOption) {
+            paymentOption = paymentOption.closest('.payment-option');
+            if (paymentOption) {
+                return paymentOption;
+            }
+        }
+        
+        // Strategy 3: Search by form action containing 'twopayment'
+        const paymentForms = document.querySelectorAll('.payment-option form, form[action*="twopayment"]');
+        for (const form of paymentForms) {
+            if (form.action && form.action.includes('twopayment')) {
+                paymentOption = form.closest('.payment-option') || form.closest('.payment-option-container') || form.parentElement;
+                if (paymentOption) {
+                    return paymentOption;
+                }
+            }
+        }
+        
+        // Strategy 4: Search all payment options for Two logo or text
+        const allPaymentOptions = document.querySelectorAll('.payment-option, [class*="payment-option"], [id*="payment-option"]');
+        for (const option of allPaymentOptions) {
+            const optionText = option.textContent || '';
+            const hasLogo = option.querySelector('img[src*="two"], img[alt*="two" i], img[alt*="Two"]');
+            const hasTwoText = optionText.toLowerCase().includes('two') && 
+                              (optionText.toLowerCase().includes('pay') || optionText.toLowerCase().includes('invoice'));
+            
+            if (hasLogo || hasTwoText) {
+                // Verify this is actually Two payment by checking for our module containers
+                const hasTwoContainer = option.querySelector('.two-payment-container, .two-payment-info, #two-payment-terms');
+                if (hasTwoContainer) {
+                    return option;
+                }
+            }
+        }
+        
+        // Strategy 5: Look for our template container and traverse up to payment option
+        const twoContainer = document.querySelector('.two-payment-container');
+        if (twoContainer) {
+            // Traverse up to find payment option container
+            let parent = twoContainer.parentElement;
+            let maxDepth = 10;
+            while (parent && maxDepth > 0) {
+                if (parent.classList.contains('payment-option') || 
+                    parent.id && parent.id.includes('payment-option')) {
+                    return parent;
+                }
+                parent = parent.parentElement;
+                maxDepth--;
+            }
+        }
+        
+        return null;
     }
     
     /**
@@ -188,37 +254,96 @@ class TwoCheckoutManager {
     }
     
     /**
-     * CRITICAL: Only trigger order intent when Two payment is selected
+     * ENHANCED: Only trigger order intent when Two payment is selected (more comprehensive detection)
      */
     setupPaymentOptionSelectionListener() {
-        // Method 1: Listen for payment radio button changes (theme-independent)
+        // Prevent duplicate listeners
+        if (this._paymentListenersAttached) return;
+        this._paymentListenersAttached = true;
+        
+        // Method 1: Listen for payment radio button changes with comprehensive selectors
         document.addEventListener('change', (event) => {
-            // Check various PrestaShop payment radio patterns
-            if (event.target.matches('input[type="radio"][name*="payment"], input[name="payment-option"]')) {
+            const paymentRadioSelectors = [
+                'input[type="radio"][name*="payment"]',
+                'input[name="payment-option"]', 
+                'input[name="payment_method"]',
+                '.payment-options input[type="radio"]',
+                '.payment-option input[type="radio"]'
+            ];
+            
+            if (paymentRadioSelectors.some(selector => event.target.matches(selector))) {
                 this.handlePaymentOptionChange(event.target);
             }
         });
         
-        // Method 2: Listen for clicks on payment option containers (theme-independent)
+        // Method 2: Listen for clicks on payment option containers with enhanced detection
         document.addEventListener('click', (event) => {
-            const paymentOption = event.target.closest('[data-module-name="twopayment"]');
+            // Check for Two payment option container clicks
+            const twoPaymentSelectors = [
+                '[data-module-name="twopayment"]',
+                '.payment-option[data-module-name="twopayment"]',
+                '.payment-option-content[data-module="twopayment"]'
+            ];
+            
+            let paymentOption = null;
+            for (const selector of twoPaymentSelectors) {
+                paymentOption = event.target.closest(selector);
+                if (paymentOption) break;
+            }
+            
             if (paymentOption) {
-                this.handleTwoPaymentSelection();
+                // Small delay to allow radio button state to update
+                setTimeout(() => this.handleTwoPaymentSelection(), 50);
             }
         });
         
-        // Method 3: Listen for payment confirmation attempts
+        // Method 3: Listen for form submissions and payment confirmation attempts
         document.addEventListener('click', (event) => {
-            // Various PrestaShop confirmation button patterns
-            if (event.target.matches([
+            const confirmationSelectors = [
                 '#payment-confirmation button',
                 '.payment-confirmation button', 
                 'button[name="confirmDeliveryOption"]',
-                'button[type="submit"][form*="payment"]'
-            ].join(', '))) {
+                'button[type="submit"][form*="payment"]',
+                '.checkout button[type="submit"]',
+                '.btn-primary[type="submit"]',
+                'button.btn[name*="confirm"]'
+            ];
+            
+            if (confirmationSelectors.some(selector => event.target.matches(selector))) {
                 this.handlePaymentConfirmation(event);
             }
         });
+        
+        // Method 4: Enhanced form submission listener (catch-all for different themes)
+        document.addEventListener('submit', (event) => {
+            // Check if this is a payment/checkout form
+            const form = event.target;
+            if (form && (form.action.includes('payment') || 
+                        form.action.includes('checkout') ||
+                        form.action.includes('order') ||
+                        form.querySelector('input[name*="payment"]'))) {
+                this.handlePaymentConfirmation(event);
+            }
+        });
+        
+        // Method 5: Periodic check for Two payment selection (fallback for complex themes)
+        this._selectionCheckInterval = setInterval(() => {
+            if (this.isTwoPaymentSelected() && this.config.orderIntentEnabled) {
+                // Only trigger if we haven't processed this selection recently AND we don't have a result yet
+                const hasResult = this.orderIntent && this.orderIntent.lastResult;
+                const recentlyChecked = this._lastSelectionCheck && (Date.now() - this._lastSelectionCheck < 5000);
+                
+                if (!hasResult && !recentlyChecked && !this.isLoadingUIShown) {
+                    this._lastSelectionCheck = Date.now();
+                    if (!this.orderIntent && window.TwoOrderIntent) {
+                        this.initializeOrderIntent();
+                    }
+                    if (this.orderIntent) {
+                        this.triggerOrderIntentForSelection();
+                    }
+                }
+            }
+        }, 1000);
     }
     
     /**
@@ -238,28 +363,78 @@ class TwoCheckoutManager {
                 this.triggerOrderIntentForSelection();
             }
         } else if (this.orderIntent) {
-            // Different payment selected - clear any Two-specific UI
+            // Different payment selected - clear any Two-specific UI and reset state
             this.clearOrderIntentUI();
+            // Reset the result so if user switches back, we check again
+            if (this.orderIntent && this.orderIntent.lastResult) {
+                this.orderIntent.lastResult = null;
+            }
         }
     }
     
     /**
-     * Check if Two payment is selected (theme-independent)
+     * ENHANCED: Check if Two payment is selected (theme-independent with better detection)
      */
     isTwoPaymentSelected(radioButton) {
-        if (!radioButton) {
-            // Check current selection
-            const checkedRadio = document.querySelector('input[type="radio"][name*="payment"]:checked');
-            radioButton = checkedRadio;
+        // Multiple strategies for different PrestaShop themes and versions
+        
+        // Strategy 1: Use provided radio button
+        if (radioButton) {
+            const twoOption = this.twoPaymentOption || document.querySelector('[data-module-name="twopayment"]');
+            if (twoOption && twoOption.contains(radioButton)) {
+                return true;
+            }
         }
         
-        if (!radioButton) return false;
+        // Strategy 2: Find currently checked radio with various selectors
+        const radioSelectors = [
+            'input[type="radio"][name="payment-option"]:checked',
+            'input[type="radio"][name*="payment"]:checked',
+            'input[name="payment_method"]:checked',
+            '.payment-options input[type="radio"]:checked',
+            '.payment-option input[type="radio"]:checked'
+        ];
         
-        // Various ways Two payment can be identified
-        return radioButton.value === 'twopayment' ||
-               radioButton.id === 'payment-option-twopayment' ||
-               radioButton.closest('[data-module-name="twopayment"]') !== null ||
-               (radioButton.name && radioButton.name.includes('twopayment'));
+        let checkedRadio = null;
+        for (const selector of radioSelectors) {
+            checkedRadio = document.querySelector(selector);
+            if (checkedRadio) break;
+        }
+        
+        if (checkedRadio) {
+            // Check if this radio is inside Two payment option
+            const twoOption = this.twoPaymentOption || document.querySelector('[data-module-name="twopayment"]');
+            if (twoOption && twoOption.contains(checkedRadio)) {
+                return true;
+            }
+            
+            // Value-based detection for different theme structures
+            if (checkedRadio.value === 'twopayment' || 
+                checkedRadio.id === 'payment-option-twopayment' ||
+                checkedRadio.value.includes('twopayment')) {
+                return true;
+            }
+        }
+        
+        // Strategy 3: Check for Two payment container with active/selected class
+        const twoContainers = document.querySelectorAll('[data-module-name="twopayment"]');
+        for (const container of twoContainers) {
+            if (container.classList.contains('selected') || 
+                container.classList.contains('active') ||
+                container.querySelector('input[type="radio"]:checked')) {
+                return true;
+            }
+        }
+        
+        // Strategy 4: Check for Two payment in URL or form action (for some themes)
+        const forms = document.querySelectorAll('form');
+        for (const form of forms) {
+            if (form.action && form.action.includes('twopayment')) {
+                return true;
+            }
+        }
+        
+        return false;
     }
     
     /**
@@ -287,6 +462,14 @@ class TwoCheckoutManager {
         
         // Only proceed if Two is actually selected
         if (!this.isTwoPaymentSelected()) {
+            return;
+        }
+        
+        // CRITICAL: If we already have a result, don't check again
+        // This prevents infinite loops from periodic checks
+        if (this.orderIntent && this.orderIntent.lastResult && this.orderIntent.lastResult.success !== undefined) {
+            // Just show the existing result
+            this.handleOrderIntentResult(this.orderIntent.lastResult);
             return;
         }
         
@@ -669,14 +852,43 @@ class TwoCheckoutManager {
     }
     
     /**
-     * Show payment terms selector after approval
+     * ENHANCED: Show payment terms selector with robust fallback for different themes
      */
     showPaymentTerms() {
-        const termsContainer = document.querySelector('#two-payment-terms');
+        // Strategy 1: Direct ID lookup
+        let termsContainer = document.querySelector('#two-payment-terms');
+        
+        // Strategy 2: Search by class
+        if (!termsContainer) {
+            termsContainer = document.querySelector('.two-payment-terms');
+        }
+        
+        // Strategy 3: Search within Two payment container
+        if (!termsContainer) {
+            const twoContainer = document.querySelector('.two-payment-container');
+            if (twoContainer) {
+                termsContainer = twoContainer.querySelector('[id*="payment-terms"], [class*="payment-terms"]');
+            }
+        }
+        
+        // Strategy 4: Search within payment option
+        if (!termsContainer && this.twoPaymentOption) {
+            termsContainer = this.twoPaymentOption.querySelector('[id*="payment-terms"], [class*="payment-terms"]');
+        }
+        
+        // Strategy 5: Search in additional information section
+        if (!termsContainer) {
+            const additionalInfo = document.querySelector('#payment-option-1-additional-information, .additional-information, .js-additional-information');
+            if (additionalInfo) {
+                termsContainer = additionalInfo.querySelector('[id*="payment-terms"], [class*="payment-terms"]');
+            }
+        }
+        
         if (termsContainer) {
             // First make it visible, then add animation class
             termsContainer.style.display = 'block';
             termsContainer.style.visibility = 'visible';
+            termsContainer.style.opacity = '1';
             
             // Force a reflow before adding the show class for animation
             termsContainer.offsetHeight;
@@ -686,33 +898,78 @@ class TwoCheckoutManager {
             this.initializePaymentTerms();
             
         } else {
+            console.warn('Two Payment: Payment terms container not found - template may not be rendered');
             
-            // Try to find it in the entire document
-            const allTermsElements = document.querySelectorAll('[id*="payment-terms"], [class*="payment-terms"]');
-            
+            // Last resort: Try to inject payment terms if template is missing
+            this.injectPaymentTermsIfMissing();
         }
+    }
+    
+    /**
+     * FALLBACK: Inject payment terms dynamically if template is missing
+     */
+    injectPaymentTermsIfMissing() {
+        // Find a suitable container to inject into
+        let targetContainer = this.getOrCreateMessageContainer();
+        
+        if (!targetContainer) {
+            console.error('Two Payment: Cannot inject payment terms - no target container found');
+            return;
+        }
+        
+        // Create payment terms HTML
+        const termsHtml = `
+            <div class="two-payment-terms" id="two-payment-terms" style="display: block;">
+                <div class="two-terms-header">
+                    <h4 class="two-terms-title">${window.twopayment?.i18n?.choose_payment_terms || 'Choose the Buy Now, Pay Later option that works best for you'}</h4>
+                    <p class="two-terms-description">${window.twopayment?.i18n?.payment_period_starts || 'Your payment period starts when your order is fulfilled, along with your invoice from Two'}</p>
+                </div>
+                <div class="two-terms-slider-container">
+                    <div class="two-terms-slider" id="two-terms-slider">
+                        <!-- Terms will be populated by JavaScript -->
+                    </div>
+                    <div class="two-terms-selected">
+                        <span class="two-terms-selected-text">${window.twopayment?.i18n?.pay_in || 'Pay in'}</span>
+                        <span class="two-terms-selected-days" id="two-selected-days">30</span>
+                        <span class="two-terms-selected-unit">${window.twopayment?.i18n?.days || 'days'}</span>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Inject after message container
+        targetContainer.insertAdjacentHTML('afterend', termsHtml);
+        
+        // Initialize the newly created terms
+        this.initializePaymentTerms();
     }
 
     /**
-     * Initialize payment terms selector with available terms
+     * ENHANCED: Initialize payment terms selector with robust error handling
      */
     initializePaymentTerms() {
-        const termsSlider = document.querySelector('#two-terms-slider');
-        const selectedDays = document.querySelector('#two-selected-days');
+        // Try multiple selectors for terms slider
+        let termsSlider = document.querySelector('#two-terms-slider');
+        if (!termsSlider) {
+            termsSlider = document.querySelector('.two-terms-slider');
+        }
         
-        
-            termsSlider: !!termsSlider,
-            selectedDays: !!selectedDays,
-            hasChildNodes: termsSlider ? termsSlider.hasChildNodes() : false
-        });
+        let selectedDays = document.querySelector('#two-selected-days');
+        if (!selectedDays) {
+            selectedDays = document.querySelector('.two-terms-selected-days');
+        }
         
         if (!termsSlider) {
-            
+            console.error('Two Payment: Terms slider element not found');
+            return;
+        }
+        
+        // Check if already initialized with our terms
+        if (termsSlider.hasChildNodes() && termsSlider.querySelector('.two-term-option')) {
             return;
         }
         
         if (termsSlider.hasChildNodes()) {
-            
             // Clear existing content to reinitialize
             termsSlider.innerHTML = '';
         }
@@ -721,16 +978,9 @@ class TwoCheckoutManager {
         const availableTerms = this.config.available_payment_terms;
         const defaultTerm = this.config.default_payment_term;
         
-        
-            availableTerms,
-            defaultTerm,
-            configAvailable: !!this.config.available_payment_terms,
-            configDefaultTerm: !!this.config.default_payment_term
-        });
-        
         // If no terms configured, don't show payment terms
         if (!availableTerms || !Array.isArray(availableTerms) || availableTerms.length === 0) {
-            
+            console.warn('Two Payment: No payment terms configured');
             return;
         }
         
@@ -774,7 +1024,9 @@ class TwoCheckoutManager {
                             timeout: 10000
                         });
                     }
-                } catch (e) { /* noop */ }
+                } catch (e) {
+                    console.error('Two Payment: Error saving term:', e);
+                }
             });
             
             termsSlider.appendChild(termOption);
@@ -837,19 +1089,35 @@ class TwoCheckoutManager {
     }
     
     /**
-     * Handle dynamic content changes (theme-independent)
+     * ENHANCED: Handle dynamic content changes with retry mechanism
      */
     handleDynamicContentChange() {
         // Re-detect everything
         this.detectCheckoutStep();
+        const previousPaymentOption = this.twoPaymentOption;
         this.detectAccountType();
         
-        // Re-setup payment listeners
+        // If we previously couldn't find the payment option but now we can, reinitialize
+        if (!previousPaymentOption && this.twoPaymentOption) {
+            this.initializeModules();
+        }
+        
+        // Re-setup payment listeners (idempotent, won't duplicate)
+        this._paymentListenersAttached = false;
         this.setupPaymentOptionSelectionListener();
         
         // Initialize modules if needed
         if (this.isBusinessAccount && this.config.orderIntentEnabled && !this.orderIntent) {
             this.initializeOrderIntent();
+        }
+        
+        // If on payment step and Two is selected, trigger order intent
+        if (this.currentStep === 'payment' && this.isTwoPaymentSelected() && this.config.orderIntentEnabled) {
+            setTimeout(() => {
+                if (this.orderIntent && !this.isLoadingUIShown) {
+                    this.triggerOrderIntentForSelection();
+                }
+            }, 500);
         }
     }
     
@@ -890,6 +1158,11 @@ class TwoCheckoutManager {
                 this.orderIntent.reset();
             }
         }
+
+        // Initialize phone validation on updated form
+        if (window.TwoPhoneValidation) {
+            try { new TwoPhoneValidation(); } catch (e) {}
+        }
     }
     
     /**
@@ -901,11 +1174,31 @@ class TwoCheckoutManager {
     }
     
     /**
-     * Handle PrestaShop payment form updates
+     * ENHANCED: Handle PrestaShop payment form updates with retry mechanism
      */
     handlePaymentFormUpdate() {
         this.detectAccountType();
         this.handleDynamicContentChange();
+        
+        // Reset order intent result when form updates so it can check again
+        if (this.orderIntent && this.orderIntent.lastResult) {
+            this.orderIntent.lastResult = null;
+        }
+        
+        // If Two is available and selected after payment form refresh, ensure order intent runs
+        if (this.config.orderIntentEnabled) {
+            if (!this.orderIntent && window.TwoOrderIntent) {
+                this.initializeOrderIntent();
+            }
+            
+            // Only trigger once per form update - no retry loop
+            if (this.isTwoPaymentSelected() && this.orderIntent) {
+                // Small delay to let DOM settle
+                setTimeout(() => {
+                    this.triggerOrderIntentForSelection();
+                }, 300);
+            }
+        }
     }
     
     /**
@@ -963,6 +1256,11 @@ class TwoCheckoutManager {
             this.initializeCompanySearch();
         }
         
+        // Initialize phone validation on address step
+        if (this.currentStep === 'address' && window.TwoPhoneValidation) {
+            try { new TwoPhoneValidation(); } catch (e) {}
+        }
+
         // Initialize order intent for payment step with business accounts
         if (this.config.orderIntentEnabled && this.currentStep === 'payment' && this.isBusinessAccount) {
             this.initializeOrderIntent();
@@ -1049,6 +1347,45 @@ class TwoCheckoutManager {
             orderIntentReady: !!this.orderIntent,
             isInitialized: this.isInitialized
         };
+    }
+    
+    /**
+     * Cleanup method to prevent memory leaks
+     */
+    cleanup() {
+        // Clear intervals
+        if (this._selectionCheckInterval) {
+            clearInterval(this._selectionCheckInterval);
+            this._selectionCheckInterval = null;
+        }
+        
+        if (this.reinitializeTimeout) {
+            clearTimeout(this.reinitializeTimeout);
+            this.reinitializeTimeout = null;
+        }
+        
+        if (this._intentRetryTimeout) {
+            clearTimeout(this._intentRetryTimeout);
+            this._intentRetryTimeout = null;
+        }
+        
+        // Reset state
+        this._paymentListenersAttached = false;
+        this._lastSelectionCheck = 0;
+        this.isInitialized = false;
+        
+        // Cleanup child modules
+        if (this.companySearch && typeof this.companySearch.destroy === 'function') {
+            this.companySearch.destroy();
+        }
+        
+        if (this.orderIntent && typeof this.orderIntent.reset === 'function') {
+            this.orderIntent.reset();
+        }
+        
+        if (this.fieldValidation && typeof this.fieldValidation.cleanup === 'function') {
+            this.fieldValidation.cleanup();
+        }
     }
 }
 
