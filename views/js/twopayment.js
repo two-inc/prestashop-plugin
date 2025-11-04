@@ -3,8 +3,29 @@
  * Defensive initialization for merchant environment compatibility
  */
 
-$(document).ready(function() {
+// CRITICAL FIX: Ensure jQuery is available before executing
+(function() {
     'use strict';
+    
+    // Wait for jQuery to be available (with timeout)
+    function waitForJQuery(callback, maxAttempts = 50) {
+        if (typeof jQuery !== 'undefined' && typeof $ !== 'undefined') {
+            // jQuery is available, proceed
+            callback();
+        } else if (maxAttempts > 0) {
+            // jQuery not yet available, wait and retry
+            setTimeout(function() {
+                waitForJQuery(callback, maxAttempts - 1);
+            }, 100);
+        } else {
+            // jQuery failed to load after timeout
+            console.error('Two Payment: jQuery not available after timeout. Module cannot initialize.');
+        }
+    }
+    
+    // Initialize when jQuery is ready
+    waitForJQuery(function() {
+        $(document).ready(function() {
     
     // DEFENSIVE: Guard against missing configuration
     if (typeof twopayment === 'undefined') {
@@ -102,4 +123,6 @@ $(document).ready(function() {
         
         observer.observe(document.body, { childList: true, subtree: true });
     }
-});
+        }); 
+    }); 
+})(); 

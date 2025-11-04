@@ -81,7 +81,7 @@ class TwoOrderIntent {
                     dataType: 'json',
                     data: { ajax: 1, action: 'getCompany', token: window.twopayment.ajax_token },
                     timeout: 8000
-                }).then((res) => {
+                }).done((res) => {
                     if (res && res.success) {
                         formData.company = company || (res.company || '');
                         formData.companyid = companyid || (res.companyid || '');
@@ -111,7 +111,7 @@ class TwoOrderIntent {
                         formData.id_address_delivery = addressDeliveryField.value;
                     }
                     resolve(formData);
-                }).catch(() => {
+                }).fail(() => {
                     formData.company = company;
                     formData.companyid = companyid;
                     const addressDeliveryField = document.querySelector("input[name='id_address_delivery']");

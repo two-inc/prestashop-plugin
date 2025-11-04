@@ -180,7 +180,61 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
 
             $this->module->setTwoOrderPaymentData($this->module->currentOrder, $payment_data);
 
-            Tools::redirect($response['payment_url']);
+            // Fraud Verification Skip (Must be enabled by Two on request)
+            // If merchant has set fraud_verification_skip=true in paymentdata, handle accordingly
+            $fraudVerificationSkip = isset($paymentdata['fraud_verification_skip']) && $paymentdata['fraud_verification_skip'] === true;
+            
+            if ($fraudVerificationSkip) {
+                // Merchant wants to skip fraud verification - validate that Two verified the order
+                $orderState = isset($response['state']) ? strtoupper($response['state']) : '';
+                
+                if ($orderState === 'VERIFIED') {
+                    // Order is verified - skip payment_url redirect and go directly to confirmation
+                    PrestaShopLogger::addLog(
+                        'TwoPayment: Fraud verification skipped for order ' . $this->module->currentOrder . ' - Order state is VERIFIED, proceeding to confirmation',
+                        1,
+                        null,
+                        'Order',
+                        $this->module->currentOrder
+                    );
+                    
+                    // Update order status to "Two: Verified - Ready for Fulfillment"
+                    // This is the correct status for orders that are verified and awaiting fulfillment
+                    $verified_status = Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT');
+                    if (!$verified_status) {
+                        // Fallback to mapped state if custom state doesn't exist
+                        $verified_status = Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP');
+                        if (!$verified_status) {
+                            // Final fallback to payment accepted
+                            $verified_status = Configuration::get('PS_OS_PAYMENT');
+                        }
+                    }
+                    $this->module->changeOrderStatus($this->module->currentOrder, $verified_status);
+                    
+                    // Redirect to order confirmation page
+                    Tools::redirect('index.php?controller=order-confirmation&id_cart=' . $cart->id . '&id_module=' . $this->module->id . '&id_order=' . $this->module->currentOrder . '&key=' . $customer->secure_key);
+                } else {
+                    // Order is NOT verified but merchant requested to skip verification - this is an error
+                    $this->module->restoreDuplicateCart($this->module->currentOrder, $customer->id);
+                    $this->module->changeOrderStatus($this->module->currentOrder, Configuration::get('PS_TWO_OS_PAYMENT_ERROR_MAP'));
+                    
+                    PrestaShopLogger::addLog(
+                        'TwoPayment: Fraud verification skip requested for order ' . $this->module->currentOrder . ' but order state is "' . $orderState . '" (expected VERIFIED). Blocking checkout.',
+                        3,
+                        null,
+                        'Order',
+                        $this->module->currentOrder
+                    );
+                    
+                    // Generic error message - don't expose fraud verification skip details to customer
+                    $message = $this->module->l('Unable to process your payment at this time. Please contact the store owner for assistance.');
+                    $this->errors[] = $message;
+                    $this->redirectWithNotifications('index.php?controller=order');
+                }
+            } else {
+                // Standard flow - redirect to Two's payment_url for verification
+                Tools::redirect($response['payment_url']);
+            }
         } else {
             $this->module->restoreDuplicateCart($this->module->currentOrder, $customer->id);
             $this->module->changeOrderStatus($this->module->currentOrder, Configuration::get('PS_TWO_OS_PAYMENT_ERROR_MAP'));
