@@ -61,6 +61,12 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             case 'checkOrderIntent':
                 $this->ajaxProcessCheckOrderIntent();
                 break;
+            case 'saveOrderIntentResult':
+                $this->ajaxProcessSaveOrderIntentResult();
+                break;
+            case 'clearOrderIntentResult':
+                $this->ajaxProcessClearOrderIntentResult();
+                break;
             default:
                 $this->sendJsonResponse(json_encode([
                     'success' => false,
@@ -292,6 +298,68 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
     {
         // Reuse the same logic path
         $this->ajaxProcessCheckOrderIntent();
+    }
+
+    /**
+     * Save order intent result to session for server-side validation
+     * Called when client receives order intent result from Two API
+     */
+    public function ajaxProcessSaveOrderIntentResult()
+    {
+        if (!$this->validateAjaxToken()) {
+            $this->sendJsonResponse(json_encode([
+                'success' => false,
+                'error' => 'Invalid token'
+            ]));
+            return;
+        }
+
+        $approved = (bool)Tools::getValue('approved');
+        $timestamp = time();
+
+        // Store in PrestaShop cookie (session-based) for server-side validation
+        $this->context->cookie->two_order_intent_approved = $approved ? '1' : '0';
+        $this->context->cookie->two_order_intent_timestamp = (string)$timestamp;
+        
+        // Write cookie to ensure it's saved
+        $this->context->cookie->write();
+
+        PrestaShopLogger::addLog(
+            'TwoPayment: Order intent result saved to session - Approved: ' . ($approved ? 'yes' : 'no') . ', Timestamp: ' . $timestamp,
+            1
+        );
+
+        $this->sendJsonResponse(json_encode([
+            'success' => true,
+            'approved' => $approved,
+            'timestamp' => $timestamp
+        ]));
+    }
+
+    /**
+     * Clear order intent result from session
+     * Called when user switches away from Two payment method
+     */
+    public function ajaxProcessClearOrderIntentResult()
+    {
+        if (!$this->validateAjaxToken()) {
+            $this->sendJsonResponse(json_encode([
+                'success' => false,
+                'error' => 'Invalid token'
+            ]));
+            return;
+        }
+
+        // Clear order intent result from cookie
+        unset($this->context->cookie->two_order_intent_approved);
+        unset($this->context->cookie->two_order_intent_timestamp);
+        $this->context->cookie->write();
+
+        PrestaShopLogger::addLog('TwoPayment: Order intent result cleared from session', 1);
+
+        $this->sendJsonResponse(json_encode([
+            'success' => true
+        ]));
     }
 
     /**

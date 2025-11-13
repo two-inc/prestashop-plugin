@@ -13,6 +13,9 @@ if (!defined('_PS_VERSION_')) {
 
 class Twopayment extends PaymentModule
 {
+    // Constants for order building logic
+    const GROSS_AMOUNT_TOLERANCE = 0.02; // 2 cents tolerance for rounding differences
+    const ORDER_INTENT_EXPIRY_SECONDS = 1800; // 30 minutes
 
     protected $output = '';
     protected $errors = array();
@@ -1428,105 +1431,77 @@ class Twopayment extends PaymentModule
 
 
 
-    public function getTwoIntentOrderData($cart, $cutomer, $currency, $address)
+    public function getTwoIntentOrderData($cart, $customer, $currency, $address)
     {
-        // Get detailed line items for proper validation
+        // Validate cart has products before building order data
+        if (!Validate::isLoadedObject($cart) || $cart->nbProducts() <= 0) {
+            PrestaShopLogger::addLog('TwoPayment: Cannot build order intent - cart is empty or invalid', 3);
+            throw new Exception('Cart is empty or invalid');
+        }
+        
+        // Get line items (using PrestaShop's native values)
         $line_items = $this->getTwoProductItems($cart);
         
-        // Calculate totals from line items to ensure accuracy
-        $calculated_gross = 0;
-        $calculated_net = 0;
-        $calculated_tax = 0;
-        $calculated_discount = 0;
-        
-        foreach ($line_items as $item) {
-            $calculated_gross += (float)$item['gross_amount'];
-            $calculated_net += (float)$item['net_amount'];
-            $calculated_tax += (float)$item['tax_amount'];
-            $calculated_discount += (float)$item['discount_amount'];
+        // Validate we have line items
+        if (empty($line_items)) {
+            PrestaShopLogger::addLog('TwoPayment: Cannot build order intent - no valid line items', 3);
+            throw new Exception('No valid line items in cart');
         }
         
-        // Get PrestaShop cart totals for validation
-        $cart_gross = $cart->getOrderTotal(true, Cart::BOTH);
-        $cart_net = $cart->getOrderTotal(false, Cart::BOTH);
-        $cart_tax = $cart_gross - $cart_net;
-        $cart_discount = $cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS);
-        
-        // STREAMLINED ORDER VALIDATION: Use line item totals (built with Two API compliance)
-        $final_gross = $calculated_gross;
-        $final_net = $calculated_net;
-        $final_tax = $calculated_tax;
-        $final_discount = abs($calculated_discount); // Two API expects positive discount amount at order level
-        
-        // Simple validation against PrestaShop cart totals (for monitoring only)
-        $net_diff = abs($cart_net - $calculated_net);
-        $gross_diff = abs($cart_gross - $calculated_gross);
-        
-        // Only log significant discrepancies
-        if ($net_diff > 0.50 || $gross_diff > 0.50) {
-            PrestaShopLogger::addLog(
-                'TwoPayment Order Intent - Notable difference from PrestaShop totals. ' .
-                'Cart Net: ' . $cart_net . ' → Two Net: ' . $calculated_net . ' (diff: ' . $net_diff . '), ' .
-                'Cart Gross: ' . $cart_gross . ' → Two Gross: ' . $calculated_gross . ' (diff: ' . $gross_diff . ')',
-                1
-            );
-        }
-        
-        // Calculate tax subtotals for enhanced validation
+        // Calculate tax subtotals from line items first
         $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
         
-        // Validate all line items against Two API formulas
-        $validation_passed = $this->validateTwoLineItems($line_items);
-        if (!$validation_passed) {
-            PrestaShopLogger::addLog('TwoPayment Order Intent - Line item validation failed, but proceeding with request', 2);
-        }
+        // Calculate totals from tax_subtotals to ensure exact match
+        $totals = $this->calculateOrderTotalsFromTaxSubtotals($tax_subtotals);
+        $final_net = $totals['net'];
+        $final_tax = $totals['tax'];
+        $final_gross = $totals['gross'];
         
-        // Organization number resolution with country-aware fallback
-        $org_number = '';
-        $buyer_country_iso = Country::getIsoById($address->id_country);
-        if (!empty($address->companyid)) {
-            $org_number = $address->companyid;
-        } elseif ($buyer_country_iso === 'ES' && !empty($address->dni)) {
-            // Only use DNI fallback for Spain
-            $org_number = $address->dni;
-        } elseif (!empty($this->context->cookie->two_company_id)) {
-            // Fallback to cookie where FE saved selected org number (e.g., GB)
-            $org_number = trim($this->context->cookie->two_company_id);
-        }
+        // Get discount amount from PrestaShop (Two API expects positive discount amount)
+        $final_discount = abs((float)$cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS));
+        
+        // Get company data with fallback chain
+        $companyData = $this->getCompanyDataWithFallbacks($address);
 
-        $request_data = array(
+        $request_data = [
             'gross_amount' => (string)($this->getTwoRoundAmount($final_gross)),
             'net_amount' => (string)($this->getTwoRoundAmount($final_net)),
             'tax_amount' => (string)($this->getTwoRoundAmount($final_tax)),
             'discount_amount' => (string)($this->getTwoRoundAmount($final_discount)),
             'tax_subtotals' => $tax_subtotals,
-            'buyer' => array(
-                'company' => array(
-                    'company_name' => (!empty($address->company) ? $address->company : (isset($this->context->cookie->two_company_name) ? trim($this->context->cookie->two_company_name) : '')),
-                    'country_prefix' => $buyer_country_iso,
-                    'organization_number' => $org_number,
+            'buyer' => [
+                'company' => [
+                    'company_name' => $companyData['company_name'],
+                    'country_prefix' => $companyData['country_iso'],
+                    'organization_number' => $companyData['organization_number'],
                     'website' => '',
-                ),
-                'representative' => array(
-                    'email' => $cutomer->email,
-                    'first_name' => $cutomer->firstname,
-                    'last_name' => $cutomer->lastname,
+                ],
+                'representative' => [
+                    'email' => $customer->email,
+                    'first_name' => $customer->firstname,
+                    'last_name' => $customer->lastname,
                     'phone_number' => $address->phone,
-                ),
-            ),
+                ],
+            ],
             'currency' => $currency->iso_code,
             'merchant_short_name' => $this->merchant_short_name,
             'invoice_type' => 'FUNDED_INVOICE', // Default product type
             'line_items' => $line_items,
-        );
+        ];
 
         return $request_data;
     }
 
     public function getTwoNewOrderData($id_order, $cart)
     {
+        // Validate cart has products before building order data
+        if (!Validate::isLoadedObject($cart) || $cart->nbProducts() <= 0) {
+            PrestaShopLogger::addLog('TwoPayment: Cannot build order data - cart is empty or invalid (Order ID: ' . $id_order . ')', 3);
+            throw new Exception('Cart is empty or invalid');
+        }
+        
         $order_reference = round(microtime(1) * 1000);
-        $cutomer = new Customer($cart->id_customer);
+        $customer = new Customer($cart->id_customer);
         $currency = new Currency($cart->id_currency);
         $invoice_address = new Address($cart->id_address_invoice);
         $delivery_address = new Address($cart->id_address_delivery);
@@ -1537,184 +1512,86 @@ class Twopayment extends PaymentModule
             $carrier_name = $carrier->name;
         }
 
-        // Get line items first for validation
+        // Get line items (using PrestaShop's native values)
         $line_items = $this->getTwoProductItems($cart);
         
-        // Calculate totals from line items to ensure accuracy
-        $calculated_gross = 0;
-        $calculated_net = 0;
-        $calculated_tax = 0;
-        $calculated_discount = 0;
-        
-        foreach ($line_items as $item) {
-            $calculated_gross += (float)$item['gross_amount'];
-            $calculated_net += (float)$item['net_amount'];
-            $calculated_tax += (float)$item['tax_amount'];
-            $calculated_discount += (float)$item['discount_amount'];
+        // Validate we have line items
+        if (empty($line_items)) {
+            PrestaShopLogger::addLog('TwoPayment: Cannot build order data - no valid line items (Order ID: ' . $id_order . ')', 3);
+            throw new Exception('No valid line items in cart');
         }
         
-        // Get PrestaShop cart totals
-        $cart_gross = $cart->getOrderTotal(true, Cart::BOTH);
-        $cart_net = $cart->getOrderTotal(false, Cart::BOTH);
-        $cart_tax = $cart_gross - $cart_net;
-        $cart_discount = $cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS);
-        
-        // ROUNDING ALIGNMENT: Ensure perfect match with PrestaShop cart totals
-        $net_diff = abs($cart_net - $calculated_net);
-        $gross_diff = abs($cart_gross - $calculated_gross);
-        
-        // If difference is minimal (rounding issue), use PrestaShop cart totals
-        if ($net_diff <= 0.02 && $gross_diff <= 0.02) {
-            PrestaShopLogger::addLog(
-                'TwoPayment Create Order - Minor rounding difference detected, aligning with PrestaShop totals. ' .
-                'Cart Net: ' . $cart_net . ' → Line Items Net: ' . $calculated_net . ' (diff: ' . $net_diff . '), ' .
-                'Cart Gross: ' . $cart_gross . ' → Line Items Gross: ' . $calculated_gross . ' (diff: ' . $gross_diff . ')',
-                1
-            );
-            
-            // Use PrestaShop cart totals for perfect alignment
-            $final_gross = $cart_gross;
-            $final_net = $cart_net;
-            $final_tax = $cart_tax;
-            $final_discount = abs($cart_discount);
-        } else {
-            // Use line item totals for larger discrepancies (indicates possible data issue)
-            $final_gross = $calculated_gross;
-            $final_net = $calculated_net;
-            $final_tax = $calculated_tax;
-            $final_discount = abs($calculated_discount);
-            
-            if ($net_diff > 0.50 || $gross_diff > 0.50) {
-                PrestaShopLogger::addLog(
-                    'TwoPayment Create Order - Significant difference from PrestaShop totals. ' .
-                    'Cart Net: ' . $cart_net . ' → Line Items Net: ' . $calculated_net . ' (diff: ' . $net_diff . '), ' .
-                    'Cart Gross: ' . $cart_gross . ' → Line Items Gross: ' . $calculated_gross . ' (diff: ' . $gross_diff . ')',
-                    2
-                );
-            }
-        }
-
-        // Calculate tax subtotals - align with final tax amount if using cart totals
+        // Calculate tax subtotals from line items first
         $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
         
-        // If we're using cart totals, adjust tax subtotals to match
-        if ($net_diff <= 0.02 && $gross_diff <= 0.02 && !empty($tax_subtotals)) {
-            $calculated_tax_total = 0;
-            foreach ($tax_subtotals as $subtotal) {
-                $calculated_tax_total += (float)$subtotal['tax_amount'];
-            }
-            
-            $tax_diff = abs($final_tax - $calculated_tax_total);
-            if ($tax_diff > 0.01) {
-                // Adjust the largest tax subtotal to match final tax amount
-                $largest_index = 0;
-                $largest_amount = 0;
-                foreach ($tax_subtotals as $index => $subtotal) {
-                    if ((float)$subtotal['tax_amount'] > $largest_amount) {
-                        $largest_amount = (float)$subtotal['tax_amount'];
-                        $largest_index = $index;
-                    }
-                }
-                
-                $adjustment = $final_tax - $calculated_tax_total;
-                $tax_subtotals[$largest_index]['tax_amount'] = (string)$this->getTwoRoundAmount($largest_amount + $adjustment);
-                
-                PrestaShopLogger::addLog(
-                    'TwoPayment Create Order - Adjusted tax subtotal by €' . number_format($adjustment, 2) . ' to align with cart total',
-                    1
-                );
-            }
-        }
+        // Two API requires gross_amount = sum(tax_subtotals)
+        // Calculate totals from tax_subtotals to ensure exact match
+        $totals = $this->calculateOrderTotalsFromTaxSubtotals($tax_subtotals);
+        $final_net = $totals['net'];
+        $final_tax = $totals['tax'];
+        $final_gross = $totals['gross'];
+        
+        // Get discount amount from PrestaShop
+        $final_discount = abs((float)$cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS));
 
-        // Validate all line items against Two API formulas
-        $validation_passed = $this->validateTwoLineItems($line_items);
-        if (!$validation_passed) {
-            PrestaShopLogger::addLog('TwoPayment Create Order - Line item validation failed, but proceeding with request', 2);
-        }
+        // Get company data with fallback chain (reused helper method)
+        $buyerData = $this->getCompanyDataWithFallbacks($invoice_address);
+        $shippingData = $this->getCompanyDataWithFallbacks($delivery_address);
+        $buyerCompanyName = $buyerData['company_name'];
+        $shippingOrgName = !empty($shippingData['company_name']) ? $shippingData['company_name'] : $buyerCompanyName;
 
-        // COMPANY DATA FALLBACKS: ensure company and organization number are present when creating the Two order
-        $cookie = $this->context->cookie;
-        $cookieCompanyName = isset($cookie->two_company_name) ? trim($cookie->two_company_name) : '';
-        $cookieCompanyId = isset($cookie->two_company_id) ? trim($cookie->two_company_id) : '';
-
-        $buyerCompanyName = !empty($invoice_address->company) ? $invoice_address->company : $cookieCompanyName;
-        $organizationNumber = '';
-        if (!empty($invoice_address->companyid)) {
-            $organizationNumber = $invoice_address->companyid;
-        } elseif (!empty($cookieCompanyId)) {
-            $organizationNumber = $cookieCompanyId;
-        } elseif (!empty($invoice_address->dni)) {
-            $organizationNumber = $invoice_address->dni;
-        }
-
-        $shippingOrgName = !empty($delivery_address->company) ? $delivery_address->company : $buyerCompanyName;
-
-        $request_data = array(
+        $request_data = [
             'gross_amount' => (string)($this->getTwoRoundAmount($final_gross)),
             'net_amount' => (string)($this->getTwoRoundAmount($final_net)),
             'currency' => $currency->iso_code,
-            'discount_amount' => (string)($this->getTwoRoundAmount($final_discount)),
+            'discount_amount' => (string)($this->getTwoRoundAmount($final_discount)), // Two API expects positive discount amount at order level (already abs() at line 1532)
             'discount_rate' => '0',
             'invoice_type' => 'FUNDED_INVOICE', // Default product type
             'tax_amount' => (string)($this->getTwoRoundAmount($final_tax)),
             'tax_rate' => (string)($cart->getAverageProductsTaxRate()),
             'tax_subtotals' => $tax_subtotals,
-            'buyer' => array(
-                'company' => array(
+            'buyer' => [
+                'company' => [
                     'company_name' => $buyerCompanyName,
-                    'country_prefix' => Country::getIsoById($invoice_address->id_country),
-                    'organization_number' => $organizationNumber,
+                    'country_prefix' => $buyerData['country_iso'],
+                    'organization_number' => $buyerData['organization_number'],
                     'website' => '',
-                ),
-                'representative' => array(
-                    'email' => $cutomer->email,
-                    'first_name' => $cutomer->firstname,
-                    'last_name' => $cutomer->lastname,
+                ],
+                'representative' => [
+                    'email' => $customer->email,
+                    'first_name' => $customer->firstname,
+                    'last_name' => $customer->lastname,
                     'phone_number' => $invoice_address->phone,
-                ),
-            ),
+                ],
+            ],
             'buyer_department' => $invoice_address->department,
             'buyer_project' => $invoice_address->project,
             'merchant_additional_info' => '',
             'merchant_order_id' => (string)($id_order),
             'merchant_reference' => (string)($order_reference),
-            'merchant_urls' => array(
-                'merchant_confirmation_url' => $this->context->link->getModuleLink($this->name, 'confirmation', array('id_order' => $id_order), true),
-                'merchant_cancel_order_url' => $this->context->link->getModuleLink($this->name, 'cancel', array('id_order' => $id_order), true),
+            'merchant_urls' => [
+                'merchant_confirmation_url' => $this->context->link->getModuleLink($this->name, 'confirmation', ['id_order' => $id_order], true),
+                'merchant_cancel_order_url' => $this->context->link->getModuleLink($this->name, 'cancel', ['id_order' => $id_order], true),
                 'merchant_edit_order_url' => '',
                 'merchant_order_verification_failed_url' => '',
                 'merchant_invoice_url' => '',
                 'merchant_shipping_document_url' => ''
-            ),
-            'billing_address' => array(
-                'city' => $invoice_address->city,
-                'country' => Country::getIsoById($invoice_address->id_country),
-                'organization_name' => $buyerCompanyName,
-                'postal_code' => $invoice_address->postcode,
-                'region' => $invoice_address->id_state ? State::getNameById($invoice_address->id_state) : "",
-                'street_address' => $invoice_address->address1 . (isset($invoice_address->address2) ? $invoice_address->address2 : "")
-            ),
-            'shipping_address' => array(
-                'city' => $delivery_address->city,
-                'country' => Country::getIsoById($delivery_address->id_country),
-                'organization_name' => $shippingOrgName,
-                'postal_code' => $delivery_address->postcode,
-                'region' => $delivery_address->id_state ? State::getNameById($delivery_address->id_state) : "",
-                'street_address' => $delivery_address->address1 . (isset($delivery_address->address2) ? $delivery_address->address2 : "")
-            ),
-            'shipping_details' => array(
+            ],
+            'billing_address' => $this->buildTwoAddress($invoice_address, $buyerCompanyName, $buyerData['country_iso']),
+            'shipping_address' => $this->buildTwoAddress($delivery_address, $shippingOrgName, $shippingData['country_iso']),
+            'shipping_details' => [
                 'carrier_name' => $carrier_name,
                 'tracking_number' => $tracking_number,
                 'expected_delivery_date' => date('Y-m-d', strtotime('+ 7 days'))
-            ),
+            ],
             'recurring' => false,
             'order_note' => '',
             'line_items' => $line_items,
-            'terms' => array(
+            'terms' => [
                 'type' => 'NET_TERMS',
                 'duration_days' => $this->getSelectedPaymentTerm()
-            ),
-        );
+            ],
+        ];
 
         PrestaShopLogger::addLog('TwoPayment: Order creation with terms - duration_days: ' . $request_data['terms']['duration_days'], 1);
         
@@ -1724,7 +1601,15 @@ class Twopayment extends PaymentModule
     public function getTwoUpdateOrderData($order, $orderpaymentdata)
     {
         $cart = new Cart($order->id_cart);
+        
+        // Validate cart has products before building order data
+        if (!Validate::isLoadedObject($cart) || $cart->nbProducts() <= 0) {
+            PrestaShopLogger::addLog('TwoPayment: Cannot build update order data - cart is empty or invalid (Order ID: ' . $order->id . ')', 3);
+            throw new Exception('Cart is empty or invalid');
+        }
+        
         $currency = new Currency($cart->id_currency);
+        $customer = new Customer($cart->id_customer);
         $invoice_address = new Address($cart->id_address_invoice);
         $delivery_address = new Address($cart->id_address_delivery);
         $carrier_name = '';
@@ -1734,96 +1619,72 @@ class Twopayment extends PaymentModule
             $carrier_name = $carrier->name;
         }
 
-        // Get line items first for validation
+        // Get line items (using PrestaShop's native values)
         $line_items = $this->getTwoProductItems($cart);
         
-        // Calculate totals from line items to ensure accuracy
-        $calculated_gross = 0;
-        $calculated_net = 0;
-        $calculated_tax = 0;
-        $calculated_discount = 0;
-        
-        foreach ($line_items as $item) {
-            $calculated_gross += (float)$item['gross_amount'];
-            $calculated_net += (float)$item['net_amount'];
-            $calculated_tax += (float)$item['tax_amount'];
-            $calculated_discount += (float)$item['discount_amount'];
+        // Validate we have line items
+        if (empty($line_items)) {
+            PrestaShopLogger::addLog('TwoPayment: Cannot build update order data - no valid line items (Order ID: ' . $order->id . ')', 3);
+            throw new Exception('No valid line items in cart');
         }
         
-        // Get PrestaShop cart totals
-        $cart_gross = $cart->getOrderTotal(true, Cart::BOTH);
-        $cart_net = $cart->getOrderTotal(false, Cart::BOTH);
-        $cart_tax = $cart_gross - $cart_net;
-        $cart_discount = $cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS);
-        
-        // STREAMLINED ORDER VALIDATION: Use line item totals (built with Two API compliance)
-        $final_gross = $calculated_gross;
-        $final_net = $calculated_net;
-        $final_tax = $calculated_tax;
-        $final_discount = abs($calculated_discount); // Two API expects positive discount amount at order level
-        
-        // Simple validation against PrestaShop cart totals (for monitoring only)
-        $net_diff = abs($cart_net - $calculated_net);
-        $gross_diff = abs($cart_gross - $calculated_gross);
-        
-        // Only log significant discrepancies
-        if ($net_diff > 0.50 || $gross_diff > 0.50) {
-            PrestaShopLogger::addLog(
-                'TwoPayment Update Order - Notable difference from PrestaShop totals. ' .
-                'Cart Net: ' . $cart_net . ' → Two Net: ' . $calculated_net . ' (diff: ' . $net_diff . '), ' .
-                'Cart Gross: ' . $cart_gross . ' → Two Gross: ' . $calculated_gross . ' (diff: ' . $gross_diff . ')',
-                1
-            );
-        }
-
-        // Calculate tax subtotals for enhanced validation
+        // Calculate tax subtotals from line items first
         $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
+        
+        // Calculate totals from tax_subtotals to ensure exact match
+        $totals = $this->calculateOrderTotalsFromTaxSubtotals($tax_subtotals);
+        $final_net = $totals['net'];
+        $final_tax = $totals['tax'];
+        $final_gross = $totals['gross'];
+        
+        // Get discount amount from PrestaShop
+        $final_discount = abs((float)$cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS));
 
-        // Validate all line items against Two API formulas
-        $validation_passed = $this->validateTwoLineItems($line_items);
-        if (!$validation_passed) {
-            PrestaShopLogger::addLog('TwoPayment Update Order - Line item validation failed, but proceeding with request', 2);
-        }
+        // Get company data with fallback chain (reused helper method)
+        $buyerData = $this->getCompanyDataWithFallbacks($invoice_address);
+        $shippingData = $this->getCompanyDataWithFallbacks($delivery_address);
+        $buyerCompanyName = $buyerData['company_name'];
+        $shippingOrgName = !empty($shippingData['company_name']) ? $shippingData['company_name'] : $buyerCompanyName;
 
-        $request_data = array(
+        $request_data = [
             'gross_amount' => (string)($this->getTwoRoundAmount($final_gross)),
             'net_amount' => (string)($this->getTwoRoundAmount($final_net)),
             'currency' => $currency->iso_code,
-            'discount_amount' => (string)($this->getTwoRoundAmount($final_discount)),
+            'discount_amount' => (string)($this->getTwoRoundAmount($final_discount)), // Two API expects positive discount amount at order level
             'discount_rate' => '0',
             'invoice_type' => 'FUNDED_INVOICE', // Default product type
             'tax_amount' => (string)($this->getTwoRoundAmount($final_tax)),
             'tax_rate' => (string)($cart->getAverageProductsTaxRate()),
             'tax_subtotals' => $tax_subtotals,
+            'buyer' => [
+                'company' => [
+                    'company_name' => $buyerCompanyName,
+                    'country_prefix' => $buyerData['country_iso'],
+                    'organization_number' => $buyerData['organization_number'],
+                    'website' => '',
+                ],
+                'representative' => [
+                    'email' => $customer->email,
+                    'first_name' => $customer->firstname,
+                    'last_name' => $customer->lastname,
+                    'phone_number' => $invoice_address->phone,
+                ],
+            ],
             'buyer_department' => $invoice_address->department,
             'buyer_project' => $invoice_address->project,
             'merchant_additional_info' => '',
             'merchant_reference' => (string)($orderpaymentdata['two_order_reference']),
-            'billing_address' => array(
-                'city' => $invoice_address->city,
-                'country' => Country::getIsoById($invoice_address->id_country),
-                'organization_name' => $invoice_address->company,
-                'postal_code' => $invoice_address->postcode,
-                'region' => $invoice_address->id_state ? State::getNameById($invoice_address->id_state) : "",
-                'street_address' => $invoice_address->address1 . (isset($invoice_address->address2) ? $invoice_address->address2 : "")
-            ),
-            'shipping_address' => array(
-                'city' => $delivery_address->city,
-                'country' => Country::getIsoById($delivery_address->id_country),
-                'organization_name' => $delivery_address->company,
-                'postal_code' => $delivery_address->postcode,
-                'region' => $delivery_address->id_state ? State::getNameById($delivery_address->id_state) : "",
-                'street_address' => $delivery_address->address1 . (isset($delivery_address->address2) ? $delivery_address->address2 : "")
-            ),
-            'shipping_details' => array(
+            'billing_address' => $this->buildTwoAddress($invoice_address, $buyerCompanyName, $buyerData['country_iso']),
+            'shipping_address' => $this->buildTwoAddress($delivery_address, $shippingOrgName, $shippingData['country_iso']),
+            'shipping_details' => [
                 'carrier_name' => $carrier_name,
                 'tracking_number' => $tracking_number,
                 'expected_delivery_date' => date('Y-m-d', strtotime('+ 7 days'))
-            ),
+            ],
             'recurring' => false,
             'order_note' => '',
             'line_items' => $line_items,
-        );
+        ];
 
         return $request_data;
     }
@@ -1886,148 +1747,122 @@ class Twopayment extends PaymentModule
         $carrier = new Carrier($cart->id_carrier, $cart->id_lang);
         $line_items = $cart->getProducts(true);
         
+        //  Validate cart has products
+        if (empty($line_items)) {
+            PrestaShopLogger::addLog('TwoPayment: Cart is empty, cannot build line items', 3);
+            return $items; // Return empty array (caller should handle empty cart)
+        }
+        
         foreach ($line_items as $line_item) {
             $categories = Product::getProductCategoriesFull($line_item['id_product'], $cart->id_lang);
             $image = Image::getCover($line_item['id_product']);
             $imagePath = $this->context->link->getImageLink($line_item['link_rewrite'], $image['id_image'], ImageType::getFormattedName('home'));
             
-            // Get base prices (PrestaShop provides these accurately)
-            $unit_price_net = (float)$line_item['price']; // Price without tax per unit
-            $unit_price_gross = (float)$line_item['price_wt']; // Price with tax per unit
+            // Use PrestaShop's calculated values directly (trust PrestaShop's calculations)
+            $net_amount_prestashop = (float)$line_item['total']; // PrestaShop's net total (source of truth)
+            $gross_amount_prestashop = (float)$line_item['total_wt']; // PrestaShop's gross total
             $quantity = (int)$line_item['cart_quantity'];
-            $unit_tax_rate = (float)$line_item['rate']; // Tax rate percentage
+            $tax_rate = (float)$line_item['rate'] / 100; // Convert percentage to decimal
             
-            // CONSERVATIVE APPROACH: Only use discount if we can verify it exists
-            // The validation error shows phantom discounts, so let's be more careful
-            $line_discount_amount = 0; // Start with no discount
+            // CRITICAL: Validate quantity to prevent division by zero
+            if ($quantity <= 0) {
+                PrestaShopLogger::addLog('TwoPayment: Invalid quantity (0 or negative) for product ' . $line_item['id_product'], 3);
+                continue; // Skip invalid line items
+            }
             
-            // Only apply line-level discount if there's clear evidence of it
-            if (isset($line_item['reduction']) && (float)$line_item['reduction'] > 0) {
-                // Check if this reduction makes mathematical sense
-                $ps_unit_price_net = (float)$line_item['price'];
-                $ps_total_net = (float)$line_item['total'];
-                $quantity = (int)$line_item['cart_quantity'];
+            // Use PrestaShop's unit price if available, otherwise calculate from total
+            // PrestaShop's 'price' field is the unit price (net, without tax)
+            $unit_price_net_prestashop = isset($line_item['price']) ? (float)$line_item['price'] : null;
+            
+            if ($unit_price_net_prestashop !== null) {
+                // Use PrestaShop's unit price directly (most accurate)
+                $unit_price_net = round($unit_price_net_prestashop, 2);
                 
-                // Calculate what the total SHOULD be without discount
-                $expected_total_without_discount = $ps_unit_price_net * $quantity;
+                // Calculate discount from PrestaShop's values
+                // Expected total without discount: quantity * unit_price
+                $expected_total = $quantity * $unit_price_net;
+                $discount_amount = round($expected_total - $net_amount_prestashop, 2);
                 
-                // If PrestaShop's total is less than expected, there might be a real discount
-                if ($expected_total_without_discount > $ps_total_net) {
-                    $calculated_discount = $expected_total_without_discount - $ps_total_net;
-                    
-                    // Only use the discount if it matches PrestaShop's reduction field (within tolerance)
-                    if (abs($calculated_discount - (float)$line_item['reduction']) < 0.01) {
-                        $line_discount_amount = $calculated_discount;
-                    }
+                // Ensure discount is not negative (protect against edge cases)
+                if ($discount_amount < 0) {
+                    PrestaShopLogger::addLog('TwoPayment: Negative discount calculated for product ' . $line_item['id_product'] . ', clamping to 0', 2);
+                    $discount_amount = 0;
                 }
+                
+                // Use PrestaShop's net_amount directly (it's the source of truth)
+                $net_amount = $net_amount_prestashop;
+            } else {
+                // Fallback: derive unit_price from net_amount (if PrestaShop doesn't provide price)
+                // This happens when PrestaShop's price field is not available
+                $discount_amount = isset($line_item['reduction']) ? (float)$line_item['reduction'] : 0;
+                
+                // Ensure discount is not negative
+                if ($discount_amount < 0) {
+                    $discount_amount = 0;
+                }
+                
+                // Two API requires exact formula: net_amount = (quantity * unit_price) - discount_amount
+                // Derive unit_price from net_amount to ensure formula compliance
+                $unit_price_net = ($net_amount_prestashop + $discount_amount) / $quantity;
+                $unit_price_net = round($unit_price_net, 2);
+                
+                // Recalculate net_amount with rounded unit_price to ensure exact formula match
+                $net_amount = ($quantity * $unit_price_net) - $discount_amount;
+                $net_amount = round($net_amount, 2);
             }
             
+            // Calculate tax using Two's formula: tax_amount = net_amount * tax_rate
+            $tax_amount = round($net_amount * $tax_rate, 2);
             
-            // Calculate amounts following Two's API requirements:
-            // net_amount = (quantity * unit_price_net) - discount_amount
-            $calculated_net_before_discount = $unit_price_net * $quantity;
-            $calculated_net_amount = $calculated_net_before_discount - $line_discount_amount;
+            // Use PrestaShop's gross_amount if it matches our calculation (within rounding tolerance)
+            // Otherwise use calculated gross_amount to satisfy Two API formula
+            $calculated_gross = $net_amount + $tax_amount;
+            $gross_diff = abs($gross_amount_prestashop - $calculated_gross);
+            $gross_tolerance = self::GROSS_AMOUNT_TOLERANCE;
             
-            // Calculate tax amount based on net amount after discount
-            $calculated_tax_amount = $calculated_net_amount * ($unit_tax_rate / 100);
-            
-            // Calculate gross amount = net amount + tax amount
-            $calculated_gross_amount = $calculated_net_amount + $calculated_tax_amount;
-            
-            // Validate against PrestaShop's calculations (with tolerance for rounding)
-            $ps_total_net = (float)$line_item['total'];
-            $ps_total_gross = (float)$line_item['total_wt'];
-            $ps_total_tax = $ps_total_gross - $ps_total_net;
-            
-            
-            // STREAMLINED APPROACH: Always use PrestaShop's actual totals as the source of truth
-            // Then adjust only what's necessary for Two API compliance
-            
-            $final_net_amount = $ps_total_net;
-            $final_gross_amount = $ps_total_gross;
-            $final_discount_amount = $line_discount_amount;
-            
-            // Calculate the effective unit price to ensure Two API formula compliance
-            // net_amount = (quantity * unit_price) - discount_amount
-            // Therefore: unit_price = (net_amount + discount_amount) / quantity
-            $calculated_unit_price_net = ($final_net_amount + $final_discount_amount) / $quantity;
-            $unit_price_net = $calculated_unit_price_net;
-            
-            // CRITICAL: Calculate tax amount using Two's exact formula for API compliance
-            // This ensures tax_amount = net_amount * tax_rate validation passes
-            $final_tax_amount = $final_net_amount * ($unit_tax_rate / 100);
-            
-            // Update gross amount to match the recalculated tax
-            $final_gross_amount = $final_net_amount + $final_tax_amount;
-            
-            // Log significant differences for debugging (but don't fail the process)
-            $ps_tax_diff = abs($ps_total_tax - $final_tax_amount);
-            $ps_gross_diff = abs($ps_total_gross - $final_gross_amount);
-            
-            if ($ps_tax_diff > 0.01 || $ps_gross_diff > 0.01) {
+            if ($gross_diff <= $gross_tolerance) {
+                // PrestaShop's gross is very close, use it (matches what customer sees)
+                $gross_amount = $gross_amount_prestashop;
+            } else {
+                // Use calculated gross to satisfy Two API formula
+                // Log when tolerance is exceeded for investigation
                 PrestaShopLogger::addLog(
-                    'TwoPayment Line Item Adjustment - Product: ' . $line_item['name'] . 
-                    ', PS Tax: ' . $ps_total_tax . ' → Two Tax: ' . $final_tax_amount . 
-                    ', PS Gross: ' . $ps_total_gross . ' → Two Gross: ' . $final_gross_amount . 
-                    ', Tax Rate: ' . $unit_tax_rate . '%', 
-                    1
-                );
-            }
-            
-            // Validation: Ensure Two API formulas will pass
-            $two_net_formula_check = ($quantity * $unit_price_net) - $final_discount_amount;
-            $two_tax_formula_check = $final_net_amount * ($unit_tax_rate / 100); // Still calculate with percentage internally
-            
-            // Only log if there are significant formula violations
-            if (abs($two_net_formula_check - $final_net_amount) > 0.02) {
-                PrestaShopLogger::addLog(
-                    'TwoPayment Net Formula Issue - Product: ' . $line_item['name'] . 
-                    ', Expected: ' . $two_net_formula_check . ', Actual: ' . $final_net_amount, 
+                    'TwoPayment: Gross amount difference exceeds tolerance for product ' . $line_item['id_product'] . 
+                    ' - PrestaShop: ' . $gross_amount_prestashop . ', Calculated: ' . $calculated_gross . ', Diff: ' . $gross_diff,
                     2
                 );
+                $gross_amount = $calculated_gross;
             }
             
-            if (abs($two_tax_formula_check - $final_tax_amount) > 0.001) {
-                PrestaShopLogger::addLog(
-                    'TwoPayment Tax Formula Issue - Product: ' . $line_item['name'] . 
-                    ', Expected: ' . $two_tax_formula_check . ', Actual: ' . $final_tax_amount, 
-                    2
-                );
-            }
-            
-            // Use product name and description directly
-            $product_name = $line_item['name'];
-            $product_description = Tools::substr(strip_tags($line_item['description_short']), 0, 255);
-            
-            $product = array(
-                'name' => $product_name,
-                'description' => $product_description,
-                'gross_amount' => (string)($this->getTwoRoundAmount($final_gross_amount)),
-                'net_amount' => (string)($this->getTwoRoundAmount($final_net_amount)),
-                'discount_amount' => (string)($this->getTwoRoundAmount($final_discount_amount)),
-                'tax_amount' => (string)($this->getTwoRoundAmount($final_tax_amount)),
-                'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($unit_tax_rate) . '%',
-                'tax_rate' => (string)($this->getTwoRoundAmount($unit_tax_rate / 100)), // Convert percentage to decimal
-                'unit_price' => (string)($this->getTwoRoundAmount($unit_price_net)), // Two API expects net unit price
+            $product = [
+                'name' => $line_item['name'],
+                'description' => Tools::substr(strip_tags($line_item['description_short']), 0, 255),
+                'gross_amount' => (string)$this->getTwoRoundAmount($gross_amount),
+                'net_amount' => (string)$this->getTwoRoundAmount($net_amount),
+                'discount_amount' => (string)$this->getTwoRoundAmount($discount_amount),
+                'tax_amount' => (string)$this->getTwoRoundAmount($tax_amount),
+                'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($line_item['rate']) . '%',
+                'tax_rate' => (string)$this->getTwoRoundAmount($tax_rate),
+                'unit_price' => (string)$this->getTwoRoundAmount($unit_price_net),
                 'quantity' => $quantity,
                 'quantity_unit' => 'pcs',
                 'image_url' => $imagePath,
                 'product_page_url' => $this->context->link->getProductLink($line_item['id_product']),
                 'type' => 'PHYSICAL',
-                'details' => array(
+                'details' => [
                     'brand' => $line_item['manufacturer_name'],
-                    'barcodes' => array(
-                        array(
+                    'barcodes' => [
+                        [
                             'type' => 'SKU',
                             'value' => $line_item['ean13']
-                        ),
-                        array(
+                        ],
+                        [
                             'type' => 'UPC',
                             'value' => $line_item['upc']
-                        ),
-                    ),
-                ),
-            );
+                        ],
+                    ],
+                ],
+            ];
             $product['details']['categories'] = [];
             if ($categories) {
                 foreach ($categories as $category) {
@@ -2040,125 +1875,111 @@ class Twopayment extends PaymentModule
 
         // Add shipping as a line item if applicable
         if (Validate::isLoadedObject($carrier) && $cart->getOrderTotal(true, Cart::ONLY_SHIPPING) > 0) {
-            $shipping_gross = (float)$cart->getOrderTotal(true, Cart::ONLY_SHIPPING);
-            $shipping_net = (float)$cart->getOrderTotal(false, Cart::ONLY_SHIPPING);
-            $shipping_tax = $shipping_gross - $shipping_net;
+            // Use PrestaShop's shipping totals (source of truth)
+            $shipping_net = round((float)$cart->getOrderTotal(false, Cart::ONLY_SHIPPING), 2);
+            $shipping_gross_prestashop = (float)$cart->getOrderTotal(true, Cart::ONLY_SHIPPING);
             
-            // STREAMLINED SHIPPING: Use PrestaShop totals, recalculate tax for Two API compliance
-            $shipping_tax_rate = 0;
+            // Calculate tax rate from PrestaShop values (derive from PrestaShop's calculated tax)
+            $shipping_tax_prestashop = $shipping_gross_prestashop - $shipping_net;
+            $shipping_tax_rate_percent = 0;
+            $shipping_tax_rate_decimal = 0;
             if ($shipping_net > 0) {
-                $shipping_tax_rate = ($shipping_tax / $shipping_net) * 100;
+                // CRITICAL: Calculate percentage first, then round, then convert to decimal
+                // This preserves precision for non-standard tax rates (e.g., 20.5%)
+                $shipping_tax_rate_percent = ($shipping_tax_prestashop / $shipping_net) * 100;
+                $shipping_tax_rate_percent = round($shipping_tax_rate_percent, 2); // Round percentage to 2 decimals
+                $shipping_tax_rate_decimal = $shipping_tax_rate_percent / 100; // Convert to decimal
             }
             
-            // Shipping line item structure
-            $shipping_discount = 0;
-            $shipping_quantity = 1;
-            $shipping_unit_price_net = $shipping_net;
+            // Two API requires exact formula: tax_amount = net_amount * tax_rate
+            // Recalculate tax_amount using rounded values to ensure formula compliance
+            $shipping_tax_amount = round($shipping_net * $shipping_tax_rate_decimal, 2);
             
-            // Calculate tax using Two's exact formula (percentage to decimal conversion happens in API output)
-            $final_shipping_tax = $shipping_net * ($shipping_tax_rate / 100);
-            $final_shipping_gross = $shipping_net + $final_shipping_tax;
+            // Calculate gross: gross_amount = net_amount + tax_amount (Two API formula)
+            $shipping_gross = $shipping_net + $shipping_tax_amount;
             
-            // Verify Two API formula for shipping
-            $shipping_formula_check = ($shipping_quantity * $shipping_unit_price_net) - $shipping_discount;
-            if (abs($shipping_formula_check - $shipping_net) > 0.001) {
-                PrestaShopLogger::addLog(
-                    'TwoPayment Shipping Formula Validation - Formula Result: ' . $shipping_formula_check . 
-                    ', Net Amount: ' . $shipping_net . ', Difference: ' . abs($shipping_formula_check - $shipping_net), 
-                    2
-                );
-            }
+            // For shipping: quantity = 1, discount = 0, so unit_price = net_amount
+            $shipping_unit_price = $shipping_net;
             
-            // Get proper shipping name and description from PrestaShop
             $shipping_name = $carrier->name ? $carrier->name : $this->l('Shipping');
-            
-            // Get shipping delay/description in the correct language
             $shipping_delay = '';
             if ($carrier->delay && is_array($carrier->delay)) {
                 $shipping_delay = isset($carrier->delay[$cart->id_lang]) ? 
                     $carrier->delay[$cart->id_lang] : 
-                    reset($carrier->delay); // Fallback to first available language
+                    reset($carrier->delay);
             } elseif ($carrier->delay) {
                 $shipping_delay = $carrier->delay;
             }
             
-            // Create meaningful description
             $shipping_description = $shipping_delay ? $shipping_delay : $this->l('Shipping cost for order');
-            
-            // Add shipping cost information if available
             if ($carrier->shipping_method == Carrier::SHIPPING_METHOD_WEIGHT) {
                 $shipping_description .= ' ' . sprintf($this->l('(by weight)'));
             } elseif ($carrier->shipping_method == Carrier::SHIPPING_METHOD_PRICE) {
                 $shipping_description .= ' ' . sprintf($this->l('(by price)'));
             }
             
-            $shipping_line = array(
+            $shipping_line = [
                 'name' => $shipping_name,
                 'description' => Tools::substr(strip_tags($shipping_description), 0, 255),
-                'gross_amount' => (string)($this->getTwoRoundAmount($final_shipping_gross)),
-                'net_amount' => (string)($this->getTwoRoundAmount($shipping_net)),
-                'discount_amount' => (string)($this->getTwoRoundAmount($shipping_discount)),
-                'tax_amount' => (string)($this->getTwoRoundAmount($final_shipping_tax)),
-                'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($shipping_tax_rate) . '%',
-                'tax_rate' => (string)($this->getTwoRoundAmount($shipping_tax_rate / 100)), // Convert percentage to decimal
-                'unit_price' => (string)($this->getTwoRoundAmount($shipping_unit_price_net)), // Two API expects net unit price
-                'quantity' => $shipping_quantity,
+                'gross_amount' => (string)$this->getTwoRoundAmount($shipping_gross),
+                'net_amount' => (string)$this->getTwoRoundAmount($shipping_net),
+                'discount_amount' => '0.00',
+                'tax_amount' => (string)$this->getTwoRoundAmount($shipping_tax_amount),
+                'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($shipping_tax_rate_percent) . '%',
+                'tax_rate' => (string)$this->getTwoRoundAmount($shipping_tax_rate_decimal),
+                'unit_price' => (string)$this->getTwoRoundAmount($shipping_unit_price),
+                'quantity' => 1,
                 'quantity_unit' => 'pcs',
                 'image_url' => '',
                 'product_page_url' => '',
                 'type' => 'SHIPPING_FEE'
-            );
+            ];
 
             $items[] = $shipping_line;
         }
 
-        // CONSERVATIVE CART-LEVEL DISCOUNT HANDLING
-        $discount_gross_total = (float)$cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS);
-        $cart_rules = $cart->getCartRules();
-        
-        if ($discount_gross_total > 0) {
-            $discount_net_total = (float)$cart->getOrderTotal(false, Cart::ONLY_DISCOUNTS);
-            $discount_tax_total = $discount_gross_total - $discount_net_total;
+        // Add cart-level discounts as line item if applicable
+        // Note: PrestaShop returns discounts as positive values (the amount discounted)
+        $discount_gross_prestashop = (float)$cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS);
+        if ($discount_gross_prestashop > 0) {
+            // Use PrestaShop's discount totals (source of truth)
+            $discount_net_total = round((float)$cart->getOrderTotal(false, Cart::ONLY_DISCOUNTS), 2);
+            $discount_tax_prestashop = $discount_gross_prestashop - $discount_net_total;
             
-            // Calculate average tax rate for discounts
-            $discount_tax_rate = 0;
+            // Calculate tax rate from PrestaShop values (handle edge case where net_total might be 0)
+            $discount_tax_rate_percent = 0;
+            $discount_tax_rate_decimal = 0;
             if ($discount_net_total > 0) {
-                $discount_tax_rate = ($discount_tax_total / $discount_net_total) * 100;
+                // Calculate percentage first, then round, then convert to decimal
+                // This preserves precision for non-standard tax rates (e.g., 20.5%)
+                $discount_tax_rate_percent = ($discount_tax_prestashop / $discount_net_total) * 100;
+                $discount_tax_rate_percent = round($discount_tax_rate_percent, 2); // Round percentage to 2 decimals
+                $discount_tax_rate_decimal = $discount_tax_rate_percent / 100; // Convert to decimal
+            } elseif ($discount_tax_prestashop > 0) {
+                // Edge case: net_total = 0 but tax exists (shouldn't happen, but handle gracefully)
+                // Cannot calculate percentage, default to 0 (tax_amount will be 0 anyway)
+                PrestaShopLogger::addLog('TwoPayment: Discount net_total is 0 but tax exists, defaulting tax rate to 0', 2);
             }
             
-            // STREAMLINED DISCOUNT: Negative amounts for discount line item
-            $discount_quantity = 1;
-            $discount_unit_price_net = -$discount_net_total; // Negative unit price
-            $discount_discount_amount = 0; // No additional discount on discount line
-            $discount_net_amount = -$discount_net_total; // Negative net amount
+            // Two API requires exact formula: tax_amount = net_amount * tax_rate
+            // Recalculate tax_amount using rounded values to ensure formula compliance
+            // Note: net_amount is negative (discount), so tax_amount will also be negative
+            $discount_tax_amount = round($discount_net_total * $discount_tax_rate_decimal, 2);
             
-            // Calculate tax using Two's exact formula (percentage to decimal conversion happens in API output)
-            $final_discount_tax = $discount_net_amount * ($discount_tax_rate / 100);
-            $final_discount_gross = $discount_net_amount + $final_discount_tax;
+            // Calculate gross: gross_amount = net_amount + tax_amount (Two API formula)
+            $discount_gross_total = $discount_net_total + $discount_tax_amount;
             
-            // Verify Two API formula for discount
-            $discount_formula_check = ($discount_quantity * $discount_unit_price_net) - $discount_discount_amount;
-            $expected_discount_net = -$discount_net_total; // Should be negative
+            // For discount: quantity = 1, discount = 0, so unit_price = net_amount (negative)
+            $discount_unit_price = $discount_net_total;
             
-            if (abs($discount_formula_check - $expected_discount_net) > 0.001) {
-                PrestaShopLogger::addLog(
-                    'TwoPayment Discount Formula Validation - Formula Result: ' . $discount_formula_check . 
-                    ', Expected Net: ' . $expected_discount_net . ', Difference: ' . abs($discount_formula_check - $expected_discount_net), 
-                    2
-                );
-            }
-            
-            // Get actual discount information from PrestaShop cart rules
             $cart_rules = $cart->getCartRules();
             $discount_name = $this->l('Discount');
             $discount_description = $this->l('Order discount');
             
             if (!empty($cart_rules)) {
-                // Use the first cart rule name as the primary discount name
                 $primary_rule = reset($cart_rules);
                 $discount_name = $primary_rule['name'];
                 
-                // Build comprehensive description
                 $discount_parts = [];
                 foreach ($cart_rules as $rule) {
                     $rule_desc = $rule['name'];
@@ -2176,41 +1997,152 @@ class Twopayment extends PaymentModule
                 }
                 
                 $discount_description = implode(', ', $discount_parts);
-                
-                // If description is too long, use primary rule description or fallback
                 if (strlen($discount_description) > 200) {
                     $discount_description = $primary_rule['description'] ? 
                         Tools::substr(strip_tags($primary_rule['description']), 0, 200) : 
                         sprintf($this->l('Discount: %s'), $primary_rule['name']);
                 }
                 
-                // If multiple cart rules, update name to show count
                 if (count($cart_rules) > 1) {
                     $discount_name = sprintf($this->l('%s (+%d more)'), $primary_rule['name'], count($cart_rules) - 1);
                 }
             }
             
-            $discount_line = array(
+            $discount_line = [
                 'name' => $discount_name,
                 'description' => Tools::substr(strip_tags($discount_description), 0, 255),
-                'gross_amount' => (string)($this->getTwoRoundAmount($final_discount_gross)), // Use recalculated gross
-                'net_amount' => (string)($this->getTwoRoundAmount($discount_net_amount)), // Negative net amount
-                'discount_amount' => (string)($this->getTwoRoundAmount($discount_discount_amount)),
-                'tax_amount' => (string)($this->getTwoRoundAmount($final_discount_tax)), // Use recalculated tax
-                'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($discount_tax_rate) . '%',
-                'tax_rate' => (string)($this->getTwoRoundAmount($discount_tax_rate / 100)), // Convert percentage to decimal
-                'unit_price' => (string)($this->getTwoRoundAmount($discount_unit_price_net)), // Two API expects net unit price (negative)
-                'quantity' => $discount_quantity,
+                'gross_amount' => (string)$this->getTwoRoundAmount(-$discount_gross_total),
+                'net_amount' => (string)$this->getTwoRoundAmount(-$discount_net_total),
+                'discount_amount' => '0.00',
+                'tax_amount' => (string)$this->getTwoRoundAmount(-$discount_tax_amount),
+                'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($discount_tax_rate_percent) . '%',
+                'tax_rate' => (string)$this->getTwoRoundAmount($discount_tax_rate_decimal),
+                'unit_price' => (string)$this->getTwoRoundAmount(-$discount_unit_price),
+                'quantity' => 1,
                 'quantity_unit' => 'item',
                 'image_url' => '',
                 'product_page_url' => '',
                 'type' => 'DIGITAL'
-            );
+            ];
 
             $items[] = $discount_line;
         }
 
         return $items;
+    }
+
+    /**
+     * Calculate order totals from tax subtotals (Two API requirement)
+     * Ensures gross_amount = sum(tax_subtotals) for API validation
+     * 
+     * @param array $tax_subtotals Tax subtotals array from getTwoTaxSubtotals()
+     * @return array ['net' => float, 'tax' => float, 'gross' => float]
+     */
+    private function calculateOrderTotalsFromTaxSubtotals($tax_subtotals)
+    {
+        $net = 0;
+        $tax = 0;
+        foreach ($tax_subtotals as $subtotal) {
+            $net += (float)$subtotal['taxable_amount'];
+            $tax += (float)$subtotal['tax_amount'];
+        }
+        return [
+            'net' => $net,
+            'tax' => $tax,
+            'gross' => $net + $tax
+        ];
+    }
+
+    /**
+     * Get company name and organization number with fallback chain
+     * Priority: Address → Cookie → DNI (ES only)
+     * 
+     * @param Address $address Invoice or delivery address
+     * @return array ['company_name' => string, 'organization_number' => string, 'country_iso' => string]
+     */
+    private function getCompanyDataWithFallbacks($address)
+    {
+        //  Validate address object is loaded
+        if (!Validate::isLoadedObject($address)) {
+            PrestaShopLogger::addLog('TwoPayment: Invalid address object passed to getCompanyDataWithFallbacks', 3);
+            throw new Exception('Invalid address object');
+        }
+        
+        // CRITICAL: Validate country ID and handle false return from Country::getIsoById()
+        $country_iso = Country::getIsoById($address->id_country);
+        if (!$country_iso || !is_string($country_iso)) {
+            PrestaShopLogger::addLog('TwoPayment: Invalid country ID: ' . $address->id_country . ' for address ID: ' . $address->id, 3);
+            throw new Exception('Invalid country in address');
+        }
+        
+        // Company name: Address → Cookie
+        $company_name = !empty($address->company) 
+            ? $address->company 
+            : (isset($this->context->cookie->two_company_name) 
+                ? trim($this->context->cookie->two_company_name) 
+                : '');
+        
+        // Organization number: Address companyid → Cookie → DNI (ES only)
+        $org_number = '';
+        if (!empty($address->companyid)) {
+            $org_number = $address->companyid;
+        } elseif (!empty($this->context->cookie->two_company_id)) {
+            $org_number = trim($this->context->cookie->two_company_id);
+        } elseif ($country_iso === 'ES' && !empty($address->dni)) {
+            $org_number = $address->dni;
+        }
+        
+        return [
+            'company_name' => $company_name,
+            'organization_number' => $org_number,
+            'country_iso' => $country_iso
+        ];
+    }
+
+    /**
+     * Build address array for Two API
+     * 
+     * @param Address $address PrestaShop Address object
+     * @param string|null $organization_name Company name (may differ from address->company)
+     * @return array Two API address format
+     */
+    private function buildTwoAddress($address, $organization_name = null, $country_iso = null)
+    {
+        // Validate address object is loaded
+        if (!Validate::isLoadedObject($address)) {
+            PrestaShopLogger::addLog('TwoPayment: Invalid address object passed to buildTwoAddress', 3);
+            throw new Exception('Invalid address object');
+        }
+        
+        if ($organization_name === null) {
+            $organization_name = $address->company;
+        }
+        
+        // Use provided country_iso or fetch it (validate false return)
+        if ($country_iso === null) {
+            $country_iso = Country::getIsoById($address->id_country);
+            if (!$country_iso || !is_string($country_iso)) {
+                PrestaShopLogger::addLog('TwoPayment: Invalid country ID: ' . $address->id_country . ' for address ID: ' . $address->id, 3);
+                throw new Exception('Invalid country in address');
+            }
+        }
+        
+        // Validate street_address is not empty (Two API requirement)
+        $street_address = trim($address->address1 . (!empty($address->address2) ? ' ' . $address->address2 : ''));
+        if (empty($street_address)) {
+            PrestaShopLogger::addLog('TwoPayment: Empty street address for address ID: ' . $address->id, 3);
+            // Use fallback instead of throwing (allows order to proceed)
+            $street_address = 'N/A';
+        }
+        
+        return [
+            'city' => $address->city,
+            'country' => $country_iso,
+            'organization_name' => $organization_name,
+            'postal_code' => $address->postcode,
+            'region' => $address->id_state ? State::getNameById($address->id_state) : '',
+            'street_address' => $street_address
+        ];
     }
 
     /**
@@ -2228,9 +2160,9 @@ class Twopayment extends PaymentModule
         // Group line items by tax rate
         foreach ($line_items as $item) {
             $tax_rate = (string)$item['tax_rate'];
-            $net_amount = (float)$item['net_amount'];
-            $tax_amount = (float)$item['tax_amount'];
-            
+            // Round amounts before summing to prevent floating point precision issues
+            $net_amount = round((float)$item['net_amount'], 2);
+            $tax_amount = round((float)$item['tax_amount'], 2);
             
             if (!isset($tax_groups[$tax_rate])) {
                 $tax_groups[$tax_rate] = [
@@ -2240,8 +2172,9 @@ class Twopayment extends PaymentModule
                 ];
             }
             
-            $tax_groups[$tax_rate]['taxable_amount'] += $net_amount;
-            $tax_groups[$tax_rate]['tax_amount'] += $tax_amount;
+            // Round after each addition to prevent precision drift
+            $tax_groups[$tax_rate]['taxable_amount'] = round($tax_groups[$tax_rate]['taxable_amount'] + $net_amount, 2);
+            $tax_groups[$tax_rate]['tax_amount'] = round($tax_groups[$tax_rate]['tax_amount'] + $tax_amount, 2);
         }
         
         // Convert to Two API format
@@ -2281,22 +2214,26 @@ class Twopayment extends PaymentModule
             $discount_amount = (float)$item['discount_amount'];
             
             // Critical validation: tax_amount = net_amount * tax_rate (tax_rate is now decimal)
+            // Allow 0.01 tolerance for rounding differences (2 decimal places = ±0.005 rounding error)
             $expected_tax_amount = $net_amount * $tax_rate;
-            if (abs($tax_amount - $expected_tax_amount) > 0.001) {
+            if (abs($tax_amount - $expected_tax_amount) > 0.01) {
                 PrestaShopLogger::addLog(
                     'TwoPayment CRITICAL Tax Formula Error - Item: ' . $item['name'] . 
-                    ', Got: ' . $tax_amount . ', Expected: ' . $expected_tax_amount, 
+                    ', Got: ' . $tax_amount . ', Expected: ' . $expected_tax_amount . 
+                    ' (diff: ' . abs($tax_amount - $expected_tax_amount) . ')', 
                     3
                 );
                 $validation_issues++;
             }
             
             // Critical validation: net_amount = (quantity * unit_price) - discount_amount
+            // Allow 0.05 tolerance for rounding differences (accounts for multiple rounding operations)
             $expected_net_amount = ($quantity * $unit_price) - $discount_amount;
-            if (abs($net_amount - $expected_net_amount) > 0.02) {
+            if (abs($net_amount - $expected_net_amount) > 0.05) {
                 PrestaShopLogger::addLog(
                     'TwoPayment CRITICAL Net Formula Error - Item: ' . $item['name'] . 
-                    ', Got: ' . $net_amount . ', Expected: ' . $expected_net_amount, 
+                    ', Got: ' . $net_amount . ', Expected: ' . $expected_net_amount . 
+                    ' (diff: ' . abs($net_amount - $expected_net_amount) . ')', 
                     3
                 );
                 $validation_issues++;
@@ -2306,9 +2243,14 @@ class Twopayment extends PaymentModule
         return $validation_issues === 0;
     }
 
+    /**
+     * Format amount to 2 decimals as string (Two API requirement)
+     * PrestaShop values are already rounded, this just formats for Two API
+     * Uses standard PHP number_format - no need for PrestaShop's rounding methods
+     */
     public function getTwoRoundAmount($amount)
     {
-        return number_format($amount, 2, '.', '');
+        return number_format((float)$amount, 2, '.', '');
     }
 
     public function getTwoCheckoutHostUrl()

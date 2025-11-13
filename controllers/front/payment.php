@@ -97,8 +97,51 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             $this->redirectWithNotifications('index.php?controller=order');
         }
 
-        // NOTE: Order intent approval is handled client-side prior to order placement.
-        // We avoid re-calling /v1/order_intent here to prevent mismatches and duplicate checks.
+        //  Validate order intent approval if enabled (server-side security layer)
+        if (Configuration::get('PS_TWO_ENABLE_ORDER_INTENT')) {
+            $orderIntentApproved = isset($this->context->cookie->two_order_intent_approved) 
+                ? $this->context->cookie->two_order_intent_approved === '1' 
+                : null;
+            
+            $orderIntentTimestamp = isset($this->context->cookie->two_order_intent_timestamp) 
+                ? (int)$this->context->cookie->two_order_intent_timestamp 
+                : 0;
+            
+            // Check if order intent was checked
+            if ($orderIntentApproved === null) {
+                // Order intent was never checked - log but allow (may be disabled or skipped)
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Order placed without order intent check (may be disabled or skipped) - Cart ID: ' . $cart->id,
+                    2
+                );
+            } elseif ($orderIntentApproved === false) {
+                // Order intent was checked and DECLINED - BLOCK ORDER
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Order BLOCKED - order intent was declined. Cart ID: ' . $cart->id . ', Customer ID: ' . $customer->id,
+                    3
+                );
+                
+                $message = $this->module->l('Your order could not be approved by Two payment. Please choose another payment method or contact support.');
+                $this->errors[] = $message;
+                $this->redirectWithNotifications('index.php?controller=order');
+                return; // Stop execution - prevent order creation
+            } elseif ($orderIntentTimestamp > 0) {
+                // Check if result is recent (within configured expiry time)
+                $age = time() - $orderIntentTimestamp;
+                if ($age > $this->module::ORDER_INTENT_EXPIRY_SECONDS) {
+                    PrestaShopLogger::addLog(
+                        'TwoPayment: Order intent result expired (age: ' . $age . ' seconds). Requiring re-check. Cart ID: ' . $cart->id,
+                        2
+                    );
+                    
+                    // Block order - require fresh order intent check
+                    $message = $this->module->l('Your payment approval has expired. Please refresh the page and try again.');
+                    $this->errors[] = $message;
+                    $this->redirectWithNotifications('index.php?controller=order');
+                    return; // Stop execution - prevent order creation
+                }
+            }
+        }
 
         // CRITICAL: Create PrestaShop order FIRST to generate order ID for Two's callback URLs
         // If Two rejects (non-201), we'll DELETE the order entirely (no phantom orders)

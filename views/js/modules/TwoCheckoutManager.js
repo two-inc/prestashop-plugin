@@ -369,6 +369,8 @@ class TwoCheckoutManager {
             if (this.orderIntent && this.orderIntent.lastResult) {
                 this.orderIntent.lastResult = null;
             }
+            // Clear server-side result when switching away from Two
+            this.clearOrderIntentResultFromServer();
         }
     }
     
@@ -441,13 +443,23 @@ class TwoCheckoutManager {
      * Handle Two payment selection specifically
      */
     handleTwoPaymentSelection() {
-        if (this.config.orderIntentEnabled) {
+        const isTwoSelected = this.isTwoPaymentSelected();
+        
+        if (isTwoSelected && this.config.orderIntentEnabled) {
             if (!this.orderIntent && window.TwoOrderIntent) {
                 this.initializeOrderIntent();
             }
             if (this.orderIntent) {
                 this.triggerOrderIntentForSelection();
             }
+        } else if (this.orderIntent) {
+            // Clear order intent UI when switching away from Two
+            this.clearOrderIntentUI();
+            if (this.orderIntent && this.orderIntent.lastResult) {
+                this.orderIntent.lastResult = null;
+            }
+            // Clear server-side result when switching away from Two
+            this.clearOrderIntentResultFromServer();
         }
     }
     
@@ -532,6 +544,10 @@ class TwoCheckoutManager {
             this.showOrderIntentError(result.error || 'Order intent check failed');
             return;
         }
+
+        // Save order intent result to server for server-side validation
+        // This prevents bypassing client-side blocking by disabling JavaScript
+        this.saveOrderIntentResultToServer(result.approved);
 
         // Build company-aware message for display (translated)
         const companyName = this.getSelectedCompanyName();
@@ -1037,6 +1053,61 @@ class TwoCheckoutManager {
             const activeTerm = defaultTerm || (availableTerms.length === 1 ? availableTerms[0] : availableTerms[0]);
             selectedDays.textContent = activeTerm;
         }
+    }
+
+    /**
+     * Save order intent result to server for server-side validation
+     * Prevents bypassing client-side blocking
+     */
+    saveOrderIntentResultToServer(approved) {
+        if (!this.config.orderIntentUrl || !window.twopayment || !window.twopayment.ajax_token) {
+            return;
+        }
+
+        $.ajax({
+            url: this.config.orderIntentUrl,
+            type: 'POST',
+            data: {
+                ajax: 1,
+                action: 'saveOrderIntentResult',
+                approved: approved ? 1 : 0,
+                token: window.twopayment.ajax_token
+            },
+            success: () => {
+                // Result saved for server-side validation
+            },
+            error: (xhr, status, error) => {
+                // Log but don't block - client-side blocking still works
+                console.warn('TwoPayment: Failed to save order intent result to server:', error);
+            }
+        });
+    }
+
+    /**
+     * Clear order intent result from server
+     * Called when user switches away from Two payment method
+     */
+    clearOrderIntentResultFromServer() {
+        if (!this.config.orderIntentUrl || !window.twopayment || !window.twopayment.ajax_token) {
+            return;
+        }
+
+        $.ajax({
+            url: this.config.orderIntentUrl,
+            type: 'POST',
+            data: {
+                ajax: 1,
+                action: 'clearOrderIntentResult',
+                token: window.twopayment.ajax_token
+            },
+            success: () => {
+                // Result cleared
+            },
+            error: () => {
+                // Non-critical - just log
+                console.warn('TwoPayment: Failed to clear order intent result from server');
+            }
+        });
     }
 
     /**
