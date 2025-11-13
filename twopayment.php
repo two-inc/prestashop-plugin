@@ -23,7 +23,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.1.2';
+        $this->version = '2.2.0';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -34,7 +34,7 @@ class Twopayment extends PaymentModule
         $this->displayName = $this->l('Two - BNPL for businesses');
         $this->description = $this->l('This module allows any merchant to accept payments with Two payment gateway.');
         $this->merchant_short_name = Configuration::get('PS_TWO_MERCHANT_SHORT_NAME');
-        $this->api_key = Configuration::get('PS_TWO_MERACHANT_API_KEY');
+        $this->api_key = Configuration::get('PS_TWO_MERCHANT_API_KEY');
         $this->enable_company_name = Configuration::get('PS_TWO_ENABLE_COMPANY_NAME');
         $this->enable_company_id = Configuration::get('PS_TWO_ENABLE_COMPANY_ID');
         $this->enable_department = Configuration::get('PS_TWO_ENABLE_DEPARTMENT');
@@ -86,7 +86,6 @@ class Twopayment extends PaymentModule
             $this->registerHook('displayAdminOrderTabLink') &&
             $this->registerHook('displayAdminOrderTabContent') &&
             $this->registerHook('displayOrderDetail') &&
-            $this->registerHook('actionOrderSlipAdd') &&
             $this->registerHook('actionOrderEdited') &&
             $this->registerHook('actionAdminOrdersTrackingNumberUpdate') &&
             $this->registerHook('actionCustomerAddressSave') &&
@@ -107,7 +106,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_SUB_TITLE', $installData['PS_TWO_SUB_TITLE']);
         Configuration::updateValue('PS_TWO_ENVIRONMENT', 'development'); // Default to development for safety
         Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', '');
-        Configuration::updateValue('PS_TWO_MERACHANT_API_KEY', '');
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', '');
         Configuration::updateValue('PS_TWO_MERCHANT_ID', '');
         Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 0);
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', 1);
@@ -115,6 +114,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', 1);
         Configuration::updateValue('PS_TWO_ENABLE_ORDER_INTENT', 1);
         Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', 0);
+        Configuration::updateValue('PS_TWO_USE_OWN_INVOICES', 0); // Disabled by default - must be enabled after coordinating with Two
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1); // Default: 30 days enabled
         // Custom Two order states will be created by createTwoOrderState()
         // Set sensible default mappings to standard PrestaShop states
@@ -243,6 +243,11 @@ class Twopayment extends PaymentModule
             `two_order_status` TEXT NULL,
             `two_day_on_invoice` TEXT NULL,
             `two_invoice_url` TEXT NULL,
+            `two_invoice_id` VARCHAR(255) NULL,
+            `two_invoice_upload_status` ENUM("PENDING", "UPLOADING", "UPLOADED", "FAILED", "NOT_APPLICABLE") DEFAULT "NOT_APPLICABLE",
+            `two_invoice_upload_reference` VARCHAR(255) NULL,
+            `two_invoice_upload_error` TEXT NULL,
+            `two_invoice_uploaded_at` DATETIME NULL,
             PRIMARY KEY  (`id_two`)
         ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8;';
 
@@ -266,7 +271,6 @@ class Twopayment extends PaymentModule
             $this->unregisterHook('displayAdminOrderTabLink') &&
             $this->unregisterHook('displayAdminOrderTabContent') &&
             $this->unregisterHook('displayOrderDetail') &&
-            $this->unregisterHook('actionOrderSlipAdd') &&
             $this->unregisterHook('actionOrderEdited') &&
             $this->unregisterHook('actionAdminOrdersTrackingNumberUpdate') &&
             $this->unregisterHook('actionCustomerAddressSave') &&
@@ -280,7 +284,7 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_TITLE');
         Configuration::deleteByName('PS_TWO_SUB_TITLE');
         Configuration::deleteByName('PS_TWO_MERCHANT_SHORT_NAME');
-        Configuration::deleteByName('PS_TWO_MERACHANT_API_KEY');
+        Configuration::deleteByName('PS_TWO_MERCHANT_API_KEY');
         Configuration::deleteByName('PS_TWO_MERCHANT_ID');
         Configuration::deleteByName('PS_TWO_API_KEY_VERIFIED');
         Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_NAME');
@@ -402,7 +406,7 @@ class Twopayment extends PaymentModule
                     array(
                         'type' => 'password',
                         'label' => $this->l('Api key'),
-                        'name' => 'PS_TWO_MERACHANT_API_KEY',
+                        'name' => 'PS_TWO_MERCHANT_API_KEY',
                         'required' => true,
                         'desc' => $this->l('Enter your api key which is provided by Two.'),
                     ),
@@ -485,7 +489,7 @@ class Twopayment extends PaymentModule
             $fields_values['PS_TWO_SUB_TITLE'][$language['id_lang']] = Tools::getValue('PS_TWO_SUB_TITLE_' . (int) $language['id_lang'], Configuration::get('PS_TWO_SUB_TITLE', (int) $language['id_lang']));
         }
         $fields_values['PS_TWO_MERCHANT_SHORT_NAME'] = Tools::getValue('PS_TWO_MERCHANT_SHORT_NAME', Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'));
-        $fields_values['PS_TWO_MERACHANT_API_KEY'] = Tools::getValue('PS_TWO_MERACHANT_API_KEY', Configuration::get('PS_TWO_MERACHANT_API_KEY'));
+        $fields_values['PS_TWO_MERCHANT_API_KEY'] = Tools::getValue('PS_TWO_MERCHANT_API_KEY', Configuration::get('PS_TWO_MERCHANT_API_KEY'));
         $fields_values['PS_TWO_ENVIRONMENT'] = Tools::getValue('PS_TWO_ENVIRONMENT', Configuration::get('PS_TWO_ENVIRONMENT'));
         
         // Payment terms checkboxes
@@ -506,7 +510,7 @@ class Twopayment extends PaymentModule
                 $this->errors[] = $this->l('Enter a sub title.');
             }
         }
-        if (Tools::isEmpty(Tools::getValue('PS_TWO_MERACHANT_API_KEY'))) {
+        if (Tools::isEmpty(Tools::getValue('PS_TWO_MERCHANT_API_KEY'))) {
             $this->errors[] = $this->l('Enter an API key.');
         }
         
@@ -529,7 +533,7 @@ class Twopayment extends PaymentModule
             $this->errors[] = $this->l('You must select at least one payment term.');
         }
         // Verify API key with Two against selected environment and capture merchant id and short name
-        $apiKey = trim(Tools::getValue('PS_TWO_MERACHANT_API_KEY'));
+        $apiKey = trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY'));
         $env = Tools::getValue('PS_TWO_ENVIRONMENT');
         if (!empty($apiKey) && in_array($env, array('production','development'))) {
             $verify = $this->verifyTwoApiKey($apiKey, $env);
@@ -559,7 +563,7 @@ class Twopayment extends PaymentModule
         // If verification succeeded, use verified short name; else fallback to form (kept for safety)
         $shortNameToSave = $this->verifiedMerchantShortName ? $this->verifiedMerchantShortName : trim(Tools::getValue('PS_TWO_MERCHANT_SHORT_NAME'));
         Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', $shortNameToSave);
-        Configuration::updateValue('PS_TWO_MERACHANT_API_KEY', trim(Tools::getValue('PS_TWO_MERACHANT_API_KEY')));
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY')));
         Configuration::updateValue('PS_TWO_ENVIRONMENT', Tools::getValue('PS_TWO_ENVIRONMENT'));
         if ($this->verifiedMerchantId) {
             Configuration::updateValue('PS_TWO_MERCHANT_ID', $this->verifiedMerchantId);
@@ -730,6 +734,26 @@ class Twopayment extends PaymentModule
                     ),
                     array(
                         'type' => 'switch',
+                        'label' => $this->l('Using Own Invoices'),
+                        'name' => 'PS_TWO_USE_OWN_INVOICES',
+                        'is_bool' => true,
+                        'desc' => $this->l('Only to be used if you are handling your own invoice and credit note distribution and must be communicated to Two as part of your implementation to ensure Two\'s invoice generation is disabled. If this toggle is enabled, PrestaShop invoices will be uploaded to Two when orders are fulfilled.'),
+                        'required' => true,
+                        'values' => array(
+                            array(
+                                'id' => 'PS_TWO_USE_OWN_INVOICES_ON',
+                                'value' => 1,
+                                'label' => $this->l('Yes')
+                            ),
+                            array(
+                                'id' => 'PS_TWO_USE_OWN_INVOICES_OFF',
+                                'value' => 0,
+                                'label' => $this->l('No')
+                            ),
+                        ),
+                    ),
+                    array(
+                        'type' => 'switch',
                         'label' => $this->l('Pre-approve the buyer during checkout and disable two if the buyer is declined'),
                         'name' => 'PS_TWO_ENABLE_ORDER_INTENT',
                         'is_bool' => true,
@@ -766,6 +790,7 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_ENABLE_DEPARTMENT'] = Tools::getValue('PS_TWO_ENABLE_DEPARTMENT', Configuration::get('PS_TWO_ENABLE_DEPARTMENT'));
         $fields_values['PS_TWO_ENABLE_PROJECT'] = Tools::getValue('PS_TWO_ENABLE_PROJECT', Configuration::get('PS_TWO_ENABLE_PROJECT'));
         $fields_values['PS_TWO_FINALIZE_PURCHASE'] = Tools::getValue('PS_TWO_FINALIZE_PURCHASE', Configuration::get('PS_TWO_FINALIZE_PURCHASE'));
+        $fields_values['PS_TWO_USE_OWN_INVOICES'] = Tools::getValue('PS_TWO_USE_OWN_INVOICES', Configuration::get('PS_TWO_USE_OWN_INVOICES'));
         $fields_values['PS_TWO_ENABLE_ORDER_INTENT'] = Tools::getValue('PS_TWO_ENABLE_ORDER_INTENT', Configuration::get('PS_TWO_ENABLE_ORDER_INTENT'));
         $fields_values['PS_TWO_ENABLE_B2B_B2C'] = Tools::getValue('PS_TWO_ENABLE_B2B_B2C', Configuration::get('PS_TWO_ENABLE_B2B_B2C'));
         return $fields_values;
@@ -784,6 +809,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_ENABLE_DEPARTMENT', Tools::getValue('PS_TWO_ENABLE_DEPARTMENT'));
         Configuration::updateValue('PS_TWO_ENABLE_PROJECT', Tools::getValue('PS_TWO_ENABLE_PROJECT'));
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', Tools::getValue('PS_TWO_FINALIZE_PURCHASE'));
+        Configuration::updateValue('PS_TWO_USE_OWN_INVOICES', Tools::getValue('PS_TWO_USE_OWN_INVOICES'));
         Configuration::updateValue('PS_TWO_ENABLE_ORDER_INTENT', Tools::getValue('PS_TWO_ENABLE_ORDER_INTENT'));
         Configuration::updateValue('PS_TWO_ENABLE_B2B_B2C', Tools::getValue('PS_TWO_ENABLE_B2B_B2C'));
 
@@ -1094,6 +1120,7 @@ class Twopayment extends PaymentModule
                             'two_order_status' => $response['status'],
                             'two_day_on_invoice' => (string)$this->getSelectedPaymentTerm(), // Selected payment term
                             'two_invoice_url' => $response['invoice_url'],
+                            'two_invoice_id' => isset($response['invoice_details']['id']) ? $response['invoice_details']['id'] : (isset($orderpaymentdata['two_invoice_id']) ? $orderpaymentdata['two_invoice_id'] : null),
                         );
                         $this->setTwoOrderPaymentData($id_order, $payment_data);
                     }
@@ -1130,8 +1157,16 @@ class Twopayment extends PaymentModule
                                     'two_order_status' => isset($order_after['status']) ? $order_after['status'] : (isset($orderpaymentdata['two_order_status']) ? $orderpaymentdata['two_order_status'] : ''),
                                     'two_day_on_invoice' => (string)$this->getSelectedPaymentTerm(), // Selected payment term
                                     'two_invoice_url' => isset($order_after['invoice_url']) ? $order_after['invoice_url'] : (isset($orderpaymentdata['two_invoice_url']) ? $orderpaymentdata['two_invoice_url'] : ''),
+                                    'two_invoice_id' => isset($order_after['invoice_details']['id']) ? $order_after['invoice_details']['id'] : (isset($orderpaymentdata['two_invoice_id']) ? $orderpaymentdata['two_invoice_id'] : null),
                                 );
                                 $this->setTwoOrderPaymentData($id_order, $payment_data);
+                            }
+                            
+                            // INVOICE UPLOAD: If "Using Own Invoices" is enabled, upload PrestaShop invoice to Two
+                            if (Configuration::get('PS_TWO_USE_OWN_INVOICES')) {
+                                // Re-fetch payment data to ensure we have the latest invoice_id
+                                $orderpaymentdata_refreshed = $this->getTwoOrderPaymentData($id_order);
+                                $this->uploadInvoiceAfterFulfillment($id_order, $orderpaymentdata_refreshed);
                             }
                         } else {
                             // Log fulfillment failure with detailed error information
@@ -1162,15 +1197,17 @@ class Twopayment extends PaymentModule
                                 'two_order_reference' => isset($order_after['merchant_reference']) ? $order_after['merchant_reference'] : (isset($orderpaymentdata['two_order_reference']) ? $orderpaymentdata['two_order_reference'] : ''),
                                 'two_order_state' => isset($order_after['state']) ? $order_after['state'] : (isset($orderpaymentdata['two_order_state']) ? $orderpaymentdata['two_order_state'] : ''),
                                 'two_order_status' => isset($order_after['status']) ? $order_after['status'] : (isset($orderpaymentdata['two_order_status']) ? $orderpaymentdata['two_order_status'] : ''),
-                                'two_day_on_invoice' => (string)$this->getSelectedPaymentTerm(), // Selected payment term
+                                'two_day_on_invoice' => (string)$this->getSelectedPaymentTerm(),
                                 'two_invoice_url' => isset($order_after['invoice_url']) ? $order_after['invoice_url'] : (isset($orderpaymentdata['two_invoice_url']) ? $orderpaymentdata['two_invoice_url'] : ''),
+                                'two_invoice_id' => isset($order_after['invoice_details']['id']) ? $order_after['invoice_details']['id'] : (isset($orderpaymentdata['two_invoice_id']) ? $orderpaymentdata['two_invoice_id'] : null),
                             );
-                            $this->setTwoOrderPaymentData($id_order, $payment_data);
+                            $this->setTwoOrderPaymentData($order->id, $payment_data);
                         }
+                        PrestaShopLogger::addLog('TwoPayment: Full refund successful for order ' . $order->id, 1);
                     } else {
-                        // Log refund failure
+                        // Log refund failure with details
                         $error_message = isset($response['error']) ? (is_array($response['error']) ? json_encode($response['error']) : $response['error']) : 'Unknown error';
-                        PrestaShopLogger::addLog('TwoPayment: Refund failed for Two order ID: ' . $two_order_id . ', Error: ' . $error_message . ', Response: ' . json_encode($response), 3);
+                        PrestaShopLogger::addLog('TwoPayment: Full refund failed for Two order ID: ' . $two_order_id . ', Error: ' . $error_message . ', Response: ' . json_encode($response), 3);
                     }
                 }
             }
@@ -1310,7 +1347,7 @@ class Twopayment extends PaymentModule
         $this->context->controller->registerJavascript('two-company-search', 'modules/twopayment/views/js/modules/TwoCompanySearch.js', array('priority' => 201, 'async' => false));
         $this->context->controller->registerJavascript('two-order-intent', 'modules/twopayment/views/js/modules/TwoOrderIntent.js', array('priority' => 202, 'async' => false));
         $this->context->controller->registerJavascript('two-field-validation', 'modules/twopayment/views/js/modules/TwoFieldValidation.js', array('priority' => 203, 'async' => false));
-        $this->context->controller->registerJavascript('two-phone-validation', 'modules/twopayment/views/js/modules/TwoPhoneValidation.js', array('priority' => 204, 'async' => false));
+        // Phone validation removed - Two API handles phone number validation
         $this->context->controller->registerJavascript('two-checkout-manager', 'modules/twopayment/views/js/modules/TwoCheckoutManager.js', array('priority' => 205, 'async' => false));
         $this->context->controller->registerJavascript('two-script', 'modules/twopayment/views/js/twopayment.js', array('priority' => 206, 'async' => false));
     }
@@ -1819,6 +1856,30 @@ class Twopayment extends PaymentModule
         return $request_data;
     }
 
+    /**
+     * Generate a deterministic UUID v4 from a seed string
+     * This ensures consistent UUIDs for the same input across multiple calls
+     * 
+     * @param string $seed Seed string to generate UUID from
+     * @return string UUID v4 format
+     */
+    protected function generateUuidV4FromSeed($seed)
+    {
+        // Generate MD5 hash of seed (128 bits = 32 hex chars)
+        $hash = md5($seed);
+        
+        // Format as UUID v4: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+        // Where y is one of 8, 9, a, or b (to set variant bits)
+        return sprintf(
+            '%08s-%04s-4%03s-%04x-%012s',
+            substr($hash, 0, 8),  // 8 chars
+            substr($hash, 8, 4),  // 4 chars
+            substr($hash, 13, 3), // 3 chars (version 4)
+            hexdec(substr($hash, 16, 4)) & 0x3fff | 0x8000, // 4 chars (variant bits)
+            substr($hash, 20, 12) // 12 chars
+        );
+    }
+
     public function getTwoProductItems($cart)
     {
         $items = [];
@@ -1934,9 +1995,13 @@ class Twopayment extends PaymentModule
                 );
             }
             
+            // Use product name and description directly
+            $product_name = $line_item['name'];
+            $product_description = Tools::substr(strip_tags($line_item['description_short']), 0, 255);
+            
             $product = array(
-                'name' => $line_item['name'],
-                'description' => Tools::substr(strip_tags($line_item['description_short']), 0, 255),
+                'name' => $product_name,
+                'description' => $product_description,
                 'gross_amount' => (string)($this->getTwoRoundAmount($final_gross_amount)),
                 'net_amount' => (string)($this->getTwoRoundAmount($final_net_amount)),
                 'discount_amount' => (string)($this->getTwoRoundAmount($final_discount_amount)),
@@ -2473,6 +2538,65 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * SHARED UTILITY: Delete order completely from database
+     * Used when Two API rejects order creation (non-201 response)
+     * Ensures no phantom orders in PrestaShop database
+     * 
+     * @param int $id_order Order ID to delete
+     * @return bool True on success, false on failure
+     */
+    public function deleteOrder($id_order)
+    {
+        try {
+            if (!$id_order) {
+                PrestaShopLogger::addLog('TwoPayment: Cannot delete order - invalid ID', 3);
+                return false;
+            }
+            
+            $order = new Order((int) $id_order);
+            if (!Validate::isLoadedObject($order)) {
+                PrestaShopLogger::addLog('TwoPayment: Cannot delete order ' . $id_order . ' - not found', 2);
+                return false;
+            }
+            
+            // Log order details before deletion for audit trail
+            PrestaShopLogger::addLog(
+                'TwoPayment: Deleting order ' . $id_order . ' - ' .
+                'Customer: ' . $order->id_customer . ', ' .
+                'Cart: ' . $order->id_cart . ', ' .
+                'Total: ' . $order->total_paid . ', ' .
+                'Status: ' . $order->current_state,
+                2
+            );
+            
+            // Delete Two payment data from our custom table
+            try {
+                $sql = 'DELETE FROM `' . _DB_PREFIX_ . 'twopayment` WHERE `id_order` = ' . (int)$id_order;
+                Db::getInstance()->execute($sql);
+                PrestaShopLogger::addLog('TwoPayment: Deleted Two payment data for order ' . $id_order, 1);
+            } catch (Exception $e) {
+                PrestaShopLogger::addLog('TwoPayment: Failed to delete Two payment data for order ' . $id_order . ': ' . $e->getMessage(), 2);
+            }
+            
+            // Use PrestaShop's native delete method (handles cascading deletes)
+            // This removes: order_detail, order_history, order_carrier, order_invoice, etc.
+            $delete_result = $order->delete();
+            
+            if ($delete_result) {
+                PrestaShopLogger::addLog('TwoPayment: Successfully deleted order ' . $id_order . ' from database', 1);
+                return true;
+            } else {
+                PrestaShopLogger::addLog('TwoPayment: Failed to delete order ' . $id_order . ' - PrestaShop delete() returned false', 3);
+                return false;
+            }
+            
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Exception during order deletion for order ' . $id_order . ': ' . $e->getMessage(), 3);
+            return false;
+        }
+    }
+
+    /**
      * SHARED UTILITY: Change order status with proper validation
      * Used across multiple controllers to maintain consistency
      */
@@ -2561,10 +2685,19 @@ class Twopayment extends PaymentModule
             curl_setopt($ch, CURLOPT_POST, 1);
             curl_setopt($ch, CURLOPT_POSTFIELDS, $params);
             curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
-            $response = curl_exec($ch);
-            $response = json_decode($response, true);
-            curl_getinfo($ch);
+            $response_body = curl_exec($ch);
+            $http_status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             curl_close($ch);
+            
+            $response_data = json_decode($response_body, true);
+            
+            // Return array with HTTP status and response data for proper error handling
+            return [
+                'http_status' => (int)$http_status,
+                'data' => $response_data,
+                // BACKWARD COMPATIBILITY: Merge data into root for existing code
+                ...(is_array($response_data) ? $response_data : [])
+            ];
         } else {
             $url = sprintf('%s%s', $this->getTwoCheckoutHostUrl(), $endpoint);
             $url = $url . '?client=PS&client_v=' . $this->version;
@@ -2580,13 +2713,20 @@ class Twopayment extends PaymentModule
             curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
             curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0);
             curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
-            $response = curl_exec($ch);
-            $response = json_decode($response, true);
-            curl_getinfo($ch);
+            $response_body = curl_exec($ch);
+            $http_status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             curl_close($ch);
+            
+            $response_data = json_decode($response_body, true);
+            
+            // Return array with HTTP status and response data for proper error handling
+            return [
+                'http_status' => (int)$http_status,
+                'data' => $response_data,
+                // BACKWARD COMPATIBILITY: Merge data into root for existing code
+                ...(is_array($response_data) ? $response_data : [])
+            ];
         }
-
-        return $response;
     }
 
     public function checkTwoStartsWithString($string, $startString)
@@ -2630,6 +2770,7 @@ class Twopayment extends PaymentModule
                 'two_order_status' => pSQL($payment_data['two_order_status']),
                 'two_day_on_invoice' => pSQL($payment_data['two_day_on_invoice']),
                 'two_invoice_url' => pSQL($payment_data['two_invoice_url']),
+                'two_invoice_id' => isset($payment_data['two_invoice_id']) ? pSQL($payment_data['two_invoice_id']) : null,
             );
             Db::getInstance()->update('twopayment', $data, 'id_order = ' . (int) $id_order);
         } else {
@@ -2641,6 +2782,7 @@ class Twopayment extends PaymentModule
                 'two_order_status' => pSQL($payment_data['two_order_status']),
                 'two_day_on_invoice' => pSQL($payment_data['two_day_on_invoice']),
                 'two_invoice_url' => pSQL($payment_data['two_invoice_url']),
+                'two_invoice_id' => isset($payment_data['two_invoice_id']) ? pSQL($payment_data['two_invoice_id']) : null,
             );
             Db::getInstance()->insert('twopayment', $data);
         }
@@ -2679,6 +2821,7 @@ class Twopayment extends PaymentModule
                         'two_order_status' => $confirm_result['status'] ?: $twopaymentdata['two_order_status'],
                         'two_day_on_invoice' => $twopaymentdata['two_day_on_invoice'],
                         'two_invoice_url' => $twopaymentdata['two_invoice_url'],
+                        'two_invoice_id' => isset($confirm_result['invoice_details']['id']) ? $confirm_result['invoice_details']['id'] : $twopaymentdata['two_invoice_id'],
                     );
                     $this->setTwoOrderPaymentData($id_order, $payment_data);
                     
@@ -2769,6 +2912,7 @@ class Twopayment extends PaymentModule
                 'twopaymentdata' => $twopaymentdata,
                 'two_portal_url' => $this->getTwoPortalUrl(), // Dynamic portal URL based on environment
                 'two_pdf_url' => $pdf_url, // PDF invoice URL if available
+                'use_own_invoices' => (bool)Configuration::get('PS_TWO_USE_OWN_INVOICES'), // Show invoice upload section if enabled
             ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayAdminOrderTabContent.tpl');
         }
@@ -2804,7 +2948,141 @@ class Twopayment extends PaymentModule
             // Set cookie expiration (1 hour)
             $this->context->cookie->setExpire(time() + 3600);
             
-            PrestaShopLogger::addLog('TwoPayment: Company data captured from address save - Company: ' . $address->company, 1);
+            PrestaShopLogger::addLog('TwoPayment: Company data captured from address save - Company: ' . $address->company, 1);                                 
+        }
+    }
+    
+    /**
+     * Upload PrestaShop invoice to Two after successful fulfillment
+     * 
+     * This method is called when an order is fulfilled and "Using Own Invoices" is enabled.
+     * It uploads the PrestaShop-generated invoice PDF to Two using the three-step upload process.
+     * 
+     * @param int $id_order PrestaShop order ID
+     * @param array $orderpaymentdata Two payment data from database
+     * @return void
+     */
+    private function uploadInvoiceAfterFulfillment($id_order, $orderpaymentdata)
+    {
+        try {
+            // Validate we have the invoice ID
+            if (!isset($orderpaymentdata['two_invoice_id']) || empty($orderpaymentdata['two_invoice_id'])) {
+                PrestaShopLogger::addLog(
+                    'TwoInvoiceUpload: Cannot upload invoice - Two invoice ID missing for Order ' . $id_order . 
+                    '. Payment data keys: ' . implode(', ', array_keys($orderpaymentdata)) . 
+                    '. two_invoice_id value: ' . (isset($orderpaymentdata['two_invoice_id']) ? $orderpaymentdata['two_invoice_id'] : 'NOT SET'),
+                    2,
+                    null,
+                    'Order',
+                    $id_order
+                );
+                
+                // Update status to NOT_APPLICABLE (no invoice ID available)
+                Db::getInstance()->update(
+                    'twopayment',
+                    array('two_invoice_upload_status' => 'NOT_APPLICABLE'),
+                    'id_order = ' . (int)$id_order
+                );
+                return;
+            }
+            
+            $two_invoice_id = $orderpaymentdata['two_invoice_id'];
+            
+            // Check if already uploaded
+            if (isset($orderpaymentdata['two_invoice_upload_status']) && 
+                $orderpaymentdata['two_invoice_upload_status'] === 'UPLOADED') {
+                PrestaShopLogger::addLog(
+                    'TwoInvoiceUpload: Invoice already uploaded for Order ' . $id_order,
+                    1,
+                    null,
+                    'Order',
+                    $id_order
+                );
+                return;
+            }
+            
+            // Update status to UPLOADING
+            Db::getInstance()->update(
+                'twopayment',
+                array('two_invoice_upload_status' => 'UPLOADING'),
+                'id_order = ' . (int)$id_order
+            );
+            
+            PrestaShopLogger::addLog(
+                'TwoInvoiceUpload: Starting invoice upload process for Order ' . $id_order,
+                1,
+                null,
+                'Order',
+                $id_order
+            );
+            
+            // Load the invoice upload service
+            require_once dirname(__FILE__) . '/classes/TwoInvoiceUploadService.php';
+            $uploadService = new TwoInvoiceUploadService($this);
+            
+            // Upload invoice (index 0 for first/only document)
+            $result = $uploadService->uploadInvoice($id_order, $two_invoice_id, 0);
+            
+            // Update status based on result
+            if ($result['success']) {
+                Db::getInstance()->update(
+                    'twopayment',
+                    array(
+                        'two_invoice_upload_status' => 'UPLOADED',
+                        'two_invoice_upload_reference' => isset($result['reference']) ? pSQL($result['reference']) : null,
+                        'two_invoice_uploaded_at' => date('Y-m-d H:i:s'),
+                        'two_invoice_upload_error' => null, // Clear any previous error
+                    ),
+                    'id_order = ' . (int)$id_order
+                );
+                
+                PrestaShopLogger::addLog(
+                    'TwoInvoiceUpload: ✓ Invoice upload completed successfully for Order ' . $id_order,
+                    1,
+                    null,
+                    'Order',
+                    $id_order
+                );
+            } else {
+                $errorMessage = isset($result['error']) ? $result['error'] : 'Unknown error';
+                
+                Db::getInstance()->update(
+                    'twopayment',
+                    array(
+                        'two_invoice_upload_status' => 'FAILED',
+                        'two_invoice_upload_error' => pSQL($errorMessage),
+                    ),
+                    'id_order = ' . (int)$id_order
+                );
+                
+                PrestaShopLogger::addLog(
+                    'TwoInvoiceUpload: ✗ Invoice upload failed for Order ' . $id_order . ' - Error: ' . $errorMessage,
+                    3,
+                    null,
+                    'Order',
+                    $id_order
+                );
+            }
+            
+        } catch (Exception $e) {
+            // Log exception but don't break the fulfillment process
+            PrestaShopLogger::addLog(
+                'TwoInvoiceUpload: Exception during invoice upload for Order ' . $id_order . ' - ' . $e->getMessage(),
+                3,
+                null,
+                'Order',
+                $id_order
+            );
+            
+            // Update status to FAILED
+            Db::getInstance()->update(
+                'twopayment',
+                array(
+                    'two_invoice_upload_status' => 'FAILED',
+                    'two_invoice_upload_error' => pSQL('Exception: ' . $e->getMessage()),
+                ),
+                'id_order = ' . (int)$id_order
+            );
         }
     }
 }

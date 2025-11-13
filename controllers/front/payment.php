@@ -100,7 +100,8 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
         // NOTE: Order intent approval is handled client-side prior to order placement.
         // We avoid re-calling /v1/order_intent here to prevent mismatches and duplicate checks.
 
-        //Two Create order
+        // CRITICAL: Create PrestaShop order FIRST to generate order ID for Two's callback URLs
+        // If Two rejects (non-201), we'll DELETE the order entirely (no phantom orders)
         $initial_status = Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION');
         if (!$initial_status) {
             // Fallback to mapped state if custom state doesn't exist (for existing installations)
@@ -110,65 +111,81 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                 $initial_status = Configuration::get('PS_OS_PREPARATION');
             }
         }
-        $this->module->validateOrder($cart->id, $initial_status, $cart->getOrderTotal(true, Cart::BOTH), $this->module->displayName, null, array(), (int) $currency->id, false, $customer->secure_key);
-
-        $paymentdata = $this->module->getTwoNewOrderData($this->module->currentOrder, $cart);
-
-        $response = $this->module->setTwoPaymentRequest('/v1/order', $paymentdata, 'POST');
-
         
+        $this->module->validateOrder($cart->id, $initial_status, $cart->getOrderTotal(true, Cart::BOTH), $this->module->displayName, null, array(), (int) $currency->id, false, $customer->secure_key);
+        $created_order_id = $this->module->currentOrder;
+        
+        PrestaShopLogger::addLog('TwoPayment: PrestaShop order created (ID: ' . $created_order_id . '), now calling Two API to create Two order', 1);
 
-        if (!isset($response)) {
-            $this->module->restoreDuplicateCart($this->module->currentOrder, $customer->id);
-            $this->module->changeOrderStatus($this->module->currentOrder, Configuration::get('PS_TWO_OS_PAYMENT_ERROR_MAP'));
-            $message = $this->module->l('Something went wrong please contact store owner.');
-            $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
-        }
+        // Build Two order payload with PrestaShop order ID for callbacks
+        $paymentdata = $this->module->getTwoNewOrderData($created_order_id, $cart);
 
-        if (isset($response['result']) && $response['result'] === 'failure') {
-            $this->module->restoreDuplicateCart($this->module->currentOrder, $customer->id);
-            $this->module->changeOrderStatus($this->module->currentOrder, Configuration::get('PS_TWO_OS_PAYMENT_ERROR_MAP'));
-            PrestaShopLogger::addLog('TwoPayment: Two /v1/order failure response: ' . json_encode($response), 3);
-            $message = $this->module->l('Your order cannot be processed with Two at this time. Please select an alternative payment method.');
-            $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
-        }
+        // Call Two API to create order
+        $response = $this->module->setTwoPaymentRequest('/v1/order', $paymentdata, 'POST');
+        
+        // Extract HTTP status code from enhanced response structure
+        $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
+        
+        PrestaShopLogger::addLog('TwoPayment: Two API response - HTTP ' . $http_status . ' - Body: ' . json_encode($response), ($http_status === 201 ? 1 : 3));
 
-        if (isset($response['response']['code']) && ($response['response']['code'] === 401 || $response['response']['code'] === 403)) {
-            $this->module->restoreDuplicateCart($this->module->currentOrder, $customer->id);
-            $this->module->changeOrderStatus($this->module->currentOrder, Configuration::get('PS_TWO_OS_PAYMENT_ERROR_MAP'));
-            $message = $this->module->l('Website is not properly configured with Two payment.');
-            $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
-        }
-
-        if (isset($response['response']['code']) && $response['response']['code'] === 400) {
-            $this->module->restoreDuplicateCart($this->module->currentOrder, $customer->id);
-            $this->module->changeOrderStatus($this->module->currentOrder, Configuration::get('PS_TWO_OS_PAYMENT_ERROR_MAP'));
-            $message = $this->module->l('Something went wrong please contact store owner.');
-            $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
-        }
-
-        $two_err = $this->module->getTwoErrorMessage($response);
-        if ($two_err) {
-            $this->module->restoreDuplicateCart($this->module->currentOrder, $customer->id);
-            $this->module->changeOrderStatus($this->module->currentOrder, Configuration::get('PS_TWO_OS_PAYMENT_ERROR_MAP'));
-            $message = ($two_err != '') ? $two_err : $this->module->l('Something went wrong please contact store owner.');
-            $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
-        }
-
-        if (isset($response['response']['code']) && $response['response']['code'] >= 400) {
-            $this->module->restoreDuplicateCart($this->module->currentOrder, $customer->id);
-            $this->module->changeOrderStatus($this->module->currentOrder, Configuration::get('PS_TWO_OS_PAYMENT_ERROR_MAP'));
-            $message = $this->module->l('EHF Invoice is not available for this order.');
+        // CRITICAL CHECK: Only proceed if Two returned 201 Created
+        // Any other status = order creation failed, delete PrestaShop order
+        if ($http_status !== 201) {
+            // Two rejected the order - DELETE PrestaShop order completely (no phantom orders)
+            PrestaShopLogger::addLog('TwoPayment: Two API did not return 201 (got ' . $http_status . ') - DELETING PrestaShop order ' . $created_order_id, 3);
+            
+            // Delete order from database
+            $this->module->deleteOrder($created_order_id);
+            
+            // Restore cart so customer can try again
+            $this->module->restoreDuplicateCart($created_order_id, $customer->id);
+            
+            // Determine user-friendly error message based on response
+            $message = $this->module->l('Unable to process your order with Two payment.');
+            
+            if (!isset($response) || $http_status === 0) {
+                $message = $this->module->l('Connection error with payment provider. Please try again.');
+            } elseif ($http_status === 401 || $http_status === 403) {
+                $message = $this->module->l('Payment method configuration error. Please contact the store.');
+            } elseif ($http_status === 400) {
+                // Try to extract specific error from Two's response
+                $two_err = $this->module->getTwoErrorMessage($response);
+                if ($two_err) {
+                    $message = $two_err;
+                } else {
+                    $message = $this->module->l('Invalid order data. Please check your details and try again.');
+                }
+            } elseif ($http_status >= 500) {
+                $message = $this->module->l('Payment provider temporarily unavailable. Please try again later.');
+            }
+            
             $this->errors[] = $message;
             $this->redirectWithNotifications('index.php?controller=order');
         }
 
         if (isset($response['id']) && $response['id']) {
+            // Extract invoice ID from response if available
+            $invoice_id = isset($response['invoice_details']['id']) ? $response['invoice_details']['id'] : null;
+            
+            // Log invoice ID extraction for debugging
+            if ($invoice_id) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Invoice ID extracted from order creation - Order ' . $this->module->currentOrder . ', Invoice ID: ' . $invoice_id,
+                    1,
+                    null,
+                    'Order',
+                    $this->module->currentOrder
+                );
+            } else {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: No invoice ID in order creation response - Order ' . $this->module->currentOrder,
+                    2,
+                    null,
+                    'Order',
+                    $this->module->currentOrder
+                );
+            }
+            
             $payment_data = array(
                 'two_order_id' => $response['id'],
                 'two_order_reference' => $response['merchant_reference'],
@@ -176,6 +193,7 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                 'two_order_status' => $response['status'],
                 'two_day_on_invoice' => (string)$this->module->getSelectedPaymentTerm(), // Selected payment term
                 'two_invoice_url' => $response['invoice_url'],
+                'two_invoice_id' => $invoice_id,
             );
 
             $this->module->setTwoOrderPaymentData($this->module->currentOrder, $payment_data);

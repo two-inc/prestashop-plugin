@@ -1159,10 +1159,7 @@ class TwoCheckoutManager {
             }
         }
 
-        // Initialize phone validation on updated form
-        if (window.TwoPhoneValidation) {
-            try { new TwoPhoneValidation(); } catch (e) {}
-        }
+        // Phone validation removed - Two API handles validation
     }
     
     /**
@@ -1256,10 +1253,7 @@ class TwoCheckoutManager {
             this.initializeCompanySearch();
         }
         
-        // Initialize phone validation on address step
-        if (this.currentStep === 'address' && window.TwoPhoneValidation) {
-            try { new TwoPhoneValidation(); } catch (e) {}
-        }
+        // Phone validation removed - Two API handles validation
 
         // Initialize order intent for payment step with business accounts
         if (this.config.orderIntentEnabled && this.currentStep === 'payment' && this.isBusinessAccount) {
