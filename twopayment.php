@@ -1189,28 +1189,124 @@ class Twopayment extends PaymentModule
                         PrestaShopLogger::addLog('TwoPayment: Exception during fulfillment for Two order ID: ' . $two_order_id . ', Exception: ' . $e->getMessage(), 3);
                     }
                 } else if ($new_order_status->id == Configuration::get('PS_TWO_OS_REFUNDED_MAP')) {
-                    // Full refund: issue refund call with no request body
-                    $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/refund', [], 'POST');
-                    if (isset($response['id']) && $response['id']) {
-                        // Fetch latest order snapshot to update local state/status
-                        $order_after = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
-                        if (isset($order_after['id']) && $order_after['id']) {
-                            $payment_data = array(
-                                'two_order_id' => $two_order_id,
-                                'two_order_reference' => isset($order_after['merchant_reference']) ? $order_after['merchant_reference'] : (isset($orderpaymentdata['two_order_reference']) ? $orderpaymentdata['two_order_reference'] : ''),
-                                'two_order_state' => isset($order_after['state']) ? $order_after['state'] : (isset($orderpaymentdata['two_order_state']) ? $orderpaymentdata['two_order_state'] : ''),
-                                'two_order_status' => isset($order_after['status']) ? $order_after['status'] : (isset($orderpaymentdata['two_order_status']) ? $orderpaymentdata['two_order_status'] : ''),
-                                'two_day_on_invoice' => (string)$this->getSelectedPaymentTerm(),
-                                'two_invoice_url' => isset($order_after['invoice_url']) ? $order_after['invoice_url'] : (isset($orderpaymentdata['two_invoice_url']) ? $orderpaymentdata['two_invoice_url'] : ''),
-                                'two_invoice_id' => isset($order_after['invoice_details']['id']) ? $order_after['invoice_details']['id'] : (isset($orderpaymentdata['two_invoice_id']) ? $orderpaymentdata['two_invoice_id'] : null),
-                            );
-                            $this->setTwoOrderPaymentData($order->id, $payment_data);
+                    // Full refund: issue refund call with no request body - wrapped in try-catch for safety
+                    try {
+                        PrestaShopLogger::addLog('TwoPayment: Initiating full refund for Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Triggered by status: ' . $new_order_status->name . ' (ID: ' . $new_order_status->id . ')', 1);
+                        
+                        // Fetch current Two order to check if already fully refunded and validate refundable state
+                        $current_two_order = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
+                        if (!$current_two_order || !isset($current_two_order['id'])) {
+                            PrestaShopLogger::addLog('TwoPayment: Cannot retrieve Two order for refund check. Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id, 3);
+                            return;
                         }
-                        PrestaShopLogger::addLog('TwoPayment: Full refund successful for order ' . $order->id, 1);
-                    } else {
-                        // Log refund failure with details
-                        $error_message = isset($response['error']) ? (is_array($response['error']) ? json_encode($response['error']) : $response['error']) : 'Unknown error';
-                        PrestaShopLogger::addLog('TwoPayment: Full refund failed for Two order ID: ' . $two_order_id . ', Error: ' . $error_message . ', Response: ' . json_encode($response), 3);
+                        
+                        // Validate order state: Two only allows refunds for FULFILLED orders
+                        $order_state = isset($current_two_order['state']) ? $current_two_order['state'] : null;
+                        if ($order_state !== 'FULFILLED' && $order_state !== 'REFUNDED') {
+                            PrestaShopLogger::addLog('TwoPayment: Order not in refundable state. Current state: ' . $order_state . '. Two only allows refunds for FULFILLED orders. Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id, 2);
+                            return;
+                        }
+                        
+                        // Check if order is already fully refunded to prevent duplicate refund calls
+                        // This handles cases where admin changes status away from "Refunded" then back to "Refunded"
+                        // Note: We don't just rely on order `state` as it shows "REFUNDED" even for partial refunds
+                        
+                        // Check 1: Order state is already REFUNDED (skip if already refunded)
+                        if ($order_state === 'REFUNDED') {
+                            PrestaShopLogger::addLog('TwoPayment: Order already refunded (state: REFUNDED). Skipping refund call for Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id, 1);
+                            return;
+                        }
+                        
+                        // Check 2: Invoice payment status is already REFUNDED
+                        $invoice_payment_status = isset($current_two_order['invoice_details']['payment_status']) ? $current_two_order['invoice_details']['payment_status'] : null;
+                        if ($invoice_payment_status === 'REFUNDED') {
+                            PrestaShopLogger::addLog('TwoPayment: Invoice already refunded (payment_status: REFUNDED). Skipping refund call for Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id, 1);
+                            return;
+                        }
+                        
+                        // Check 3: Verify if full refund already exists by checking refunds array
+                        // Sum of refund total_amount (absolute values) should equal gross_amount for full refund
+                        // This is the most reliable check as it verifies the actual refunded amount
+                        if (isset($current_two_order['refunds']) && is_array($current_two_order['refunds']) && !empty($current_two_order['refunds'])) {
+                            $total_refunded = 0;
+                            $gross_amount = isset($current_two_order['gross_amount']) ? (float)$current_two_order['gross_amount'] : 0;
+                            
+                            foreach ($current_two_order['refunds'] as $refund) {
+                                if (isset($refund['total_amount'])) {
+                                    // total_amount is negative, so we use absolute value
+                                    $total_refunded += abs((float)$refund['total_amount']);
+                                }
+                            }
+                            
+                            // If total refunded equals gross amount, full refund already exists
+                            if ($gross_amount > 0 && abs($total_refunded - $gross_amount) < 0.01) {
+                                PrestaShopLogger::addLog('TwoPayment: Full refund already exists (refunded: ' . $total_refunded . ', gross: ' . $gross_amount . '). Skipping refund call for Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id, 1);
+                                return;
+                            }
+                        }
+                        
+                        // Generate idempotency key to prevent duplicate refund calls (race condition protection)
+                        // Format: refund_{order_id}_{unique_hash} ensures uniqueness per refund attempt
+                        // Uses microtime + uniqid for maximum uniqueness even in high-concurrency scenarios
+                        $idempotency_key = 'refund_' . $two_order_id . '_' . md5($order->id . '_' . microtime(true) . '_' . uniqid('', true));
+                        
+                        // Issue refund call with no request body (full refund) and idempotency key
+                        $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/refund', [], 'POST', ['X-Idempotency-Key: ' . $idempotency_key]);
+                        
+                        // Extract HTTP status code from response
+                        $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
+                        
+                        // Only treat as success if HTTP status is 201 (Created)
+                        if ($http_status === 201 && isset($response['id']) && $response['id']) {
+                            // Fetch latest order snapshot to update local state/status
+                            $order_after = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
+                            if (isset($order_after['id']) && $order_after['id']) {
+                                $payment_data = array(
+                                    'two_order_id' => $two_order_id,
+                                    'two_order_reference' => isset($order_after['merchant_reference']) ? $order_after['merchant_reference'] : (isset($orderpaymentdata['two_order_reference']) ? $orderpaymentdata['two_order_reference'] : ''),
+                                    'two_order_state' => isset($order_after['state']) ? $order_after['state'] : (isset($orderpaymentdata['two_order_state']) ? $orderpaymentdata['two_order_state'] : ''),
+                                    'two_order_status' => isset($order_after['status']) ? $order_after['status'] : (isset($orderpaymentdata['two_order_status']) ? $orderpaymentdata['two_order_status'] : ''),
+                                    'two_day_on_invoice' => (string)$this->getSelectedPaymentTerm(),
+                                    'two_invoice_url' => isset($order_after['invoice_url']) ? $order_after['invoice_url'] : (isset($orderpaymentdata['two_invoice_url']) ? $orderpaymentdata['two_invoice_url'] : ''),
+                                    'two_invoice_id' => isset($order_after['invoice_details']['id']) ? $order_after['invoice_details']['id'] : (isset($orderpaymentdata['two_invoice_id']) ? $orderpaymentdata['two_invoice_id'] : null),
+                                );
+                                $this->setTwoOrderPaymentData($order->id, $payment_data);
+                            }
+                            PrestaShopLogger::addLog('TwoPayment: Full refund successful (HTTP 201) for Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id . ', Idempotency Key: ' . $idempotency_key, 1);
+                        } else {
+                            // Log refund failure with detailed error information including HTTP status
+                            $error_message = 'Unknown error';
+                            if (isset($response['error'])) {
+                                $error_message = is_array($response['error']) ? json_encode($response['error']) : $response['error'];
+                            } elseif (isset($response['message'])) {
+                                $error_message = $response['message'];
+                            }
+                            
+                            // Logging with HTTP status and context
+                            $log_message = 'TwoPayment: Full refund FAILED for Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id;
+                            $log_message .= ', HTTP Status: ' . ($http_status > 0 ? $http_status : 'Unknown');
+                            $log_message .= ', Error: ' . $error_message;
+                            $log_message .= ', Idempotency Key: ' . $idempotency_key;
+                            $log_message .= ', Response: ' . json_encode($response);
+                            
+                            PrestaShopLogger::addLog($log_message, 3);
+                            
+                            // Log specific error scenarios for easier troubleshooting
+                            if ($http_status === 400) {
+                                PrestaShopLogger::addLog('TwoPayment: Refund failed - Bad Request (400). Order may not be in refundable state or invalid data. Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id, 3);
+                            } elseif ($http_status === 409) {
+                                PrestaShopLogger::addLog('TwoPayment: Refund failed - Conflict (409). Possible duplicate refund attempt. Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id, 3);
+                            } elseif ($http_status >= 500) {
+                                PrestaShopLogger::addLog('TwoPayment: Refund failed - Server Error (' . $http_status . '). Two API temporarily unavailable. Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id, 3);
+                            } elseif ($http_status === 0) {
+                                PrestaShopLogger::addLog('TwoPayment: Refund failed - No HTTP response (connection error). Check network connectivity. Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id, 3);
+                            }
+                            
+                            // Don't interfere with PrestaShop's status change process
+                        }
+                    } catch (Exception $e) {
+                        // Catch any exceptions to prevent breaking the order status change
+                        PrestaShopLogger::addLog('TwoPayment: Exception during refund for Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id . ', Exception: ' . $e->getMessage() . ', Trace: ' . $e->getTraceAsString(), 3);
                     }
                 }
             }
@@ -2606,7 +2702,7 @@ class Twopayment extends PaymentModule
     }
 
 
-    public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST')
+    public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
     {
         if ($method == "POST" || $method == "PUT") {
             $url = sprintf('%s%s', $this->getTwoCheckoutHostUrl(), $endpoint);
@@ -2616,6 +2712,11 @@ class Twopayment extends PaymentModule
                 'Content-Type: application/json; charset=utf-8',
                 'X-API-Key:' . $this->api_key,
             ];
+            
+            // Merge additional headers (e.g., idempotency key)
+            if (!empty($additional_headers) && is_array($additional_headers)) {
+                $headers = array_merge($headers, $additional_headers);
+            }
             
             $ch = curl_init();
             curl_setopt($ch, CURLOPT_URL, $url);
