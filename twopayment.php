@@ -112,6 +112,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', '');
         Configuration::updateValue('PS_TWO_MERCHANT_ID', '');
         Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 0);
+        Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', 0); // Default: SSL verification enabled (secure)
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', 1);
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_ID', 1);
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', 1);
@@ -290,6 +291,7 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_MERCHANT_API_KEY');
         Configuration::deleteByName('PS_TWO_MERCHANT_ID');
         Configuration::deleteByName('PS_TWO_API_KEY_VERIFIED');
+        Configuration::deleteByName('PS_TWO_DISABLE_SSL_VERIFY');
         Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_NAME');
         Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_ID');
         Configuration::deleteByName('PS_TWO_ENABLE_DEPARTMENT');
@@ -568,6 +570,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', $shortNameToSave);
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY')));
         Configuration::updateValue('PS_TWO_ENVIRONMENT', Tools::getValue('PS_TWO_ENVIRONMENT'));
+        Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int)Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
         if ($this->verifiedMerchantId) {
             Configuration::updateValue('PS_TWO_MERCHANT_ID', $this->verifiedMerchantId);
             Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 1);
@@ -775,6 +778,26 @@ class Twopayment extends PaymentModule
                             ),
                         ),
                     ),
+                    array(
+                        'type' => 'switch',
+                        'label' => $this->l('Disable SSL Verification (Corporate Networks Only)'),
+                        'name' => 'PS_TWO_DISABLE_SSL_VERIFY',
+                        'is_bool' => true,
+                        'desc' => $this->l('WARNING: Only enable this if you are behind a corporate proxy with custom SSL certificates. This disables SSL certificate verification and is a SECURITY RISK. NOT RECOMMENDED for production.'),
+                        'required' => true,
+                        'values' => array(
+                            array(
+                                'id' => 'PS_TWO_DISABLE_SSL_VERIFY_ON',
+                                'value' => 1,
+                                'label' => $this->l('Yes (Not Recommended)')
+                            ),
+                            array(
+                                'id' => 'PS_TWO_DISABLE_SSL_VERIFY_OFF',
+                                'value' => 0,
+                                'label' => $this->l('No (Secure)')
+                            ),
+                        ),
+                    ),
                 ),
                 'submit' => array(
                     'title' => $this->l('Save'),
@@ -796,6 +819,7 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_USE_OWN_INVOICES'] = Tools::getValue('PS_TWO_USE_OWN_INVOICES', Configuration::get('PS_TWO_USE_OWN_INVOICES'));
         $fields_values['PS_TWO_ENABLE_ORDER_INTENT'] = Tools::getValue('PS_TWO_ENABLE_ORDER_INTENT', Configuration::get('PS_TWO_ENABLE_ORDER_INTENT'));
         $fields_values['PS_TWO_ENABLE_B2B_B2C'] = Tools::getValue('PS_TWO_ENABLE_B2B_B2C', Configuration::get('PS_TWO_ENABLE_B2B_B2C'));
+        $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
         return $fields_values;
     }
 
@@ -2387,12 +2411,25 @@ class Twopayment extends PaymentModule
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0);
+        
+        // SSL VERIFICATION - Secure by default
+        $this->configureSslVerification($ch);
+        
         curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'GET');
         $response = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curl_error = curl_error($ch);
         curl_close($ch);
+        
+        // Handle SSL/connection errors
+        if ($response === false || !empty($curl_error)) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: API key verification failed - cURL error: ' . $curl_error . 
+                ' (URL: ' . $url . ')',
+                3
+            );
+            return false;
+        }
 
         if ($httpCode !== 200 || !$response) {
             PrestaShopLogger::addLog('TwoPayment: API key verification failed. HTTP ' . (int)$httpCode . ' Response: ' . (is_string($response) ? $response : ''), 2);
@@ -2723,14 +2760,38 @@ class Twopayment extends PaymentModule
             curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_TIMEOUT, 60);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0);
+            
+            // SSL VERIFICATION - Secure by default
+            $this->configureSslVerification($ch);
+            
             curl_setopt($ch, CURLOPT_POST, 1);
             curl_setopt($ch, CURLOPT_POSTFIELDS, $params);
             curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
+            
             $response_body = curl_exec($ch);
             $http_status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curl_error = curl_error($ch);
             curl_close($ch);
+            
+            // Handle SSL/connection errors
+            if ($response_body === false || !empty($curl_error)) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: cURL error - ' . $curl_error . 
+                    ' (URL: ' . $url . ', Endpoint: ' . $endpoint . ')',
+                    3
+                );
+                
+                return [
+                    'http_status' => 0,
+                    'data' => [
+                        'error' => 'Connection error',
+                        'error_message' => 'Unable to connect to Two API. Please check your server configuration.',
+                        'curl_error' => $curl_error
+                    ],
+                    'error' => 'Connection error',
+                    'error_message' => 'Unable to connect to Two API'
+                ];
+            }
             
             $response_data = json_decode($response_body, true);
             
@@ -2753,12 +2814,36 @@ class Twopayment extends PaymentModule
             curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_TIMEOUT, 60);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0);
+            
+            // SSL VERIFICATION - Secure by default
+            $this->configureSslVerification($ch);
+            
             curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
+            
             $response_body = curl_exec($ch);
             $http_status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curl_error = curl_error($ch);
             curl_close($ch);
+            
+            // Handle SSL/connection errors
+            if ($response_body === false || !empty($curl_error)) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: cURL error - ' . $curl_error . 
+                    ' (URL: ' . $url . ', Endpoint: ' . $endpoint . ')',
+                    3
+                );
+                
+                return [
+                    'http_status' => 0,
+                    'data' => [
+                        'error' => 'Connection error',
+                        'error_message' => 'Unable to connect to Two API. Please check your server configuration.',
+                        'curl_error' => $curl_error
+                    ],
+                    'error' => 'Connection error',
+                    'error_message' => 'Unable to connect to Two API'
+                ];
+            }
             
             $response_data = json_decode($response_body, true);
             
@@ -2770,6 +2855,76 @@ class Twopayment extends PaymentModule
                 ...(is_array($response_data) ? $response_data : [])
             ];
         }
+    }
+
+    /**
+     * Configure SSL verification for cURL requests
+     * Secure by default, with fallback for corporate networks
+     * 
+     * @param resource|CurlHandle $ch cURL handle
+     * @return void
+     */
+    private function configureSslVerification($ch)
+    {
+        // Check if SSL verification is disabled via configuration (for corporate networks)
+        $disable_ssl_verify = (bool)Configuration::get('PS_TWO_DISABLE_SSL_VERIFY', false);
+        
+        if ($disable_ssl_verify) {
+            // Only if explicitly configured (corporate networks with custom certificates)
+            PrestaShopLogger::addLog(
+                'TwoPayment: SSL verification disabled by configuration (security risk - corporate networks only)',
+                2
+            );
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        } else {
+            // Enable SSL verification (secure by default)
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+            
+            // Try to find CA certificate bundle
+            $ca_bundle = $this->findCaBundle();
+            if ($ca_bundle) {
+                curl_setopt($ch, CURLOPT_CAINFO, $ca_bundle);
+            }
+        }
+    }
+    
+    /**
+     * Find CA certificate bundle for SSL verification
+     * Checks common system locations for CA certificates
+     * 
+     * @return string|null Path to CA bundle or null if not found
+     */
+    private function findCaBundle()
+    {
+        $ca_locations = [
+            _PS_CACHE_DIR_ . 'ca-bundle.crt',
+            '/etc/ssl/certs/ca-certificates.crt',  // Debian/Ubuntu
+            '/etc/pki/tls/certs/ca-bundle.crt',    // CentOS/RHEL
+            '/usr/local/etc/openssl/cert.pem',      // macOS Homebrew
+            '/etc/ssl/cert.pem',                    // Alpine Linux
+            '/usr/share/ssl/certs/ca-bundle.crt',   // Some Linux distributions
+            '/opt/local/share/curl/curl-ca-bundle.crt', // macOS MacPorts
+        ];
+        
+        foreach ($ca_locations as $location) {
+            if (file_exists($location) && is_readable($location)) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Using CA bundle: ' . $location,
+                    1
+                );
+                return $location;
+            }
+        }
+        
+        // Log warning if no CA bundle found (but still try with system defaults)
+        PrestaShopLogger::addLog(
+            'TwoPayment: No CA bundle found in common locations. Using system default CA certificates.',
+            2
+        );
+        
+        return null;
     }
 
     public function checkTwoStartsWithString($string, $startString)
