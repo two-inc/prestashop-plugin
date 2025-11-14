@@ -169,11 +169,11 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
         // Extract HTTP status code from enhanced response structure
         $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
         
-        PrestaShopLogger::addLog('TwoPayment: Two API response - HTTP ' . $http_status . ' - Body: ' . json_encode($response), ($http_status === 201 ? 1 : 3));
+        PrestaShopLogger::addLog('TwoPayment: Two API response - HTTP ' . $http_status . ' - Body: ' . json_encode($response), ($http_status === Twopayment::HTTP_STATUS_CREATED ? 1 : 3));
 
         // CRITICAL CHECK: Only proceed if Two returned 201 Created
         // Any other status = order creation failed, delete PrestaShop order
-        if ($http_status !== 201) {
+        if ($http_status !== Twopayment::HTTP_STATUS_CREATED) {
             // Two rejected the order - DELETE PrestaShop order completely (no phantom orders)
             PrestaShopLogger::addLog('TwoPayment: Two API did not return 201 (got ' . $http_status . ') - DELETING PrestaShop order ' . $created_order_id, 3);
             
@@ -198,7 +198,7 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                 } else {
                     $message = $this->module->l('Invalid order data. Please check your details and try again.');
                 }
-            } elseif ($http_status >= 500) {
+            } elseif ($http_status >= Twopayment::HTTP_STATUS_SERVER_ERROR) {
                 $message = $this->module->l('Payment provider temporarily unavailable. Please try again later.');
             }
             

@@ -16,6 +16,30 @@ class Twopayment extends PaymentModule
     // Constants for order building logic
     const GROSS_AMOUNT_TOLERANCE = 0.02; // 2 cents tolerance for rounding differences
     const ORDER_INTENT_EXPIRY_SECONDS = 1800; // 30 minutes
+    
+    // Constants for payment terms
+    const DEFAULT_PAYMENT_TERM_DAYS = 30; // Default payment term in days
+    const PAYMENT_TERMS_OPTIONS = [7, 15, 20, 30, 45, 60, 90]; // Available payment term options
+    
+    // Constants for API timeouts (seconds)
+    const API_TIMEOUT_SHORT = 30; // Standard API timeout
+    const API_TIMEOUT_LONG = 60; // Extended timeout for file uploads
+    
+    // Constants for validation tolerances
+    const TAX_FORMULA_TOLERANCE = 0.01; // Tolerance for tax formula validation
+    const NET_FORMULA_TOLERANCE = 0.05; // Tolerance for net formula validation
+    
+    // Constants for delivery dates
+    const DEFAULT_DELIVERY_DAYS_OFFSET = 7; // Default expected delivery date offset
+    
+    // Constants for HTTP status codes
+    const HTTP_STATUS_OK = 200;
+    const HTTP_STATUS_CREATED = 201;
+    const HTTP_STATUS_BAD_REQUEST = 400;
+    const HTTP_STATUS_SERVER_ERROR = 500;
+    
+    // Constants for cookie/session expiry (seconds)
+    const COOKIE_EXPIRY_ONE_HOUR = 3600; // 1 hour
 
     protected $output = '';
     protected $errors = array();
@@ -102,7 +126,7 @@ class Twopayment extends PaymentModule
         $installData = array();
         foreach ($this->languages as $language) {
             $installData['PS_TWO_TITLE'][(int) $language['id_lang']] = 'Business invoice 30 days';
-            $installData['PS_TWO_SUB_TITLE'][(int) $language['id_lang']] = 'Receive the invoice via EHF and PDF';
+            $installData['PS_TWO_SUB_TITLE'][(int) $language['id_lang']] = 'Buy now, pay later - instant credit';
         }
         Configuration::updateValue('PS_TWO_TAB_VALUE', 1);
         Configuration::updateValue('PS_TWO_TITLE', $installData['PS_TWO_TITLE']);
@@ -498,7 +522,7 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_ENVIRONMENT'] = Tools::getValue('PS_TWO_ENVIRONMENT', Configuration::get('PS_TWO_ENVIRONMENT'));
         
         // Payment terms checkboxes
-        $payment_terms = array('7', '15', '20', '30', '45', '60', '90');
+        $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
         foreach ($payment_terms as $term) {
             $fields_values['PS_TWO_PAYMENT_TERMS_' . $term] = Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term, Configuration::get('PS_TWO_PAYMENT_TERMS_' . $term));
         }
@@ -526,7 +550,7 @@ class Twopayment extends PaymentModule
         }
         
         // Validate payment terms
-        $payment_terms = array('7', '15', '20', '30', '45', '60', '90');
+        $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
         $selected_terms = array();
         foreach ($payment_terms as $term) {
             if (Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term)) {
@@ -580,7 +604,7 @@ class Twopayment extends PaymentModule
         }
         
         // Save payment terms checkboxes
-        $payment_terms = array('7', '15', '20', '30', '45', '60', '90');
+        $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
         foreach ($payment_terms as $term) {
             Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . $term, Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term) ? 1 : 0);
         }
@@ -720,10 +744,10 @@ class Twopayment extends PaymentModule
                     ),
                     array(
                         'type' => 'switch',
-                        'label' => $this->l('Finalize purchase when order is shipped'),
+                        'label' => $this->l('Automatically fulfill orders with Two'),
                         'name' => 'PS_TWO_FINALIZE_PURCHASE',
                         'is_bool' => true,
-                        'desc' => $this->l('If you choose YES then order status of shipped to be passed to Two.'),
+                        'desc' => $this->l('When enabled, orders are automatically marked as fulfilled in Two when their status changes to one of your configured fulfillment trigger statuses (see Order Status Mapping). This activates buyer payment terms and begins the payout cycle. If disabled, you must fulfill orders manually in Two\'s Merchant Portal.'),
                         'required' => true,
                         'values' => array(
                             array(
@@ -949,7 +973,7 @@ class Twopayment extends PaymentModule
                         'type' => 'select',
                         'name' => 'PS_TWO_OS_FULFILLED_MAP',
                         'label' => $this->l('Two: Order Fulfilled - Trigger Statuses'),
-                        'desc' => $this->l('Select one or more order statuses that should trigger Two fulfillment. When any of these statuses are set, the order will be marked as fulfilled with Two. Buyer payment terms become active and payout cycle begins. You can select multiple statuses (Hold Ctrl/Cmd to select multiple. Default: Shipped'),
+                        'desc' => $this->buildFulfillmentStatusDescription(),
                         'required' => true,
                         'multiple' => true,
                         'size' => 8,
@@ -1050,7 +1074,86 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', Tools::getValue('PS_TWO_OS_CANCELLED_MAP'));
         Configuration::updateValue('PS_TWO_OS_REFUNDED_MAP', Tools::getValue('PS_TWO_OS_REFUNDED_MAP'));
 
-        $this->output .= $this->displayConfirmation($this->l('Two order status mapping updated successfully.'));
+        // Build confirmation message with currently selected fulfillment trigger statuses
+        $fulfilled_map = Configuration::get('PS_TWO_OS_FULFILLED_MAP');
+        $fulfilled_ids = json_decode($fulfilled_map, true);
+        if (!is_array($fulfilled_ids)) {
+            $fulfilled_ids = array($fulfilled_map);
+        }
+        
+        $status_names = $this->getOrderStatusNames($fulfilled_ids);
+        $status_list = !empty($status_names) ? implode(', ', $status_names) : $this->l('None selected');
+        
+        $confirmation_message = $this->l('Two order status mapping updated successfully.');
+        if (!empty($status_names)) {
+            $confirmation_message .= '<br><br><strong>' . $this->l('Currently active fulfillment trigger statuses:') . '</strong><br>';
+            $confirmation_message .= '<ul style="margin: 5px 0; padding-left: 20px;">';
+            foreach ($status_names as $status_name) {
+                $confirmation_message .= '<li>' . htmlspecialchars($status_name, ENT_QUOTES, 'UTF-8') . '</li>';
+            }
+            $confirmation_message .= '</ul>';
+        }
+
+        $this->output .= $this->displayConfirmation($confirmation_message);
+    }
+    
+    /**
+     * Build description for fulfillment status field showing currently active statuses
+     * 
+     * @return string Description HTML
+     */
+    protected function buildFulfillmentStatusDescription()
+    {
+        $base_desc = $this->l('Select one or more order statuses that should trigger Two fulfillment. When any of these statuses are set, the order will be marked as fulfilled with Two. Buyer payment terms become active and payout cycle begins. You can select multiple statuses (Hold Ctrl/Cmd to select multiple. Default: Shipped');
+        
+        // Get currently selected statuses
+        $fulfilled_map = Configuration::get('PS_TWO_OS_FULFILLED_MAP');
+        $fulfilled_ids = json_decode($fulfilled_map, true);
+        if (!is_array($fulfilled_ids)) {
+            if (!empty($fulfilled_map)) {
+                $fulfilled_ids = array($fulfilled_map);
+            } else {
+                $fulfilled_ids = array(Configuration::get('PS_OS_SHIPPING'));
+            }
+        }
+        
+        $status_names = $this->getOrderStatusNames($fulfilled_ids);
+        
+        if (!empty($status_names)) {
+            $base_desc .= '<br><br><strong style="color: #28a745;">' . $this->l('Currently active:') . '</strong> ';
+            $base_desc .= '<span style="color: #28a745; font-weight: bold;">' . implode(', ', array_map(function($name) {
+                return htmlspecialchars($name, ENT_QUOTES, 'UTF-8');
+            }, $status_names)) . '</span>';
+        }
+        
+        return $base_desc;
+    }
+    
+    /**
+     * Get order status names from status IDs
+     * 
+     * @param array $status_ids Array of order status IDs
+     * @return array Array of status names
+     */
+    protected function getOrderStatusNames($status_ids)
+    {
+        if (empty($status_ids) || !is_array($status_ids)) {
+            return array();
+        }
+        
+        $status_names = array();
+        $all_states = OrderState::getOrderStates($this->context->language->id);
+        
+        foreach ($status_ids as $status_id) {
+            foreach ($all_states as $state) {
+                if ((int)$state['id_order_state'] === (int)$status_id) {
+                    $status_names[] = $state['name'];
+                    break;
+                }
+            }
+        }
+        
+        return $status_names;
     }
 
     /**
@@ -1163,10 +1266,10 @@ class Twopayment extends PaymentModule
                             return;
                         }
                         
-                        // Only attempt fulfillment if order is in a fulfillable state
-                        // Both VERIFIED and CONFIRMED orders can be fulfilled according to Two API
-                        if (!in_array($current_two_order['state'], ['VERIFIED', 'CONFIRMED'])) {
-                            PrestaShopLogger::addLog('TwoPayment: Two order not in fulfillable state. Current state: ' . $current_two_order['state'] . ', Two order ID: ' . $two_order_id, 2);
+                        // Only attempt fulfillment if order is in CONFIRMED state
+                        // Only CONFIRMED orders can be fulfilled (VERIFIED orders must be confirmed first to ensure they have been sent to the checkout success page)
+                        if ($current_two_order['state'] !== 'CONFIRMED') {
+                            PrestaShopLogger::addLog('TwoPayment: Two order not in fulfillable state. Current state: ' . $current_two_order['state'] . ', Expected: CONFIRMED. Two order ID: ' . $two_order_id, 2);
                             return;
                         }
                         
@@ -1281,7 +1384,7 @@ class Twopayment extends PaymentModule
                         $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
                         
                         // Only treat as success if HTTP status is 201 (Created)
-                        if ($http_status === 201 && isset($response['id']) && $response['id']) {
+                        if ($http_status === self::HTTP_STATUS_CREATED && isset($response['id']) && $response['id']) {
                             // Fetch latest order snapshot to update local state/status
                             $order_after = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
                             if (isset($order_after['id']) && $order_after['id']) {
@@ -1296,7 +1399,7 @@ class Twopayment extends PaymentModule
                                 );
                                 $this->setTwoOrderPaymentData($order->id, $payment_data);
                             }
-                            PrestaShopLogger::addLog('TwoPayment: Full refund successful (HTTP 201) for Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id . ', Idempotency Key: ' . $idempotency_key, 1);
+                            PrestaShopLogger::addLog('TwoPayment: Full refund successful (HTTP ' . self::HTTP_STATUS_CREATED . ') for Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id . ', Idempotency Key: ' . $idempotency_key, 1);
                         } else {
                             // Log refund failure with detailed error information including HTTP status
                             $error_message = 'Unknown error';
@@ -1320,7 +1423,7 @@ class Twopayment extends PaymentModule
                                 PrestaShopLogger::addLog('TwoPayment: Refund failed - Bad Request (400). Order may not be in refundable state or invalid data. Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id, 3);
                             } elseif ($http_status === 409) {
                                 PrestaShopLogger::addLog('TwoPayment: Refund failed - Conflict (409). Possible duplicate refund attempt. Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id, 3);
-                            } elseif ($http_status >= 500) {
+                            } elseif ($http_status >= self::HTTP_STATUS_SERVER_ERROR) {
                                 PrestaShopLogger::addLog('TwoPayment: Refund failed - Server Error (' . $http_status . '). Two API temporarily unavailable. Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id, 3);
                             } elseif ($http_status === 0) {
                                 PrestaShopLogger::addLog('TwoPayment: Refund failed - No HTTP response (connection error). Check network connectivity. Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id, 3);
@@ -1526,7 +1629,7 @@ class Twopayment extends PaymentModule
             $title = $this->l('Pay with Two');
         }
         if (Tools::isEmpty($subtitle)) {
-            $subtitle = $this->l('Get 30 days to pay your invoice via EHF and PDF');
+            $subtitle = $this->l('Buy now, pay later - instant credit');
         }
 
         // Order intent is now handled on frontend via AJAX
@@ -1627,9 +1730,17 @@ class Twopayment extends PaymentModule
         $delivery_address = new Address($cart->id_address_delivery);
         $carrier_name = '';
         $tracking_number = '';
+        $expected_delivery_days = self::DEFAULT_DELIVERY_DAYS_OFFSET; // Default fallback
         $carrier = new Carrier($cart->id_carrier, $cart->id_lang);
         if (Validate::isLoadedObject($carrier)) {
             $carrier_name = $carrier->name;
+            // Use carrier's max_delivery_days if available, otherwise use default
+            if (isset($carrier->max_delivery_days) && $carrier->max_delivery_days > 0) {
+                $expected_delivery_days = (int)$carrier->max_delivery_days;
+            } elseif (isset($carrier->min_delivery_days) && $carrier->min_delivery_days > 0) {
+                // Fallback to min_delivery_days if max not available
+                $expected_delivery_days = (int)$carrier->min_delivery_days;
+            }
         }
 
         // Get line items (using PrestaShop's native values)
@@ -1702,7 +1813,7 @@ class Twopayment extends PaymentModule
             'shipping_details' => [
                 'carrier_name' => $carrier_name,
                 'tracking_number' => $tracking_number,
-                'expected_delivery_date' => date('Y-m-d', strtotime('+ 7 days'))
+                'expected_delivery_date' => date('Y-m-d', strtotime('+ ' . $expected_delivery_days . ' days'))
             ],
             'recurring' => false,
             'order_note' => '',
@@ -1734,9 +1845,17 @@ class Twopayment extends PaymentModule
         $delivery_address = new Address($cart->id_address_delivery);
         $carrier_name = '';
         $tracking_number = '';
+        $expected_delivery_days = self::DEFAULT_DELIVERY_DAYS_OFFSET; // Default fallback
         $carrier = new Carrier($cart->id_carrier, $cart->id_lang);
         if (Validate::isLoadedObject($carrier)) {
             $carrier_name = $carrier->name;
+            // Use carrier's max_delivery_days if available, otherwise use default
+            if (isset($carrier->max_delivery_days) && $carrier->max_delivery_days > 0) {
+                $expected_delivery_days = (int)$carrier->max_delivery_days;
+            } elseif (isset($carrier->min_delivery_days) && $carrier->min_delivery_days > 0) {
+                // Fallback to min_delivery_days if max not available
+                $expected_delivery_days = (int)$carrier->min_delivery_days;
+            }
         }
 
         // Get line items (using PrestaShop's native values)
@@ -1799,7 +1918,7 @@ class Twopayment extends PaymentModule
             'shipping_details' => [
                 'carrier_name' => $carrier_name,
                 'tracking_number' => $tracking_number,
-                'expected_delivery_date' => date('Y-m-d', strtotime('+ 7 days'))
+                'expected_delivery_date' => date('Y-m-d', strtotime('+ ' . $expected_delivery_days . ' days'))
             ],
             'recurring' => false,
             'order_note' => '',
@@ -2336,7 +2455,7 @@ class Twopayment extends PaymentModule
             // Critical validation: tax_amount = net_amount * tax_rate (tax_rate is now decimal)
             // Allow 0.01 tolerance for rounding differences (2 decimal places = ±0.005 rounding error)
             $expected_tax_amount = $net_amount * $tax_rate;
-            if (abs($tax_amount - $expected_tax_amount) > 0.01) {
+            if (abs($tax_amount - $expected_tax_amount) > self::TAX_FORMULA_TOLERANCE) {
                 PrestaShopLogger::addLog(
                     'TwoPayment CRITICAL Tax Formula Error - Item: ' . $item['name'] . 
                     ', Got: ' . $tax_amount . ', Expected: ' . $expected_tax_amount . 
@@ -2349,7 +2468,7 @@ class Twopayment extends PaymentModule
             // Critical validation: net_amount = (quantity * unit_price) - discount_amount
             // Allow 0.05 tolerance for rounding differences (accounts for multiple rounding operations)
             $expected_net_amount = ($quantity * $unit_price) - $discount_amount;
-            if (abs($net_amount - $expected_net_amount) > 0.05) {
+            if (abs($net_amount - $expected_net_amount) > self::NET_FORMULA_TOLERANCE) {
                 PrestaShopLogger::addLog(
                     'TwoPayment CRITICAL Net Formula Error - Item: ' . $item['name'] . 
                     ', Got: ' . $net_amount . ', Expected: ' . $expected_net_amount . 
@@ -2410,7 +2529,7 @@ class Twopayment extends PaymentModule
         curl_setopt($ch, CURLOPT_URL, $url);
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        curl_setopt($ch, CURLOPT_TIMEOUT, self::API_TIMEOUT_SHORT);
         
         // SSL VERIFICATION - Secure by default
         $this->configureSslVerification($ch);
@@ -2431,7 +2550,7 @@ class Twopayment extends PaymentModule
             return false;
         }
 
-        if ($httpCode !== 200 || !$response) {
+        if ($httpCode !== self::HTTP_STATUS_OK || !$response) {
             PrestaShopLogger::addLog('TwoPayment: API key verification failed. HTTP ' . (int)$httpCode . ' Response: ' . (is_string($response) ? $response : ''), 2);
             return false;
         }
@@ -2538,7 +2657,7 @@ class Twopayment extends PaymentModule
      */
     public function getAvailablePaymentTerms()
     {
-        $payment_terms = array('7', '15', '20', '30', '45', '60', '90');
+        $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
         $available_terms = array();
         
         foreach ($payment_terms as $term) {
@@ -2547,9 +2666,9 @@ class Twopayment extends PaymentModule
             }
         }
         
-        // If no terms are configured, default to 30 days
+        // If no terms are configured, default to DEFAULT_PAYMENT_TERM_DAYS
         if (empty($available_terms)) {
-            $available_terms = array(30);
+            $available_terms = array(self::DEFAULT_PAYMENT_TERM_DAYS);
         }
         
         sort($available_terms); // Ensure they're in ascending order
@@ -2569,13 +2688,13 @@ class Twopayment extends PaymentModule
             return $available_terms[0];
         }
         
-        // If 30 days is available, use it as default
-        if (in_array(30, $available_terms)) {
-            return 30;
+        // If DEFAULT_PAYMENT_TERM_DAYS is available, use it as default
+        if (in_array(self::DEFAULT_PAYMENT_TERM_DAYS, $available_terms)) {
+            return self::DEFAULT_PAYMENT_TERM_DAYS;
         }
         
         // Otherwise, use the first available term
-        return !empty($available_terms) ? $available_terms[0] : 30;
+        return !empty($available_terms) ? $available_terms[0] : self::DEFAULT_PAYMENT_TERM_DAYS;
     }
 
     /**
@@ -2646,8 +2765,8 @@ class Twopayment extends PaymentModule
             
             // Delete Two payment data from our custom table
             try {
-                $sql = 'DELETE FROM `' . _DB_PREFIX_ . 'twopayment` WHERE `id_order` = ' . (int)$id_order;
-                Db::getInstance()->execute($sql);
+                // Use PrestaShop's delete() method for proper escaping and security
+                Db::getInstance()->delete('twopayment', 'id_order = ' . (int)$id_order);
                 PrestaShopLogger::addLog('TwoPayment: Deleted Two payment data for order ' . $id_order, 1);
             } catch (Exception $e) {
                 PrestaShopLogger::addLog('TwoPayment: Failed to delete Two payment data for order ' . $id_order . ': ' . $e->getMessage(), 2);
@@ -2759,7 +2878,7 @@ class Twopayment extends PaymentModule
             curl_setopt($ch, CURLOPT_URL, $url);
             curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+            curl_setopt($ch, CURLOPT_TIMEOUT, self::API_TIMEOUT_LONG);
             
             // SSL VERIFICATION - Secure by default
             $this->configureSslVerification($ch);
@@ -2784,7 +2903,7 @@ class Twopayment extends PaymentModule
                 return [
                     'http_status' => 0,
                     'data' => [
-                        'error' => 'Connection error',
+                        'error' => $this->l('Connection error'),
                         'error_message' => 'Unable to connect to Two API. Please check your server configuration.',
                         'curl_error' => $curl_error
                     ],
@@ -2813,7 +2932,7 @@ class Twopayment extends PaymentModule
             curl_setopt($ch, CURLOPT_URL, $url);
             curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+            curl_setopt($ch, CURLOPT_TIMEOUT, self::API_TIMEOUT_LONG);
             
             // SSL VERIFICATION - Secure by default
             $this->configureSslVerification($ch);
@@ -2939,7 +3058,7 @@ class Twopayment extends PaymentModule
             return $this->l('Something went wrong please contact store owner.');
         }
 
-        if (isset($body['response']['code']) && $body['response'] && $body['response']['code'] && $body['response']['code'] >= 400) {
+        if (isset($body['response']['code']) && $body['response'] && $body['response']['code'] && $body['response']['code'] >= self::HTTP_STATUS_BAD_REQUEST) {
             return sprintf($this->l('Two response code %d'), $body['response']['code']);
         }
 
@@ -2958,6 +3077,8 @@ class Twopayment extends PaymentModule
 
     public function setTwoOrderPaymentData($id_order, $payment_data)
     {
+        // PrestaShop standard: (int) casting prevents SQL injection for integer IDs
+        $id_order = (int)$id_order;
         $result = $this->getTwoOrderPaymentData($id_order);
         if ($result) {
             $data = array(
@@ -2994,7 +3115,8 @@ class Twopayment extends PaymentModule
 
     public function getTwoOrderPaymentData($id_order)
     {
-        $sql = 'SELECT * FROM ' . _DB_PREFIX_ . 'twopayment WHERE id_order = ' . (int) $id_order;
+        // PrestaShop standard: (int) casting prevents SQL injection for integer IDs
+        $sql = 'SELECT * FROM `' . _DB_PREFIX_ . 'twopayment` WHERE `id_order` = ' . (int)$id_order;
         $result = Db::getInstance()->getRow($sql);
         return $result;
     }
@@ -3144,7 +3266,7 @@ class Twopayment extends PaymentModule
             }
             
             // Set cookie expiration (1 hour)
-            $this->context->cookie->setExpire(time() + 3600);
+            $this->context->cookie->setExpire(time() + self::COOKIE_EXPIRY_ONE_HOUR);
             
             PrestaShopLogger::addLog('TwoPayment: Company data captured from address save - Company: ' . $address->company, 1);                                 
         }

@@ -359,7 +359,7 @@ class TwoInvoiceUploadService
                 $lastError = $this->parseCloudStorageError($httpCode, $response, $curlError);
                 
                 // Don't retry on client errors (4xx) - these won't succeed
-                if ($httpCode >= 400 && $httpCode < 500) {
+                if ($httpCode >= Twopayment::HTTP_STATUS_BAD_REQUEST && $httpCode < Twopayment::HTTP_STATUS_SERVER_ERROR) {
                     break;
                 }
                 

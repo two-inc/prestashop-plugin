@@ -94,7 +94,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             return;
         }
         $this->context->cookie->two_payment_term = $days;
-        $this->context->cookie->setExpire(time() + 3600);
+        $this->context->cookie->setExpire(time() + Twopayment::COOKIE_EXPIRY_ONE_HOUR);
         PrestaShopLogger::addLog('TwoPayment: Saved selected payment term ' . $days . ' days in cookie', 1);
         $this->sendJsonResponse(json_encode(['success' => true]));
     }
@@ -123,7 +123,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         if (!empty($country)) {
             $this->context->cookie->two_company_country = $country;
         }
-        $this->context->cookie->setExpire(time() + 3600);
+        $this->context->cookie->setExpire(time() + Twopayment::COOKIE_EXPIRY_ONE_HOUR);
         PrestaShopLogger::addLog('TwoPayment: Saved company in cookie for session', 1);
         $this->sendJsonResponse(json_encode(['success' => true]));
     }
@@ -384,7 +384,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         
         $rate_limit_key = 'two_order_intent_' . md5($session_id);
         $current_time = time();
-        $rate_limit_window = 60; // 1 minute
+        $rate_limit_window = Twopayment::API_TIMEOUT_SHORT; // 1 minute (using API_TIMEOUT_SHORT constant)
         $max_requests = 5; // Production rate limit
         
         // Get current request data from session
@@ -501,7 +501,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             $this->context->cookie->two_company_id = $companyData['companyid'] ?? '';
             
             // Set cookie expiration (1 hour)
-            $this->context->cookie->setExpire(time() + 3600);
+            $this->context->cookie->setExpire(time() + Twopayment::COOKIE_EXPIRY_ONE_HOUR);
             
             PrestaShopLogger::addLog('TwoPayment: Company data stored in PrestaShop session', 1);
         }
