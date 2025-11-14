@@ -56,19 +56,6 @@
             // Store global reference for modules
             window.TwoCheckoutManager_Instance = checkoutManager;
             
-            // ADDITIONAL FIX: Ensure phone validation initializes on address forms
-            if (typeof TwoPhoneValidation !== 'undefined') {
-                // Initialize immediately if phone field exists
-                const phoneField = document.querySelector("input[name='phone'], input[name='phone_mobile']");
-                if (phoneField && !phoneField.hasAttribute('data-intl-tel-input-id')) {
-                    try {
-                        new TwoPhoneValidation();
-                    } catch (e) {
-                        console.warn('Two Payment: Phone validation initialization failed:', e);
-                    }
-                }
-            }
-            
         } catch (error) {
             console.error('Two Payment: Initialization failed:', error);
             
@@ -107,7 +94,6 @@
                         if (node.nodeType === 1 && 
                             (node.querySelector && 
                              (node.querySelector('.payment-options') || 
-                              node.querySelector("input[name='phone']") ||
                               node.querySelector('.js-address-form')))) {
                             shouldReinit = true;
                             break;
