@@ -5,6 +5,49 @@ All notable changes to the Two Payment module for PrestaShop will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2025-11-21
+
+### Added
+- **End-of-Month (EOM) Payment Terms**: New payment term type for B2B invoicing
+  - Supports EOM+30, EOM+45, and EOM+60 day terms
+  - Payment calculated from end of current month at fulfillment, plus selected days
+  - Example: Order fulfilled Jan 15 with EOM+30 = Payment due Feb 28 (end of Jan + 30 days)
+- **Payment Term Type Configuration**: Radio button selection in admin (Standard vs EOM)
+  - Dynamic UI: EOM mode shows only 30/45/60 day options
+  - Standard mode shows all available terms (7/15/20/30/45/60/90 days)
+  - Clear explanations with real-world examples for each type
+- **API Integration**: `duration_days_calculated_from: "END_OF_MONTH"` field added to order payload for EOM terms
+- **Database Schema**: Added `two_payment_term_type` column to store term type per order
+- **Enhanced Buyer Display**: 
+  - Standard terms: "Pay in 30 days" (multilingual)
+  - EOM terms: "Pay in 30 days from end of month" (clear, localized)
+  - Dynamic description text changes based on term type
+- **Admin Order View**: Shows "End of Month + 30 days" with EOM badge for clarity
+- **Upgrade Script**: `upgrade-2.3.0.php` with backward-compatible defaults
+
+### Changed
+- **Checkout Display**: Smart label/unit hiding for EOM terms (no verbose "Pay in EOM+30 days")
+- **Payment Terms Selector**: Term format changes based on type (tooltips explain EOM)
+- **API Payload Builder**: New `buildTermsPayload()` method conditionally adds EOM field
+- **Available Terms Logic**: `getAvailablePaymentTerms()` filters based on term type
+
+### Fixed
+- Invoice upload feature temporarily disabled (will be re-enabled after further testing)
+
+### Technical
+- **PHP 7.1+ Compatible**: No spread operators, arrow functions, or typed properties
+- **Backward Compatible**: Existing merchants default to STANDARD type
+- **Historical Orders**: Upgrade script marks existing orders as STANDARD
+- **ES5 JavaScript**: Uses `function()` syntax instead of arrow functions in loops
+- **Security**: Whitelist validation for term type (only STANDARD or EOM accepted)
+
+### User Experience
+- Clear admin explanations with fulfillment date examples
+- Language-friendly checkout display (works in ES, EN, DE, FR, etc.)
+- Tooltips on EOM term options
+- EOM badge in admin order view with explanation
+- Concise term display without verbose text
+
 ## [2.2.0] - 2025-11-14
 
 ### Added
@@ -90,6 +133,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Patch** (0.0.X): Bug fixes, backwards compatible
 
 ## Upgrade Notes
+
+### Upgrading to 2.3.0
+
+1. **Backup**: Always backup your database before upgrading
+2. **Automatic Migration**: Upgrade script automatically:
+   - Adds `two_payment_term_type` column (VARCHAR(20), default 'STANDARD')
+   - Sets `PS_TWO_PAYMENT_TERM_TYPE` configuration to 'STANDARD'
+   - Updates existing orders to STANDARD type (no visible change)
+3. **Backward Compatible**: Existing merchants see no changes
+   - Payment terms continue to work exactly as before
+   - All existing orders display correctly as standard terms
+4. **New Feature**: EOM payment terms available as opt-in
+   - Configure in module admin: Payment Term Type radio button
+   - Only affects new orders after enabling EOM
+5. **API Compatibility**: EOM requires Two backend support
+   - Test on staging environment first
+   - Verify `duration_days_calculated_from` field is accepted
+6. **No Breaking Changes**: Standard terms unchanged, EOM is additive
 
 ### Upgrading to 2.2.0
 

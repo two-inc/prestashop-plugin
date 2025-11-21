@@ -60,16 +60,16 @@
     <div class="two-payment-terms" id="two-payment-terms" style="display: none;">
         <div class="two-terms-header">
             <h4 class="two-terms-title">{l s='Choose the Buy Now, Pay Later option that works best for you' mod='twopayment'}</h4>
-            <p class="two-terms-description">{l s=' Your payment period starts when your order is fulfilled, along with your invoice from Two' mod='twopayment'}</p>
+            <p class="two-terms-description" id="two-terms-description" data-standard-text="{l s='Your payment period starts when your order is fulfilled' mod='twopayment'}" data-eom-text="{l s='Payment due at the end of the current month plus the selected days from when your order is fulfilled' mod='twopayment'}">
+                {l s='Your payment period starts when your order is fulfilled' mod='twopayment'}
+            </p>
         </div>
         <div class="two-terms-slider-container">
             <div class="two-terms-slider" id="two-terms-slider">
                 {* Terms will be populated by JavaScript *}
             </div>
             <div class="two-terms-selected">
-                <span class="two-terms-selected-text">{l s='Pay in' mod='twopayment'}</span>
                 <span class="two-terms-selected-days" id="two-selected-days">30</span>
-                <span class="two-terms-selected-unit">{l s='days' mod='twopayment'}</span>
             </div>
         </div>
     </div>

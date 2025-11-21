@@ -52,6 +52,7 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
                         'two_order_state' => $final_state,
                         'two_order_status' => $final_status,
                         'two_day_on_invoice' => (string)$this->module->getSelectedPaymentTerm(), // Selected payment term
+                        'two_payment_term_type' => Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'), // Term type (STANDARD or EOM)
                         'two_invoice_url' => $response['invoice_url'],
                     );
                     $this->module->setTwoOrderPaymentData($order->id, $payment_data);

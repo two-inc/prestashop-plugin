@@ -937,17 +937,15 @@ class TwoCheckoutManager {
         const termsHtml = `
             <div class="two-payment-terms" id="two-payment-terms" style="display: block;">
                 <div class="two-terms-header">
-                    <h4 class="two-terms-title">${window.twopayment?.i18n?.choose_payment_terms || 'Choose the Buy Now, Pay Later option that works best for you'}</h4>
-                    <p class="two-terms-description">${window.twopayment?.i18n?.payment_period_starts || 'Your payment period starts when your order is fulfilled, along with your invoice from Two'}</p>
+                    <h4 class="two-terms-title">${(window.twopayment && window.twopayment.i18n && window.twopayment.i18n.choose_payment_terms) || 'Choose the Buy Now, Pay Later option that works best for you'}</h4>
+                    <p class="two-terms-description">${(window.twopayment && window.twopayment.i18n && window.twopayment.i18n.payment_period_starts) || 'Your payment period starts when your order is fulfilled'}</p>
                 </div>
                 <div class="two-terms-slider-container">
                     <div class="two-terms-slider" id="two-terms-slider">
                         <!-- Terms will be populated by JavaScript -->
                     </div>
                     <div class="two-terms-selected">
-                        <span class="two-terms-selected-text">${window.twopayment?.i18n?.pay_in || 'Pay in'}</span>
-                        <span class="two-terms-selected-days" id="two-selected-days">30</span>
-                        <span class="two-terms-selected-unit">${window.twopayment?.i18n?.days || 'days'}</span>
+                        <span class="two-terms-selected-days" id="two-selected-days"></span>
                     </div>
                 </div>
             </div>
@@ -993,18 +991,43 @@ class TwoCheckoutManager {
         // Get payment terms from admin configuration (passed via template)
         const availableTerms = this.config.available_payment_terms;
         const defaultTerm = this.config.default_payment_term;
+        const termType = this.config.payment_term_type || 'STANDARD';
         
         // If no terms configured, don't show payment terms
         if (!availableTerms || !Array.isArray(availableTerms) || availableTerms.length === 0) {
-            console.warn('Two Payment: No payment terms configured');
             return;
         }
         
+        // Update description based on term type
+        var termsDescription = document.querySelector('#two-terms-description');
+        if (termsDescription) {
+            if (termType === 'EOM') {
+                var eomText = termsDescription.getAttribute('data-eom-text');
+                if (eomText) {
+                    termsDescription.textContent = eomText;
+                }
+            } else {
+                var standardText = termsDescription.getAttribute('data-standard-text');
+                if (standardText) {
+                    termsDescription.textContent = standardText;
+                }
+            }
+        }
+        
         // Create term options
-        availableTerms.forEach((days, index) => {
+        availableTerms.forEach(function(days, index) {
             const termOption = document.createElement('div');
             termOption.className = 'two-term-option';
-            termOption.textContent = days;
+            
+            // Format display based on term type (EOM+X for End-of-Month, X for Standard)
+            if (termType === 'EOM') {
+                termOption.textContent = 'EOM+' + days;
+                termOption.title = 'End of Month + ' + days + ' days';
+            } else {
+                termOption.textContent = days;
+                termOption.title = days + ' days';
+            }
+            
             termOption.dataset.days = days;
             
             // Set default term: use configured default, or if only one term, make it active, or first term
@@ -1024,9 +1047,25 @@ class TwoCheckoutManager {
                 // Add active class to selected option
                 termOption.classList.add('active');
                 
-                // Update selected days display
+                // Update selected term display
                 if (selectedDays) {
-                    selectedDays.textContent = days;
+                    const payInText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.pay_in 
+                        ? window.twopayment.i18n.pay_in 
+                        : 'Pay in';
+                    const daysText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.days 
+                        ? window.twopayment.i18n.days 
+                        : 'days';
+                    const fromEndOfMonthText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.from_end_of_month 
+                        ? window.twopayment.i18n.from_end_of_month 
+                        : 'from end of month';
+
+                    if (termType === 'EOM') {
+                        // For EOM: Show "Pay in X days from end of month" format
+                        selectedDays.textContent = payInText + ' ' + days + ' ' + daysText + ' ' + fromEndOfMonthText;
+                    } else {
+                        // For Standard: Show "Pay in 30 days" format
+                        selectedDays.textContent = payInText + ' ' + days + ' ' + daysText;
+                    }
                 }
 
                 // Persist selection in cookie via backend (10s timeout)
@@ -1048,13 +1087,34 @@ class TwoCheckoutManager {
             termsSlider.appendChild(termOption);
         });
         
-        // Set initial selected days based on the active term
-        if (selectedDays) {
-            const activeTerm = defaultTerm || (availableTerms.length === 1 ? availableTerms[0] : availableTerms[0]);
-            selectedDays.textContent = activeTerm;
+        // Set initial selected term display
+        const activeTerm = defaultTerm || (availableTerms.length === 1 ? availableTerms[0] : availableTerms[0]);
+        
+        if (selectedDays && activeTerm) {
+            const payInText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.pay_in 
+                ? window.twopayment.i18n.pay_in 
+                : 'Pay in';
+            const daysText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.days 
+                ? window.twopayment.i18n.days 
+                : 'days';
+            const fromEndOfMonthText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.from_end_of_month 
+                ? window.twopayment.i18n.from_end_of_month 
+                : 'from end of month';
+
+            if (termType === 'EOM') {
+                // For EOM: Show "Pay in X days from end of month" format
+                selectedDays.textContent = payInText + ' ' + activeTerm + ' ' + daysText + ' ' + fromEndOfMonthText;
+            } else {
+                // For Standard: Show "Pay in 30 days" format
+                selectedDays.textContent = payInText + ' ' + activeTerm + ' ' + daysText;
+            }
         }
     }
-
+    
+    /**
+     * Update payment terms description based on term type
+     * Separated for reusability and early initialization
+     */
     /**
      * Save order intent result to server for server-side validation
      * Prevents bypassing client-side blocking

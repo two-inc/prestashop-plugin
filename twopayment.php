@@ -50,7 +50,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.2.0';
+        $this->version = '2.3.0';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -143,6 +143,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_ENABLE_ORDER_INTENT', 1);
         Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', 0);
         Configuration::updateValue('PS_TWO_USE_OWN_INVOICES', 0); // Disabled by default - must be enabled after coordinating with Two
+        Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', 'STANDARD'); // Default: Standard payment terms (not EOM)
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1); // Default: 30 days enabled
         // Custom Two order states will be created by createTwoOrderState()
         // Set sensible default mappings to standard PrestaShop states
@@ -270,6 +271,7 @@ class Twopayment extends PaymentModule
             `two_order_state` TEXT NULL,
             `two_order_status` TEXT NULL,
             `two_day_on_invoice` TEXT NULL,
+            `two_payment_term_type` VARCHAR(20) DEFAULT "STANDARD",
             `two_invoice_url` TEXT NULL,
             `two_invoice_id` VARCHAR(255) NULL,
             `two_invoice_upload_status` ENUM("PENDING", "UPLOADING", "UPLOADED", "FAILED", "NOT_APPLICABLE") DEFAULT "NOT_APPLICABLE",
@@ -455,46 +457,72 @@ class Twopayment extends PaymentModule
                         )
                     ),
                     array(
+                        'type' => 'radio',
+                        'label' => $this->l('Payment Term Type'),
+                        'name' => 'PS_TWO_PAYMENT_TERM_TYPE',
+                        'desc' => $this->l('Choose how payment terms are calculated:') . '<br><br><strong>' . $this->l('Standard Terms:') . '</strong> ' . $this->l('Payment due X days from fulfillment date. Example: If you fulfill an order on January 15th with 30-day terms, payment is due February 14th.') . '<br><br><strong>' . $this->l('End-of-Month (EOM) Terms:') . '</strong> ' . $this->l('Payment due at the end of the current month plus X days from fulfillment date. Example: If you fulfill an order on January 15th with EOM+30 terms, payment is due February 28th (end of January + 30 days). This is common for B2B invoicing.'),
+                        'is_bool' => false,
+                        'values' => array(
+                            array(
+                                'id' => 'term_type_standard',
+                                'value' => 'STANDARD',
+                                'label' => $this->l('Standard Terms (e.g., 30 days from fulfillment)')
+                            ),
+                            array(
+                                'id' => 'term_type_eom',
+                                'value' => 'EOM',
+                                'label' => $this->l('End-of-Month Terms (e.g., EOM + 30 days)')
+                            ),
+                        ),
+                    ),
+                    array(
                         'type' => 'checkbox',
                         'label' => $this->l('Available Payment Terms'),
                         'name' => 'PS_TWO_PAYMENT_TERMS',
-                        'desc' => $this->l('Select which payment terms you want to offer to your customers at checkout. If only one term is selected, it will be used as the default. Multiple terms will show a selector.'),
+                        'desc' => '<span id="two-payment-terms-desc-standard" style="display: none;">' . $this->l('Select which payment terms you want to offer. Standard terms are calculated from the fulfillment date.') . '</span><span id="two-payment-terms-desc-eom" style="display: none;">' . $this->l('Select which payment terms you want to offer. EOM (End-of-Month) terms are calculated from the end of the month at fulfillment, plus the selected days. Only 30, 45, and 60 day terms are available for EOM.') . '</span>',
                         'values' => array(
                             'query' => array(
                                 array(
                                     'id' => '7',
                                     'name' => $this->l('7 days'),
-                                    'val' => '1'
+                                    'val' => '1',
+                                    'class' => 'two-term-option two-term-7 two-term-standard'
                                 ),
                                 array(
                                     'id' => '15',
                                     'name' => $this->l('15 days'),
-                                    'val' => '1'
+                                    'val' => '1',
+                                    'class' => 'two-term-option two-term-15 two-term-standard'
                                 ),
                                 array(
                                     'id' => '20',
                                     'name' => $this->l('20 days'),
-                                    'val' => '1'
+                                    'val' => '1',
+                                    'class' => 'two-term-option two-term-20 two-term-standard'
                                 ),
                                 array(
                                     'id' => '30',
                                     'name' => $this->l('30 days'),
-                                    'val' => '1'
+                                    'val' => '1',
+                                    'class' => 'two-term-option two-term-30 two-term-both'
                                 ),
                                 array(
                                     'id' => '45',
                                     'name' => $this->l('45 days'),
-                                    'val' => '1'
+                                    'val' => '1',
+                                    'class' => 'two-term-option two-term-45 two-term-both'
                                 ),
                                 array(
                                     'id' => '60',
                                     'name' => $this->l('60 days'),
-                                    'val' => '1'
+                                    'val' => '1',
+                                    'class' => 'two-term-option two-term-60 two-term-both'
                                 ),
                                 array(
                                     'id' => '90',
                                     'name' => $this->l('90 days'),
-                                    'val' => '1'
+                                    'val' => '1',
+                                    'class' => 'two-term-option two-term-90 two-term-standard'
                                 ),
                             ),
                             'id' => 'id',
@@ -520,6 +548,9 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_MERCHANT_SHORT_NAME'] = Tools::getValue('PS_TWO_MERCHANT_SHORT_NAME', Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'));
         $fields_values['PS_TWO_MERCHANT_API_KEY'] = Tools::getValue('PS_TWO_MERCHANT_API_KEY', Configuration::get('PS_TWO_MERCHANT_API_KEY'));
         $fields_values['PS_TWO_ENVIRONMENT'] = Tools::getValue('PS_TWO_ENVIRONMENT', Configuration::get('PS_TWO_ENVIRONMENT'));
+        
+        // Payment term type (STANDARD or EOM)
+        $fields_values['PS_TWO_PAYMENT_TERM_TYPE'] = Tools::getValue('PS_TWO_PAYMENT_TERM_TYPE', Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'));
         
         // Payment terms checkboxes
         $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
@@ -601,6 +632,12 @@ class Twopayment extends PaymentModule
         } else {
             // Ensure flag not stale when verification fails/non-run
             Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 0);
+        }
+        
+        // Save payment term type (STANDARD or EOM)
+        $term_type = Tools::getValue('PS_TWO_PAYMENT_TERM_TYPE');
+        if ($term_type === 'STANDARD' || $term_type === 'EOM') {
+            Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', $term_type);
         }
         
         // Save payment terms checkboxes
@@ -762,26 +799,27 @@ class Twopayment extends PaymentModule
                             ),
                         ),
                     ),
-                    array(
-                        'type' => 'switch',
-                        'label' => $this->l('Using Own Invoices'),
-                        'name' => 'PS_TWO_USE_OWN_INVOICES',
-                        'is_bool' => true,
-                        'desc' => $this->l('Only to be used if you are handling your own invoice and credit note distribution and must be communicated to Two as part of your implementation to ensure Two\'s invoice generation is disabled. If this toggle is enabled, PrestaShop invoices will be uploaded to Two when orders are fulfilled.'),
-                        'required' => true,
-                        'values' => array(
-                            array(
-                                'id' => 'PS_TWO_USE_OWN_INVOICES_ON',
-                                'value' => 1,
-                                'label' => $this->l('Yes')
-                            ),
-                            array(
-                                'id' => 'PS_TWO_USE_OWN_INVOICES_OFF',
-                                'value' => 0,
-                                'label' => $this->l('No')
-                            ),
-                        ),
-                    ),
+                    // TEMPORARILY DISABLED: Invoice upload feature disabled for now
+                    // array(
+                    //     'type' => 'switch',
+                    //     'label' => $this->l('Using Own Invoices'),
+                    //     'name' => 'PS_TWO_USE_OWN_INVOICES',
+                    //     'is_bool' => true,
+                    //     'desc' => $this->l('Only to be used if you are handling your own invoice and credit note distribution and must be communicated to Two as part of your implementation to ensure Two\'s invoice generation is disabled. If this toggle is enabled, PrestaShop invoices will be uploaded to Two when orders are fulfilled.'),
+                    //     'required' => true,
+                    //     'values' => array(
+                    //         array(
+                    //             'id' => 'PS_TWO_USE_OWN_INVOICES_ON',
+                    //             'value' => 1,
+                    //             'label' => $this->l('Yes')
+                    //         ),
+                    //         array(
+                    //             'id' => 'PS_TWO_USE_OWN_INVOICES_OFF',
+                    //             'value' => 0,
+                    //             'label' => $this->l('No')
+                    //         ),
+                    //     ),
+                    // ),
                     array(
                         'type' => 'switch',
                         'label' => $this->l('Pre-approve the buyer during checkout and disable two if the buyer is declined'),
@@ -840,7 +878,8 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_ENABLE_DEPARTMENT'] = Tools::getValue('PS_TWO_ENABLE_DEPARTMENT', Configuration::get('PS_TWO_ENABLE_DEPARTMENT'));
         $fields_values['PS_TWO_ENABLE_PROJECT'] = Tools::getValue('PS_TWO_ENABLE_PROJECT', Configuration::get('PS_TWO_ENABLE_PROJECT'));
         $fields_values['PS_TWO_FINALIZE_PURCHASE'] = Tools::getValue('PS_TWO_FINALIZE_PURCHASE', Configuration::get('PS_TWO_FINALIZE_PURCHASE'));
-        $fields_values['PS_TWO_USE_OWN_INVOICES'] = Tools::getValue('PS_TWO_USE_OWN_INVOICES', Configuration::get('PS_TWO_USE_OWN_INVOICES'));
+        // TEMPORARILY DISABLED: Invoice upload feature disabled for now
+        $fields_values['PS_TWO_USE_OWN_INVOICES'] = 0; // Force disabled
         $fields_values['PS_TWO_ENABLE_ORDER_INTENT'] = Tools::getValue('PS_TWO_ENABLE_ORDER_INTENT', Configuration::get('PS_TWO_ENABLE_ORDER_INTENT'));
         $fields_values['PS_TWO_ENABLE_B2B_B2C'] = Tools::getValue('PS_TWO_ENABLE_B2B_B2C', Configuration::get('PS_TWO_ENABLE_B2B_B2C'));
         $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
@@ -860,7 +899,8 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_ENABLE_DEPARTMENT', Tools::getValue('PS_TWO_ENABLE_DEPARTMENT'));
         Configuration::updateValue('PS_TWO_ENABLE_PROJECT', Tools::getValue('PS_TWO_ENABLE_PROJECT'));
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', Tools::getValue('PS_TWO_FINALIZE_PURCHASE'));
-        Configuration::updateValue('PS_TWO_USE_OWN_INVOICES', Tools::getValue('PS_TWO_USE_OWN_INVOICES'));
+        // TEMPORARILY DISABLED: Invoice upload feature disabled for now - force to 0
+        Configuration::updateValue('PS_TWO_USE_OWN_INVOICES', 0);
         Configuration::updateValue('PS_TWO_ENABLE_ORDER_INTENT', Tools::getValue('PS_TWO_ENABLE_ORDER_INTENT'));
         Configuration::updateValue('PS_TWO_ENABLE_B2B_B2C', Tools::getValue('PS_TWO_ENABLE_B2B_B2C'));
 
@@ -1249,6 +1289,7 @@ class Twopayment extends PaymentModule
                             'two_order_state' => $response['state'],
                             'two_order_status' => $response['status'],
                             'two_day_on_invoice' => (string)$this->getSelectedPaymentTerm(), // Selected payment term
+                            'two_payment_term_type' => Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'), // Term type (STANDARD or EOM)
                             'two_invoice_url' => $response['invoice_url'],
                             'two_invoice_id' => isset($response['invoice_details']['id']) ? $response['invoice_details']['id'] : (isset($orderpaymentdata['two_invoice_id']) ? $orderpaymentdata['two_invoice_id'] : null),
                         );
@@ -1286,14 +1327,16 @@ class Twopayment extends PaymentModule
                                     'two_order_state' => isset($order_after['state']) ? $order_after['state'] : (isset($orderpaymentdata['two_order_state']) ? $orderpaymentdata['two_order_state'] : ''),
                                     'two_order_status' => isset($order_after['status']) ? $order_after['status'] : (isset($orderpaymentdata['two_order_status']) ? $orderpaymentdata['two_order_status'] : ''),
                                     'two_day_on_invoice' => (string)$this->getSelectedPaymentTerm(), // Selected payment term
+                                    'two_payment_term_type' => Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'), // Term type (STANDARD or EOM)
                                     'two_invoice_url' => isset($order_after['invoice_url']) ? $order_after['invoice_url'] : (isset($orderpaymentdata['two_invoice_url']) ? $orderpaymentdata['two_invoice_url'] : ''),
                                     'two_invoice_id' => isset($order_after['invoice_details']['id']) ? $order_after['invoice_details']['id'] : (isset($orderpaymentdata['two_invoice_id']) ? $orderpaymentdata['two_invoice_id'] : null),
                                 );
                                 $this->setTwoOrderPaymentData($id_order, $payment_data);
                             }
                             
-                            // INVOICE UPLOAD: If "Using Own Invoices" is enabled, upload PrestaShop invoice to Two
-                            if (Configuration::get('PS_TWO_USE_OWN_INVOICES')) {
+                            // INVOICE UPLOAD: TEMPORARILY DISABLED - Feature disabled for now
+                            // Force disable even if configuration is set (safety check)
+                            if (false && Configuration::get('PS_TWO_USE_OWN_INVOICES')) {
                                 // Re-fetch payment data to ensure we have the latest invoice_id
                                 $orderpaymentdata_refreshed = $this->getTwoOrderPaymentData($id_order);
                                 $this->uploadInvoiceAfterFulfillment($id_order, $orderpaymentdata_refreshed);
@@ -1394,6 +1437,7 @@ class Twopayment extends PaymentModule
                                     'two_order_state' => isset($order_after['state']) ? $order_after['state'] : (isset($orderpaymentdata['two_order_state']) ? $orderpaymentdata['two_order_state'] : ''),
                                     'two_order_status' => isset($order_after['status']) ? $order_after['status'] : (isset($orderpaymentdata['two_order_status']) ? $orderpaymentdata['two_order_status'] : ''),
                                     'two_day_on_invoice' => (string)$this->getSelectedPaymentTerm(),
+                                    'two_payment_term_type' => Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'), // Term type (STANDARD or EOM)
                                     'two_invoice_url' => isset($order_after['invoice_url']) ? $order_after['invoice_url'] : (isset($orderpaymentdata['two_invoice_url']) ? $orderpaymentdata['two_invoice_url'] : ''),
                                     'two_invoice_id' => isset($order_after['invoice_details']['id']) ? $order_after['invoice_details']['id'] : (isset($orderpaymentdata['two_invoice_id']) ? $orderpaymentdata['two_invoice_id'] : null),
                                 );
@@ -1536,6 +1580,9 @@ class Twopayment extends PaymentModule
             'credit_unavailable' => $this->l('Two payment is not available for this order. Please choose another payment method.'),
             'network_issue' => $this->l('There was a temporary issue verifying your payment. Please try again or choose another payment method.'),
             'approval_required' => $this->l('Payment approval required before proceeding'),
+            'pay_in' => $this->l('Pay in'),
+            'days' => $this->l('days'),
+            'from_end_of_month' => $this->l('from end of month'),
         );
 
         Media::addJsDef(array('twopayment' => array(
@@ -1555,6 +1602,7 @@ class Twopayment extends PaymentModule
                 'countries' => $param_countries,
                 'available_payment_terms' => $this->getAvailablePaymentTerms(),
                 'default_payment_term' => $this->getDefaultPaymentTerm(),
+                'payment_term_type' => Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'),
                 'i18n' => $i18n,
                 'phone_i18n' => array(
                     'invalid_number' => $this->l('Invalid phone number'),
@@ -1818,13 +1866,10 @@ class Twopayment extends PaymentModule
             'recurring' => false,
             'order_note' => '',
             'line_items' => $line_items,
-            'terms' => [
-                'type' => 'NET_TERMS',
-                'duration_days' => $this->getSelectedPaymentTerm()
-            ],
+            'terms' => $this->buildTermsPayload(),
         ];
 
-        PrestaShopLogger::addLog('TwoPayment: Order creation with terms - duration_days: ' . $request_data['terms']['duration_days'], 1);
+        PrestaShopLogger::addLog('TwoPayment: Order creation with terms - ' . json_encode($request_data['terms']), 1);
         
         return $request_data;
     }
@@ -2655,12 +2700,26 @@ class Twopayment extends PaymentModule
      * Get available payment terms configured by the merchant
      * @return array Array of available payment terms in days
      */
+    /**
+     * Get available payment terms filtered by term type (STANDARD or EOM)
+     * @return array Array of available payment term durations (e.g., [30, 45, 60])
+     */
     public function getAvailablePaymentTerms()
     {
-        $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
+        $term_type = Configuration::get('PS_TWO_PAYMENT_TERM_TYPE');
+        
+        // Determine which terms to check based on type
+        if ($term_type === 'EOM') {
+            // EOM only supports 30, 45, 60 day terms
+            $terms_to_check = array('30', '45', '60');
+        } else {
+            // STANDARD supports all terms
+            $terms_to_check = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
+        }
+        
         $available_terms = array();
         
-        foreach ($payment_terms as $term) {
+        foreach ($terms_to_check as $term) {
             if (Configuration::get('PS_TWO_PAYMENT_TERMS_' . $term)) {
                 $available_terms[] = (int)$term;
             }
@@ -2856,7 +2915,33 @@ class Twopayment extends PaymentModule
         PrestaShopLogger::addLog('TwoPayment: Using default payment term: ' . $default_term . ' days', 1);
         return $default_term;
     }
-
+    
+    /**
+     * Build payment terms payload for Two API
+     * Adds duration_days_calculated_from for EOM terms
+     * 
+     * @return array Terms payload
+     * 
+     * PHP COMPATIBILITY: PHP 7.1+ compatible (no spread operators)
+     */
+    public function buildTermsPayload()
+    {
+        $term_type = Configuration::get('PS_TWO_PAYMENT_TERM_TYPE');
+        $duration_days = $this->getSelectedPaymentTerm();
+        
+        // Base terms structure
+        $terms = array(
+            'type' => 'NET_TERMS',
+            'duration_days' => $duration_days
+        );
+        
+        // Add duration_days_calculated_from for EOM terms
+        if ($term_type === 'EOM') {
+            $terms['duration_days_calculated_from'] = 'END_OF_MONTH';
+        }
+        
+        return $terms;
+    }
 
     public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
     {
@@ -2915,12 +3000,11 @@ class Twopayment extends PaymentModule
             $response_data = json_decode($response_body, true);
             
             // Return array with HTTP status and response data for proper error handling
-            return [
+            // BACKWARD COMPATIBILITY: Merge data into root for existing code
+            return array_merge([
                 'http_status' => (int)$http_status,
                 'data' => $response_data,
-                // BACKWARD COMPATIBILITY: Merge data into root for existing code
-                ...(is_array($response_data) ? $response_data : [])
-            ];
+            ], is_array($response_data) ? $response_data : []);
         } else {
             $url = sprintf('%s%s', $this->getTwoCheckoutHostUrl(), $endpoint);
             $url = $url . '?client=PS&client_v=' . $this->version;
@@ -2967,12 +3051,11 @@ class Twopayment extends PaymentModule
             $response_data = json_decode($response_body, true);
             
             // Return array with HTTP status and response data for proper error handling
-            return [
+            // BACKWARD COMPATIBILITY: Merge data into root for existing code
+            return array_merge([
                 'http_status' => (int)$http_status,
                 'data' => $response_data,
-                // BACKWARD COMPATIBILITY: Merge data into root for existing code
-                ...(is_array($response_data) ? $response_data : [])
-            ];
+            ], is_array($response_data) ? $response_data : []);
         }
     }
 
@@ -3090,6 +3173,7 @@ class Twopayment extends PaymentModule
                 'two_day_on_invoice' => pSQL($payment_data['two_day_on_invoice']),
                 'two_invoice_url' => pSQL($payment_data['two_invoice_url']),
                 'two_invoice_id' => isset($payment_data['two_invoice_id']) ? pSQL($payment_data['two_invoice_id']) : null,
+                'two_payment_term_type' => isset($payment_data['two_payment_term_type']) ? pSQL($payment_data['two_payment_term_type']) : 'STANDARD',
             );
             Db::getInstance()->update('twopayment', $data, 'id_order = ' . (int) $id_order);
         } else {
@@ -3102,6 +3186,7 @@ class Twopayment extends PaymentModule
                 'two_day_on_invoice' => pSQL($payment_data['two_day_on_invoice']),
                 'two_invoice_url' => pSQL($payment_data['two_invoice_url']),
                 'two_invoice_id' => isset($payment_data['two_invoice_id']) ? pSQL($payment_data['two_invoice_id']) : null,
+                'two_payment_term_type' => isset($payment_data['two_payment_term_type']) ? pSQL($payment_data['two_payment_term_type']) : 'STANDARD',
             );
             Db::getInstance()->insert('twopayment', $data);
         }
@@ -3142,6 +3227,7 @@ class Twopayment extends PaymentModule
                         'two_day_on_invoice' => $twopaymentdata['two_day_on_invoice'],
                         'two_invoice_url' => $twopaymentdata['two_invoice_url'],
                         'two_invoice_id' => isset($confirm_result['invoice_details']['id']) ? $confirm_result['invoice_details']['id'] : $twopaymentdata['two_invoice_id'],
+                        'two_payment_term_type' => isset($twopaymentdata['two_payment_term_type']) ? $twopaymentdata['two_payment_term_type'] : 'STANDARD',
                     );
                     $this->setTwoOrderPaymentData($id_order, $payment_data);
                     
@@ -3232,7 +3318,7 @@ class Twopayment extends PaymentModule
                 'twopaymentdata' => $twopaymentdata,
                 'two_portal_url' => $this->getTwoPortalUrl(), // Dynamic portal URL based on environment
                 'two_pdf_url' => $pdf_url, // PDF invoice URL if available
-                'use_own_invoices' => (bool)Configuration::get('PS_TWO_USE_OWN_INVOICES'), // Show invoice upload section if enabled
+                'use_own_invoices' => false, // TEMPORARILY DISABLED: Invoice upload feature disabled for now
             ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayAdminOrderTabContent.tpl');
         }

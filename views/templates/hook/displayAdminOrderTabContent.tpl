@@ -31,7 +31,14 @@
                 {if $twopaymentdata.two_day_on_invoice}
                 <div class="two-info-card">
                     <span class="two-info-label">{l s='Payment Terms' mod='twopayment'}</span>
-                    <span class="two-info-value two-payment-terms">{$twopaymentdata.two_day_on_invoice} {l s='days' mod='twopayment'}</span>
+                    <span class="two-info-value two-payment-terms">
+                        {if $twopaymentdata.two_payment_term_type == 'EOM'}
+                            {l s='End of Month' mod='twopayment'} + {$twopaymentdata.two_day_on_invoice} {l s='days' mod='twopayment'}
+                            <span class="two-term-type-badge" title="{l s='Payment due: end of current month at fulfillment + payment term days' mod='twopayment'}">EOM</span>
+                        {else}
+                            {$twopaymentdata.two_day_on_invoice} {l s='days' mod='twopayment'}
+                        {/if}
+                    </span>
                 </div>
                 {/if}
             </div>
