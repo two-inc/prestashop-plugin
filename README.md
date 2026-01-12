@@ -28,8 +28,11 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 - Cross-version compatibility (PrestaShop 1.7.6 - 9.x)
 - Theme-agnostic implementation
 - jQuery compatibility handling for older PrestaShop versions
-- Comprehensive error logging
+- Comprehensive error logging with optional debug mode
 - Order payload validation ensuring exact PrestaShop invoice matching
+- Robust tax rate calculation with fallback validation
+- User-friendly error messages for API validation failures
+- Phone number fallback (phone → phone_mobile)
 
 ## Requirements
 
@@ -90,6 +93,7 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 | Auto Fulfill Orders | Automatically fulfill orders with Two when status changes | Enabled |
 | Invoice Upload | Auto-upload invoices to Two | Disabled |
 | SSL Verification | Verify SSL certificates | Enabled |
+| Debug Mode | Enable detailed diagnostic logging | Disabled |
 
 ## Payment Terms: Standard vs End-of-Month (EOM)
 
@@ -385,6 +389,45 @@ The module builds order payloads that exactly match PrestaShop invoices:
   - Check Order Intent was approved
   - Verify JavaScript loaded correctly
   - Check browser console for errors
+  - Ensure company is selected (not just typed) - search and click a result
+
+### "Invalid Phone Number" Error
+- **Symptom**: Order fails with phone validation error
+- **Solutions**:
+  - Ensure customer has entered a valid phone number in billing address
+  - Module tries both `phone` and `phone_mobile` fields automatically
+  - Phone must be valid for the selected country
+  - Check billing address has a phone number filled in
+
+### "Company Details Required" Message
+- **Symptom**: Two payment shows message asking to provide company details
+- **Solutions**:
+  - Customer must enter company name in the billing address Company field
+  - Customer must search and **select** their company from the dropdown results
+  - Simply typing a company name is not enough - must click to select from search
+  - If using an existing address, customer should edit it to add/verify company
+
+### Tax Rate Issues (0% Tax)
+- **Symptom**: Two API rejects order with tax rate error
+- **Solutions**:
+  - Enable Debug Mode in module settings (Other Settings → Enable Debug Mode)
+  - Check PrestaShop logs for "TwoPayment: Product tax debug" entries
+  - Verify products have correct tax rules assigned in PrestaShop
+  - Module now calculates tax from actual amounts as fallback
+  - Contact Two support with debug logs if issue persists
+
+### Debug Mode
+- **When to use**: Only enable when requested by Two support for troubleshooting
+- **What it logs**: 
+  - Tax calculations per product (rate field, net/gross amounts, calculated rate)
+  - Helps diagnose tax rate discrepancies between PrestaShop and Two API
+- **How to enable**: 
+  1. Go to Module Configuration → Other Settings
+  2. Toggle "Enable Debug Mode" to Yes
+  3. Save settings
+  4. Reproduce the issue
+  5. Check PrestaShop logs (`var/logs/`)
+  6. Disable Debug Mode when done
 
 ## Security
 
@@ -433,4 +476,4 @@ Two Commercial License
 
 ## Copyright
 
-© 2021-2025 Two Team
+© 2021-2026 Two Team

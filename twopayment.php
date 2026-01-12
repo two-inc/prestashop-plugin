@@ -325,6 +325,7 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_FINALIZE_PURCHASE');
         Configuration::deleteByName('PS_TWO_ENABLE_ORDER_INTENT');
         Configuration::deleteByName('PS_TWO_USE_ACCOUNT_TYPE');
+        Configuration::deleteByName('PS_TWO_DEBUG_MODE');
         return true;
     }
 
@@ -860,6 +861,26 @@ class Twopayment extends PaymentModule
                             ),
                         ),
                     ),
+                    array(
+                        'type' => 'switch',
+                        'label' => $this->l('Enable Debug Mode'),
+                        'name' => 'PS_TWO_DEBUG_MODE',
+                        'is_bool' => true,
+                        'desc' => $this->l('Enable detailed logging for troubleshooting. Logs tax calculations and other diagnostic data. Only enable when requested by Two support.'),
+                        'required' => false,
+                        'values' => array(
+                            array(
+                                'id' => 'PS_TWO_DEBUG_MODE_ON',
+                                'value' => 1,
+                                'label' => $this->l('Yes')
+                            ),
+                            array(
+                                'id' => 'PS_TWO_DEBUG_MODE_OFF',
+                                'value' => 0,
+                                'label' => $this->l('No')
+                            ),
+                        ),
+                    ),
                 ),
                 'submit' => array(
                     'title' => $this->l('Save'),
@@ -883,6 +904,7 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_ENABLE_ORDER_INTENT'] = Tools::getValue('PS_TWO_ENABLE_ORDER_INTENT', Configuration::get('PS_TWO_ENABLE_ORDER_INTENT'));
         $fields_values['PS_TWO_ENABLE_B2B_B2C'] = Tools::getValue('PS_TWO_ENABLE_B2B_B2C', Configuration::get('PS_TWO_ENABLE_B2B_B2C'));
         $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
+        $fields_values['PS_TWO_DEBUG_MODE'] = Tools::getValue('PS_TWO_DEBUG_MODE', Configuration::get('PS_TWO_DEBUG_MODE'));
         return $fields_values;
     }
 
@@ -903,6 +925,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_USE_OWN_INVOICES', 0);
         Configuration::updateValue('PS_TWO_ENABLE_ORDER_INTENT', Tools::getValue('PS_TWO_ENABLE_ORDER_INTENT'));
         Configuration::updateValue('PS_TWO_ENABLE_B2B_B2C', Tools::getValue('PS_TWO_ENABLE_B2B_B2C'));
+        Configuration::updateValue('PS_TWO_DEBUG_MODE', Tools::getValue('PS_TWO_DEBUG_MODE'));
 
         $this->output .= $this->displayConfirmation($this->l('Other settings are updated.'));
     }
@@ -1572,9 +1595,10 @@ class Twopayment extends PaymentModule
             'generic_error' => $this->l('There was an issue processing your Two payment request. Please try again or choose another payment method.'),
             'invoice_likely_accepted_for' => $this->l('Your invoice with Two is likely to be accepted for %s'),
             'invoice_cannot_be_approved_for' => $this->l('Your invoice with Two cannot be approved at this time for %s'),
-            'company_name_required' => $this->l('Please enter your company name to continue with Two payment.'),
+            'invalid_phone_number' => $this->l('The phone number in your billing address appears to be invalid. Please go back and ensure you have entered a valid phone number for your country.'),
+            'company_name_required' => $this->l('To pay with Two, go back to your billing address and enter your company name in the Company field.'),
             'organization_number_required' => $this->l('Please search and select a valid company to continue with Two payment.'),
-            'select_company_to_use_two' => $this->l('To pay with Two, please select your company from the search results so we can verify your business and offer invoice terms.'),
+            'select_company_to_use_two' => $this->l('To pay with Two, go back to your billing address and search for your company name. Select your company from the results to verify your business.'),
             'invalid_company' => $this->l('The company information provided is not valid. Please search and select a valid company.'),
             'company_not_found' => $this->l('We could not find your company. Please try a different company name or contact support.'),
             'credit_unavailable' => $this->l('Two payment is not available for this order. Please choose another payment method.'),
@@ -1751,7 +1775,7 @@ class Twopayment extends PaymentModule
                     'email' => $customer->email,
                     'first_name' => $customer->firstname,
                     'last_name' => $customer->lastname,
-                    'phone_number' => $address->phone,
+                    'phone_number' => $this->getPhoneWithFallback($address),
                 ],
             ],
             'currency' => $currency->iso_code,
@@ -1840,7 +1864,7 @@ class Twopayment extends PaymentModule
                     'email' => $customer->email,
                     'first_name' => $customer->firstname,
                     'last_name' => $customer->lastname,
-                    'phone_number' => $invoice_address->phone,
+                    'phone_number' => $this->getPhoneWithFallback($invoice_address),
                 ],
             ],
             'buyer_department' => $invoice_address->department,
@@ -1951,7 +1975,7 @@ class Twopayment extends PaymentModule
                     'email' => $customer->email,
                     'first_name' => $customer->firstname,
                     'last_name' => $customer->lastname,
-                    'phone_number' => $invoice_address->phone,
+                    'phone_number' => $this->getPhoneWithFallback($invoice_address),
                 ],
             ],
             'buyer_department' => $invoice_address->department,
@@ -2046,7 +2070,64 @@ class Twopayment extends PaymentModule
             $net_amount_prestashop = (float)$line_item['total']; // PrestaShop's net total (source of truth)
             $gross_amount_prestashop = (float)$line_item['total_wt']; // PrestaShop's gross total
             $quantity = (int)$line_item['cart_quantity'];
-            $tax_rate = (float)$line_item['rate'] / 100; // Convert percentage to decimal
+            
+            // DIAGNOSTIC LOGGING: Log tax data for debugging store-specific issues
+            // Only log when debug mode is enabled to avoid excessive log entries in production
+            if (Configuration::get('PS_TWO_DEBUG_MODE')) {
+                $calculated_rate_for_log = ($net_amount_prestashop > 0) 
+                    ? round((($gross_amount_prestashop - $net_amount_prestashop) / $net_amount_prestashop) * 100, 2) 
+                    : 0;
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Product tax debug - ID: ' . $line_item['id_product'] . 
+                    ' | rate field: ' . (isset($line_item['rate']) ? $line_item['rate'] : 'NULL') . 
+                    ' | total (net): ' . $net_amount_prestashop . 
+                    ' | total_wt (gross): ' . $gross_amount_prestashop .
+                    ' | calculated rate: ' . $calculated_rate_for_log . '%',
+                    1 // Info level
+                );
+            }
+            
+            // VALIDATED TAX RATE CALCULATION
+            // Get tax rate from PrestaShop's rate field
+            $rate_from_field = isset($line_item['rate']) ? (float)$line_item['rate'] / 100 : 0;
+            
+            // Calculate tax rate from PrestaShop's actual amounts (gross vs net) - source of truth
+            $rate_from_amounts = 0;
+            if ($net_amount_prestashop > 0 && $gross_amount_prestashop > $net_amount_prestashop) {
+                $rate_from_amounts = ($gross_amount_prestashop - $net_amount_prestashop) / $net_amount_prestashop;
+                $rate_from_amounts = round($rate_from_amounts, 4);
+            }
+            
+            // Decision logic: use amounts as source of truth, with full logging for anomalies
+            if (abs($rate_from_field - $rate_from_amounts) < 0.001) {
+                // Rates match - use the field value (cleaner)
+                $tax_rate = $rate_from_field;
+            } elseif ($rate_from_field == 0 && $rate_from_amounts > 0) {
+                // ANOMALY: PrestaShop applied tax but rate field is 0
+                // Use calculated rate (what PrestaShop actually charged)
+                $tax_rate = $rate_from_amounts;
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Tax rate anomaly - rate field is 0 but tax was applied. ' .
+                    'Product: ' . $line_item['id_product'] . ', Using calculated rate: ' . ($rate_from_amounts * 100) . '%',
+                    2 // Warning level
+                );
+            } elseif ($rate_from_amounts == 0 && $rate_from_field > 0) {
+                // ANOMALY: Rate field has value but no tax in amounts
+                // Use 0 (what PrestaShop actually charged)
+                $tax_rate = 0;
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Tax rate anomaly - rate field is ' . ($rate_from_field * 100) . '% but no tax in amounts. ' .
+                    'Product: ' . $line_item['id_product'] . ', Using 0%',
+                    2 // Warning level
+                );
+            } else {
+                // Both have values but differ - use calculated (what customer pays)
+                $tax_rate = $rate_from_amounts;
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Tax rate mismatch - field: ' . ($rate_from_field * 100) . '%, calculated: ' . ($rate_from_amounts * 100) . '% for product ' . $line_item['id_product'],
+                    2
+                );
+            }
             
             // CRITICAL: Validate quantity to prevent division by zero
             if ($quantity <= 0) {
@@ -2335,6 +2416,38 @@ class Twopayment extends PaymentModule
             'tax' => $tax,
             'gross' => $net + $tax
         ];
+    }
+
+    /**
+     * Get phone number with PrestaShop-native fallback chain
+     * Priority: phone → phone_mobile → empty (let Two API validate)
+     * 
+     * @param Address $address PrestaShop Address object
+     * @return string Phone number or empty string
+     */
+    private function getPhoneWithFallback($address)
+    {
+        // Validate address object
+        if (!Validate::isLoadedObject($address)) {
+            return '';
+        }
+        
+        // Priority 1: Main phone
+        if (!empty($address->phone)) {
+            return trim($address->phone);
+        }
+        
+        // Priority 2: Mobile phone
+        if (!empty($address->phone_mobile)) {
+            return trim($address->phone_mobile);
+        }
+        
+        // No phone found - log warning but let Two API handle validation
+        PrestaShopLogger::addLog(
+            'TwoPayment: No phone number found for address ID ' . $address->id . ' - Two API will validate',
+            2
+        );
+        return '';
     }
 
     /**
@@ -3146,16 +3259,80 @@ class Twopayment extends PaymentModule
         }
 
         if (is_string($body)) {
+            // ENHANCED: Parse validation errors and return user-friendly messages
+            $friendly_message = $this->parseValidationErrorToFriendlyMessage($body);
+            if ($friendly_message) {
+                return $friendly_message;
+            }
             return $body;
         }
 
         if (isset($body['error_details']) && $body['error_details']) {
+            // ENHANCED: Parse validation errors in error_details
+            $friendly_message = $this->parseValidationErrorToFriendlyMessage($body['error_details']);
+            if ($friendly_message) {
+                return $friendly_message;
+            }
             return $body['error_details'];
         }
 
         if (isset($body['error_code']) && $body['error_code']) {
+            // ENHANCED: Parse validation errors in error_message
+            if (isset($body['error_message'])) {
+                $friendly_message = $this->parseValidationErrorToFriendlyMessage($body['error_message']);
+                if ($friendly_message) {
+                    return $friendly_message;
+                }
+            }
             return $body['error_message'];
         }
+    }
+    
+    /**
+     * Parse Two API validation errors and return user-friendly messages
+     * Handles common validation errors like invalid phone numbers, missing fields, etc.
+     * 
+     * @param string $error_string Raw error string from Two API
+     * @return string|null User-friendly message or null if not a recognized pattern
+     */
+    private function parseValidationErrorToFriendlyMessage($error_string)
+    {
+        if (!is_string($error_string)) {
+            return null;
+        }
+        
+        $error_lower = strtolower($error_string);
+        
+        // Phone number validation errors
+        if (strpos($error_lower, 'invalid phone number') !== false || 
+            strpos($error_lower, 'phone_number') !== false && strpos($error_lower, 'value_error') !== false) {
+            return $this->l('The phone number in your billing address appears to be invalid. Please go back and ensure you have entered a valid phone number for your country.');
+        }
+        
+        // Email validation errors
+        if (strpos($error_lower, 'invalid email') !== false || 
+            strpos($error_lower, 'email') !== false && strpos($error_lower, 'value_error') !== false) {
+            return $this->l('The email address provided is invalid. Please check your email and try again.');
+        }
+        
+        // Company/organization validation errors
+        if (strpos($error_lower, 'invalid company') !== false || 
+            strpos($error_lower, 'organization_number') !== false && strpos($error_lower, 'value_error') !== false) {
+            return $this->l('The company information provided is invalid. Please go back to your billing address and search for your company name to select a valid company.');
+        }
+        
+        // Address validation errors
+        if (strpos($error_lower, 'invalid address') !== false || 
+            strpos($error_lower, 'address') !== false && strpos($error_lower, 'value_error') !== false) {
+            return $this->l('The address provided is invalid. Please go back and verify your billing address details.');
+        }
+        
+        // General validation error - provide helpful generic message
+        if (strpos($error_lower, 'validation error') !== false || strpos($error_lower, 'value_error') !== false) {
+            return $this->l('Some of the information provided is invalid. Please check your billing address details and try again.');
+        }
+        
+        return null;
     }
 
     public function setTwoOrderPaymentData($id_order, $payment_data)

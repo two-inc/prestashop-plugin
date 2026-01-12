@@ -24,15 +24,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Dynamic description text changes based on term type
 - **Admin Order View**: Shows "End of Month + 30 days" with EOM badge for clarity
 - **Upgrade Script**: `upgrade-2.3.0.php` with backward-compatible defaults
+- **Debug Mode**: Admin toggle for detailed diagnostic logging (Other Settings → Enable Debug Mode)
+  - Logs tax calculations, rate fields, and gross/net amounts per product
+  - Only enable when requested by Two support for troubleshooting
+- **Phone Number Fallback**: Automatic fallback from `phone` to `phone_mobile` field
+  - Handles cases where customers only provide mobile number
+  - Graceful handling when no phone provided (Two API validates)
 
 ### Changed
 - **Checkout Display**: Smart label/unit hiding for EOM terms (no verbose "Pay in EOM+30 days")
 - **Payment Terms Selector**: Term format changes based on type (tooltips explain EOM)
 - **API Payload Builder**: New `buildTermsPayload()` method conditionally adds EOM field
 - **Available Terms Logic**: `getAvailablePaymentTerms()` filters based on term type
+- **Tax Rate Calculation**: Now validates tax rate from actual amounts (gross - net / net)
+  - Handles edge case where PrestaShop `rate` field is 0 but tax is applied
+  - Logs anomalies when rate field doesn't match calculated rate
+  - Uses calculated rate as source of truth (what customer actually pays)
+- **Company Messaging**: Clearer guidance when company data is missing
+  - "Go back to your billing address and enter your company name in the Company field"
+  - "Go back to your billing address and search for your company name. Select your company from the results"
+  - Specific status codes: `no_company`, `incomplete_company` for better UX
 
 ### Fixed
 - Invoice upload feature temporarily disabled (will be re-enabled after further testing)
+- **Tax Rate 0% Issue**: Fixed edge case where tax rate was sent as 0 despite tax being applied
+  - Now calculates rate from PrestaShop's actual gross/net amounts
+- **Phone Validation Errors**: User-friendly messages for invalid phone numbers
+  - "The phone number in your billing address appears to be invalid. Please go back and ensure you have entered a valid phone number for your country."
+- **API Validation Errors**: Comprehensive parsing of Two API validation errors
+  - Phone, email, address, and company validation errors now show user-friendly messages
+  - Generic fallback for unknown validation errors
 
 ### Technical
 - **PHP 7.1+ Compatible**: No spread operators, arrow functions, or typed properties
