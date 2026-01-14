@@ -260,18 +260,40 @@ class TwoOrderIntent {
             return 'Your invoice with Two cannot be approved at this time. Please select an alternative payment method.';
         }
         const error = ('' + errorString).toLowerCase();
+        
+        // Phone number validation errors (priority - specific error type)
+        if (error.includes('invalid phone number') || 
+            (error.includes('phone_number') && error.includes('value_error'))) {
+            return window.twopayment?.i18n?.invalid_phone_number || 
+                'The phone number in your billing address appears to be invalid. Please go back and ensure you have entered a valid phone number for your country.';
+        }
+        
+        // Email validation errors
+        if (error.includes('invalid email') || 
+            (error.includes('email') && error.includes('value_error'))) {
+            return 'The email address provided is invalid. Please check your email and try again.';
+        }
+        
+        // Organization/company errors
         if (error.includes('organization_number') || error.includes('organization number')) {
-            return 'Company information is incomplete. Please ensure you have selected your company from the search results.';
+            return 'Company information is incomplete. Go back to your billing address and select your company from the search results.';
         }
-        if (error.includes('validation error')) {
-            return 'Some required company information is missing. Please complete all required fields.';
+        
+        // General validation errors
+        if (error.includes('validation error') || error.includes('value_error')) {
+            return 'Some of the information provided is invalid. Please check your billing address details and try again.';
         }
+        
+        // Invalid data errors
         if (error.includes('invalid')) {
-            return 'The company information provided is not valid. Please select your company from the search results.';
+            return 'The company information provided is not valid. Go back to your billing address and select your company from the search results.';
         }
+        
+        // Not found errors
         if (error.includes('not found') || error.includes('404')) {
-            return 'Company information could not be verified. Please select your company from the search results.';
+            return 'Company information could not be verified. Go back to your billing address and select your company from the search results.';
         }
+        
         return 'Your invoice with Two cannot be approved at this time. Please select an alternative payment method.';
     }
 
@@ -391,7 +413,7 @@ class TwoOrderIntent {
                         }
                         const $msg = $twoPaymentOption.find('.two-order-intent-message');
                         if ($msg.length > 0) {
-                            const t = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.select_company_to_use_two) || 'To pay with Two, please select your company from the search results so we can verify your business and offer invoice terms.';
+                            const t = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.select_company_to_use_two) || 'To pay with Two, go back to your billing address and search for your company name. Select your company from the results to verify your business.';
                             $msg.removeClass('approved declined loading').html(t).show();
                         }
                         return;

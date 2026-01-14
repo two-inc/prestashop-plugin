@@ -520,12 +520,22 @@ class TwoCheckoutManager {
      */
     handleOrderIntentResult(result) {
         if (!result.success) {
-            // If order intent was skipped (e.g., missing company data), show a gentle prompt when account type is disabled
-            const err = (result && result.error) ? String(result.error).toLowerCase() : '';
+            // ENHANCED: Handle specific company status codes from backend
+            const status = result.status || '';
+            const err = (result && result.error) ? String(result.error) : '';
+            const errLower = err.toLowerCase();
             const useAccountType = !!(window.twopayment && String(window.twopayment.use_account_type) === '1');
-            if (err.includes('skipped') && !useAccountType) {
+            
+            // Handle specific status codes for clear user guidance
+            if (status === 'no_company' || status === 'incomplete_company') {
+                this.showCompanyRequiredMessage(err, status);
+                return;
+            }
+            
+            // Legacy: If order intent was skipped (e.g., missing company data), show a gentle prompt
+            if (errLower.includes('skipped') && !useAccountType) {
                 const messageContainer = this.getOrCreateMessageContainer();
-                const requiredMsg = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.select_company_to_use_two) || 'To pay with Two, please select your company from the search results so we can verify your business and offer invoice terms.';
+                const requiredMsg = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.select_company_to_use_two) || 'To pay with Two, go back to your billing address and search for your company name. Select your company from the results to verify your business.';
                 const messageElement = messageContainer.querySelector('.two-payment-message') || messageContainer;
                 if (messageElement !== messageContainer) {
                     messageElement.innerHTML = requiredMsg;
@@ -605,6 +615,48 @@ class TwoCheckoutManager {
                messageLower.includes('please enter') ||
                messageLower.includes('please provide') ||
                messageLower.includes('missing');
+    }
+
+    /**
+     * Show company required message with clear guidance (theme-independent)
+     * @param {string} message - The error message from backend
+     * @param {string} status - The status code: 'no_company' or 'incomplete_company'
+     */
+    showCompanyRequiredMessage(message, status) {
+        const messageContainer = this.getOrCreateMessageContainer();
+        const actionTitle = window.twopayment?.i18n?.action_required_title || 'Action Required';
+        
+        // Determine help text based on status
+        let helpText = '';
+        if (status === 'no_company') {
+            helpText = window.twopayment?.i18n?.company_name_required || 
+                'To pay with Two, go back to your billing address and enter your company name in the Company field.';
+        } else if (status === 'incomplete_company') {
+            helpText = window.twopayment?.i18n?.select_company_to_use_two || 
+                'Go back to your billing address and search for your company name. Select your company from the results to verify your business.';
+        }
+        
+        // Build the message UI
+        const messageElement = messageContainer.querySelector('.two-payment-message') || messageContainer;
+        if (messageElement !== messageContainer) {
+            messageElement.innerHTML = message || helpText;
+        } else {
+            messageContainer.innerHTML = `
+                <p class="two-subtitle">${actionTitle}</p>
+                <p class="two-payment-message">${message || helpText}</p>
+                ${helpText && message !== helpText ? `<p class="two-help-text">${helpText}</p>` : ''}
+            `;
+        }
+        
+        // Apply styling
+        messageContainer.classList.remove('approved', 'loading', 'declined');
+        messageContainer.classList.add('show', 'action-required');
+        messageContainer.style.display = 'block';
+        
+        // Hide loading overlay
+        this.hideLoadingOverlay();
+        
+        // Don't show payment terms - company verification required first
     }
     
     /**
@@ -700,10 +752,23 @@ class TwoCheckoutManager {
     
     /**
      * Show order intent error (theme-independent)
+     * SMART: If company data is missing, show company-specific message instead of generic error
      */
     showOrderIntentError(error) {
-        // Convert technical error messages to user-friendly ones
-        const userFriendlyError = this.getUserFriendlyErrorMessage(error);
+        // SMART CHECK: Before showing generic error, check if company data is actually missing
+        // This handles the common case where error is shown due to missing company selection
+        const companyMissing = this.isCompanyDataMissing();
+        
+        let userFriendlyError;
+        if (companyMissing) {
+            // Company data is incomplete - show specific guidance
+            userFriendlyError = window.twopayment?.i18n?.select_company_to_use_two ||
+                'To pay with Two, go back to your billing address and search for your company name. Select your company from the results to verify your business.';
+        } else {
+            // Company data looks complete - show generic error
+            userFriendlyError = window.twopayment?.i18n?.generic_error ||
+                'There was an issue processing your Two payment request. Please try again or choose another payment method.';
+        }
         
         const messageContainer = this.getOrCreateMessageContainer();
         
@@ -727,6 +792,32 @@ class TwoCheckoutManager {
         this.clearLoadingState();
         this.isLoadingUIShown = false;
     }
+    
+    /**
+     * Check if company data is missing (org number not selected)
+     * @returns {boolean} True if company org number is missing
+     */
+    isCompanyDataMissing() {
+        let orgNumber = '';
+        
+        // Check companyid form field
+        const companyIdField = document.querySelector("input[name='companyid']");
+        if (companyIdField && companyIdField.value) {
+            orgNumber = companyIdField.value.trim();
+        }
+        
+        // Also check cookie as fallback
+        if (!orgNumber) {
+            try {
+                const cookieMatch = document.cookie.match(/two_company_id=([^;]+)/);
+                if (cookieMatch) {
+                    orgNumber = decodeURIComponent(cookieMatch[1]).trim();
+                }
+            } catch (e) { /* ignore */ }
+        }
+        
+        return !orgNumber;
+    }
 
     /**
      * Convert technical error messages to user-friendly ones
@@ -734,39 +825,68 @@ class TwoCheckoutManager {
     getUserFriendlyErrorMessage(error) {
         // Handle specific error cases
         if (typeof error === 'string') {
+            const errorLower = error.toLowerCase();
+            
+            // Case: Invalid phone number (from Two API validation)
+            if (errorLower.includes('invalid phone number') || 
+                (errorLower.includes('phone_number') && errorLower.includes('value_error'))) {
+                return window.twopayment?.i18n?.invalid_phone_number || 
+                    'The phone number in your billing address appears to be invalid. Please go back and ensure you have entered a valid phone number for your country.';
+            }
+            
             // Case: "Company name is required for business accounts"
-            if (error.toLowerCase().includes('company name is required')) {
-                return 'Please enter your company name to continue with Two payment.';
+            if (errorLower.includes('company name is required')) {
+                return window.twopayment?.i18n?.company_name_required ||
+                    'To pay with Two, go back to your billing address and enter your company name in the Company field.';
             }
             
             // Case: "Organization number is required"
-            if (error.toLowerCase().includes('organization number') && error.toLowerCase().includes('required')) {
-                return 'Please search and select a valid company to continue with Two payment.';
+            if (errorLower.includes('organization number') && errorLower.includes('required')) {
+                return window.twopayment?.i18n?.select_company_to_use_two ||
+                    'Go back to your billing address and search for your company name. Select your company from the results to verify your business.';
             }
             
             // Case: "Invalid company information"
-            if (error.toLowerCase().includes('invalid company')) {
-                return 'The company information provided is not valid. Please search and select a valid company.';
+            if (errorLower.includes('invalid company')) {
+                return 'The company information provided is not valid. Go back to your billing address and select a valid company from the search results.';
             }
             
             // Case: "Company not found"
-            if (error.toLowerCase().includes('company not found')) {
+            if (errorLower.includes('company not found')) {
                 return 'We could not find your company in our database. Please try searching with a different company name or contact support.';
             }
             
+            // Case: Invalid email
+            if (errorLower.includes('invalid email') || 
+                (errorLower.includes('email') && errorLower.includes('value_error'))) {
+                return 'The email address provided is invalid. Please check your email and try again.';
+            }
+            
+            // Case: Invalid address
+            if (errorLower.includes('invalid address') || 
+                (errorLower.includes('address') && errorLower.includes('value_error'))) {
+                return 'The address provided is invalid. Please go back and verify your billing address details.';
+            }
+            
             // Case: "Credit check failed" or similar
-            if (error.toLowerCase().includes('credit') || error.toLowerCase().includes('not approved')) {
+            if (errorLower.includes('credit') || errorLower.includes('not approved')) {
                 return 'Two payment is not available for this order. Please choose another payment method.';
             }
             
             // Case: API or network errors
-            if (error.toLowerCase().includes('network') || error.toLowerCase().includes('timeout') || error.toLowerCase().includes('api')) {
+            if (errorLower.includes('network') || errorLower.includes('timeout') || errorLower.includes('api')) {
                 return 'There was a temporary issue verifying your payment. Please try again or choose another payment method.';
+            }
+            
+            // Case: General validation error
+            if (errorLower.includes('validation error') || errorLower.includes('value_error')) {
+                return 'Some of the information provided is invalid. Please check your billing address details and try again.';
             }
         }
         
         // Default fallback for unknown errors
-        return 'There was an issue processing your Two payment request. Please try again or choose another payment method.';
+        return window.twopayment?.i18n?.generic_error ||
+            'There was an issue processing your Two payment request. Please try again or choose another payment method.';
     }
     
     /**
@@ -937,17 +1057,15 @@ class TwoCheckoutManager {
         const termsHtml = `
             <div class="two-payment-terms" id="two-payment-terms" style="display: block;">
                 <div class="two-terms-header">
-                    <h4 class="two-terms-title">${window.twopayment?.i18n?.choose_payment_terms || 'Choose the Buy Now, Pay Later option that works best for you'}</h4>
-                    <p class="two-terms-description">${window.twopayment?.i18n?.payment_period_starts || 'Your payment period starts when your order is fulfilled, along with your invoice from Two'}</p>
+                    <h4 class="two-terms-title">${(window.twopayment && window.twopayment.i18n && window.twopayment.i18n.choose_payment_terms) || 'Choose the Buy Now, Pay Later option that works best for you'}</h4>
+                    <p class="two-terms-description">${(window.twopayment && window.twopayment.i18n && window.twopayment.i18n.payment_period_starts) || 'Your payment period starts when your order is fulfilled'}</p>
                 </div>
                 <div class="two-terms-slider-container">
                     <div class="two-terms-slider" id="two-terms-slider">
                         <!-- Terms will be populated by JavaScript -->
                     </div>
                     <div class="two-terms-selected">
-                        <span class="two-terms-selected-text">${window.twopayment?.i18n?.pay_in || 'Pay in'}</span>
-                        <span class="two-terms-selected-days" id="two-selected-days">30</span>
-                        <span class="two-terms-selected-unit">${window.twopayment?.i18n?.days || 'days'}</span>
+                        <span class="two-terms-selected-days" id="two-selected-days"></span>
                     </div>
                 </div>
             </div>
@@ -993,18 +1111,43 @@ class TwoCheckoutManager {
         // Get payment terms from admin configuration (passed via template)
         const availableTerms = this.config.available_payment_terms;
         const defaultTerm = this.config.default_payment_term;
+        const termType = this.config.payment_term_type || 'STANDARD';
         
         // If no terms configured, don't show payment terms
         if (!availableTerms || !Array.isArray(availableTerms) || availableTerms.length === 0) {
-            console.warn('Two Payment: No payment terms configured');
             return;
         }
         
+        // Update description based on term type
+        var termsDescription = document.querySelector('#two-terms-description');
+        if (termsDescription) {
+            if (termType === 'EOM') {
+                var eomText = termsDescription.getAttribute('data-eom-text');
+                if (eomText) {
+                    termsDescription.textContent = eomText;
+                }
+            } else {
+                var standardText = termsDescription.getAttribute('data-standard-text');
+                if (standardText) {
+                    termsDescription.textContent = standardText;
+                }
+            }
+        }
+        
         // Create term options
-        availableTerms.forEach((days, index) => {
+        availableTerms.forEach(function(days, index) {
             const termOption = document.createElement('div');
             termOption.className = 'two-term-option';
-            termOption.textContent = days;
+            
+            // Format display based on term type (EOM+X for End-of-Month, X for Standard)
+            if (termType === 'EOM') {
+                termOption.textContent = 'EOM+' + days;
+                termOption.title = 'End of Month + ' + days + ' days';
+            } else {
+                termOption.textContent = days;
+                termOption.title = days + ' days';
+            }
+            
             termOption.dataset.days = days;
             
             // Set default term: use configured default, or if only one term, make it active, or first term
@@ -1024,9 +1167,25 @@ class TwoCheckoutManager {
                 // Add active class to selected option
                 termOption.classList.add('active');
                 
-                // Update selected days display
+                // Update selected term display
                 if (selectedDays) {
-                    selectedDays.textContent = days;
+                    const payInText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.pay_in 
+                        ? window.twopayment.i18n.pay_in 
+                        : 'Pay in';
+                    const daysText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.days 
+                        ? window.twopayment.i18n.days 
+                        : 'days';
+                    const fromEndOfMonthText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.from_end_of_month 
+                        ? window.twopayment.i18n.from_end_of_month 
+                        : 'from end of month';
+
+                    if (termType === 'EOM') {
+                        // For EOM: Show "Pay in X days from end of month" format
+                        selectedDays.textContent = payInText + ' ' + days + ' ' + daysText + ' ' + fromEndOfMonthText;
+                    } else {
+                        // For Standard: Show "Pay in 30 days" format
+                        selectedDays.textContent = payInText + ' ' + days + ' ' + daysText;
+                    }
                 }
 
                 // Persist selection in cookie via backend (10s timeout)
@@ -1048,13 +1207,34 @@ class TwoCheckoutManager {
             termsSlider.appendChild(termOption);
         });
         
-        // Set initial selected days based on the active term
-        if (selectedDays) {
-            const activeTerm = defaultTerm || (availableTerms.length === 1 ? availableTerms[0] : availableTerms[0]);
-            selectedDays.textContent = activeTerm;
+        // Set initial selected term display
+        const activeTerm = defaultTerm || (availableTerms.length === 1 ? availableTerms[0] : availableTerms[0]);
+        
+        if (selectedDays && activeTerm) {
+            const payInText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.pay_in 
+                ? window.twopayment.i18n.pay_in 
+                : 'Pay in';
+            const daysText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.days 
+                ? window.twopayment.i18n.days 
+                : 'days';
+            const fromEndOfMonthText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.from_end_of_month 
+                ? window.twopayment.i18n.from_end_of_month 
+                : 'from end of month';
+
+            if (termType === 'EOM') {
+                // For EOM: Show "Pay in X days from end of month" format
+                selectedDays.textContent = payInText + ' ' + activeTerm + ' ' + daysText + ' ' + fromEndOfMonthText;
+            } else {
+                // For Standard: Show "Pay in 30 days" format
+                selectedDays.textContent = payInText + ' ' + activeTerm + ' ' + daysText;
+            }
         }
     }
-
+    
+    /**
+     * Update payment terms description based on term type
+     * Separated for reusability and early initialization
+     */
     /**
      * Save order intent result to server for server-side validation
      * Prevents bypassing client-side blocking

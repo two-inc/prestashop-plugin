@@ -58,6 +58,34 @@
                 $('#two-tabs a').removeClass('active');
                 $(this).addClass('active');
             });
+            
+            // Payment Term Type - Dynamic show/hide of term options
+            // PHP 7.1+ compatible: Using ES5 syntax (no arrow functions)
+            function updatePaymentTermsVisibility() {
+                var termType = $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]:checked').val();
+                
+                if (termType === 'EOM') {
+                    // EOM: Only show 30, 45, 60 day options
+                    $('.two-term-standard').closest('.form-group').hide();
+                    $('.two-term-both').closest('.form-group').show();
+                    $('#two-payment-terms-desc-standard').hide();
+                    $('#two-payment-terms-desc-eom').show();
+                } else {
+                    // STANDARD: Show all options (7, 15, 20, 30, 45, 60, 90)
+                    $('.two-term-standard').closest('.form-group').show();
+                    $('.two-term-both').closest('.form-group').show();
+                    $('#two-payment-terms-desc-standard').show();
+                    $('#two-payment-terms-desc-eom').hide();
+                }
+            }
+            
+            // Run on page load
+            updatePaymentTermsVisibility();
+            
+            // Run when term type changes
+            $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]').on('change', function() {
+                updatePaymentTermsVisibility();
+            });
         });
     </script>
 {/literal}

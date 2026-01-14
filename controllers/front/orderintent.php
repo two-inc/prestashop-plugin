@@ -234,22 +234,27 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         // Store company data in PrestaShop session for future use
         $this->storeCompanyDataInSession($companyData);
         
+        // ENHANCED VALIDATION: Provide clear status codes for different company data scenarios
+        // This allows frontend to show specific guidance to users
         
-        // Simple validation - require both company name and organization number
+        // Case 1: No company name at all - user hasn't entered company details
         if (empty($companyName)) {
-            PrestaShopLogger::addLog('TwoPayment: ERROR - No company name provided in form data', 3);
+            PrestaShopLogger::addLog('TwoPayment: No company name provided - prompting user', 2);
             $this->sendJsonResponse(json_encode([
                 'success' => false,
-                'error' => 'Company name is required for business accounts'
+                'status' => 'no_company',
+                'error' => $this->module->l('To pay with Two, go back to your billing address and enter your company name in the Company field.')
             ]));
             return;
         }
         
+        // Case 2: Has company name but no org number - common with existing addresses
         if (empty($companyId)) {
-            PrestaShopLogger::addLog('TwoPayment: ERROR - No organization number provided in form data', 3);
+            PrestaShopLogger::addLog('TwoPayment: Company name exists but no org number - prompting user to search', 2);
             $this->sendJsonResponse(json_encode([
                 'success' => false,
-                'error' => 'Organization number is required. Please select your company from the search results.'
+                'status' => 'incomplete_company',
+                'error' => $this->module->l('To pay with Two, go back to your billing address and search for your company name. Select your company from the results to verify your business.')
             ]));
             return;
         }

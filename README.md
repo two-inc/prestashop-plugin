@@ -12,7 +12,9 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 - **Organization Number Capture**: Hidden field (`companyid`) automatically populated from company selection
 - **Order Intent Check**: Frontend validation before payment confirmation
 - **Server-Side Verification**: Defense-in-depth security with server-side Order Intent verification
-- **Payment Terms UI**: Configurable payment terms (7/15/20/30/45/60/90 days) with user selection
+- **Payment Terms UI**: Configurable payment terms with user selection
+  - **Standard Terms**: 7/15/20/30/45/60/90 days from fulfillment date
+  - **End-of-Month (EOM) Terms**: 30/45/60 days from end of current month at fulfillment
 - **Admin Integration**: Two order ID, state, status, and invoice URL displayed in order pages
 - **Invoice Upload**: Automatic upload of PrestaShop-generated invoices to Two (optional feature)
 
@@ -26,8 +28,11 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 - Cross-version compatibility (PrestaShop 1.7.6 - 9.x)
 - Theme-agnostic implementation
 - jQuery compatibility handling for older PrestaShop versions
-- Comprehensive error logging
+- Comprehensive error logging with optional debug mode
 - Order payload validation ensuring exact PrestaShop invoice matching
+- Robust tax rate calculation with fallback validation
+- User-friendly error messages for API validation failures
+- Phone number fallback (phone → phone_mobile)
 
 ## Requirements
 
@@ -54,8 +59,11 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 3. **API Key**: Enter your Two API key for the selected environment
    - The module validates the API key on save
    - Invalid keys will show an error message
-4. **Payment Terms**: Configure available payment terms
-   - Enable/disable individual terms: 7, 15, 20, 30, 45, 60, 90 days
+4. **Payment Terms**: Configure payment term type and available terms
+   - **Term Type**: Choose Standard or End-of-Month (EOM) terms
+     - **Standard**: Payment due X days from fulfillment date (all durations available)
+     - **EOM**: Payment due at end of current month + X days (30/45/60 only)
+   - Enable/disable individual terms based on selected type
    - Set default payment term (defaults to 30 days if available)
 5. **Optional Features**:
    - Enable/disable company name field requirement
@@ -73,7 +81,8 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 |--------|-------------|---------|
 | Environment | Sandbox or Production | Sandbox |
 | API Key | Two merchant API key | Required |
-| Payment Terms | Available terms (7-90 days) | 30 days enabled |
+| Payment Term Type | Standard or End-of-Month (EOM) | Standard |
+| Payment Terms | Available terms based on type | 30 days enabled |
 | Default Payment Term | Default term when multiple available | 30 days |
 | Company Name | Require company name field | Enabled |
 | Organization Number | Require organization number | Enabled |
@@ -84,6 +93,55 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 | Auto Fulfill Orders | Automatically fulfill orders with Two when status changes | Enabled |
 | Invoice Upload | Auto-upload invoices to Two | Disabled |
 | SSL Verification | Verify SSL certificates | Enabled |
+| Debug Mode | Enable detailed diagnostic logging | Disabled |
+
+## Payment Terms: Standard vs End-of-Month (EOM)
+
+The module supports two types of payment terms to match your B2B invoicing practices:
+
+### Standard Payment Terms
+
+Payment is due **X days from the fulfillment date**.
+
+**Example:**
+- Order fulfilled: January 15
+- Payment term: 30 days
+- **Payment due: February 14** (Jan 15 + 30 days)
+
+**Available durations:** 7, 15, 20, 30, 45, 60, 90 days
+
+**When to use:**
+- Simple, straightforward payment terms
+- Common for B2B transactions
+- Easy for buyers to understand
+
+### End-of-Month (EOM) Payment Terms
+
+Payment is due at the **end of the current month (at fulfillment) plus X days**.
+
+**Example:**
+- Order fulfilled: January 15
+- Payment term: EOM+30
+- Calculation: End of January (Jan 31) + 30 days
+- **Payment due: February 28** (or Feb 29 in leap years)
+
+**Available durations:** 30, 45, 60 days only
+
+**When to use:**
+- Aligns with monthly accounting cycles
+- Common in industries with monthly billing
+- Simplifies payment tracking for buyers with multiple orders
+
+**Display:**
+- Admin: "End of Month + 30 days"
+- Checkout: "Pay in 30 days from end of month"
+
+**How it works:**
+1. Two's backend calculates the end of the month when the order is fulfilled
+2. Adds the specified days to that date
+3. Buyer receives invoice with the calculated due date
+
+---
 
 ## How It Works
 
@@ -331,6 +389,45 @@ The module builds order payloads that exactly match PrestaShop invoices:
   - Check Order Intent was approved
   - Verify JavaScript loaded correctly
   - Check browser console for errors
+  - Ensure company is selected (not just typed) - search and click a result
+
+### "Invalid Phone Number" Error
+- **Symptom**: Order fails with phone validation error
+- **Solutions**:
+  - Ensure customer has entered a valid phone number in billing address
+  - Module tries both `phone` and `phone_mobile` fields automatically
+  - Phone must be valid for the selected country
+  - Check billing address has a phone number filled in
+
+### "Company Details Required" Message
+- **Symptom**: Two payment shows message asking to provide company details
+- **Solutions**:
+  - Customer must enter company name in the billing address Company field
+  - Customer must search and **select** their company from the dropdown results
+  - Simply typing a company name is not enough - must click to select from search
+  - If using an existing address, customer should edit it to add/verify company
+
+### Tax Rate Issues (0% Tax)
+- **Symptom**: Two API rejects order with tax rate error
+- **Solutions**:
+  - Enable Debug Mode in module settings (Other Settings → Enable Debug Mode)
+  - Check PrestaShop logs for "TwoPayment: Product tax debug" entries
+  - Verify products have correct tax rules assigned in PrestaShop
+  - Module now calculates tax from actual amounts as fallback
+  - Contact Two support with debug logs if issue persists
+
+### Debug Mode
+- **When to use**: Only enable when requested by Two support for troubleshooting
+- **What it logs**: 
+  - Tax calculations per product (rate field, net/gross amounts, calculated rate)
+  - Helps diagnose tax rate discrepancies between PrestaShop and Two API
+- **How to enable**: 
+  1. Go to Module Configuration → Other Settings
+  2. Toggle "Enable Debug Mode" to Yes
+  3. Save settings
+  4. Reproduce the issue
+  5. Check PrestaShop logs (`var/logs/`)
+  6. Disable Debug Mode when done
 
 ## Security
 
@@ -379,4 +476,4 @@ Two Commercial License
 
 ## Copyright
 
-© 2021-2025 Two Team
+© 2021-2026 Two Team

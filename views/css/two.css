@@ -945,6 +945,22 @@
     gap: 6px;
 }
 
+/* Payment Terms Badge for EOM */
+.two-term-type-badge {
+    display: inline-block;
+    background: #3b82f6;
+    color: white;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-left: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    vertical-align: middle;
+    cursor: help;
+}
+
 /* Action Cards */
 .two-actions-grid {
     display: flex;
