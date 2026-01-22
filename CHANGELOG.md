@@ -5,6 +5,62 @@ All notable changes to the Two Payment module for PrestaShop will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.2] - 2026-01-22
+
+### Added
+- **Invoice Upload Feature**: Re-enabled the invoice upload functionality
+  - When enabled, PrestaShop-generated PDF invoices are uploaded to Two when orders are fulfilled
+  - Merchants can customize their invoice templates to include Two's payment details
+  - PrestaShop invoice templates can be modified in `/themes/[theme]/pdf/invoice.tpl` or `/pdf/invoice.tpl`
+  - Feature remains disabled by default - must be coordinated with Two before enabling
+
+### Changed
+- **Invoice Upload Configuration**: Re-enabled `PS_TWO_USE_OWN_INVOICES` toggle in admin settings
+  - Clear instructions explaining merchants must customize their invoice template
+  - Example Smarty code provided for adding Two-specific content only to Two orders
+  - Shows how to use `{if $order->module == 'twopayment'}` conditional
+  - Warning to contact Two support before enabling
+
+### Technical
+- No database schema changes required
+- No new hooks required
+- Invoice upload uses existing Three-step process (request URL, upload to cloud storage, poll status)
+
+---
+
+## [2.3.1] - 2026-01-22
+
+### Added
+- **Plugin Information Tab**: New admin tab displaying plugin capabilities, limitations, and troubleshooting tips
+  - Clear list of what the plugin can and cannot do
+  - Important requirements for customers (company name, phone, etc.)
+  - Common troubleshooting tips with solutions
+  - Support contact information and version display
+
+### Fixed
+- **Tax Amount Calculation**: Fixed "Line item tax amount differs from tax rate * net amount" API errors
+  - Tax amount now calculated using Two's required formula: `tax_amount = net_amount * tax_rate`
+  - Ensures mathematical consistency between tax_rate, net_amount, and tax_amount
+  - Resolves API rejection for orders with rounding discrepancies
+- **Shipping Cost with Free Shipping**: Fixed shipping detection when free shipping cart rules are active
+  - Now uses `getPackageShippingCost()` to get carrier cost before cart rules are applied
+  - Shipping line item now includes correct amount even with free shipping promotions
+- **Tax Rate Sourcing**: Improved tax rate determination using PrestaShop's native `rate` field
+  - Primary source: PrestaShop's configured tax rate (canonical value)
+  - Fallback: Calculate from amounts when rate field is unavailable
+  - Edge case handling for tax-exempt customers and rate field inconsistencies
+
+### Changed
+- **Tax Calculation Logic**: Tax amounts are now calculated from rates instead of taken from PrestaShop
+  - Guarantees Two API formula compliance: `tax_amount = net_amount * tax_rate`
+  - Gross amount validation with configurable tolerance
+  - Debug logging for rate variances when debug mode is enabled
+
+### Technical
+- No database schema changes required
+- Backward compatible with all existing configurations
+- PHP 7.1+ compatible
+
 ## [2.3.0] - 2025-11-21
 
 ### Added

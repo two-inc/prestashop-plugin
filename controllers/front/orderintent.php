@@ -450,12 +450,18 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
     }
 
     /**
-     * Get company data using PrestaShop-native fallback chain
-     * Priority: Form data → Session → Address → Database
+     * Get company data using PrestaShop-native fallback chain with smart auto-resolution
+     * Priority: Form data → Session → Address fields (with org number verification via Two API)
+     * 
+     * CRITICAL FIX: When a logged-in user uses an existing address, we check for organization
+     * numbers stored in address fields (dni, vat_number) and verify them via Two's API.
+     * This is MORE RELIABLE than searching by company name because org numbers give exact matches.
+     * 
+     * Example: https://api.two.inc/companies/v2/company?q=A81304487&country=ES returns exact match
      */
     private function getCompanyDataWithFallbacks()
     {
-        // Priority 1: Form data (highest priority - direct user input)
+        // Priority 1: Form data (highest priority - direct user input from company search)
         $company = trim(Tools::getValue('company', ''));
         $companyId = trim(Tools::getValue('companyid', ''));
         
@@ -464,28 +470,102 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             return ['company' => $company, 'companyid' => $companyId];
         }
         
-        // Priority 2: PrestaShop session/cookie (persisted from previous steps)
-        if (isset($this->context->cookie->two_company_name) && !empty($this->context->cookie->two_company_name)) {
-            PrestaShopLogger::addLog('TwoPayment: Company data retrieved from PrestaShop session', 1);
+        // Priority 2: PrestaShop session/cookie (persisted from previous steps or company search)
+        $sessionCompany = isset($this->context->cookie->two_company_name) ? trim($this->context->cookie->two_company_name) : '';
+        $sessionCompanyId = isset($this->context->cookie->two_company_id) ? trim($this->context->cookie->two_company_id) : '';
+        
+        if (!empty($sessionCompany) && !empty($sessionCompanyId)) {
+            PrestaShopLogger::addLog('TwoPayment: Company data retrieved from PrestaShop session (complete)', 1);
             return [
-                'company' => $this->context->cookie->two_company_name,
-                'companyid' => $this->context->cookie->two_company_id ?? ''
+                'company' => $sessionCompany,
+                'companyid' => $sessionCompanyId
             ];
         }
         
-        // Priority 3: Customer's current address data
+        // Priority 3: Customer's address with ORG NUMBER VERIFICATION via Two API
+        // This is the KEY FIX - we look for org numbers in address fields and verify them
         if ($this->context->customer->isLogged()) {
             $address = new Address($this->context->cart->id_address_invoice);
-            if (Validate::isLoadedObject($address) && !empty($address->company)) {
-                PrestaShopLogger::addLog('TwoPayment: Company data retrieved from customer address', 1);
-                return [
-                    'company' => $address->company,
-                    'companyid' => $this->getStoredCompanyId($address->company) ?? ''
-                ];
+            if (Validate::isLoadedObject($address)) {
+                $countryIso = Country::getIsoById($address->id_country);
+                
+                if ($countryIso && is_string($countryIso)) {
+                    // STEP 1: Try to extract organization number from address fields
+                    // This checks dni, vat_number, companyid fields
+                    $existingOrgNumber = $this->module->extractOrgNumberFromAddress($address, $countryIso);
+                    
+                    if (!empty($existingOrgNumber)) {
+                        // STEP 2: Verify the org number via Two's API to get company name
+                        // This gives us an EXACT match - no vagueness like name-based search
+                        PrestaShopLogger::addLog(
+                            'TwoPayment: Found org number in address (' . $existingOrgNumber . '), verifying via Two API',
+                            1
+                        );
+                        
+                        $verifiedCompany = $this->module->verifyCompanyByOrgNumber($existingOrgNumber, $countryIso);
+                        
+                        if ($verifiedCompany && !empty($verifiedCompany['organization_number'])) {
+                            // SUCCESS! We have verified company data from existing address
+                            $resolvedCompany = $verifiedCompany['name'];
+                            $resolvedOrgNumber = $verifiedCompany['organization_number'];
+                            
+                            // Cache in session for future requests
+                            $this->context->cookie->two_company_name = $resolvedCompany;
+                            $this->context->cookie->two_company_id = $resolvedOrgNumber;
+                            $this->context->cookie->two_company_country = $countryIso;
+                            $this->context->cookie->setExpire(time() + Twopayment::COOKIE_EXPIRY_ONE_HOUR);
+                            
+                            PrestaShopLogger::addLog(
+                                'TwoPayment: ✓ Company VERIFIED from address org number - ' . 
+                                $existingOrgNumber . ' => ' . $resolvedCompany . ' (cached in session)',
+                                1
+                            );
+                            
+                            return [
+                                'company' => $resolvedCompany,
+                                'companyid' => $resolvedOrgNumber
+                            ];
+                        } else {
+                            // Org number couldn't be verified - might be invalid or Two API issue
+                            PrestaShopLogger::addLog(
+                                'TwoPayment: Org number from address could not be verified: ' . $existingOrgNumber . 
+                                ' in ' . $countryIso . ' - user will need to search manually',
+                                2
+                            );
+                        }
+                    }
+                    
+                    // FALLBACK: Address has company name but no verifiable org number
+                    // User will need to use company search to select their company
+                    if (!empty($address->company)) {
+                        PrestaShopLogger::addLog(
+                            'TwoPayment: Address has company name but no org number found in fields - ' .
+                            'company: "' . $address->company . '" in ' . $countryIso,
+                            1
+                        );
+                        
+                        return [
+                            'company' => trim($address->company),
+                            'companyid' => '' // User needs to search and select
+                        ];
+                    }
+                }
             }
         }
         
-        // Priority 4: Check if we have any partial data
+        // Priority 4: Partial session data (company name without org number)
+        if (!empty($sessionCompany) && empty($sessionCompanyId)) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Session has company name but no org number - user needs to search',
+                1
+            );
+            return [
+                'company' => $sessionCompany,
+                'companyid' => ''
+            ];
+        }
+        
+        // Priority 5: Any partial form data
         if (!empty($company) || !empty($companyId)) {
             PrestaShopLogger::addLog('TwoPayment: Partial company data found - company: "' . $company . '", companyid: "' . $companyId . '"', 2);
             return ['company' => $company, 'companyid' => $companyId];

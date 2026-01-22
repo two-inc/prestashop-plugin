@@ -91,7 +91,7 @@
         </div>
         {/if}
 
-        {* Actions Section - now styled like info cards *}
+        {* Actions Section *}
         <div class="two-section">
             <h4 class="two-section-title">{l s='Actions' mod='twopayment'}</h4>
             <div class="two-info-cards">
@@ -123,5 +123,3 @@
         </div>
     </div>
 </div>
-
-

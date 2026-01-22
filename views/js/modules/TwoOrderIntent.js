@@ -31,17 +31,16 @@ class TwoOrderIntent {
         }
         this.isProcessing = true;
         
+        // CRITICAL FIX: Always let the backend try to resolve company data
+        // The backend can check address fields (dni, vat_number) that the frontend can't see
+        // Backend will return appropriate status codes if company data is missing
         return this.collectFormData()
             .then(formData => {
-                const useAccountType = !!(window.twopayment && String(window.twopayment.use_account_type) === '1');
-                if (!useAccountType) {
-                    const hasCompany = !!(formData.company && String(formData.company).trim().length > 0);
-                    const hasCompanyId = !!(formData.companyid && String(formData.companyid).trim().length > 0);
-                    if (!hasCompany || !hasCompanyId) {
-                        // Skip without calling server; UI will prompt
-                        throw new Error('skipped');
-                    }
-                }
+                // Always proceed to backend - it will check:
+                // 1. Form data (company, companyid)
+                // 2. Session cookie
+                // 3. Address fields (dni, vat_number) and verify via Two API
+                // Backend returns status codes: 'no_company', 'incomplete_company' if needed
                 return this.fetchOrderIntentPayload(formData);
             })
             .then(payload => this.callTwoOrderIntent(payload))
@@ -256,8 +255,12 @@ class TwoOrderIntent {
     }
 
     getErrorMessage(errorString) {
+        // Default fallback message (uses i18n)
+        const defaultMessage = window.twopayment?.i18n?.invoice_declined || 
+            'Your invoice with Two cannot be approved at this time. Please select an alternative payment method.';
+            
         if (!errorString) {
-            return 'Your invoice with Two cannot be approved at this time. Please select an alternative payment method.';
+            return defaultMessage;
         }
         const error = ('' + errorString).toLowerCase();
         
@@ -271,39 +274,47 @@ class TwoOrderIntent {
         // Email validation errors
         if (error.includes('invalid email') || 
             (error.includes('email') && error.includes('value_error'))) {
-            return 'The email address provided is invalid. Please check your email and try again.';
+            return window.twopayment?.i18n?.invalid_email || 
+                'The email address provided is invalid. Please check your email and try again.';
         }
         
         // Organization/company errors
         if (error.includes('organization_number') || error.includes('organization number')) {
-            return 'Company information is incomplete. Go back to your billing address and select your company from the search results.';
+            return window.twopayment?.i18n?.company_incomplete || 
+                'Company information is incomplete. Go back to your billing address and select your company from the search results.';
         }
         
         // General validation errors
         if (error.includes('validation error') || error.includes('value_error')) {
-            return 'Some of the information provided is invalid. Please check your billing address details and try again.';
+            return window.twopayment?.i18n?.validation_error || 
+                'Some of the information provided is invalid. Please check your billing address details and try again.';
         }
         
         // Invalid data errors
         if (error.includes('invalid')) {
-            return 'The company information provided is not valid. Go back to your billing address and select your company from the search results.';
+            return window.twopayment?.i18n?.invalid_company || 
+                'The company information provided is not valid. Go back to your billing address and select your company from the search results.';
         }
         
         // Not found errors
         if (error.includes('not found') || error.includes('404')) {
-            return 'Company information could not be verified. Go back to your billing address and select your company from the search results.';
+            return window.twopayment?.i18n?.company_verify_failed || 
+                'Company information could not be verified. Go back to your billing address and select your company from the search results.';
         }
         
-        return 'Your invoice with Two cannot be approved at this time. Please select an alternative payment method.';
+        return defaultMessage;
     }
 
     handleError(error) {
-        const isSkip = (error && typeof error.message === 'string' && error.message.toLowerCase().includes('skipped'));
+        // Backend provides clear status codes, so just pass through the error message
+        const message = this.getErrorMessage(error && error.message ? error.message : '');
+        
         const result = {
             success: false,
             approved: false,
-            message: isSkip ? 'Order intent check skipped' : this.getErrorMessage(error && error.message ? error.message : ''),
-            error: error && error.message ? error.message : ''
+            message: message,
+            error: error && error.message ? error.message : '',
+            status: 'error'
         };
         this.lastResult = result;
         this.updateUI(result);
@@ -397,28 +408,24 @@ class TwoOrderIntent {
                 return $(this).find('[data-module-name="twopayment"]').length > 0;
             });
             if ($twoPaymentOption.length > 0 && $twoPaymentOption.is(':visible')) {
-                // If account type is disabled and company data is missing, show gentle prompt instead of calling intent
-                const useAccountType = !!(window.twopayment && String(window.twopayment.use_account_type) === '1');
-                if (!useAccountType) {
-                    let countryChanged = false;
-                    try { countryChanged = (sessionStorage.getItem('two_country_changed') === '1'); } catch (e) {}
-                    const companyField = document.querySelector("input[name='company']");
-                    const companyIdField = document.querySelector("input[name='companyid']");
-                    const hasCompany = companyField && companyField.value && companyField.value.trim().length > 0;
-                    const hasCompanyId = companyIdField && companyIdField.value && companyIdField.value.trim().length > 0;
-                    if (countryChanged || !hasCompany || !hasCompanyId) {
-                        // ADDITIONAL FIX: Clear country changed flag here as well when detected
-                        if (countryChanged) {
-                            try { sessionStorage.removeItem('two_country_changed'); } catch (e) {}
-                        }
-                        const $msg = $twoPaymentOption.find('.two-order-intent-message');
-                        if ($msg.length > 0) {
-                            const t = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.select_company_to_use_two) || 'To pay with Two, go back to your billing address and search for your company name. Select your company from the results to verify your business.';
-                            $msg.removeClass('approved declined loading').html(t).show();
-                        }
-                        return;
+                // Check for country change - if country changed, user needs to re-select company
+                let countryChanged = false;
+                try { countryChanged = (sessionStorage.getItem('two_country_changed') === '1'); } catch (e) {}
+                
+                if (countryChanged) {
+                    // Clear country changed flag
+                    try { sessionStorage.removeItem('two_country_changed'); } catch (e) {}
+                    const $msg = $twoPaymentOption.find('.two-order-intent-message');
+                    if ($msg.length > 0) {
+                        const t = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.select_company_to_use_two) || 'To pay with Two, go back to your billing address and search for your company name. Select your company from the results to verify your business.';
+                        $msg.removeClass('approved declined loading').html(t).show();
                     }
+                    return;
                 }
+                
+                // CRITICAL FIX: Always let the backend check for company data
+                // Backend can find org numbers in address fields (dni, vat_number) 
+                // that the frontend can't see, and verify them via Two API
                 this.checkOrderIntent();
             }
         }, 5000);
