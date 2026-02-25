@@ -1,0 +1,49 @@
+---
+alwaysApply: true
+---
+# Two Payment Module - AI Development Rules
+
+> **Primary context source: `CLAUDE.md` in repository root**
+> This file exists for non-Claude AI models. All detailed rules are in CLAUDE.md.
+
+## Quick Rules (see CLAUDE.md for full details)
+
+1. **Read CLAUDE.md first** - Contains all development patterns and rules
+2. **Payment safety** - Never deploy untested, always try-catch, never log secrets
+3. **Cross-version** - Test on PS 1.7.6+, 8.x, and 9.x
+4. **jQuery fallback** - Triple-layer loading + waitForJQuery wrapper
+5. **Assets** - Only load on checkout pages, never async
+6. **Self-improve** - Update CLAUDE.md and .ai/*.md files when learning
+
+## File References
+
+| Purpose | File |
+|---------|------|
+| Full AI context | `CLAUDE.md` |
+| Architectural decisions | `.ai/decisions.md` |
+| Bug fixes & learnings | `.ai/learnings.md` |
+| Module documentation | `README.md` |
+| Version history | `CHANGELOG.md` |
+
+## Critical Patterns
+
+```php
+// Always wrap hooks
+public function hookAnyHook($params) {
+    try {
+        // logic
+    } catch (Exception $e) {
+        PrestaShopLogger::addLog('TwoPayment: ' . $e->getMessage(), 3);
+        return;
+    }
+}
+```
+
+```javascript
+// Always wrap JS init
+waitForJQuery(function() {
+    // Safe to use jQuery
+});
+```
+
+**For complete rules, patterns, and self-improvement protocols, see `CLAUDE.md`.**

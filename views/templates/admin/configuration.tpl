@@ -10,6 +10,7 @@
             <a class="list-group-item {if $twotabvalue == 1}active{/if}" href="#general-settings" aria-controls="general-settings" role="tab" data-toggle="tab">{l s='General Settings' mod='twopayment'}</a>
             <a class="list-group-item {if $twotabvalue == 2}active{/if}" href="#other-settings" aria-controls="other-settings" role="tab" data-toggle="tab">{l s='Other Settings' mod='twopayment'}</a>
             <a class="list-group-item {if $twotabvalue == 3}active{/if}" href="#order-status-settings" aria-controls="order-status-settings" role="tab" data-toggle="tab">{l s='Order Status Settings' mod='twopayment'}</a>
+            <a class="list-group-item {if $twotabvalue == 4}active{/if}" href="#plugin-info" aria-controls="plugin-info" role="tab" data-toggle="tab">{l s='Plugin Information' mod='twopayment'}</a>
         </div>
     </div>
     <div class="col-lg-10 col-md-9">
@@ -46,6 +47,9 @@
             </div>
             <div id="order-status-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 3}active{/if}">
                 {$renderTwoOrderStatusForm nofilter}
+            </div>
+            <div id="plugin-info" role="tabpanel" class="tab-pane {if $twotabvalue == 4}active{/if}">
+                {$renderTwoPluginInfo nofilter}
             </div>
         </div>
     </div>

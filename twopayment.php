@@ -50,7 +50,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.3.0';
+        $this->version = '2.3.2';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -96,6 +96,7 @@ class Twopayment extends PaymentModule
             }
         }
     }
+    
 
     public function install()
     {
@@ -280,6 +281,8 @@ class Twopayment extends PaymentModule
             `two_invoice_uploaded_at` DATETIME NULL,
             PRIMARY KEY  (`id_two`)
         ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8;';
+        // Note: invoice_details (payment info) is NOT stored in DB - fetched from Two API when needed
+        // This ensures payment details are always current and avoids stale data issues
 
         foreach ($sql as $query) {
             if (Db::getInstance()->execute($query) == false) {
@@ -376,6 +379,7 @@ class Twopayment extends PaymentModule
                 'renderTwoGeneralForm' => $this->renderTwoGeneralForm(),
                 'renderTwoOtherForm' => $this->renderTwoOtherForm(),
                 'renderTwoOrderStatusForm' => $this->renderTwoOrderStatusForm(),
+                'renderTwoPluginInfo' => $this->renderTwoPluginInfo(),
                 'twotabvalue' => Configuration::get('PS_TWO_TAB_VALUE'),
                 'two_api_verified' => (int) Configuration::get('PS_TWO_API_KEY_VERIFIED'),
                 'two_merchant_id' => Configuration::get('PS_TWO_MERCHANT_ID'),
@@ -800,27 +804,44 @@ class Twopayment extends PaymentModule
                             ),
                         ),
                     ),
-                    // TEMPORARILY DISABLED: Invoice upload feature disabled for now
-                    // array(
-                    //     'type' => 'switch',
-                    //     'label' => $this->l('Using Own Invoices'),
-                    //     'name' => 'PS_TWO_USE_OWN_INVOICES',
-                    //     'is_bool' => true,
-                    //     'desc' => $this->l('Only to be used if you are handling your own invoice and credit note distribution and must be communicated to Two as part of your implementation to ensure Two\'s invoice generation is disabled. If this toggle is enabled, PrestaShop invoices will be uploaded to Two when orders are fulfilled.'),
-                    //     'required' => true,
-                    //     'values' => array(
-                    //         array(
-                    //             'id' => 'PS_TWO_USE_OWN_INVOICES_ON',
-                    //             'value' => 1,
-                    //             'label' => $this->l('Yes')
-                    //         ),
-                    //         array(
-                    //             'id' => 'PS_TWO_USE_OWN_INVOICES_OFF',
-                    //             'value' => 0,
-                    //             'label' => $this->l('No')
-                    //         ),
-                    //     ),
-                    // ),
+                    array(
+                        'type' => 'switch',
+                        'label' => $this->l('Upload Own Invoices to Two'),
+                        'name' => 'PS_TWO_USE_OWN_INVOICES',
+                        'is_bool' => true,
+                        'desc' => $this->l('Enable this ONLY if you are using your own invoices instead of Two\'s generated invoices. This must be coordinated with Two before enabling.') . '<br><br>' .
+                                  '<strong>' . $this->l('When enabled:') . '</strong><br>' .
+                                  '• ' . $this->l('Your PrestaShop invoices will be uploaded to Two when orders are fulfilled') . '<br>' .
+                                  '• ' . $this->l('Two will NOT generate invoices - your invoice is used instead') . '<br><br>' .
+                                  '<strong style="color: #d63031;">' . $this->l('REQUIRED: You must customize your invoice template') . '</strong><br>' .
+                                  $this->l('Edit your invoice template to include Two\'s payment details FOR TWO ORDERS ONLY.') . '<br>' .
+                                  $this->l('Template location:') . ' <code>/themes/YOUR_THEME/pdf/invoice.tpl</code> ' . $this->l('or') . ' <code>/pdf/invoice.tpl</code><br><br>' .
+                                  '<strong>' . $this->l('Add this code to your invoice template:') . '</strong>' .
+                                  '<pre style="background:#f5f5f5; padding:10px; margin:10px 0; border-radius:4px; font-size:11px; overflow-x:auto;">' .
+                                  '{if $order->module == \'twopayment\'}<br>' .
+                                  '&lt;div style="margin-top:20px; padding:15px; border:1px solid #333;"&gt;<br>' .
+                                  '  &lt;strong&gt;Payment Instructions&lt;/strong&gt;&lt;br&gt;<br>' .
+                                  '  The debt represented by this invoice has been assigned to Two.<br>' .
+                                  '  Please pay to Two\'s bank account (details provided by Two).<br>' .
+                                  '  Include your payment reference when paying.<br>' .
+                                  '&lt;/div&gt;<br>' .
+                                  '{/if}</pre>' .
+                                  $this->l('Two will provide you with the specific bank details and payment reference format to include.') . '<br><br>' .
+                                  '<strong style="color: #d63031;">' . $this->l('Important: Contact Two support before enabling this feature.') . '</strong>',
+                        'required' => true,
+                        'values' => array(
+                            array(
+                                'id' => 'PS_TWO_USE_OWN_INVOICES_ON',
+                                'value' => 1,
+                                'label' => $this->l('Yes')
+                            ),
+                            array(
+                                'id' => 'PS_TWO_USE_OWN_INVOICES_OFF',
+                                'value' => 0,
+                                'label' => $this->l('No')
+                            ),
+                        ),
+                    ),
                     array(
                         'type' => 'switch',
                         'label' => $this->l('Pre-approve the buyer during checkout and disable two if the buyer is declined'),
@@ -899,8 +920,7 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_ENABLE_DEPARTMENT'] = Tools::getValue('PS_TWO_ENABLE_DEPARTMENT', Configuration::get('PS_TWO_ENABLE_DEPARTMENT'));
         $fields_values['PS_TWO_ENABLE_PROJECT'] = Tools::getValue('PS_TWO_ENABLE_PROJECT', Configuration::get('PS_TWO_ENABLE_PROJECT'));
         $fields_values['PS_TWO_FINALIZE_PURCHASE'] = Tools::getValue('PS_TWO_FINALIZE_PURCHASE', Configuration::get('PS_TWO_FINALIZE_PURCHASE'));
-        // TEMPORARILY DISABLED: Invoice upload feature disabled for now
-        $fields_values['PS_TWO_USE_OWN_INVOICES'] = 0; // Force disabled
+        $fields_values['PS_TWO_USE_OWN_INVOICES'] = Tools::getValue('PS_TWO_USE_OWN_INVOICES', Configuration::get('PS_TWO_USE_OWN_INVOICES'));
         $fields_values['PS_TWO_ENABLE_ORDER_INTENT'] = Tools::getValue('PS_TWO_ENABLE_ORDER_INTENT', Configuration::get('PS_TWO_ENABLE_ORDER_INTENT'));
         $fields_values['PS_TWO_ENABLE_B2B_B2C'] = Tools::getValue('PS_TWO_ENABLE_B2B_B2C', Configuration::get('PS_TWO_ENABLE_B2B_B2C'));
         $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
@@ -921,8 +941,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_ENABLE_DEPARTMENT', Tools::getValue('PS_TWO_ENABLE_DEPARTMENT'));
         Configuration::updateValue('PS_TWO_ENABLE_PROJECT', Tools::getValue('PS_TWO_ENABLE_PROJECT'));
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', Tools::getValue('PS_TWO_FINALIZE_PURCHASE'));
-        // TEMPORARILY DISABLED: Invoice upload feature disabled for now - force to 0
-        Configuration::updateValue('PS_TWO_USE_OWN_INVOICES', 0);
+        Configuration::updateValue('PS_TWO_USE_OWN_INVOICES', Tools::getValue('PS_TWO_USE_OWN_INVOICES'));
         Configuration::updateValue('PS_TWO_ENABLE_ORDER_INTENT', Tools::getValue('PS_TWO_ENABLE_ORDER_INTENT'));
         Configuration::updateValue('PS_TWO_ENABLE_B2B_B2C', Tools::getValue('PS_TWO_ENABLE_B2B_B2C'));
         Configuration::updateValue('PS_TWO_DEBUG_MODE', Tools::getValue('PS_TWO_DEBUG_MODE'));
@@ -949,6 +968,90 @@ class Twopayment extends PaymentModule
             'id_language' => $this->context->language->id,
         );
         return $helper->generateForm(array($this->getTwoOrderStatusForm()));
+    }
+
+    /**
+     * Render the Plugin Information tab content
+     * Displays capabilities and limitations of the Two Payment plugin
+     * 
+     * @return string HTML content for the plugin information tab
+     */
+    protected function renderTwoPluginInfo()
+    {
+        $html = '
+        <div class="panel">
+            <div class="panel-heading">
+                <i class="icon-info-circle"></i> ' . $this->l('What This Plugin Does') . '
+            </div>
+            <div class="panel-body">
+                <div class="alert alert-info">
+                    <strong>' . $this->l('Two is a B2B Buy Now, Pay Later solution') . '</strong><br>
+                    ' . $this->l('This plugin enables business customers to pay on invoice with instant credit decisions.') . '
+                </div>
+                
+                <h4 style="color:#4CAF50;margin-top:20px;"><i class="icon-check"></i> ' . $this->l('What the plugin CAN do') . '</h4>
+                <ul class="list-unstyled" style="margin-left:20px;">
+                    <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Accept B2B invoice payments with instant credit approval') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Company search and validation at checkout (auto-complete)') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Real-time buyer eligibility check (Order Intent) before purchase') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Automatic order fulfillment when order status changes (configurable)') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Support for Standard and End-of-Month (EOM) payment terms') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Configurable payment terms (7, 15, 20, 30, 45, 60, 90 days)') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Handle full refunds through PrestaShop admin') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Display Two order information in admin order view') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Support for multiple tax rates and tax-exempt customers') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Handle free shipping cart rules and discounts correctly') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Works with PrestaShop 1.7.6 through 9.x') . '</li>
+                </ul>
+                
+                <h4 style="color:#f0ad4e;margin-top:25px;"><i class="icon-warning"></i> ' . $this->l('Important Requirements') . '</h4>
+                <ul class="list-unstyled" style="margin-left:20px;">
+                    <li style="margin-bottom:8px;"><i class="icon-exclamation-triangle text-warning"></i> ' . $this->l('Customers must have a valid company/organization number') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-exclamation-triangle text-warning"></i> ' . $this->l('Customers must enter their company name in the billing address') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-exclamation-triangle text-warning"></i> ' . $this->l('A valid phone number is required for credit checks') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-exclamation-triangle text-warning"></i> ' . $this->l('Two must approve the buyer before the order can be placed') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-exclamation-triangle text-warning"></i> ' . $this->l('Products must have correct tax rules configured in PrestaShop') . '</li>
+                </ul>
+                
+                <h4 style="color:#d9534f;margin-top:25px;"><i class="icon-times"></i> ' . $this->l('What the plugin CANNOT do') . '</h4>
+                <ul class="list-unstyled" style="margin-left:20px;">
+                    <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . $this->l('Process B2C (consumer) payments - Two is B2B only') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . $this->l('Guarantee approval - Two performs real-time credit checks') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . $this->l('Override Two\'s credit decision or buyer limits') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . $this->l('Process partial refunds - use the Two Merchant Portal for partial refunds') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . $this->l('Partial fulfillment - orders must be fulfilled in full') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . $this->l('Fix incorrect tax configuration in your store - taxes must be set up correctly in PrestaShop') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . $this->l('Process orders without a valid company registration number') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . $this->l('Change payment terms after an order is placed') . '</li>
+                </ul>
+                
+                <h4 style="color:#5bc0de;margin-top:25px;"><i class="icon-lightbulb-o"></i> ' . $this->l('Troubleshooting Tips') . '</h4>
+                <ul class="list-unstyled" style="margin-left:20px;">
+                    <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Tax shows 0%?') . '</strong> ' . $this->l('Check that tax rules are configured for your country in International > Taxes > Tax Rules') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Buyer rejected?') . '</strong> ' . $this->l('The company may have reached their credit limit or failed Two\'s credit check') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Company not found?') . '</strong> ' . $this->l('Customer must enter their official registered company name') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Phone invalid?') . '</strong> ' . $this->l('Ensure the phone number includes country code and is in a valid format') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Amount mismatch errors?') . '</strong> ' . $this->l('Enable Debug Mode in Other Settings and contact Two support with the logs') . '</li>
+                </ul>
+            </div>
+        </div>
+        
+        <div class="panel">
+            <div class="panel-heading">
+                <i class="icon-life-ring"></i> ' . $this->l('Need Help?') . '
+            </div>
+            <div class="panel-body">
+                <p>' . $this->l('For technical support or questions about this plugin:') . '</p>
+                <ul>
+                    <li><strong>' . $this->l('Email:') . '</strong> <a href="mailto:support@two.inc">support@two.inc</a></li>
+                    <li><strong>' . $this->l('Documentation:') . '</strong> <a href="https://docs.two.inc" target="_blank">docs.two.inc</a></li>
+                    <li><strong>' . $this->l('Merchant Portal:') . '</strong> <a href="' . $this->getTwoPortalUrl() . '" target="_blank">' . $this->l('Open Two Portal') . '</a></li>
+                </ul>
+                <p style="margin-top:15px;"><small class="text-muted">' . $this->l('Plugin Version:') . ' ' . $this->version . ' | ' . $this->l('PrestaShop:') . ' ' . _PS_VERSION_ . '</small></p>
+            </div>
+        </div>';
+        
+        return $html;
     }
 
     protected function getTwoOrderStatusForm()
@@ -1354,14 +1457,33 @@ class Twopayment extends PaymentModule
                                     'two_invoice_url' => isset($order_after['invoice_url']) ? $order_after['invoice_url'] : (isset($orderpaymentdata['two_invoice_url']) ? $orderpaymentdata['two_invoice_url'] : ''),
                                     'two_invoice_id' => isset($order_after['invoice_details']['id']) ? $order_after['invoice_details']['id'] : (isset($orderpaymentdata['two_invoice_id']) ? $orderpaymentdata['two_invoice_id'] : null),
                                 );
+                                // Note: invoice_details (payment info) is NOT stored in DB - it's fetched from Two API when needed
+                                // This ensures payment details are always current and avoids DB schema changes
+                                
                                 $this->setTwoOrderPaymentData($id_order, $payment_data);
                             }
                             
-                            // INVOICE UPLOAD: TEMPORARILY DISABLED - Feature disabled for now
-                            // Force disable even if configuration is set (safety check)
-                            if (false && Configuration::get('PS_TWO_USE_OWN_INVOICES')) {
+                            // Invoice Upload: Upload PrestaShop invoice to Two when using own invoices
+                            $use_own_invoices = Configuration::get('PS_TWO_USE_OWN_INVOICES');
+                            PrestaShopLogger::addLog(
+                                'TwoPayment: Invoice upload check - PS_TWO_USE_OWN_INVOICES=' . ($use_own_invoices ? 'YES' : 'NO') . ', Order ID=' . $id_order,
+                                1,
+                                null,
+                                'Order',
+                                $id_order
+                            );
+                            
+                            if ($use_own_invoices) {
                                 // Re-fetch payment data to ensure we have the latest invoice_id
                                 $orderpaymentdata_refreshed = $this->getTwoOrderPaymentData($id_order);
+                                PrestaShopLogger::addLog(
+                                    'TwoPayment: Triggering invoice upload - two_invoice_id=' . 
+                                    (isset($orderpaymentdata_refreshed['two_invoice_id']) ? $orderpaymentdata_refreshed['two_invoice_id'] : 'NOT SET'),
+                                    1,
+                                    null,
+                                    'Order',
+                                    $id_order
+                                );
                                 $this->uploadInvoiceAfterFulfillment($id_order, $orderpaymentdata_refreshed);
                             }
                         } else {
@@ -1604,6 +1726,13 @@ class Twopayment extends PaymentModule
             'credit_unavailable' => $this->l('Two payment is not available for this order. Please choose another payment method.'),
             'network_issue' => $this->l('There was a temporary issue verifying your payment. Please try again or choose another payment method.'),
             'approval_required' => $this->l('Payment approval required before proceeding'),
+            'invoice_declined' => $this->l('Your invoice with Two cannot be approved at this time. Please select an alternative payment method.'),
+            'invalid_email' => $this->l('The email address provided is invalid. Please check your email and try again.'),
+            'company_incomplete' => $this->l('Company information is incomplete. Go back to your billing address and select your company from the search results.'),
+            'validation_error' => $this->l('Some of the information provided is invalid. Please check your billing address details and try again.'),
+            'company_verify_failed' => $this->l('Company information could not be verified. Go back to your billing address and select your company from the search results.'),
+            'company_verification_needed' => $this->l('Company Verification Needed'),
+            'company_auto_resolve_hint' => $this->l('We found your company name but need you to verify it. Please go back to your billing address and select your company from the search results.'),
             'pay_in' => $this->l('Pay in'),
             'days' => $this->l('days'),
             'from_end_of_month' => $this->l('from end of month'),
@@ -2087,46 +2216,57 @@ class Twopayment extends PaymentModule
                 );
             }
             
-            // VALIDATED TAX RATE CALCULATION
-            // Get tax rate from PrestaShop's rate field
-            $rate_from_field = isset($line_item['rate']) ? (float)$line_item['rate'] / 100 : 0;
+            // BEST PRACTICE: TAX RATE FROM PRESTASHOP'S NATIVE FIELD
+            // PrestaShop provides the 'rate' field in cart products which is the configured tax rate
+            // This is more accurate than calculating from amounts (avoids rounding errors)
             
-            // Calculate tax rate from PrestaShop's actual amounts (gross vs net) - source of truth
-            $rate_from_amounts = 0;
+            // Step 1: Get tax rate from PrestaShop's native rate field (PRIMARY SOURCE)
+            $rate_from_field = isset($line_item['rate']) ? (float)$line_item['rate'] : 0;
+            $tax_rate_decimal = $rate_from_field / 100; // Convert percentage to decimal
+            
+            // Step 2: Validate against actual amounts (VERIFICATION)
+            // Calculate what the rate would be based on actual charged amounts
+            $rate_from_amounts_decimal = 0;
             if ($net_amount_prestashop > 0 && $gross_amount_prestashop > $net_amount_prestashop) {
-                $rate_from_amounts = ($gross_amount_prestashop - $net_amount_prestashop) / $net_amount_prestashop;
-                $rate_from_amounts = round($rate_from_amounts, 4);
+                $rate_from_amounts_decimal = ($gross_amount_prestashop - $net_amount_prestashop) / $net_amount_prestashop;
             }
             
-            // Decision logic: use amounts as source of truth, with full logging for anomalies
-            if (abs($rate_from_field - $rate_from_amounts) < 0.001) {
-                // Rates match - use the field value (cleaner)
-                $tax_rate = $rate_from_field;
-            } elseif ($rate_from_field == 0 && $rate_from_amounts > 0) {
-                // ANOMALY: PrestaShop applied tax but rate field is 0
-                // Use calculated rate (what PrestaShop actually charged)
-                $tax_rate = $rate_from_amounts;
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Tax rate anomaly - rate field is 0 but tax was applied. ' .
-                    'Product: ' . $line_item['id_product'] . ', Using calculated rate: ' . ($rate_from_amounts * 100) . '%',
-                    2 // Warning level
-                );
-            } elseif ($rate_from_amounts == 0 && $rate_from_field > 0) {
-                // ANOMALY: Rate field has value but no tax in amounts
-                // Use 0 (what PrestaShop actually charged)
+            // Step 3: Decision logic - prefer native field, fall back to calculated when necessary
+            $tax_rate = $tax_rate_decimal; // Default: use PrestaShop's configured rate
+            
+            // Handle edge cases where native field and amounts disagree
+            if ($rate_from_field > 0 && $rate_from_amounts_decimal == 0) {
+                // Tax rule is configured but no tax was actually applied (e.g., tax-exempt customer)
+                // Use 0 because that's what the customer is actually paying
                 $tax_rate = 0;
+                if (Configuration::get('PS_TWO_DEBUG_MODE')) {
+                    PrestaShopLogger::addLog(
+                        'TwoPayment: Tax rate override - configured rate ' . $rate_from_field . '% but no tax in amounts. ' .
+                        'Product: ' . $line_item['id_product'] . ' | Using 0% (customer not charged tax)',
+                        1
+                    );
+                }
+            } elseif ($rate_from_field == 0 && $rate_from_amounts_decimal > 0) {
+                // No rate field but tax was applied (rare edge case)
+                // Use calculated rate as fallback
+                $tax_rate = round($rate_from_amounts_decimal, 4);
                 PrestaShopLogger::addLog(
-                    'TwoPayment: Tax rate anomaly - rate field is ' . ($rate_from_field * 100) . '% but no tax in amounts. ' .
-                    'Product: ' . $line_item['id_product'] . ', Using 0%',
-                    2 // Warning level
-                );
-            } else {
-                // Both have values but differ - use calculated (what customer pays)
-                $tax_rate = $rate_from_amounts;
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Tax rate mismatch - field: ' . ($rate_from_field * 100) . '%, calculated: ' . ($rate_from_amounts * 100) . '% for product ' . $line_item['id_product'],
+                    'TwoPayment: Tax rate fallback - rate field is 0 but tax was applied. ' .
+                    'Product: ' . $line_item['id_product'] . ' | Using calculated: ' . round($rate_from_amounts_decimal * 100, 2) . '%',
                     2
                 );
+            } elseif ($rate_from_field > 0 && abs($tax_rate_decimal - $rate_from_amounts_decimal) > 0.005) {
+                // Both exist but differ significantly (more than 0.5% difference)
+                // Use the native field rate but log for investigation
+                // The amounts may differ due to rounding, but the configured rate is canonical
+                if (Configuration::get('PS_TWO_DEBUG_MODE')) {
+                    PrestaShopLogger::addLog(
+                        'TwoPayment: Tax rate variance - field: ' . $rate_from_field . '%, amounts: ' . 
+                        round($rate_from_amounts_decimal * 100, 2) . '% | Product: ' . $line_item['id_product'] . 
+                        ' | Using configured rate (rounding variance expected)',
+                        1
+                    );
+                }
             }
             
             // CRITICAL: Validate quantity to prevent division by zero
@@ -2199,6 +2339,9 @@ class Twopayment extends PaymentModule
                 $gross_amount = $calculated_gross;
             }
             
+            // Calculate actual tax rate percentage for display (tax_class_name)
+            $tax_rate_percent_display = round($tax_rate * 100, 2);
+            
             $product = [
                 'name' => $line_item['name'],
                 'description' => Tools::substr(strip_tags($line_item['description_short']), 0, 255),
@@ -2206,7 +2349,7 @@ class Twopayment extends PaymentModule
                 'net_amount' => (string)$this->getTwoRoundAmount($net_amount),
                 'discount_amount' => (string)$this->getTwoRoundAmount($discount_amount),
                 'tax_amount' => (string)$this->getTwoRoundAmount($tax_amount),
-                'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($line_item['rate']) . '%',
+                'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($tax_rate_percent_display) . '%',
                 'tax_rate' => (string)$this->getTwoRoundAmount($tax_rate),
                 'unit_price' => (string)$this->getTwoRoundAmount($unit_price_net),
                 'quantity' => $quantity,
@@ -2239,25 +2382,63 @@ class Twopayment extends PaymentModule
         }
 
         // Add shipping as a line item if applicable
-        if (Validate::isLoadedObject($carrier) && $cart->getOrderTotal(true, Cart::ONLY_SHIPPING) > 0) {
-            // Use PrestaShop's shipping totals (source of truth)
-            $shipping_net = round((float)$cart->getOrderTotal(false, Cart::ONLY_SHIPPING), 2);
-            $shipping_gross_prestashop = (float)$cart->getOrderTotal(true, Cart::ONLY_SHIPPING);
+        // BEST PRACTICE: Use getPackageShippingCost() to get actual carrier cost BEFORE free shipping rules
+        // This fixes the issue where getOrderTotal(ONLY_SHIPPING) returns 0 when free shipping cart rules are active
+        $shipping_cost_with_tax = 0;
+        $shipping_cost_without_tax = 0;
+        
+        if (Validate::isLoadedObject($carrier)) {
+            // Method 1: Get package shipping cost directly from carrier (ignores free shipping rules)
+            // Parameters: id_carrier, use_tax, country, product_list, id_zone
+            $shipping_cost_with_tax = $cart->getPackageShippingCost((int)$cart->id_carrier, true, null, null, null);
+            $shipping_cost_without_tax = $cart->getPackageShippingCost((int)$cart->id_carrier, false, null, null, null);
             
-            // Calculate tax rate from PrestaShop values (derive from PrestaShop's calculated tax)
-            $shipping_tax_prestashop = $shipping_gross_prestashop - $shipping_net;
-            $shipping_tax_rate_percent = 0;
+            // Fallback: If getPackageShippingCost returns 0 or false, try getOrderTotal
+            // This handles edge cases where carrier pricing might be complex
+            if ($shipping_cost_with_tax <= 0) {
+                $shipping_cost_with_tax = (float)$cart->getOrderTotal(true, Cart::ONLY_SHIPPING);
+                $shipping_cost_without_tax = (float)$cart->getOrderTotal(false, Cart::ONLY_SHIPPING);
+            }
+        }
+        
+        if (Validate::isLoadedObject($carrier) && $shipping_cost_with_tax > 0) {
+            // Use PrestaShop's shipping totals (source of truth)
+            $shipping_net = round($shipping_cost_without_tax, 2);
+            $shipping_gross_prestashop = $shipping_cost_with_tax;
+            
+            // BEST PRACTICE: Get tax rate from carrier's tax configuration instead of calculating from amounts
+            // This uses PrestaShop's native tax system for accuracy
             $shipping_tax_rate_decimal = 0;
-            if ($shipping_net > 0) {
-                // CRITICAL: Calculate percentage first, then round, then convert to decimal
-                // This preserves precision for non-standard tax rates (e.g., 20.5%)
-                $shipping_tax_rate_percent = ($shipping_tax_prestashop / $shipping_net) * 100;
-                $shipping_tax_rate_percent = round($shipping_tax_rate_percent, 2); // Round percentage to 2 decimals
-                $shipping_tax_rate_decimal = $shipping_tax_rate_percent / 100; // Convert to decimal
+            $shipping_tax_rate_percent = 0;
+            
+            // Try to get tax rate from carrier's tax rules group (PrestaShop native method)
+            $carrier_tax_rules_group_id = $carrier->getIdTaxRulesGroup();
+            if ($carrier_tax_rules_group_id > 0) {
+                // Get delivery address for tax calculation
+                $delivery_address = new Address($cart->id_address_delivery);
+                if (Validate::isLoadedObject($delivery_address)) {
+                    // Use PrestaShop's TaxManagerFactory to get the correct tax calculator
+                    $tax_manager = TaxManagerFactory::getManager(
+                        $delivery_address,
+                        $carrier_tax_rules_group_id
+                    );
+                    $tax_calculator = $tax_manager->getTaxCalculator();
+                    
+                    // Get the total tax rate from the calculator
+                    $shipping_tax_rate_percent = $tax_calculator->getTotalRate();
+                    $shipping_tax_rate_decimal = $shipping_tax_rate_percent / 100;
+                }
+            }
+            
+            // Fallback: Calculate rate from amounts if native method didn't work
+            if ($shipping_tax_rate_decimal == 0 && $shipping_net > 0 && $shipping_gross_prestashop > $shipping_net) {
+                $shipping_tax_rate_decimal = ($shipping_gross_prestashop - $shipping_net) / $shipping_net;
+                $shipping_tax_rate_percent = round($shipping_tax_rate_decimal * 100, 2);
+                $shipping_tax_rate_decimal = round($shipping_tax_rate_decimal, 4);
             }
             
             // Two API requires exact formula: tax_amount = net_amount * tax_rate
-            // Recalculate tax_amount using rounded values to ensure formula compliance
+            // Recalculate tax_amount using the tax rate to ensure formula compliance
             $shipping_tax_amount = round($shipping_net * $shipping_tax_rate_decimal, 2);
             
             // Calculate gross: gross_amount = net_amount + tax_amount (Two API formula)
@@ -2452,14 +2633,18 @@ class Twopayment extends PaymentModule
 
     /**
      * Get company name and organization number with fallback chain
-     * Priority: Address → Cookie → DNI (ES only)
+     * Priority: Cookie (verified) → Address fields (dni, vat_number) → Cookie (unverified)
+     * 
+     * ENHANCED: Now checks multiple address fields for org numbers across all countries,
+     * not just dni for Spain. This supports addresses where org numbers are stored in
+     * dni, vat_number, or other fields.
      * 
      * @param Address $address Invoice or delivery address
      * @return array ['company_name' => string, 'organization_number' => string, 'country_iso' => string]
      */
     private function getCompanyDataWithFallbacks($address)
     {
-        //  Validate address object is loaded
+        // Validate address object is loaded
         if (!Validate::isLoadedObject($address)) {
             PrestaShopLogger::addLog('TwoPayment: Invalid address object passed to getCompanyDataWithFallbacks', 3);
             throw new Exception('Invalid address object');
@@ -2472,6 +2657,19 @@ class Twopayment extends PaymentModule
             throw new Exception('Invalid country in address');
         }
         
+        // Priority 1: Session cookie (from company search - already verified)
+        if (!empty($this->context->cookie->two_company_id) && !empty($this->context->cookie->two_company_name)) {
+            return [
+                'company_name' => trim($this->context->cookie->two_company_name),
+                'organization_number' => trim($this->context->cookie->two_company_id),
+                'country_iso' => $country_iso
+            ];
+        }
+        
+        // Priority 2: Extract org number from address fields (dni, vat_number, companyid)
+        // This uses the enhanced extraction method that works across all countries
+        $org_number = $this->extractOrgNumberFromAddress($address, $country_iso);
+        
         // Company name: Address → Cookie
         $company_name = !empty($address->company) 
             ? $address->company 
@@ -2479,15 +2677,8 @@ class Twopayment extends PaymentModule
                 ? trim($this->context->cookie->two_company_name) 
                 : '');
         
-        // Organization number: Address companyid → Cookie → DNI (ES only)
-        $org_number = '';
-        if (!empty($address->companyid)) {
-            $org_number = $address->companyid;
-        } elseif (!empty($this->context->cookie->two_company_id)) {
-            $org_number = trim($this->context->cookie->two_company_id);
-        } elseif ($country_iso === 'ES' && !empty($address->dni)) {
-            $org_number = $address->dni;
-        }
+        // If we found org number from address but no company name, we can still use it
+        // Two's order API will accept org number and resolve company name
         
         return [
             'company_name' => $company_name,
@@ -3339,32 +3530,24 @@ class Twopayment extends PaymentModule
     {
         // PrestaShop standard: (int) casting prevents SQL injection for integer IDs
         $id_order = (int)$id_order;
+        
         $result = $this->getTwoOrderPaymentData($id_order);
+        $data = array(
+            'id_order' => pSQL($id_order),
+            'two_order_id' => pSQL($payment_data['two_order_id']),
+            'two_order_reference' => pSQL($payment_data['two_order_reference']),
+            'two_order_state' => pSQL($payment_data['two_order_state']),
+            'two_order_status' => pSQL($payment_data['two_order_status']),
+            'two_day_on_invoice' => pSQL($payment_data['two_day_on_invoice']),
+            'two_invoice_url' => pSQL($payment_data['two_invoice_url']),
+            'two_invoice_id' => isset($payment_data['two_invoice_id']) ? pSQL($payment_data['two_invoice_id']) : null,
+            'two_payment_term_type' => isset($payment_data['two_payment_term_type']) ? pSQL($payment_data['two_payment_term_type']) : 'STANDARD',
+        );
+        // Note: invoice_details (payment info) is NOT stored in DB - fetched from Two API when needed
+        
         if ($result) {
-            $data = array(
-                'id_order' => pSQL($id_order),
-                'two_order_id' => pSQL($payment_data['two_order_id']),
-                'two_order_reference' => pSQL($payment_data['two_order_reference']),
-                'two_order_state' => pSQL($payment_data['two_order_state']),
-                'two_order_status' => pSQL($payment_data['two_order_status']),
-                'two_day_on_invoice' => pSQL($payment_data['two_day_on_invoice']),
-                'two_invoice_url' => pSQL($payment_data['two_invoice_url']),
-                'two_invoice_id' => isset($payment_data['two_invoice_id']) ? pSQL($payment_data['two_invoice_id']) : null,
-                'two_payment_term_type' => isset($payment_data['two_payment_term_type']) ? pSQL($payment_data['two_payment_term_type']) : 'STANDARD',
-            );
             Db::getInstance()->update('twopayment', $data, 'id_order = ' . (int) $id_order);
         } else {
-            $data = array(
-                'id_order' => pSQL($id_order),
-                'two_order_id' => pSQL($payment_data['two_order_id']),
-                'two_order_reference' => pSQL($payment_data['two_order_reference']),
-                'two_order_state' => pSQL($payment_data['two_order_state']),
-                'two_order_status' => pSQL($payment_data['two_order_status']),
-                'two_day_on_invoice' => pSQL($payment_data['two_day_on_invoice']),
-                'two_invoice_url' => pSQL($payment_data['two_invoice_url']),
-                'two_invoice_id' => isset($payment_data['two_invoice_id']) ? pSQL($payment_data['two_invoice_id']) : null,
-                'two_payment_term_type' => isset($payment_data['two_payment_term_type']) ? pSQL($payment_data['two_payment_term_type']) : 'STANDARD',
-            );
             Db::getInstance()->insert('twopayment', $data);
         }
     }
@@ -3495,7 +3678,7 @@ class Twopayment extends PaymentModule
                 'twopaymentdata' => $twopaymentdata,
                 'two_portal_url' => $this->getTwoPortalUrl(), // Dynamic portal URL based on environment
                 'two_pdf_url' => $pdf_url, // PDF invoice URL if available
-                'use_own_invoices' => false, // TEMPORARILY DISABLED: Invoice upload feature disabled for now
+                'use_own_invoices' => (bool)Configuration::get('PS_TWO_USE_OWN_INVOICES'),
             ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayAdminOrderTabContent.tpl');
         }
@@ -3667,6 +3850,219 @@ class Twopayment extends PaymentModule
                 'id_order = ' . (int)$id_order
             );
         }
+    }
+    
+    /**
+     * Verify and resolve company data using organization number via Two's company search API
+     * 
+     * CRITICAL: This enables smart UX for logged-in users with existing addresses.
+     * Instead of searching by company name, we search by organization 
+     * number which gives an EXACT match.
+     * 
+     * Two's API supports searching by org number: /companies/v2/company?q={org_number}&country={iso}
+     * Example: https://api.two.inc/companies/v2/company?q=A81304487&country=ES
+     * 
+     * @param string $orgNumber The organization number to search for (CIF, NIF, company number, etc.)
+     * @param string $countryIso Two-letter country ISO code (e.g., 'GB', 'NO', 'SE', 'ES')
+     * @return array|null Returns ['name' => string, 'organization_number' => string] on success, null on failure
+     */
+    public function verifyCompanyByOrgNumber($orgNumber, $countryIso)
+    {
+        if (empty($orgNumber) || empty($countryIso)) {
+            return null;
+        }
+        
+        // Normalize inputs
+        $orgNumber = trim($orgNumber);
+        $countryIso = strtoupper(trim($countryIso));
+        
+        // Build the search URL - search by organization number for exact match
+        // This is the key insight: Two's API accepts org numbers in the 'q' parameter
+        $searchUrl = $this->getTwoCheckoutHostUrl() . '/companies/v2/company';
+        $searchUrl .= '?' . http_build_query([
+            'q' => $orgNumber,
+            'country' => $countryIso
+        ]);
+        
+        PrestaShopLogger::addLog(
+            'TwoPayment: Verifying company by org number: ' . $orgNumber . ' in ' . $countryIso,
+            1
+        );
+        
+        // Make the request (no API key required for company search)
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $searchUrl);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, self::API_TIMEOUT_SHORT);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Accept: application/json'
+        ]);
+        
+        // Configure SSL verification
+        $this->configureSslVerification($ch);
+        
+        $response_body = curl_exec($ch);
+        $http_status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curl_error = curl_error($ch);
+        curl_close($ch);
+        
+        // Handle errors
+        if ($response_body === false || !empty($curl_error) || $http_status !== 200) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Company verification failed - HTTP ' . $http_status . 
+                ', Error: ' . ($curl_error ?: 'Unknown') . 
+                ', OrgNumber: ' . $orgNumber . ', Country: ' . $countryIso,
+                2
+            );
+            return null;
+        }
+        
+        $response = json_decode($response_body, true);
+        
+        if (!isset($response['items']) || !is_array($response['items']) || empty($response['items'])) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Company verification - no results for org number: ' . $orgNumber . ' in ' . $countryIso,
+                1
+            );
+            return null;
+        }
+        
+        $companies = $response['items'];
+        
+        // When searching by org number, we expect an exact match
+        // The API should return the company with matching organization number
+        foreach ($companies as $company) {
+            $foundOrgNumber = $this->extractOrganizationNumber($company);
+            
+            // Normalize both for comparison (remove spaces, dashes, make uppercase)
+            $normalizedSearch = strtoupper(preg_replace('/[\s\-]/', '', $orgNumber));
+            $normalizedFound = strtoupper(preg_replace('/[\s\-]/', '', $foundOrgNumber));
+            
+            if ($normalizedSearch === $normalizedFound) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: ✓ Company verified by org number - ' . $orgNumber . 
+                    ' => ' . $company['name'] . ' in ' . $countryIso,
+                    1
+                );
+                return [
+                    'name' => $company['name'],
+                    'organization_number' => $foundOrgNumber
+                ];
+            }
+        }
+        
+        // If no exact org number match, but we got a single result, it might be valid
+        // (API might have found it via partial match)
+        if (count($companies) === 1) {
+            $company = $companies[0];
+            $foundOrgNumber = $this->extractOrganizationNumber($company);
+            if (!empty($foundOrgNumber)) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: ✓ Company resolved (single result) - searched: ' . $orgNumber . 
+                    ' => ' . $company['name'] . ' (' . $foundOrgNumber . ') in ' . $countryIso,
+                    1
+                );
+                return [
+                    'name' => $company['name'],
+                    'organization_number' => $foundOrgNumber
+                ];
+            }
+        }
+        
+        PrestaShopLogger::addLog(
+            'TwoPayment: Company verification - org number not matched: ' . $orgNumber . 
+            ' in ' . $countryIso . ' (found ' . count($companies) . ' companies)',
+            2
+        );
+        return null;
+    }
+    
+    /**
+     * Extract organization number from address fields
+     * Checks various PrestaShop address fields where org numbers might be stored
+     * 
+     * @param Address $address PrestaShop address object
+     * @param string $countryIso Country ISO code for context-aware extraction
+     * @return string Organization number or empty string
+     */
+    public function extractOrgNumberFromAddress($address, $countryIso)
+    {
+        if (!Validate::isLoadedObject($address)) {
+            return '';
+        }
+        
+        $countryIso = strtoupper(trim($countryIso));
+        
+        // Priority 1: dni field (commonly used in ES, PT, IT for fiscal numbers like CIF/NIF)
+        if (!empty($address->dni)) {
+            $dni = trim($address->dni);
+            // Validate it looks like an org number (alphanumeric, reasonable length)
+            if (preg_match('/^[A-Z0-9\-]{5,20}$/i', $dni)) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Found org number in dni field: ' . $dni . ' for ' . $countryIso,
+                    1
+                );
+                return $dni;
+            }
+        }
+        
+        // Priority 2: vat_number field (if available in address)
+        if (property_exists($address, 'vat_number') && !empty($address->vat_number)) {
+            $vatNumber = trim($address->vat_number);
+            // VAT numbers often have country prefix - strip it if present
+            if (preg_match('/^[A-Z]{2}(.+)$/i', $vatNumber, $matches)) {
+                $vatNumber = $matches[1];
+            }
+            if (preg_match('/^[A-Z0-9\-]{5,20}$/i', $vatNumber)) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Found org number in vat_number field: ' . $vatNumber . ' for ' . $countryIso,
+                    1
+                );
+                return $vatNumber;
+            }
+        }
+        
+        // Priority 3: companyid field (if it was set previously)
+        if (property_exists($address, 'companyid') && !empty($address->companyid)) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Found org number in companyid field: ' . $address->companyid . ' for ' . $countryIso,
+                1
+            );
+            return trim($address->companyid);
+        }
+        
+        return '';
+    }
+    
+    /**
+     * Extract organization number from Two company search result
+     * Handles various field naming conventions across different countries
+     * 
+     * @param array $company Company data from Two API
+     * @return string Organization number or empty string
+     */
+    private function extractOrganizationNumber($company)
+    {
+        // Primary: national_identifier object (most countries)
+        if (isset($company['national_identifier']) && is_array($company['national_identifier'])) {
+            $ni = $company['national_identifier'];
+            $orgNumber = $ni['id'] ?? $ni['value'] ?? $ni['organisationNumber'] ?? 
+                        $ni['organizationNumber'] ?? $ni['registration_number'] ?? 
+                        $ni['company_number'] ?? '';
+            if (!empty($orgNumber)) {
+                return trim($orgNumber);
+            }
+        }
+        
+        // Fallback: Direct fields (commonly used in GB)
+        $directFields = ['registration_number', 'company_number', 'organization_number', 'organisation_number'];
+        foreach ($directFields as $field) {
+            if (isset($company[$field]) && !empty($company[$field])) {
+                return trim($company[$field]);
+            }
+        }
+        
+        return '';
     }
 }
 

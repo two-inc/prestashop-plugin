@@ -527,13 +527,28 @@ class TwoCheckoutManager {
             const useAccountType = !!(window.twopayment && String(window.twopayment.use_account_type) === '1');
             
             // Handle specific status codes for clear user guidance
-            if (status === 'no_company' || status === 'incomplete_company') {
+            // 'no_company' = no company name entered at all
+            // 'incomplete_company' = company name exists but backend couldn't auto-resolve org number
+            if (status === 'no_company') {
                 this.showCompanyRequiredMessage(err, status);
                 return;
             }
             
-            // Legacy: If order intent was skipped (e.g., missing company data), show a gentle prompt
+            if (status === 'incomplete_company') {
+                // Backend tried to auto-resolve but couldn't find a confident match
+                // Show message asking user to search and select their company
+                this.showCompanyRequiredMessage(err, status);
+                return;
+            }
+            
+            // Legacy: If order intent was skipped (frontend-side skip), show appropriate prompt
+            if (errLower.includes('skipped_no_company') && !useAccountType) {
+                this.showCompanyRequiredMessage(err, 'no_company');
+                return;
+            }
+            
             if (errLower.includes('skipped') && !useAccountType) {
+                // Generic skip - show company selection prompt
                 const messageContainer = this.getOrCreateMessageContainer();
                 const requiredMsg = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.select_company_to_use_two) || 'To pay with Two, go back to your billing address and search for your company name. Select your company from the results to verify your business.';
                 const messageElement = messageContainer.querySelector('.two-payment-message') || messageContainer;
@@ -632,8 +647,10 @@ class TwoCheckoutManager {
             helpText = window.twopayment?.i18n?.company_name_required || 
                 'To pay with Two, go back to your billing address and enter your company name in the Company field.';
         } else if (status === 'incomplete_company') {
+            // IMPROVED: When auto-resolution failed, give clearer guidance
+            // The backend tried to find the company but couldn't get a confident match
             helpText = window.twopayment?.i18n?.select_company_to_use_two || 
-                'Go back to your billing address and search for your company name. Select your company from the results to verify your business.';
+                'To pay with Two, go back to your billing address and search for your company name. Select your company from the search results to verify your business.';
         }
         
         // Build the message UI
@@ -641,8 +658,13 @@ class TwoCheckoutManager {
         if (messageElement !== messageContainer) {
             messageElement.innerHTML = message || helpText;
         } else {
+            // For incomplete_company, show a more informative message
+            const displayTitle = status === 'incomplete_company' 
+                ? (window.twopayment?.i18n?.company_verification_needed || 'Company Verification Needed')
+                : actionTitle;
+            
             messageContainer.innerHTML = `
-                <p class="two-subtitle">${actionTitle}</p>
+                <p class="two-subtitle">${displayTitle}</p>
                 <p class="two-payment-message">${message || helpText}</p>
                 ${helpText && message !== helpText ? `<p class="two-help-text">${helpText}</p>` : ''}
             `;
