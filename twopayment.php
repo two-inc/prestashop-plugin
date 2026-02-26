@@ -28,6 +28,8 @@ class Twopayment extends PaymentModule
     // Constants for validation tolerances
     const TAX_FORMULA_TOLERANCE = 0.01; // Tolerance for tax formula validation
     const NET_FORMULA_TOLERANCE = 0.05; // Tolerance for net formula validation
+    const TAX_RATE_PRECISION = 6; // Decimal precision for tax rates sent to Two
+    const TAX_RATE_VARIANCE_TOLERANCE = 0.005; // Acceptable decimal variance between configured and applied rate
     
     // Constants for delivery dates
     const DEFAULT_DELIVERY_DAYS_OFFSET = 7; // Default expected delivery date offset
@@ -40,6 +42,8 @@ class Twopayment extends PaymentModule
     
     // Constants for cookie/session expiry (seconds)
     const COOKIE_EXPIRY_ONE_HOUR = 3600; // 1 hour
+    const ATTEMPT_RETENTION_DAYS = 90; // Keep attempt telemetry for 90 days
+    const ATTEMPT_CLEANUP_INTERVAL_SECONDS = 86400; // Run cleanup at most once per day
 
     protected $output = '';
     protected $errors = array();
@@ -50,7 +54,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.3.2';
+        $this->version = '2.4.0';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -261,7 +265,7 @@ class Twopayment extends PaymentModule
 
     protected function createTwoTables()
     {
-        // Only create our own payment tracking table - no modifications to core PrestaShop tables
+        // Only create our own module tables - no modifications to core PrestaShop tables
         $sql = array();
         
         $sql[] = 'CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'twopayment` (
@@ -280,6 +284,35 @@ class Twopayment extends PaymentModule
             `two_invoice_upload_error` TEXT NULL,
             `two_invoice_uploaded_at` DATETIME NULL,
             PRIMARY KEY  (`id_two`)
+        ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8;';
+
+        $sql[] = 'CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'twopayment_attempt` (
+            `id_attempt` int(11) NOT NULL AUTO_INCREMENT,
+            `attempt_token` VARCHAR(80) NOT NULL,
+            `id_cart` INT(11) UNSIGNED NOT NULL,
+            `id_customer` INT(11) UNSIGNED NOT NULL,
+            `id_order` INT(11) UNSIGNED NULL,
+            `customer_secure_key` VARCHAR(64) NOT NULL,
+            `merchant_order_id` VARCHAR(80) NOT NULL,
+            `two_order_id` VARCHAR(255) NULL,
+            `two_order_reference` VARCHAR(255) NULL,
+            `two_order_state` VARCHAR(64) NULL,
+            `two_order_status` VARCHAR(64) NULL,
+            `two_day_on_invoice` VARCHAR(32) NULL,
+            `two_payment_term_type` VARCHAR(20) DEFAULT "STANDARD",
+            `two_invoice_url` TEXT NULL,
+            `two_invoice_id` VARCHAR(255) NULL,
+            `cart_snapshot_hash` VARCHAR(64) NULL,
+            `order_create_idempotency_key` VARCHAR(128) NULL,
+            `status` VARCHAR(32) NOT NULL DEFAULT "CREATED",
+            `created_at` DATETIME NOT NULL,
+            `updated_at` DATETIME NOT NULL,
+            PRIMARY KEY (`id_attempt`),
+            UNIQUE KEY `uniq_attempt_token` (`attempt_token`),
+            KEY `idx_attempt_cart` (`id_cart`),
+            KEY `idx_attempt_order` (`id_order`),
+            KEY `idx_attempt_two_order_id` (`two_order_id`),
+            KEY `idx_attempt_updated_at` (`updated_at`)
         ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8;';
         // Note: invoice_details (payment info) is NOT stored in DB - fetched from Two API when needed
         // This ensures payment details are always current and avoids stale data issues
@@ -1494,7 +1527,13 @@ class Twopayment extends PaymentModule
                             } elseif (isset($response['message'])) {
                                 $error_message = $response['message'];
                             }
-                            PrestaShopLogger::addLog('TwoPayment: Fulfillment failed for Two order ID: ' . $two_order_id . ', Error: ' . $error_message . ', Response: ' . json_encode($response), 3);
+                            $response_summary = $this->buildTwoApiResponseLogSummary($response);
+                            PrestaShopLogger::addLog(
+                                'TwoPayment: Fulfillment failed for Two order ID: ' . $two_order_id .
+                                ', Error: ' . $error_message .
+                                ', Response Summary: ' . json_encode($response_summary),
+                                3
+                            );
                             
                             // Don't interfere with PrestaShop's status change process
                             // Just log the error - admin can check logs for fulfillment issues
@@ -1603,7 +1642,7 @@ class Twopayment extends PaymentModule
                             $log_message .= ', HTTP Status: ' . ($http_status > 0 ? $http_status : 'Unknown');
                             $log_message .= ', Error: ' . $error_message;
                             $log_message .= ', Idempotency Key: ' . $idempotency_key;
-                            $log_message .= ', Response: ' . json_encode($response);
+                            $log_message .= ', Response Summary: ' . json_encode($this->buildTwoApiResponseLogSummary($response));
                             
                             PrestaShopLogger::addLog($log_message, 3);
                             
@@ -1681,22 +1720,23 @@ class Twopayment extends PaymentModule
             );
         }
         
-        // Layer 3: GUARANTEED CDN fallback (critical for PrestaShop 1.7.6.5 compatibility)
-        // This ensures jQuery loads even when PrestaShop's methods fail silently
-        // Uses official jQuery CDN with crossorigin for security
-        try {
-            $this->context->controller->addJS(
-                'https://code.jquery.com/jquery-3.6.0.min.js',
-                false // Load in HEAD before other scripts
-            );
-        } catch (Exception $e) {
-            PrestaShopLogger::addLog(
-                'Two Payment: CDN jQuery fallback failed - ' . $e->getMessage(),
-                3, // Error level - this is critical
-                null,
-                'Module',
-                $this->id
-            );
+        // Layer 3: Optional CDN fallback only for legacy PrestaShop versions.
+        // Avoid forcing duplicate jQuery loads on modern themes.
+        if (version_compare(_PS_VERSION_, '1.7.7.0', '<=')) {
+            try {
+                $this->context->controller->addJS(
+                    'https://code.jquery.com/jquery-3.6.0.min.js',
+                    false // Load in HEAD before other scripts
+                );
+            } catch (Exception $e) {
+                PrestaShopLogger::addLog(
+                    'Two Payment: CDN jQuery fallback failed - ' . $e->getMessage(),
+                    3, // Error level - this is critical
+                    null,
+                    'Module',
+                    $this->id
+                );
+            }
         }
 
         $countries = Country::getCountries($this->context->language->id, false, false, false);
@@ -1871,6 +1911,11 @@ class Twopayment extends PaymentModule
             PrestaShopLogger::addLog('TwoPayment: Cannot build order intent - no valid line items', 3);
             throw new Exception('No valid line items in cart');
         }
+
+        if (!$this->validateTwoLineItems($line_items)) {
+            PrestaShopLogger::addLog('TwoPayment: Cannot build order intent - invalid line item formulas', 3);
+            throw new Exception('Invalid line item formulas');
+        }
         
         // Calculate tax subtotals from line items first
         $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
@@ -1916,11 +1961,11 @@ class Twopayment extends PaymentModule
         return $request_data;
     }
 
-    public function getTwoNewOrderData($id_order, $cart)
+    public function getTwoNewOrderData($merchant_order_id, $cart, $merchant_urls = null)
     {
         // Validate cart has products before building order data
         if (!Validate::isLoadedObject($cart) || $cart->nbProducts() <= 0) {
-            PrestaShopLogger::addLog('TwoPayment: Cannot build order data - cart is empty or invalid (Order ID: ' . $id_order . ')', 3);
+            PrestaShopLogger::addLog('TwoPayment: Cannot build order data - cart is empty or invalid (Merchant order ID: ' . $merchant_order_id . ')', 3);
             throw new Exception('Cart is empty or invalid');
         }
         
@@ -1949,8 +1994,13 @@ class Twopayment extends PaymentModule
         
         // Validate we have line items
         if (empty($line_items)) {
-            PrestaShopLogger::addLog('TwoPayment: Cannot build order data - no valid line items (Order ID: ' . $id_order . ')', 3);
+            PrestaShopLogger::addLog('TwoPayment: Cannot build order data - no valid line items (Merchant order ID: ' . $merchant_order_id . ')', 3);
             throw new Exception('No valid line items in cart');
+        }
+
+        if (!$this->validateTwoLineItems($line_items)) {
+            PrestaShopLogger::addLog('TwoPayment: Cannot build order data - invalid line item formulas (Merchant order ID: ' . $merchant_order_id . ')', 3);
+            throw new Exception('Invalid line item formulas');
         }
         
         // Calculate tax subtotals from line items first
@@ -1962,6 +2012,7 @@ class Twopayment extends PaymentModule
         $final_net = $totals['net'];
         $final_tax = $totals['tax'];
         $final_gross = $totals['gross'];
+        $final_tax_rate = $this->calculateTwoOrderTaxRate($final_net, $final_tax);
         
         // Get discount amount from PrestaShop
         $final_discount = abs((float)$cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS));
@@ -1972,6 +2023,18 @@ class Twopayment extends PaymentModule
         $buyerCompanyName = $buyerData['company_name'];
         $shippingOrgName = !empty($shippingData['company_name']) ? $shippingData['company_name'] : $buyerCompanyName;
 
+        if (!is_array($merchant_urls)) {
+            // Backward compatibility: legacy flow where merchant order id was the local PrestaShop id_order
+            $merchant_urls = [
+                'merchant_confirmation_url' => $this->context->link->getModuleLink($this->name, 'confirmation', ['id_order' => $merchant_order_id], true),
+                'merchant_cancel_order_url' => $this->context->link->getModuleLink($this->name, 'cancel', ['id_order' => $merchant_order_id], true),
+                'merchant_edit_order_url' => '',
+                'merchant_order_verification_failed_url' => '',
+                'merchant_invoice_url' => '',
+                'merchant_shipping_document_url' => ''
+            ];
+        }
+
         $request_data = [
             'gross_amount' => (string)($this->getTwoRoundAmount($final_gross)),
             'net_amount' => (string)($this->getTwoRoundAmount($final_net)),
@@ -1980,7 +2043,7 @@ class Twopayment extends PaymentModule
             'discount_rate' => '0',
             'invoice_type' => 'FUNDED_INVOICE', // Default product type
             'tax_amount' => (string)($this->getTwoRoundAmount($final_tax)),
-            'tax_rate' => (string)($cart->getAverageProductsTaxRate()),
+            'tax_rate' => $this->formatTwoTaxRate($final_tax_rate),
             'tax_subtotals' => $tax_subtotals,
             'buyer' => [
                 'company' => [
@@ -1999,16 +2062,9 @@ class Twopayment extends PaymentModule
             'buyer_department' => $invoice_address->department,
             'buyer_project' => $invoice_address->project,
             'merchant_additional_info' => '',
-            'merchant_order_id' => (string)($id_order),
+            'merchant_order_id' => (string)$merchant_order_id,
             'merchant_reference' => (string)($order_reference),
-            'merchant_urls' => [
-                'merchant_confirmation_url' => $this->context->link->getModuleLink($this->name, 'confirmation', ['id_order' => $id_order], true),
-                'merchant_cancel_order_url' => $this->context->link->getModuleLink($this->name, 'cancel', ['id_order' => $id_order], true),
-                'merchant_edit_order_url' => '',
-                'merchant_order_verification_failed_url' => '',
-                'merchant_invoice_url' => '',
-                'merchant_shipping_document_url' => ''
-            ],
+            'merchant_urls' => $merchant_urls,
             'billing_address' => $this->buildTwoAddress($invoice_address, $buyerCompanyName, $buyerData['country_iso']),
             'shipping_address' => $this->buildTwoAddress($delivery_address, $shippingOrgName, $shippingData['country_iso']),
             'shipping_details' => [
@@ -2064,6 +2120,11 @@ class Twopayment extends PaymentModule
             PrestaShopLogger::addLog('TwoPayment: Cannot build update order data - no valid line items (Order ID: ' . $order->id . ')', 3);
             throw new Exception('No valid line items in cart');
         }
+
+        if (!$this->validateTwoLineItems($line_items)) {
+            PrestaShopLogger::addLog('TwoPayment: Cannot build update order data - invalid line item formulas (Order ID: ' . $order->id . ')', 3);
+            throw new Exception('Invalid line item formulas');
+        }
         
         // Calculate tax subtotals from line items first
         $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
@@ -2073,6 +2134,7 @@ class Twopayment extends PaymentModule
         $final_net = $totals['net'];
         $final_tax = $totals['tax'];
         $final_gross = $totals['gross'];
+        $final_tax_rate = $this->calculateTwoOrderTaxRate($final_net, $final_tax);
         
         // Get discount amount from PrestaShop
         $final_discount = abs((float)$cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS));
@@ -2091,7 +2153,7 @@ class Twopayment extends PaymentModule
             'discount_rate' => '0',
             'invoice_type' => 'FUNDED_INVOICE', // Default product type
             'tax_amount' => (string)($this->getTwoRoundAmount($final_tax)),
-            'tax_rate' => (string)($cart->getAverageProductsTaxRate()),
+            'tax_rate' => $this->formatTwoTaxRate($final_tax_rate),
             'tax_subtotals' => $tax_subtotals,
             'buyer' => [
                 'company' => [
@@ -2110,6 +2172,7 @@ class Twopayment extends PaymentModule
             'buyer_department' => $invoice_address->department,
             'buyer_project' => $invoice_address->project,
             'merchant_additional_info' => '',
+            'merchant_order_id' => (string)$order->id,
             'merchant_reference' => (string)($orderpaymentdata['two_order_reference']),
             'billing_address' => $this->buildTwoAddress($invoice_address, $buyerCompanyName, $buyerData['country_iso']),
             'shipping_address' => $this->buildTwoAddress($delivery_address, $shippingOrgName, $shippingData['country_iso']),
@@ -2216,58 +2279,41 @@ class Twopayment extends PaymentModule
                 );
             }
             
-            // BEST PRACTICE: TAX RATE FROM PRESTASHOP'S NATIVE FIELD
-            // PrestaShop provides the 'rate' field in cart products which is the configured tax rate
-            // This is more accurate than calculating from amounts (avoids rounding errors)
-            
-            // Step 1: Get tax rate from PrestaShop's native rate field (PRIMARY SOURCE)
-            $rate_from_field = isset($line_item['rate']) ? (float)$line_item['rate'] : 0;
-            $tax_rate_decimal = $rate_from_field / 100; // Convert percentage to decimal
-            
-            // Step 2: Validate against actual amounts (VERIFICATION)
-            // Calculate what the rate would be based on actual charged amounts
-            $rate_from_amounts_decimal = 0;
-            if ($net_amount_prestashop > 0 && $gross_amount_prestashop > $net_amount_prestashop) {
-                $rate_from_amounts_decimal = ($gross_amount_prestashop - $net_amount_prestashop) / $net_amount_prestashop;
-            }
-            
-            // Step 3: Decision logic - prefer native field, fall back to calculated when necessary
-            $tax_rate = $tax_rate_decimal; // Default: use PrestaShop's configured rate
-            
-            // Handle edge cases where native field and amounts disagree
-            if ($rate_from_field > 0 && $rate_from_amounts_decimal == 0) {
-                // Tax rule is configured but no tax was actually applied (e.g., tax-exempt customer)
-                // Use 0 because that's what the customer is actually paying
-                $tax_rate = 0;
-                if (Configuration::get('PS_TWO_DEBUG_MODE')) {
-                    PrestaShopLogger::addLog(
-                        'TwoPayment: Tax rate override - configured rate ' . $rate_from_field . '% but no tax in amounts. ' .
-                        'Product: ' . $line_item['id_product'] . ' | Using 0% (customer not charged tax)',
-                        1
-                    );
-                }
-            } elseif ($rate_from_field == 0 && $rate_from_amounts_decimal > 0) {
-                // No rate field but tax was applied (rare edge case)
-                // Use calculated rate as fallback
-                $tax_rate = round($rate_from_amounts_decimal, 4);
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Tax rate fallback - rate field is 0 but tax was applied. ' .
-                    'Product: ' . $line_item['id_product'] . ' | Using calculated: ' . round($rate_from_amounts_decimal * 100, 2) . '%',
-                    2
-                );
-            } elseif ($rate_from_field > 0 && abs($tax_rate_decimal - $rate_from_amounts_decimal) > 0.005) {
-                // Both exist but differ significantly (more than 0.5% difference)
-                // Use the native field rate but log for investigation
-                // The amounts may differ due to rounding, but the configured rate is canonical
-                if (Configuration::get('PS_TWO_DEBUG_MODE')) {
-                    PrestaShopLogger::addLog(
-                        'TwoPayment: Tax rate variance - field: ' . $rate_from_field . '%, amounts: ' . 
-                        round($rate_from_amounts_decimal * 100, 2) . '% | Product: ' . $line_item['id_product'] . 
-                        ' | Using configured rate (rounding variance expected)',
-                        1
-                    );
+            // Derive the effective tax rate from applied amounts first to reflect what PrestaShop actually charged.
+            // Use configured rate only when it is close enough to the applied rate (normal rounding variance).
+            $rate_from_field_percent = isset($line_item['rate']) ? (float)$line_item['rate'] : 0;
+            $rate_from_field_decimal = $rate_from_field_percent / 100;
+            $applied_tax_amount_prestashop = round($gross_amount_prestashop - $net_amount_prestashop, 2);
+            $rate_from_amounts_decimal = 0.0;
+
+            if ($net_amount_prestashop > 0) {
+                $rate_from_amounts_decimal = $applied_tax_amount_prestashop / $net_amount_prestashop;
+                if ($rate_from_amounts_decimal < 0) {
+                    $rate_from_amounts_decimal = 0.0;
                 }
             }
+
+            $tax_rate = 0.0;
+            if ($net_amount_prestashop > 0) {
+                $rate_difference = abs($rate_from_field_decimal - $rate_from_amounts_decimal);
+                if ($rate_from_field_percent > 0 && $rate_difference <= self::TAX_RATE_VARIANCE_TOLERANCE) {
+                    $tax_rate = $rate_from_field_decimal;
+                } else {
+                    $tax_rate = $rate_from_amounts_decimal;
+                    if ($rate_from_field_percent > 0 && Configuration::get('PS_TWO_DEBUG_MODE')) {
+                        PrestaShopLogger::addLog(
+                            'TwoPayment: Tax rate variance - field: ' . $rate_from_field_percent . '%, amounts: ' .
+                            round($rate_from_amounts_decimal * 100, 2) . '% | Product: ' . $line_item['id_product'] .
+                            ' | Using applied rate from amounts',
+                            1
+                        );
+                    }
+                }
+            } elseif ($rate_from_field_percent > 0) {
+                $tax_rate = $rate_from_field_decimal;
+            }
+
+            $tax_rate = round(max(0, (float)$tax_rate), self::TAX_RATE_PRECISION);
             
             // CRITICAL: Validate quantity to prevent division by zero
             if ($quantity <= 0) {
@@ -2341,6 +2387,19 @@ class Twopayment extends PaymentModule
             
             // Calculate actual tax rate percentage for display (tax_class_name)
             $tax_rate_percent_display = round($tax_rate * 100, 2);
+            $barcodes = array();
+            if (!empty($line_item['ean13'])) {
+                $barcodes[] = array(
+                    'type' => 'SKU',
+                    'value' => $line_item['ean13'],
+                );
+            }
+            if (!empty($line_item['upc'])) {
+                $barcodes[] = array(
+                    'type' => 'UPC',
+                    'value' => $line_item['upc'],
+                );
+            }
             
             $product = [
                 'name' => $line_item['name'],
@@ -2350,7 +2409,7 @@ class Twopayment extends PaymentModule
                 'discount_amount' => (string)$this->getTwoRoundAmount($discount_amount),
                 'tax_amount' => (string)$this->getTwoRoundAmount($tax_amount),
                 'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($tax_rate_percent_display) . '%',
-                'tax_rate' => (string)$this->getTwoRoundAmount($tax_rate),
+                'tax_rate' => $this->formatTwoTaxRate($tax_rate),
                 'unit_price' => (string)$this->getTwoRoundAmount($unit_price_net),
                 'quantity' => $quantity,
                 'quantity_unit' => 'pcs',
@@ -2359,16 +2418,7 @@ class Twopayment extends PaymentModule
                 'type' => 'PHYSICAL',
                 'details' => [
                     'brand' => $line_item['manufacturer_name'],
-                    'barcodes' => [
-                        [
-                            'type' => 'SKU',
-                            'value' => $line_item['ean13']
-                        ],
-                        [
-                            'type' => 'UPC',
-                            'value' => $line_item['upc']
-                        ],
-                    ],
+                    'barcodes' => $barcodes,
                 ],
             ];
             $product['details']['categories'] = [];
@@ -2472,7 +2522,7 @@ class Twopayment extends PaymentModule
                 'discount_amount' => '0.00',
                 'tax_amount' => (string)$this->getTwoRoundAmount($shipping_tax_amount),
                 'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($shipping_tax_rate_percent) . '%',
-                'tax_rate' => (string)$this->getTwoRoundAmount($shipping_tax_rate_decimal),
+                'tax_rate' => $this->formatTwoTaxRate($shipping_tax_rate_decimal),
                 'unit_price' => (string)$this->getTwoRoundAmount($shipping_unit_price),
                 'quantity' => 1,
                 'quantity_unit' => 'pcs',
@@ -2562,7 +2612,7 @@ class Twopayment extends PaymentModule
                 'discount_amount' => '0.00',
                 'tax_amount' => (string)$this->getTwoRoundAmount(-$discount_tax_amount),
                 'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($discount_tax_rate_percent) . '%',
-                'tax_rate' => (string)$this->getTwoRoundAmount($discount_tax_rate_decimal),
+                'tax_rate' => $this->formatTwoTaxRate($discount_tax_rate_decimal),
                 'unit_price' => (string)$this->getTwoRoundAmount(-$discount_unit_price),
                 'quantity' => 1,
                 'quantity_unit' => 'item',
@@ -2632,6 +2682,73 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Retrieve validated company data from session cookie for a given country.
+     *
+     * @param string $country_iso
+     * @return array ['company_name' => string, 'organization_number' => string]
+     */
+    public function getTwoValidatedSessionCompanyData($country_iso)
+    {
+        $country_iso = strtoupper(trim((string)$country_iso));
+        $session_company = isset($this->context->cookie->two_company_name) ? trim((string)$this->context->cookie->two_company_name) : '';
+        $session_company_id = isset($this->context->cookie->two_company_id) ? trim((string)$this->context->cookie->two_company_id) : '';
+        $session_company_country = isset($this->context->cookie->two_company_country) ? strtoupper(trim((string)$this->context->cookie->two_company_country)) : '';
+
+        if (Tools::isEmpty($session_company) || Tools::isEmpty($session_company_id)) {
+            return array(
+                'company_name' => '',
+                'organization_number' => '',
+            );
+        }
+
+        if (Tools::isEmpty($session_company_country) && !Tools::isEmpty($country_iso)) {
+            // Legacy session values without country marker cannot be safely reused across countries.
+            unset($this->context->cookie->two_company_name);
+            unset($this->context->cookie->two_company_id);
+            unset($this->context->cookie->two_company_country);
+            if (method_exists($this->context->cookie, 'write')) {
+                $this->context->cookie->write();
+            }
+
+            PrestaShopLogger::addLog(
+                'TwoPayment: Cleared legacy session company without country marker for address country=' . $country_iso,
+                2
+            );
+
+            return array(
+                'company_name' => '',
+                'organization_number' => '',
+            );
+        }
+
+        if (!Tools::isEmpty($session_company_country) && !Tools::isEmpty($country_iso) && $session_company_country !== $country_iso) {
+            // Prevent cross-country stale company reuse when customer changes address country.
+            unset($this->context->cookie->two_company_name);
+            unset($this->context->cookie->two_company_id);
+            unset($this->context->cookie->two_company_country);
+            if (method_exists($this->context->cookie, 'write')) {
+                $this->context->cookie->write();
+            }
+
+            PrestaShopLogger::addLog(
+                'TwoPayment: Cleared stale session company due to country mismatch. Session country=' .
+                $session_company_country . ', address country=' . $country_iso,
+                2
+            );
+
+            return array(
+                'company_name' => '',
+                'organization_number' => '',
+            );
+        }
+
+        return array(
+            'company_name' => $session_company,
+            'organization_number' => $session_company_id,
+        );
+    }
+
+    /**
      * Get company name and organization number with fallback chain
      * Priority: Cookie (verified) → Address fields (dni, vat_number) → Cookie (unverified)
      * 
@@ -2657,11 +2774,12 @@ class Twopayment extends PaymentModule
             throw new Exception('Invalid country in address');
         }
         
-        // Priority 1: Session cookie (from company search - already verified)
-        if (!empty($this->context->cookie->two_company_id) && !empty($this->context->cookie->two_company_name)) {
+        // Priority 1: Session cookie (from company search - already verified and country-validated)
+        $validated_session_company = $this->getTwoValidatedSessionCompanyData($country_iso);
+        if (!empty($validated_session_company['company_name']) && !empty($validated_session_company['organization_number'])) {
             return [
-                'company_name' => trim($this->context->cookie->two_company_name),
-                'organization_number' => trim($this->context->cookie->two_company_id),
+                'company_name' => $validated_session_company['company_name'],
+                'organization_number' => $validated_session_company['organization_number'],
                 'country_iso' => $country_iso
             ];
         }
@@ -2768,7 +2886,7 @@ class Twopayment extends PaymentModule
         // Convert to Two API format
         foreach ($tax_groups as $rate => $group) {
             $tax_subtotals[] = [
-                'tax_rate' => (string)($this->getTwoRoundAmount((float)$rate)), // Rate is already in decimal format
+                'tax_rate' => $this->formatTwoTaxRate((float)$rate),
                 'taxable_amount' => (string)($this->getTwoRoundAmount($group['taxable_amount'])),
                 'tax_amount' => (string)($this->getTwoRoundAmount($group['tax_amount']))
             ];
@@ -2832,13 +2950,47 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Format amount to 2 decimals as string (Two API requirement)
-     * PrestaShop values are already rounded, this just formats for Two API
-     * Uses standard PHP number_format - no need for PrestaShop's rounding methods
+     * Format monetary amount to 2 decimals as string (Two API requirement).
      */
     public function getTwoRoundAmount($amount)
     {
         return number_format((float)$amount, 2, '.', '');
+    }
+
+    /**
+     * Format tax rate decimal with higher precision than monetary amounts.
+     *
+     * @param float $tax_rate Decimal tax rate (e.g. 0.21 for 21%)
+     * @return string
+     */
+    private function formatTwoTaxRate($tax_rate)
+    {
+        $normalized = round(max(0, (float)$tax_rate), self::TAX_RATE_PRECISION);
+        return rtrim(rtrim(number_format($normalized, self::TAX_RATE_PRECISION, '.', ''), '0'), '.');
+    }
+
+    /**
+     * Calculate effective order-level tax rate from final net and tax totals.
+     *
+     * @param float $net_amount
+     * @param float $tax_amount
+     * @return float Decimal tax rate
+     */
+    private function calculateTwoOrderTaxRate($net_amount, $tax_amount)
+    {
+        $net_amount = (float)$net_amount;
+        $tax_amount = (float)$tax_amount;
+
+        if (abs($net_amount) < 0.000001) {
+            return 0.0;
+        }
+
+        $rate = $tax_amount / $net_amount;
+        if ($rate < 0) {
+            return 0.0;
+        }
+
+        return round($rate, self::TAX_RATE_PRECISION);
     }
 
     public function getTwoCheckoutHostUrl()
@@ -3445,10 +3597,6 @@ class Twopayment extends PaymentModule
             return $this->l('Something went wrong please contact store owner.');
         }
 
-        if (isset($body['response']['code']) && $body['response'] && $body['response']['code'] && $body['response']['code'] >= self::HTTP_STATUS_BAD_REQUEST) {
-            return sprintf($this->l('Two response code %d'), $body['response']['code']);
-        }
-
         if (is_string($body)) {
             // ENHANCED: Parse validation errors and return user-friendly messages
             $friendly_message = $this->parseValidationErrorToFriendlyMessage($body);
@@ -3458,25 +3606,123 @@ class Twopayment extends PaymentModule
             return $body;
         }
 
-        if (isset($body['error_details']) && $body['error_details']) {
-            // ENHANCED: Parse validation errors in error_details
-            $friendly_message = $this->parseValidationErrorToFriendlyMessage($body['error_details']);
-            if ($friendly_message) {
-                return $friendly_message;
-            }
-            return $body['error_details'];
+        if (!is_array($body)) {
+            return null;
         }
 
-        if (isset($body['error_code']) && $body['error_code']) {
-            // ENHANCED: Parse validation errors in error_message
-            if (isset($body['error_message'])) {
-                $friendly_message = $this->parseValidationErrorToFriendlyMessage($body['error_message']);
+        $http_status = isset($body['http_status']) ? (int)$body['http_status'] : 0;
+        $is_http_error = $http_status >= self::HTTP_STATUS_BAD_REQUEST;
+        $candidates = array($body);
+        if (isset($body['data']) && is_array($body['data'])) {
+            $candidates[] = $body['data'];
+        }
+
+        foreach ($candidates as $candidate) {
+            $has_explicit_error_keys = isset($candidate['error']) ||
+                isset($candidate['error_message']) ||
+                isset($candidate['error_details']) ||
+                isset($candidate['error_code']);
+
+            if (isset($candidate['response']['code']) && $candidate['response'] && $candidate['response']['code'] && $candidate['response']['code'] >= self::HTTP_STATUS_BAD_REQUEST) {
+                return sprintf($this->l('Two response code %d'), $candidate['response']['code']);
+            }
+
+            if (isset($candidate['error_details']) && $candidate['error_details']) {
+                $friendly_message = $this->parseValidationErrorToFriendlyMessage($candidate['error_details']);
                 if ($friendly_message) {
                     return $friendly_message;
                 }
+                return (string)$candidate['error_details'];
             }
-            return $body['error_message'];
+
+            if (isset($candidate['error_code']) && $candidate['error_code']) {
+                if (isset($candidate['error_message'])) {
+                    $friendly_message = $this->parseValidationErrorToFriendlyMessage($candidate['error_message']);
+                    if ($friendly_message) {
+                        return $friendly_message;
+                    }
+                }
+                if (isset($candidate['error_message']) && !Tools::isEmpty($candidate['error_message'])) {
+                    return (string)$candidate['error_message'];
+                }
+                if (isset($candidate['message']) && !Tools::isEmpty($candidate['message'])) {
+                    return (string)$candidate['message'];
+                }
+            }
+
+            if (isset($candidate['error_message']) && !Tools::isEmpty($candidate['error_message'])) {
+                $friendly_message = $this->parseValidationErrorToFriendlyMessage($candidate['error_message']);
+                if ($friendly_message) {
+                    return $friendly_message;
+                }
+                return (string)$candidate['error_message'];
+            }
+
+            if (($is_http_error || $has_explicit_error_keys) && isset($candidate['message']) && !Tools::isEmpty($candidate['message'])) {
+                return (string)$candidate['message'];
+            }
+
+            if (($is_http_error || $has_explicit_error_keys) && isset($candidate['detail']) && !Tools::isEmpty($candidate['detail'])) {
+                return (string)$candidate['detail'];
+            }
+
+            if (isset($candidate['error']) && is_scalar($candidate['error']) && !Tools::isEmpty($candidate['error'])) {
+                $friendly_message = $this->parseValidationErrorToFriendlyMessage((string)$candidate['error']);
+                if ($friendly_message) {
+                    return $friendly_message;
+                }
+                return (string)$candidate['error'];
+            }
         }
+
+        if ($http_status >= self::HTTP_STATUS_BAD_REQUEST) {
+            return sprintf($this->l('Two response code %d'), $http_status);
+        }
+
+        return null;
+    }
+
+    /**
+     * Build a redacted API response summary safe for production logs.
+     *
+     * @param mixed $response
+     * @return array
+     */
+    public function buildTwoApiResponseLogSummary($response)
+    {
+        $summary = array(
+            'http_status' => 0,
+        );
+
+        if (!is_array($response)) {
+            return $summary;
+        }
+
+        if (isset($response['http_status'])) {
+            $summary['http_status'] = (int)$response['http_status'];
+        }
+        if (isset($response['id'])) {
+            $summary['two_order_id'] = (string)$response['id'];
+        }
+        if (isset($response['state'])) {
+            $summary['two_order_state'] = (string)$response['state'];
+        }
+        if (isset($response['status'])) {
+            $summary['two_order_status'] = (string)$response['status'];
+        }
+        if (isset($response['merchant_reference'])) {
+            $summary['two_order_reference'] = (string)$response['merchant_reference'];
+        }
+
+        if (isset($response['error'])) {
+            $summary['error'] = is_scalar($response['error']) ? (string)$response['error'] : 'structured_error';
+        } elseif (isset($response['error_message'])) {
+            $summary['error'] = (string)$response['error_message'];
+        } elseif (isset($response['data']) && is_array($response['data']) && isset($response['data']['error'])) {
+            $summary['error'] = is_scalar($response['data']['error']) ? (string)$response['data']['error'] : 'structured_error';
+        }
+
+        return $summary;
     }
     
     /**
@@ -3524,6 +3770,428 @@ class Twopayment extends PaymentModule
         }
         
         return null;
+    }
+
+    /**
+     * Generate a unique attempt token for the provider-first checkout flow.
+     *
+     * @param int $id_cart Cart ID
+     * @param int $id_customer Customer ID
+     * @return string
+     */
+    public function generateTwoCheckoutAttemptToken($id_cart, $id_customer)
+    {
+        $seed = (int)$id_cart . '|' . (int)$id_customer . '|' . microtime(true) . '|' . mt_rand();
+        $random = '';
+        try {
+            $random = bin2hex(random_bytes(8));
+        } catch (Exception $e) {
+            $random = md5($seed . '|' . uniqid('', true));
+        }
+
+        return strtolower($this->generateUuidV4FromSeed($seed . '|' . $random));
+    }
+
+    /**
+     * Validate whether a checkout callback is authorized for the stored attempt.
+     *
+     * @param array $attempt Attempt record from twopayment_attempt
+     * @param string $provided_secure_key Optional key from callback query string
+     * @param int $context_customer_id Current context customer ID
+     * @param string $context_customer_secure_key Current context customer secure key
+     * @return bool
+     */
+    public function isTwoAttemptCallbackAuthorized($attempt, $provided_secure_key = '', $context_customer_id = 0, $context_customer_secure_key = '')
+    {
+        if (!is_array($attempt)) {
+            return false;
+        }
+
+        $expected_secure_key = isset($attempt['customer_secure_key']) ? trim((string)$attempt['customer_secure_key']) : '';
+        if (Tools::isEmpty($expected_secure_key)) {
+            return false;
+        }
+
+        $provided_secure_key = trim((string)$provided_secure_key);
+        if (!Tools::isEmpty($provided_secure_key)) {
+            return hash_equals($expected_secure_key, $provided_secure_key);
+        }
+
+        $attempt_customer_id = isset($attempt['id_customer']) ? (int)$attempt['id_customer'] : 0;
+        $context_customer_id = (int)$context_customer_id;
+        $context_customer_secure_key = trim((string)$context_customer_secure_key);
+
+        if (
+            $attempt_customer_id > 0 &&
+            $context_customer_id === $attempt_customer_id &&
+            !Tools::isEmpty($context_customer_secure_key)
+        ) {
+            return hash_equals($expected_secure_key, $context_customer_secure_key);
+        }
+
+        return false;
+    }
+
+    /**
+     * Build a compact merchant_order_id for Two order creation before local order exists.
+     *
+     * @param string $attempt_token Unique attempt token
+     * @param int $id_cart Cart ID
+     * @return string
+     */
+    public function buildTwoMerchantOrderId($attempt_token, $id_cart)
+    {
+        $attempt_fragment = Tools::substr(str_replace('-', '', (string)$attempt_token), 0, 24);
+        return 'ps-cart-' . (int)$id_cart . '-att-' . $attempt_fragment;
+    }
+
+    /**
+     * Build deterministic hash for order creation idempotency key.
+     *
+     * @param Cart $cart
+     * @param string $snapshot_hash
+     * @return string
+     */
+    public function buildTwoOrderCreateIdempotencyKey($cart, $snapshot_hash)
+    {
+        // Keep retries idempotent within a short window while still allowing future fresh attempts.
+        $time_bucket = (int)floor(time() / 300); // 5-minute bucket
+        $seed = 'create_order|' .
+            (int)$cart->id . '|' .
+            (int)$cart->id_customer . '|' .
+            (string)$snapshot_hash . '|' .
+            (string)Configuration::get('PS_TWO_ENVIRONMENT') . '|' .
+            $time_bucket;
+
+        return 'create_' . Tools::substr(hash('sha256', $seed), 0, 48);
+    }
+
+    /**
+     * Calculate cart snapshot hash used to guard callback-time local order creation.
+     *
+     * @param Cart $cart
+     * @param array $paymentdata
+     * @return string
+     */
+    public function calculateTwoCheckoutSnapshotHash($cart, $paymentdata)
+    {
+        $snapshot = $this->buildTwoCheckoutSnapshot($cart, $paymentdata);
+        return hash('sha256', json_encode($snapshot, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    }
+
+    /**
+     * Build normalized checkout snapshot with stable ordering.
+     *
+     * @param Cart $cart
+     * @param array $paymentdata
+     * @return array
+     */
+    private function buildTwoCheckoutSnapshot($cart, $paymentdata)
+    {
+        $line_items = array();
+        if (isset($paymentdata['line_items']) && is_array($paymentdata['line_items'])) {
+            foreach ($paymentdata['line_items'] as $item) {
+                if (!is_array($item)) {
+                    continue;
+                }
+                $line_items[] = array(
+                    'type' => isset($item['type']) ? (string)$item['type'] : '',
+                    'quantity' => isset($item['quantity']) ? (int)$item['quantity'] : 0,
+                    'unit_price' => $this->normalizeSnapshotAmount(isset($item['unit_price']) ? $item['unit_price'] : 0),
+                    'net_amount' => $this->normalizeSnapshotAmount(isset($item['net_amount']) ? $item['net_amount'] : 0),
+                    'tax_amount' => $this->normalizeSnapshotAmount(isset($item['tax_amount']) ? $item['tax_amount'] : 0),
+                    'gross_amount' => $this->normalizeSnapshotAmount(isset($item['gross_amount']) ? $item['gross_amount'] : 0),
+                    'discount_amount' => $this->normalizeSnapshotAmount(isset($item['discount_amount']) ? $item['discount_amount'] : 0),
+                    'tax_rate' => $this->normalizeSnapshotRate(isset($item['tax_rate']) ? $item['tax_rate'] : 0),
+                );
+            }
+            usort($line_items, function ($a, $b) {
+                return strcmp(json_encode($a), json_encode($b));
+            });
+        }
+
+        $tax_subtotals = array();
+        if (isset($paymentdata['tax_subtotals']) && is_array($paymentdata['tax_subtotals'])) {
+            foreach ($paymentdata['tax_subtotals'] as $subtotal) {
+                if (!is_array($subtotal)) {
+                    continue;
+                }
+                $tax_subtotals[] = array(
+                    'tax_rate' => $this->normalizeSnapshotRate(isset($subtotal['tax_rate']) ? $subtotal['tax_rate'] : 0),
+                    'taxable_amount' => $this->normalizeSnapshotAmount(isset($subtotal['taxable_amount']) ? $subtotal['taxable_amount'] : 0),
+                    'tax_amount' => $this->normalizeSnapshotAmount(isset($subtotal['tax_amount']) ? $subtotal['tax_amount'] : 0),
+                );
+            }
+            usort($tax_subtotals, function ($a, $b) {
+                return strcmp($a['tax_rate'], $b['tax_rate']);
+            });
+        }
+
+        return array(
+            'id_cart' => (int)$cart->id,
+            'id_customer' => (int)$cart->id_customer,
+            'id_currency' => (int)$cart->id_currency,
+            'id_address_invoice' => (int)$cart->id_address_invoice,
+            'id_address_delivery' => (int)$cart->id_address_delivery,
+            'id_carrier' => (int)$cart->id_carrier,
+            'currency' => isset($paymentdata['currency']) ? (string)$paymentdata['currency'] : '',
+            'gross_amount' => $this->normalizeSnapshotAmount(isset($paymentdata['gross_amount']) ? $paymentdata['gross_amount'] : 0),
+            'net_amount' => $this->normalizeSnapshotAmount(isset($paymentdata['net_amount']) ? $paymentdata['net_amount'] : 0),
+            'tax_amount' => $this->normalizeSnapshotAmount(isset($paymentdata['tax_amount']) ? $paymentdata['tax_amount'] : 0),
+            'discount_amount' => $this->normalizeSnapshotAmount(isset($paymentdata['discount_amount']) ? $paymentdata['discount_amount'] : 0),
+            'tax_subtotals' => $tax_subtotals,
+            'line_items' => $line_items,
+        );
+    }
+
+    /**
+     * Normalize snapshot numeric fields to fixed string decimals.
+     *
+     * @param mixed $amount
+     * @return string
+     */
+    private function normalizeSnapshotAmount($amount)
+    {
+        return number_format((float)$amount, 2, '.', '');
+    }
+
+    /**
+     * Normalize tax rate fields in checkout snapshots with fixed high precision.
+     *
+     * @param mixed $rate
+     * @return string
+     */
+    private function normalizeSnapshotRate($rate)
+    {
+        return number_format(max(0, (float)$rate), self::TAX_RATE_PRECISION, '.', '');
+    }
+
+    /**
+     * Periodically purge stale checkout attempts to keep table size bounded.
+     *
+     * @param bool $force
+     * @return void
+     */
+    public function maybeCleanupStaleTwoCheckoutAttempts($force = false)
+    {
+        $now = time();
+        $last_run = (int)Configuration::get('PS_TWO_ATTEMPT_CLEANUP_LAST_RUN', 0);
+        if (!$force && $last_run > 0 && ($now - $last_run) < self::ATTEMPT_CLEANUP_INTERVAL_SECONDS) {
+            return;
+        }
+
+        $cutoff = date('Y-m-d H:i:s', $now - (self::ATTEMPT_RETENTION_DAYS * 86400));
+        $sql = 'DELETE FROM `' . _DB_PREFIX_ . 'twopayment_attempt` WHERE `updated_at` < "' . pSQL($cutoff) . '"';
+        $ok = Db::getInstance()->execute($sql);
+        if (!$ok) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Failed to purge stale checkout attempts older than ' . $cutoff,
+                2
+            );
+            return;
+        }
+
+        Configuration::updateValue('PS_TWO_ATTEMPT_CLEANUP_LAST_RUN', (string)$now);
+    }
+
+    /**
+     * Insert or update a checkout attempt.
+     *
+     * @param string $attempt_token Unique attempt token
+     * @param array $attempt_data Attempt payload
+     * @return bool
+     */
+    public function setTwoCheckoutAttempt($attempt_token, $attempt_data)
+    {
+        $attempt_token = trim((string)$attempt_token);
+        if (Tools::isEmpty($attempt_token) || !is_array($attempt_data)) {
+            return false;
+        }
+
+        $now = date('Y-m-d H:i:s');
+        $status = isset($attempt_data['status']) ? $this->normalizeTwoAttemptStatus($attempt_data['status']) : 'CREATED';
+        $secure_key = isset($attempt_data['customer_secure_key']) ? (string)$attempt_data['customer_secure_key'] : '';
+        $merchant_order_id = isset($attempt_data['merchant_order_id']) ? (string)$attempt_data['merchant_order_id'] : '';
+
+        if (Tools::isEmpty($secure_key) || Tools::isEmpty($merchant_order_id)) {
+            return false;
+        }
+
+        $data = array(
+            'attempt_token' => pSQL($attempt_token),
+            'id_cart' => isset($attempt_data['id_cart']) ? (int)$attempt_data['id_cart'] : 0,
+            'id_customer' => isset($attempt_data['id_customer']) ? (int)$attempt_data['id_customer'] : 0,
+            'id_order' => isset($attempt_data['id_order']) ? (int)$attempt_data['id_order'] : null,
+            'customer_secure_key' => pSQL($secure_key),
+            'merchant_order_id' => pSQL($merchant_order_id),
+            'two_order_id' => isset($attempt_data['two_order_id']) ? pSQL($attempt_data['two_order_id']) : null,
+            'two_order_reference' => isset($attempt_data['two_order_reference']) ? pSQL($attempt_data['two_order_reference']) : null,
+            'two_order_state' => isset($attempt_data['two_order_state']) ? pSQL($attempt_data['two_order_state']) : null,
+            'two_order_status' => isset($attempt_data['two_order_status']) ? pSQL($attempt_data['two_order_status']) : null,
+            'two_day_on_invoice' => isset($attempt_data['two_day_on_invoice']) ? pSQL($attempt_data['two_day_on_invoice']) : null,
+            'two_payment_term_type' => isset($attempt_data['two_payment_term_type']) ? pSQL($attempt_data['two_payment_term_type']) : 'STANDARD',
+            'two_invoice_url' => isset($attempt_data['two_invoice_url']) ? pSQL($attempt_data['two_invoice_url'], true) : null,
+            'two_invoice_id' => isset($attempt_data['two_invoice_id']) ? pSQL($attempt_data['two_invoice_id']) : null,
+            'cart_snapshot_hash' => isset($attempt_data['cart_snapshot_hash']) ? pSQL($attempt_data['cart_snapshot_hash']) : null,
+            'order_create_idempotency_key' => isset($attempt_data['order_create_idempotency_key']) ? pSQL($attempt_data['order_create_idempotency_key']) : null,
+            'status' => pSQL($status),
+            'updated_at' => pSQL($now),
+        );
+
+        $existing = $this->getTwoCheckoutAttempt($attempt_token);
+        if ($existing) {
+            unset($data['attempt_token']);
+            return Db::getInstance()->update(
+                'twopayment_attempt',
+                $data,
+                'attempt_token = "' . pSQL($attempt_token) . '"'
+            );
+        }
+
+        $data['created_at'] = pSQL($now);
+        return Db::getInstance()->insert('twopayment_attempt', $data);
+    }
+
+    /**
+     * Retrieve a checkout attempt by token.
+     *
+     * @param string $attempt_token
+     * @return array|false
+     */
+    public function getTwoCheckoutAttempt($attempt_token)
+    {
+        $attempt_token = trim((string)$attempt_token);
+        if (Tools::isEmpty($attempt_token)) {
+            return false;
+        }
+
+        $sql = 'SELECT * FROM `' . _DB_PREFIX_ . 'twopayment_attempt` WHERE `attempt_token` = "' . pSQL($attempt_token) . '"';
+        return Db::getInstance()->getRow($sql);
+    }
+
+    /**
+     * Update attempt status and selected columns.
+     *
+     * @param string $attempt_token
+     * @param string $status
+     * @param array $extra_data
+     * @return bool
+     */
+    public function updateTwoCheckoutAttemptStatus($attempt_token, $status, $extra_data = array())
+    {
+        $attempt_token = trim((string)$attempt_token);
+        if (Tools::isEmpty($attempt_token)) {
+            return false;
+        }
+
+        $data = array(
+            'status' => pSQL($this->normalizeTwoAttemptStatus($status)),
+            'updated_at' => pSQL(date('Y-m-d H:i:s')),
+        );
+
+        if (isset($extra_data['id_order'])) {
+            $data['id_order'] = (int)$extra_data['id_order'];
+        }
+        if (isset($extra_data['two_order_state'])) {
+            $data['two_order_state'] = pSQL($extra_data['two_order_state']);
+        }
+        if (isset($extra_data['two_order_status'])) {
+            $data['two_order_status'] = pSQL($extra_data['two_order_status']);
+        }
+        if (isset($extra_data['two_invoice_url'])) {
+            $data['two_invoice_url'] = pSQL($extra_data['two_invoice_url'], true);
+        }
+        if (isset($extra_data['two_invoice_id'])) {
+            $data['two_invoice_id'] = pSQL($extra_data['two_invoice_id']);
+        }
+        if (isset($extra_data['cart_snapshot_hash'])) {
+            $data['cart_snapshot_hash'] = pSQL($extra_data['cart_snapshot_hash']);
+        }
+        if (isset($extra_data['order_create_idempotency_key'])) {
+            $data['order_create_idempotency_key'] = pSQL($extra_data['order_create_idempotency_key']);
+        }
+
+        return Db::getInstance()->update(
+            'twopayment_attempt',
+            $data,
+            'attempt_token = "' . pSQL($attempt_token) . '"'
+        );
+    }
+
+    /**
+     * Link an attempt to the created local order.
+     *
+     * @param string $attempt_token
+     * @param int $id_order
+     * @return bool
+     */
+    public function linkTwoCheckoutAttemptToOrder($attempt_token, $id_order)
+    {
+        return $this->updateTwoCheckoutAttemptStatus($attempt_token, 'CONFIRMED', array(
+            'id_order' => (int)$id_order,
+        ));
+    }
+
+    /**
+     * Update merchant_order_id for a stored checkout attempt.
+     *
+     * @param string $attempt_token
+     * @param string $merchant_order_id
+     * @return bool
+     */
+    public function setTwoCheckoutAttemptMerchantOrderId($attempt_token, $merchant_order_id)
+    {
+        $attempt_token = trim((string)$attempt_token);
+        $merchant_order_id = trim((string)$merchant_order_id);
+        if (Tools::isEmpty($attempt_token) || Tools::isEmpty($merchant_order_id)) {
+            return false;
+        }
+
+        return Db::getInstance()->update(
+            'twopayment_attempt',
+            array(
+                'merchant_order_id' => pSQL($merchant_order_id),
+                'updated_at' => pSQL(date('Y-m-d H:i:s')),
+            ),
+            'attempt_token = "' . pSQL($attempt_token) . '"'
+        );
+    }
+
+    /**
+     * Resolve existing order ID by cart ID with framework fallback.
+     *
+     * @param int $id_cart
+     * @return int
+     */
+    public function getTwoOrderIdByCart($id_cart)
+    {
+        $id_cart = (int)$id_cart;
+        if ($id_cart <= 0) {
+            return 0;
+        }
+
+        if (method_exists('Order', 'getOrderByCartId')) {
+            return (int)Order::getOrderByCartId($id_cart);
+        }
+
+        $sql = 'SELECT `id_order` FROM `' . _DB_PREFIX_ . 'orders` WHERE `id_cart` = ' . $id_cart . ' ORDER BY `id_order` DESC';
+        return (int)Db::getInstance()->getValue($sql);
+    }
+
+    /**
+     * Ensure attempt status values are consistent.
+     *
+     * @param string $status
+     * @return string
+     */
+    private function normalizeTwoAttemptStatus($status)
+    {
+        $status = strtoupper((string)$status);
+        $allowed = array('CREATED', 'REDIRECTED', 'CONFIRMED', 'CANCELLED', 'FAILED');
+        if (!in_array($status, $allowed, true)) {
+            return 'FAILED';
+        }
+        return $status;
     }
 
     public function setTwoOrderPaymentData($id_order, $payment_data)
@@ -4065,4 +4733,3 @@ class Twopayment extends PaymentModule
         return '';
     }
 }
-

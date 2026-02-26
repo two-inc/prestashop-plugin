@@ -33,6 +33,9 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 - Robust tax rate calculation with fallback validation
 - User-friendly error messages for API validation failures
 - Phone number fallback (phone → phone_mobile)
+- Provider-first checkout finalization (local order created after provider verification)
+- Cart snapshot validation before callback-time local order creation
+- Idempotency key header on provider order creation requests
 
 ## Requirements
 
@@ -171,10 +174,10 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 #### 3. Order Confirmation
 - Customer clicks "Place Order" with Two selected
 - Module verifies Order Intent server-side (defense-in-depth)
-- If valid, PrestaShop order created
-- Two order created via API
-- Payment data saved to database
-- Customer redirected to confirmation page
+- Module creates Two order first (provider-first)
+- If Two rejects, checkout stops and no PrestaShop order is created
+- If Two verifies, module creates PrestaShop order from callback and saves payment data
+- Customer is redirected to native PrestaShop order confirmation page
 
 ### Order Management
 

@@ -5,6 +5,69 @@ All notable changes to the Two Payment module for PrestaShop will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+---
+
+## Latest Release: v2.4.0
+
+**Release Date:** 2026-02-25
+
+**Highlights:**
+- Cart snapshot guard to block local order creation if cart changes after Two order creation
+- Idempotency key header on `/v1/order` creation to prevent duplicate provider orders on retries
+- Added attempt metadata columns for snapshot hash and order-create idempotency key
+
+**Upgrade:** Includes database migration creating/updating `twopayment_attempt`.
+
+---
+
+## [2.4.0] - 2026-02-25
+
+### Added
+- **Checkout Attempt Persistence**: New `twopayment_attempt` table tracks provider-first checkout attempts
+  - Stores attempt token, cart/customer linkage, Two order metadata, and lifecycle status
+  - Supports idempotent callback handling and safe retries
+- **Cart Snapshot Consistency Check**: Callback finalization validates cart still matches original checkout payload hash
+  - If cart drift is detected, local order creation is blocked
+  - Provider order is cancelled (best effort) and customer is sent back to checkout
+- **Order Create Idempotency Header**: `/v1/order` calls include `X-Idempotency-Key`
+  - Key is derived from cart/customer/environment and normalized snapshot hash
+  - Reduces duplicate provider orders when requests are retried
+- **Attempt Metadata Columns**:
+  - `cart_snapshot_hash`
+  - `order_create_idempotency_key`
+
+### Changed
+- **Provider-First Checkout Flow**: Payment controller now creates Two orders before local PrestaShop orders
+  - Eliminates local order creation/deletion cycle on provider rejection
+  - Prevents rejected attempts from producing local order side effects
+- **merchant_order_id Alignment**: After callback-time local order creation, module performs best-effort Two order update to set `merchant_order_id` to the real PrestaShop `id_order`
+- **Callback Orchestration**:
+  - Confirmation controller now supports `attempt_token` callback flow and creates local order only after verified provider state
+  - Cancel controller now supports `attempt_token` cancellation without creating local orders
+  - Both controllers keep legacy `id_order` paths for backward compatibility
+- **Tax Payload Accuracy Hardening**:
+  - Tax rates are now serialized with dedicated high precision (no money-format truncation)
+  - Product tax rate selection now prioritizes applied PrestaShop amounts when configured and applied rates diverge
+  - Order-level `tax_rate` is derived from final net/tax totals
+- **Provider Error Handling Hardening**:
+  - `getTwoErrorMessage()` now treats HTTP `>= 400` as an error even when provider body is empty/non-JSON
+  - Nested `data.error_message`/`data.message` responses are now parsed consistently
+- **Session Company Country Safety**:
+  - Legacy company cookies without `two_company_country` are now cleared when validating against a known address country
+  - Prevents stale cross-country company/org-number reuse in mixed-country checkouts
+
+### Technical
+- Added upgrade script `upgrade-2.4.0.php`
+- Module version bumped to `2.4.0`
+- `twopayment_attempt` schema includes snapshot and idempotency metadata
+- Added strict line-item formula validation gate before building intent/create/update payloads
+- Added test harness and automated checks:
+  - Offline deterministic test runner (`php tests/run.php`)
+  - PHPUnit-compatible test suite scaffolding (`tests/OrderBuilderTest.php`, `phpunit.xml.dist`)
+  - GitHub Actions workflow for push/PR test execution
+  - Added coverage for HTTP-only provider failures and legacy session company country edge cases
+
+---
 ## [2.3.2] - 2026-01-22
 
 ### Added
@@ -258,4 +321,3 @@ None in version 2.2.0 - all changes are backwards compatible.
 
 
 For detailed technical changes, see git commit history.
-

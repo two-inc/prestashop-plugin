@@ -1,0 +1,16 @@
+{
+  "name": "two/twopayment-prestashop-module",
+  "description": "Development dependencies for Two PrestaShop module tests",
+  "type": "project",
+  "license": "proprietary",
+  "require": {},
+  "require-dev": {
+    "phpunit/phpunit": "^11.5"
+  },
+  "config": {
+    "sort-packages": true
+  },
+  "scripts": {
+    "test": "phpunit -c phpunit.xml.dist"
+  }
+}

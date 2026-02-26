@@ -42,6 +42,10 @@
     // DEFENSIVE: Retry initialization if DOM isn't ready
     function initializeTwoPayment() {
         try {
+            if (window.TwoCheckoutManager_Instance && typeof window.TwoCheckoutManager_Instance.cleanup === 'function') {
+                window.TwoCheckoutManager_Instance.cleanup();
+            }
+
             // Initialize the checkout manager with configuration
             const checkoutManager = new TwoCheckoutManager({
                 companySearchEnabled: twopayment.company_name_search === '1',
@@ -64,6 +68,10 @@
             setTimeout(() => {
                 try {
                     if (typeof TwoCheckoutManager !== 'undefined') {
+                        if (window.TwoCheckoutManager_Instance && typeof window.TwoCheckoutManager_Instance.cleanup === 'function') {
+                            window.TwoCheckoutManager_Instance.cleanup();
+                        }
+
                         const checkoutManager = new TwoCheckoutManager({
                             companySearchEnabled: twopayment.company_name_search === '1',
                             orderIntentEnabled: twopayment.enable_order_intent === '1',
@@ -84,32 +92,12 @@
     
     // Initialize immediately
     initializeTwoPayment();
-    
-    // ADDITIONAL COMPATIBILITY: Listen for dynamic content changes (some themes load checkout content via AJAX)
-    if (typeof MutationObserver !== 'undefined') {
-        const observer = new MutationObserver((mutations) => {
-            let shouldReinit = false;
-            mutations.forEach((mutation) => {
-                if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
-                    for (let node of mutation.addedNodes) {
-                        if (node.nodeType === 1 && 
-                            (node.querySelector && 
-                             (node.querySelector('.payment-options') || 
-                              node.querySelector('.js-address-form')))) {
-                            shouldReinit = true;
-                            break;
-                        }
-                    }
-                }
-            });
-            
-            if (shouldReinit && typeof TwoCheckoutManager !== 'undefined' && !window.TwoCheckoutManager_Instance) {
-                setTimeout(initializeTwoPayment, 100);
-            }
-        });
-        
-        observer.observe(document.body, { childList: true, subtree: true });
-    }
+
+    window.addEventListener('beforeunload', function() {
+        if (window.TwoCheckoutManager_Instance && typeof window.TwoCheckoutManager_Instance.cleanup === 'function') {
+            window.TwoCheckoutManager_Instance.cleanup();
+        }
+    });
         }); 
     }); 
 })(); 

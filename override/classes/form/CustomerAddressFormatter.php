@@ -106,7 +106,7 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
                 $fieldParts = explode(':', $field, 2);
 
                 if ($field === 'address2') {
-                    $formField->setType('number');
+                    $formField->setType('text');
                 }
 
                 // CRITICAL: Company field handling for Two payment functionality
@@ -187,7 +187,7 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
                 $fieldParts = explode(':', $field, 2);
                 if ($field === 'address2') {
                     $formField->setRequired(true);
-                    $formField->setType('number');
+                    $formField->setType('text');
                 }
                 if (count($fieldParts) === 1) {
                     if ($field === 'postcode') {

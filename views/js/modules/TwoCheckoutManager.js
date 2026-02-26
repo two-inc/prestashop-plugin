@@ -343,7 +343,7 @@ class TwoCheckoutManager {
                     }
                 }
             }
-        }, 1000);
+        }, 3000);
     }
     
     /**
@@ -1326,7 +1326,12 @@ class TwoCheckoutManager {
      * Setup mutation observer for dynamic content (theme-independent)
      */
     setupMutationObserver() {
-        const observer = new MutationObserver((mutations) => {
+        if (this._mutationObserver) {
+            this._mutationObserver.disconnect();
+            this._mutationObserver = null;
+        }
+
+        this._mutationObserver = new MutationObserver((mutations) => {
             let shouldReinitialize = false;
             
             mutations.forEach((mutation) => {
@@ -1355,7 +1360,7 @@ class TwoCheckoutManager {
             }
         });
         
-        observer.observe(document.body, {
+        this._mutationObserver.observe(document.body, {
             childList: true,
             subtree: true
         });
@@ -1629,6 +1634,11 @@ class TwoCheckoutManager {
         if (this.reinitializeTimeout) {
             clearTimeout(this.reinitializeTimeout);
             this.reinitializeTimeout = null;
+        }
+
+        if (this._mutationObserver) {
+            this._mutationObserver.disconnect();
+            this._mutationObserver = null;
         }
         
         if (this._intentRetryTimeout) {

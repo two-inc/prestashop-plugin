@@ -156,8 +156,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         
         // If this is a direct access (not AJAX), return simple response
         if (!Tools::getValue('ajax')) {
-            die;
-            exit;
+            return;
         }
         
         parent::initContent();
@@ -170,7 +169,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
      */
     public function ajaxProcessCheckOrderIntent()
     {
-        // Rate limiting protection - max 3 requests per minute per session
+        // Rate limiting protection
         if (!$this->checkRateLimit()) {
             $this->sendJsonResponse(json_encode([
                 'success' => false,
@@ -377,38 +376,38 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
 
     /**
      * Rate limiting check - prevent abuse of order intent API
-     * Max 3 requests per minute per session
+     * Max 5 requests per minute per checkout cookie session
      */
     private function checkRateLimit()
     {
-        $session_id = session_id();
-        if (empty($session_id)) {
-            // If no session, use IP as fallback (less reliable but better than nothing)
-            $session_id = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
-        }
-        
-        $rate_limit_key = 'two_order_intent_' . md5($session_id);
         $current_time = time();
-        $rate_limit_window = Twopayment::API_TIMEOUT_SHORT; // 1 minute (using API_TIMEOUT_SHORT constant)
+        $rate_limit_window = 60;
         $max_requests = 5; // Production rate limit
-        
-        // Get current request data from session
-        $request_data = isset($_SESSION[$rate_limit_key]) ? $_SESSION[$rate_limit_key] : [];
-        
-        // Clean old requests outside the window
-        $request_data = array_filter($request_data, function($timestamp) use ($current_time, $rate_limit_window) {
-            return ($current_time - $timestamp) < $rate_limit_window;
-        });
-        
+
+        $request_data = array();
+        $encoded = isset($this->context->cookie->two_order_intent_rate_limit) ? (string)$this->context->cookie->two_order_intent_rate_limit : '';
+        if (!Tools::isEmpty($encoded)) {
+            $decoded = json_decode($encoded, true);
+            if (is_array($decoded)) {
+                foreach ($decoded as $timestamp) {
+                    $timestamp = (int)$timestamp;
+                    if ($timestamp > 0 && ($current_time - $timestamp) < $rate_limit_window) {
+                        $request_data[] = $timestamp;
+                    }
+                }
+            }
+        }
+
         // Check if we're over the limit
         if (count($request_data) >= $max_requests) {
             return false;
         }
-        
+
         // Add current request
         $request_data[] = $current_time;
-        $_SESSION[$rate_limit_key] = $request_data;
-        
+        $this->context->cookie->two_order_intent_rate_limit = json_encode(array_values($request_data));
+        $this->context->cookie->write();
+
         return true;
     }
 
@@ -471,8 +470,21 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         }
         
         // Priority 2: PrestaShop session/cookie (persisted from previous steps or company search)
-        $sessionCompany = isset($this->context->cookie->two_company_name) ? trim($this->context->cookie->two_company_name) : '';
-        $sessionCompanyId = isset($this->context->cookie->two_company_id) ? trim($this->context->cookie->two_company_id) : '';
+        // Validate session company country against the current invoice country to avoid stale cross-country data.
+        $currentCountryIso = '';
+        $invoiceAddressId = (int)$this->context->cart->id_address_invoice;
+        if ($invoiceAddressId > 0) {
+            $invoiceAddress = new Address($invoiceAddressId);
+            if (Validate::isLoadedObject($invoiceAddress)) {
+                $countryIsoCandidate = Country::getIsoById($invoiceAddress->id_country);
+                if ($countryIsoCandidate && is_string($countryIsoCandidate)) {
+                    $currentCountryIso = $countryIsoCandidate;
+                }
+            }
+        }
+        $validatedSession = $this->module->getTwoValidatedSessionCompanyData($currentCountryIso);
+        $sessionCompany = isset($validatedSession['company_name']) ? trim($validatedSession['company_name']) : '';
+        $sessionCompanyId = isset($validatedSession['organization_number']) ? trim($validatedSession['organization_number']) : '';
         
         if (!empty($sessionCompany) && !empty($sessionCompanyId)) {
             PrestaShopLogger::addLog('TwoPayment: Company data retrieved from PrestaShop session (complete)', 1);
@@ -584,6 +596,17 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         if (!empty($companyData['company'])) {
             $this->context->cookie->two_company_name = $companyData['company'];
             $this->context->cookie->two_company_id = $companyData['companyid'] ?? '';
+
+            $invoiceAddressId = (int)$this->context->cart->id_address_invoice;
+            if ($invoiceAddressId > 0) {
+                $invoiceAddress = new Address($invoiceAddressId);
+                if (Validate::isLoadedObject($invoiceAddress)) {
+                    $countryIso = Country::getIsoById($invoiceAddress->id_country);
+                    if ($countryIso && is_string($countryIso)) {
+                        $this->context->cookie->two_company_country = strtoupper($countryIso);
+                    }
+                }
+            }
             
             // Set cookie expiration (1 hour)
             $this->context->cookie->setExpire(time() + Twopayment::COOKIE_EXPIRY_ONE_HOUR);
