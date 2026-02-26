@@ -37,6 +37,8 @@ namespace {
         public static array $productCategories = [];
         public static array $images = [];
         public static array $taxRuleRates = [];
+        public static array $dbExecuteSResponses = [];
+        public static array $dbLastExecuteS = [];
 
         public static function reset(): void
         {
@@ -61,6 +63,8 @@ namespace {
             self::$productCategories = [];
             self::$images = [];
             self::$taxRuleRates = [];
+            self::$dbExecuteSResponses = [];
+            self::$dbLastExecuteS = [];
 
             $context = Context::getContext();
             $context->cookie = new Cookie();
@@ -578,6 +582,11 @@ namespace {
 
         public function executeS($sql): array
         {
+            StubStore::$dbLastExecuteS[] = (string) $sql;
+            if (!empty(StubStore::$dbExecuteSResponses)) {
+                $next = array_shift(StubStore::$dbExecuteSResponses);
+                return is_array($next) ? $next : [];
+            }
             return [];
         }
 

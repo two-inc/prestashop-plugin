@@ -28,7 +28,31 @@
             {if $twopaymentdata.two_day_on_invoice}
             <div class="two-info-item">
                 <span class="two-info-label">{l s='Payment Terms' mod='twopayment'}</span>
-                <span class="two-info-value two-payment-terms">{$twopaymentdata.two_day_on_invoice} {l s='days' mod='twopayment'}</span>
+                <span class="two-info-value two-admin-payment-terms">
+                    {if $twopaymentdata.two_payment_term_type == 'EOM'}
+                        {l s='End of Month' mod='twopayment'} + {$twopaymentdata.two_day_on_invoice} {l s='days' mod='twopayment'}
+                        <span class="two-term-type-badge">EOM</span>
+                    {else}
+                        {$twopaymentdata.two_day_on_invoice} {l s='days' mod='twopayment'}
+                    {/if}
+                </span>
+            </div>
+            {else}
+            <div class="two-info-item">
+                <span class="two-info-label">{l s='Payment Terms' mod='twopayment'}</span>
+                <span class="two-info-value text-muted">{l s='Not recorded for this order' mod='twopayment'}</span>
+            </div>
+            {/if}
+            {if $twopaymentdata.two_order_state}
+            <div class="two-info-item">
+                <span class="two-info-label">{l s='Two State' mod='twopayment'}</span>
+                <span class="two-info-value">{$twopaymentdata.two_order_state}</span>
+            </div>
+            {/if}
+            {if $twopaymentdata.two_order_status}
+            <div class="two-info-item">
+                <span class="two-info-label">{l s='Two Status' mod='twopayment'}</span>
+                <span class="two-info-value">{$twopaymentdata.two_order_status}</span>
             </div>
             {/if}
         </div>
@@ -40,17 +64,21 @@
                 <i class="icon-external-link"></i> {l s='View in Portal' mod='twopayment'}
             </a>
             {/if}
-            {if $two_pdf_url}
+            {if $two_invoice_actions_available && $two_pdf_url}
             <a href="{$two_pdf_url}" target="_blank" rel="noopener noreferrer" class="two-action-link two-action-secondary">
                 <i class="icon-download"></i> {l s='Download Invoice' mod='twopayment'}
             </a>
             {/if}
-            {if $twopaymentdata.two_invoice_url}
+            {if $two_invoice_actions_available && $twopaymentdata.two_invoice_url}
             <a href="{$twopaymentdata.two_invoice_url}" target="_blank" class="two-action-link two-action-secondary">
                 <i class="icon-link"></i> {l s='Invoice URL' mod='twopayment'}
             </a>
             {/if}
+            {if !$two_invoice_actions_available}
+            <div class="two-info-value text-muted">
+                <i class="icon-info-circle"></i> {l s='Invoice links become available after the Two order is fulfilled.' mod='twopayment'}
+            </div>
+            {/if}
         </div>
     </div>
 </div>
-

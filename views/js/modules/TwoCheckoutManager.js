@@ -29,6 +29,22 @@ class TwoCheckoutManager {
         
         this.init();
     }
+
+    t(key, fallback) {
+        if (window.twopayment && window.twopayment.i18n && window.twopayment.i18n[key]) {
+            return window.twopayment.i18n[key];
+        }
+        return fallback;
+    }
+
+    escapeHtml(value) {
+        return String(value === null || value === undefined ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
     
     /**
      * Initialize the checkout manager
@@ -511,7 +527,7 @@ class TwoCheckoutManager {
         this.orderIntent.checkOrderIntent().then(result => {
             this.handleOrderIntentResult(result);
         }).catch(error => {
-            this.handleOrderIntentError(error.message || 'Order intent check failed');
+            this.showOrderIntentError(error.message || this.t('order_intent_check_failed', 'Order intent check failed'));
         });
     }
     
@@ -550,14 +566,17 @@ class TwoCheckoutManager {
             if (errLower.includes('skipped') && !useAccountType) {
                 // Generic skip - show company selection prompt
                 const messageContainer = this.getOrCreateMessageContainer();
-                const requiredMsg = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.select_company_to_use_two) || 'To pay with Two, go back to your billing address and search for your company name. Select your company from the results to verify your business.';
+                const requiredMsg = this.t(
+                    'select_company_to_use_two',
+                    'To pay with Two, go back to your billing address and search for your company name. Select your company from the results to verify your business.'
+                );
                 const messageElement = messageContainer.querySelector('.two-payment-message') || messageContainer;
                 if (messageElement !== messageContainer) {
-                    messageElement.innerHTML = requiredMsg;
+                    messageElement.textContent = requiredMsg;
                 } else {
                     messageContainer.innerHTML = `
-                        <p class="two-subtitle">${(window.twopayment && window.twopayment.i18n && window.twopayment.i18n.action_required_title) || 'Action Required'}</p>
-                        <p class="two-payment-message">${requiredMsg}</p>
+                        <p class="two-subtitle">${this.escapeHtml(this.t('action_required_title', 'Action Required'))}</p>
+                        <p class="two-payment-message">${this.escapeHtml(requiredMsg)}</p>
                     `;
                 }
                 messageContainer.classList.remove('approved', 'loading');
@@ -566,7 +585,7 @@ class TwoCheckoutManager {
                 this.hideLoadingOverlay();
                 return;
             }
-            this.showOrderIntentError(result.error || 'Order intent check failed');
+            this.showOrderIntentError(result.error || this.t('order_intent_check_failed', 'Order intent check failed'));
             return;
         }
 
@@ -577,14 +596,14 @@ class TwoCheckoutManager {
         // Build company-aware message for display (translated)
         const companyName = this.getSelectedCompanyName();
         if (result.approved) {
-            let approvedMsg = result.message || ((window.twopayment && window.twopayment.i18n && window.twopayment.i18n.payment_approved_message) || 'Payment approved! Choose your payment terms below.');
+            let approvedMsg = result.message || this.t('payment_approved_message', 'Payment approved! Choose your payment terms below.');
             if (companyName && window.twopayment && window.twopayment.i18n && window.twopayment.i18n.invoice_likely_accepted_for) {
                 approvedMsg = window.twopayment.i18n.invoice_likely_accepted_for.replace('%s', companyName);
             }
             this.showOrderIntentApproval(approvedMsg);
         } else {
             // For declined results, also check if the decline reason should be treated as an error
-            const baseDecline = result.message || ((window.twopayment && window.twopayment.i18n && window.twopayment.i18n.payment_not_available_message) || 'Two payment is not available for this order.');
+            const baseDecline = result.message || this.t('payment_not_available_message', 'Two payment is not available for this order.');
             let declineMessage = baseDecline;
             if (companyName && window.twopayment && window.twopayment.i18n && window.twopayment.i18n.invoice_cannot_be_approved_for) {
                 declineMessage = window.twopayment.i18n.invoice_cannot_be_approved_for.replace('%s', companyName);
@@ -639,34 +658,39 @@ class TwoCheckoutManager {
      */
     showCompanyRequiredMessage(message, status) {
         const messageContainer = this.getOrCreateMessageContainer();
-        const actionTitle = window.twopayment?.i18n?.action_required_title || 'Action Required';
+        const actionTitle = this.t('action_required_title', 'Action Required');
         
         // Determine help text based on status
         let helpText = '';
         if (status === 'no_company') {
-            helpText = window.twopayment?.i18n?.company_name_required || 
-                'To pay with Two, go back to your billing address and enter your company name in the Company field.';
+            helpText = this.t(
+                'company_name_required',
+                'To pay with Two, go back to your billing address and enter your company name in the Company field.'
+            );
         } else if (status === 'incomplete_company') {
             // IMPROVED: When auto-resolution failed, give clearer guidance
             // The backend tried to find the company but couldn't get a confident match
-            helpText = window.twopayment?.i18n?.select_company_to_use_two || 
-                'To pay with Two, go back to your billing address and search for your company name. Select your company from the search results to verify your business.';
+            helpText = this.t(
+                'select_company_to_use_two',
+                'To pay with Two, go back to your billing address and search for your company name. Select your company from the search results to verify your business.'
+            );
         }
         
         // Build the message UI
         const messageElement = messageContainer.querySelector('.two-payment-message') || messageContainer;
         if (messageElement !== messageContainer) {
-            messageElement.innerHTML = message || helpText;
+            messageElement.textContent = message || helpText;
         } else {
             // For incomplete_company, show a more informative message
             const displayTitle = status === 'incomplete_company' 
-                ? (window.twopayment?.i18n?.company_verification_needed || 'Company Verification Needed')
+                ? this.t('company_verification_needed', 'Company Verification Needed')
                 : actionTitle;
+            const displayMessage = message || helpText;
             
             messageContainer.innerHTML = `
-                <p class="two-subtitle">${displayTitle}</p>
-                <p class="two-payment-message">${message || helpText}</p>
-                ${helpText && message !== helpText ? `<p class="two-help-text">${helpText}</p>` : ''}
+                <p class="two-subtitle">${this.escapeHtml(displayTitle)}</p>
+                <p class="two-payment-message">${this.escapeHtml(displayMessage)}</p>
+                ${helpText && message !== helpText ? `<p class="two-help-text">${this.escapeHtml(helpText)}</p>` : ''}
             `;
         }
         
@@ -696,7 +720,7 @@ class TwoCheckoutManager {
             overlay.innerHTML = `
                 <div class="two-loading-container">
                     <div class="two-loading-spinner"></div>
-                    <span class="two-loading-text">${(window.twopayment && window.twopayment.i18n && window.twopayment.i18n.checking_eligibility) || 'Checking Two payment eligibility...'}</span>
+                    <span class="two-loading-text">${this.t('checking_eligibility', 'Checking Two payment eligibility...')}</span>
                 </div>
             `;
             parent.appendChild(overlay);
@@ -722,12 +746,13 @@ class TwoCheckoutManager {
         
         // Update the payment info section with success message
         const messageElement = messageContainer.querySelector('.two-payment-message') || messageContainer;
+        const approvedMessage = message || this.t('payment_approved_message', 'Payment approved! Choose your payment terms below.');
         if (messageElement !== messageContainer) {
-            messageElement.innerHTML = message || ((window.twopayment && window.twopayment.i18n && window.twopayment.i18n.payment_approved_message) || 'Payment approved! Choose your payment terms below.');
+            messageElement.textContent = approvedMessage;
         } else {
             messageContainer.innerHTML = `
-                <p class="two-subtitle">${(window.twopayment && window.twopayment.i18n && window.twopayment.i18n.payment_approved_title) || 'Payment Approved'}</p>
-                <p class="two-payment-message">${message || ((window.twopayment && window.twopayment.i18n && window.twopayment.i18n.payment_approved_message) || 'Payment approved! Choose your payment terms below.')}</p>
+                <p class="two-subtitle">${this.escapeHtml(this.t('payment_approved_title', 'Payment Approved'))}</p>
+                <p class="two-payment-message">${this.escapeHtml(approvedMessage)}</p>
             `;
         }
         
@@ -753,12 +778,13 @@ class TwoCheckoutManager {
         
         // Update the payment info section with decline message
         const messageElement = messageContainer.querySelector('.two-payment-message') || messageContainer;
+        const declineMessage = message || this.t('payment_not_available_message', 'Two payment is not available for this order.');
         if (messageElement !== messageContainer) {
-            messageElement.innerHTML = message || ((window.twopayment && window.twopayment.i18n && window.twopayment.i18n.payment_not_available_message) || 'Two payment is not available for this order.');
+            messageElement.textContent = declineMessage;
         } else {
             messageContainer.innerHTML = `
-                <p class="two-subtitle">${(window.twopayment && window.twopayment.i18n && window.twopayment.i18n.payment_not_available_title) || 'Payment Not Available'}</p>
-                <p class="two-payment-message">${message || ((window.twopayment && window.twopayment.i18n && window.twopayment.i18n.payment_not_available_message) || 'Two payment is not available for this order.')}</p>
+                <p class="two-subtitle">${this.escapeHtml(this.t('payment_not_available_title', 'Payment Not Available'))}</p>
+                <p class="two-payment-message">${this.escapeHtml(declineMessage)}</p>
             `;
         }
         
@@ -784,12 +810,16 @@ class TwoCheckoutManager {
         let userFriendlyError;
         if (companyMissing) {
             // Company data is incomplete - show specific guidance
-            userFriendlyError = window.twopayment?.i18n?.select_company_to_use_two ||
-                'To pay with Two, go back to your billing address and search for your company name. Select your company from the results to verify your business.';
+            userFriendlyError = this.t(
+                'select_company_to_use_two',
+                'To pay with Two, go back to your billing address and search for your company name. Select your company from the results to verify your business.'
+            );
         } else {
             // Company data looks complete - show generic error
-            userFriendlyError = window.twopayment?.i18n?.generic_error ||
-                'There was an issue processing your Two payment request. Please try again or choose another payment method.';
+            userFriendlyError = this.t(
+                'generic_error',
+                'There was an issue processing your Two payment request. Please try again or choose another payment method.'
+            );
         }
         
         const messageContainer = this.getOrCreateMessageContainer();
@@ -797,11 +827,11 @@ class TwoCheckoutManager {
         // Update the payment info section with error message
         const messageElement = messageContainer.querySelector('.two-payment-message') || messageContainer;
         if (messageElement !== messageContainer) {
-            messageElement.innerHTML = userFriendlyError;
+            messageElement.textContent = userFriendlyError;
         } else {
             messageContainer.innerHTML = `
-                <p class="two-subtitle">${(window.twopayment && window.twopayment.i18n && window.twopayment.i18n.action_required_title) || 'Action Required'}</p>
-                <p class="two-payment-message">${userFriendlyError}</p>
+                <p class="two-subtitle">${this.escapeHtml(this.t('action_required_title', 'Action Required'))}</p>
+                <p class="two-payment-message">${this.escapeHtml(userFriendlyError)}</p>
             `;
         }
         
@@ -852,63 +882,89 @@ class TwoCheckoutManager {
             // Case: Invalid phone number (from Two API validation)
             if (errorLower.includes('invalid phone number') || 
                 (errorLower.includes('phone_number') && errorLower.includes('value_error'))) {
-                return window.twopayment?.i18n?.invalid_phone_number || 
-                    'The phone number in your billing address appears to be invalid. Please go back and ensure you have entered a valid phone number for your country.';
+                return this.t(
+                    'invalid_phone_number',
+                    'The phone number in your billing address appears to be invalid. Please go back and ensure you have entered a valid phone number for your country.'
+                );
             }
             
             // Case: "Company name is required for business accounts"
             if (errorLower.includes('company name is required')) {
-                return window.twopayment?.i18n?.company_name_required ||
-                    'To pay with Two, go back to your billing address and enter your company name in the Company field.';
+                return this.t(
+                    'company_name_required',
+                    'To pay with Two, go back to your billing address and enter your company name in the Company field.'
+                );
             }
             
             // Case: "Organization number is required"
             if (errorLower.includes('organization number') && errorLower.includes('required')) {
-                return window.twopayment?.i18n?.select_company_to_use_two ||
-                    'Go back to your billing address and search for your company name. Select your company from the results to verify your business.';
+                return this.t(
+                    'select_company_to_use_two',
+                    'Go back to your billing address and search for your company name. Select your company from the results to verify your business.'
+                );
             }
             
             // Case: "Invalid company information"
             if (errorLower.includes('invalid company')) {
-                return 'The company information provided is not valid. Go back to your billing address and select a valid company from the search results.';
+                return this.t(
+                    'invalid_company',
+                    'The company information provided is not valid. Go back to your billing address and select a valid company from the search results.'
+                );
             }
             
             // Case: "Company not found"
             if (errorLower.includes('company not found')) {
-                return 'We could not find your company in our database. Please try searching with a different company name or contact support.';
+                return this.t(
+                    'company_not_found',
+                    'We could not find your company in our database. Please try searching with a different company name or contact support.'
+                );
             }
             
             // Case: Invalid email
             if (errorLower.includes('invalid email') || 
                 (errorLower.includes('email') && errorLower.includes('value_error'))) {
-                return 'The email address provided is invalid. Please check your email and try again.';
+                return this.t('invalid_email', 'The email address provided is invalid. Please check your email and try again.');
             }
             
             // Case: Invalid address
             if (errorLower.includes('invalid address') || 
                 (errorLower.includes('address') && errorLower.includes('value_error'))) {
-                return 'The address provided is invalid. Please go back and verify your billing address details.';
+                return this.t(
+                    'invalid_address',
+                    'The address provided is invalid. Please go back and verify your billing address details.'
+                );
             }
             
             // Case: "Credit check failed" or similar
             if (errorLower.includes('credit') || errorLower.includes('not approved')) {
-                return 'Two payment is not available for this order. Please choose another payment method.';
+                return this.t(
+                    'credit_unavailable',
+                    'Two payment is not available for this order. Please choose another payment method.'
+                );
             }
             
             // Case: API or network errors
             if (errorLower.includes('network') || errorLower.includes('timeout') || errorLower.includes('api')) {
-                return 'There was a temporary issue verifying your payment. Please try again or choose another payment method.';
+                return this.t(
+                    'network_issue',
+                    'There was a temporary issue verifying your payment. Please try again or choose another payment method.'
+                );
             }
             
             // Case: General validation error
             if (errorLower.includes('validation error') || errorLower.includes('value_error')) {
-                return 'Some of the information provided is invalid. Please check your billing address details and try again.';
+                return this.t(
+                    'validation_error',
+                    'Some of the information provided is invalid. Please check your billing address details and try again.'
+                );
             }
         }
         
         // Default fallback for unknown errors
-        return window.twopayment?.i18n?.generic_error ||
-            'There was an issue processing your Two payment request. Please try again or choose another payment method.';
+        return this.t(
+            'generic_error',
+            'There was an issue processing your Two payment request. Please try again or choose another payment method.'
+        );
     }
     
     /**
@@ -1079,8 +1135,8 @@ class TwoCheckoutManager {
         const termsHtml = `
             <div class="two-payment-terms" id="two-payment-terms" style="display: block;">
                 <div class="two-terms-header">
-                    <h4 class="two-terms-title">${(window.twopayment && window.twopayment.i18n && window.twopayment.i18n.choose_payment_terms) || 'Choose the Buy Now, Pay Later option that works best for you'}</h4>
-                    <p class="two-terms-description">${(window.twopayment && window.twopayment.i18n && window.twopayment.i18n.payment_period_starts) || 'Your payment period starts when your order is fulfilled'}</p>
+                    <h4 class="two-terms-title">${this.t('choose_payment_terms', 'Choose the Buy Now, Pay Later option that works best for you')}</h4>
+                    <p class="two-terms-description">${this.t('payment_period_starts', 'Your payment period starts when your order is fulfilled')}</p>
                 </div>
                 <div class="two-terms-slider-container">
                     <div class="two-terms-slider" id="two-terms-slider">
@@ -1164,10 +1220,10 @@ class TwoCheckoutManager {
             // Format display based on term type (EOM+X for End-of-Month, X for Standard)
             if (termType === 'EOM') {
                 termOption.textContent = 'EOM+' + days;
-                termOption.title = 'End of Month + ' + days + ' days';
+                termOption.title = this.t('end_of_month_plus_days', 'End of Month + %s days').replace('%s', days);
             } else {
                 termOption.textContent = days;
-                termOption.title = days + ' days';
+                termOption.title = days + ' ' + this.t('days', 'days');
             }
             
             termOption.dataset.days = days;
@@ -1513,7 +1569,7 @@ class TwoCheckoutManager {
                 if (event && typeof event.preventDefault === 'function') {
                     event.preventDefault();
                 }
-                const msg = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.approval_required) || 'Payment approval required before proceeding';
+                const msg = this.t('approval_required', 'Payment approval required before proceeding');
                 this.showOrderIntentError(msg);
             }
         }

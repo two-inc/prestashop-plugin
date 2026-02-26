@@ -17,6 +17,13 @@ class TwoOrderIntent {
         this.checkIntervalId = null;
         this.lastCompany = null;
     }
+
+    t(key, fallback) {
+        if (window.twopayment && window.twopayment.i18n && window.twopayment.i18n[key]) {
+            return window.twopayment.i18n[key];
+        }
+        return fallback;
+    }
     
     shouldRunOrderIntent() {
         if (!this.config.enabled) return false;
@@ -231,12 +238,14 @@ class TwoOrderIntent {
 
     processResult(response) {
         if (!response || typeof response !== 'object') {
-            return { success: false, approved: false, message: 'Invalid response from server' };
+            return { success: false, approved: false, message: this.t('invalid_response_from_server', 'Invalid response from server') };
         }
         const result = {
             success: !!response.success,
             approved: !!response.approved,
-            message: response.message || (response.approved ? 'Your invoice with Two is likely to be accepted' : 'Your invoice with Two cannot be approved at this time'),
+            message: response.message || (response.approved
+                ? this.t('invoice_likely_accepted', 'Your invoice with Two is likely to be accepted')
+                : this.t('invoice_cannot_be_approved', 'Your invoice with Two cannot be approved at this time')),
             rawResponse: response.rawResponse || response
         };
         const companyField = document.querySelector("input[name='company']");
@@ -245,9 +254,11 @@ class TwoOrderIntent {
         }
         // Inject company into message immediately to ensure UI gets the contextual string
         if (this.lastCompany && typeof this.lastCompany === 'string' && this.lastCompany.trim().length > 0) {
+            const approvedTemplate = this.t('invoice_likely_accepted_for', 'Your invoice with Two is likely to be accepted for %s');
+            const declinedTemplate = this.t('invoice_cannot_be_approved_for', 'Your invoice with Two cannot be approved at this time for %s');
             result.message = result.approved
-                ? `Your invoice with Two is likely to be accepted for ${this.lastCompany}`
-                : `Your invoice with Two cannot be approved at this time for ${this.lastCompany}`;
+                ? approvedTemplate.replace('%s', this.lastCompany)
+                : declinedTemplate.replace('%s', this.lastCompany);
         }
         this.lastResult = result;
         this.updateUI(result);
@@ -256,8 +267,10 @@ class TwoOrderIntent {
 
     getErrorMessage(errorString) {
         // Default fallback message (uses i18n)
-        const defaultMessage = window.twopayment?.i18n?.invoice_declined || 
-            'Your invoice with Two cannot be approved at this time. Please select an alternative payment method.';
+        const defaultMessage = this.t(
+            'invoice_declined',
+            'Your invoice with Two cannot be approved at this time. Please select an alternative payment method.'
+        );
             
         if (!errorString) {
             return defaultMessage;
@@ -267,39 +280,48 @@ class TwoOrderIntent {
         // Phone number validation errors (priority - specific error type)
         if (error.includes('invalid phone number') || 
             (error.includes('phone_number') && error.includes('value_error'))) {
-            return window.twopayment?.i18n?.invalid_phone_number || 
-                'The phone number in your billing address appears to be invalid. Please go back and ensure you have entered a valid phone number for your country.';
+            return this.t(
+                'invalid_phone_number',
+                'The phone number in your billing address appears to be invalid. Please go back and ensure you have entered a valid phone number for your country.'
+            );
         }
         
         // Email validation errors
         if (error.includes('invalid email') || 
             (error.includes('email') && error.includes('value_error'))) {
-            return window.twopayment?.i18n?.invalid_email || 
-                'The email address provided is invalid. Please check your email and try again.';
+            return this.t('invalid_email', 'The email address provided is invalid. Please check your email and try again.');
         }
         
         // Organization/company errors
         if (error.includes('organization_number') || error.includes('organization number')) {
-            return window.twopayment?.i18n?.company_incomplete || 
-                'Company information is incomplete. Go back to your billing address and select your company from the search results.';
+            return this.t(
+                'company_incomplete',
+                'Company information is incomplete. Go back to your billing address and select your company from the search results.'
+            );
         }
         
         // General validation errors
         if (error.includes('validation error') || error.includes('value_error')) {
-            return window.twopayment?.i18n?.validation_error || 
-                'Some of the information provided is invalid. Please check your billing address details and try again.';
+            return this.t(
+                'validation_error',
+                'Some of the information provided is invalid. Please check your billing address details and try again.'
+            );
         }
         
         // Invalid data errors
         if (error.includes('invalid')) {
-            return window.twopayment?.i18n?.invalid_company || 
-                'The company information provided is not valid. Go back to your billing address and select your company from the search results.';
+            return this.t(
+                'invalid_company',
+                'The company information provided is not valid. Go back to your billing address and select your company from the search results.'
+            );
         }
         
         // Not found errors
         if (error.includes('not found') || error.includes('404')) {
-            return window.twopayment?.i18n?.company_verify_failed || 
-                'Company information could not be verified. Go back to your billing address and select your company from the search results.';
+            return this.t(
+                'company_verify_failed',
+                'Company information could not be verified. Go back to your billing address and select your company from the search results.'
+            );
         }
         
         return defaultMessage;
@@ -334,10 +356,10 @@ class TwoOrderIntent {
         let messageText = result.message;
         if (this.lastCompany && typeof this.lastCompany === 'string' && this.lastCompany.trim().length > 0) {
             if (result.approved) {
-                const t = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.invoice_likely_accepted_for) || 'Your invoice with Two is likely to be accepted for %s';
+                const t = this.t('invoice_likely_accepted_for', 'Your invoice with Two is likely to be accepted for %s');
                 messageText = t.replace('%s', this.lastCompany);
             } else {
-                const t = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.invoice_cannot_be_approved_for) || 'Your invoice with Two cannot be approved at this time for %s';
+                const t = this.t('invoice_cannot_be_approved_for', 'Your invoice with Two cannot be approved at this time for %s');
                 messageText = t.replace('%s', this.lastCompany);
             }
         }
@@ -345,7 +367,7 @@ class TwoOrderIntent {
         $messageContainer
             .removeClass('approved declined loading')
             .addClass(result.approved ? 'approved' : 'declined')
-            .html(messageText);
+            .text(messageText);
         if (result.approved) {
             $twoPaymentOption.removeClass('disabled');
             $twoPaymentOption.find('input[type="radio"]').prop('disabled', false);
@@ -388,7 +410,9 @@ class TwoOrderIntent {
     }
 
     showOrderPreventionMessage() {
-        const message = this.lastResult ? this.lastResult.message : 'Please resolve the payment issue before continuing.';
+        const message = this.lastResult
+            ? this.lastResult.message
+            : this.t('resolve_payment_issue_before_continuing', 'Please resolve the payment issue before continuing.');
         const $twoPaymentOption = $('.payment-option').filter(function() {
             return $(this).find('[data-module-name="twopayment"]').length > 0;
         });
@@ -417,8 +441,11 @@ class TwoOrderIntent {
                     try { sessionStorage.removeItem('two_country_changed'); } catch (e) {}
                     const $msg = $twoPaymentOption.find('.two-order-intent-message');
                     if ($msg.length > 0) {
-                        const t = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.select_company_to_use_two) || 'To pay with Two, go back to your billing address and search for your company name. Select your company from the results to verify your business.';
-                        $msg.removeClass('approved declined loading').html(t).show();
+                        const t = this.t(
+                            'select_company_to_use_two',
+                            'To pay with Two, go back to your billing address and search for your company name. Select your company from the results to verify your business.'
+                        );
+                        $msg.removeClass('approved declined loading').text(t).show();
                     }
                     return;
                 }
@@ -443,4 +470,3 @@ class TwoOrderIntent {
 }
 
 window.TwoOrderIntent = TwoOrderIntent;
-

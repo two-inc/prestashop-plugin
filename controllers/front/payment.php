@@ -191,6 +191,11 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
         if (isset($response['id']) && $response['id']) {
             // Extract invoice ID from response if available
             $invoice_id = isset($response['invoice_details']['id']) ? $response['invoice_details']['id'] : null;
+            $resolved_terms = $this->module->resolveTwoPaymentTermsFromOrderResponse(
+                $response,
+                (string)$this->module->getSelectedPaymentTerm(),
+                Configuration::get('PS_TWO_PAYMENT_TERM_TYPE')
+            );
             
             // Log invoice ID extraction for debugging
             if ($invoice_id) {
@@ -216,8 +221,8 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                 'two_order_reference' => $response['merchant_reference'],
                 'two_order_state' => $response['state'],
                 'two_order_status' => $response['status'],
-                'two_day_on_invoice' => (string)$this->module->getSelectedPaymentTerm(), // Selected payment term
-                'two_payment_term_type' => Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'), // Term type (STANDARD or EOM)
+                'two_day_on_invoice' => $resolved_terms['two_day_on_invoice'],
+                'two_payment_term_type' => $resolved_terms['two_payment_term_type'],
                 'two_invoice_url' => $response['invoice_url'],
                 'two_invoice_id' => $invoice_id,
             );
@@ -268,6 +273,8 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                     $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'REDIRECTED', array(
                         'two_order_state' => $response['state'],
                         'two_order_status' => $response['status'],
+                        'two_day_on_invoice' => $resolved_terms['two_day_on_invoice'],
+                        'two_payment_term_type' => $resolved_terms['two_payment_term_type'],
                         'two_invoice_url' => isset($response['invoice_url']) ? $response['invoice_url'] : '',
                         'two_invoice_id' => $invoice_id,
                     ));
@@ -303,6 +310,8 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                 $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'REDIRECTED', array(
                     'two_order_state' => isset($response['state']) ? $response['state'] : '',
                     'two_order_status' => isset($response['status']) ? $response['status'] : '',
+                    'two_day_on_invoice' => $resolved_terms['two_day_on_invoice'],
+                    'two_payment_term_type' => $resolved_terms['two_payment_term_type'],
                     'two_invoice_url' => isset($response['invoice_url']) ? $response['invoice_url'] : '',
                     'two_invoice_id' => $invoice_id,
                 ));

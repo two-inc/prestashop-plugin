@@ -1528,13 +1528,18 @@ class Twopayment extends PaymentModule
                     $this->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/cancel', [], 'POST');
                     $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
                     if (isset($response['id']) && $response['id']) {
+                        $resolved_terms = $this->resolveTwoPaymentTermsFromOrderResponse(
+                            $response,
+                            isset($orderpaymentdata['two_day_on_invoice']) ? (string)$orderpaymentdata['two_day_on_invoice'] : (string)$this->getSelectedPaymentTerm(),
+                            isset($orderpaymentdata['two_payment_term_type']) ? $orderpaymentdata['two_payment_term_type'] : Configuration::get('PS_TWO_PAYMENT_TERM_TYPE')
+                        );
                         $payment_data = array(
                             'two_order_id' => $response['id'],
                             'two_order_reference' => $response['merchant_reference'],
                             'two_order_state' => $response['state'],
                             'two_order_status' => $response['status'],
-                            'two_day_on_invoice' => (string)$this->getSelectedPaymentTerm(), // Selected payment term
-                            'two_payment_term_type' => Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'), // Term type (STANDARD or EOM)
+                            'two_day_on_invoice' => $resolved_terms['two_day_on_invoice'],
+                            'two_payment_term_type' => $resolved_terms['two_payment_term_type'],
                             'two_invoice_url' => $response['invoice_url'],
                             'two_invoice_id' => isset($response['invoice_details']['id']) ? $response['invoice_details']['id'] : (isset($orderpaymentdata['two_invoice_id']) ? $orderpaymentdata['two_invoice_id'] : null),
                         );
@@ -1566,13 +1571,18 @@ class Twopayment extends PaymentModule
                             // Refresh order data from Two to avoid overwriting the stored Two order ID with fulfillment ID
                             $order_after = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
                             if (isset($order_after['id']) && $order_after['id']) {
+                                $resolved_terms = $this->resolveTwoPaymentTermsFromOrderResponse(
+                                    $order_after,
+                                    isset($orderpaymentdata['two_day_on_invoice']) ? (string)$orderpaymentdata['two_day_on_invoice'] : (string)$this->getSelectedPaymentTerm(),
+                                    isset($orderpaymentdata['two_payment_term_type']) ? $orderpaymentdata['two_payment_term_type'] : Configuration::get('PS_TWO_PAYMENT_TERM_TYPE')
+                                );
                                 $payment_data = array(
                                     'two_order_id' => $two_order_id,
                                     'two_order_reference' => isset($order_after['merchant_reference']) ? $order_after['merchant_reference'] : (isset($orderpaymentdata['two_order_reference']) ? $orderpaymentdata['two_order_reference'] : ''),
                                     'two_order_state' => isset($order_after['state']) ? $order_after['state'] : (isset($orderpaymentdata['two_order_state']) ? $orderpaymentdata['two_order_state'] : ''),
                                     'two_order_status' => isset($order_after['status']) ? $order_after['status'] : (isset($orderpaymentdata['two_order_status']) ? $orderpaymentdata['two_order_status'] : ''),
-                                    'two_day_on_invoice' => (string)$this->getSelectedPaymentTerm(), // Selected payment term
-                                    'two_payment_term_type' => Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'), // Term type (STANDARD or EOM)
+                                    'two_day_on_invoice' => $resolved_terms['two_day_on_invoice'],
+                                    'two_payment_term_type' => $resolved_terms['two_payment_term_type'],
                                     'two_invoice_url' => isset($order_after['invoice_url']) ? $order_after['invoice_url'] : (isset($orderpaymentdata['two_invoice_url']) ? $orderpaymentdata['two_invoice_url'] : ''),
                                     'two_invoice_id' => isset($order_after['invoice_details']['id']) ? $order_after['invoice_details']['id'] : (isset($orderpaymentdata['two_invoice_id']) ? $orderpaymentdata['two_invoice_id'] : null),
                                 );
@@ -1701,13 +1711,18 @@ class Twopayment extends PaymentModule
                             // Fetch latest order snapshot to update local state/status
                             $order_after = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
                             if (isset($order_after['id']) && $order_after['id']) {
+                                $resolved_terms = $this->resolveTwoPaymentTermsFromOrderResponse(
+                                    $order_after,
+                                    isset($orderpaymentdata['two_day_on_invoice']) ? (string)$orderpaymentdata['two_day_on_invoice'] : (string)$this->getSelectedPaymentTerm(),
+                                    isset($orderpaymentdata['two_payment_term_type']) ? $orderpaymentdata['two_payment_term_type'] : Configuration::get('PS_TWO_PAYMENT_TERM_TYPE')
+                                );
                                 $payment_data = array(
                                     'two_order_id' => $two_order_id,
                                     'two_order_reference' => isset($order_after['merchant_reference']) ? $order_after['merchant_reference'] : (isset($orderpaymentdata['two_order_reference']) ? $orderpaymentdata['two_order_reference'] : ''),
                                     'two_order_state' => isset($order_after['state']) ? $order_after['state'] : (isset($orderpaymentdata['two_order_state']) ? $orderpaymentdata['two_order_state'] : ''),
                                     'two_order_status' => isset($order_after['status']) ? $order_after['status'] : (isset($orderpaymentdata['two_order_status']) ? $orderpaymentdata['two_order_status'] : ''),
-                                    'two_day_on_invoice' => (string)$this->getSelectedPaymentTerm(),
-                                    'two_payment_term_type' => Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'), // Term type (STANDARD or EOM)
+                                    'two_day_on_invoice' => $resolved_terms['two_day_on_invoice'],
+                                    'two_payment_term_type' => $resolved_terms['two_payment_term_type'],
                                     'two_invoice_url' => isset($order_after['invoice_url']) ? $order_after['invoice_url'] : (isset($orderpaymentdata['two_invoice_url']) ? $orderpaymentdata['two_invoice_url'] : ''),
                                     'two_invoice_id' => isset($order_after['invoice_details']['id']) ? $order_after['invoice_details']['id'] : (isset($orderpaymentdata['two_invoice_id']) ? $orderpaymentdata['two_invoice_id'] : null),
                                 );
@@ -1841,19 +1856,28 @@ class Twopayment extends PaymentModule
             'payment_approved_message' => $this->l('Payment approved! Choose your payment terms below.'),
             'payment_not_available_message' => $this->l('Two payment is not available for this order.'),
             'generic_error' => $this->l('There was an issue processing your Two payment request. Please try again or choose another payment method.'),
+            'order_intent_check_failed' => $this->l('Order intent check failed'),
+            'invalid_response_from_server' => $this->l('Invalid response from server'),
+            'choose_payment_terms' => $this->l('Choose the Buy Now, Pay Later option that works best for you'),
+            'payment_period_starts' => $this->l('Your payment period starts when your order is fulfilled'),
             'invoice_likely_accepted_for' => $this->l('Your invoice with Two is likely to be accepted for %s'),
             'invoice_cannot_be_approved_for' => $this->l('Your invoice with Two cannot be approved at this time for %s'),
+            'invoice_likely_accepted' => $this->l('Your invoice with Two is likely to be accepted'),
+            'invoice_cannot_be_approved' => $this->l('Your invoice with Two cannot be approved at this time'),
             'invalid_phone_number' => $this->l('The phone number in your billing address appears to be invalid. Please go back and ensure you have entered a valid phone number for your country.'),
             'company_name_required' => $this->l('To pay with Two, go back to your billing address and enter your company name in the Company field.'),
+            'company_name_required_business' => $this->l('Company name is required for business accounts.'),
             'organization_number_required' => $this->l('Please search and select a valid company to continue with Two payment.'),
             'select_company_to_use_two' => $this->l('To pay with Two, go back to your billing address and search for your company name. Select your company from the results to verify your business.'),
             'invalid_company' => $this->l('The company information provided is not valid. Please search and select a valid company.'),
             'company_not_found' => $this->l('We could not find your company. Please try a different company name or contact support.'),
             'credit_unavailable' => $this->l('Two payment is not available for this order. Please choose another payment method.'),
             'network_issue' => $this->l('There was a temporary issue verifying your payment. Please try again or choose another payment method.'),
+            'resolve_payment_issue_before_continuing' => $this->l('Please resolve the payment issue before continuing.'),
             'approval_required' => $this->l('Payment approval required before proceeding'),
             'invoice_declined' => $this->l('Your invoice with Two cannot be approved at this time. Please select an alternative payment method.'),
             'invalid_email' => $this->l('The email address provided is invalid. Please check your email and try again.'),
+            'invalid_address' => $this->l('The address provided is invalid. Please go back and verify your billing address details.'),
             'company_incomplete' => $this->l('Company information is incomplete. Go back to your billing address and select your company from the search results.'),
             'validation_error' => $this->l('Some of the information provided is invalid. Please check your billing address details and try again.'),
             'company_verify_failed' => $this->l('Company information could not be verified. Go back to your billing address and select your company from the search results.'),
@@ -1862,6 +1886,7 @@ class Twopayment extends PaymentModule
             'pay_in' => $this->l('Pay in'),
             'days' => $this->l('days'),
             'from_end_of_month' => $this->l('from end of month'),
+            'end_of_month_plus_days' => $this->l('End of Month + %s days'),
         );
 
         Media::addJsDef(array('twopayment' => array(
@@ -3569,6 +3594,90 @@ class Twopayment extends PaymentModule
         return $terms;
     }
 
+    /**
+     * Resolve local stored payment terms from a Two order response.
+     * Supports STANDARD and EOM only; unsupported schemes fall back to STANDARD.
+     *
+     * @param array $order_response Two API response payload
+     * @param string $fallback_days Existing/fallback duration days
+     * @param string $fallback_type Existing/fallback term type
+     * @return array{two_day_on_invoice:string,two_payment_term_type:string}
+     */
+    public function resolveTwoPaymentTermsFromOrderResponse($order_response, $fallback_days = '', $fallback_type = 'STANDARD')
+    {
+        $resolved_days = trim((string)$fallback_days);
+
+        $resolved_type = strtoupper(trim((string)$fallback_type));
+        if ($resolved_type !== 'EOM') {
+            $resolved_type = 'STANDARD';
+        }
+
+        if (!is_array($order_response)) {
+            return array(
+                'two_day_on_invoice' => $resolved_days,
+                'two_payment_term_type' => $resolved_type,
+            );
+        }
+
+        $terms_container = $order_response;
+        if (
+            (!isset($terms_container['terms']) || !is_array($terms_container['terms'])) &&
+            isset($order_response['data']) &&
+            is_array($order_response['data'])
+        ) {
+            $terms_container = $order_response['data'];
+        }
+
+        if (!isset($terms_container['terms']) || !is_array($terms_container['terms'])) {
+            return array(
+                'two_day_on_invoice' => $resolved_days,
+                'two_payment_term_type' => $resolved_type,
+            );
+        }
+
+        $terms = $terms_container['terms'];
+        $terms_type = isset($terms['type']) ? strtoupper(trim((string)$terms['type'])) : '';
+        if (!Tools::isEmpty($terms_type) && $terms_type !== 'NET_TERMS') {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Unsupported terms.type "' . $terms_type . '" returned by Two API. Keeping fallback local term values.',
+                2
+            );
+            return array(
+                'two_day_on_invoice' => $resolved_days,
+                'two_payment_term_type' => $resolved_type,
+            );
+        }
+
+        if (isset($terms['duration_days'])) {
+            $duration_days = (int)$terms['duration_days'];
+            if ($duration_days > 0) {
+                $resolved_days = (string)$duration_days;
+            }
+        }
+
+        $calculation_scheme = isset($terms['duration_days_calculated_from'])
+            ? strtoupper(trim((string)$terms['duration_days_calculated_from']))
+            : '';
+
+        if ($calculation_scheme === 'END_OF_MONTH') {
+            $resolved_type = 'EOM';
+        } elseif (!Tools::isEmpty($calculation_scheme)) {
+            // Plugin intentionally supports STANDARD and EOM only.
+            $resolved_type = 'STANDARD';
+            PrestaShopLogger::addLog(
+                'TwoPayment: Unsupported duration_days_calculated_from "' . $calculation_scheme . '" returned by Two API. Storing as STANDARD.',
+                2
+            );
+        } else {
+            $resolved_type = 'STANDARD';
+        }
+
+        return array(
+            'two_day_on_invoice' => $resolved_days,
+            'two_payment_term_type' => $resolved_type,
+        );
+    }
+
     public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
     {
         if ($method == "POST" || $method == "PUT") {
@@ -4268,6 +4377,12 @@ class Twopayment extends PaymentModule
         if (isset($extra_data['two_order_status'])) {
             $data['two_order_status'] = pSQL($extra_data['two_order_status']);
         }
+        if (isset($extra_data['two_day_on_invoice'])) {
+            $data['two_day_on_invoice'] = pSQL($extra_data['two_day_on_invoice']);
+        }
+        if (isset($extra_data['two_payment_term_type'])) {
+            $data['two_payment_term_type'] = pSQL($extra_data['two_payment_term_type']);
+        }
         if (isset($extra_data['two_invoice_url'])) {
             $data['two_invoice_url'] = pSQL($extra_data['two_invoice_url'], true);
         }
@@ -4404,6 +4519,281 @@ class Twopayment extends PaymentModule
         return $result;
     }
 
+    /**
+     * Merge fallback payment-term data into order payment data without overriding
+     * already persisted values.
+     *
+     * @param array $twopaymentdata Primary order payment row
+     * @param array|false $fallback_data Fallback row (attempt/API)
+     * @return array
+     */
+    public function mergeTwoPaymentTermFallback($twopaymentdata, $fallback_data)
+    {
+        if (!is_array($twopaymentdata)) {
+            return array();
+        }
+
+        if (!is_array($fallback_data)) {
+            return $twopaymentdata;
+        }
+
+        $merged = $twopaymentdata;
+        $current_days = isset($merged['two_day_on_invoice']) ? trim((string)$merged['two_day_on_invoice']) : '';
+        $current_type = isset($merged['two_payment_term_type']) ? trim((string)$merged['two_payment_term_type']) : '';
+        $fallback_days = isset($fallback_data['two_day_on_invoice']) ? trim((string)$fallback_data['two_day_on_invoice']) : '';
+        $fallback_type = isset($fallback_data['two_payment_term_type']) ? trim((string)$fallback_data['two_payment_term_type']) : '';
+
+        if (Tools::isEmpty($current_days) && !Tools::isEmpty($fallback_days)) {
+            $merged['two_day_on_invoice'] = $fallback_days;
+        }
+
+        if (Tools::isEmpty($current_type) && !Tools::isEmpty($fallback_type)) {
+            $merged['two_payment_term_type'] = $fallback_type;
+        }
+
+        return $merged;
+    }
+
+    /**
+     * Invoice links should only be exposed once Two marks the order as fulfilled.
+     *
+     * @param array $twopaymentdata
+     * @return bool
+     */
+    public function shouldExposeTwoInvoiceActions($twopaymentdata)
+    {
+        if (!is_array($twopaymentdata)) {
+            return false;
+        }
+
+        $state = isset($twopaymentdata['two_order_state']) ? strtoupper(trim((string)$twopaymentdata['two_order_state'])) : '';
+        return $state === 'FULFILLED';
+    }
+
+    /**
+     * Refresh admin order payment data from Two API GET /v1/order/{id}.
+     * Falls back to stored snapshot if provider call fails.
+     *
+     * @param int $id_order
+     * @param array $twopaymentdata
+     * @return array
+     */
+    protected function syncTwoAdminOrderPaymentDataFromProvider($id_order, $twopaymentdata)
+    {
+        if (!is_array($twopaymentdata)) {
+            return array();
+        }
+
+        $id_order = (int)$id_order;
+        $two_order_id = $this->resolveTwoOrderIdForAdmin($id_order, $twopaymentdata);
+        if ($id_order <= 0 || Tools::isEmpty($two_order_id)) {
+            return $twopaymentdata;
+        }
+
+        if (!isset($twopaymentdata['two_order_id']) || Tools::isEmpty($twopaymentdata['two_order_id'])) {
+            $twopaymentdata['two_order_id'] = $two_order_id;
+        }
+
+        // Avoid duplicate provider calls when both admin hooks render on the same request.
+        static $request_cache = array();
+        $cache_key = $id_order . ':' . $two_order_id;
+        if (isset($request_cache[$cache_key])) {
+            return $request_cache[$cache_key];
+        }
+
+        $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, array(), 'GET');
+        $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
+        $order_payload = $this->extractTwoOrderPayloadFromApiResponse($response);
+        if (
+            $http_status !== self::HTTP_STATUS_OK ||
+            !is_array($order_payload) ||
+            !isset($order_payload['id']) ||
+            Tools::isEmpty($order_payload['id'])
+        ) {
+            if ($http_status > 0) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Admin order sync failed for id_order ' . $id_order . ', Two order ' . $two_order_id . ', HTTP ' . $http_status,
+                    2
+                );
+            }
+            $request_cache[$cache_key] = $twopaymentdata;
+            return $twopaymentdata;
+        }
+
+        $existing_days = isset($twopaymentdata['two_day_on_invoice']) ? (string)$twopaymentdata['two_day_on_invoice'] : '';
+        $existing_type = isset($twopaymentdata['two_payment_term_type']) ? $twopaymentdata['two_payment_term_type'] : 'STANDARD';
+        $resolved_terms = $this->resolveTwoPaymentTermsFromOrderResponse($order_payload, $existing_days, $existing_type);
+
+        $updated = array(
+            'two_order_id' => (string)$order_payload['id'],
+            'two_order_reference' => isset($order_payload['merchant_reference']) ? (string)$order_payload['merchant_reference'] : (isset($twopaymentdata['two_order_reference']) ? (string)$twopaymentdata['two_order_reference'] : ''),
+            'two_order_state' => isset($order_payload['state']) ? (string)$order_payload['state'] : (isset($twopaymentdata['two_order_state']) ? (string)$twopaymentdata['two_order_state'] : ''),
+            'two_order_status' => isset($order_payload['status']) ? (string)$order_payload['status'] : (isset($twopaymentdata['two_order_status']) ? (string)$twopaymentdata['two_order_status'] : ''),
+            'two_day_on_invoice' => $resolved_terms['two_day_on_invoice'],
+            'two_payment_term_type' => $resolved_terms['two_payment_term_type'],
+            'two_invoice_url' => isset($order_payload['invoice_url']) ? (string)$order_payload['invoice_url'] : (isset($twopaymentdata['two_invoice_url']) ? (string)$twopaymentdata['two_invoice_url'] : ''),
+            'two_invoice_id' => isset($order_payload['invoice_details']['id']) ? (string)$order_payload['invoice_details']['id'] : (isset($twopaymentdata['two_invoice_id']) ? (string)$twopaymentdata['two_invoice_id'] : ''),
+        );
+
+        $compare_fields = array(
+            'two_order_id',
+            'two_order_reference',
+            'two_order_state',
+            'two_order_status',
+            'two_day_on_invoice',
+            'two_payment_term_type',
+            'two_invoice_url',
+            'two_invoice_id',
+        );
+
+        $changed = false;
+        foreach ($compare_fields as $field) {
+            $old_value = isset($twopaymentdata[$field]) ? trim((string)$twopaymentdata[$field]) : '';
+            $new_value = isset($updated[$field]) ? trim((string)$updated[$field]) : '';
+            if ($old_value !== $new_value) {
+                $changed = true;
+                break;
+            }
+        }
+
+        if ($changed) {
+            $this->setTwoOrderPaymentData($id_order, $updated);
+        }
+
+        $synced = $twopaymentdata;
+        foreach ($updated as $field => $value) {
+            $synced[$field] = $value;
+        }
+
+        $request_cache[$cache_key] = $synced;
+        return $synced;
+    }
+
+    /**
+     * Resolve Two order ID for admin sync from persisted order row or attempt fallback.
+     *
+     * @param int $id_order
+     * @param array $twopaymentdata
+     * @return string
+     */
+    protected function resolveTwoOrderIdForAdmin($id_order, $twopaymentdata)
+    {
+        $id_order = (int)$id_order;
+        if ($id_order <= 0 || !is_array($twopaymentdata)) {
+            return '';
+        }
+
+        $two_order_id = isset($twopaymentdata['two_order_id']) ? trim((string)$twopaymentdata['two_order_id']) : '';
+        if (!Tools::isEmpty($two_order_id)) {
+            return $two_order_id;
+        }
+
+        $attempt = $this->getLatestTwoCheckoutAttemptByOrder($id_order);
+        if (is_array($attempt)) {
+            $attempt_two_order_id = isset($attempt['two_order_id']) ? trim((string)$attempt['two_order_id']) : '';
+            if (!Tools::isEmpty($attempt_two_order_id)) {
+                return $attempt_two_order_id;
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * Normalize Two API order payload shape for handlers that may return wrapped data.
+     *
+     * @param mixed $response
+     * @return array
+     */
+    protected function extractTwoOrderPayloadFromApiResponse($response)
+    {
+        if (!is_array($response)) {
+            return array();
+        }
+
+        if (isset($response['id']) && !Tools::isEmpty($response['id'])) {
+            return $response;
+        }
+
+        if (isset($response['data']) && is_array($response['data'])) {
+            if (isset($response['data']['id']) && !Tools::isEmpty($response['data']['id'])) {
+                return $response['data'];
+            }
+
+            if (
+                isset($response['data']['order']) &&
+                is_array($response['data']['order']) &&
+                isset($response['data']['order']['id']) &&
+                !Tools::isEmpty($response['data']['order']['id'])
+            ) {
+                return $response['data']['order'];
+            }
+        }
+
+        return array();
+    }
+
+    /**
+     * Get latest persisted attempt data for a local order (if available).
+     *
+     * @param int $id_order
+     * @return array|false
+     */
+    protected function getLatestTwoCheckoutAttemptByOrder($id_order)
+    {
+        $id_order = (int)$id_order;
+        if ($id_order <= 0) {
+            return false;
+        }
+
+        $sql = 'SELECT `two_order_id`, `two_day_on_invoice`, `two_payment_term_type`, `two_order_state`, `two_order_status`, `two_invoice_url`, `two_invoice_id` ' .
+            'FROM `' . _DB_PREFIX_ . 'twopayment_attempt` ' .
+            'WHERE `id_order` = ' . (int)$id_order . ' ' .
+            'ORDER BY `updated_at` DESC, `id_attempt` DESC';
+        $rows = Db::getInstance()->executeS($sql);
+
+        if (!is_array($rows) || empty($rows)) {
+            return false;
+        }
+
+        return $rows[0];
+    }
+
+    /**
+     * Enrich admin order data with fallback values and persist repaired terms.
+     *
+     * @param int $id_order
+     * @param array $twopaymentdata
+     * @return array
+     */
+    protected function enrichTwoAdminOrderPaymentData($id_order, $twopaymentdata)
+    {
+        if (!is_array($twopaymentdata)) {
+            return array();
+        }
+
+        $fallback_data = $this->getLatestTwoCheckoutAttemptByOrder((int)$id_order);
+        $merged = $this->mergeTwoPaymentTermFallback($twopaymentdata, $fallback_data);
+
+        $updated_days = isset($merged['two_day_on_invoice']) ? trim((string)$merged['two_day_on_invoice']) : '';
+        $updated_type = isset($merged['two_payment_term_type']) ? trim((string)$merged['two_payment_term_type']) : '';
+        $original_days = isset($twopaymentdata['two_day_on_invoice']) ? trim((string)$twopaymentdata['two_day_on_invoice']) : '';
+        $original_type = isset($twopaymentdata['two_payment_term_type']) ? trim((string)$twopaymentdata['two_payment_term_type']) : '';
+
+        if ($updated_days !== $original_days || $updated_type !== $original_type) {
+            Db::getInstance()->update(
+                'twopayment',
+                array(
+                    'two_day_on_invoice' => $updated_days,
+                    'two_payment_term_type' => $updated_type,
+                ),
+                'id_order = ' . (int)$id_order
+            );
+        }
+
+        return $merged;
+    }
+
     public function hookDisplayPaymentReturn($params)
     {
         $id_order = $params['order']->id;
@@ -4476,9 +4866,13 @@ class Twopayment extends PaymentModule
         $id_order = $params['id_order'];
         $twopaymentdata = $this->getTwoOrderPaymentData($id_order);
         if ($twopaymentdata) {
+            $twopaymentdata = $this->syncTwoAdminOrderPaymentDataFromProvider((int)$id_order, $twopaymentdata);
+            $twopaymentdata = $this->enrichTwoAdminOrderPaymentData((int)$id_order, $twopaymentdata);
+            $invoice_actions_available = $this->shouldExposeTwoInvoiceActions($twopaymentdata);
+
             // Generate PDF URL if Two order ID is available
             $pdf_url = null;
-            if (!empty($twopaymentdata['two_order_id'])) {
+            if ($invoice_actions_available && !empty($twopaymentdata['two_order_id'])) {
                 $pdf_url = $this->getTwoPdfUrl($twopaymentdata['two_order_id']);
             }
             
@@ -4486,6 +4880,7 @@ class Twopayment extends PaymentModule
                 'twopaymentdata' => $twopaymentdata,
                 'two_portal_url' => $this->getTwoPortalUrl(), // Dynamic portal URL based on environment
                 'two_pdf_url' => $pdf_url, // PDF invoice URL if available
+                'two_invoice_actions_available' => $invoice_actions_available,
             ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayAdminOrderLeft.tpl');
         }
@@ -4506,9 +4901,13 @@ class Twopayment extends PaymentModule
         $twopaymentdata = $this->getTwoOrderPaymentData($id_order);
 
         if ($twopaymentdata) {
+            $twopaymentdata = $this->syncTwoAdminOrderPaymentDataFromProvider((int)$id_order, $twopaymentdata);
+            $twopaymentdata = $this->enrichTwoAdminOrderPaymentData((int)$id_order, $twopaymentdata);
+            $invoice_actions_available = $this->shouldExposeTwoInvoiceActions($twopaymentdata);
+
             // Generate PDF URL if Two order ID is available
             $pdf_url = null;
-            if (!empty($twopaymentdata['two_order_id'])) {
+            if ($invoice_actions_available && !empty($twopaymentdata['two_order_id'])) {
                 $pdf_url = $this->getTwoPdfUrl($twopaymentdata['two_order_id']);
             }
             
@@ -4517,6 +4916,7 @@ class Twopayment extends PaymentModule
                 'two_portal_url' => $this->getTwoPortalUrl(), // Dynamic portal URL based on environment
                 'two_pdf_url' => $pdf_url, // PDF invoice URL if available
                 'use_own_invoices' => (bool)Configuration::get('PS_TWO_USE_OWN_INVOICES'),
+                'two_invoice_actions_available' => $invoice_actions_available,
             ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayAdminOrderTabContent.tpl');
         }

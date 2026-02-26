@@ -78,6 +78,15 @@ final class OrderBuilderSpec
         self::testHookActionAdminControllerSetMediaSkipsUnrelatedAdminPage();
         self::testHookPaymentOptionsAllowsBusinessFallbackWhenAccountTypeMissing();
         self::testHookPaymentOptionsBlocksNonBusinessWhenAccountTypePresent();
+        self::testMergeTwoPaymentTermFallbackUsesFallbackWhenMissing();
+        self::testMergeTwoPaymentTermFallbackKeepsExistingValues();
+        self::testShouldExposeTwoInvoiceActionsRequiresFulfilledState();
+        self::testResolveTwoPaymentTermsFromOrderResponseUsesEndOfMonthAsEom();
+        self::testResolveTwoPaymentTermsFromOrderResponseFallsBackToStandardForUnsupportedScheme();
+        self::testSyncTwoAdminOrderPaymentDataFromProviderPullsLatestTermsFromTwo();
+        self::testSyncTwoAdminOrderPaymentDataFromProviderSupportsNestedDataEnvelope();
+        self::testSyncTwoAdminOrderPaymentDataFromProviderRecoversMissingTwoOrderIdFromAttempt();
+        self::testGetLatestTwoCheckoutAttemptByOrderSelectsTwoOrderIdForFallbackRecovery();
         self::testGetTwoValidatedSessionCompanyDataRejectsCountryMismatch();
         self::testGetTwoValidatedSessionCompanyDataRejectsLegacySessionWithoutCountryMarker();
         self::testBuildTwoApiResponseLogSummaryRedactsNestedProviderPayload();
@@ -652,6 +661,318 @@ final class OrderBuilderSpec
         $options = $module->hookPaymentOptions([]);
 
         TinyAssert::same(0, count($options));
+    }
+
+    private static function testMergeTwoPaymentTermFallbackUsesFallbackWhenMissing(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $base = [
+            'id_order' => 11,
+            'two_day_on_invoice' => '',
+            'two_payment_term_type' => '',
+        ];
+        $fallback = [
+            'two_day_on_invoice' => '45',
+            'two_payment_term_type' => 'EOM',
+        ];
+
+        $merged = $module->mergeTwoPaymentTermFallback($base, $fallback);
+
+        TinyAssert::same('45', (string) $merged['two_day_on_invoice']);
+        TinyAssert::same('EOM', (string) $merged['two_payment_term_type']);
+    }
+
+    private static function testMergeTwoPaymentTermFallbackKeepsExistingValues(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $base = [
+            'id_order' => 12,
+            'two_day_on_invoice' => '30',
+            'two_payment_term_type' => 'STANDARD',
+        ];
+        $fallback = [
+            'two_day_on_invoice' => '60',
+            'two_payment_term_type' => 'EOM',
+        ];
+
+        $merged = $module->mergeTwoPaymentTermFallback($base, $fallback);
+
+        TinyAssert::same('30', (string) $merged['two_day_on_invoice']);
+        TinyAssert::same('STANDARD', (string) $merged['two_payment_term_type']);
+    }
+
+    private static function testShouldExposeTwoInvoiceActionsRequiresFulfilledState(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        TinyAssert::true($module->shouldExposeTwoInvoiceActions(['two_order_state' => 'FULFILLED']));
+        TinyAssert::false($module->shouldExposeTwoInvoiceActions(['two_order_state' => 'VERIFIED']));
+        TinyAssert::false($module->shouldExposeTwoInvoiceActions(['two_order_state' => 'CONFIRMED']));
+        TinyAssert::false($module->shouldExposeTwoInvoiceActions(['two_order_state' => '']));
+    }
+
+    private static function testResolveTwoPaymentTermsFromOrderResponseUsesEndOfMonthAsEom(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $response = [
+            'terms' => [
+                'duration_days' => 60,
+                'duration_days_calculated_from' => 'END_OF_MONTH',
+            ],
+        ];
+
+        $resolved = $module->resolveTwoPaymentTermsFromOrderResponse($response, '30', 'STANDARD');
+
+        TinyAssert::same('60', (string)$resolved['two_day_on_invoice']);
+        TinyAssert::same('EOM', (string)$resolved['two_payment_term_type']);
+    }
+
+    private static function testResolveTwoPaymentTermsFromOrderResponseFallsBackToStandardForUnsupportedScheme(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $response = [
+            'terms' => [
+                'duration_days' => 45,
+                'duration_days_calculated_from' => 'END_OF_WEEK',
+            ],
+        ];
+
+        $resolved = $module->resolveTwoPaymentTermsFromOrderResponse($response, '30', 'EOM');
+
+        TinyAssert::same('45', (string)$resolved['two_day_on_invoice']);
+        TinyAssert::same('STANDARD', (string)$resolved['two_payment_term_type']);
+    }
+
+    private static function testSyncTwoAdminOrderPaymentDataFromProviderPullsLatestTermsFromTwo(): void
+    {
+        self::reset();
+        $module = new class extends TwopaymentTestHarness {
+            public $lastSavedOrderId = null;
+            public $lastSavedPaymentData = null;
+
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            {
+                if ($method === 'GET' && $endpoint === '/v1/order/two-123') {
+                    return [
+                        'http_status' => Twopayment::HTTP_STATUS_OK,
+                        'id' => 'two-123',
+                        'merchant_reference' => 'MR-123',
+                        'state' => 'CONFIRMED',
+                        'status' => 'PENDING',
+                        'invoice_url' => 'https://two.test/invoice/123',
+                        'invoice_details' => ['id' => 'inv-123'],
+                        'terms' => [
+                            'type' => 'NET_TERMS',
+                            'duration_days' => 60,
+                            'duration_days_calculated_from' => 'END_OF_MONTH',
+                        ],
+                    ];
+                }
+
+                return ['http_status' => 500];
+            }
+
+            public function setTwoOrderPaymentData($id_order, $payment_data)
+            {
+                $this->lastSavedOrderId = (int)$id_order;
+                $this->lastSavedPaymentData = $payment_data;
+            }
+
+            public function syncAdminDataForTest($id_order, $twopaymentdata)
+            {
+                return $this->syncTwoAdminOrderPaymentDataFromProvider($id_order, $twopaymentdata);
+            }
+        };
+
+        $base = [
+            'id_order' => 55,
+            'two_order_id' => 'two-123',
+            'two_order_reference' => '',
+            'two_order_state' => 'VERIFIED',
+            'two_order_status' => 'APPROVED',
+            'two_day_on_invoice' => '',
+            'two_payment_term_type' => '',
+            'two_invoice_url' => '',
+            'two_invoice_id' => '',
+        ];
+
+        $synced = $module->syncAdminDataForTest(55, $base);
+
+        TinyAssert::same('60', (string)$synced['two_day_on_invoice']);
+        TinyAssert::same('EOM', (string)$synced['two_payment_term_type']);
+        TinyAssert::same('CONFIRMED', (string)$synced['two_order_state']);
+        TinyAssert::same('MR-123', (string)$synced['two_order_reference']);
+        TinyAssert::same(55, (int)$module->lastSavedOrderId);
+        TinyAssert::same('60', (string)$module->lastSavedPaymentData['two_day_on_invoice']);
+    }
+
+    private static function testSyncTwoAdminOrderPaymentDataFromProviderSupportsNestedDataEnvelope(): void
+    {
+        self::reset();
+        $module = new class extends TwopaymentTestHarness {
+            public $lastSavedOrderId = null;
+            public $lastSavedPaymentData = null;
+
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            {
+                if ($method === 'GET' && $endpoint === '/v1/order/two-456') {
+                    return [
+                        'http_status' => Twopayment::HTTP_STATUS_OK,
+                        'data' => [
+                            'id' => 'two-456',
+                            'merchant_reference' => 'MR-456',
+                            'state' => 'CONFIRMED',
+                            'status' => 'PENDING',
+                            'invoice_url' => 'https://two.test/invoice/456',
+                            'invoice_details' => ['id' => 'inv-456'],
+                            'terms' => [
+                                'type' => 'NET_TERMS',
+                                'duration_days' => 60,
+                                'duration_days_calculated_from' => null,
+                            ],
+                        ],
+                    ];
+                }
+
+                return ['http_status' => 500];
+            }
+
+            public function setTwoOrderPaymentData($id_order, $payment_data)
+            {
+                $this->lastSavedOrderId = (int)$id_order;
+                $this->lastSavedPaymentData = $payment_data;
+            }
+
+            public function syncAdminDataForTest($id_order, $twopaymentdata)
+            {
+                return $this->syncTwoAdminOrderPaymentDataFromProvider($id_order, $twopaymentdata);
+            }
+        };
+
+        $base = [
+            'id_order' => 56,
+            'two_order_id' => 'two-456',
+            'two_order_reference' => '',
+            'two_order_state' => '',
+            'two_order_status' => '',
+            'two_day_on_invoice' => '',
+            'two_payment_term_type' => '',
+            'two_invoice_url' => '',
+            'two_invoice_id' => '',
+        ];
+
+        $synced = $module->syncAdminDataForTest(56, $base);
+
+        TinyAssert::same('60', (string)$synced['two_day_on_invoice']);
+        TinyAssert::same('STANDARD', (string)$synced['two_payment_term_type']);
+        TinyAssert::same('MR-456', (string)$synced['two_order_reference']);
+        TinyAssert::same(56, (int)$module->lastSavedOrderId);
+    }
+
+    private static function testSyncTwoAdminOrderPaymentDataFromProviderRecoversMissingTwoOrderIdFromAttempt(): void
+    {
+        self::reset();
+        $module = new class extends TwopaymentTestHarness {
+            public $lastSavedOrderId = null;
+            public $lastSavedPaymentData = null;
+
+            protected function getLatestTwoCheckoutAttemptByOrder($id_order)
+            {
+                return array(
+                    'two_order_id' => 'two-789',
+                );
+            }
+
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            {
+                if ($method === 'GET' && $endpoint === '/v1/order/two-789') {
+                    return [
+                        'http_status' => Twopayment::HTTP_STATUS_OK,
+                        'id' => 'two-789',
+                        'merchant_reference' => 'MR-789',
+                        'state' => 'CONFIRMED',
+                        'status' => 'PENDING',
+                        'terms' => [
+                            'type' => 'NET_TERMS',
+                            'duration_days' => 60,
+                            'duration_days_calculated_from' => null,
+                        ],
+                    ];
+                }
+
+                return ['http_status' => 500];
+            }
+
+            public function setTwoOrderPaymentData($id_order, $payment_data)
+            {
+                $this->lastSavedOrderId = (int)$id_order;
+                $this->lastSavedPaymentData = $payment_data;
+            }
+
+            public function syncAdminDataForTest($id_order, $twopaymentdata)
+            {
+                return $this->syncTwoAdminOrderPaymentDataFromProvider($id_order, $twopaymentdata);
+            }
+        };
+
+        $base = [
+            'id_order' => 57,
+            'two_order_id' => '',
+            'two_order_reference' => '',
+            'two_order_state' => '',
+            'two_order_status' => '',
+            'two_day_on_invoice' => '',
+            'two_payment_term_type' => '',
+            'two_invoice_url' => '',
+            'two_invoice_id' => '',
+        ];
+
+        $synced = $module->syncAdminDataForTest(57, $base);
+
+        TinyAssert::same('two-789', (string)$synced['two_order_id']);
+        TinyAssert::same('60', (string)$synced['two_day_on_invoice']);
+        TinyAssert::same('STANDARD', (string)$synced['two_payment_term_type']);
+        TinyAssert::same(57, (int)$module->lastSavedOrderId);
+    }
+
+    private static function testGetLatestTwoCheckoutAttemptByOrderSelectsTwoOrderIdForFallbackRecovery(): void
+    {
+        self::reset();
+        StubStore::$dbExecuteSResponses[] = array(
+            array(
+                'two_order_id' => 'two-fallback-1',
+                'two_day_on_invoice' => '60',
+                'two_payment_term_type' => 'STANDARD',
+                'two_order_state' => 'CONFIRMED',
+                'two_order_status' => 'PENDING',
+                'two_invoice_url' => '',
+                'two_invoice_id' => '',
+            ),
+        );
+
+        $module = new class extends TwopaymentTestHarness {
+            public function getLatestAttemptForTest($id_order)
+            {
+                return $this->getLatestTwoCheckoutAttemptByOrder($id_order);
+            }
+        };
+
+        $latest = $module->getLatestAttemptForTest(57);
+
+        TinyAssert::true(is_array($latest));
+        TinyAssert::same('two-fallback-1', (string)$latest['two_order_id']);
+        TinyAssert::true(!empty(StubStore::$dbLastExecuteS));
+        TinyAssert::true(strpos(StubStore::$dbLastExecuteS[0], '`two_order_id`') !== false);
+        TinyAssert::true(strpos(StubStore::$dbLastExecuteS[0], '`id_order` = 57') !== false);
     }
 
     private static function testGetTwoValidatedSessionCompanyDataRejectsCountryMismatch(): void

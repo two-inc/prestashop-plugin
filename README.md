@@ -328,11 +328,40 @@ twopayment/
 - **TwoOrderIntent**: Order Intent validation (client-side)
 - **TwoCompanySearch**: Company search functionality
 
+## Developer & AI Quickstart
+
+### Start Here
+
+- [AI_CONTEXT.md](AI_CONTEXT.md): AI operating manual (architecture, invariants, pitfalls)
+- [AGENTS.md](AGENTS.md): repository guardrails for any coding agent
+- [tests/README.md](tests/README.md): test coverage and execution details
+- [CHANGELOG.md](CHANGELOG.md): behavior/history reference
+
+Compatibility note:
+- [CLAUDE.md](CLAUDE.md) is a pointer to `AI_CONTEXT.md` for tooling compatibility only.
+
+### Mandatory Invariants
+
+- Never create a local PrestaShop order if Two rejects order creation or verification.
+- Keep provider-first checkout flow and retry idempotency intact.
+- Apply rejection safeguards globally (not country-specific).
+- Keep tax and amount formulas aligned with PrestaShop totals and test expectations.
+- Update translation surfaces (`$this->l`, JS i18n map, `translations/es.php`) for user-facing text changes.
+
+### Minimum Verification Before Commit
+
+```bash
+php -l twopayment.php
+php tests/run.php
+```
+
+If you modified more PHP files, lint each touched file as well.
+
 ## API Integration
 
 ### Endpoints Used
 - `/v1/merchant/verify_api_key` - API key validation
-- `/v1/order/intent` - Order Intent check
+- `/v1/order_intent` - Order Intent check
 - `/v1/order` - Order creation
 - `/v1/order/{id}` - Order updates, refunds
 - `/v1/invoice/{id}/upload` - Invoice upload initiation

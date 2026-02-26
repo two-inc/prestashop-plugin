@@ -78,8 +78,15 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
             $response = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
             $response_http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
             if ($response_http_status > 0 && $response_http_status < Twopayment::HTTP_STATUS_BAD_REQUEST && is_array($response)) {
+                $resolved_terms = $this->module->resolveTwoPaymentTermsFromOrderResponse(
+                    $response,
+                    isset($attempt['two_day_on_invoice']) ? (string)$attempt['two_day_on_invoice'] : (string)$this->module->getSelectedPaymentTerm(),
+                    isset($attempt['two_payment_term_type']) ? $attempt['two_payment_term_type'] : Configuration::get('PS_TWO_PAYMENT_TERM_TYPE')
+                );
                 $extra_data['two_order_state'] = isset($response['state']) ? $response['state'] : '';
                 $extra_data['two_order_status'] = isset($response['status']) ? $response['status'] : '';
+                $extra_data['two_day_on_invoice'] = $resolved_terms['two_day_on_invoice'];
+                $extra_data['two_payment_term_type'] = $resolved_terms['two_payment_term_type'];
                 if (isset($response['invoice_url'])) {
                     $extra_data['two_invoice_url'] = $response['invoice_url'];
                 }
@@ -131,14 +138,19 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
             $response = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
             $response_http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
             if ($response_http_status > 0 && $response_http_status < Twopayment::HTTP_STATUS_BAD_REQUEST && isset($response['state']) && $response['state'] == 'CANCELLED') {
+                $resolved_terms = $this->module->resolveTwoPaymentTermsFromOrderResponse(
+                    $response,
+                    isset($orderpaymentdata['two_day_on_invoice']) ? (string)$orderpaymentdata['two_day_on_invoice'] : (string)$this->module->getSelectedPaymentTerm(),
+                    isset($orderpaymentdata['two_payment_term_type']) ? $orderpaymentdata['two_payment_term_type'] : Configuration::get('PS_TWO_PAYMENT_TERM_TYPE')
+                );
                 $payment_data = array(
                     'two_order_id' => $response['id'],
                     'two_order_reference' => $response['merchant_reference'],
                     'two_order_state' => $response['state'],
                     'two_order_status' => $response['status'],
-                    'two_day_on_invoice' => (string)$this->module->getSelectedPaymentTerm(), // Selected payment term
+                    'two_day_on_invoice' => $resolved_terms['two_day_on_invoice'],
                     'two_invoice_url' => $response['invoice_url'],
-                    'two_payment_term_type' => isset($orderpaymentdata['two_payment_term_type']) ? $orderpaymentdata['two_payment_term_type'] : Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'),
+                    'two_payment_term_type' => $resolved_terms['two_payment_term_type'],
                 );
                 $this->module->setTwoOrderPaymentData($order->id, $payment_data);
             }
