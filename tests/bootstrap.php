@@ -66,6 +66,21 @@ namespace {
             $context->cookie = new Cookie();
             $context->link = new Link();
             $context->controller = new \stdClass();
+            $context->language = (object) ['id' => 1];
+            $context->smarty = new class {
+                public function assign($vars): void
+                {
+                }
+
+                public function fetch($template): string
+                {
+                    return '';
+                }
+            };
+
+            if (class_exists('Tools') && method_exists('Tools', 'resetTestValues')) {
+                Tools::resetTestValues();
+            }
         }
     }
 
@@ -81,6 +96,8 @@ namespace {
         public string $displayName = 'Two';
         public string $merchant_short_name = 'merchant';
         public string $api_key = 'test-api-key';
+        public bool $active = true;
+        public array $languages = [];
         public $context;
         public int $currentOrder = 0;
 
@@ -93,6 +110,21 @@ namespace {
         {
             return $string;
         }
+
+        public function displayConfirmation($message): string
+        {
+            return (string) $message;
+        }
+
+        public function displayError($message): string
+        {
+            return (string) $message;
+        }
+
+        public function display($file, $template): string
+        {
+            return '';
+        }
     }
 
     class Context
@@ -100,6 +132,9 @@ namespace {
         public $cookie;
         public $link;
         public $controller;
+        public $cart;
+        public $language;
+        public $smarty;
 
         private static ?self $instance = null;
 
@@ -110,6 +145,17 @@ namespace {
                 self::$instance->cookie = new Cookie();
                 self::$instance->link = new Link();
                 self::$instance->controller = new \stdClass();
+                self::$instance->language = (object) ['id' => 1];
+                self::$instance->smarty = new class {
+                    public function assign($vars): void
+                    {
+                    }
+
+                    public function fetch($template): string
+                    {
+                        return '';
+                    }
+                };
             }
 
             return self::$instance;
@@ -187,6 +233,8 @@ namespace {
 
     class Tools
     {
+        private static array $testValues = [];
+
         public static function substr($string, $start, $length = null)
         {
             return $length === null ? substr((string) $string, (int) $start) : substr((string) $string, (int) $start, (int) $length);
@@ -218,6 +266,31 @@ namespace {
         public static function ps_round($value, $precision = 2): float
         {
             return round((float) $value, (int) $precision);
+        }
+
+        public static function getValue($key, $default = null)
+        {
+            return array_key_exists((string) $key, self::$testValues) ? self::$testValues[(string) $key] : $default;
+        }
+
+        public static function setTestValue($key, $value): void
+        {
+            self::$testValues[(string) $key] = $value;
+        }
+
+        public static function resetTestValues(): void
+        {
+            self::$testValues = [];
+        }
+
+        public static function getToken($page = false): string
+        {
+            return 'token';
+        }
+
+        public static function strtolower($value): string
+        {
+            return strtolower((string) $value);
         }
     }
 
@@ -351,6 +424,7 @@ namespace {
         public string $phone_mobile = '';
         public string $department = '';
         public string $project = '';
+        public string $account_type = '';
 
         public function __construct($id = null)
         {
@@ -549,6 +623,8 @@ namespace {
             $this->version = '2.4.0';
             $this->merchant_short_name = 'merchant';
             $this->api_key = 'test-api-key';
+            $this->languages = [['id_lang' => 1]];
+            $this->active = true;
         }
 
         public function l($string)

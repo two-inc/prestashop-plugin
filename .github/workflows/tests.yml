@@ -26,6 +26,8 @@ jobs:
 
       - name: Syntax check test files
         run: |
+          php -l twopayment.php
+          php -l controllers/front/payment.php
           php -l tests/bootstrap.php
           php -l tests/OrderBuilderTest.php
           php -l tests/run.php

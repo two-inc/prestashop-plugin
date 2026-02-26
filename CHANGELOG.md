@@ -40,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Provider-First Checkout Flow**: Payment controller now creates Two orders before local PrestaShop orders
   - Eliminates local order creation/deletion cycle on provider rejection
   - Prevents rejected attempts from producing local order side effects
+- **Unified Checkout Company Resolver**:
+  - Payment controller now uses shared module fallback logic for company/org-number extraction
+  - Applies country-aware cookie validation and multi-field org-number extraction consistently at checkout
 - **merchant_order_id Alignment**: After callback-time local order creation, module performs best-effort Two order update to set `merchant_order_id` to the real PrestaShop `id_order`
 - **Callback Orchestration**:
   - Confirmation controller now supports `attempt_token` callback flow and creates local order only after verified provider state
@@ -55,17 +58,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Session Company Country Safety**:
   - Legacy company cookies without `two_company_country` are now cleared when validating against a known address country
   - Prevents stale cross-country company/org-number reuse in mixed-country checkouts
+- **Business Account Gate Resilience**:
+  - When account-type mode is enabled but `account_type` is missing, module now falls back to company + org-number presence
+  - Avoids false-negative payment option hiding on installations where custom address fields are not reliably persisted
 
 ### Technical
 - Added upgrade script `upgrade-2.4.0.php`
 - Module version bumped to `2.4.0`
 - `twopayment_attempt` schema includes snapshot and idempotency metadata
 - Added strict line-item formula validation gate before building intent/create/update payloads
+- Added back-office media hook implementation for module/admin order styling consistency
+- Fixed settings persistence path: `PS_TWO_DISABLE_SSL_VERIFY` now saves through "Other Settings" handler (where field is rendered)
 - Added test harness and automated checks:
   - Offline deterministic test runner (`php tests/run.php`)
   - PHPUnit-compatible test suite scaffolding (`tests/OrderBuilderTest.php`, `phpunit.xml.dist`)
   - GitHub Actions workflow for push/PR test execution
-  - Added coverage for HTTP-only provider failures and legacy session company country edge cases
+  - CI syntax checks now include core module/controller files in addition to test files
+  - Added coverage for HTTP-only provider failures, legacy session company country edge cases, shared checkout company resolver behavior, admin media hook routing, account-type fallback gating, and SSL setting persistence paths
 
 ---
 ## [2.3.2] - 2026-01-22

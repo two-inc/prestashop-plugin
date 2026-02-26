@@ -663,7 +663,6 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', $shortNameToSave);
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY')));
         Configuration::updateValue('PS_TWO_ENVIRONMENT', Tools::getValue('PS_TWO_ENVIRONMENT'));
-        Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int)Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
         if ($this->verifiedMerchantId) {
             Configuration::updateValue('PS_TWO_MERCHANT_ID', $this->verifiedMerchantId);
             Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 1);
@@ -977,6 +976,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_USE_OWN_INVOICES', Tools::getValue('PS_TWO_USE_OWN_INVOICES'));
         Configuration::updateValue('PS_TWO_ENABLE_ORDER_INTENT', Tools::getValue('PS_TWO_ENABLE_ORDER_INTENT'));
         Configuration::updateValue('PS_TWO_ENABLE_B2B_B2C', Tools::getValue('PS_TWO_ENABLE_B2B_B2C'));
+        Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
         Configuration::updateValue('PS_TWO_DEBUG_MODE', Tools::getValue('PS_TWO_DEBUG_MODE'));
 
         $this->output .= $this->displayConfirmation($this->l('Other settings are updated.'));
@@ -1021,6 +1021,7 @@ class Twopayment extends PaymentModule
                     <strong>' . $this->l('Two is a B2B Buy Now, Pay Later solution') . '</strong><br>
                     ' . $this->l('This plugin enables business customers to pay on invoice with instant credit decisions.') . '
                 </div>
+                ' . $this->renderTwoPluginHealthChecklist() . '
                 
                 <h4 style="color:#4CAF50;margin-top:20px;"><i class="icon-check"></i> ' . $this->l('What the plugin CAN do') . '</h4>
                 <ul class="list-unstyled" style="margin-left:20px;">
@@ -1084,6 +1085,91 @@ class Twopayment extends PaymentModule
             </div>
         </div>';
         
+        return $html;
+    }
+
+    /**
+     * Render a compact operational health summary for plugin configuration.
+     *
+     * @return string HTML
+     */
+    protected function renderTwoPluginHealthChecklist()
+    {
+        $environment = (string) Configuration::get('PS_TWO_ENVIRONMENT', 'development');
+        $api_verified = (bool) Configuration::get('PS_TWO_API_KEY_VERIFIED');
+        $ssl_disabled = (bool) Configuration::get('PS_TWO_DISABLE_SSL_VERIFY');
+        $order_intent_enabled = (bool) Configuration::get('PS_TWO_ENABLE_ORDER_INTENT');
+        $use_account_type = (bool) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE');
+        $term_type = (string) Configuration::get('PS_TWO_PAYMENT_TERM_TYPE', 'STANDARD');
+        $available_terms = $this->getAvailablePaymentTerms();
+
+        $term_labels = array();
+        foreach ($available_terms as $term) {
+            $term_labels[] = (int) $term;
+        }
+
+        $status_rows = array(
+            array(
+                'label' => $this->l('API key'),
+                'value' => $api_verified ? $this->l('Verified') : $this->l('Not verified'),
+                'ok' => $api_verified,
+            ),
+            array(
+                'label' => $this->l('Environment'),
+                'value' => strtoupper($environment),
+                'ok' => true,
+            ),
+            array(
+                'label' => $this->l('SSL verification'),
+                'value' => $ssl_disabled ? $this->l('Disabled') : $this->l('Enabled'),
+                'ok' => !$ssl_disabled,
+            ),
+            array(
+                'label' => $this->l('Order intent pre-check'),
+                'value' => $order_intent_enabled ? $this->l('Enabled') : $this->l('Disabled'),
+                'ok' => true,
+            ),
+            array(
+                'label' => $this->l('Account type mode'),
+                'value' => $use_account_type ? $this->l('Enabled') : $this->l('Disabled'),
+                'ok' => true,
+            ),
+            array(
+                'label' => $this->l('Payment terms'),
+                'value' => $term_type . ' (' . implode(', ', $term_labels) . ')',
+                'ok' => !empty($term_labels),
+            ),
+        );
+
+        $html = '<div class="panel" style="margin-top:15px;">';
+        $html .= '<div class="panel-heading"><i class="icon-dashboard"></i> ' . $this->l('Current Configuration Health') . '</div>';
+        $html .= '<div class="panel-body">';
+        $html .= '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 16px;">';
+
+        foreach ($status_rows as $row) {
+            $status_class = $row['ok'] ? 'text-success' : 'text-warning';
+            $status_icon = $row['ok'] ? 'icon-check-circle' : 'icon-warning';
+            $html .= '<div><strong>' . $row['label'] . ':</strong> <span class="' . $status_class . '"><i class="' . $status_icon . '"></i> ' . $row['value'] . '</span></div>';
+        }
+
+        $html .= '</div>';
+
+        if ($environment === 'production' && $ssl_disabled) {
+            $html .= '<div class="alert alert-danger" style="margin-top:12px;margin-bottom:0;">';
+            $html .= '<strong>' . $this->l('Security warning:') . '</strong> ';
+            $html .= $this->l('SSL verification is disabled in production. Re-enable it unless your network requires a trusted corporate proxy setup.');
+            $html .= '</div>';
+        }
+
+        if (!$api_verified) {
+            $html .= '<div class="alert alert-warning" style="margin-top:12px;margin-bottom:0;">';
+            $html .= '<strong>' . $this->l('Action required:') . '</strong> ';
+            $html .= $this->l('API key is not verified. Checkout requests may fail until the General Settings are saved with a valid key.');
+            $html .= '</div>';
+        }
+
+        $html .= '</div></div>';
+
         return $html;
     }
 
@@ -1819,6 +1905,46 @@ class Twopayment extends PaymentModule
         $this->context->controller->registerJavascript('two-script', 'modules/twopayment/views/js/twopayment.js', array('priority' => 206, 'async' => false));
     }
 
+    /**
+     * Back-office media hook.
+     * Loads module admin styling for order widgets and module configuration views.
+     */
+    public function hookActionAdminControllerSetMedia()
+    {
+        if (!isset($this->context->controller) || !is_object($this->context->controller)) {
+            return;
+        }
+
+        $controller = $this->context->controller;
+        $controller_name = isset($controller->controller_name) ? (string) $controller->controller_name : '';
+        $php_self = isset($controller->php_self) ? (string) $controller->php_self : '';
+        $request_controller = (string) Tools::getValue('controller');
+        $configure_module = (string) Tools::getValue('configure');
+
+        $is_module_config_page = ($configure_module === $this->name);
+        $is_order_admin_page = (stripos($controller_name, 'Order') !== false)
+            || (stripos($php_self, 'order') !== false)
+            || (stripos($request_controller, 'Order') !== false);
+
+        if (!$is_module_config_page && !$is_order_admin_page) {
+            return;
+        }
+
+        if (method_exists($controller, 'registerStylesheet')) {
+            $controller->registerStylesheet(
+                'module-twopayment-admin-css',
+                'modules/twopayment/views/css/two.css',
+                array('media' => 'all', 'priority' => 200)
+            );
+
+            return;
+        }
+
+        if (method_exists($controller, 'addCSS')) {
+            $controller->addCSS($this->_path . 'views/css/two.css');
+        }
+    }
+
     public function hookPaymentOptions($params)
     {
         if (!$this->active) {
@@ -1844,11 +1970,24 @@ class Twopayment extends PaymentModule
 
         // If merchant uses account type selection, gate payment option to business accounts
         if ((int) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE')) {
-            if (empty($billing_address->account_type) || $billing_address->account_type !== 'business') {
-                PrestaShopLogger::addLog('TwoPayment: Payment option hidden - account type is not business (current: ' . ($billing_address->account_type ?: 'not set') . ')', 1);
-                return [];
+            $account_type = property_exists($billing_address, 'account_type') ? trim((string) $billing_address->account_type) : '';
+            if ($account_type !== 'business') {
+                $country_iso = Country::getIsoById((int) $billing_address->id_country);
+                $org_number = '';
+                if (!Tools::isEmpty($country_iso)) {
+                    $org_number = $this->extractOrgNumberFromAddress($billing_address, $country_iso);
+                }
+
+                // Resilience fallback: some shops may not persist custom account_type.
+                // If business identity is still clearly present, keep Two visible.
+                if (Tools::isEmpty($account_type) && !Tools::isEmpty($billing_address->company) && !Tools::isEmpty($org_number)) {
+                    PrestaShopLogger::addLog('TwoPayment: Account type missing, allowing payment option based on company + org number fallback', 2);
+                } else {
+                    PrestaShopLogger::addLog('TwoPayment: Payment option hidden - account type is not business (current: ' . ($account_type ?: 'not set') . ')', 1);
+                    return [];
+                }
             }
-            PrestaShopLogger::addLog('TwoPayment: Payment option shown for business account', 1);
+            PrestaShopLogger::addLog('TwoPayment: Payment option shown for business account path', 1);
         } else {
             // When account type selection is disabled, allow showing Two option; FE will prompt for company selection as needed
             PrestaShopLogger::addLog('TwoPayment: Payment option shown (account type disabled)', 1);
@@ -2745,6 +2884,37 @@ class Twopayment extends PaymentModule
         return array(
             'company_name' => $session_company,
             'organization_number' => $session_company_id,
+        );
+    }
+
+    /**
+     * Public checkout resolver for company data.
+     * Uses the same fallback chain as order payload building so checkout guard logic
+     * behaves consistently across supported countries.
+     *
+     * @param Address $address Invoice address
+     * @return array ['company_name' => string, 'organization_number' => string, 'country_iso' => string]
+     */
+    public function getTwoCheckoutCompanyData($address)
+    {
+        try {
+            $data = $this->getCompanyDataWithFallbacks($address);
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Failed resolving checkout company data - ' . $e->getMessage(),
+                2
+            );
+            return array(
+                'company_name' => '',
+                'organization_number' => '',
+                'country_iso' => '',
+            );
+        }
+
+        return array(
+            'company_name' => isset($data['company_name']) ? trim((string) $data['company_name']) : '',
+            'organization_number' => isset($data['organization_number']) ? trim((string) $data['organization_number']) : '',
+            'country_iso' => isset($data['country_iso']) ? strtoupper(trim((string) $data['country_iso'])) : '',
         );
     }
 

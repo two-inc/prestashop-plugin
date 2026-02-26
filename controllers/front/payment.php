@@ -23,27 +23,12 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             Tools::redirect('index.php?controller=order');
         }
 
-        // Guard: Require company details when placing order with Two
-        $address = new Address((int)$cart->id_address_invoice);
-
-        $companyName = isset($address->company) ? trim($address->company) : '';
-        $companyId = '';
-        // Prefer companyid if present; fallback for ES to dni
-        if (!empty($address->companyid)) {
-            $companyId = trim($address->companyid);
-        } else {
-            $iso = Country::getIsoById($address->id_country);
-            if ($iso === 'ES' && !empty($address->dni)) {
-                $companyId = trim($address->dni);
-            }
-        }
-        // Fallback to cookie values saved during company selection (handles GB and others)
-        if (Tools::isEmpty($companyName) && isset($this->context->cookie->two_company_name)) {
-            $companyName = trim($this->context->cookie->two_company_name);
-        }
-        if (Tools::isEmpty($companyId) && isset($this->context->cookie->two_company_id)) {
-            $companyId = trim($this->context->cookie->two_company_id);
-        }
+        // Guard: Require company details when placing order with Two.
+        // Use shared module resolver so checkout and order payload logic stay consistent.
+        $address = new Address((int) $cart->id_address_invoice);
+        $companyData = $this->module->getTwoCheckoutCompanyData($address);
+        $companyName = isset($companyData['company_name']) ? trim((string) $companyData['company_name']) : '';
+        $companyId = isset($companyData['organization_number']) ? trim((string) $companyData['organization_number']) : '';
 
         if (Tools::isEmpty($companyName) || Tools::isEmpty($companyId)) {
             $msg = $this->module->l('To pay with Two, please select your company so we can verify your business and offer invoice terms.');

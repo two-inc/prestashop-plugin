@@ -335,6 +335,222 @@ final class OrderBuilderTest extends TestCase
         self::assertFalse($module->isTwoAttemptCallbackAuthorized($attempt, '', 41, 'secure-key-42'));
     }
 
+    public function testGetTwoCheckoutCompanyDataUsesAddressVatNumberForAnyCountry(): void
+    {
+        $module = new TwopaymentTestHarness();
+
+        StubStore::$countries[826] = 'GB';
+        StubStore::$addresses[801] = [
+            'id_country' => 826,
+            'company' => 'Acme UK Ltd',
+            'vat_number' => 'GB123456789',
+            'loaded' => true,
+        ];
+
+        $address = new Address(801);
+        $data = $module->getTwoCheckoutCompanyData($address);
+
+        self::assertSame('Acme UK Ltd', $data['company_name']);
+        self::assertSame('123456789', $data['organization_number']);
+        self::assertSame('GB', $data['country_iso']);
+    }
+
+    public function testGetTwoCheckoutCompanyDataUsesValidatedCookieFallback(): void
+    {
+        $module = new TwopaymentTestHarness();
+        $module->context->cookie->two_company_name = 'Acme ES S.L.';
+        $module->context->cookie->two_company_id = 'B12345678';
+        $module->context->cookie->two_company_country = 'ES';
+
+        StubStore::$addresses[802] = [
+            'id_country' => 34,
+            'company' => '',
+            'loaded' => true,
+        ];
+
+        $address = new Address(802);
+        $data = $module->getTwoCheckoutCompanyData($address);
+
+        self::assertSame('Acme ES S.L.', $data['company_name']);
+        self::assertSame('B12345678', $data['organization_number']);
+        self::assertSame('ES', $data['country_iso']);
+    }
+
+    public function testGetTwoCheckoutCompanyDataClearsStaleCookieOnCountryMismatch(): void
+    {
+        $module = new TwopaymentTestHarness();
+        $module->context->cookie->two_company_name = 'Acme Norge';
+        $module->context->cookie->two_company_id = 'NO123';
+        $module->context->cookie->two_company_country = 'NO';
+
+        StubStore::$addresses[803] = [
+            'id_country' => 34,
+            'company' => '',
+            'loaded' => true,
+        ];
+
+        $address = new Address(803);
+        $data = $module->getTwoCheckoutCompanyData($address);
+
+        self::assertSame('', $data['company_name']);
+        self::assertSame('', $data['organization_number']);
+        self::assertSame('ES', $data['country_iso']);
+        self::assertFalse(isset($module->context->cookie->two_company_name));
+        self::assertFalse(isset($module->context->cookie->two_company_id));
+        self::assertFalse(isset($module->context->cookie->two_company_country));
+    }
+
+    public function testSaveGeneralFormDoesNotChangeSslVerificationFlag(): void
+    {
+        $module = new class extends TwopaymentTestHarness {
+            public function saveGeneralForTest(): void
+            {
+                $this->saveTwoGeneralFormValues();
+            }
+        };
+
+        Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', 1);
+        Tools::setTestValue('PS_TWO_DISABLE_SSL_VERIFY', 0);
+        Tools::setTestValue('PS_TWO_ENVIRONMENT', 'development');
+        Tools::setTestValue('PS_TWO_TITLE_1', 'Two title');
+        Tools::setTestValue('PS_TWO_SUB_TITLE_1', 'Two subtitle');
+        Tools::setTestValue('PS_TWO_MERCHANT_SHORT_NAME', 'merchant');
+        Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', 'api-key');
+
+        $module->saveGeneralForTest();
+
+        self::assertSame(1, (int) Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
+    }
+
+    public function testSaveOtherFormUpdatesSslVerificationFlag(): void
+    {
+        $module = new class extends TwopaymentTestHarness {
+            public function saveOtherForTest(): void
+            {
+                $this->saveTwoOtherFormValues();
+            }
+        };
+
+        Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', 0);
+        Tools::setTestValue('PS_TWO_DISABLE_SSL_VERIFY', 1);
+
+        $module->saveOtherForTest();
+
+        self::assertSame(1, (int) Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
+    }
+
+    public function testHookActionAdminControllerSetMediaRegistersCssOnModuleConfigPage(): void
+    {
+        $module = new TwopaymentTestHarness();
+
+        $controller = new class {
+            public $controller_name = 'AdminModules';
+            public $php_self = 'module';
+            public $styles = [];
+
+            public function registerStylesheet($id, $path, $options = [])
+            {
+                $this->styles[] = [
+                    'id' => $id,
+                    'path' => $path,
+                    'options' => $options,
+                ];
+            }
+        };
+
+        $module->context->controller = $controller;
+        Tools::setTestValue('configure', 'twopayment');
+        Tools::setTestValue('controller', 'AdminModules');
+
+        $module->hookActionAdminControllerSetMedia();
+
+        self::assertCount(1, $controller->styles);
+        self::assertSame('module-twopayment-admin-css', $controller->styles[0]['id']);
+    }
+
+    public function testHookActionAdminControllerSetMediaSkipsUnrelatedAdminPage(): void
+    {
+        $module = new TwopaymentTestHarness();
+
+        $controller = new class {
+            public $controller_name = 'AdminProducts';
+            public $php_self = 'products';
+            public $styles = [];
+
+            public function registerStylesheet($id, $path, $options = [])
+            {
+                $this->styles[] = [
+                    'id' => $id,
+                    'path' => $path,
+                    'options' => $options,
+                ];
+            }
+        };
+
+        $module->context->controller = $controller;
+        Tools::setTestValue('configure', 'othermodule');
+        Tools::setTestValue('controller', 'AdminProducts');
+
+        $module->hookActionAdminControllerSetMedia();
+
+        self::assertCount(0, $controller->styles);
+    }
+
+    public function testHookPaymentOptionsAllowsBusinessFallbackWhenAccountTypeMissing(): void
+    {
+        $module = new class extends TwopaymentTestHarness {
+            protected function getTwoPaymentOption()
+            {
+                return (object) ['method' => 'two'];
+            }
+        };
+
+        Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', 1);
+        StubStore::$countries[826] = 'GB';
+        StubStore::$addresses[901] = [
+            'id_country' => 826,
+            'company' => 'Acme UK Ltd',
+            'vat_number' => 'GB123456789',
+            'loaded' => true,
+        ];
+
+        $cart = new Cart(501);
+        $cart->id_address_invoice = 901;
+        $module->context->cart = $cart;
+
+        $options = $module->hookPaymentOptions([]);
+
+        self::assertCount(1, $options);
+    }
+
+    public function testHookPaymentOptionsBlocksNonBusinessWhenAccountTypePresent(): void
+    {
+        $module = new class extends TwopaymentTestHarness {
+            protected function getTwoPaymentOption()
+            {
+                return (object) ['method' => 'two'];
+            }
+        };
+
+        Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', 1);
+        StubStore::$countries[34] = 'ES';
+        StubStore::$addresses[902] = [
+            'id_country' => 34,
+            'company' => 'Acme ES S.L.',
+            'dni' => 'B12345678',
+            'account_type' => 'private',
+            'loaded' => true,
+        ];
+
+        $cart = new Cart(502);
+        $cart->id_address_invoice = 902;
+        $module->context->cart = $cart;
+
+        $options = $module->hookPaymentOptions([]);
+
+        self::assertCount(0, $options);
+    }
+
     public function testGetTwoValidatedSessionCompanyDataRejectsCountryMismatch(): void
     {
         $module = new TwopaymentTestHarness();
