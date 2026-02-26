@@ -156,7 +156,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         
         // If this is a direct access (not AJAX), return simple response
         if (!Tools::getValue('ajax')) {
-            return;
+            exit;
         }
         
         parent::initContent();
