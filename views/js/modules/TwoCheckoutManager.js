@@ -315,35 +315,25 @@ class TwoCheckoutManager {
         
         // Method 3: Listen for form submissions and payment confirmation attempts
         document.addEventListener('click', (event) => {
-            const confirmationSelectors = [
-                '#payment-confirmation button',
-                '.payment-confirmation button', 
-                'button[name="confirmDeliveryOption"]',
-                'button[type="submit"][form*="payment"]',
-                '.checkout button[type="submit"]',
-                '.btn-primary[type="submit"]',
-                'button.btn[name*="confirm"]'
-            ];
-            
-            if (confirmationSelectors.some(selector => event.target.matches(selector))) {
+            if (this.isPaymentConfirmationButton(event.target)) {
                 this.handlePaymentConfirmation(event);
             }
         });
         
         // Method 4: Enhanced form submission listener (catch-all for different themes)
         document.addEventListener('submit', (event) => {
-            // Check if this is a payment/checkout form
             const form = event.target;
-            if (form && (form.action.includes('payment') || 
-                        form.action.includes('checkout') ||
-                        form.action.includes('order') ||
-                        form.querySelector('input[name*="payment"]'))) {
+            if (this.isPaymentConfirmationForm(form)) {
                 this.handlePaymentConfirmation(event);
             }
         });
         
         // Method 5: Periodic check for Two payment selection (fallback for complex themes)
         this._selectionCheckInterval = setInterval(() => {
+            this.detectCheckoutStep();
+            if (this.currentStep !== 'payment') {
+                return;
+            }
             if (this.isTwoPaymentSelected() && this.config.orderIntentEnabled) {
                 // Only trigger if we haven't processed this selection recently AND we don't have a result yet
                 const hasResult = this.orderIntent && this.orderIntent.lastResult;
@@ -444,15 +434,35 @@ class TwoCheckoutManager {
             }
         }
         
-        // Strategy 4: Check for Two payment in URL or form action (for some themes)
-        const forms = document.querySelectorAll('form');
-        for (const form of forms) {
-            if (form.action && form.action.includes('twopayment')) {
-                return true;
-            }
-        }
-        
         return false;
+    }
+
+    isPaymentConfirmationButton(target) {
+        if (!(target instanceof Element)) {
+            return false;
+        }
+
+        const button = target.closest('button[type="submit"], input[type="submit"]');
+        if (!button) {
+            return false;
+        }
+
+        // Keep interception strictly scoped to payment confirmation area.
+        return !!(
+            button.closest('#payment-confirmation') ||
+            button.closest('.payment-confirmation')
+        );
+    }
+
+    isPaymentConfirmationForm(form) {
+        if (!(form instanceof HTMLFormElement)) {
+            return false;
+        }
+
+        return !!(
+            form.closest('#payment-confirmation') ||
+            form.closest('.payment-confirmation')
+        );
     }
     
     /**
@@ -1213,7 +1223,7 @@ class TwoCheckoutManager {
         }
         
         // Create term options
-        availableTerms.forEach(function(days, index) {
+        availableTerms.forEach((days, index) => {
             const termOption = document.createElement('div');
             termOption.className = 'two-term-option';
             
@@ -1377,6 +1387,12 @@ class TwoCheckoutManager {
             this.twoPaymentRadio.disabled = true;
         }
     }
+
+    enableTwoPayment() {
+        if (this.twoPaymentRadio) {
+            this.twoPaymentRadio.disabled = false;
+        }
+    }
     
     /**
      * Setup mutation observer for dynamic content (theme-independent)
@@ -1487,11 +1503,15 @@ class TwoCheckoutManager {
             if (this.isBusinessAccount) {
                 this.initializeCompanySearch();
             }
-            // Clear cached intent state when address is edited so a new selection can trigger intent
-            if (this.orderIntent && this.orderIntent.reset) {
-                this.orderIntent.reset();
-            }
         }
+
+        // Clear cached intent state when address is edited so a new selection can trigger intent
+        if (this.orderIntent && this.orderIntent.reset) {
+            this.orderIntent.reset();
+        }
+        this.clearOrderIntentUI();
+        this.clearOrderIntentResultFromServer();
+        this.enableTwoPayment();
 
         // Phone validation removed - Two API handles validation
     }
@@ -1554,6 +1574,11 @@ class TwoCheckoutManager {
      * Handle payment confirmation
      */
     handlePaymentConfirmation(event) {
+        this.detectCheckoutStep();
+        if (this.currentStep !== 'payment') {
+            return;
+        }
+
         if (this.isTwoPaymentSelected() && this.orderIntent && this.config.orderIntentEnabled) {
             // If processing or no result yet, block and show loading
             if (this.orderIntent.isProcessing || !this.orderIntent.lastResult) {

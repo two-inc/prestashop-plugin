@@ -61,6 +61,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Business Account Gate Resilience**:
   - When account-type mode is enabled but `account_type` is missing, module now falls back to company + org-number presence
   - Avoids false-negative payment option hiding on installations where custom address fields are not reliably persisted
+- **Order Intent Enforcement**:
+  - Removed the admin toggle for order intent pre-approval from "Other Settings"
+  - Enforced order intent as mandatory for Two checkout server-side validation
+  - Updated checkout initialization to always run order intent pre-check logic
+- **Checkout Compatibility Hardening**:
+  - Reworked `CustomerAddressFormatter` override to delegate to core formatter and apply only minimal Two-specific field adjustments
+  - Removed remote CDN jQuery fallback from front-controller media hook
+  - Added same-origin runtime jQuery fallback loader in frontend module bootstrap for legacy environments
+- **Address Switching Reliability**:
+  - Prevented stale same-country session company reuse when the shopper switches to a different checkout address/company
+  - Added address-aware session marker (`two_company_address_id`) for company-cookie synchronization
+  - Reset order-intent UI/server state and re-enable Two payment option after checkout address updates
+  - Cleared stale hidden `companyid` values when company input changes to avoid cross-address mismatch blocking
+- **Checkout Step Stability**:
+  - Restricted order-intent submit interception to payment confirmation forms/buttons only (no blocking on personal-info or address step continue actions)
+  - Removed fallback Two-selection detection based on generic form action matching to avoid false positives outside payment step
+- **Organization Number Parsing**:
+  - VAT extraction now strips prefix only when it matches the current address country ISO (prevents truncating valid org numbers like `SC806781` for GB)
+- **Order Intent Company Context**:
+  - Bound checkout approval message company name to backend order-intent payload company data
+  - Cleared stale `lastCompany` state on order-intent reset to prevent cross-address message leakage
+- **Address Selector Accuracy**:
+  - Order-intent and company-cookie flows now read the selected (`:checked`) checkout address ID instead of the first address input in DOM
+  - Order-intent server resolver now uses selected delivery/invoice address context consistently for country/company resolution
 
 ### Technical
 - Added upgrade script `upgrade-2.4.0.php`

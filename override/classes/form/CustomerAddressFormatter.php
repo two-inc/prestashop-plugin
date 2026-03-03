@@ -35,220 +35,89 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
 
     public function getFormat()
     {
-        $fields = AddressFormat::getOrderedAddressFields($this->country->id, true, true);
-        $required = array_flip(AddressFormat::getFieldsRequired());
-        if (Module::isInstalled('twopayment') && Module::isEnabled('twopayment')) {
-            $format = [
-                'back' => (new FormField())
-                    ->setName('back')
-                    ->setType('hidden'),
-                'token' => (new FormField())
-                    ->setName('token')
-                    ->setType('hidden'),
-                'alias' => (new FormField())
-                    ->setName('alias')
-                    ->setLabel(
-                        $this->getFieldLabel('alias')
-                    ),
-            ];
+        $format = parent::getFormat();
+        if (!is_array($format) || !Module::isInstalled('twopayment') || !Module::isEnabled('twopayment')) {
+            return $format;
+        }
 
-            // Conditionally insert account_type when merchant wants account type selection
-            if ((int) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE')) {
-                $format = [
-                    'back' => (new FormField())
-                        ->setName('back')
-                        ->setType('hidden'),
-                    'token' => (new FormField())
-                        ->setName('token')
-                        ->setType('hidden'),
-                    'account_type' => (new FormField())
-                        ->setName('account_type')
-                        ->setType('select')
-                        ->setRequired(true)
-                        ->addAvailableValue('personal', $this->getFieldLabel('personal_type'))
-                        ->addAvailableValue('business', $this->getFieldLabel('business_type'))
-                        ->setLabel($this->getFieldLabel('account_type')),
-                    'alias' => (new FormField())
-                        ->setName('alias')
-                        ->setLabel(
-                            $this->getFieldLabel('alias')
-                        ),
-                ];
-            }
+        $useAccountType = (int) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE') === 1;
 
-            //insert new fileds - conditionally based on admin settings
-            $inserted = array();
-            
-            // Department field - only add if enabled in admin settings
-            if (Configuration::get('PS_TWO_ENABLE_DEPARTMENT')) {
-                $inserted[] = 'department';
-            }
-            
-            // Project field - only add if enabled in admin settings  
-            if (Configuration::get('PS_TWO_ENABLE_PROJECT')) {
-                $inserted[] = 'project';
-            }
-            
-            // Note: companyid field is handled via hidden JavaScript field only
-            // No database persistence - form-first approach like old tillit.js
-            
-            if (!empty($inserted)) {
-                array_splice($fields, 3, 0, $inserted);
-            }
+        if ($useAccountType && !isset($format['account_type'])) {
+            $accountTypeField = (new FormField())
+                ->setName('account_type')
+                ->setType('select')
+                ->setRequired(true)
+                ->addAvailableValue('personal', $this->getFieldLabel('personal_type'))
+                ->addAvailableValue('business', $this->getFieldLabel('business_type'))
+                ->setLabel($this->getFieldLabel('account_type'));
+            $this->applyFieldDefinitionMetadata($accountTypeField, 'account_type');
+            $format = $this->insertFieldAfter($format, 'token', 'account_type', $accountTypeField);
+        }
 
-            //move country fileds
-            $out = array_splice($fields, array_search('Country:name', $fields), 1);
-            array_splice($fields, 2, 0, $out);
-
-            foreach ($fields as $field) {
-                $formField = new FormField();
-                $formField->setName($field);
-                $fieldParts = explode(':', $field, 2);
-
-                if ($field === 'address2') {
-                    $formField->setType('text');
-                }
-
-                // CRITICAL: Company field handling for Two payment functionality
-                if ($field === 'company') {
-                    $formField->addAvailableValue('placeholder', $this->translator->trans('Search your company name', [], 'Shop.Forms.Labels'));
-                    if ((int) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE')) {
-                        // Make company field conditionally visible and required via JavaScript when using account type
-                        $formField->addAvailableValue('data-conditional-field', 'business');
-                        $formField->addAvailableValue('data-conditional-required', 'business');
-                        // Initially hidden - will be shown when business account is selected
-                        $formField->addAvailableValue('data-initial-state', 'hidden');
-                    }
-                }
-                if (count($fieldParts) === 1) {
-                    if ($field === 'postcode') {
-                        if ($this->country->need_zip_code) {
-                            $formField->setRequired(true);
-                        }
-                    } elseif ($field === 'phone') {
-                        $formField->setType('tel');
-                        $formField->setRequired(true);
-                    } elseif ($field === 'dni' && null !== $this->country) {
-                        if ($this->country->need_identification_number) {
-                            $formField->setRequired(true);
-                        }
-                    }
-                } elseif (count($fieldParts) === 2) {
-                    list($entity, $entityField) = $fieldParts;
-                    $formField->setType('select');
-                    $formField->setName('id_' . Tools::strtolower($entity));
-                    if ($entity === 'Country') {
-                        $formField->setType('countrySelect');
-                        $formField->setValue($this->country->id);
-                        foreach ($this->availableCountries as $country) {
-                            $formField->addAvailableValue(
-                                $country['id_country'],
-                                $country[$entityField]
-                            );
-                        }
-                    } elseif ($entity === 'State') {
-                        if ($this->country->contains_states) {
-                            $states = State::getStatesByIdCountry($this->country->id, true);
-                            foreach ($states as $state) {
-                                $formField->addAvailableValue(
-                                    $state['id_state'],
-                                    $state[$entityField]
-                                );
-                            }
-                            $formField->setRequired(true);
-                        }
-                    }
-                }
-                $formField->setLabel($this->getFieldLabel($field));
-                if (!$formField->isRequired()) {
-                    $formField->setRequired(
-                        array_key_exists($field, $required)
-                    );
-                }
-                $format[$formField->getName()] = $formField;
-            }
-        } else {
-            $format = [
-                'back' => (new FormField())
-                    ->setName('back')
-                    ->setType('hidden'),
-                'token' => (new FormField())
-                    ->setName('token')
-                    ->setType('hidden'),
-                'alias' => (new FormField())
-                    ->setName('alias')
-                    ->setLabel(
-                        $this->getFieldLabel('alias')
-                    ),
-            ];
-            foreach ($fields as $field) {
-                $formField = new FormField();
-                $formField->setName($field);
-                $fieldParts = explode(':', $field, 2);
-                if ($field === 'address2') {
-                    $formField->setRequired(true);
-                    $formField->setType('text');
-                }
-                if (count($fieldParts) === 1) {
-                    if ($field === 'postcode') {
-                        if ($this->country->need_zip_code) {
-                            $formField->setRequired(true);
-                        }
-                    } elseif ($field === 'phone') {
-                        $formField->setType('tel');
-                    } elseif ($field === 'dni' && null !== $this->country) {
-                        if ($this->country->need_identification_number) {
-                            $formField->setRequired(true);
-                        }
-                    }
-                } elseif (count($fieldParts) === 2) {
-                    list($entity, $entityField) = $fieldParts;
-                    $formField->setType('select');
-                    $formField->setName('id_' . Tools::strtolower($entity));
-                    if ($entity === 'Country') {
-                        $formField->setType('countrySelect');
-                        $formField->setValue($this->country->id);
-                        foreach ($this->availableCountries as $country) {
-                            $formField->addAvailableValue(
-                                $country['id_country'],
-                                $country[$entityField]
-                            );
-                        }
-                    } elseif ($entity === 'State') {
-                        if ($this->country->contains_states) {
-                            $states = State::getStatesByIdCountry($this->country->id, true);
-                            foreach ($states as $state) {
-                                $formField->addAvailableValue(
-                                    $state['id_state'],
-                                    $state[$entityField]
-                                );
-                            }
-                            $formField->setRequired(true);
-                        }
-                    }
-                }
-                $formField->setLabel($this->getFieldLabel($field));
-                if (!$formField->isRequired()) {
-                    $formField->setRequired(
-                        array_key_exists($field, $required)
-                    );
-                }
-                $format[$formField->getName()] = $formField;
+        if (isset($format['company']) && $format['company'] instanceof FormField) {
+            $format['company']->addAvailableValue('placeholder', $this->translator->trans('Search your company name', [], 'Shop.Forms.Labels'));
+            if ($useAccountType) {
+                $format['company']->addAvailableValue('data-conditional-field', 'business');
+                $format['company']->addAvailableValue('data-conditional-required', 'business');
+                $format['company']->addAvailableValue('data-initial-state', 'hidden');
             }
         }
-        $additionalAddressFormFields = Hook::exec('additionalCustomerAddressFields', ['fields' => &$format], null, true);
-        if (is_array($additionalAddressFormFields)) {
-            foreach ($additionalAddressFormFields as $moduleName => $additionnalFormFields) {
-                if (!is_array($additionnalFormFields)) {
-                    continue;
-                }
-                foreach ($additionnalFormFields as $formField) {
-                    $formField->moduleName = $moduleName;
-                    $format[$moduleName . '_' . $formField->getName()] = $formField;
-                }
+
+        if (isset($format['phone']) && $format['phone'] instanceof FormField) {
+            $format['phone']->setType('tel');
+            $format['phone']->setRequired(true);
+        }
+
+        if ((int) Configuration::get('PS_TWO_ENABLE_DEPARTMENT') === 1 && !isset($format['department'])) {
+            $departmentField = (new FormField())
+                ->setName('department')
+                ->setType('text')
+                ->setLabel($this->getFieldLabel('department'));
+            $this->applyFieldDefinitionMetadata($departmentField, 'department');
+            $format = $this->insertFieldAfter($format, 'company', 'department', $departmentField);
+        }
+
+        if ((int) Configuration::get('PS_TWO_ENABLE_PROJECT') === 1 && !isset($format['project'])) {
+            $projectField = (new FormField())
+                ->setName('project')
+                ->setType('text')
+                ->setLabel($this->getFieldLabel('project'));
+            $this->applyFieldDefinitionMetadata($projectField, 'project');
+            $format = $this->insertFieldAfter($format, 'department', 'project', $projectField);
+        }
+
+        return $format;
+    }
+
+    private function insertFieldAfter(array $format, $afterKey, $newKey, FormField $field)
+    {
+        $result = array();
+        $inserted = false;
+
+        foreach ($format as $key => $value) {
+            $result[$key] = $value;
+            if ($key === $afterKey) {
+                $result[$newKey] = $field;
+                $inserted = true;
             }
         }
-        return $this->addConstraints($this->addMaxLength($format));
+
+        if (!$inserted) {
+            $result[$newKey] = $field;
+        }
+
+        return $result;
+    }
+
+    private function applyFieldDefinitionMetadata(FormField $field, $fieldName)
+    {
+        if (!empty($this->definition[$fieldName]['validate'])) {
+            $field->addConstraint($this->definition[$fieldName]['validate']);
+        }
+
+        if (!empty($this->definition[$fieldName]['size'])) {
+            $field->setMaxLength($this->definition[$fieldName]['size']);
+        }
     }
 
     private function addConstraints(array $format)

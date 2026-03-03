@@ -70,10 +70,13 @@ final class OrderBuilderSpec
         self::testIsTwoAttemptCallbackAuthorizedFallsBackToContextCustomerKeyWhenRequestKeyMissing();
         self::testIsTwoAttemptCallbackAuthorizedRejectsMismatchedKeys();
         self::testGetTwoCheckoutCompanyDataUsesAddressVatNumberForAnyCountry();
+        self::testGetTwoCheckoutCompanyDataPrefersCurrentAddressOrgNumberOverSessionCompany();
         self::testGetTwoCheckoutCompanyDataUsesValidatedCookieFallback();
         self::testGetTwoCheckoutCompanyDataClearsStaleCookieOnCountryMismatch();
+        self::testGetTwoCheckoutCompanyDataIgnoresStaleCookieWhenAddressCompanyChangesSameCountry();
         self::testSaveGeneralFormDoesNotChangeSslVerificationFlag();
         self::testSaveOtherFormUpdatesSslVerificationFlag();
+        self::testOtherSettingsFormDoesNotExposeOrderIntentToggle();
         self::testHookActionAdminControllerSetMediaRegistersCssOnModuleConfigPage();
         self::testHookActionAdminControllerSetMediaSkipsUnrelatedAdminPage();
         self::testHookPaymentOptionsAllowsBusinessFallbackWhenAccountTypeMissing();
@@ -94,6 +97,8 @@ final class OrderBuilderSpec
         self::testGetTwoErrorMessageReadsNestedDataMessage();
         self::testGetTwoErrorMessageIgnoresSuccessMessagePayload();
         self::testGetTwoProductItemsSkipsEmptyBarcodeEntries();
+        self::testExtractOrgNumberFromAddressKeepsNonCountryPrefixVatNumber();
+        self::testExtractOrgNumberFromAddressStripsMatchingCountryPrefixVatNumber();
     }
 
     private static function reset(): void
@@ -455,6 +460,34 @@ final class OrderBuilderSpec
         TinyAssert::same('GB', $data['country_iso']);
     }
 
+    private static function testGetTwoCheckoutCompanyDataPrefersCurrentAddressOrgNumberOverSessionCompany(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        // Stale session from previously selected UK address/company
+        $module->context->cookie->two_company_name = 'CHEESE AND BEES LTD';
+        $module->context->cookie->two_company_id = 'SC806781';
+        $module->context->cookie->two_company_country = 'GB';
+        $module->context->cookie->two_company_address_id = '28';
+
+        // Current selected address is Spanish and has org number in VAT field
+        StubStore::$countries[34] = 'ES';
+        StubStore::$addresses[29] = [
+            'id_country' => 34,
+            'company' => 'Queso y Abejas S.L.',
+            'vat_number' => 'ESB12345678',
+            'loaded' => true,
+        ];
+
+        $address = new Address(29);
+        $data = $module->getTwoCheckoutCompanyData($address);
+
+        TinyAssert::same('Queso y Abejas S.L.', $data['company_name']);
+        TinyAssert::same('B12345678', $data['organization_number']);
+        TinyAssert::same('ES', $data['country_iso']);
+    }
+
     private static function testGetTwoCheckoutCompanyDataUsesValidatedCookieFallback(): void
     {
         self::reset();
@@ -504,6 +537,30 @@ final class OrderBuilderSpec
         TinyAssert::false(isset($module->context->cookie->two_company_country));
     }
 
+    private static function testGetTwoCheckoutCompanyDataIgnoresStaleCookieWhenAddressCompanyChangesSameCountry(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $module->context->cookie->two_company_name = 'Acme ES S.L.';
+        $module->context->cookie->two_company_id = 'B12345678';
+        $module->context->cookie->two_company_country = 'ES';
+        $module->context->cookie->two_company_address_id = '999';
+
+        StubStore::$addresses[804] = [
+            'id_country' => 34,
+            'company' => 'Beta Industrial S.L.',
+            'loaded' => true,
+        ];
+
+        $address = new Address(804);
+        $data = $module->getTwoCheckoutCompanyData($address);
+
+        TinyAssert::same('Beta Industrial S.L.', $data['company_name']);
+        TinyAssert::same('', $data['organization_number']);
+        TinyAssert::same('ES', $data['country_iso']);
+    }
+
     private static function testSaveGeneralFormDoesNotChangeSslVerificationFlag(): void
     {
         self::reset();
@@ -543,6 +600,24 @@ final class OrderBuilderSpec
         $module->saveOtherForTest();
 
         TinyAssert::same(1, (int) Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
+    }
+
+    private static function testOtherSettingsFormDoesNotExposeOrderIntentToggle(): void
+    {
+        self::reset();
+        $module = new class extends TwopaymentTestHarness {
+            public function getOtherFormForTest(): array
+            {
+                return $this->getTwoOtherForm();
+            }
+        };
+
+        $form = $module->getOtherFormForTest();
+        $inputNames = array_map(function ($field) {
+            return isset($field['name']) ? (string) $field['name'] : '';
+        }, $form['form']['input']);
+
+        TinyAssert::false(in_array('PS_TWO_ENABLE_ORDER_INTENT', $inputNames, true));
     }
 
     private static function testHookActionAdminControllerSetMediaRegistersCssOnModuleConfigPage(): void
@@ -1108,6 +1183,44 @@ final class OrderBuilderSpec
 
         TinyAssert::count(1, $items);
         TinyAssert::same([], $items[0]['details']['barcodes']);
+    }
+
+    private static function testExtractOrgNumberFromAddressKeepsNonCountryPrefixVatNumber(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        StubStore::$countries[826] = 'GB';
+        StubStore::$addresses[812] = [
+            'id_country' => 826,
+            'company' => 'Cheese Box Ltd',
+            'vat_number' => 'SC806781',
+            'loaded' => true,
+        ];
+
+        $address = new Address(812);
+        $orgNumber = $module->extractOrgNumberFromAddress($address, 'GB');
+
+        TinyAssert::same('SC806781', $orgNumber);
+    }
+
+    private static function testExtractOrgNumberFromAddressStripsMatchingCountryPrefixVatNumber(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        StubStore::$countries[826] = 'GB';
+        StubStore::$addresses[813] = [
+            'id_country' => 826,
+            'company' => 'Cheese Box Ltd',
+            'vat_number' => 'GB123456789',
+            'loaded' => true,
+        ];
+
+        $address = new Address(813);
+        $orgNumber = $module->extractOrgNumberFromAddress($address, 'GB');
+
+        TinyAssert::same('123456789', $orgNumber);
     }
 }
 

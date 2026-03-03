@@ -30,6 +30,8 @@ class TwoCompanySearch {
         }
         
         this.createOrganizationField();
+        this.clearStaleOrganizationSelection();
+        this.setupCompanyInputSync();
         this.setupAutocomplete();
         this.setupCountryChangeListener();
         this.isInitialized = true;
@@ -47,6 +49,52 @@ class TwoCompanySearch {
         }
         
         this.organizationField = orgField;
+    }
+
+    normalizeCompanyName(value) {
+        return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    }
+
+    clearStaleOrganizationSelection() {
+        if (!this.companyField || !this.organizationField) {
+            return;
+        }
+
+        const company = String(this.companyField.val() || '').trim();
+        const orgNumber = String(this.organizationField.val() || '').trim();
+        const taggedCompany = String(this.organizationField.attr('data-two-company-name') || '').trim();
+
+        if (!orgNumber) {
+            return;
+        }
+
+        if (!company) {
+            this.organizationField.val('');
+            this.organizationField.removeAttr('data-two-company-name');
+            return;
+        }
+
+        // If companyid exists but has no selection marker, treat it as stale after address/form re-renders.
+        if (!taggedCompany) {
+            this.organizationField.val('');
+            return;
+        }
+
+        if (this.normalizeCompanyName(company) !== this.normalizeCompanyName(taggedCompany)) {
+            this.organizationField.val('');
+            this.organizationField.removeAttr('data-two-company-name');
+        }
+    }
+
+    setupCompanyInputSync() {
+        if (!this.companyField || this.companyField.length === 0) {
+            return;
+        }
+
+        this.companyField.off('.twoCompanySync');
+        this.companyField.on('input.twoCompanySync change.twoCompanySync', () => {
+            this.clearStaleOrganizationSelection();
+        });
     }
     
     /**
@@ -301,6 +349,25 @@ class TwoCompanySearch {
         if (!ui.item) {
             return false;
         }
+
+        const triggerOrderIntentRecheck = () => {
+            try {
+                if (
+                    window.TwoCheckoutManager_Instance &&
+                    window.TwoCheckoutManager_Instance.isTwoPaymentSelected &&
+                    window.TwoCheckoutManager_Instance.isTwoPaymentSelected()
+                ) {
+                    if (window.TwoCheckoutManager_Instance.orderIntent && window.TwoCheckoutManager_Instance.orderIntent.reset) {
+                        window.TwoCheckoutManager_Instance.orderIntent.reset();
+                    }
+                    if (window.TwoCheckoutManager_Instance.triggerOrderIntentForSelection) {
+                        window.TwoCheckoutManager_Instance.triggerOrderIntentForSelection();
+                    }
+                }
+            } catch (e) {
+                // noop
+            }
+        };
         
         // SIMPLE & RELIABLE: Direct field assignment like old tillit.js
         this.companyField.val(ui.item.value);
@@ -308,6 +375,7 @@ class TwoCompanySearch {
         // Set organization number immediately if available
         if (ui.item.organization_number) {
             this.organizationField.val(ui.item.organization_number);
+            this.organizationField.attr('data-two-company-name', ui.item.value);
             
             // Persist for reliability across steps
             this.persistCompanyToCookie({
@@ -320,8 +388,17 @@ class TwoCompanySearch {
             if (dniField.length > 0) {
                 dniField.val(ui.item.organization_number);
             }
+
+            const vatField = $("input[name='vat_number']");
+            if (vatField.length > 0) {
+                vatField.val(ui.item.organization_number);
+            }
         }
-        
+
+        // For some countries (e.g. GB), org number may only be present in company details.
+        // Defer order-intent trigger until details lookup completes when org number is missing.
+        const shouldDeferIntentTrigger = !!ui.item.lookup_id && !ui.item.organization_number;
+
         // Optional: Fetch additional details for address auto-fill if lookup_id is available
         if (ui.item.lookup_id) {
             this.fetchCompanyDetails(ui.item.lookup_id)
@@ -330,24 +407,20 @@ class TwoCompanySearch {
                 })
                 .catch(error => {
                     // Silently fail - address auto-fill is not critical
+                })
+                .finally(() => {
+                    if (shouldDeferIntentTrigger) {
+                        triggerOrderIntentRecheck();
+                    }
                 });
         }
 
         // Country change has been resolved by a fresh company selection
         try { sessionStorage.removeItem('two_country_changed'); } catch (e) {}
 
-        // If user already selected Two payment, re-run order intent with new company
-        try {
-            if (window.TwoCheckoutManager_Instance && window.TwoCheckoutManager_Instance.isTwoPaymentSelected && window.TwoCheckoutManager_Instance.isTwoPaymentSelected()) {
-                if (window.TwoCheckoutManager_Instance.orderIntent && window.TwoCheckoutManager_Instance.orderIntent.reset) {
-                    window.TwoCheckoutManager_Instance.orderIntent.reset();
-                }
-                if (window.TwoCheckoutManager_Instance.triggerOrderIntentForSelection) {
-                    window.TwoCheckoutManager_Instance.triggerOrderIntentForSelection();
-                }
-            }
-        } catch (e) {
-            // noop
+        // If org number is already known from selection, run order intent immediately.
+        if (!shouldDeferIntentTrigger) {
+            triggerOrderIntentRecheck();
         }
         
         return true;
@@ -392,9 +465,14 @@ class TwoCompanySearch {
                 const currentOrgNumber = this.organizationField.val();
                 if (!currentOrgNumber || currentOrgNumber !== natIdVal) {
                     this.organizationField.val(natIdVal);
+                    this.organizationField.attr('data-two-company-name', this.companyField ? this.companyField.val() : '');
                     const dniField = $("input[name='dni']");
                     if (dniField.length > 0) {
                         dniField.val(natIdVal);
+                    }
+                    const vatField = $("input[name='vat_number']");
+                    if (vatField.length > 0) {
+                        vatField.val(natIdVal);
                     }
                     // Persist to cookie so backend can use it during order placement
                     this.persistCompanyToCookie({
@@ -477,7 +555,10 @@ class TwoCompanySearch {
      */
     reset() {
         if (this.companyField) this.companyField.val('');
-        if (this.organizationField) this.organizationField.val('');
+        if (this.organizationField) {
+            this.organizationField.val('');
+            this.organizationField.removeAttr('data-two-company-name');
+        }
     }
     
     /**
@@ -537,6 +618,7 @@ class TwoCompanySearch {
                 }
                 if (this.organizationField) {
                     this.organizationField.val('');
+                    this.organizationField.removeAttr('data-two-company-name');
                 }
                 // Recreate autocomplete to ensure new country is used immediately
                 this.setupAutocomplete();
@@ -606,13 +688,57 @@ class TwoCompanySearch {
                     token: window.twopayment.ajax_token,
                     company: data.company,
                     companyid: data.companyid,
-                    country: this.getCurrentCountry()
+                    country: this.getCurrentCountry(),
+                    id_address: this.getCurrentAddressId()
                 },
                 timeout: 10000
             });
         } catch (e) {
             // no-op
         }
+    }
+
+    getCurrentAddressId() {
+        const checkedAddressSelectors = [
+            "input[name='id_address_invoice']:checked",
+            "input[name='id_address_delivery']:checked"
+        ];
+        for (const selector of checkedAddressSelectors) {
+            const field = document.querySelector(selector);
+            if (field && field.value) {
+                const parsed = parseInt(field.value, 10);
+                if (parsed > 0) {
+                    return parsed;
+                }
+            }
+        }
+
+        const addressForm = document.querySelector('.js-address-form form[data-id-address]');
+        if (addressForm) {
+            const attrValue = addressForm.getAttribute('data-id-address');
+            const parsed = parseInt(attrValue || '0', 10);
+            if (parsed > 0) {
+                return parsed;
+            }
+        }
+
+        const selectors = [
+            "input[name='id_address_invoice']",
+            "input[name='id_address_delivery']",
+            "input[name='id_address']"
+        ];
+
+        for (const selector of selectors) {
+            const field = document.querySelector(selector);
+            if (field && field.value) {
+                const parsed = parseInt(field.value, 10);
+                if (parsed > 0) {
+                    return parsed;
+                }
+            }
+        }
+
+        return 0;
     }
 
     /**

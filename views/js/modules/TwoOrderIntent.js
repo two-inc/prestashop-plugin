@@ -50,7 +50,18 @@ class TwoOrderIntent {
                 // Backend returns status codes: 'no_company', 'incomplete_company' if needed
                 return this.fetchOrderIntentPayload(formData);
             })
-            .then(payload => this.callTwoOrderIntent(payload))
+            .then(payload => {
+                const payloadCompany = (
+                    payload &&
+                    payload.buyer &&
+                    payload.buyer.company &&
+                    payload.buyer.company.company_name
+                ) ? String(payload.buyer.company.company_name).trim() : '';
+                if (payloadCompany) {
+                    this.lastCompany = payloadCompany;
+                }
+                return this.callTwoOrderIntent(payload);
+            })
             .then(result => this.processResult(result))
             .catch(error => this.handleError(error))
             .finally(() => { this.isProcessing = false; });
@@ -79,8 +90,9 @@ class TwoOrderIntent {
                 try { sessionStorage.removeItem('two_country_changed'); } catch (e) {}
             }
 
-            // If fields are empty (e.g., only payment step visible), try cookie fallback
-            if ((!company || !companyid) && window.twopayment && window.twopayment.order_intent_url && window.twopayment.ajax_token) {
+            // Only use cookie fallback when BOTH values are missing (e.g., payment step with no address form fields).
+            // If one value exists and the other is missing, keep form values as-is to avoid stale mixed company/companyid pairs.
+            if ((!company && !companyid) && window.twopayment && window.twopayment.order_intent_url && window.twopayment.ajax_token) {
                 $.ajax({
                     url: window.twopayment.order_intent_url,
                     type: 'POST',
@@ -89,22 +101,28 @@ class TwoOrderIntent {
                     timeout: 8000
                 }).done((res) => {
                     if (res && res.success) {
-                        formData.company = company || (res.company || '');
-                        formData.companyid = companyid || (res.companyid || '');
-                        // If stored company country mismatches address country or country changed, invalidate stored company
+                        formData.company = (res.company || '');
+                        formData.companyid = (res.companyid || '');
+                        // If stored company country/address mismatches current address context, invalidate stored company
                         const addressCountryIso = this.getCurrentAddressCountryISO();
                         const storedCountryMismatch = res.country && addressCountryIso && res.country.toUpperCase() !== addressCountryIso.toUpperCase();
-                        if (countryChanged || storedCountryMismatch) {
+                        const currentAddressId = this.getCurrentAddressId();
+                        const storedAddressId = res.address_id ? parseInt(res.address_id, 10) : 0;
+                        const storedAddressMismatch = storedAddressId > 0 && currentAddressId > 0 && storedAddressId !== currentAddressId;
+                        if (countryChanged || storedCountryMismatch || storedAddressMismatch) {
                             // DEBUG: Log country change details for troubleshooting
-                            console.log('Two Order Intent: Country change detected.', {
+                            console.log('Two Order Intent: Invalidating stored company context.', {
                                 countryChanged: countryChanged,
                                 storedCountryMismatch: storedCountryMismatch,
+                                storedAddressMismatch: storedAddressMismatch,
                                 storedCompanyCountry: res.country,
+                                storedAddressId: storedAddressId,
+                                currentAddressId: currentAddressId,
                                 currentAddressCountry: addressCountryIso,
                                 invalidatingCompany: res.company
                             });
-                            formData.company = company; // keep whatever is in the field (likely empty)
-                            formData.companyid = companyid;
+                            formData.company = '';
+                            formData.companyid = '';
                         }
                         // Persist last company for messaging
                         this.lastCompany = formData.company;
@@ -112,17 +130,17 @@ class TwoOrderIntent {
                         formData.company = company;
                         formData.companyid = companyid;
                     }
-                    const addressDeliveryField = document.querySelector("input[name='id_address_delivery']");
-                    if (addressDeliveryField) {
-                        formData.id_address_delivery = addressDeliveryField.value;
+                    const selectedAddressId = this.getCurrentAddressId();
+                    if (selectedAddressId > 0) {
+                        formData.id_address_delivery = selectedAddressId;
                     }
                     resolve(formData);
                 }).fail(() => {
                     formData.company = company;
                     formData.companyid = companyid;
-                    const addressDeliveryField = document.querySelector("input[name='id_address_delivery']");
-                    if (addressDeliveryField) {
-                        formData.id_address_delivery = addressDeliveryField.value;
+                    const selectedAddressId = this.getCurrentAddressId();
+                    if (selectedAddressId > 0) {
+                        formData.id_address_delivery = selectedAddressId;
                     }
                     resolve(formData);
                 });
@@ -131,9 +149,9 @@ class TwoOrderIntent {
             formData.company = company;
             formData.companyid = companyid;
             this.lastCompany = company;
-            const addressDeliveryField = document.querySelector("input[name='id_address_delivery']");
-            if (addressDeliveryField) {
-                formData.id_address_delivery = addressDeliveryField.value;
+            const selectedAddressId = this.getCurrentAddressId();
+            if (selectedAddressId > 0) {
+                formData.id_address_delivery = selectedAddressId;
             }
             resolve(formData);
         });
@@ -185,6 +203,49 @@ class TwoOrderIntent {
             console.warn('Two Order Intent: Failed to get current address country ISO:', e);
         }
         return '';
+    }
+
+    getCurrentAddressId() {
+        const checkedAddressSelectors = [
+            "input[name='id_address_invoice']:checked",
+            "input[name='id_address_delivery']:checked"
+        ];
+        for (const selector of checkedAddressSelectors) {
+            const field = document.querySelector(selector);
+            if (field && field.value) {
+                const parsed = parseInt(field.value, 10);
+                if (parsed > 0) {
+                    return parsed;
+                }
+            }
+        }
+
+        const addressForm = document.querySelector('.js-address-form form[data-id-address]');
+        if (addressForm) {
+            const attrValue = addressForm.getAttribute('data-id-address');
+            const parsed = parseInt(attrValue || '0', 10);
+            if (parsed > 0) {
+                return parsed;
+            }
+        }
+
+        const selectors = [
+            "input[name='id_address_invoice']",
+            "input[name='id_address_delivery']",
+            "input[name='id_address']"
+        ];
+
+        for (const selector of selectors) {
+            const field = document.querySelector(selector);
+            if (field && field.value) {
+                const parsed = parseInt(field.value, 10);
+                if (parsed > 0) {
+                    return parsed;
+                }
+            }
+        }
+
+        return 0;
     }
 
     fetchOrderIntentPayload(formData) {
@@ -344,8 +405,8 @@ class TwoOrderIntent {
     }
 
     updateUI(result) {
-        const $twoPaymentOption = $('.payment-option').filter(function() {
-            return $(this).find('[data-module-name="twopayment"]').length > 0;
+        const $twoPaymentOption = $('.payment-option').filter((_, element) => {
+            return $(element).find('[data-module-name="twopayment"]').length > 0;
         });
         if ($twoPaymentOption.length === 0) return;
         let $messageContainer = $twoPaymentOption.find('.two-order-intent-message');
@@ -413,8 +474,8 @@ class TwoOrderIntent {
         const message = this.lastResult
             ? this.lastResult.message
             : this.t('resolve_payment_issue_before_continuing', 'Please resolve the payment issue before continuing.');
-        const $twoPaymentOption = $('.payment-option').filter(function() {
-            return $(this).find('[data-module-name="twopayment"]').length > 0;
+        const $twoPaymentOption = $('.payment-option').filter((_, element) => {
+            return $(element).find('[data-module-name="twopayment"]').length > 0;
         });
         $twoPaymentOption.addClass('pulse-highlight');
         setTimeout(() => { $twoPaymentOption.removeClass('pulse-highlight'); }, 2000);
@@ -428,8 +489,8 @@ class TwoOrderIntent {
     startMonitoring() {
         if (this.checkIntervalId) this.stopMonitoring();
         this.checkIntervalId = setInterval(() => {
-            const $twoPaymentOption = $('.payment-option').filter(function() {
-                return $(this).find('[data-module-name="twopayment"]').length > 0;
+            const $twoPaymentOption = $('.payment-option').filter((_, element) => {
+                return $(element).find('[data-module-name="twopayment"]').length > 0;
             });
             if ($twoPaymentOption.length > 0 && $twoPaymentOption.is(':visible')) {
                 // Check for country change - if country changed, user needs to re-select company
@@ -466,7 +527,12 @@ class TwoOrderIntent {
     }
 
     getLastResult() { return this.lastResult; }
-    reset() { this.lastResult = null; this.isProcessing = false; this.stopMonitoring(); }
+    reset() {
+        this.lastResult = null;
+        this.lastCompany = null;
+        this.isProcessing = false;
+        this.stopMonitoring();
+    }
 }
 
 window.TwoOrderIntent = TwoOrderIntent;

@@ -70,7 +70,8 @@ class Twopayment extends PaymentModule
         $this->enable_company_id = Configuration::get('PS_TWO_ENABLE_COMPANY_ID');
         $this->enable_department = Configuration::get('PS_TWO_ENABLE_DEPARTMENT');
         $this->enable_project = Configuration::get('PS_TWO_ENABLE_PROJECT');
-        $this->enable_order_intent = Configuration::get('PS_TWO_ENABLE_ORDER_INTENT');
+        // Order intent pre-check is mandatory for all checkouts.
+        $this->enable_order_intent = 1;
         $this->use_account_type = Configuration::get('PS_TWO_USE_ACCOUNT_TYPE');
         $this->finalize_purchase_shipping = Configuration::get('PS_TWO_FINALIZE_PURCHASE');
         
@@ -145,7 +146,6 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', 1);
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_ID', 1);
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', 1);
-        Configuration::updateValue('PS_TWO_ENABLE_ORDER_INTENT', 1);
         Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', 0);
         Configuration::updateValue('PS_TWO_USE_OWN_INVOICES', 0); // Disabled by default - must be enabled after coordinating with Two
         Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', 'STANDARD'); // Default: Standard payment terms (not EOM)
@@ -359,7 +359,6 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_ENABLE_DEPARTMENT');
         Configuration::deleteByName('PS_TWO_ENABLE_PROJECT');
         Configuration::deleteByName('PS_TWO_FINALIZE_PURCHASE');
-        Configuration::deleteByName('PS_TWO_ENABLE_ORDER_INTENT');
         Configuration::deleteByName('PS_TWO_USE_ACCOUNT_TYPE');
         Configuration::deleteByName('PS_TWO_DEBUG_MODE');
         return true;
@@ -876,26 +875,6 @@ class Twopayment extends PaymentModule
                     ),
                     array(
                         'type' => 'switch',
-                        'label' => $this->l('Pre-approve the buyer during checkout and disable two if the buyer is declined'),
-                        'name' => 'PS_TWO_ENABLE_ORDER_INTENT',
-                        'is_bool' => true,
-                        'desc' => $this->l('If you choose YES then pre-approve the buyer during checkout and disable two if the buyer is declined.'),
-                        'required' => true,
-                        'values' => array(
-                            array(
-                                'id' => 'PS_TWO_ENABLE_ORDER_INTENT_ON',
-                                'value' => 1,
-                                'label' => $this->l('Yes')
-                            ),
-                            array(
-                                'id' => 'PS_TWO_ENABLE_ORDER_INTENT_OFF',
-                                'value' => 0,
-                                'label' => $this->l('No')
-                            ),
-                        ),
-                    ),
-                    array(
-                        'type' => 'switch',
                         'label' => $this->l('Disable SSL Verification (Corporate Networks Only)'),
                         'name' => 'PS_TWO_DISABLE_SSL_VERIFY',
                         'is_bool' => true,
@@ -953,7 +932,6 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_ENABLE_PROJECT'] = Tools::getValue('PS_TWO_ENABLE_PROJECT', Configuration::get('PS_TWO_ENABLE_PROJECT'));
         $fields_values['PS_TWO_FINALIZE_PURCHASE'] = Tools::getValue('PS_TWO_FINALIZE_PURCHASE', Configuration::get('PS_TWO_FINALIZE_PURCHASE'));
         $fields_values['PS_TWO_USE_OWN_INVOICES'] = Tools::getValue('PS_TWO_USE_OWN_INVOICES', Configuration::get('PS_TWO_USE_OWN_INVOICES'));
-        $fields_values['PS_TWO_ENABLE_ORDER_INTENT'] = Tools::getValue('PS_TWO_ENABLE_ORDER_INTENT', Configuration::get('PS_TWO_ENABLE_ORDER_INTENT'));
         $fields_values['PS_TWO_ENABLE_B2B_B2C'] = Tools::getValue('PS_TWO_ENABLE_B2B_B2C', Configuration::get('PS_TWO_ENABLE_B2B_B2C'));
         $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
         $fields_values['PS_TWO_DEBUG_MODE'] = Tools::getValue('PS_TWO_DEBUG_MODE', Configuration::get('PS_TWO_DEBUG_MODE'));
@@ -974,7 +952,6 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_ENABLE_PROJECT', Tools::getValue('PS_TWO_ENABLE_PROJECT'));
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', Tools::getValue('PS_TWO_FINALIZE_PURCHASE'));
         Configuration::updateValue('PS_TWO_USE_OWN_INVOICES', Tools::getValue('PS_TWO_USE_OWN_INVOICES'));
-        Configuration::updateValue('PS_TWO_ENABLE_ORDER_INTENT', Tools::getValue('PS_TWO_ENABLE_ORDER_INTENT'));
         Configuration::updateValue('PS_TWO_ENABLE_B2B_B2C', Tools::getValue('PS_TWO_ENABLE_B2B_B2C'));
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
         Configuration::updateValue('PS_TWO_DEBUG_MODE', Tools::getValue('PS_TWO_DEBUG_MODE'));
@@ -1098,7 +1075,7 @@ class Twopayment extends PaymentModule
         $environment = (string) Configuration::get('PS_TWO_ENVIRONMENT', 'development');
         $api_verified = (bool) Configuration::get('PS_TWO_API_KEY_VERIFIED');
         $ssl_disabled = (bool) Configuration::get('PS_TWO_DISABLE_SSL_VERIFY');
-        $order_intent_enabled = (bool) Configuration::get('PS_TWO_ENABLE_ORDER_INTENT');
+        $order_intent_enabled = true;
         $use_account_type = (bool) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE');
         $term_type = (string) Configuration::get('PS_TWO_PAYMENT_TERM_TYPE', 'STANDARD');
         $available_terms = $this->getAvailablePaymentTerms();
@@ -1821,24 +1798,8 @@ class Twopayment extends PaymentModule
             );
         }
         
-        // Layer 3: Optional CDN fallback only for legacy PrestaShop versions.
-        // Avoid forcing duplicate jQuery loads on modern themes.
-        if (version_compare(_PS_VERSION_, '1.7.7.0', '<=')) {
-            try {
-                $this->context->controller->addJS(
-                    'https://code.jquery.com/jquery-3.6.0.min.js',
-                    false // Load in HEAD before other scripts
-                );
-            } catch (Exception $e) {
-                PrestaShopLogger::addLog(
-                    'Two Payment: CDN jQuery fallback failed - ' . $e->getMessage(),
-                    3, // Error level - this is critical
-                    null,
-                    'Module',
-                    $this->id
-                );
-            }
-        }
+        // Layer 3 moved to frontend runtime: local same-origin jQuery fallback in twopayment.js.
+        // This avoids remote CDN dependency while preserving legacy compatibility behavior.
 
         $countries = Country::getCountries($this->context->language->id, false, false, false);
         $param_countries = array();
@@ -2870,6 +2831,7 @@ class Twopayment extends PaymentModule
             unset($this->context->cookie->two_company_name);
             unset($this->context->cookie->two_company_id);
             unset($this->context->cookie->two_company_country);
+            unset($this->context->cookie->two_company_address_id);
             if (method_exists($this->context->cookie, 'write')) {
                 $this->context->cookie->write();
             }
@@ -2890,6 +2852,7 @@ class Twopayment extends PaymentModule
             unset($this->context->cookie->two_company_name);
             unset($this->context->cookie->two_company_id);
             unset($this->context->cookie->two_company_country);
+            unset($this->context->cookie->two_company_address_id);
             if (method_exists($this->context->cookie, 'write')) {
                 $this->context->cookie->write();
             }
@@ -2968,15 +2931,33 @@ class Twopayment extends PaymentModule
             PrestaShopLogger::addLog('TwoPayment: Invalid country ID: ' . $address->id_country . ' for address ID: ' . $address->id, 3);
             throw new Exception('Invalid country in address');
         }
-        
+
+        $address_company = trim((string) $address->company);
+        $current_address_id = (int) $address->id;
+        $session_address_id = isset($this->context->cookie->two_company_address_id)
+            ? (int) $this->context->cookie->two_company_address_id
+            : 0;
+        $allow_cookie_company_fallback = true;
+
         // Priority 1: Session cookie (from company search - already verified and country-validated)
         $validated_session_company = $this->getTwoValidatedSessionCompanyData($country_iso);
         if (!empty($validated_session_company['company_name']) && !empty($validated_session_company['organization_number'])) {
-            return [
-                'company_name' => $validated_session_company['company_name'],
-                'organization_number' => $validated_session_company['organization_number'],
-                'country_iso' => $country_iso
-            ];
+            $session_company_name = trim((string) $validated_session_company['company_name']);
+
+            if ($session_address_id > 0 && $current_address_id > 0 && $session_address_id !== $current_address_id) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Ignoring session company due to address switch. Session address=' .
+                    $session_address_id . ', current address=' . $current_address_id,
+                    2
+                );
+                $allow_cookie_company_fallback = false;
+            } else {
+                return [
+                    'company_name' => $session_company_name,
+                    'organization_number' => $validated_session_company['organization_number'],
+                    'country_iso' => $country_iso
+                ];
+            }
         }
         
         // Priority 2: Extract org number from address fields (dni, vat_number, companyid)
@@ -2984,9 +2965,9 @@ class Twopayment extends PaymentModule
         $org_number = $this->extractOrgNumberFromAddress($address, $country_iso);
         
         // Company name: Address → Cookie
-        $company_name = !empty($address->company) 
-            ? $address->company 
-            : (isset($this->context->cookie->two_company_name) 
+        $company_name = !Tools::isEmpty($address_company)
+            ? $address_company
+            : (($allow_cookie_company_fallback && isset($this->context->cookie->two_company_name))
                 ? trim($this->context->cookie->two_company_name) 
                 : '');
         
@@ -4942,6 +4923,9 @@ class Twopayment extends PaymentModule
         // Store company data in session for persistence across checkout steps
         if (isset($this->context->cookie)) {
             $this->context->cookie->two_company_name = $address->company;
+            if (!empty($address->id)) {
+                $this->context->cookie->two_company_address_id = (string) (int) $address->id;
+            }
             
             // Try to get organization number from form data if available
             $companyId = Tools::getValue('companyid', '');
@@ -5247,9 +5231,12 @@ class Twopayment extends PaymentModule
         // Priority 2: vat_number field (if available in address)
         if (property_exists($address, 'vat_number') && !empty($address->vat_number)) {
             $vatNumber = trim($address->vat_number);
-            // VAT numbers often have country prefix - strip it if present
-            if (preg_match('/^[A-Z]{2}(.+)$/i', $vatNumber, $matches)) {
-                $vatNumber = $matches[1];
+            // VAT numbers often have a country prefix (e.g. GB123...). Only strip when it matches address country.
+            if (preg_match('/^([A-Z]{2})([A-Z0-9\-]{3,})$/i', $vatNumber, $matches)) {
+                $prefix = strtoupper($matches[1]);
+                if ($prefix === $countryIso) {
+                    $vatNumber = $matches[2];
+                }
             }
             if (preg_match('/^[A-Z0-9\-]{5,20}$/i', $vatNumber)) {
                 PrestaShopLogger::addLog(

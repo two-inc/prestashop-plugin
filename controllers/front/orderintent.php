@@ -112,6 +112,13 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $company = trim(Tools::getValue('company', ''));
         $companyId = trim(Tools::getValue('companyid', ''));
         $country = trim(Tools::getValue('country', ''));
+        $addressId = (int) Tools::getValue('id_address', 0);
+        if ($addressId <= 0 && Validate::isLoadedObject($this->context->cart)) {
+            $addressId = (int) $this->context->cart->id_address_delivery;
+            if ($addressId <= 0) {
+                $addressId = (int) $this->context->cart->id_address_invoice;
+            }
+        }
 
         if (empty($company) || empty($companyId)) {
             $this->sendJsonResponse(json_encode(['success' => false, 'error' => 'Missing company data']));
@@ -122,6 +129,9 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $this->context->cookie->two_company_id = $companyId;
         if (!empty($country)) {
             $this->context->cookie->two_company_country = $country;
+        }
+        if ($addressId > 0) {
+            $this->context->cookie->two_company_address_id = (string) $addressId;
         }
         $this->context->cookie->setExpire(time() + Twopayment::COOKIE_EXPIRY_ONE_HOUR);
         PrestaShopLogger::addLog('TwoPayment: Saved company in cookie for session', 1);
@@ -140,11 +150,13 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $company = isset($this->context->cookie->two_company_name) ? $this->context->cookie->two_company_name : '';
         $companyId = isset($this->context->cookie->two_company_id) ? $this->context->cookie->two_company_id : '';
         $companyCountry = isset($this->context->cookie->two_company_country) ? $this->context->cookie->two_company_country : '';
+        $companyAddressId = isset($this->context->cookie->two_company_address_id) ? (int) $this->context->cookie->two_company_address_id : 0;
         $this->sendJsonResponse(json_encode([
             'success' => true,
             'company' => $company,
             'companyid' => $companyId,
-            'country' => $companyCountry
+            'country' => $companyCountry,
+            'address_id' => $companyAddressId
         ]));
     }
 
@@ -469,14 +481,22 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             return ['company' => $company, 'companyid' => $companyId];
         }
         
+        // Resolve selected checkout address first (prefer request-provided delivery address).
+        $selectedAddressId = (int) Tools::getValue('id_address_delivery');
+        if ($selectedAddressId <= 0) {
+            $selectedAddressId = (int) $this->context->cart->id_address_delivery;
+        }
+        if ($selectedAddressId <= 0) {
+            $selectedAddressId = (int) $this->context->cart->id_address_invoice;
+        }
+
         // Priority 2: PrestaShop session/cookie (persisted from previous steps or company search)
-        // Validate session company country against the current invoice country to avoid stale cross-country data.
+        // Validate session company country against the current selected address country.
         $currentCountryIso = '';
-        $invoiceAddressId = (int)$this->context->cart->id_address_invoice;
-        if ($invoiceAddressId > 0) {
-            $invoiceAddress = new Address($invoiceAddressId);
-            if (Validate::isLoadedObject($invoiceAddress)) {
-                $countryIsoCandidate = Country::getIsoById($invoiceAddress->id_country);
+        if ($selectedAddressId > 0) {
+            $selectedAddress = new Address($selectedAddressId);
+            if (Validate::isLoadedObject($selectedAddress)) {
+                $countryIsoCandidate = Country::getIsoById($selectedAddress->id_country);
                 if ($countryIsoCandidate && is_string($countryIsoCandidate)) {
                     $currentCountryIso = $countryIsoCandidate;
                 }
@@ -485,6 +505,19 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $validatedSession = $this->module->getTwoValidatedSessionCompanyData($currentCountryIso);
         $sessionCompany = isset($validatedSession['company_name']) ? trim($validatedSession['company_name']) : '';
         $sessionCompanyId = isset($validatedSession['organization_number']) ? trim($validatedSession['organization_number']) : '';
+        $sessionAddressId = isset($this->context->cookie->two_company_address_id)
+            ? (int) $this->context->cookie->two_company_address_id
+            : 0;
+
+        if ($sessionAddressId > 0 && $selectedAddressId > 0 && $sessionAddressId !== $selectedAddressId) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Ignoring session company due to address switch in order intent. Session address=' .
+                $sessionAddressId . ', selected address=' . $selectedAddressId,
+                2
+            );
+            $sessionCompany = '';
+            $sessionCompanyId = '';
+        }
         
         if (!empty($sessionCompany) && !empty($sessionCompanyId)) {
             PrestaShopLogger::addLog('TwoPayment: Company data retrieved from PrestaShop session (complete)', 1);
@@ -496,71 +529,69 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         
         // Priority 3: Customer's address with ORG NUMBER VERIFICATION via Two API
         // This is the KEY FIX - we look for org numbers in address fields and verify them
-        if ($this->context->customer->isLogged()) {
-            $address = new Address($this->context->cart->id_address_invoice);
-            if (Validate::isLoadedObject($address)) {
-                $countryIso = Country::getIsoById($address->id_country);
+        $address = new Address($selectedAddressId);
+        if (Validate::isLoadedObject($address)) {
+            $countryIso = Country::getIsoById($address->id_country);
+            
+            if ($countryIso && is_string($countryIso)) {
+                // STEP 1: Try to extract organization number from address fields
+                // This checks dni, vat_number, companyid fields
+                $existingOrgNumber = $this->module->extractOrgNumberFromAddress($address, $countryIso);
                 
-                if ($countryIso && is_string($countryIso)) {
-                    // STEP 1: Try to extract organization number from address fields
-                    // This checks dni, vat_number, companyid fields
-                    $existingOrgNumber = $this->module->extractOrgNumberFromAddress($address, $countryIso);
+                if (!empty($existingOrgNumber)) {
+                    // STEP 2: Verify the org number via Two's API to get company name
+                    // This gives us an EXACT match - no vagueness like name-based search
+                    PrestaShopLogger::addLog(
+                        'TwoPayment: Found org number in address (' . $existingOrgNumber . '), verifying via Two API',
+                        1
+                    );
                     
-                    if (!empty($existingOrgNumber)) {
-                        // STEP 2: Verify the org number via Two's API to get company name
-                        // This gives us an EXACT match - no vagueness like name-based search
-                        PrestaShopLogger::addLog(
-                            'TwoPayment: Found org number in address (' . $existingOrgNumber . '), verifying via Two API',
-                            1
-                        );
-                        
-                        $verifiedCompany = $this->module->verifyCompanyByOrgNumber($existingOrgNumber, $countryIso);
-                        
-                        if ($verifiedCompany && !empty($verifiedCompany['organization_number'])) {
-                            // SUCCESS! We have verified company data from existing address
-                            $resolvedCompany = $verifiedCompany['name'];
-                            $resolvedOrgNumber = $verifiedCompany['organization_number'];
-                            
-                            // Cache in session for future requests
-                            $this->context->cookie->two_company_name = $resolvedCompany;
-                            $this->context->cookie->two_company_id = $resolvedOrgNumber;
-                            $this->context->cookie->two_company_country = $countryIso;
-                            $this->context->cookie->setExpire(time() + Twopayment::COOKIE_EXPIRY_ONE_HOUR);
-                            
-                            PrestaShopLogger::addLog(
-                                'TwoPayment: ✓ Company VERIFIED from address org number - ' . 
-                                $existingOrgNumber . ' => ' . $resolvedCompany . ' (cached in session)',
-                                1
-                            );
-                            
-                            return [
-                                'company' => $resolvedCompany,
-                                'companyid' => $resolvedOrgNumber
-                            ];
-                        } else {
-                            // Org number couldn't be verified - might be invalid or Two API issue
-                            PrestaShopLogger::addLog(
-                                'TwoPayment: Org number from address could not be verified: ' . $existingOrgNumber . 
-                                ' in ' . $countryIso . ' - user will need to search manually',
-                                2
-                            );
-                        }
-                    }
+                    $verifiedCompany = $this->module->verifyCompanyByOrgNumber($existingOrgNumber, $countryIso);
                     
-                    // FALLBACK: Address has company name but no verifiable org number
-                    // User will need to use company search to select their company
-                    if (!empty($address->company)) {
+                    if ($verifiedCompany && !empty($verifiedCompany['organization_number'])) {
+                        // SUCCESS! We have verified company data from existing address
+                        $resolvedCompany = $verifiedCompany['name'];
+                        $resolvedOrgNumber = $verifiedCompany['organization_number'];
+                        
+                        // Cache in session for future requests
+                        $this->context->cookie->two_company_name = $resolvedCompany;
+                        $this->context->cookie->two_company_id = $resolvedOrgNumber;
+                        $this->context->cookie->two_company_country = $countryIso;
+                        $this->context->cookie->setExpire(time() + Twopayment::COOKIE_EXPIRY_ONE_HOUR);
+                        
                         PrestaShopLogger::addLog(
-                            'TwoPayment: Address has company name but no org number found in fields - ' .
-                            'company: "' . $address->company . '" in ' . $countryIso,
+                            'TwoPayment: ✓ Company VERIFIED from address org number - ' . 
+                            $existingOrgNumber . ' => ' . $resolvedCompany . ' (cached in session)',
                             1
                         );
                         
                         return [
-                            'company' => trim($address->company),
-                            'companyid' => '' // User needs to search and select
+                            'company' => $resolvedCompany,
+                            'companyid' => $resolvedOrgNumber
                         ];
+                    } else {
+                        // Org number couldn't be verified - might be invalid or Two API issue
+                        PrestaShopLogger::addLog(
+                            'TwoPayment: Org number from address could not be verified: ' . $existingOrgNumber . 
+                            ' in ' . $countryIso . ' - user will need to search manually',
+                            2
+                        );
                     }
+                }
+                
+                // FALLBACK: Address has company name but no verifiable org number
+                // User will need to use company search to select their company
+                if (!empty($address->company)) {
+                    PrestaShopLogger::addLog(
+                        'TwoPayment: Address has company name but no org number found in fields - ' .
+                        'company: "' . $address->company . '" in ' . $countryIso,
+                        1
+                    );
+                    
+                    return [
+                        'company' => trim($address->company),
+                        'companyid' => '' // User needs to search and select
+                    ];
                 }
             }
         }
@@ -597,14 +628,22 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             $this->context->cookie->two_company_name = $companyData['company'];
             $this->context->cookie->two_company_id = $companyData['companyid'] ?? '';
 
-            $invoiceAddressId = (int)$this->context->cart->id_address_invoice;
-            if ($invoiceAddressId > 0) {
-                $invoiceAddress = new Address($invoiceAddressId);
-                if (Validate::isLoadedObject($invoiceAddress)) {
-                    $countryIso = Country::getIsoById($invoiceAddress->id_country);
+            $addressId = (int) Tools::getValue('id_address_delivery');
+            if ($addressId <= 0) {
+                $addressId = (int) $this->context->cart->id_address_delivery;
+            }
+            if ($addressId <= 0) {
+                $addressId = (int) $this->context->cart->id_address_invoice;
+            }
+
+            if ($addressId > 0) {
+                $selectedAddress = new Address($addressId);
+                if (Validate::isLoadedObject($selectedAddress)) {
+                    $countryIso = Country::getIsoById($selectedAddress->id_country);
                     if ($countryIso && is_string($countryIso)) {
                         $this->context->cookie->two_company_country = strtoupper($countryIso);
                     }
+                    $this->context->cookie->two_company_address_id = (string) $addressId;
                 }
             }
             

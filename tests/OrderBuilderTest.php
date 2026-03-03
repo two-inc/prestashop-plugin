@@ -355,6 +355,31 @@ final class OrderBuilderTest extends TestCase
         self::assertSame('GB', $data['country_iso']);
     }
 
+    public function testGetTwoCheckoutCompanyDataPrefersCurrentAddressOrgNumberOverSessionCompany(): void
+    {
+        $module = new TwopaymentTestHarness();
+
+        $module->context->cookie->two_company_name = 'CHEESE AND BEES LTD';
+        $module->context->cookie->two_company_id = 'SC806781';
+        $module->context->cookie->two_company_country = 'GB';
+        $module->context->cookie->two_company_address_id = '28';
+
+        StubStore::$countries[34] = 'ES';
+        StubStore::$addresses[29] = [
+            'id_country' => 34,
+            'company' => 'Queso y Abejas S.L.',
+            'vat_number' => 'ESB12345678',
+            'loaded' => true,
+        ];
+
+        $address = new Address(29);
+        $data = $module->getTwoCheckoutCompanyData($address);
+
+        self::assertSame('Queso y Abejas S.L.', $data['company_name']);
+        self::assertSame('B12345678', $data['organization_number']);
+        self::assertSame('ES', $data['country_iso']);
+    }
+
     public function testGetTwoCheckoutCompanyDataUsesValidatedCookieFallback(): void
     {
         $module = new TwopaymentTestHarness();
@@ -400,6 +425,28 @@ final class OrderBuilderTest extends TestCase
         self::assertFalse(isset($module->context->cookie->two_company_country));
     }
 
+    public function testGetTwoCheckoutCompanyDataIgnoresStaleCookieWhenAddressCompanyChangesSameCountry(): void
+    {
+        $module = new TwopaymentTestHarness();
+        $module->context->cookie->two_company_name = 'Acme ES S.L.';
+        $module->context->cookie->two_company_id = 'B12345678';
+        $module->context->cookie->two_company_country = 'ES';
+        $module->context->cookie->two_company_address_id = '999';
+
+        StubStore::$addresses[804] = [
+            'id_country' => 34,
+            'company' => 'Beta Industrial S.L.',
+            'loaded' => true,
+        ];
+
+        $address = new Address(804);
+        $data = $module->getTwoCheckoutCompanyData($address);
+
+        self::assertSame('Beta Industrial S.L.', $data['company_name']);
+        self::assertSame('', $data['organization_number']);
+        self::assertSame('ES', $data['country_iso']);
+    }
+
     public function testSaveGeneralFormDoesNotChangeSslVerificationFlag(): void
     {
         $module = new class extends TwopaymentTestHarness {
@@ -437,6 +484,23 @@ final class OrderBuilderTest extends TestCase
         $module->saveOtherForTest();
 
         self::assertSame(1, (int) Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
+    }
+
+    public function testOtherSettingsFormDoesNotExposeOrderIntentToggle(): void
+    {
+        $module = new class extends TwopaymentTestHarness {
+            public function getOtherFormForTest(): array
+            {
+                return $this->getTwoOtherForm();
+            }
+        };
+
+        $form = $module->getOtherFormForTest();
+        $inputNames = array_map(function ($field) {
+            return isset($field['name']) ? (string) $field['name'] : '';
+        }, $form['form']['input']);
+
+        self::assertNotContains('PS_TWO_ENABLE_ORDER_INTENT', $inputNames);
     }
 
     public function testHookActionAdminControllerSetMediaRegistersCssOnModuleConfigPage(): void
@@ -981,5 +1045,41 @@ final class OrderBuilderTest extends TestCase
 
         self::assertCount(1, $items);
         self::assertSame([], $items[0]['details']['barcodes']);
+    }
+
+    public function testExtractOrgNumberFromAddressKeepsNonCountryPrefixVatNumber(): void
+    {
+        $module = new TwopaymentTestHarness();
+
+        StubStore::$countries[826] = 'GB';
+        StubStore::$addresses[812] = [
+            'id_country' => 826,
+            'company' => 'Cheese Box Ltd',
+            'vat_number' => 'SC806781',
+            'loaded' => true,
+        ];
+
+        $address = new Address(812);
+        $orgNumber = $module->extractOrgNumberFromAddress($address, 'GB');
+
+        self::assertSame('SC806781', $orgNumber);
+    }
+
+    public function testExtractOrgNumberFromAddressStripsMatchingCountryPrefixVatNumber(): void
+    {
+        $module = new TwopaymentTestHarness();
+
+        StubStore::$countries[826] = 'GB';
+        StubStore::$addresses[813] = [
+            'id_country' => 826,
+            'company' => 'Cheese Box Ltd',
+            'vat_number' => 'GB123456789',
+            'loaded' => true,
+        ];
+
+        $address = new Address(813);
+        $orgNumber = $module->extractOrgNumberFromAddress($address, 'GB');
+
+        self::assertSame('123456789', $orgNumber);
     }
 }
