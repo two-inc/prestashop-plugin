@@ -150,6 +150,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_USE_OWN_INVOICES', 0); // Disabled by default - must be enabled after coordinating with Two
         Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', 'STANDARD'); // Default: Standard payment terms (not EOM)
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1); // Default: 30 days enabled
+        Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1); // Enabled by default; can be disabled for compatibility
         // Custom Two order states will be created by createTwoOrderState()
         // Set sensible default mappings to standard PrestaShop states
         // Processing states default to their Two-branded states out-of-the-box
@@ -358,6 +359,7 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_ID');
         Configuration::deleteByName('PS_TWO_ENABLE_DEPARTMENT');
         Configuration::deleteByName('PS_TWO_ENABLE_PROJECT');
+        Configuration::deleteByName('PS_TWO_ENABLE_TAX_SUBTOTALS');
         Configuration::deleteByName('PS_TWO_FINALIZE_PURCHASE');
         Configuration::deleteByName('PS_TWO_USE_ACCOUNT_TYPE');
         Configuration::deleteByName('PS_TWO_DEBUG_MODE');
@@ -875,6 +877,26 @@ class Twopayment extends PaymentModule
                     ),
                     array(
                         'type' => 'switch',
+                        'label' => $this->l('Send tax subtotals in request payloads'),
+                        'name' => 'PS_TWO_ENABLE_TAX_SUBTOTALS',
+                        'is_bool' => true,
+                        'desc' => $this->l('If you choose YES, tax_subtotals will be sent in /v1/order and /v1/order_intent payloads. If you choose NO, tax_subtotals will be omitted from those payloads.'),
+                        'required' => true,
+                        'values' => array(
+                            array(
+                                'id' => 'PS_TWO_ENABLE_TAX_SUBTOTALS_ON',
+                                'value' => 1,
+                                'label' => $this->l('Yes')
+                            ),
+                            array(
+                                'id' => 'PS_TWO_ENABLE_TAX_SUBTOTALS_OFF',
+                                'value' => 0,
+                                'label' => $this->l('No')
+                            ),
+                        ),
+                    ),
+                    array(
+                        'type' => 'switch',
                         'label' => $this->l('Disable SSL Verification (Corporate Networks Only)'),
                         'name' => 'PS_TWO_DISABLE_SSL_VERIFY',
                         'is_bool' => true,
@@ -933,6 +955,7 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_FINALIZE_PURCHASE'] = Tools::getValue('PS_TWO_FINALIZE_PURCHASE', Configuration::get('PS_TWO_FINALIZE_PURCHASE'));
         $fields_values['PS_TWO_USE_OWN_INVOICES'] = Tools::getValue('PS_TWO_USE_OWN_INVOICES', Configuration::get('PS_TWO_USE_OWN_INVOICES'));
         $fields_values['PS_TWO_ENABLE_B2B_B2C'] = Tools::getValue('PS_TWO_ENABLE_B2B_B2C', Configuration::get('PS_TWO_ENABLE_B2B_B2C'));
+        $fields_values['PS_TWO_ENABLE_TAX_SUBTOTALS'] = Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
         $fields_values['PS_TWO_DEBUG_MODE'] = Tools::getValue('PS_TWO_DEBUG_MODE', Configuration::get('PS_TWO_DEBUG_MODE'));
         return $fields_values;
@@ -953,6 +976,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', Tools::getValue('PS_TWO_FINALIZE_PURCHASE'));
         Configuration::updateValue('PS_TWO_USE_OWN_INVOICES', Tools::getValue('PS_TWO_USE_OWN_INVOICES'));
         Configuration::updateValue('PS_TWO_ENABLE_B2B_B2C', Tools::getValue('PS_TWO_ENABLE_B2B_B2C'));
+        Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', (int) Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
         Configuration::updateValue('PS_TWO_DEBUG_MODE', Tools::getValue('PS_TWO_DEBUG_MODE'));
 
@@ -2062,7 +2086,6 @@ class Twopayment extends PaymentModule
             'net_amount' => (string)($this->getTwoRoundAmount($final_net)),
             'tax_amount' => (string)($this->getTwoRoundAmount($final_tax)),
             'discount_amount' => (string)($this->getTwoRoundAmount($final_discount)),
-            'tax_subtotals' => $tax_subtotals,
             'buyer' => [
                 'company' => [
                     'company_name' => $companyData['company_name'],
@@ -2082,6 +2105,10 @@ class Twopayment extends PaymentModule
             'invoice_type' => 'FUNDED_INVOICE', // Default product type
             'line_items' => $line_items,
         ];
+
+        if ($this->shouldIncludeTaxSubtotals()) {
+            $request_data['tax_subtotals'] = $tax_subtotals;
+        }
 
         return $request_data;
     }
@@ -2137,7 +2164,6 @@ class Twopayment extends PaymentModule
         $final_net = $totals['net'];
         $final_tax = $totals['tax'];
         $final_gross = $totals['gross'];
-        $final_tax_rate = $this->calculateTwoOrderTaxRate($final_net, $final_tax);
         
         // Get discount amount from PrestaShop
         $final_discount = abs((float)$cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS));
@@ -2168,8 +2194,6 @@ class Twopayment extends PaymentModule
             'discount_rate' => '0',
             'invoice_type' => 'FUNDED_INVOICE', // Default product type
             'tax_amount' => (string)($this->getTwoRoundAmount($final_tax)),
-            'tax_rate' => $this->formatTwoTaxRate($final_tax_rate),
-            'tax_subtotals' => $tax_subtotals,
             'buyer' => [
                 'company' => [
                     'company_name' => $buyerCompanyName,
@@ -2202,6 +2226,10 @@ class Twopayment extends PaymentModule
             'line_items' => $line_items,
             'terms' => $this->buildTermsPayload(),
         ];
+
+        if ($this->shouldIncludeTaxSubtotals()) {
+            $request_data['tax_subtotals'] = $tax_subtotals;
+        }
 
         PrestaShopLogger::addLog('TwoPayment: Order creation with terms - ' . json_encode($request_data['terms']), 1);
         
@@ -2259,7 +2287,6 @@ class Twopayment extends PaymentModule
         $final_net = $totals['net'];
         $final_tax = $totals['tax'];
         $final_gross = $totals['gross'];
-        $final_tax_rate = $this->calculateTwoOrderTaxRate($final_net, $final_tax);
         
         // Get discount amount from PrestaShop
         $final_discount = abs((float)$cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS));
@@ -2278,8 +2305,6 @@ class Twopayment extends PaymentModule
             'discount_rate' => '0',
             'invoice_type' => 'FUNDED_INVOICE', // Default product type
             'tax_amount' => (string)($this->getTwoRoundAmount($final_tax)),
-            'tax_rate' => $this->formatTwoTaxRate($final_tax_rate),
-            'tax_subtotals' => $tax_subtotals,
             'buyer' => [
                 'company' => [
                     'company_name' => $buyerCompanyName,
@@ -2310,6 +2335,10 @@ class Twopayment extends PaymentModule
             'order_note' => '',
             'line_items' => $line_items,
         ];
+
+        if ($this->shouldIncludeTaxSubtotals()) {
+            $request_data['tax_subtotals'] = $tax_subtotals;
+        }
 
         return $request_data;
     }
@@ -2772,6 +2801,16 @@ class Twopayment extends PaymentModule
             'tax' => $tax,
             'gross' => $net + $tax
         ];
+    }
+
+    /**
+     * Determine whether tax subtotals should be sent in outbound payloads.
+     *
+     * @return bool
+     */
+    private function shouldIncludeTaxSubtotals()
+    {
+        return (bool)Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS', 1);
     }
 
     /**

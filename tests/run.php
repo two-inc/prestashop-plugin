@@ -63,7 +63,9 @@ final class OrderBuilderSpec
         self::testValidateTwoLineItemsRejectsBrokenTaxFormula();
         self::testGetTwoTaxSubtotalsKeepsDecimalTaxRatePrecision();
         self::testGetTwoProductItemsUsesAppliedTaxRateWhenConfiguredRateDiffers();
-        self::testGetTwoNewOrderDataComputesOrderTaxRateFromTotals();
+        self::testGetTwoNewOrderDataOmitsTopLevelTaxRate();
+        self::testGetTwoNewOrderDataOmitsTaxSubtotalsWhenDisabled();
+        self::testGetTwoIntentOrderDataOmitsTopLevelTaxRateAndOmitsTaxSubtotalsWhenDisabled();
         self::testGetTwoNewOrderDataThrowsWhenLineItemsFailFormulaValidation();
         self::testSnapshotHashChangesWhenTaxRateChangesBeyondTwoDecimals();
         self::testIsTwoAttemptCallbackAuthorizedWithMatchingKey();
@@ -181,7 +183,7 @@ final class OrderBuilderSpec
         TinyAssert::same('120.50', $items[0]['gross_amount']);
     }
 
-    private static function testGetTwoNewOrderDataComputesOrderTaxRateFromTotals(): void
+    private static function testGetTwoNewOrderDataOmitsTopLevelTaxRate(): void
     {
         self::reset();
 
@@ -276,10 +278,187 @@ final class OrderBuilderSpec
             'merchant_shipping_document_url' => '',
         ]);
 
-        TinyAssert::same('0.205', $payload['tax_rate']);
+        TinyAssert::false(isset($payload['tax_rate']));
+        TinyAssert::true(isset($payload['tax_subtotals']));
         TinyAssert::same('100.00', $payload['net_amount']);
         TinyAssert::same('20.50', $payload['tax_amount']);
         TinyAssert::same('120.50', $payload['gross_amount']);
+    }
+
+    private static function testGetTwoNewOrderDataOmitsTaxSubtotalsWhenDisabled(): void
+    {
+        self::reset();
+        StubStore::$configuration['PS_TWO_ENABLE_TAX_SUBTOTALS'] = 0;
+
+        $lineItems = [[
+            'name' => 'Widget',
+            'description' => 'Test',
+            'gross_amount' => '120.50',
+            'net_amount' => '100.00',
+            'discount_amount' => '0.00',
+            'tax_amount' => '20.50',
+            'tax_class_name' => 'VAT 20.50%',
+            'tax_rate' => '0.205',
+            'unit_price' => '100.00',
+            'quantity' => 1,
+            'quantity_unit' => 'pcs',
+            'image_url' => '',
+            'product_page_url' => '',
+            'type' => 'PHYSICAL',
+            'details' => ['brand' => 'Brand', 'barcodes' => [], 'categories' => []],
+        ]];
+
+        $module = new class($lineItems) extends TwopaymentTestHarness {
+            private array $forcedLineItems;
+
+            public function __construct(array $forcedLineItems)
+            {
+                parent::__construct();
+                $this->forcedLineItems = $forcedLineItems;
+            }
+
+            public function getTwoProductItems($cart)
+            {
+                return $this->forcedLineItems;
+            }
+
+            public function buildTermsPayload()
+            {
+                return ['type' => 'NET_TERMS', 'duration_days' => 30];
+            }
+        };
+
+        StubStore::$customers[401] = [
+            'email' => 'buyer@example.com',
+            'firstname' => 'Juan',
+            'lastname' => 'Gonzalez',
+            'secure_key' => 'secure-key',
+            'loaded' => true,
+        ];
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$addresses[601] = [
+            'id_country' => 34,
+            'company' => 'Acme S.L.',
+            'companyid' => 'B12345678',
+            'address1' => 'Calle Mayor 1',
+            'city' => 'Madrid',
+            'postcode' => '28001',
+            'phone' => '+34910000000',
+            'loaded' => true,
+        ];
+        StubStore::$addresses[602] = StubStore::$addresses[601];
+
+        $cart = new Cart(155);
+        $cart->id_customer = 401;
+        $cart->id_currency = 978;
+        $cart->id_address_invoice = 601;
+        $cart->id_address_delivery = 602;
+        $cart->id_carrier = 0;
+        $cart->id_lang = 1;
+
+        StubStore::$cartProducts[155] = [['id_product' => 601, 'cart_quantity' => 1]];
+        StubStore::$cartTotals[155] = [
+            true => [Cart::ONLY_DISCOUNTS => 0.0],
+            false => [Cart::ONLY_DISCOUNTS => 0.0],
+            'average_products_tax_rate' => 21.0,
+        ];
+
+        $payload = $module->getTwoNewOrderData('merchant-attempt-155', $cart, [
+            'merchant_confirmation_url' => 'https://shop.local/confirm',
+            'merchant_cancel_order_url' => 'https://shop.local/cancel',
+            'merchant_edit_order_url' => '',
+            'merchant_order_verification_failed_url' => '',
+            'merchant_invoice_url' => '',
+            'merchant_shipping_document_url' => '',
+        ]);
+
+        TinyAssert::false(isset($payload['tax_subtotals']));
+        TinyAssert::false(isset($payload['tax_rate']));
+    }
+
+    private static function testGetTwoIntentOrderDataOmitsTopLevelTaxRateAndOmitsTaxSubtotalsWhenDisabled(): void
+    {
+        self::reset();
+
+        $lineItems = [[
+            'name' => 'Widget',
+            'description' => 'Test',
+            'gross_amount' => '120.50',
+            'net_amount' => '100.00',
+            'discount_amount' => '0.00',
+            'tax_amount' => '20.50',
+            'tax_class_name' => 'VAT 20.50%',
+            'tax_rate' => '0.205',
+            'unit_price' => '100.00',
+            'quantity' => 1,
+            'quantity_unit' => 'pcs',
+            'image_url' => '',
+            'product_page_url' => '',
+            'type' => 'PHYSICAL',
+            'details' => ['brand' => 'Brand', 'barcodes' => [], 'categories' => []],
+        ]];
+
+        $module = new class($lineItems) extends TwopaymentTestHarness {
+            private array $forcedLineItems;
+
+            public function __construct(array $forcedLineItems)
+            {
+                parent::__construct();
+                $this->forcedLineItems = $forcedLineItems;
+            }
+
+            public function getTwoProductItems($cart)
+            {
+                return $this->forcedLineItems;
+            }
+        };
+
+        StubStore::$customers[402] = [
+            'email' => 'buyer@example.com',
+            'firstname' => 'Ana',
+            'lastname' => 'Lopez',
+            'secure_key' => 'secure-key-intent',
+            'loaded' => true,
+        ];
+        StubStore::$currencies[840] = ['iso_code' => 'USD', 'loaded' => true];
+        StubStore::$addresses[603] = [
+            'id_country' => 34,
+            'company' => 'Acme S.L.',
+            'companyid' => 'B12345678',
+            'address1' => 'Calle Mayor 1',
+            'city' => 'Madrid',
+            'postcode' => '28001',
+            'phone' => '+34910000000',
+            'loaded' => true,
+        ];
+
+        $cart = new Cart(156);
+        $cart->id_customer = 402;
+        $cart->id_currency = 840;
+        $cart->id_address_invoice = 603;
+        $cart->id_address_delivery = 603;
+        $cart->id_carrier = 0;
+        $cart->id_lang = 1;
+
+        StubStore::$cartProducts[156] = [['id_product' => 602, 'cart_quantity' => 1]];
+        StubStore::$cartTotals[156] = [
+            true => [Cart::ONLY_DISCOUNTS => 0.0],
+            false => [Cart::ONLY_DISCOUNTS => 0.0],
+            'average_products_tax_rate' => 21.0,
+        ];
+
+        $customer = new Customer(402);
+        $currency = new Currency(840);
+        $address = new Address(603);
+
+        $payloadWithSubtotals = $module->getTwoIntentOrderData($cart, $customer, $currency, $address);
+        TinyAssert::false(isset($payloadWithSubtotals['tax_rate']));
+        TinyAssert::true(isset($payloadWithSubtotals['tax_subtotals']));
+
+        StubStore::$configuration['PS_TWO_ENABLE_TAX_SUBTOTALS'] = 0;
+        $payloadWithoutSubtotals = $module->getTwoIntentOrderData($cart, $customer, $currency, $address);
+        TinyAssert::false(isset($payloadWithoutSubtotals['tax_rate']));
+        TinyAssert::false(isset($payloadWithoutSubtotals['tax_subtotals']));
     }
 
     private static function testGetTwoNewOrderDataThrowsWhenLineItemsFailFormulaValidation(): void
@@ -595,11 +774,14 @@ final class OrderBuilderSpec
         };
 
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', 0);
+        Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1);
         Tools::setTestValue('PS_TWO_DISABLE_SSL_VERIFY', 1);
+        Tools::setTestValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 0);
 
         $module->saveOtherForTest();
 
         TinyAssert::same(1, (int) Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
+        TinyAssert::same(0, (int) Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS'));
     }
 
     private static function testOtherSettingsFormDoesNotExposeOrderIntentToggle(): void
@@ -618,6 +800,7 @@ final class OrderBuilderSpec
         }, $form['form']['input']);
 
         TinyAssert::false(in_array('PS_TWO_ENABLE_ORDER_INTENT', $inputNames, true));
+        TinyAssert::true(in_array('PS_TWO_ENABLE_TAX_SUBTOTALS', $inputNames, true));
     }
 
     private static function testHookActionAdminControllerSetMediaRegistersCssOnModuleConfigPage(): void

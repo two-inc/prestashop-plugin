@@ -49,7 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tax Payload Accuracy Hardening**:
   - Tax rates are now serialized with dedicated high precision (no money-format truncation)
   - Product tax rate selection now prioritizes applied PrestaShop amounts when configured and applied rates diverge
-  - Order-level `tax_rate` is derived from final net/tax totals
+  - Top-level `tax_rate` is omitted from `/v1/order` and `/v1/order_intent` request payloads
+  - `tax_subtotals` is optional and omitted entirely when `PS_TWO_ENABLE_TAX_SUBTOTALS` is disabled
+  - Added back-office setting `PS_TWO_ENABLE_TAX_SUBTOTALS` in "Other Settings" to control whether `tax_subtotals` is sent
 - **Provider Error Handling Hardening**:
   - `getTwoErrorMessage()` now treats HTTP `>= 400` as an error even when provider body is empty/non-JSON
   - Nested `data.error_message`/`data.message` responses are now parsed consistently

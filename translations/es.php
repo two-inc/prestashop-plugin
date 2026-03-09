@@ -69,6 +69,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_e81c4e4f2b7b93b481e13a8553c2ae1b'] 
 $_MODULE['<{twopayment}prestashop>twopayment_85827e9f33a1e80cb81988a448cf9362'] = 'Añade este código a tu plantilla de factura:';
 $_MODULE['<{twopayment}prestashop>twopayment_fca5999dcb67db13c8f61dcb5416812c'] = 'Two te proporcionará los datos bancarios y el formato de referencia de pago específicos que debes incluir.';
 $_MODULE['<{twopayment}prestashop>twopayment_48c9eb2ed2048d4f5e0b67fba92dc385'] = 'Importante: contacta con soporte de Two antes de activar esta función.';
+$_MODULE['<{twopayment}prestashop>twopayment_9af4c01d9a1ebe24c5ae45e7b07024c3'] = 'Enviar subtotales de impuestos en las cargas útiles de solicitud';
+$_MODULE['<{twopayment}prestashop>twopayment_d2a7c39c5ec025981855847fed006923'] = 'Si seleccionas SÍ, tax_subtotals se enviará en las cargas útiles de /v1/order y /v1/order_intent. Si seleccionas NO, tax_subtotals se omitirá en esas cargas útiles.';
 $_MODULE['<{twopayment}prestashop>twopayment_a56829d4783f7416b716c4e547ceb828'] = 'Preaprobar al comprador durante el proceso de compra y desactivar Two si la solicitud es rechazada';
 $_MODULE['<{twopayment}prestashop>twopayment_d68e0d956cafd369eecf08a556ba13b7'] = 'Si seleccionas SÍ, el comprador será preaprobado durante el proceso de compra y Two se desactivará si la solicitud es rechazada.';
 $_MODULE['<{twopayment}prestashop>twopayment_21b310fbc2bfba901b28b7b9c6591b56'] = 'Desactivar la verificación SSL (Solo para redes corporativas)';
