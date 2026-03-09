@@ -91,6 +91,16 @@ namespace {
     class Module
     {
         public int $id = 1;
+
+        public static function isInstalled($name): bool
+        {
+            return (string) $name === 'twopayment';
+        }
+
+        public static function isEnabled($name): bool
+        {
+            return (string) $name === 'twopayment';
+        }
     }
 
     class PaymentModule extends Module
@@ -412,6 +422,14 @@ namespace {
 
     class Address
     {
+        public static array $definition = [
+            'fields' => [
+                'account_type' => ['validate' => 'isGenericName', 'size' => 32],
+                'department' => ['validate' => 'isGenericName', 'size' => 255],
+                'project' => ['validate' => 'isGenericName', 'size' => 255],
+            ],
+        ];
+
         public bool $loaded = false;
         public int $id = 0;
         public int $id_country = 0;
@@ -440,6 +458,84 @@ namespace {
                 $this->id = $id;
                 $this->loaded = true;
             }
+        }
+    }
+
+    class FormField
+    {
+        private string $name = '';
+        private string $type = 'text';
+        private string $label = '';
+        private bool $required = false;
+        private array $availableValues = [];
+        private array $constraints = [];
+        private ?int $maxLength = null;
+
+        public function setName($name): self
+        {
+            $this->name = (string) $name;
+            return $this;
+        }
+
+        public function getName(): string
+        {
+            return $this->name;
+        }
+
+        public function setType($type): self
+        {
+            $this->type = (string) $type;
+            return $this;
+        }
+
+        public function getType(): string
+        {
+            return $this->type;
+        }
+
+        public function setLabel($label): self
+        {
+            $this->label = (string) $label;
+            return $this;
+        }
+
+        public function getLabel(): string
+        {
+            return $this->label;
+        }
+
+        public function setRequired($required): self
+        {
+            $this->required = (bool) $required;
+            return $this;
+        }
+
+        public function isRequired(): bool
+        {
+            return $this->required;
+        }
+
+        public function addAvailableValue($key, $value): self
+        {
+            $this->availableValues[(string) $key] = $value;
+            return $this;
+        }
+
+        public function getAvailableValue($key)
+        {
+            return $this->availableValues[(string) $key] ?? null;
+        }
+
+        public function addConstraint($constraint): self
+        {
+            $this->constraints[] = $constraint;
+            return $this;
+        }
+
+        public function setMaxLength($maxLength): self
+        {
+            $this->maxLength = (int) $maxLength;
+            return $this;
         }
     }
 

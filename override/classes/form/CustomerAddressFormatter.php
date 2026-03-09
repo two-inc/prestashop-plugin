@@ -15,6 +15,7 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
 
     public function __construct(Country $country, $translator, array $availableCountries)
     {
+        parent::__construct($country, $translator, $availableCountries);
         $this->country = $country;
         $this->translator = $translator;
         $this->availableCountries = $availableCountries;
@@ -39,6 +40,8 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
         if (!is_array($format) || !Module::isInstalled('twopayment') || !Module::isEnabled('twopayment')) {
             return $format;
         }
+
+        $format = $this->moveFieldBefore($format, 'id_country', 'company');
 
         $useAccountType = (int) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE') === 1;
 
@@ -104,6 +107,33 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
 
         if (!$inserted) {
             $result[$newKey] = $field;
+        }
+
+        return $result;
+    }
+
+    private function moveFieldBefore(array $format, $fieldKey, $beforeKey)
+    {
+        if (!array_key_exists($fieldKey, $format) || !array_key_exists($beforeKey, $format) || $fieldKey === $beforeKey) {
+            return $format;
+        }
+
+        $keys = array_keys($format);
+        $fieldIndex = array_search($fieldKey, $keys, true);
+        $beforeIndex = array_search($beforeKey, $keys, true);
+        if ($fieldIndex === false || $beforeIndex === false || $fieldIndex < $beforeIndex) {
+            return $format;
+        }
+
+        $field = $format[$fieldKey];
+        unset($format[$fieldKey]);
+
+        $result = array();
+        foreach ($format as $key => $value) {
+            if ($key === $beforeKey) {
+                $result[$fieldKey] = $field;
+            }
+            $result[$key] = $value;
         }
 
         return $result;

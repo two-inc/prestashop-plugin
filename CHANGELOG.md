@@ -18,8 +18,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Upgrade:** Includes database migration creating/updating `twopayment_attempt`.
 
----
-
 ## [2.4.0] - 2026-02-25
 
 ### Added
@@ -85,6 +83,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Address Selector Accuracy**:
   - Order-intent and company-cookie flows now read the selected (`:checked`) checkout address ID instead of the first address input in DOM
   - Order-intent server resolver now uses selected delivery/invoice address context consistently for country/company resolution
+
+### Fixed
+- **Checkout Address Formatter Stability**:
+  - Fixed `CustomerAddressFormatter` override constructor to call `parent::__construct(...)`
+  - Prevents `Call to a member function trans() on null` fatals on `/order` during checkout address step rendering
+  - Preserves Two-specific field adjustments while keeping core formatter translator initialization intact
+- **Checkout Address Field Order**:
+  - Restored country selector positioning immediately before company field in checkout addresses
+  - Keeps core field metadata/validation intact by reordering existing formatter output instead of rebuilding fields
 
 ### Technical
 - Added upgrade script `upgrade-2.4.0.php`

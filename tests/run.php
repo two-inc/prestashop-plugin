@@ -1224,8 +1224,11 @@ final class OrderBuilderSpec
     }
 }
 
+require __DIR__ . '/CustomerAddressFormatterOverrideSpec.php';
+
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
+    'CustomerAddressFormatterOverrideSpec::runAll' => [CustomerAddressFormatterOverrideSpec::class, 'runAll'],
 ];
 
 $failed = 0;
