@@ -292,6 +292,194 @@ final class OrderBuilderTest extends TestCase
         self::assertTrue($hasWrappingLine);
     }
 
+    public function testGetTwoNewOrderDataSnapsGiftWrappingRateToCanonicalContext(): void
+    {
+        $module = new TwopaymentTestHarness();
+
+        StubStore::$customers[7003] = [
+            'email' => 'buyer@example.com',
+            'firstname' => 'Lena',
+            'lastname' => 'Garcia',
+            'secure_key' => 'secure-key-7003',
+            'loaded' => true,
+        ];
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$countries[34] = 'ES';
+        StubStore::$addresses[7301] = [
+            'id_country' => 34,
+            'company' => 'Acme ES S.L.',
+            'companyid' => 'B12345678',
+            'address1' => 'Calle Mayor 1',
+            'city' => 'Madrid',
+            'postcode' => '28001',
+            'phone' => '+34910000000',
+            'loaded' => true,
+        ];
+        StubStore::$addresses[7302] = StubStore::$addresses[7301];
+
+        $cart = new Cart(7003);
+        $cart->id_customer = 7003;
+        $cart->id_currency = 978;
+        $cart->id_address_invoice = 7301;
+        $cart->id_address_delivery = 7302;
+        $cart->id_carrier = 0;
+        $cart->id_lang = 1;
+
+        StubStore::$cartProducts[7003] = [[
+            'id_product' => 9303,
+            'link_rewrite' => 'gift-product-canonical',
+            'name' => 'Gift Product Canonical',
+            'description_short' => 'Gift product test',
+            'manufacturer_name' => 'ACME',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 100.00,
+            'total_wt' => 121.00,
+            'cart_quantity' => 1,
+            'rate' => 21.0,
+            'price' => 100.00,
+            'reduction' => 0,
+        ]];
+        StubStore::$productCategories[9303] = [['name' => 'Gifts']];
+        StubStore::$images[9303] = ['id_image' => 9303];
+        StubStore::$cartTotals[7003] = [
+            true => [
+                Cart::ONLY_DISCOUNTS => 0.0,
+                Cart::BOTH => 123.99,
+                Cart::ONLY_WRAPPING => 2.99,
+            ],
+            false => [
+                Cart::ONLY_DISCOUNTS => 0.0,
+                Cart::BOTH => 102.47,
+                Cart::ONLY_WRAPPING => 2.47,
+            ],
+            'average_products_tax_rate' => 21.0,
+        ];
+
+        $payload = $module->getTwoNewOrderData('merchant-attempt-7003', $cart, [
+            'merchant_confirmation_url' => 'https://shop.local/confirm',
+            'merchant_cancel_order_url' => 'https://shop.local/cancel',
+            'merchant_edit_order_url' => '',
+            'merchant_order_verification_failed_url' => '',
+            'merchant_invoice_url' => '',
+            'merchant_shipping_document_url' => '',
+        ]);
+
+        $wrappingLine = null;
+        foreach ($payload['line_items'] as $lineItem) {
+            if ((string)($lineItem['name'] ?? '') === 'Gift wrapping') {
+                $wrappingLine = $lineItem;
+                break;
+            }
+        }
+
+        self::assertNotNull($wrappingLine, 'Expected gift wrapping line');
+        self::assertSame('2.99', (string)$wrappingLine['gross_amount']);
+        self::assertSame('2.47', (string)$wrappingLine['net_amount']);
+        self::assertSame('0.52', (string)$wrappingLine['tax_amount']);
+        self::assertSame('0.21', (string)$wrappingLine['tax_rate']);
+    }
+
+    public function testGetTwoProductItemsSnapsMinorRateDriftToKnownProductContexts(): void
+    {
+        $module = new TwopaymentTestHarness();
+
+        $cart = new Cart(12);
+        $cart->id_lang = 1;
+        $cart->id_carrier = 0;
+
+        StubStore::$cartProducts[12] = [
+            [
+                'id_product' => 8801,
+                'link_rewrite' => 'anchor-product',
+                'name' => 'Anchor Product',
+                'description_short' => 'Anchor',
+                'manufacturer_name' => 'ACME',
+                'ean13' => '',
+                'upc' => '',
+                'total' => 100.00,
+                'total_wt' => 121.00,
+                'cart_quantity' => 1,
+                'rate' => 21.0,
+                'price' => 100.00,
+                'reduction' => 0,
+            ],
+            [
+                'id_product' => 8802,
+                'link_rewrite' => 'drift-product',
+                'name' => 'Drift Product',
+                'description_short' => 'Drift',
+                'manufacturer_name' => 'ACME',
+                'ean13' => '',
+                'upc' => '',
+                'total' => 2.47,
+                'total_wt' => 2.99,
+                'cart_quantity' => 1,
+                // Intentionally missing rate field to simulate amount-derived drift.
+                'price' => 2.47,
+                'reduction' => 0,
+            ],
+        ];
+
+        StubStore::$productCategories[8801] = [['name' => 'General']];
+        StubStore::$productCategories[8802] = [['name' => 'General']];
+        StubStore::$images[8801] = ['id_image' => 8801];
+        StubStore::$images[8802] = ['id_image' => 8802];
+
+        $items = $module->getTwoProductItems($cart);
+
+        self::assertCount(2, $items);
+        self::assertSame('0.21', (string)$items[0]['tax_rate']);
+        self::assertSame('0.21', (string)$items[1]['tax_rate']);
+    }
+
+    public function testGetTwoProductItemsSpanishFallbackDefaultsToTwentyOnePercentWithoutKnownContext(): void
+    {
+        $module = new TwopaymentTestHarness();
+
+        StubStore::$countries[34] = 'ES';
+        StubStore::$addresses[7401] = [
+            'id_country' => 34,
+            'company' => 'Acme ES S.L.',
+            'companyid' => 'B12345678',
+            'address1' => 'Calle Mayor 1',
+            'city' => 'Madrid',
+            'postcode' => '28001',
+            'phone' => '+34910000000',
+            'loaded' => true,
+        ];
+        StubStore::$addresses[7402] = StubStore::$addresses[7401];
+
+        $cart = new Cart(14);
+        $cart->id_lang = 1;
+        $cart->id_carrier = 0;
+        $cart->id_address_invoice = 7401;
+        $cart->id_address_delivery = 7402;
+
+        StubStore::$cartProducts[14] = [[
+            'id_product' => 8811,
+            'link_rewrite' => 'es-fallback-product',
+            'name' => 'ES fallback product',
+            'description_short' => 'Fallback',
+            'manufacturer_name' => 'ACME',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 2.47,
+            'total_wt' => 2.99,
+            'cart_quantity' => 1,
+            // Intentionally no rate field to force amount-derived unresolved context.
+            'price' => 2.47,
+            'reduction' => 0,
+        ]];
+        StubStore::$productCategories[8811] = [['name' => 'General']];
+        StubStore::$images[8811] = ['id_image' => 8811];
+
+        $items = $module->getTwoProductItems($cart);
+
+        self::assertCount(1, $items);
+        self::assertSame('0.21', (string)$items[0]['tax_rate']);
+    }
+
     public function testGetTwoNewOrderDataOmitsTopLevelTaxRate(): void
     {
         $lineItems = [[
@@ -2369,5 +2557,325 @@ final class OrderBuilderTest extends TestCase
         self::assertSame('-560.74', number_format($aggregatedByRule['discount-rule']['net'], 2, '.', ''));
         self::assertSame('-58.00', number_format($aggregatedByRule['free shipping rule']['gross'], 2, '.', ''));
         self::assertSame('-673.99', number_format($aggregatedByRule['discount-rule']['gross'], 2, '.', ''));
+    }
+
+    public function testMerchantCase1BuildsExpectedOrderPayload(): void
+    {
+        $module = new TwopaymentTestHarness();
+
+        StubStore::$customers[6101] = [
+            'email' => 'buyer@example.com',
+            'firstname' => 'Cliente',
+            'lastname' => 'Uno',
+            'secure_key' => 'secure-key-6101',
+            'loaded' => true,
+        ];
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$countries[34] = 'ES';
+        StubStore::$addresses[7101] = [
+            'id_country' => 34,
+            'company' => 'SPAIN',
+            'companyid' => 'E20468708',
+            'address1' => 'Calle Mayor 1',
+            'city' => 'Madrid',
+            'postcode' => '28001',
+            'phone' => '666666668',
+            'loaded' => true,
+        ];
+        StubStore::$addresses[7102] = StubStore::$addresses[7101];
+        StubStore::$carriers[710] = [
+            'name' => 'My carrier',
+            'delay' => 'Delivery next day!',
+            'shipping_method' => Carrier::SHIPPING_METHOD_WEIGHT,
+            'tax_rules_group_id' => 7,
+        ];
+        StubStore::$taxRuleRates[7] = 21.0;
+
+        $cart = new Cart(6101);
+        $cart->id_customer = 6101;
+        $cart->id_currency = 978;
+        $cart->id_address_invoice = 7101;
+        $cart->id_address_delivery = 7102;
+        $cart->id_carrier = 710;
+        $cart->id_lang = 1;
+
+        StubStore::$cartProducts[6101] = [[
+            'id_product' => 9101,
+            'link_rewrite' => 'tv-lg-4k',
+            'name' => 'TV LG 4K UHD, SmartTV con IA, 164 cm (65")',
+            'description_short' => 'TV',
+            'manufacturer_name' => 'LG',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 1320.66,
+            'total_wt' => 1598.00,
+            'cart_quantity' => 2,
+            'rate' => 21.0,
+            'price' => 660.33,
+            'reduction' => 0,
+        ]];
+        StubStore::$productCategories[9101] = [['name' => 'TV']];
+        StubStore::$images[9101] = ['id_image' => 9101];
+        StubStore::$cartShipping[6101] = [
+            true => 58.00,
+            false => 47.93,
+        ];
+        StubStore::$cartTotals[6101] = [
+            true => [
+                Cart::ONLY_DISCOUNTS => 137.90,
+                Cart::BOTH => 1518.10,
+                Cart::ONLY_SHIPPING => 0.00,
+            ],
+            false => [
+                Cart::ONLY_DISCOUNTS => 113.96,
+                Cart::BOTH => 1254.63,
+                Cart::ONLY_SHIPPING => 0.00,
+            ],
+            'average_products_tax_rate' => 21.0,
+        ];
+        StubStore::$cartRules[6101] = [
+            [
+                'name' => 'Envío gratis',
+                'code' => 'free-shipping',
+                'value' => -58.00,
+                'value_real' => 58.00,
+                'value_tax_exc' => 47.93,
+                'free_shipping' => 1,
+            ],
+            [
+                'name' => 'Promo cruzada| 5%',
+                'code' => 'cross-promo',
+                'value' => -79.90,
+                'value_real' => 79.90,
+                'value_tax_exc' => 66.03,
+                'free_shipping' => 0,
+            ],
+        ];
+
+        $payload = $module->getTwoNewOrderData('merchant-case-1', $cart, [
+            'merchant_confirmation_url' => 'https://shop.local/confirm',
+            'merchant_cancel_order_url' => 'https://shop.local/cancel',
+            'merchant_edit_order_url' => '',
+            'merchant_order_verification_failed_url' => '',
+            'merchant_invoice_url' => '',
+            'merchant_shipping_document_url' => '',
+        ]);
+
+        self::assertSame('1518.10', (string)$payload['gross_amount']);
+        self::assertSame('1254.63', (string)$payload['net_amount']);
+        self::assertSame('263.47', (string)$payload['tax_amount']);
+
+        $shippingSeen = false;
+        $freeShippingDiscountSeen = false;
+        $promoDiscountSeen = false;
+        foreach ($payload['line_items'] as $line) {
+            if ((string)$line['type'] === 'SHIPPING_FEE') {
+                $shippingSeen = true;
+                self::assertSame('58.00', (string)$line['gross_amount']);
+            }
+            if ((string)$line['name'] === 'Envío gratis') {
+                $freeShippingDiscountSeen = true;
+                self::assertSame('-58.00', (string)$line['gross_amount']);
+            }
+            if ((string)$line['name'] === 'Promo cruzada| 5%') {
+                $promoDiscountSeen = true;
+                self::assertSame('-79.90', (string)$line['gross_amount']);
+            }
+        }
+        self::assertTrue($shippingSeen);
+        self::assertTrue($freeShippingDiscountSeen);
+        self::assertTrue($promoDiscountSeen);
+    }
+
+    public function testMerchantCase2BlocksOnInconsistentOrderTotals(): void
+    {
+        $module = new TwopaymentTestHarness();
+
+        StubStore::$customers[6102] = [
+            'email' => 'buyer@example.com',
+            'firstname' => 'Cliente',
+            'lastname' => 'Dos',
+            'secure_key' => 'secure-key-6102',
+            'loaded' => true,
+        ];
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$countries[34] = 'ES';
+        StubStore::$addresses[7201] = [
+            'id_country' => 34,
+            'company' => 'SPAIN',
+            'companyid' => 'E20468708',
+            'address1' => 'Calle Mayor 1',
+            'city' => 'Madrid',
+            'postcode' => '28001',
+            'phone' => '666666668',
+            'loaded' => true,
+        ];
+        StubStore::$addresses[7202] = StubStore::$addresses[7201];
+        StubStore::$carriers[720] = [
+            'name' => 'Carrier',
+            'delay' => '',
+            'shipping_method' => Carrier::SHIPPING_METHOD_PRICE,
+            'tax_rules_group_id' => 7,
+        ];
+        StubStore::$taxRuleRates[7] = 21.0;
+
+        $cart = new Cart(6102);
+        $cart->id_customer = 6102;
+        $cart->id_currency = 978;
+        $cart->id_address_invoice = 7201;
+        $cart->id_address_delivery = 7202;
+        $cart->id_carrier = 720;
+        $cart->id_lang = 1;
+
+        StubStore::$cartProducts[6102] = [[
+            'id_product' => 9201,
+            'link_rewrite' => 'lg-projector',
+            'name' => 'LG CineBeam LED Projector with SmartTV WebOS',
+            'description_short' => 'Projector',
+            'manufacturer_name' => 'LG',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 548.53,
+            'total_wt' => 663.72,
+            'cart_quantity' => 1,
+            'rate' => 21.0,
+            'price' => 548.53,
+            'reduction' => 0,
+        ]];
+        StubStore::$productCategories[9201] = [['name' => 'Projectors']];
+        StubStore::$images[9201] = ['id_image' => 9201];
+        StubStore::$cartShipping[6102] = [
+            true => 2.99,
+            false => 2.47,
+        ];
+        StubStore::$cartTotals[6102] = [
+            true => [
+                Cart::ONLY_DISCOUNTS => 0.00,
+                Cart::BOTH => 25610.36,
+                Cart::ONLY_SHIPPING => 2.99,
+            ],
+            false => [
+                Cart::ONLY_DISCOUNTS => 0.00,
+                Cart::BOTH => 21165.59,
+                Cart::ONLY_SHIPPING => 2.47,
+            ],
+            'average_products_tax_rate' => 21.0,
+        ];
+
+        $this->expectException(Exception::class);
+        $this->expectExceptionMessage('Order totals do not reconcile with cart totals');
+
+        $module->getTwoNewOrderData('merchant-case-2', $cart, [
+            'merchant_confirmation_url' => 'https://shop.local/confirm',
+            'merchant_cancel_order_url' => 'https://shop.local/cancel',
+            'merchant_edit_order_url' => '',
+            'merchant_order_verification_failed_url' => '',
+            'merchant_invoice_url' => '',
+            'merchant_shipping_document_url' => '',
+        ]);
+    }
+
+    public function testMerchantCase3BuildsSimpleOrderPayload(): void
+    {
+        $module = new TwopaymentTestHarness();
+
+        StubStore::$customers[6103] = [
+            'email' => 'buyer@example.com',
+            'firstname' => 'Cliente',
+            'lastname' => 'Tres',
+            'secure_key' => 'secure-key-6103',
+            'loaded' => true,
+        ];
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$countries[34] = 'ES';
+        StubStore::$addresses[7301] = [
+            'id_country' => 34,
+            'company' => 'SPAIN',
+            'companyid' => 'E20468708',
+            'address1' => 'Calle Mayor 1',
+            'city' => 'Madrid',
+            'postcode' => '28001',
+            'phone' => '666666668',
+            'loaded' => true,
+        ];
+        StubStore::$addresses[7302] = StubStore::$addresses[7301];
+        StubStore::$carriers[730] = [
+            'name' => 'Carrier',
+            'delay' => '',
+            'shipping_method' => Carrier::SHIPPING_METHOD_PRICE,
+            'tax_rules_group_id' => 7,
+        ];
+        StubStore::$taxRuleRates[7] = 21.0;
+
+        $cart = new Cart(6103);
+        $cart->id_customer = 6103;
+        $cart->id_currency = 978;
+        $cart->id_address_invoice = 7301;
+        $cart->id_address_delivery = 7302;
+        $cart->id_carrier = 730;
+        $cart->id_lang = 1;
+
+        StubStore::$cartProducts[6103] = [[
+            'id_product' => 9301,
+            'link_rewrite' => 'lg-xboom',
+            'name' => 'LG XBOOM High Voltage Speaker, 1000W',
+            'description_short' => 'Speaker',
+            'manufacturer_name' => 'LG',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 409.24,
+            'total_wt' => 495.18,
+            'cart_quantity' => 1,
+            'rate' => 21.0,
+            'price' => 409.24,
+            'reduction' => 0,
+        ]];
+        StubStore::$productCategories[9301] = [['name' => 'Audio']];
+        StubStore::$images[9301] = ['id_image' => 9301];
+        StubStore::$cartShipping[6103] = [
+            true => 2.99,
+            false => 2.47,
+        ];
+        StubStore::$cartTotals[6103] = [
+            true => [
+                Cart::ONLY_DISCOUNTS => 0.00,
+                Cart::BOTH => 498.17,
+                Cart::ONLY_SHIPPING => 2.99,
+            ],
+            false => [
+                Cart::ONLY_DISCOUNTS => 0.00,
+                Cart::BOTH => 411.71,
+                Cart::ONLY_SHIPPING => 2.47,
+            ],
+            'average_products_tax_rate' => 21.0,
+        ];
+
+        $payload = $module->getTwoNewOrderData('merchant-case-3', $cart, [
+            'merchant_confirmation_url' => 'https://shop.local/confirm',
+            'merchant_cancel_order_url' => 'https://shop.local/cancel',
+            'merchant_edit_order_url' => '',
+            'merchant_order_verification_failed_url' => '',
+            'merchant_invoice_url' => '',
+            'merchant_shipping_document_url' => '',
+        ]);
+
+        self::assertSame('498.17', (string)$payload['gross_amount']);
+        self::assertSame('411.71', (string)$payload['net_amount']);
+        self::assertSame('86.46', (string)$payload['tax_amount']);
+
+        $hasProduct = false;
+        $hasShipping = false;
+        foreach ($payload['line_items'] as $line) {
+            if ((string)$line['type'] === 'PHYSICAL') {
+                $hasProduct = true;
+            }
+            if ((string)$line['type'] === 'SHIPPING_FEE') {
+                $hasShipping = true;
+                self::assertSame('2.99', (string)$line['gross_amount']);
+                self::assertSame('0.21', (string)$line['tax_rate']);
+            }
+        }
+        self::assertTrue($hasProduct);
+        self::assertTrue($hasShipping);
     }
 }

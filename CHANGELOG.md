@@ -51,6 +51,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Order intent payload now includes both `billing_address` and `shipping_address` for parity with order create/update payload composition.
 - **Discount tax-rate canonicalization hardening**:
   - Discount-line fallback tax-rate derivation now snaps near-context drift to canonical cart tax contexts (for example `0.212` -> `0.21`), preventing provider-side strict VAT rate rejections on ES orders.
+- **Shipping tax-rate canonicalization hardening**:
+  - Shipping-line tax rate now snaps to canonical cart/carrier tax contexts when drift is only rounding noise (for example `0.211` -> `0.21`), preventing provider-side strict ES VAT rejections.
+- **Additional tax-rate drift hardening (wrapping + product fallback)**:
+  - Gift-wrapping tax-rate derivation now snaps to canonical cart tax contexts when drift is rounding-only.
+  - Product-line fallback tax-rate derivation now reuses configured product tax-rate contexts to avoid minor synthetic drift when a line is missing/loses its direct rate field.
+- **ES strict fallback default for unresolved line rates**:
+  - Added an ES-only canonical normalization pass across built line items.
+  - When a line tax-rate remains unresolved but formula-safe with canonical fallback, the fallback defaults to `0.21`.
 - **Buyer confirmation payment-term clarity**:
   - Post-order buyer success card now renders invoice terms with explicit term type: `Standard + X days` or `End of Month + X days`.
 - **Tax precision hardening for payload formulas**:
