@@ -558,11 +558,41 @@ final class OrderBuilderTest extends TestCase
         $payloadWithSubtotals = $module->getTwoIntentOrderData($cart, $customer, $currency, $address);
         self::assertArrayNotHasKey('tax_rate', $payloadWithSubtotals);
         self::assertArrayHasKey('tax_subtotals', $payloadWithSubtotals);
+        self::assertArrayHasKey('billing_address', $payloadWithSubtotals);
+        self::assertArrayHasKey('shipping_address', $payloadWithSubtotals);
+        self::assertSame('ES', $payloadWithSubtotals['billing_address']['country']);
+        self::assertSame('ES', $payloadWithSubtotals['shipping_address']['country']);
 
         StubStore::$configuration['PS_TWO_ENABLE_TAX_SUBTOTALS'] = 0;
         $payloadWithoutSubtotals = $module->getTwoIntentOrderData($cart, $customer, $currency, $address);
         self::assertArrayNotHasKey('tax_rate', $payloadWithoutSubtotals);
         self::assertArrayNotHasKey('tax_subtotals', $payloadWithoutSubtotals);
+    }
+
+    public function testGetTwoRequestHeadersSkipAuthForOrderIntent(): void
+    {
+        $module = new TwopaymentTestHarness();
+
+        $orderIntentHeaders = $module->getTwoRequestHeaders(
+            '/v1/order_intent',
+            ['Authorization: Bearer should-not-leak', 'X-API-Key: should-not-leak']
+        );
+        $createOrderHeaders = $module->getTwoRequestHeaders('/v1/order');
+
+        foreach ($orderIntentHeaders as $header) {
+            self::assertFalse(strpos($header, 'X-API-Key:') === 0);
+            self::assertFalse(strpos($header, 'Authorization:') === 0);
+            self::assertFalse(strpos($header, 'Proxy-Authorization:') === 0);
+        }
+
+        $createOrderHasApiKey = false;
+        foreach ($createOrderHeaders as $header) {
+            if (strpos($header, 'X-API-Key:') === 0) {
+                $createOrderHasApiKey = true;
+                break;
+            }
+        }
+        self::assertTrue($createOrderHasApiKey);
     }
 
     public function testGetTwoNewOrderDataThrowsWhenLineItemsFailFormulaValidation(): void
@@ -2078,6 +2108,103 @@ final class OrderBuilderTest extends TestCase
         self::assertSame('-95.87', (string)$discountLines[0]['net_amount']);
         self::assertSame('-20.13', (string)$discountLines[0]['tax_amount']);
         self::assertSame('0.21', (string)$discountLines[0]['tax_rate']);
+    }
+
+    public function testGetTwoNewOrderDataSnapsSmallDiscountRateToCanonicalContext(): void
+    {
+        $module = new TwopaymentTestHarness();
+
+        StubStore::$customers[496] = [
+            'email' => 'buyer@example.com',
+            'firstname' => 'Eva',
+            'lastname' => 'Garcia',
+            'secure_key' => 'secure-key-496',
+            'loaded' => true,
+        ];
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$countries[34] = 'ES';
+        StubStore::$addresses[950] = [
+            'id_country' => 34,
+            'company' => 'SPAIN',
+            'companyid' => 'E20468708',
+            'address1' => 'Calle Mayor 1',
+            'city' => 'Madrid',
+            'postcode' => '28001',
+            'phone' => '666666668',
+            'loaded' => true,
+        ];
+        StubStore::$addresses[951] = StubStore::$addresses[950];
+
+        $cart = new Cart(496);
+        $cart->id_customer = 496;
+        $cart->id_currency = 978;
+        $cart->id_address_invoice = 950;
+        $cart->id_address_delivery = 951;
+        $cart->id_carrier = 0;
+        $cart->id_lang = 1;
+
+        StubStore::$cartProducts[496] = [
+            [
+                'id_product' => 8301,
+                'link_rewrite' => 'single-taxed-product',
+                'name' => 'Single taxed product',
+                'description_short' => 'Product',
+                'manufacturer_name' => 'ACME',
+                'ean13' => '',
+                'upc' => '',
+                'total' => 100.00,
+                'total_wt' => 121.00,
+                'cart_quantity' => 1,
+                'rate' => 21.0,
+                'price' => 100.00,
+                'reduction' => 0,
+            ],
+        ];
+        StubStore::$productCategories[8301] = [['name' => 'General']];
+        StubStore::$images[8301] = ['id_image' => 8301];
+        StubStore::$cartShipping[496] = [true => 0.00, false => 0.00];
+        StubStore::$cartTotals[496] = [
+            true => [
+                Cart::ONLY_DISCOUNTS => 4.69,
+                Cart::BOTH => 116.31,
+                Cart::ONLY_SHIPPING => 0.00,
+            ],
+            false => [
+                Cart::ONLY_DISCOUNTS => 3.87,
+                Cart::BOTH => 96.13,
+                Cart::ONLY_SHIPPING => 0.00,
+            ],
+            'average_products_tax_rate' => 21.0,
+        ];
+        StubStore::$cartRules[496] = [
+            [
+                'name' => 'discount-rule-1',
+                'code' => 'discount-rule-1',
+                'value' => -4.69,
+                'value_real' => 4.69,
+                'value_tax_exc' => 3.87,
+            ],
+        ];
+
+        $payload = $module->getTwoNewOrderData('merchant-attempt-496', $cart, [
+            'merchant_confirmation_url' => 'https://shop.local/confirm',
+            'merchant_cancel_order_url' => 'https://shop.local/cancel',
+            'merchant_edit_order_url' => '',
+            'merchant_order_verification_failed_url' => '',
+            'merchant_invoice_url' => '',
+            'merchant_shipping_document_url' => '',
+        ]);
+
+        $discountLine = null;
+        foreach ($payload['line_items'] as $line) {
+            if ((string)$line['name'] === 'discount-rule-1') {
+                $discountLine = $line;
+                break;
+            }
+        }
+
+        self::assertNotNull($discountLine);
+        self::assertSame('0.21', (string)$discountLine['tax_rate']);
     }
 
     public function testGetTwoNewOrderDataUsesCartRuleMonetaryValuesForDiscountLines(): void

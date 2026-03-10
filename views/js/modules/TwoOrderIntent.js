@@ -24,6 +24,27 @@ class TwoOrderIntent {
         }
         return fallback;
     }
+
+    buildPublicApiBeforeSend() {
+        return function (xhr) {
+            const blockedHeaders = {
+                'authorization': true,
+                'proxy-authorization': true,
+                'x-api-key': true
+            };
+            const originalSetRequestHeader = xhr && xhr.setRequestHeader ? xhr.setRequestHeader.bind(xhr) : null;
+            if (!originalSetRequestHeader) {
+                return;
+            }
+            xhr.setRequestHeader = function (name, value) {
+                const normalized = String(name || '').toLowerCase();
+                if (blockedHeaders[normalized]) {
+                    return;
+                }
+                originalSetRequestHeader(name, value);
+            };
+        };
+    }
     
     shouldRunOrderIntent() {
         if (!this.config.enabled) return false;
@@ -280,9 +301,12 @@ class TwoOrderIntent {
             $.ajax({
                 url: (window.twopayment && window.twopayment.checkout_host ? window.twopayment.checkout_host : '') + '/v1/order_intent',
                 type: 'POST',
+                crossDomain: true,
                 dataType: 'json',
                 contentType: 'application/json',
                 data: JSON.stringify(payload),
+                xhrFields: { withCredentials: false },
+                beforeSend: this.buildPublicApiBeforeSend(),
                 timeout: 15000,
                 success: (response) => {
                     // Normalize to previous result shape

@@ -35,6 +35,7 @@ class Twopayment extends PaymentModule
     const SNAPSHOT_TAX_RATE_PRECISION = 2; // Keep snapshot hash behavior stable across minor rate precision drift
     const TAX_RATE_PERCENT_PRECISION = 2; // Provider expects VAT rates rounded to 2 decimals in percent
     const TAX_RATE_VARIANCE_TOLERANCE = 0.005; // Acceptable decimal variance between configured and applied rate
+    const TAX_RATE_CONTEXT_SNAP_TOLERANCE = 0.0025; // Snap near-context discount rates (e.g. 0.212 -> 0.21) for provider compatibility
     // Two module currency coverage baseline: keep these provider currencies explicitly allowed.
     // Required coverage: NOK, GBP, SEK, USD, DKK, EUR
     const TWO_SUPPORTED_CURRENCY_ISOS = ['NOK', 'GBP', 'SEK', 'USD', 'DKK', 'EUR'];
@@ -2345,8 +2346,31 @@ class Twopayment extends PaymentModule
         $final_gross = $pricingData['gross_amount'];
         $final_discount = $pricingData['discount_amount'];
         
+        // Resolve invoice/shipping addresses for parity with create/update payloads.
+        $invoice_address = Validate::isLoadedObject($address) ? $address : new Address((int)$cart->id_address_invoice);
+        if (!Validate::isLoadedObject($invoice_address)) {
+            PrestaShopLogger::addLog('TwoPayment: Cannot build order intent - invalid invoice address', 3);
+            throw new Exception('Invalid invoice address');
+        }
+
+        $delivery_address = new Address((int)$cart->id_address_delivery);
+        if (!Validate::isLoadedObject($delivery_address)) {
+            $delivery_address = $invoice_address;
+        }
+
         // Get company data with fallback chain
-        $companyData = $this->getCompanyDataWithFallbacks($address);
+        $companyData = $this->getCompanyDataWithFallbacks($invoice_address);
+        $shippingData = $companyData;
+        try {
+            $shippingData = $this->getCompanyDataWithFallbacks($delivery_address);
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Order intent shipping company fallback used due to address resolution error - ' . $e->getMessage(),
+                2
+            );
+            $delivery_address = $invoice_address;
+        }
+        $shippingOrgName = !empty($shippingData['company_name']) ? $shippingData['company_name'] : $companyData['company_name'];
 
         $request_data = [
             'gross_amount' => (string)($this->getTwoRoundAmount($final_gross)),
@@ -2364,12 +2388,14 @@ class Twopayment extends PaymentModule
                     'email' => $customer->email,
                     'first_name' => $customer->firstname,
                     'last_name' => $customer->lastname,
-                    'phone_number' => $this->getPhoneWithFallback($address),
+                    'phone_number' => $this->getPhoneWithFallback($invoice_address),
                 ],
             ],
             'currency' => $currency->iso_code,
             'merchant_short_name' => $this->merchant_short_name,
             'invoice_type' => 'FUNDED_INVOICE', // Default product type
+            'billing_address' => $this->buildTwoAddress($invoice_address, $companyData['company_name'], $companyData['country_iso']),
+            'shipping_address' => $this->buildTwoAddress($delivery_address, $shippingOrgName, $shippingData['country_iso']),
             'line_items' => $line_items,
         ];
 
@@ -3367,6 +3393,12 @@ class Twopayment extends PaymentModule
                     ? max(0, $line_tax / $line_net)
                     : max(0, (float)$context_data['tax_rate']);
                 $line_rate = $this->normalizeTwoTaxRateToPercentPrecision($line_rate_raw);
+                $snapped_line_rate = $this->normalizeTwoTaxRateToPercentPrecision(
+                    $this->snapTwoTaxRateToKnownContexts($line_rate_raw, $known_context_rates)
+                );
+                if (abs($line_tax - ($line_net * $snapped_line_rate)) <= self::TAX_FORMULA_TOLERANCE) {
+                    $line_rate = $snapped_line_rate;
+                }
                 $segments = [[
                     'net' => $line_net,
                     'tax' => $line_tax,
@@ -3620,13 +3652,21 @@ class Twopayment extends PaymentModule
             $line_tax = round($line_gross - $line_net, 2);
             $segments = $this->buildTwoCanonicalDiscountRateSegments($line_net, $line_tax, $known_context_rates);
             if (empty($segments)) {
+                $fallback_rate = $line_net > 0
+                    ? max(0, $line_tax / $line_net)
+                    : 0.0;
+                $fallback_rate = $this->normalizeTwoTaxRateToPercentPrecision($fallback_rate);
+                $snapped_fallback_rate = $this->normalizeTwoTaxRateToPercentPrecision(
+                    $this->snapTwoTaxRateToKnownContexts($fallback_rate, $known_context_rates)
+                );
+                if (abs($line_tax - ($line_net * $snapped_fallback_rate)) <= self::TAX_FORMULA_TOLERANCE) {
+                    $fallback_rate = $snapped_fallback_rate;
+                }
                 $segments = [[
                     'net' => $line_net,
                     'tax' => $line_tax,
                     'gross' => round($line_net + $line_tax, 2),
-                    'rate' => $line_net > 0
-                        ? $this->normalizeTwoTaxRateToPercentPrecision(max(0, $line_tax / $line_net))
-                        : 0.0,
+                    'rate' => $fallback_rate,
                 ]];
             }
 
@@ -4541,7 +4581,11 @@ class Twopayment extends PaymentModule
         }
 
         // Only snap when difference is tiny (pure rounding drift).
-        if ($nearest !== null && $nearest_diff !== null && $nearest_diff <= 0.001) {
+        if (
+            $nearest !== null &&
+            $nearest_diff !== null &&
+            $nearest_diff <= self::TAX_RATE_CONTEXT_SNAP_TOLERANCE
+        ) {
             return $nearest;
         }
 
@@ -5196,8 +5240,15 @@ class Twopayment extends PaymentModule
                 }
 
                 // Hard block accidental auth header leakage on order-intent path.
-                if (!$includeApiKey && stripos(trim($header), 'X-API-Key:') === 0) {
-                    continue;
+                if (!$includeApiKey) {
+                    $normalizedHeader = strtolower(trim($header));
+                    if (
+                        strpos($normalizedHeader, 'x-api-key:') === 0 ||
+                        strpos($normalizedHeader, 'authorization:') === 0 ||
+                        strpos($normalizedHeader, 'proxy-authorization:') === 0
+                    ) {
+                        continue;
+                    }
                 }
 
                 $headers[] = $header;

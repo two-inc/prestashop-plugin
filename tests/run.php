@@ -78,6 +78,7 @@ final class OrderBuilderSpec
         self::testGetTwoNewOrderDataIncludesShippingAndDiscountLineItemsWhenReconciled();
         self::testGetTwoNewOrderDataFallbackFreeShippingUsesShippingTaxContext();
         self::testGetTwoNewOrderDataUsesCartRuleMonetaryValuesForDiscountLines();
+        self::testGetTwoNewOrderDataSnapsSmallDiscountRateToCanonicalContext();
         self::testGetTwoNewOrderDataKeepsDiscountTaxFormulaForLargeRoundedDiscounts();
         self::testGetTwoRequestHeadersSkipApiKeyForOrderIntent();
         self::testCheckTwoOrderIntentApprovalAtPaymentDeclinesEvenWhenFrontendCookieSaysApproved();
@@ -692,6 +693,10 @@ final class OrderBuilderSpec
         $payloadWithSubtotals = $module->getTwoIntentOrderData($cart, $customer, $currency, $address);
         TinyAssert::false(isset($payloadWithSubtotals['tax_rate']));
         TinyAssert::true(isset($payloadWithSubtotals['tax_subtotals']));
+        TinyAssert::true(isset($payloadWithSubtotals['billing_address']));
+        TinyAssert::true(isset($payloadWithSubtotals['shipping_address']));
+        TinyAssert::same('ES', $payloadWithSubtotals['billing_address']['country']);
+        TinyAssert::same('ES', $payloadWithSubtotals['shipping_address']['country']);
 
         StubStore::$configuration['PS_TWO_ENABLE_TAX_SUBTOTALS'] = 0;
         $payloadWithoutSubtotals = $module->getTwoIntentOrderData($cart, $customer, $currency, $address);
@@ -1764,18 +1769,133 @@ final class OrderBuilderSpec
         TinyAssert::same('-673.99', number_format($aggregatedByRule['discount-rule']['gross'], 2, '.', ''), 'Expected canonical gross discount from cart rule value_real');
     }
 
+    private static function testGetTwoNewOrderDataSnapsSmallDiscountRateToCanonicalContext(): void
+    {
+        self::reset();
+
+        $module = new TwopaymentTestHarness();
+
+        StubStore::$customers[496] = [
+            'email' => 'buyer@example.com',
+            'firstname' => 'Eva',
+            'lastname' => 'Garcia',
+            'secure_key' => 'secure-key-496',
+            'loaded' => true,
+        ];
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$countries[34] = 'ES';
+        StubStore::$addresses[950] = [
+            'id_country' => 34,
+            'company' => 'SPAIN',
+            'companyid' => 'E20468708',
+            'address1' => 'Calle Mayor 1',
+            'city' => 'Madrid',
+            'postcode' => '28001',
+            'phone' => '666666668',
+            'loaded' => true,
+        ];
+        StubStore::$addresses[951] = StubStore::$addresses[950];
+
+        $cart = new Cart(496);
+        $cart->id_customer = 496;
+        $cart->id_currency = 978;
+        $cart->id_address_invoice = 950;
+        $cart->id_address_delivery = 951;
+        $cart->id_carrier = 0;
+        $cart->id_lang = 1;
+
+        StubStore::$cartProducts[496] = [
+            [
+                'id_product' => 8301,
+                'link_rewrite' => 'single-taxed-product',
+                'name' => 'Single taxed product',
+                'description_short' => 'Product',
+                'manufacturer_name' => 'ACME',
+                'ean13' => '',
+                'upc' => '',
+                'total' => 100.00,
+                'total_wt' => 121.00,
+                'cart_quantity' => 1,
+                'rate' => 21.0,
+                'price' => 100.00,
+                'reduction' => 0,
+            ],
+        ];
+        StubStore::$productCategories[8301] = [['name' => 'General']];
+        StubStore::$images[8301] = ['id_image' => 8301];
+        StubStore::$cartShipping[496] = [true => 0.00, false => 0.00];
+        StubStore::$cartTotals[496] = [
+            true => [
+                Cart::ONLY_DISCOUNTS => 4.69,
+                Cart::BOTH => 116.31,
+                Cart::ONLY_SHIPPING => 0.00,
+            ],
+            false => [
+                Cart::ONLY_DISCOUNTS => 3.87,
+                Cart::BOTH => 96.13,
+                Cart::ONLY_SHIPPING => 0.00,
+            ],
+            'average_products_tax_rate' => 21.0,
+        ];
+        StubStore::$cartRules[496] = [
+            [
+                'name' => 'discount-rule-1',
+                'code' => 'discount-rule-1',
+                'value' => -4.69,
+                'value_real' => 4.69,
+                'value_tax_exc' => 3.87,
+            ],
+        ];
+
+        $payload = $module->getTwoNewOrderData('merchant-attempt-496', $cart, [
+            'merchant_confirmation_url' => 'https://shop.local/confirm',
+            'merchant_cancel_order_url' => 'https://shop.local/cancel',
+            'merchant_edit_order_url' => '',
+            'merchant_order_verification_failed_url' => '',
+            'merchant_invoice_url' => '',
+            'merchant_shipping_document_url' => '',
+        ]);
+
+        $discountLine = null;
+        foreach ($payload['line_items'] as $line) {
+            if ((string)$line['name'] === 'discount-rule-1') {
+                $discountLine = $line;
+                break;
+            }
+        }
+
+        TinyAssert::true($discountLine !== null, 'Expected discount-rule-1 line item');
+        TinyAssert::same('0.21', (string)$discountLine['tax_rate'], 'Expected small discount line to snap to canonical 0.21 rate');
+    }
+
     private static function testGetTwoRequestHeadersSkipApiKeyForOrderIntent(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
 
         $orderIntentHeaders = $module->getTwoRequestHeaders('/v1/order_intent');
+        $orderIntentHeadersWithExtras = $module->getTwoRequestHeaders(
+            '/v1/order_intent',
+            ['Authorization: Bearer should-not-leak', 'X-API-Key: should-not-leak']
+        );
         $createOrderHeaders = $module->getTwoRequestHeaders('/v1/order');
 
         $orderIntentHasApiKey = false;
         foreach ($orderIntentHeaders as $header) {
             if (strpos($header, 'X-API-Key:') === 0) {
                 $orderIntentHasApiKey = true;
+                break;
+            }
+        }
+
+        $orderIntentHasAuthHeaders = false;
+        foreach ($orderIntentHeadersWithExtras as $header) {
+            if (
+                strpos($header, 'X-API-Key:') === 0 ||
+                strpos($header, 'Authorization:') === 0 ||
+                strpos($header, 'Proxy-Authorization:') === 0
+            ) {
+                $orderIntentHasAuthHeaders = true;
                 break;
             }
         }
@@ -1789,6 +1909,7 @@ final class OrderBuilderSpec
         }
 
         TinyAssert::false($orderIntentHasApiKey, 'Order intent headers must not include X-API-Key');
+        TinyAssert::false($orderIntentHasAuthHeaders, 'Order intent headers must not include auth headers');
         TinyAssert::true($createOrderHasApiKey, 'Create order headers must include X-API-Key');
     }
 

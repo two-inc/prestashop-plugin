@@ -46,6 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Coverage and validation documentation updates**:
   - Added test coverage for strict payment-submit drift blocking, callback race recovery, and provider cancel helper behavior.
   - Added real-engine integration matrix requirements for PrestaShop `1.7.8`, `8.x`, and `9.x` under `tests/integration/README.md`.
+- **Order intent/company-search client auth safety + intent address parity**:
+  - Added client-side request guards on frontend public Two API calls (`/v1/order_intent`, company search/detail endpoints) to block accidental auth header propagation.
+  - Order intent payload now includes both `billing_address` and `shipping_address` for parity with order create/update payload composition.
+- **Discount tax-rate canonicalization hardening**:
+  - Discount-line fallback tax-rate derivation now snaps near-context drift to canonical cart tax contexts (for example `0.212` -> `0.21`), preventing provider-side strict VAT rate rejections on ES orders.
 - **Tax precision hardening for payload formulas**:
   - Line-item `tax_rate` serialization now preserves non-integer VAT rates (for example `0.055` for 5.5%) to keep `tax_amount = net_amount * tax_rate` consistent.
   - Tax subtotal grouping precision remains compatibility-safe while checkout snapshot tax-rate normalization remains stable at two decimals.

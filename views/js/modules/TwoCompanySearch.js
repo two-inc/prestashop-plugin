@@ -56,6 +56,27 @@ class TwoCompanySearch {
         return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
     }
 
+    buildPublicApiBeforeSend() {
+        return function (xhr) {
+            const blockedHeaders = {
+                'authorization': true,
+                'proxy-authorization': true,
+                'x-api-key': true
+            };
+            const originalSetRequestHeader = xhr && xhr.setRequestHeader ? xhr.setRequestHeader.bind(xhr) : null;
+            if (!originalSetRequestHeader) {
+                return;
+            }
+            xhr.setRequestHeader = function (name, value) {
+                const normalized = String(name || '').toLowerCase();
+                if (blockedHeaders[normalized]) {
+                    return;
+                }
+                originalSetRequestHeader(name, value);
+            };
+        };
+    }
+
     clearStaleOrganizationSelection() {
         if (!this.companyField || !this.organizationField) {
             return;
@@ -293,7 +314,10 @@ class TwoCompanySearch {
         $.ajax({
             url: searchUrl,
             method: 'GET',
+            crossDomain: true,
             dataType: 'json',
+            xhrFields: { withCredentials: false },
+            beforeSend: this.buildPublicApiBeforeSend(),
             timeout: 10000,
             success: (data) => {
                 const companies = data.items || [];
@@ -488,7 +512,10 @@ class TwoCompanySearch {
             $.ajax({
                 url: detailUrl,
                 method: 'GET',
+                crossDomain: true,
                 dataType: 'json',
+                xhrFields: { withCredentials: false },
+                beforeSend: this.buildPublicApiBeforeSend(),
                 timeout: 10000,
                 success: resolve,
                 error: (xhr, status, error) => {
