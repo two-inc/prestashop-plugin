@@ -5,6 +5,9 @@ All notable changes to the Two Payment module for PrestaShop will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+
+
 ## Latest Release: v2.4.0
 
 **Release Date:** 2026-02-25
@@ -33,6 +36,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `order_create_idempotency_key`
 
 ### Changed
+- **Tax precision hardening for payload formulas**:
+  - Line-item `tax_rate` serialization now preserves non-integer VAT rates (for example `0.055` for 5.5%) to keep `tax_amount = net_amount * tax_rate` consistent.
+  - Tax subtotal grouping precision remains compatibility-safe while checkout snapshot tax-rate normalization remains stable at two decimals.
+- **Cart-rule-aligned discount attribution**:
+  - Discount line generation now prefers PrestaShop cart-rule monetary fields (`value_real`, `value_tax_exc`) to keep per-rule discount lines aligned with invoice semantics.
+  - Weighted tax-context allocation remains as fallback when rule-level monetary metadata is unavailable.
+- **Currency compatibility guardrails**:
+  - Added explicit cart-currency compatibility checks in `hookPaymentOptions()` following PrestaShop payment-module patterns.
+  - Added server-side currency guard in payment submit controller to fail fast before provider calls when currency is unsupported.
+  - Added explicit ISO allowlist coverage in module checks for `NOK`, `GBP`, `SEK`, `USD`, `DKK`, and `EUR` (all fully supported).
+- **Checkout address-basis consistency**:
+  - Order intent backend now prioritizes invoice/billing address identity and keeps delivery only as fallback for backward compatibility.
+  - Frontend order intent payload now sends both invoice and delivery address identifiers to keep mixed-theme flows compatible.
+- **Idempotency and callback safety**:
+  - Order-create idempotency key no longer depends on a time bucket for identical cart snapshots.
+  - Added callback-time rebinding guard to prevent overwriting an existing local order binding with a different Two order ID.
 - **Provider-First Checkout Flow**: Payment controller now creates Two orders before local PrestaShop orders
   - Eliminates local order creation/deletion cycle on provider rejection
   - Prevents rejected attempts from producing local order side effects
@@ -98,6 +117,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Local order creation is blocked when provider amount is missing/invalid
 
 ### Fixed
+- **Gift wrapping parity**:
+  - Added explicit gift wrapping line-item construction so wrapping totals are represented in Two payloads and reconcile with PrestaShop grand totals.
+- **Order intent payload regression on rounded mixed discounts**:
+  - Discount line-item tax rate now uses higher precision when derived from rounded net/tax splits to preserve `tax_amount = net_amount * tax_rate` validation in large cart-rule discount scenarios (including free-shipping combinations).
+- **Order intent account-type guard restoration**:
+  - Order intent now applies account-type enforcement only when the merchant enabled account-type mode, with controlled fallback for legacy address forms missing `account_type`.
+- **Payment term cookie warnings in tests/runtime**:
+  - Guarded cookie reads in `getSelectedPaymentTerm()` to avoid undefined property warnings.
+- **Buyer metadata warning suppression**:
+  - `buyer_department` and `buyer_project` payload fields are now read with property checks to avoid undefined property warnings on default address entities.
 - **Checkout Address Formatter Stability**:
   - Fixed `CustomerAddressFormatter` override constructor to call `parent::__construct(...)`
   - Prevents `Call to a member function trans() on null` fatals on `/order` during checkout address step rendering

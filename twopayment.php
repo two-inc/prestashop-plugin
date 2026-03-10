@@ -30,8 +30,14 @@ class Twopayment extends PaymentModule
     const NET_FORMULA_TOLERANCE = 0.05; // Tolerance for net formula validation
     const ORDER_RECONCILIATION_TOLERANCE = 0.02; // Warn-level parity tolerance against cart totals (PrestaShop rounding can drift by up to 2 cents)
     const ORDER_RECONCILIATION_HARD_BLOCK_TOLERANCE = 1.00; // Hard-block only for material mismatches
-    const TAX_RATE_PRECISION = 2; // Decimal precision for tax rates sent to Two
+    const TAX_RATE_PRECISION = 3; // Decimal precision for line-item tax rates sent to Two
+    const TAX_SUBTOTAL_RATE_PRECISION = 2; // Keep tax subtotal grouping stable for compatibility
+    const SNAPSHOT_TAX_RATE_PRECISION = 2; // Keep snapshot hash behavior stable across minor rate precision drift
+    const TAX_RATE_PERCENT_PRECISION = 2; // Provider expects VAT rates rounded to 2 decimals in percent
     const TAX_RATE_VARIANCE_TOLERANCE = 0.005; // Acceptable decimal variance between configured and applied rate
+    // Two module currency coverage baseline: keep these provider currencies explicitly allowed.
+    // Required coverage: NOK, GBP, SEK, USD, DKK, EUR
+    const TWO_SUPPORTED_CURRENCY_ISOS = ['NOK', 'GBP', 'SEK', 'USD', 'DKK', 'EUR'];
     
     // Constants for delivery dates
     const DEFAULT_DELIVERY_DAYS_OFFSET = 7; // Default expected delivery date offset
@@ -1979,6 +1985,14 @@ class Twopayment extends PaymentModule
             return [];
         }
 
+        if (!$this->checkCurrency($cart)) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Payment option hidden - unsupported cart currency for cart ' . (int)$cart->id,
+                2
+            );
+            return [];
+        }
+
         // If merchant uses account type selection, gate payment option to business accounts
         if ((int) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE')) {
             $account_type = property_exists($billing_address, 'account_type') ? trim((string) $billing_address->account_type) : '';
@@ -2041,6 +2055,59 @@ class Twopayment extends PaymentModule
             ->setAdditionalInformation($this->context->smarty->fetch('module:twopayment/views/templates/hook/paymentinfo.tpl'));
 
         return $preTwoOption;
+    }
+
+    /**
+     * Check if cart currency is allowed for this module according to PrestaShop payment restrictions.
+     *
+     * @param Cart $cart
+     * @return bool
+     */
+    private function checkCurrency($cart)
+    {
+        if (!Validate::isLoadedObject($cart) || !isset($cart->id_currency) || (int)$cart->id_currency <= 0) {
+            return false;
+        }
+
+        $currency_order = new Currency((int)$cart->id_currency);
+        if (!Validate::isLoadedObject($currency_order)) {
+            return false;
+        }
+
+        // Enforce provider-supported currency ISO list first, then apply PrestaShop module assignment check.
+        // This keeps behavior explicit and documents covered currencies in-code.
+        $currency_iso = strtoupper(trim((string)$currency_order->iso_code));
+        if (Tools::isEmpty($currency_iso) || !in_array($currency_iso, self::TWO_SUPPORTED_CURRENCY_ISOS, true)) {
+            return false;
+        }
+
+        if (!method_exists($this, 'getCurrency')) {
+            return true;
+        }
+
+        $currencies_module = $this->getCurrency((int)$cart->id_currency);
+        if (empty($currencies_module)) {
+            return false;
+        }
+
+        foreach ($currencies_module as $currency_module) {
+            if (isset($currency_module['id_currency']) && (int)$currency_module['id_currency'] === (int)$currency_order->id) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Public wrapper for currency compatibility checks used by front controllers.
+     *
+     * @param Cart $cart
+     * @return bool
+     */
+    public function isCartCurrencySupportedByTwo($cart)
+    {
+        return $this->checkCurrency($cart);
     }
 
     /**
@@ -2515,8 +2582,8 @@ class Twopayment extends PaymentModule
                     'phone_number' => $this->getPhoneWithFallback($invoice_address),
                 ],
             ],
-            'buyer_department' => $invoice_address->department,
-            'buyer_project' => $invoice_address->project,
+            'buyer_department' => property_exists($invoice_address, 'department') ? (string)$invoice_address->department : '',
+            'buyer_project' => property_exists($invoice_address, 'project') ? (string)$invoice_address->project : '',
             'merchant_additional_info' => '',
             'merchant_order_id' => (string)$merchant_order_id,
             'merchant_reference' => (string)($order_reference),
@@ -2608,8 +2675,8 @@ class Twopayment extends PaymentModule
                     'phone_number' => $this->getPhoneWithFallback($invoice_address),
                 ],
             ],
-            'buyer_department' => $invoice_address->department,
-            'buyer_project' => $invoice_address->project,
+            'buyer_department' => property_exists($invoice_address, 'department') ? (string)$invoice_address->department : '',
+            'buyer_project' => property_exists($invoice_address, 'project') ? (string)$invoice_address->project : '',
             'merchant_additional_info' => '',
             'merchant_order_id' => (string)$order->id,
             'merchant_reference' => (string)($orderpaymentdata['two_order_reference']),
@@ -2913,6 +2980,30 @@ class Twopayment extends PaymentModule
             $items[] = $shipping_line;
         }
 
+        $wrapping_totals = $this->getTwoGiftWrappingTotals($cart);
+        if ($wrapping_totals['gross'] > 0) {
+            $wrapping_rate_decimal = $wrapping_totals['net'] > 0
+                ? round(max(0, $wrapping_totals['tax'] / $wrapping_totals['net']), self::TAX_RATE_PRECISION)
+                : 0.0;
+            $wrapping_rate_percent = round($wrapping_rate_decimal * 100, 2);
+            $items[] = [
+                'name' => $this->l('Gift wrapping'),
+                'description' => Tools::substr(strip_tags($this->l('Gift wrapping for this order')), 0, 255),
+                'gross_amount' => (string)$this->getTwoRoundAmount($wrapping_totals['gross']),
+                'net_amount' => (string)$this->getTwoRoundAmount($wrapping_totals['net']),
+                'discount_amount' => '0.00',
+                'tax_amount' => (string)$this->getTwoRoundAmount($wrapping_totals['tax']),
+                'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($wrapping_rate_percent) . '%',
+                'tax_rate' => $this->formatTwoTaxRate($wrapping_rate_decimal),
+                'unit_price' => (string)$this->getTwoRoundAmount($wrapping_totals['net']),
+                'quantity' => 1,
+                'quantity_unit' => 'item',
+                'image_url' => '',
+                'product_page_url' => '',
+                'type' => 'DIGITAL',
+            ];
+        }
+
         // Add cart-level discounts as one or more lines split by tax context when applicable.
         $discount_lines = $this->buildTwoDiscountLinesFromCartTotals($cart, $items);
         if (!empty($discount_lines)) {
@@ -2922,6 +3013,35 @@ class Twopayment extends PaymentModule
         }
 
         return $items;
+    }
+
+    /**
+     * Resolve gift wrapping totals from cart, if wrapping is enabled.
+     *
+     * @param Cart $cart
+     * @return array{net:float,tax:float,gross:float}
+     */
+    private function getTwoGiftWrappingTotals($cart)
+    {
+        if (!defined('Cart::ONLY_WRAPPING')) {
+            return ['net' => 0.0, 'tax' => 0.0, 'gross' => 0.0];
+        }
+
+        $wrapping_gross = round((float)$cart->getOrderTotal(true, Cart::ONLY_WRAPPING), 2);
+        $wrapping_net = round((float)$cart->getOrderTotal(false, Cart::ONLY_WRAPPING), 2);
+        if ($wrapping_gross <= 0 && $wrapping_net <= 0) {
+            return ['net' => 0.0, 'tax' => 0.0, 'gross' => 0.0];
+        }
+
+        if ($wrapping_gross < $wrapping_net) {
+            $wrapping_gross = $wrapping_net;
+        }
+
+        return [
+            'net' => $wrapping_net,
+            'tax' => round($wrapping_gross - $wrapping_net, 2),
+            'gross' => $wrapping_gross,
+        ];
     }
 
     /**
@@ -2941,6 +3061,13 @@ class Twopayment extends PaymentModule
 
         $discount_net_total = round((float)$cart->getOrderTotal(false, Cart::ONLY_DISCOUNTS), 2);
         $discount_tax_total = round($discount_gross_total - $discount_net_total, 2);
+
+        // Prefer cart-rule monetary values when available to keep discount attribution
+        // aligned with PrestaShop invoice semantics. Fallback to context-based split.
+        $rule_scoped_lines = $this->buildTwoDiscountLinesFromCartRules($cart, $discount_net_total, $discount_gross_total, $existingItems);
+        if (!empty($rule_scoped_lines)) {
+            return $rule_scoped_lines;
+        }
 
         $descriptor = $this->buildTwoDiscountDescriptor($cart);
         $contexts = $this->collectDiscountTaxContextsFromItems($existingItems);
@@ -2977,9 +3104,15 @@ class Twopayment extends PaymentModule
                 continue;
             }
 
-            $line_rate = $line_net > 0
-                ? round(max(0, $line_tax / $line_net), self::TAX_RATE_PRECISION)
-                : round(max(0, (float)$context_data['tax_rate']), self::TAX_RATE_PRECISION);
+            // Discount splits can produce rounded net/tax pairs where 3dp tax-rate precision
+            // is not enough to satisfy strict formula checks on large amounts.
+            // Use higher precision for computed discount rates to keep:
+            // tax_amount ~= net_amount * tax_rate within validation tolerance.
+            $line_rate_raw = $line_net > 0
+                ? max(0, $line_tax / $line_net)
+                : max(0, (float)$context_data['tax_rate']);
+            $line_rate = $this->normalizeTwoTaxRateToPercentPrecision($line_rate_raw);
+            $line_rate_precision = 4;
             $line_rate_percent = round($line_rate * 100, 2);
             $line_name = $descriptor['name'];
             if ($is_split) {
@@ -2994,7 +3127,7 @@ class Twopayment extends PaymentModule
                 'discount_amount' => '0.00',
                 'tax_amount' => (string)$this->getTwoRoundAmount(-$line_tax),
                 'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($line_rate_percent) . '%',
-                'tax_rate' => $this->formatTwoTaxRate($line_rate),
+                'tax_rate' => $this->formatTwoTaxRate($line_rate, $line_rate_precision),
                 'unit_price' => (string)$this->getTwoRoundAmount(-$line_net),
                 'quantity' => 1,
                 'quantity_unit' => 'item',
@@ -3005,6 +3138,198 @@ class Twopayment extends PaymentModule
         }
 
         return $lines;
+    }
+
+    /**
+     * Build discount lines using cart-rule monetary values when available.
+     * This preserves PrestaShop rule-level semantics better than context weighting.
+     *
+     * @param Cart $cart
+     * @param float $discount_net_total
+     * @param float $discount_gross_total
+     * @return array
+     */
+    private function buildTwoDiscountLinesFromCartRules($cart, $discount_net_total, $discount_gross_total, $existingItems)
+    {
+        $cart_rules = $cart->getCartRules();
+        if (empty($cart_rules)) {
+            return [];
+        }
+
+        $known_context_rates = [];
+        $contexts = $this->collectDiscountTaxContextsFromItems($existingItems);
+        foreach ($contexts as $context) {
+            if (isset($context['tax_rate'])) {
+                $known_context_rates[] = (float)$context['tax_rate'];
+            }
+        }
+
+        $rule_rows = [];
+        foreach ($cart_rules as $idx => $rule) {
+            $gross_raw = $this->extractTwoDiscountRuleGrossAmount($rule);
+            if ($gross_raw <= 0) {
+                continue;
+            }
+
+            $net_raw = $this->extractTwoDiscountRuleNetAmount($rule, $gross_raw);
+            if ($net_raw === null) {
+                // Incomplete cart-rule monetary metadata; use fallback strategy.
+                return [];
+            }
+
+            $net_raw = max(0.0, (float)$net_raw);
+            $gross_raw = max(0.0, (float)$gross_raw);
+            if ($net_raw > $gross_raw) {
+                $net_raw = $gross_raw;
+            }
+
+            $rule_rows[(string)$idx] = [
+                'rule' => $rule,
+                'gross_raw' => $gross_raw,
+                'net_raw' => $net_raw,
+            ];
+        }
+
+        if (empty($rule_rows)) {
+            return [];
+        }
+
+        $gross_weights = [];
+        $net_weights = [];
+        foreach ($rule_rows as $rule_key => $row) {
+            $gross_weights[$rule_key] = (float)$row['gross_raw'];
+            $net_weights[$rule_key] = (float)$row['net_raw'];
+        }
+
+        $allocated_gross = $this->allocateTwoAmountByWeights($discount_gross_total, $gross_weights);
+        $net_weight_source = array_sum($net_weights) > 0 ? $net_weights : $gross_weights;
+        $allocated_net = $this->allocateTwoAmountByWeights($discount_net_total, $net_weight_source);
+
+        $lines = [];
+        foreach ($rule_rows as $rule_key => $row) {
+            $line_gross = isset($allocated_gross[$rule_key]) ? (float)$allocated_gross[$rule_key] : 0.0;
+            $line_net = isset($allocated_net[$rule_key]) ? (float)$allocated_net[$rule_key] : 0.0;
+
+            if ($line_gross <= 0) {
+                continue;
+            }
+
+            if ($line_net < 0) {
+                $line_net = 0.0;
+            }
+            if ($line_net > $line_gross) {
+                $line_net = $line_gross;
+            }
+
+            $line_tax = round($line_gross - $line_net, 2);
+            $line_rate_raw = $line_net > 0
+                ? max(0, $line_tax / $line_net)
+                : 0.0;
+            $line_rate = $this->normalizeTwoTaxRateToPercentPrecision($line_rate_raw);
+            $line_rate = $this->snapTwoTaxRateToKnownContexts($line_rate, $known_context_rates);
+            $line_rate_precision = 4;
+            $line_rate_percent = round($line_rate * 100, 2);
+            $descriptor = $this->buildTwoSingleDiscountDescriptor($row['rule']);
+
+            $lines[] = [
+                'name' => $descriptor['name'],
+                'description' => $descriptor['description'],
+                'gross_amount' => (string)$this->getTwoRoundAmount(-$line_gross),
+                'net_amount' => (string)$this->getTwoRoundAmount(-$line_net),
+                'discount_amount' => '0.00',
+                'tax_amount' => (string)$this->getTwoRoundAmount(-$line_tax),
+                'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($line_rate_percent) . '%',
+                'tax_rate' => $this->formatTwoTaxRate($line_rate, $line_rate_precision),
+                'unit_price' => (string)$this->getTwoRoundAmount(-$line_net),
+                'quantity' => 1,
+                'quantity_unit' => 'item',
+                'image_url' => '',
+                'product_page_url' => '',
+                'type' => 'DIGITAL',
+            ];
+        }
+
+        return $lines;
+    }
+
+    /**
+     * Extract gross discount amount from a cart rule.
+     *
+     * @param array $rule
+     * @return float
+     */
+    private function extractTwoDiscountRuleGrossAmount($rule)
+    {
+        $gross_fields = ['value_real', 'value'];
+        foreach ($gross_fields as $field) {
+            if (!isset($rule[$field]) || !is_numeric($rule[$field])) {
+                continue;
+            }
+
+            $amount = abs((float)$rule[$field]);
+            if ($amount > 0) {
+                return $amount;
+            }
+        }
+
+        // Only trust reduction_amount as gross when explicitly tax-excluded.
+        if (
+            isset($rule['reduction_amount']) && is_numeric($rule['reduction_amount']) &&
+            isset($rule['reduction_tax']) && (int)$rule['reduction_tax'] === 0
+        ) {
+            $amount = abs((float)$rule['reduction_amount']);
+            if ($amount > 0) {
+                return $amount;
+            }
+        }
+
+        return 0.0;
+    }
+
+    /**
+     * Extract net discount amount from a cart rule.
+     *
+     * @param array $rule
+     * @param float $gross_amount
+     * @return float|null
+     */
+    private function extractTwoDiscountRuleNetAmount($rule, $gross_amount)
+    {
+        if (isset($rule['value_tax_exc']) && is_numeric($rule['value_tax_exc'])) {
+            return abs((float)$rule['value_tax_exc']);
+        }
+
+        if (isset($rule['reduction_tax']) && (int)$rule['reduction_tax'] === 0) {
+            return (float)$gross_amount;
+        }
+
+        return null;
+    }
+
+    /**
+     * Build discount line descriptor for a single cart rule.
+     *
+     * @param array $rule
+     * @return array{name:string,description:string}
+     */
+    private function buildTwoSingleDiscountDescriptor($rule)
+    {
+        $name = isset($rule['name']) && !Tools::isEmpty($rule['name'])
+            ? trim((string)$rule['name'])
+            : $this->l('Discount');
+
+        $description = isset($rule['description']) && !Tools::isEmpty($rule['description'])
+            ? trim((string)$rule['description'])
+            : $name;
+
+        if (!empty($rule['code'])) {
+            $description .= ' (' . trim((string)$rule['code']) . ')';
+        }
+
+        return [
+            'name' => $name,
+            'description' => Tools::substr(strip_tags($description), 0, 255),
+        ];
     }
 
     /**
@@ -3452,7 +3777,10 @@ class Twopayment extends PaymentModule
         
         // Group line items by tax rate
         foreach ($line_items as $item) {
-            $tax_rate = $this->formatTwoTaxRate(isset($item['tax_rate']) ? (float)$item['tax_rate'] : 0);
+            $tax_rate = $this->formatTwoTaxRate(
+                isset($item['tax_rate']) ? (float)$item['tax_rate'] : 0,
+                self::TAX_SUBTOTAL_RATE_PRECISION
+            );
             // Round amounts before summing to prevent floating point precision issues
             $net_amount = round((float)$item['net_amount'], 2);
             $tax_amount = round((float)$item['tax_amount'], 2);
@@ -3550,10 +3878,63 @@ class Twopayment extends PaymentModule
      * @param float $tax_rate Decimal tax rate (e.g. 0.21 for 21%)
      * @return string
      */
-    private function formatTwoTaxRate($tax_rate)
+    private function formatTwoTaxRate($tax_rate, $precision = null)
     {
-        $normalized = round(max(0, (float)$tax_rate), self::TAX_RATE_PRECISION);
-        return number_format($normalized, self::TAX_RATE_PRECISION, '.', '');
+        $precision = $precision === null ? self::TAX_RATE_PRECISION : (int)$precision;
+        $normalized = round(max(0, (float)$tax_rate), $precision);
+        $formatted = number_format($normalized, $precision, '.', '');
+        if (strpos($formatted, '.') !== false) {
+            $formatted = rtrim(rtrim($formatted, '0'), '.');
+        }
+
+        return $formatted === '' ? '0' : $formatted;
+    }
+
+    /**
+     * Normalize decimal tax rate so it carries at most 2 decimals in percent.
+     *
+     * Example: 0.210098 => 21.0098% => 21.01% => 0.2101
+     *
+     * @param float $rate Decimal tax rate
+     * @return float
+     */
+    private function normalizeTwoTaxRateToPercentPrecision($rate)
+    {
+        $percent = round(max(0, (float)$rate) * 100, self::TAX_RATE_PERCENT_PRECISION);
+        return $percent / 100;
+    }
+
+    /**
+     * Snap rate to known cart contexts when only minor rounding drift exists.
+     *
+     * @param float $rate
+     * @param array $known_rates
+     * @return float
+     */
+    private function snapTwoTaxRateToKnownContexts($rate, $known_rates)
+    {
+        $rate = max(0, (float)$rate);
+        if (empty($known_rates)) {
+            return $rate;
+        }
+
+        $nearest = null;
+        $nearest_diff = null;
+        foreach ($known_rates as $candidate) {
+            $candidate = max(0, (float)$candidate);
+            $diff = abs($rate - $candidate);
+            if ($nearest_diff === null || $diff < $nearest_diff) {
+                $nearest = $candidate;
+                $nearest_diff = $diff;
+            }
+        }
+
+        // Only snap when difference is tiny (pure rounding drift).
+        if ($nearest !== null && $nearest_diff !== null && $nearest_diff <= 0.001) {
+            return $nearest;
+        }
+
+        return $rate;
     }
 
     /**
@@ -3940,14 +4321,17 @@ class Twopayment extends PaymentModule
         $default_term = $this->getDefaultPaymentTerm();
         
         // Try to get from PrestaShop context cookie first
-        $selected_term = (int)$this->context->cookie->two_payment_term;
+        $cookie_term_raw = isset($this->context->cookie->two_payment_term)
+            ? (string)$this->context->cookie->two_payment_term
+            : '';
+        $selected_term = (int)$cookie_term_raw;
         
         // If not found, try to get from browser cookies
         if (!$selected_term && isset($_COOKIE['two_payment_term'])) {
             $selected_term = (int)$_COOKIE['two_payment_term'];
         }
         
-        PrestaShopLogger::addLog('TwoPayment: Getting payment term - Context Cookie: ' . $this->context->cookie->two_payment_term . ', Browser Cookie: ' . (isset($_COOKIE['two_payment_term']) ? $_COOKIE['two_payment_term'] : 'not set') . ', Selected: ' . $selected_term . ', Available: ' . implode(',', $available_terms) . ', Default: ' . $default_term, 1);
+        PrestaShopLogger::addLog('TwoPayment: Getting payment term - Context Cookie: ' . $cookie_term_raw . ', Browser Cookie: ' . (isset($_COOKIE['two_payment_term']) ? $_COOKIE['two_payment_term'] : 'not set') . ', Selected: ' . $selected_term . ', Available: ' . implode(',', $available_terms) . ', Default: ' . $default_term, 1);
         
         if ($selected_term && in_array($selected_term, $available_terms)) {
             PrestaShopLogger::addLog('TwoPayment: Using selected payment term: ' . $selected_term . ' days', 1);
@@ -4583,16 +4967,38 @@ class Twopayment extends PaymentModule
      */
     public function buildTwoOrderCreateIdempotencyKey($cart, $snapshot_hash)
     {
-        // Keep retries idempotent within a short window while still allowing future fresh attempts.
-        $time_bucket = (int)floor(time() / 300); // 5-minute bucket
+        // Keep retries idempotent for the same cart snapshot.
         $seed = 'create_order|' .
             (int)$cart->id . '|' .
             (int)$cart->id_customer . '|' .
             (string)$snapshot_hash . '|' .
-            (string)Configuration::get('PS_TWO_ENVIRONMENT') . '|' .
-            $time_bucket;
+            (string)Configuration::get('PS_TWO_ENVIRONMENT');
 
         return 'create_' . Tools::substr(hash('sha256', $seed), 0, 48);
+    }
+
+    /**
+     * Detect whether an existing local order is already bound to a different Two order.
+     *
+     * @param array|false $existing_payment_data
+     * @param string $incoming_two_order_id
+     * @return bool
+     */
+    public function hasTwoOrderRebindingConflict($existing_payment_data, $incoming_two_order_id)
+    {
+        if (!is_array($existing_payment_data)) {
+            return false;
+        }
+
+        $existing_two_order_id = isset($existing_payment_data['two_order_id'])
+            ? trim((string)$existing_payment_data['two_order_id'])
+            : '';
+        $incoming_two_order_id = trim((string)$incoming_two_order_id);
+        if (Tools::isEmpty($existing_two_order_id) || Tools::isEmpty($incoming_two_order_id)) {
+            return false;
+        }
+
+        return !hash_equals($existing_two_order_id, $incoming_two_order_id);
     }
 
     /**
@@ -4692,7 +5098,7 @@ class Twopayment extends PaymentModule
      */
     private function normalizeSnapshotRate($rate)
     {
-        return number_format(max(0, (float)$rate), self::TAX_RATE_PRECISION, '.', '');
+        return number_format(max(0, (float)$rate), self::SNAPSHOT_TAX_RATE_PRECISION, '.', '');
     }
 
     /**

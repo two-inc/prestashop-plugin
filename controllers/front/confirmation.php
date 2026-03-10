@@ -190,6 +190,34 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             $id_order = (int)$this->module->getTwoOrderIdByCart((int)$cart->id);
         }
 
+        if ($id_order > 0) {
+            $existing_payment_data = $this->module->getTwoOrderPaymentData((int)$id_order);
+            if ($this->module->hasTwoOrderRebindingConflict($existing_payment_data, (string)$attempt['two_order_id'])) {
+                $existing_two_order_id = isset($existing_payment_data['two_order_id']) ? (string)$existing_payment_data['two_order_id'] : '';
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Rebinding guard blocked callback for attempt ' . $attempt_token .
+                    '. Existing order ' . (int)$id_order . ' already linked to Two order ' . $existing_two_order_id .
+                    ', incoming Two order ' . (string)$attempt['two_order_id'],
+                    3
+                );
+
+                // Best effort: cancel incoming duplicate provider order to avoid orphaned external state.
+                if (!Tools::isEmpty($attempt['two_order_id'])) {
+                    $this->module->setTwoPaymentRequest('/v1/order/' . $attempt['two_order_id'] . '/cancel', [], 'POST');
+                }
+
+                $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
+                $existing_order = new Order((int)$id_order);
+                if (Validate::isLoadedObject($existing_order)) {
+                    $this->redirectToOrderConfirmation($existing_order, $customer);
+                }
+
+                $message = $this->module->l('This payment attempt has already been finalized.');
+                $this->errors[] = $message;
+                $this->redirectWithNotifications('index.php?controller=order');
+            }
+        }
+
         if ($id_order <= 0) {
             $initial_status = $this->getInitialAwaitingStatus();
             $currency = new Currency((int)$cart->id_currency);

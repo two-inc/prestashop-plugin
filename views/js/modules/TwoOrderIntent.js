@@ -132,6 +132,7 @@ class TwoOrderIntent {
                     }
                     const selectedAddressId = this.getCurrentAddressId();
                     if (selectedAddressId > 0) {
+                        formData.id_address_invoice = selectedAddressId;
                         formData.id_address_delivery = selectedAddressId;
                     }
                     resolve(formData);
@@ -140,6 +141,7 @@ class TwoOrderIntent {
                     formData.companyid = companyid;
                     const selectedAddressId = this.getCurrentAddressId();
                     if (selectedAddressId > 0) {
+                        formData.id_address_invoice = selectedAddressId;
                         formData.id_address_delivery = selectedAddressId;
                     }
                     resolve(formData);
@@ -151,6 +153,7 @@ class TwoOrderIntent {
             this.lastCompany = company;
             const selectedAddressId = this.getCurrentAddressId();
             if (selectedAddressId > 0) {
+                formData.id_address_invoice = selectedAddressId;
                 formData.id_address_delivery = selectedAddressId;
             }
             resolve(formData);

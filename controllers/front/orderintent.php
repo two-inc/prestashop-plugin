@@ -114,9 +114,9 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $country = trim(Tools::getValue('country', ''));
         $addressId = (int) Tools::getValue('id_address', 0);
         if ($addressId <= 0 && Validate::isLoadedObject($this->context->cart)) {
-            $addressId = (int) $this->context->cart->id_address_delivery;
+            $addressId = (int) $this->context->cart->id_address_invoice;
             if ($addressId <= 0) {
-                $addressId = (int) $this->context->cart->id_address_invoice;
+                $addressId = (int) $this->context->cart->id_address_delivery;
             }
         }
 
@@ -214,11 +214,15 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $customer = new Customer($cart->id_customer);
         $currency = new Currency($cart->id_currency);
         
-        // CRITICAL FIX: Use the address ID that JavaScript sends, not hardcoded invoice address
-        $addressId = (int)Tools::getValue('id_address_delivery');
+        // Use invoice/billing address as authoritative company identity source.
+        $addressId = (int)Tools::getValue('id_address_invoice');
         if (empty($addressId)) {
-            // Fallback to delivery address from cart, then invoice address
-            $addressId = $cart->id_address_delivery ?: $cart->id_address_invoice;
+            // Backward compatibility: older clients may still send delivery id only.
+            $addressId = (int)Tools::getValue('id_address_delivery');
+        }
+        if (empty($addressId)) {
+            // Fallback to invoice address from cart, then delivery address.
+            $addressId = $cart->id_address_invoice ?: $cart->id_address_delivery;
         }
         
         $address = new Address($addressId);
@@ -238,9 +242,20 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $companyData = $this->getCompanyDataWithFallbacks();
         $companyName = $companyData['company'];
         $companyId = $companyData['companyid'];
-        // Determine account type. When admin disabled account type, treat as business at payment step but relax earlier steps on FE.
+        // Determine account type only when merchant explicitly enabled account-type mode.
+        // Keep resilience fallback for shops where custom address field is not persisted.
         $useAccountType = (int)Configuration::get('PS_TWO_USE_ACCOUNT_TYPE');
-        $accountType = $useAccountType ? 'business' : 'business';
+        $accountType = 'business';
+        if ($useAccountType) {
+            $accountType = property_exists($address, 'account_type') ? trim((string) $address->account_type) : '';
+            if (Tools::isEmpty($accountType) && !empty($companyName) && !empty($companyId)) {
+                $accountType = 'business';
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Account type missing in order intent; allowing business fallback from validated company data',
+                    2
+                );
+            }
+        }
         
         // Store company data in PrestaShop session for future use
         $this->storeCompanyDataInSession($companyData);
@@ -479,12 +494,15 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         }
         
         // Resolve selected checkout address first (prefer request-provided delivery address).
-        $selectedAddressId = (int) Tools::getValue('id_address_delivery');
+        $selectedAddressId = (int) Tools::getValue('id_address_invoice');
         if ($selectedAddressId <= 0) {
-            $selectedAddressId = (int) $this->context->cart->id_address_delivery;
+            $selectedAddressId = (int) Tools::getValue('id_address_delivery');
         }
         if ($selectedAddressId <= 0) {
             $selectedAddressId = (int) $this->context->cart->id_address_invoice;
+        }
+        if ($selectedAddressId <= 0) {
+            $selectedAddressId = (int) $this->context->cart->id_address_delivery;
         }
 
         // Priority 2: PrestaShop session/cookie (persisted from previous steps or company search)
@@ -625,12 +643,15 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             $this->context->cookie->two_company_name = $companyData['company'];
             $this->context->cookie->two_company_id = $companyData['companyid'] ?? '';
 
-            $addressId = (int) Tools::getValue('id_address_delivery');
+            $addressId = (int) Tools::getValue('id_address_invoice');
             if ($addressId <= 0) {
-                $addressId = (int) $this->context->cart->id_address_delivery;
+                $addressId = (int) Tools::getValue('id_address_delivery');
             }
             if ($addressId <= 0) {
                 $addressId = (int) $this->context->cart->id_address_invoice;
+            }
+            if ($addressId <= 0) {
+                $addressId = (int) $this->context->cart->id_address_delivery;
             }
 
             if ($addressId > 0) {

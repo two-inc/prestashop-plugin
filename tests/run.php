@@ -63,6 +63,8 @@ final class OrderBuilderSpec
         self::testValidateTwoLineItemsRejectsBrokenTaxFormula();
         self::testGetTwoTaxSubtotalsNormalizesTaxRateToTwoDecimals();
         self::testGetTwoProductItemsUsesAppliedTaxRateWhenConfiguredRateDiffers();
+        self::testGetTwoNewOrderDataSupportsFivePointFivePercentVat();
+        self::testGetTwoNewOrderDataIncludesGiftWrappingLine();
         self::testGetTwoNewOrderDataOmitsTopLevelTaxRate();
         self::testGetTwoNewOrderDataOmitsTaxSubtotalsWhenDisabled();
         self::testGetTwoIntentOrderDataOmitsTopLevelTaxRateAndOmitsTaxSubtotalsWhenDisabled();
@@ -73,12 +75,16 @@ final class OrderBuilderSpec
         self::testGetTwoNewOrderDataAllowsTwoCentBoundaryForLargeTotals();
         self::testGetTwoNewOrderDataAllowsThreeCentReconciliationDrift();
         self::testGetTwoNewOrderDataIncludesShippingAndDiscountLineItemsWhenReconciled();
+        self::testGetTwoNewOrderDataUsesCartRuleMonetaryValuesForDiscountLines();
+        self::testGetTwoNewOrderDataKeepsDiscountTaxFormulaForLargeRoundedDiscounts();
         self::testGetTwoRequestHeadersSkipApiKeyForOrderIntent();
         self::testCheckTwoOrderIntentApprovalAtPaymentDeclinesEvenWhenFrontendCookieSaysApproved();
         self::testCheckTwoOrderIntentApprovalAtPaymentAllowsApprovedResponse();
         self::testCheckTwoOrderIntentApprovalAtPaymentHandlesProviderNetworkFailure();
         self::testExtractTwoProviderGrossAmountForValidationSupportsRootAndNestedPayloads();
         self::testSnapshotHashIgnoresTaxRateChangesBeyondTwoDecimals();
+        self::testBuildTwoOrderCreateIdempotencyKeyIsDeterministicForSameSnapshot();
+        self::testHasTwoOrderRebindingConflictDetectsMismatchedTwoOrderIds();
         self::testIsTwoAttemptCallbackAuthorizedWithMatchingKey();
         self::testIsTwoAttemptCallbackAuthorizedFallsBackToContextCustomerKeyWhenRequestKeyMissing();
         self::testIsTwoAttemptCallbackAuthorizedRejectsMismatchedKeys();
@@ -94,6 +100,8 @@ final class OrderBuilderSpec
         self::testHookActionAdminControllerSetMediaSkipsUnrelatedAdminPage();
         self::testHookPaymentOptionsAllowsBusinessFallbackWhenAccountTypeMissing();
         self::testHookPaymentOptionsBlocksNonBusinessWhenAccountTypePresent();
+        self::testHookPaymentOptionsAllowsTwoCoveredCurrencies();
+        self::testHookPaymentOptionsBlocksUnsupportedCurrency();
         self::testMergeTwoPaymentTermFallbackUsesFallbackWhenMissing();
         self::testMergeTwoPaymentTermFallbackKeepsExistingValues();
         self::testShouldExposeTwoInvoiceActionsRequiresFulfilledState();
@@ -187,9 +195,178 @@ final class OrderBuilderSpec
         $items = $module->getTwoProductItems($cart);
 
         TinyAssert::count(1, $items);
-        TinyAssert::same('0.21', $items[0]['tax_rate']);
+        TinyAssert::same('0.205', $items[0]['tax_rate']);
         TinyAssert::same('20.50', $items[0]['tax_amount']);
         TinyAssert::same('120.50', $items[0]['gross_amount']);
+    }
+
+    private static function testGetTwoNewOrderDataSupportsFivePointFivePercentVat(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        StubStore::$customers[7001] = [
+            'email' => 'buyer@example.com',
+            'firstname' => 'Eva',
+            'lastname' => 'Martin',
+            'secure_key' => 'secure-key-7001',
+            'loaded' => true,
+        ];
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$addresses[7101] = [
+            'id_country' => 33,
+            'company' => 'Acme FR SAS',
+            'companyid' => 'FR123456789',
+            'address1' => '10 Rue de Paris',
+            'city' => 'Paris',
+            'postcode' => '75001',
+            'phone' => '+33100000000',
+            'loaded' => true,
+        ];
+        StubStore::$addresses[7102] = StubStore::$addresses[7101];
+        StubStore::$countries[33] = 'FR';
+
+        $cart = new Cart(7001);
+        $cart->id_customer = 7001;
+        $cart->id_currency = 978;
+        $cart->id_address_invoice = 7101;
+        $cart->id_address_delivery = 7102;
+        $cart->id_carrier = 0;
+        $cart->id_lang = 1;
+
+        StubStore::$cartProducts[7001] = [[
+            'id_product' => 9301,
+            'link_rewrite' => 'reduced-vat-item',
+            'name' => 'Reduced VAT item',
+            'description_short' => 'Reduced VAT test',
+            'manufacturer_name' => 'ACME',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 100.00,
+            'total_wt' => 105.50,
+            'cart_quantity' => 1,
+            'rate' => 5.5,
+            'price' => 100.00,
+            'reduction' => 0,
+        ]];
+        StubStore::$productCategories[9301] = [['name' => 'Books']];
+        StubStore::$images[9301] = ['id_image' => 9301];
+        StubStore::$cartTotals[7001] = [
+            true => [
+                Cart::ONLY_DISCOUNTS => 0.0,
+                Cart::BOTH => 105.50,
+            ],
+            false => [
+                Cart::ONLY_DISCOUNTS => 0.0,
+                Cart::BOTH => 100.00,
+            ],
+            'average_products_tax_rate' => 5.5,
+        ];
+
+        $payload = $module->getTwoNewOrderData('merchant-attempt-7001', $cart, [
+            'merchant_confirmation_url' => 'https://shop.local/confirm',
+            'merchant_cancel_order_url' => 'https://shop.local/cancel',
+            'merchant_edit_order_url' => '',
+            'merchant_order_verification_failed_url' => '',
+            'merchant_invoice_url' => '',
+            'merchant_shipping_document_url' => '',
+        ]);
+
+        TinyAssert::same('105.50', $payload['gross_amount']);
+        TinyAssert::same('100.00', $payload['net_amount']);
+        TinyAssert::same('5.50', $payload['tax_amount']);
+        TinyAssert::same('0.055', $payload['line_items'][0]['tax_rate']);
+    }
+
+    private static function testGetTwoNewOrderDataIncludesGiftWrappingLine(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        StubStore::$customers[7002] = [
+            'email' => 'buyer@example.com',
+            'firstname' => 'Luis',
+            'lastname' => 'Ramos',
+            'secure_key' => 'secure-key-7002',
+            'loaded' => true,
+        ];
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$countries[34] = 'ES';
+        StubStore::$addresses[7201] = [
+            'id_country' => 34,
+            'company' => 'Acme ES S.L.',
+            'companyid' => 'B12345678',
+            'address1' => 'Calle Mayor 1',
+            'city' => 'Madrid',
+            'postcode' => '28001',
+            'phone' => '+34910000000',
+            'loaded' => true,
+        ];
+        StubStore::$addresses[7202] = StubStore::$addresses[7201];
+
+        $cart = new Cart(7002);
+        $cart->id_customer = 7002;
+        $cart->id_currency = 978;
+        $cart->id_address_invoice = 7201;
+        $cart->id_address_delivery = 7202;
+        $cart->id_carrier = 0;
+        $cart->id_lang = 1;
+
+        StubStore::$cartProducts[7002] = [[
+            'id_product' => 9302,
+            'link_rewrite' => 'gift-product',
+            'name' => 'Gift Product',
+            'description_short' => 'Gift product test',
+            'manufacturer_name' => 'ACME',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 100.00,
+            'total_wt' => 121.00,
+            'cart_quantity' => 1,
+            'rate' => 21.0,
+            'price' => 100.00,
+            'reduction' => 0,
+        ]];
+        StubStore::$productCategories[9302] = [['name' => 'Gifts']];
+        StubStore::$images[9302] = ['id_image' => 9302];
+        StubStore::$cartTotals[7002] = [
+            true => [
+                Cart::ONLY_DISCOUNTS => 0.0,
+                Cart::BOTH => 123.42,
+                Cart::ONLY_WRAPPING => 2.42,
+            ],
+            false => [
+                Cart::ONLY_DISCOUNTS => 0.0,
+                Cart::BOTH => 102.00,
+                Cart::ONLY_WRAPPING => 2.00,
+            ],
+            'average_products_tax_rate' => 21.0,
+        ];
+
+        $payload = $module->getTwoNewOrderData('merchant-attempt-7002', $cart, [
+            'merchant_confirmation_url' => 'https://shop.local/confirm',
+            'merchant_cancel_order_url' => 'https://shop.local/cancel',
+            'merchant_edit_order_url' => '',
+            'merchant_order_verification_failed_url' => '',
+            'merchant_invoice_url' => '',
+            'merchant_shipping_document_url' => '',
+        ]);
+
+        TinyAssert::same('123.42', $payload['gross_amount']);
+        TinyAssert::same('102.00', $payload['net_amount']);
+        TinyAssert::same('21.42', $payload['tax_amount']);
+
+        $hasWrappingLine = false;
+        foreach ($payload['line_items'] as $lineItem) {
+            if ((string) ($lineItem['name'] ?? '') === 'Gift wrapping') {
+                $hasWrappingLine = true;
+                TinyAssert::same('2.42', (string) $lineItem['gross_amount']);
+                TinyAssert::same('2.00', (string) $lineItem['net_amount']);
+                TinyAssert::same('0.42', (string) $lineItem['tax_amount']);
+            }
+        }
+
+        TinyAssert::true($hasWrappingLine);
     }
 
     private static function testGetTwoNewOrderDataOmitsTopLevelTaxRate(): void
@@ -1138,6 +1315,275 @@ final class OrderBuilderSpec
         TinyAssert::same(1518.10, $lineGross, 'Expected line item gross sum to match order gross');
     }
 
+    private static function testGetTwoNewOrderDataKeepsDiscountTaxFormulaForLargeRoundedDiscounts(): void
+    {
+        self::reset();
+
+        $module = new TwopaymentTestHarness();
+
+        StubStore::$customers[492] = [
+            'email' => 'buyer@example.com',
+            'firstname' => 'Ana',
+            'lastname' => 'Lopez',
+            'secure_key' => 'secure-key-492',
+            'loaded' => true,
+        ];
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$addresses[930] = [
+            'id_country' => 34,
+            'company' => 'ORDER IN TECH',
+            'companyid' => 'B01588177',
+            'address1' => 'Calle Mayor 1',
+            'city' => 'Madrid',
+            'postcode' => '28001',
+            'phone' => '+34910000000',
+            'loaded' => true,
+        ];
+        StubStore::$addresses[931] = StubStore::$addresses[930];
+
+        StubStore::$carriers[32] = [
+            'name' => 'Carrier',
+            'delay' => '',
+            'shipping_method' => Carrier::SHIPPING_METHOD_PRICE,
+            'tax_rules_group_id' => 7,
+        ];
+        StubStore::$taxRuleRates[7] = 21.0;
+
+        $cart = new Cart(492);
+        $cart->id_customer = 492;
+        $cart->id_currency = 978;
+        $cart->id_address_invoice = 930;
+        $cart->id_address_delivery = 931;
+        $cart->id_carrier = 32;
+        $cart->id_lang = 1;
+
+        StubStore::$cartProducts[492] = [[
+            'id_product' => 778,
+            'link_rewrite' => 'bulk-product',
+            'name' => 'Bulk Product',
+            'description_short' => 'Bulk',
+            'manufacturer_name' => 'ACME',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 3000.00,
+            'total_wt' => 3630.00,
+            'cart_quantity' => 1,
+            'rate' => 21.0,
+            'price' => 3000.00,
+            'reduction' => 0,
+        ]];
+        StubStore::$productCategories[778] = [['name' => 'Bulk']];
+        StubStore::$images[778] = ['id_image' => 9902];
+        StubStore::$cartShipping[492] = [
+            true => 121.00,
+            false => 100.00,
+        ];
+        StubStore::$cartTotals[492] = [
+            true => [
+                Cart::ONLY_DISCOUNTS => 709.25,
+                Cart::BOTH => 3041.75,
+                Cart::ONLY_SHIPPING => 0.00,
+            ],
+            false => [
+                Cart::ONLY_DISCOUNTS => 586.25,
+                Cart::BOTH => 2513.75,
+                Cart::ONLY_SHIPPING => 0.00,
+            ],
+            'average_products_tax_rate' => 21.0,
+        ];
+        StubStore::$cartRules[492] = [
+            ['name' => 'free shipping rule', 'code' => '', 'value' => -121.00, 'reduction_percent' => 0, 'reduction_amount' => 121.00, 'free_shipping' => 1],
+            ['name' => 'bulk promo', 'code' => '', 'value' => -588.25, 'reduction_percent' => 0, 'reduction_amount' => 588.25, 'free_shipping' => 0],
+        ];
+
+        $payload = $module->getTwoNewOrderData('merchant-attempt-492', $cart, [
+            'merchant_confirmation_url' => 'https://shop.local/confirm',
+            'merchant_cancel_order_url' => 'https://shop.local/cancel',
+            'merchant_edit_order_url' => '',
+            'merchant_order_verification_failed_url' => '',
+            'merchant_invoice_url' => '',
+            'merchant_shipping_document_url' => '',
+        ]);
+
+        $discountLine = null;
+        foreach ($payload['line_items'] as $line) {
+            if (isset($line['gross_amount']) && (float)$line['gross_amount'] < 0) {
+                $discountLine = $line;
+                break;
+            }
+        }
+
+        TinyAssert::true($discountLine !== null, 'Expected a discount line item');
+        $lineTax = (float)$discountLine['tax_amount'];
+        $lineNet = (float)$discountLine['net_amount'];
+        $lineRate = (float)$discountLine['tax_rate'];
+        $diff = abs($lineTax - ($lineNet * $lineRate));
+        TinyAssert::true($diff <= 0.02, 'Expected discount line tax formula to remain within tolerance, diff=' . $diff);
+    }
+
+    private static function testGetTwoNewOrderDataUsesCartRuleMonetaryValuesForDiscountLines(): void
+    {
+        self::reset();
+
+        $module = new TwopaymentTestHarness();
+
+        StubStore::$customers[493] = [
+            'email' => 'buyer@example.com',
+            'firstname' => 'John',
+            'lastname' => 'Jones',
+            'secure_key' => 'secure-key-493',
+            'loaded' => true,
+        ];
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$countries[34] = 'ES';
+        StubStore::$countries[826] = 'GB';
+        StubStore::$addresses[940] = [
+            'id_country' => 34,
+            'company' => 'SPAIN',
+            'companyid' => 'J13936695',
+            'address1' => 'Billing here CALLE DALIA, 10 215',
+            'city' => 'BENALMADENA',
+            'postcode' => '29639',
+            'phone' => '666666668',
+            'loaded' => true,
+        ];
+        StubStore::$addresses[941] = [
+            'id_country' => 826,
+            'company' => 'SPAIN LTD',
+            'companyid' => '06922947',
+            'address1' => 'Shipping here 20-22 Wenlock Road',
+            'city' => 'London',
+            'postcode' => 'N1 7GU',
+            'phone' => '666666668',
+            'loaded' => true,
+        ];
+
+        StubStore::$carriers[33] = [
+            'name' => 'My carrier',
+            'delay' => 'Delivery next day!',
+            'shipping_method' => Carrier::SHIPPING_METHOD_WEIGHT,
+            'tax_rules_group_id' => 7,
+        ];
+        StubStore::$taxRuleRates[7] = 21.0;
+
+        $cart = new Cart(493);
+        $cart->id_customer = 493;
+        $cart->id_currency = 978;
+        $cart->id_address_invoice = 940;
+        $cart->id_address_delivery = 941;
+        $cart->id_carrier = 33;
+        $cart->id_lang = 1;
+
+        StubStore::$cartProducts[493] = [
+            [
+                'id_product' => 8201,
+                'link_rewrite' => 'hummingbird-printed-sweater',
+                'name' => 'Hummingbird printed sweater',
+                'description_short' => 'Sweater',
+                'manufacturer_name' => 'Studio Design',
+                'ean13' => '',
+                'upc' => '',
+                'total' => 430.80,
+                'total_wt' => 430.80,
+                'cart_quantity' => 12,
+                'rate' => 0.0,
+                'price' => 35.90,
+                'reduction' => 0,
+            ],
+            [
+                'id_product' => 8202,
+                'link_rewrite' => 'hummingbird-notebook',
+                'name' => 'Hummingbird notebook',
+                'description_short' => 'Notebook',
+                'manufacturer_name' => 'Graphic Corner',
+                'ean13' => '',
+                'upc' => '',
+                'total' => 10832.23,
+                'total_wt' => 13107.00,
+                'cart_quantity' => 17,
+                'rate' => 21.0,
+                'price' => 637.19,
+                'reduction' => 0,
+            ],
+        ];
+        StubStore::$productCategories[8201] = [['name' => 'Women']];
+        StubStore::$productCategories[8202] = [['name' => 'Stationery']];
+        StubStore::$images[8201] = ['id_image' => 8201];
+        StubStore::$images[8202] = ['id_image' => 8202];
+        StubStore::$cartShipping[493] = [
+            true => 116.00,
+            false => 95.87,
+        ];
+        StubStore::$cartTotals[493] = [
+            true => [
+                Cart::ONLY_DISCOUNTS => 731.99,
+                Cart::BOTH => 13138.40,
+                Cart::ONLY_SHIPPING => 0.00,
+                Cart::ONLY_WRAPPING => 216.59,
+            ],
+            false => [
+                Cart::ONLY_DISCOUNTS => 608.99,
+                Cart::BOTH => 10928.91,
+                Cart::ONLY_SHIPPING => 0.00,
+                Cart::ONLY_WRAPPING => 179.00,
+            ],
+            'average_products_tax_rate' => 21.0,
+        ];
+        StubStore::$cartRules[493] = [
+            [
+                'name' => 'free shipping rule',
+                'code' => 'free-ship',
+                'value' => -58.00,
+                'value_real' => 58.00,
+                'value_tax_exc' => 48.252911813643927,
+            ],
+            [
+                'name' => 'discount-rule',
+                'code' => 'discount-rule',
+                'value' => -673.99,
+                'value_real' => 673.99,
+                'value_tax_exc' => 560.73885440931781,
+            ],
+        ];
+
+        $payload = $module->getTwoNewOrderData('merchant-attempt-493', $cart, [
+            'merchant_confirmation_url' => 'https://shop.local/confirm',
+            'merchant_cancel_order_url' => 'https://shop.local/cancel',
+            'merchant_edit_order_url' => '',
+            'merchant_order_verification_failed_url' => '',
+            'merchant_invoice_url' => '',
+            'merchant_shipping_document_url' => '',
+        ]);
+
+        $discountLines = [];
+        foreach ($payload['line_items'] as $line) {
+            if (isset($line['gross_amount']) && (float)$line['gross_amount'] < 0) {
+                $discountLines[] = $line;
+            }
+        }
+
+        TinyAssert::same(2, count($discountLines), 'Expected one discount line per cart rule');
+
+        $byName = [];
+        foreach ($discountLines as $line) {
+            $byName[(string)$line['name']] = $line;
+        }
+
+        TinyAssert::true(isset($byName['free shipping rule']), 'Expected free shipping rule discount line');
+        TinyAssert::true(isset($byName['discount-rule']), 'Expected discount-rule discount line');
+        TinyAssert::same('-48.25', (string)$byName['free shipping rule']['net_amount'], 'Expected canonical net discount from cart rule value_tax_exc');
+        TinyAssert::same('-560.74', (string)$byName['discount-rule']['net_amount'], 'Expected canonical net discount from cart rule value_tax_exc');
+        TinyAssert::same('-58.00', (string)$byName['free shipping rule']['gross_amount'], 'Expected canonical gross discount from cart rule value_real');
+        TinyAssert::same('-673.99', (string)$byName['discount-rule']['gross_amount'], 'Expected canonical gross discount from cart rule value_real');
+        foreach ($discountLines as $line) {
+            $rateString = (string)$line['tax_rate'];
+            TinyAssert::true((bool)preg_match('/^\d+(?:\.\d{1,4})?$/', $rateString), 'Expected discount tax_rate to use at most 4 decimal digits: ' . $rateString);
+            $rate = (float)$rateString;
+            $percent = $rate * 100;
+            TinyAssert::true(abs($percent - round($percent, 2)) <= 0.000001, 'Expected discount tax_rate to be rounded to 2 decimals in percent: ' . $rateString);
+        }
+    }
+
     private static function testGetTwoRequestHeadersSkipApiKeyForOrderIntent(): void
     {
         self::reset();
@@ -1300,6 +1746,40 @@ final class OrderBuilderSpec
         $hashB = $module->calculateTwoCheckoutSnapshotHash($cart, $changedPayload);
 
         TinyAssert::same($hashA, $hashB);
+    }
+
+    private static function testBuildTwoOrderCreateIdempotencyKeyIsDeterministicForSameSnapshot(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $cart = new Cart(991);
+        $cart->id_customer = 123;
+
+        $keyA = $module->buildTwoOrderCreateIdempotencyKey($cart, 'snapshot-hash-1');
+        $keyB = $module->buildTwoOrderCreateIdempotencyKey($cart, 'snapshot-hash-1');
+        $keyC = $module->buildTwoOrderCreateIdempotencyKey($cart, 'snapshot-hash-2');
+
+        TinyAssert::same($keyA, $keyB);
+        TinyAssert::notSame($keyA, $keyC);
+    }
+
+    private static function testHasTwoOrderRebindingConflictDetectsMismatchedTwoOrderIds(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        TinyAssert::true($module->hasTwoOrderRebindingConflict([
+            'two_order_id' => 'two-existing-1',
+        ], 'two-incoming-2'));
+
+        TinyAssert::false($module->hasTwoOrderRebindingConflict([
+            'two_order_id' => 'two-existing-1',
+        ], 'two-existing-1'));
+
+        TinyAssert::false($module->hasTwoOrderRebindingConflict([
+            'two_order_id' => '',
+        ], 'two-incoming-2'));
     }
 
     private static function testIsTwoAttemptCallbackAuthorizedWithMatchingKey(): void
@@ -1608,7 +2088,10 @@ final class OrderBuilderSpec
 
         $cart = new Cart(501);
         $cart->id_address_invoice = 901;
+        $cart->id_currency = 978;
         $module->context->cart = $cart;
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$moduleCurrencies['twopayment'] = [['id_currency' => 978]];
 
         $options = $module->hookPaymentOptions([]);
 
@@ -1638,6 +2121,84 @@ final class OrderBuilderSpec
 
         $cart = new Cart(502);
         $cart->id_address_invoice = 902;
+        $cart->id_currency = 978;
+        $module->context->cart = $cart;
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$moduleCurrencies['twopayment'] = [['id_currency' => 978]];
+
+        $options = $module->hookPaymentOptions([]);
+
+        TinyAssert::same(0, count($options));
+    }
+
+    private static function testHookPaymentOptionsAllowsTwoCoveredCurrencies(): void
+    {
+        self::reset();
+        $module = new class extends TwopaymentTestHarness {
+            protected function getTwoPaymentOption()
+            {
+                return (object) ['method' => 'two'];
+            }
+        };
+
+        $module->active = true;
+        Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', 0);
+        StubStore::$countries[826] = 'GB';
+        StubStore::$addresses[904] = [
+            'id_country' => 826,
+            'company' => 'Acme UK Ltd',
+            'vat_number' => 'GB123456789',
+            'loaded' => true,
+        ];
+
+        $covered = [
+            578 => 'NOK',
+            826 => 'GBP',
+            752 => 'SEK',
+            840 => 'USD',
+            208 => 'DKK',
+            978 => 'EUR',
+        ];
+
+        foreach ($covered as $idCurrency => $iso) {
+            StubStore::$currencies[$idCurrency] = ['iso_code' => $iso, 'loaded' => true];
+            StubStore::$moduleCurrencies['twopayment'] = [['id_currency' => $idCurrency]];
+
+            $cart = new Cart(504 + $idCurrency);
+            $cart->id_address_invoice = 904;
+            $cart->id_currency = $idCurrency;
+            $module->context->cart = $cart;
+
+            $options = $module->hookPaymentOptions([]);
+            TinyAssert::same(1, count($options), 'Expected covered currency to be allowed: ' . $iso);
+        }
+    }
+
+    private static function testHookPaymentOptionsBlocksUnsupportedCurrency(): void
+    {
+        self::reset();
+        $module = new class extends TwopaymentTestHarness {
+            protected function getTwoPaymentOption()
+            {
+                return (object) ['method' => 'two'];
+            }
+        };
+
+        $module->active = true;
+        Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', 0);
+        StubStore::$countries[826] = 'GB';
+        StubStore::$addresses[903] = [
+            'id_country' => 826,
+            'company' => 'Acme UK Ltd',
+            'vat_number' => 'GB123456789',
+            'loaded' => true,
+        ];
+        StubStore::$currencies[392] = ['iso_code' => 'JPY', 'loaded' => true];
+        StubStore::$moduleCurrencies['twopayment'] = [['id_currency' => 392]];
+
+        $cart = new Cart(503);
+        $cart->id_address_invoice = 903;
+        $cart->id_currency = 392;
         $module->context->cart = $cart;
 
         $options = $module->hookPaymentOptions([]);

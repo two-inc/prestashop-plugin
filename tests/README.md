@@ -7,9 +7,14 @@ This folder contains deterministic tests for order-building and payload safety l
 - Line item formula validation (`tax_amount = net_amount * tax_rate` and net formula)
 - Tax subtotal grouping and decimal tax-rate precision retention
 - Product tax-rate derivation when configured and applied rates differ
+- Non-integer VAT handling for line-item formula safety (e.g. 5.5%)
 - Order-level tax-rate derivation from final net/tax totals
 - Guardrails that reject invalid line items before building order payloads
 - Snapshot hash sensitivity to tax-rate precision changes beyond two decimals
+- Gift wrapping payload line composition and reconciliation safety
+- Currency compatibility gating for payment option visibility
+- Large rounded discount split handling keeps tax-formula validation stable
+- Cart-rule monetary (`value_real`/`value_tax_exc`) discount line attribution
 
 ## Why this matters
 

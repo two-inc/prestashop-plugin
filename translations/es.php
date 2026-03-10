@@ -220,6 +220,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_ea9cf7e47ff33b2be14e6dd07cbcefc6'] 
 $_MODULE['<{twopayment}prestashop>twopayment_2b4ef6e3a316295ab176b9dae7ef46b6'] = 'Coste de envío del pedido';
 $_MODULE['<{twopayment}prestashop>twopayment_9091655deaca780040e501e02a1805b2'] = '(por peso)';
 $_MODULE['<{twopayment}prestashop>twopayment_329aa8486f4fde54cc4c9965faea9aa9'] = '(por precio)';
+$_MODULE['<{twopayment}prestashop>twopayment_484f5a79672cebe198ebdde45a1d672f'] = 'Envoltorio de regalo';
+$_MODULE['<{twopayment}prestashop>twopayment_b4d559d50e616b7eb46089c0734d1b1c'] = 'Envoltorio de regalo para este pedido';
 $_MODULE['<{twopayment}prestashop>twopayment_104d9898c04874d0fbac36e125fa1369'] = 'Descuento';
 $_MODULE['<{twopayment}prestashop>twopayment_82ab2bbfea5681899d51358644b7e5b0'] = 'Descuento del pedido';
 $_MODULE['<{twopayment}prestashop>twopayment_736a2c997a0aeb75cd77b06f9a7b6934'] = 'Descuento: %s';
@@ -245,6 +247,7 @@ $_MODULE['<{twopayment}prestashop>confirmation_4b63989fed5f90859fafd6e1f02be539'
 $_MODULE['<{twopayment}prestashop>confirmation_3727d6bec90c4328e4aa9f542668fb4a'] = 'El pago aún no se ha verificado. Inténtalo de nuevo o contacta con soporte.';
 $_MODULE['<{twopayment}prestashop>confirmation_11503989a3f470d727d38a6054896940'] = 'No se pudo cargar la moneda para este intento de pago.';
 $_MODULE['<{twopayment}prestashop>confirmation_87265a2a96ebb4450eb89400cecdac4c'] = 'No se pudo crear el pedido local para este intento de pago.';
+$_MODULE['<{twopayment}prestashop>confirmation_8725e3093da6c77204f4212866d6cdc1'] = 'Este intento de pago ya se ha finalizado.';
 $_MODULE['<{twopayment}prestashop>confirmation_a49e05d4125474b3a6cfc0caacc5a48f'] = 'No se pudo cargar el pedido creado. Contacta con soporte.';
 $_MODULE['<{twopayment}prestashop>confirmation_0ad05b9020f4d78e45efdacdb76e734b'] = 'No se pudo cargar el cliente del pedido.';
 $_MODULE['<{twopayment}prestashop>payment_3b8d62101f4aa1d63f9f4fb18f32f193'] = 'Para pagar con Two, selecciona tu empresa para que podamos verificar tu negocio y ofrecerte plazos de factura.';
@@ -253,6 +256,8 @@ $_MODULE['<{twopayment}prestashop>payment_27347f1b2aaf71eb152357081a0820b5'] = '
 $_MODULE['<{twopayment}prestashop>payment_36db71f088bd580af6416fa507d77a58'] = 'Tu pedido no pudo ser aprobado por el pago con Two. Por favor, elige otro método de pago o contacta con el soporte.';
 $_MODULE['<{twopayment}prestashop>payment_9c51eb50fb79bffa2c795ac4773781dc'] = 'La aprobación de tu pago ha expirado. Actualiza la página e inténtalo de nuevo.';
 $_MODULE['<{twopayment}prestashop>payment_990f982c41ce66c911e505fb58fa8e46'] = 'No se puede procesar tu pedido con el pago de Two.';
+$_MODULE['<{twopayment}prestashop>payment_8dd557fb0a33b5d844cdf7b87e84f59a'] = 'Este método de pago no está disponible para la moneda seleccionada.';
+$_MODULE['<{twopayment}prestashop>payment_2ead200be9922b9284cb1324bea07c33'] = 'No se puede procesar tu pedido con el pago de Two. Revisa tu carrito e inténtalo de nuevo.';
 $_MODULE['<{twopayment}prestashop>payment_0e59e4dd7c8466ff99df71f1e49cbfa1'] = 'Error de conexión con el proveedor de pago. Por favor, inténtalo de nuevo.';
 $_MODULE['<{twopayment}prestashop>payment_d83e9ff3f8fd11e651a6f27f40dcf82b'] = 'Error en la configuración del método de pago. Por favor, contacta con la tienda.';
 $_MODULE['<{twopayment}prestashop>payment_f962210107c086dcb022c580cdd04c72'] = 'Datos de pedido no válidos. Revisa tus datos e inténtalo de nuevo.';

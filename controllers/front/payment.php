@@ -57,6 +57,15 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             return;
         }
 
+        if (!$this->module->isCartCurrencySupportedByTwo($cart)) {
+            $this->failCheckout(
+                $this->module->l('This payment method is not available for your selected currency.'),
+                'TwoPayment: Unsupported currency ' . (int)$cart->id_currency . ' for cart ' . $cart->id,
+                2
+            );
+            return;
+        }
+
         $authorized = false;
         foreach (Module::getPaymentModules() as $module) {
             if ($module['name'] == 'twopayment') {
@@ -156,9 +165,18 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             'merchant_shipping_document_url' => ''
         ];
 
-        $paymentdata = $this->module->getTwoNewOrderData($merchant_order_id, $cart, $merchant_urls);
-        $cart_snapshot_hash = $this->module->calculateTwoCheckoutSnapshotHash($cart, $paymentdata);
-        $idempotency_key = $this->module->buildTwoOrderCreateIdempotencyKey($cart, $cart_snapshot_hash);
+        try {
+            $paymentdata = $this->module->getTwoNewOrderData($merchant_order_id, $cart, $merchant_urls);
+            $cart_snapshot_hash = $this->module->calculateTwoCheckoutSnapshotHash($cart, $paymentdata);
+            $idempotency_key = $this->module->buildTwoOrderCreateIdempotencyKey($cart, $cart_snapshot_hash);
+        } catch (Exception $e) {
+            $this->failCheckout(
+                $this->module->l('Unable to process your order with Two payment. Please review your cart and try again.'),
+                'TwoPayment: Failed building order payload for cart ' . $cart->id . ' - ' . $e->getMessage(),
+                3
+            );
+            return;
+        }
 
         // Call Two API to create order
         $response = $this->module->setTwoPaymentRequest(

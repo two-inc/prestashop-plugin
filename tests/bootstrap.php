@@ -34,6 +34,7 @@ namespace {
         public static array $cartTotals = [];
         public static array $cartShipping = [];
         public static array $cartRules = [];
+        public static array $moduleCurrencies = [];
         public static array $productCategories = [];
         public static array $images = [];
         public static array $taxRuleRates = [];
@@ -60,6 +61,16 @@ namespace {
             self::$cartTotals = [];
             self::$cartShipping = [];
             self::$cartRules = [];
+            self::$moduleCurrencies = [
+                'twopayment' => [
+                    ['id_currency' => 578], // NOK
+                    ['id_currency' => 826], // GBP
+                    ['id_currency' => 752], // SEK
+                    ['id_currency' => 840], // USD
+                    ['id_currency' => 208], // DKK
+                    ['id_currency' => 978], // EUR
+                ],
+            ];
             self::$productCategories = [];
             self::$images = [];
             self::$taxRuleRates = [];
@@ -138,6 +149,25 @@ namespace {
         public function display($file, $template): string
         {
             return '';
+        }
+
+        public function getCurrency($idCurrency = null): array
+        {
+            $moduleName = property_exists($this, 'name') ? (string) $this->name : '';
+            $currencies = StubStore::$moduleCurrencies[$moduleName] ?? [];
+            if ($idCurrency === null) {
+                return $currencies;
+            }
+
+            $idCurrency = (int) $idCurrency;
+            $filtered = [];
+            foreach ($currencies as $currency) {
+                if ((int) ($currency['id_currency'] ?? 0) === $idCurrency) {
+                    $filtered[] = $currency;
+                }
+            }
+
+            return $filtered;
         }
     }
 
@@ -585,6 +615,7 @@ namespace {
         public const ONLY_DISCOUNTS = 1;
         public const ONLY_SHIPPING = 2;
         public const BOTH = 3;
+        public const ONLY_WRAPPING = 4;
 
         public bool $loaded = true;
         public int $id = 0;
