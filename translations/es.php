@@ -314,6 +314,8 @@ $_MODULE['<{twopayment}prestashop>paymentinfo_1ffcb4e0a351d5e143bec6362c0feaf8']
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_b9484b0275e32e5b1011b9e3a49ce19a'] = 'Pago con Two';
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_7de46cb469a9606c3f20c512df2519f3'] = 'Plazos de la factura';
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_cdca48ec5dde79b84b395c0c557bb290'] = '%d días';
+$_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_64fb978fc0b2296e92bfe159b00b80cf'] = 'Fin de mes + %d días';
+$_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_7f9bf3875603f517e5ea51fcebed6ca8'] = 'Estándar + %d días';
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_f23b2c9fe4875f2c3dbc61a4bd02705b'] = 'Portal del comprador Two';
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_eca5a3449475f365c129a02789d64a36'] = 'Accede a tu portal de comprador de Two para ver este pedido una vez completado';
 $_MODULE['<{twopayment}prestashop>displayadminordertablink_4aa713eb466d04cbbf55ce1bc172294c'] = 'Detalles del pago Two';

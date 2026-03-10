@@ -11,7 +11,13 @@
                 {if $twopaymentdata.two_day_on_invoice}
                     <tr>
                         <td><strong>{l s='Invoice Terms' mod='twopayment'}</strong></td>
-                        <td>{l s='%d days' sprintf=[$twopaymentdata.two_day_on_invoice] mod='twopayment'}</td>
+                        <td>
+                            {if isset($twopaymentdata.two_payment_term_type) && $twopaymentdata.two_payment_term_type == 'EOM'}
+                                {l s='End of Month + %d days' sprintf=[$twopaymentdata.two_day_on_invoice] mod='twopayment'}
+                            {else}
+                                {l s='Standard + %d days' sprintf=[$twopaymentdata.two_day_on_invoice] mod='twopayment'}
+                            {/if}
+                        </td>
                     </tr>
                 {/if}
                 {if $two_buyer_portal_url}
@@ -24,5 +30,4 @@
         </table>
     </div>
 </div>
-
 
