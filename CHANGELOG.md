@@ -36,6 +36,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `order_create_idempotency_key`
 
 ### Changed
+- **Order intent and callback hardening (provider-first parity)**:
+  - Authoritative payment-submit order intent now fail-closes on strict reconciliation drift before provider `/v1/order_intent` call.
+  - Callback-time local order creation now wraps `validateOrder()` with race-safe recovery using existing order-by-cart lookup.
+  - Provider lifecycle cleanup now performs best-effort cancel on terminal post-create failures (including missing `payment_url`) with explicit lifecycle logs.
+- **Order intent i18n normalization**:
+  - Replaced remaining hardcoded order-intent user-facing errors with translation-surface strings.
+  - Added Spanish (`es`) translations for the normalized order-intent error keys.
+- **Coverage and validation documentation updates**:
+  - Added test coverage for strict payment-submit drift blocking, callback race recovery, and provider cancel helper behavior.
+  - Added real-engine integration matrix requirements for PrestaShop `1.7.8`, `8.x`, and `9.x` under `tests/integration/README.md`.
 - **Tax precision hardening for payload formulas**:
   - Line-item `tax_rate` serialization now preserves non-integer VAT rates (for example `0.055` for 5.5%) to keep `tax_amount = net_amount * tax_rate` consistent.
   - Tax subtotal grouping precision remains compatibility-safe while checkout snapshot tax-rate normalization remains stable at two decimals.

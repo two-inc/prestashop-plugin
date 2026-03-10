@@ -56,6 +56,14 @@ PHPUnit config and equivalent test file are included:
 - `phpunit.xml.dist`
 - `tests/OrderBuilderTest.php`
 
+## Real-engine integration matrix
+
+Integration coverage requirements for PrestaShop `1.7.8`, `8.x`, and `9.x` live in:
+
+- `tests/integration/README.md`
+
+This matrix validates cart-rule/tax/discount parity against real PrestaShop checkout/cart behavior, beyond the offline deterministic harness.
+
 ## When to add tests
 
 Add or update tests when you change:

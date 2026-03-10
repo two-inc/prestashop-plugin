@@ -202,6 +202,11 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                 'TwoPayment: Two API did not return 201 (got ' . $http_status . ') - no local order created for cart ' . $cart->id . ', attempt ' . $attempt_token,
                 3
             );
+            PrestaShopLogger::addLog(
+                'TwoPayment: Provider order lifecycle - create_failed for attempt ' . $attempt_token .
+                ', HTTP ' . $http_status,
+                2
+            );
             
             // Determine user-friendly error message based on response
             $message = $this->module->l('Unable to process your order with Two payment.');
@@ -283,7 +288,7 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                 );
                 if (isset($response['id']) && $response['id']) {
                     // Best effort cleanup when local attempt persistence fails.
-                    $this->module->setTwoPaymentRequest('/v1/order/' . $response['id'] . '/cancel', [], 'POST');
+                    $this->module->cancelTwoOrderBestEffort((string)$response['id'], 'attempt_persist_failed');
                 }
                 $this->errors[] = $this->module->l('Temporary checkout issue. Please try again.');
                 $this->redirectWithNotifications('index.php?controller=order');
@@ -327,7 +332,7 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
 
                     // Best effort provider cleanup
                     if (isset($response['id']) && $response['id']) {
-                        $this->module->setTwoPaymentRequest('/v1/order/' . $response['id'] . '/cancel', [], 'POST');
+                        $this->module->cancelTwoOrderBestEffort((string)$response['id'], 'fraud_skip_state_invalid');
                     }
 
                     PrestaShopLogger::addLog(
@@ -356,6 +361,15 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
 
                 if (!isset($response['payment_url']) || Tools::isEmpty($response['payment_url'])) {
                     $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
+                    if (isset($response['id']) && !Tools::isEmpty($response['id'])) {
+                        $cancelled = $this->module->cancelTwoOrderBestEffort((string)$response['id'], 'missing_payment_url');
+                        PrestaShopLogger::addLog(
+                            'TwoPayment: Provider order lifecycle - created_without_redirect for attempt ' . $attempt_token .
+                            ', Two order ' . $response['id'] .
+                            ', cleanup=' . ($cancelled ? 'cancelled' : 'cancel_failed'),
+                            $cancelled ? 2 : 3
+                        );
+                    }
                     $this->errors[] = $this->module->l('Unable to redirect to payment provider. Please try again.');
                     $this->redirectWithNotifications('index.php?controller=order');
                 }

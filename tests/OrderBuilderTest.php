@@ -643,6 +643,11 @@ final class OrderBuilderTest extends TestCase
                 return ['currency' => 'EUR'];
             }
 
+            protected function shouldRunStrictOrderIntentParityAtPayment()
+            {
+                return false;
+            }
+
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
             {
                 return [
@@ -669,6 +674,11 @@ final class OrderBuilderTest extends TestCase
                 return ['currency' => 'EUR'];
             }
 
+            protected function shouldRunStrictOrderIntentParityAtPayment()
+            {
+                return false;
+            }
+
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
             {
                 return [
@@ -693,6 +703,11 @@ final class OrderBuilderTest extends TestCase
                 return ['currency' => 'EUR'];
             }
 
+            protected function shouldRunStrictOrderIntentParityAtPayment()
+            {
+                return false;
+            }
+
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
             {
                 return [
@@ -707,6 +722,217 @@ final class OrderBuilderTest extends TestCase
 
         self::assertFalse($result['approved']);
         self::assertSame('provider_unavailable', $result['status']);
+    }
+
+    public function testCheckTwoOrderIntentApprovalAtPaymentBlocksOnStrictReconciliationDrift(): void
+    {
+        $lineItems = [[
+            'name' => 'Widget',
+            'description' => 'Product',
+            'gross_amount' => '121.00',
+            'net_amount' => '100.00',
+            'discount_amount' => '0.00',
+            'tax_amount' => '21.00',
+            'tax_class_name' => 'VAT 21.00%',
+            'tax_rate' => '0.21',
+            'unit_price' => '100.00',
+            'quantity' => 1,
+            'quantity_unit' => 'pcs',
+            'image_url' => '',
+            'product_page_url' => '',
+            'type' => 'PHYSICAL',
+            'details' => ['brand' => null, 'barcodes' => [], 'categories' => []],
+        ]];
+
+        $module = new class($lineItems) extends TwopaymentTestHarness {
+            private array $forcedLineItems;
+            public bool $providerCalled = false;
+
+            public function __construct(array $forcedLineItems)
+            {
+                parent::__construct();
+                $this->forcedLineItems = $forcedLineItems;
+            }
+
+            public function getTwoProductItems($cart)
+            {
+                return $this->forcedLineItems;
+            }
+
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            {
+                $this->providerCalled = true;
+                return [
+                    'http_status' => 200,
+                    'approved' => true,
+                ];
+            }
+        };
+
+        StubStore::$customers[781] = [
+            'email' => 'buyer@example.com',
+            'firstname' => 'Ana',
+            'lastname' => 'Garcia',
+            'secure_key' => 'secure-key-781',
+            'loaded' => true,
+        ];
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$addresses[1781] = [
+            'id_country' => 34,
+            'company' => 'ACME S.L.',
+            'companyid' => 'B12345678',
+            'address1' => 'Calle Mayor 1',
+            'city' => 'Madrid',
+            'postcode' => '28001',
+            'phone' => '+34910000000',
+            'loaded' => true,
+        ];
+
+        $cart = new Cart(781);
+        $cart->id_customer = 781;
+        $cart->id_currency = 978;
+        $cart->id_address_invoice = 1781;
+        $cart->id_address_delivery = 1781;
+        $cart->id_carrier = 0;
+        $cart->id_lang = 1;
+
+        StubStore::$cartProducts[781] = [['id_product' => 1, 'cart_quantity' => 1]];
+        StubStore::$cartTotals[781] = [
+            true => [
+                Cart::ONLY_DISCOUNTS => 0.00,
+                Cart::BOTH => 121.20,
+            ],
+            false => [
+                Cart::ONLY_DISCOUNTS => 0.00,
+                Cart::BOTH => 100.00,
+            ],
+            'average_products_tax_rate' => 21.0,
+        ];
+
+        $result = $module->checkTwoOrderIntentApprovalAtPayment($cart, new Customer(781), new Currency(978), new Address(1781));
+
+        self::assertFalse($result['approved']);
+        self::assertSame('reconciliation_mismatch', $result['status']);
+        self::assertFalse($module->providerCalled);
+    }
+
+    public function testCreateTwoLocalOrderAfterProviderVerificationRecoversExistingOrderOnRace(): void
+    {
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$customers[882] = [
+            'email' => 'buyer@example.com',
+            'firstname' => 'Luis',
+            'lastname' => 'Ramos',
+            'secure_key' => 'secure-key-882',
+            'loaded' => true,
+        ];
+
+        $cart = new Cart(882);
+        $cart->id_customer = 882;
+        $cart->id_currency = 978;
+
+        $module = new class extends TwopaymentTestHarness {
+            public function validateOrder(
+                $id_cart,
+                $id_order_state,
+                $amount_paid,
+                $payment_method = 'Unknown',
+                $message = null,
+                $extra_vars = [],
+                $currency_special = null,
+                $dont_touch_amount = false,
+                $secure_key = false,
+                ?Shop $shop = null,
+                ?string $order_reference = null
+            ) {
+                throw new Exception('Cart cannot be loaded or an order has already been placed using this cart');
+            }
+
+            public function getTwoOrderIdByCart($id_cart)
+            {
+                return 445;
+            }
+        };
+
+        $result = $module->createTwoLocalOrderAfterProviderVerification(
+            $cart,
+            new Customer(882),
+            1,
+            121.00
+        );
+
+        self::assertTrue($result['success']);
+        self::assertSame(445, (int) $result['id_order']);
+        self::assertTrue($result['recovered_existing']);
+    }
+
+    public function testCreateTwoLocalOrderAfterProviderVerificationFailsWhenNoRecoverableOrderExists(): void
+    {
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$customers[883] = [
+            'email' => 'buyer@example.com',
+            'firstname' => 'Luis',
+            'lastname' => 'Ramos',
+            'secure_key' => 'secure-key-883',
+            'loaded' => true,
+        ];
+
+        $cart = new Cart(883);
+        $cart->id_customer = 883;
+        $cart->id_currency = 978;
+
+        $module = new class extends TwopaymentTestHarness {
+            public function validateOrder(
+                $id_cart,
+                $id_order_state,
+                $amount_paid,
+                $payment_method = 'Unknown',
+                $message = null,
+                $extra_vars = [],
+                $currency_special = null,
+                $dont_touch_amount = false,
+                $secure_key = false,
+                ?Shop $shop = null,
+                ?string $order_reference = null
+            ) {
+                throw new Exception('cart exception');
+            }
+
+            public function getTwoOrderIdByCart($id_cart)
+            {
+                return 0;
+            }
+        };
+
+        $result = $module->createTwoLocalOrderAfterProviderVerification(
+            $cart,
+            new Customer(883),
+            1,
+            121.00
+        );
+
+        self::assertFalse($result['success']);
+        self::assertSame(0, (int) $result['id_order']);
+        self::assertFalse($result['recovered_existing']);
+    }
+
+    public function testCancelTwoOrderBestEffortReturnsTrueOnSuccessAndFalseOnFailure(): void
+    {
+        $successModule = new class extends TwopaymentTestHarness {
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            {
+                return ['http_status' => 200];
+            }
+        };
+        self::assertTrue($successModule->cancelTwoOrderBestEffort('two-success', 'test'));
+
+        $failureModule = new class extends TwopaymentTestHarness {
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            {
+                return ['http_status' => 500];
+            }
+        };
+        self::assertFalse($failureModule->cancelTwoOrderBestEffort('two-failure', 'test'));
     }
 
     public function testExtractTwoProviderGrossAmountForValidationSupportsRootAndNestedPayloads(): void

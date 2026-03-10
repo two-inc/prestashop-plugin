@@ -70,7 +70,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             default:
                 $this->sendJsonResponse(json_encode([
                     'success' => false,
-                    'error' => 'Unknown action: ' . $action
+                    'error' => $this->module->l('Unknown action requested.')
                 ]));
         }
     }
@@ -81,16 +81,16 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
     public function ajaxProcessSavePaymentTerm()
     {
         if (!$this->validateAjaxToken()) {
-            $this->sendJsonResponse(json_encode(['success' => false, 'error' => 'Invalid token']));
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Invalid token')]));
             return;
         }
         if (!$this->isPost()) {
-            $this->sendJsonResponse(json_encode(['success' => false, 'error' => 'Only POST requests allowed']));
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Only POST requests allowed')]));
             return;
         }
         $days = (int)Tools::getValue('days');
         if ($days <= 0) {
-            $this->sendJsonResponse(json_encode(['success' => false, 'error' => 'Invalid days']));
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Invalid days')]));
             return;
         }
         $this->context->cookie->two_payment_term = $days;
@@ -105,7 +105,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
     public function ajaxProcessSaveCompany()
     {
         if (!$this->validateAjaxToken()) {
-            $this->sendJsonResponse(json_encode(['success' => false, 'error' => 'Invalid token']));
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Invalid token')]));
             return;
         }
 
@@ -121,7 +121,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         }
 
         if (empty($company) || empty($companyId)) {
-            $this->sendJsonResponse(json_encode(['success' => false, 'error' => 'Missing company data']));
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Missing company data')]));
             return;
         }
 
@@ -144,7 +144,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
     public function ajaxProcessGetCompany()
     {
         if (!$this->validateAjaxToken()) {
-            $this->sendJsonResponse(json_encode(['success' => false, 'error' => 'Invalid token']));
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Invalid token')]));
             return;
         }
         $company = isset($this->context->cookie->two_company_name) ? $this->context->cookie->two_company_name : '';
@@ -185,7 +185,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         if (!$this->checkRateLimit()) {
             $this->sendJsonResponse(json_encode([
                 'success' => false,
-                'error' => 'Too many requests. Please wait and try again.'
+                'error' => $this->module->l('Too many requests. Please wait and try again.')
             ]));
             return;
         }
@@ -194,7 +194,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         if (!$this->validateAjaxToken()) {
             $this->sendJsonResponse(json_encode([
                 'success' => false,
-                'error' => 'Invalid token'
+                'error' => $this->module->l('Invalid token')
             ]));
             return;
         }
@@ -203,7 +203,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         if (!$this->isPost()) {
             $this->sendJsonResponse(json_encode([
                 'success' => false,
-                'error' => 'Only POST requests allowed'
+                'error' => $this->module->l('Only POST requests allowed')
             ]));
             return;
         }
@@ -233,7 +233,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             PrestaShopLogger::addLog('TwoPayment: Invalid cart, customer, or address data in order intent (address ID: ' . $addressId . ')', 3);
             $this->sendJsonResponse(json_encode([
                 'success' => false,
-                'error' => 'Invalid cart or customer data'
+                'error' => $this->module->l('Invalid cart or customer data')
             ]));
             return;
         }
@@ -284,7 +284,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             PrestaShopLogger::addLog('TwoPayment: Order intent blocked - non-business account type: ' . $accountType, 2);
             $this->sendJsonResponse(json_encode([
                 'success' => false,
-                'error' => 'Two payment is only available for business accounts'
+                'error' => $this->module->l('Two payment is only available for business accounts')
             ]));
             return;
         }
@@ -309,7 +309,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             
             $this->sendJsonResponse(json_encode([
                 'success' => false,
-                'error' => 'Failed to build order intent payload'
+                'error' => $this->module->l('Failed to build order intent payload')
             ]));
             return;
         }
@@ -333,7 +333,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         if (!$this->validateAjaxToken()) {
             $this->sendJsonResponse(json_encode([
                 'success' => false,
-                'error' => 'Invalid token'
+                'error' => $this->module->l('Invalid token')
             ]));
             return;
         }
@@ -366,7 +366,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         if (!$this->validateAjaxToken()) {
             $this->sendJsonResponse(json_encode([
                 'success' => false,
-                'error' => 'Invalid token'
+                'error' => $this->module->l('Invalid token')
             ]));
             return;
         }

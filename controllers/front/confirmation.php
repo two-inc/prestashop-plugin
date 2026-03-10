@@ -220,26 +220,32 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
 
         if ($id_order <= 0) {
             $initial_status = $this->getInitialAwaitingStatus();
-            $currency = new Currency((int)$cart->id_currency);
-            if (!Validate::isLoadedObject($currency)) {
+            $create_result = $this->module->createTwoLocalOrderAfterProviderVerification(
+                $cart,
+                $customer,
+                (int)$initial_status,
+                (float)$provider_gross_amount
+            );
+
+            if (!(bool)$create_result['success']) {
                 $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
-                $message = $this->module->l('Unable to load currency for this payment attempt.');
+                $error_code = isset($create_result['error']) ? (string)$create_result['error'] : '';
+                if ($error_code === 'currency_invalid') {
+                    $message = $this->module->l('Unable to load currency for this payment attempt.');
+                } else {
+                    $message = $this->module->l('Unable to create local order for this payment attempt.');
+                }
                 $this->errors[] = $message;
                 $this->redirectWithNotifications('index.php?controller=order');
             }
-
-            $this->module->validateOrder(
-                (int)$cart->id,
-                (int)$initial_status,
-                (float)$provider_gross_amount,
-                $this->module->displayName,
-                null,
-                array(),
-                (int)$currency->id,
-                false,
-                $customer->secure_key
-            );
-            $id_order = (int)$this->module->currentOrder;
+            $id_order = isset($create_result['id_order']) ? (int)$create_result['id_order'] : 0;
+            if ((bool)(isset($create_result['recovered_existing']) ? $create_result['recovered_existing'] : false)) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Recovered existing local order ' . $id_order .
+                    ' for callback attempt ' . $attempt_token . ' after validateOrder race/duplicate.',
+                    2
+                );
+            }
         }
 
         if ($id_order <= 0) {

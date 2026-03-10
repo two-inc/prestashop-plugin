@@ -2106,7 +2106,7 @@ class Twopayment extends PaymentModule
      * @return array
      * @throws Exception
      */
-    private function buildTwoOrderPricingData($cart, $contextLabel = 'order payload')
+    private function buildTwoOrderPricingData($cart, $contextLabel = 'order payload', $strictReconciliation = false)
     {
         $line_items = $this->getTwoProductItems($cart);
         if (empty($line_items)) {
@@ -2122,7 +2122,7 @@ class Twopayment extends PaymentModule
         $lineTotals = $this->calculateTwoLineItemTotals($line_items);
         $max_reconciliation_diff_cents = 0;
         if (!$this->validateTwoOrderReconciliationAgainstCart($cart, $lineTotals, $contextLabel, $max_reconciliation_diff_cents)) {
-            if ($this->shouldBlockOnReconciliationDrift($contextLabel, $max_reconciliation_diff_cents)) {
+            if ($this->shouldBlockOnReconciliationDrift($contextLabel, $max_reconciliation_diff_cents, (bool)$strictReconciliation)) {
                 throw new Exception('Order totals do not reconcile with cart totals');
             }
 
@@ -2266,8 +2266,13 @@ class Twopayment extends PaymentModule
      * @param int $maxDiffCents
      * @return bool
      */
-    private function shouldBlockOnReconciliationDrift($contextLabel, $maxDiffCents)
+    private function shouldBlockOnReconciliationDrift($contextLabel, $maxDiffCents, $strictReconciliation = false)
     {
+        if ((bool)$strictReconciliation) {
+            $strictToleranceCents = $this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE);
+            return (int)$maxDiffCents > $strictToleranceCents;
+        }
+
         if (strpos($contextLabel, 'order intent') !== false) {
             return false;
         }
@@ -2308,14 +2313,31 @@ class Twopayment extends PaymentModule
 
     public function getTwoIntentOrderData($cart, $customer, $currency, $address)
     {
+        return $this->buildTwoIntentOrderData($cart, $customer, $currency, $address, false);
+    }
+
+    /**
+     * Build order intent payload with selectable reconciliation strictness.
+     *
+     * @param Cart $cart
+     * @param Customer $customer
+     * @param Currency $currency
+     * @param Address $address
+     * @param bool $strictReconciliation
+     * @return array
+     */
+    private function buildTwoIntentOrderData($cart, $customer, $currency, $address, $strictReconciliation)
+    {
         // Validate cart has products before building order data
         if (!Validate::isLoadedObject($cart) || $cart->nbProducts() <= 0) {
             PrestaShopLogger::addLog('TwoPayment: Cannot build order intent - cart is empty or invalid', 3);
             throw new Exception('Cart is empty or invalid');
         }
         
-        // Order intent is a pre-check only; reconciliation drift is logged but does not hard-block payload generation.
-        $pricingData = $this->buildTwoOrderPricingData($cart, 'order intent');
+        $contextLabel = (bool)$strictReconciliation ? 'order intent strict submit' : 'order intent';
+        // Order intent pre-check remains permissive for UX refresh checks.
+        // Payment-submit authoritative intent checks must be strict.
+        $pricingData = $this->buildTwoOrderPricingData($cart, $contextLabel, (bool)$strictReconciliation);
         $line_items = $pricingData['line_items'];
         $tax_subtotals = $pricingData['tax_subtotals'];
         $final_net = $pricingData['net_amount'];
@@ -2385,9 +2407,20 @@ class Twopayment extends PaymentModule
         );
 
         try {
-            $payload = $this->getTwoIntentOrderData($cart, $customer, $currency, $address);
+            if ($this->shouldRunStrictOrderIntentParityAtPayment()) {
+                // Authoritative payment-submit intent check must fail-closed on reconciliation drift.
+                $payload = $this->buildTwoIntentOrderData($cart, $customer, $currency, $address, true);
+            } else {
+                $payload = $this->getTwoIntentOrderData($cart, $customer, $currency, $address);
+            }
         } catch (Exception $e) {
-            $result['status'] = 'payload_error';
+            $exceptionMessage = (string)$e->getMessage();
+            if (stripos($exceptionMessage, 'reconcile') !== false) {
+                $result['status'] = 'reconciliation_mismatch';
+                $result['message'] = $this->l('Unable to process your order with Two payment. Please review your cart and try again.');
+            } else {
+                $result['status'] = 'payload_error';
+            }
             PrestaShopLogger::addLog(
                 'TwoPayment: Backend order intent payload build failed at payment submit - ' . $e->getMessage(),
                 3
@@ -2454,6 +2487,113 @@ class Twopayment extends PaymentModule
         }
 
         return $result;
+    }
+
+    /**
+     * Extension hook for tests: keep strict parity enabled in production.
+     *
+     * @return bool
+     */
+    protected function shouldRunStrictOrderIntentParityAtPayment()
+    {
+        return true;
+    }
+
+    /**
+     * Create a local PrestaShop order after provider verification with race-safe recovery.
+     *
+     * @param Cart $cart
+     * @param Customer $customer
+     * @param int $initial_status
+     * @param float $provider_gross_amount
+     * @return array{success:bool,id_order:int,recovered_existing:bool,error:string}
+     */
+    public function createTwoLocalOrderAfterProviderVerification($cart, $customer, $initial_status, $provider_gross_amount)
+    {
+        $result = array(
+            'success' => false,
+            'id_order' => 0,
+            'recovered_existing' => false,
+            'error' => '',
+        );
+
+        if (!Validate::isLoadedObject($cart)) {
+            $result['error'] = 'cart_invalid';
+            return $result;
+        }
+
+        $currency = new Currency((int)$cart->id_currency);
+        if (!Validate::isLoadedObject($currency)) {
+            $result['error'] = 'currency_invalid';
+            return $result;
+        }
+
+        try {
+            $this->validateOrder(
+                (int)$cart->id,
+                (int)$initial_status,
+                (float)$provider_gross_amount,
+                $this->displayName,
+                null,
+                array(),
+                (int)$currency->id,
+                false,
+                $customer->secure_key
+            );
+            $createdOrderId = (int)$this->currentOrder;
+            if ($createdOrderId > 0) {
+                $result['success'] = true;
+                $result['id_order'] = $createdOrderId;
+                return $result;
+            }
+        } catch (Exception $e) {
+            $result['error'] = (string)$e->getMessage();
+            PrestaShopLogger::addLog(
+                'TwoPayment: validateOrder exception after provider verification for cart ' . (int)$cart->id .
+                ' - ' . $result['error'],
+                3
+            );
+        }
+
+        // Recovery path for idempotent callback retries/races where order was already created.
+        $existingOrderId = (int)$this->getTwoOrderIdByCart((int)$cart->id);
+        if ($existingOrderId > 0) {
+            $result['success'] = true;
+            $result['id_order'] = $existingOrderId;
+            $result['recovered_existing'] = true;
+            return $result;
+        }
+
+        return $result;
+    }
+
+    /**
+     * Best-effort provider order cancellation helper.
+     *
+     * @param string $two_order_id
+     * @param string $context_label
+     * @return bool
+     */
+    public function cancelTwoOrderBestEffort($two_order_id, $context_label = '')
+    {
+        $two_order_id = trim((string)$two_order_id);
+        if (Tools::isEmpty($two_order_id)) {
+            return false;
+        }
+
+        $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/cancel', [], 'POST');
+        $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
+        $success = ($http_status > 0 && $http_status < self::HTTP_STATUS_BAD_REQUEST);
+
+        PrestaShopLogger::addLog(
+            'TwoPayment: Provider order cancel ' . ($success ? 'succeeded' : 'failed') .
+            ' for Two order ' . $two_order_id .
+            (!Tools::isEmpty($context_label) ? ' (' . $context_label . ')' : '') .
+            ', HTTP ' . $http_status,
+            $success ? 1 : 2
+        );
+
+        return $success;
     }
 
     /**
