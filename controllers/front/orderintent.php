@@ -317,8 +317,8 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
     }
 
     /**
-     * Save order intent result to session for server-side validation
-     * Called when client receives order intent result from Two API
+     * Save frontend order intent result in session as telemetry only.
+     * Authoritative approval is revalidated server-side on payment submit.
      */
     public function ajaxProcessSaveOrderIntentResult()
     {
@@ -340,10 +340,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         // Write cookie to ensure it's saved
         $this->context->cookie->write();
 
-        PrestaShopLogger::addLog(
-            'TwoPayment: Order intent result saved to session - Approved: ' . ($approved ? 'yes' : 'no') . ', Timestamp: ' . $timestamp,
-            1
-        );
+        PrestaShopLogger::addLog('TwoPayment: Order intent telemetry saved in session', 1);
 
         $this->sendJsonResponse(json_encode([
             'success' => true,
@@ -353,7 +350,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
     }
 
     /**
-     * Clear order intent result from session
+     * Clear order intent telemetry from session
      * Called when user switches away from Two payment method
      */
     public function ajaxProcessClearOrderIntentResult()

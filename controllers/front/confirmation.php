@@ -172,6 +172,19 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             }
         }
 
+        $provider_gross_amount = $this->module->extractTwoProviderGrossAmountForValidation($response);
+        if ($provider_gross_amount === null) {
+            $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
+            PrestaShopLogger::addLog(
+                'TwoPayment: Missing or invalid provider gross_amount in callback response for attempt ' . $attempt_token,
+                3
+            );
+            $message = $this->module->l('Unable to retrieve the order payment information please contact store owner.');
+            $this->errors[] = $message;
+            $this->redirectWithNotifications('index.php?controller=order');
+            return;
+        }
+
         $id_order = (int)$attempt['id_order'];
         if ($id_order <= 0) {
             $id_order = (int)$this->module->getTwoOrderIdByCart((int)$cart->id);
@@ -190,7 +203,7 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             $this->module->validateOrder(
                 (int)$cart->id,
                 (int)$initial_status,
-                (float)$cart->getOrderTotal(true, Cart::BOTH),
+                (float)$provider_gross_amount,
                 $this->module->displayName,
                 null,
                 array(),

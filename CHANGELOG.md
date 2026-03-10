@@ -5,8 +5,6 @@ All notable changes to the Two Payment module for PrestaShop will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
----
-
 ## Latest Release: v2.4.0
 
 **Release Date:** 2026-02-25
@@ -47,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Cancel controller now supports `attempt_token` cancellation without creating local orders
   - Both controllers keep legacy `id_order` paths for backward compatibility
 - **Tax Payload Accuracy Hardening**:
-  - Tax rates are now serialized with dedicated high precision (no money-format truncation)
+  - Tax rates are now serialized to fixed 2 decimal places (`tax_rate` like `0.21`) across line items, tax subtotals, and checkout snapshots
   - Product tax rate selection now prioritizes applied PrestaShop amounts when configured and applied rates diverge
   - Top-level `tax_rate` is omitted from `/v1/order` and `/v1/order_intent` request payloads
   - `tax_subtotals` is optional and omitted entirely when `PS_TWO_ENABLE_TAX_SUBTOTALS` is disabled
@@ -92,6 +90,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Order Intent Auth Boundary**:
   - Added endpoint-aware header policy so `/v1/order_intent` never includes `X-API-Key`
   - Server-to-server Two endpoints keep API-key authentication on backend requests
+- **Payment Submit Authorization Hardening**:
+  - `/payment` now performs a fresh backend `/v1/order_intent` check and treats frontend intent cookies as telemetry only
+  - Checkout submit token validation is enforced before provider calls in payment submission
+- **Callback Amount Integrity**:
+  - Callback-time `validateOrder()` now uses provider `gross_amount` from Two order response
+  - Local order creation is blocked when provider amount is missing/invalid
 
 ### Fixed
 - **Checkout Address Formatter Stability**:
@@ -108,6 +112,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Fixed `CustomerAddressFormatter` override `setCountry()/getCountry()` to delegate to core formatter state
   - Prevents stale country format when shopper switches address country during checkout (e.g. UK to Spain)
   - Ensures ES-required `dni` validation is applied before persistence, avoiding `Property Address->dni is empty` fatals
+- **Order Intent Reconciliation False Negatives**:
+  - Increased order/cart reconciliation tolerance to `0.02` to match real PrestaShop cent-level rounding drift
+  - Reconciliation drift is now warning-level by default and does not block order-intent precheck payloads
+  - Reconciliation threshold checks now compare integer cents to avoid float precision boundary rejects at exactly `0.02`
+- **Provider-First Reconciliation Handling**:
+  - Intent payload builder continues when cart reconciliation drift is detected
+  - Create/update payload builders only hard-block on material mismatches (> `1.00`) to guard true parity errors
+  - Module logs drift details for observability while avoiding local false-negative blocks from cent-level artifacts
+- **Presta-Native Amount Modeling**:
+  - Product and shipping line monetary fields now keep PrestaShop net/tax/gross totals as canonical values
+  - Discount totals are split across detected tax contexts instead of a single blended synthetic discount line
+  - Preserves line-level formula compliance while better matching PrestaShop rounding behavior
 - **Discount Rule Description Warning**:
   - Guarded optional `value` key access in cart-rule description builder to avoid PHP warnings on stores where cart-rule payload omits that key
 

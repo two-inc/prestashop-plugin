@@ -61,20 +61,24 @@ final class OrderBuilderSpec
     public static function runAll(): void
     {
         self::testValidateTwoLineItemsRejectsBrokenTaxFormula();
-        self::testGetTwoTaxSubtotalsKeepsDecimalTaxRatePrecision();
+        self::testGetTwoTaxSubtotalsNormalizesTaxRateToTwoDecimals();
         self::testGetTwoProductItemsUsesAppliedTaxRateWhenConfiguredRateDiffers();
         self::testGetTwoNewOrderDataOmitsTopLevelTaxRate();
         self::testGetTwoNewOrderDataOmitsTaxSubtotalsWhenDisabled();
         self::testGetTwoIntentOrderDataOmitsTopLevelTaxRateAndOmitsTaxSubtotalsWhenDisabled();
         self::testGetTwoNewOrderDataThrowsWhenLineItemsFailFormulaValidation();
-        self::testGetTwoNewOrderDataThrowsWhenCartTotalsDoNotReconcile();
-        self::testGetTwoIntentOrderDataAllowsReconciliationDriftForPrecheckOnly();
+        self::testGetTwoNewOrderDataThrowsWhenCartTotalsMismatchIsMaterial();
+        self::testGetTwoIntentOrderDataContinuesWhenCartTotalsDoNotReconcile();
         self::testGetTwoNewOrderDataAllowsTwoCentReconciliationDrift();
         self::testGetTwoNewOrderDataAllowsTwoCentBoundaryForLargeTotals();
-        self::testGetTwoNewOrderDataRejectsThreeCentReconciliationDrift();
+        self::testGetTwoNewOrderDataAllowsThreeCentReconciliationDrift();
         self::testGetTwoNewOrderDataIncludesShippingAndDiscountLineItemsWhenReconciled();
         self::testGetTwoRequestHeadersSkipApiKeyForOrderIntent();
-        self::testSnapshotHashChangesWhenTaxRateChangesBeyondTwoDecimals();
+        self::testCheckTwoOrderIntentApprovalAtPaymentDeclinesEvenWhenFrontendCookieSaysApproved();
+        self::testCheckTwoOrderIntentApprovalAtPaymentAllowsApprovedResponse();
+        self::testCheckTwoOrderIntentApprovalAtPaymentHandlesProviderNetworkFailure();
+        self::testExtractTwoProviderGrossAmountForValidationSupportsRootAndNestedPayloads();
+        self::testSnapshotHashIgnoresTaxRateChangesBeyondTwoDecimals();
         self::testIsTwoAttemptCallbackAuthorizedWithMatchingKey();
         self::testIsTwoAttemptCallbackAuthorizedFallsBackToContextCustomerKeyWhenRequestKeyMissing();
         self::testIsTwoAttemptCallbackAuthorizedRejectsMismatchedKeys();
@@ -133,7 +137,7 @@ final class OrderBuilderSpec
         TinyAssert::false($module->validateTwoLineItems($lineItems));
     }
 
-    private static function testGetTwoTaxSubtotalsKeepsDecimalTaxRatePrecision(): void
+    private static function testGetTwoTaxSubtotalsNormalizesTaxRateToTwoDecimals(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
@@ -146,12 +150,10 @@ final class OrderBuilderSpec
 
         $subtotals = $module->getTwoTaxSubtotals($lineItems);
 
-        TinyAssert::same('0.205', $subtotals[0]['tax_rate']);
-        TinyAssert::same('150.00', $subtotals[0]['taxable_amount']);
-        TinyAssert::same('30.75', $subtotals[0]['tax_amount']);
-        TinyAssert::same('0.21', $subtotals[1]['tax_rate']);
-        TinyAssert::same('200.00', $subtotals[1]['taxable_amount']);
-        TinyAssert::same('42.00', $subtotals[1]['tax_amount']);
+        TinyAssert::count(1, $subtotals);
+        TinyAssert::same('0.21', $subtotals[0]['tax_rate']);
+        TinyAssert::same('350.00', $subtotals[0]['taxable_amount']);
+        TinyAssert::same('72.75', $subtotals[0]['tax_amount']);
     }
 
     private static function testGetTwoProductItemsUsesAppliedTaxRateWhenConfiguredRateDiffers(): void
@@ -185,7 +187,7 @@ final class OrderBuilderSpec
         $items = $module->getTwoProductItems($cart);
 
         TinyAssert::count(1, $items);
-        TinyAssert::same('0.205', $items[0]['tax_rate']);
+        TinyAssert::same('0.21', $items[0]['tax_rate']);
         TinyAssert::same('20.50', $items[0]['tax_amount']);
         TinyAssert::same('120.50', $items[0]['gross_amount']);
     }
@@ -539,7 +541,7 @@ final class OrderBuilderSpec
         }, 'Invalid line item formulas');
     }
 
-    private static function testGetTwoNewOrderDataThrowsWhenCartTotalsDoNotReconcile(): void
+    private static function testGetTwoNewOrderDataThrowsWhenCartTotalsMismatchIsMaterial(): void
     {
         self::reset();
 
@@ -653,7 +655,7 @@ final class OrderBuilderSpec
         }, 'Order totals do not reconcile with cart totals');
     }
 
-    private static function testGetTwoIntentOrderDataAllowsReconciliationDriftForPrecheckOnly(): void
+    private static function testGetTwoIntentOrderDataContinuesWhenCartTotalsDoNotReconcile(): void
     {
         self::reset();
 
@@ -834,7 +836,7 @@ final class OrderBuilderSpec
         TinyAssert::same('21.00', $payload['tax_amount'], 'Expected line-derived tax total to remain unchanged');
     }
 
-    private static function testGetTwoNewOrderDataRejectsThreeCentReconciliationDrift(): void
+    private static function testGetTwoNewOrderDataAllowsThreeCentReconciliationDrift(): void
     {
         self::reset();
 
@@ -917,16 +919,16 @@ final class OrderBuilderSpec
             'average_products_tax_rate' => 21.0,
         ];
 
-        TinyAssert::throws(function () use ($module, $cart): void {
-            $module->getTwoNewOrderData('merchant-attempt-593', $cart, [
-                'merchant_confirmation_url' => 'https://shop.local/confirm',
-                'merchant_cancel_order_url' => 'https://shop.local/cancel',
-                'merchant_edit_order_url' => '',
-                'merchant_order_verification_failed_url' => '',
-                'merchant_invoice_url' => '',
-                'merchant_shipping_document_url' => '',
-            ]);
-        }, 'Order totals do not reconcile with cart totals');
+        $payload = $module->getTwoNewOrderData('merchant-attempt-593', $cart, [
+            'merchant_confirmation_url' => 'https://shop.local/confirm',
+            'merchant_cancel_order_url' => 'https://shop.local/cancel',
+            'merchant_edit_order_url' => '',
+            'merchant_order_verification_failed_url' => '',
+            'merchant_invoice_url' => '',
+            'merchant_shipping_document_url' => '',
+        ]);
+
+        TinyAssert::same('121.00', $payload['gross_amount'], 'Expected create payload to proceed despite 3-cent drift');
     }
 
     private static function testGetTwoNewOrderDataAllowsTwoCentBoundaryForLargeTotals(): void
@@ -1164,7 +1166,97 @@ final class OrderBuilderSpec
         TinyAssert::true($createOrderHasApiKey, 'Create order headers must include X-API-Key');
     }
 
-    private static function testSnapshotHashChangesWhenTaxRateChangesBeyondTwoDecimals(): void
+    private static function testCheckTwoOrderIntentApprovalAtPaymentDeclinesEvenWhenFrontendCookieSaysApproved(): void
+    {
+        self::reset();
+
+        $module = new class extends TwopaymentTestHarness {
+            public function getTwoIntentOrderData($cart, $customer, $currency, $address)
+            {
+                return ['currency' => 'EUR'];
+            }
+
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            {
+                return [
+                    'http_status' => 200,
+                    'approved' => false,
+                ];
+            }
+        };
+
+        $module->context->cookie->two_order_intent_approved = '1';
+        $module->context->cookie->two_order_intent_timestamp = (string) time();
+
+        $result = $module->checkTwoOrderIntentApprovalAtPayment(new Cart(1), new Customer(), new Currency(), new Address());
+
+        TinyAssert::false($result['approved'], 'Expected backend decline to override frontend cookie telemetry');
+        TinyAssert::same('declined', $result['status']);
+    }
+
+    private static function testCheckTwoOrderIntentApprovalAtPaymentAllowsApprovedResponse(): void
+    {
+        self::reset();
+
+        $module = new class extends TwopaymentTestHarness {
+            public function getTwoIntentOrderData($cart, $customer, $currency, $address)
+            {
+                return ['currency' => 'EUR'];
+            }
+
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            {
+                return [
+                    'http_status' => 200,
+                    'approved' => true,
+                    'message' => 'ok',
+                ];
+            }
+        };
+
+        $result = $module->checkTwoOrderIntentApprovalAtPayment(new Cart(1), new Customer(), new Currency(), new Address());
+
+        TinyAssert::true($result['approved']);
+        TinyAssert::same('approved', $result['status']);
+    }
+
+    private static function testCheckTwoOrderIntentApprovalAtPaymentHandlesProviderNetworkFailure(): void
+    {
+        self::reset();
+
+        $module = new class extends TwopaymentTestHarness {
+            public function getTwoIntentOrderData($cart, $customer, $currency, $address)
+            {
+                return ['currency' => 'EUR'];
+            }
+
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            {
+                return [
+                    'http_status' => 0,
+                    'error' => 'Connection error',
+                    'error_message' => 'Unable to connect',
+                ];
+            }
+        };
+
+        $result = $module->checkTwoOrderIntentApprovalAtPayment(new Cart(1), new Customer(), new Currency(), new Address());
+
+        TinyAssert::false($result['approved']);
+        TinyAssert::same('provider_unavailable', $result['status']);
+    }
+
+    private static function testExtractTwoProviderGrossAmountForValidationSupportsRootAndNestedPayloads(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        TinyAssert::same(121.10, $module->extractTwoProviderGrossAmountForValidation(['gross_amount' => '121.10']));
+        TinyAssert::same(1518.10, $module->extractTwoProviderGrossAmountForValidation(['data' => ['gross_amount' => '1518.10']]));
+        TinyAssert::same(null, $module->extractTwoProviderGrossAmountForValidation(['gross_amount' => '']));
+    }
+
+    private static function testSnapshotHashIgnoresTaxRateChangesBeyondTwoDecimals(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
@@ -1207,7 +1299,7 @@ final class OrderBuilderSpec
         $hashA = $module->calculateTwoCheckoutSnapshotHash($cart, $basePayload);
         $hashB = $module->calculateTwoCheckoutSnapshotHash($cart, $changedPayload);
 
-        TinyAssert::notSame($hashA, $hashB);
+        TinyAssert::same($hashA, $hashB);
     }
 
     private static function testIsTwoAttemptCallbackAuthorizedWithMatchingKey(): void

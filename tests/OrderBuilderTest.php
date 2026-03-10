@@ -28,7 +28,7 @@ final class OrderBuilderTest extends TestCase
         self::assertFalse($module->validateTwoLineItems($lineItems));
     }
 
-    public function testGetTwoTaxSubtotalsKeepsDecimalTaxRatePrecision(): void
+    public function testGetTwoTaxSubtotalsNormalizesTaxRateToTwoDecimals(): void
     {
         $module = new TwopaymentTestHarness();
 
@@ -40,13 +40,10 @@ final class OrderBuilderTest extends TestCase
 
         $subtotals = $module->getTwoTaxSubtotals($lineItems);
 
-        self::assertSame('0.205', $subtotals[0]['tax_rate']);
-        self::assertSame('150.00', $subtotals[0]['taxable_amount']);
-        self::assertSame('30.75', $subtotals[0]['tax_amount']);
-
-        self::assertSame('0.21', $subtotals[1]['tax_rate']);
-        self::assertSame('200.00', $subtotals[1]['taxable_amount']);
-        self::assertSame('42.00', $subtotals[1]['tax_amount']);
+        self::assertCount(1, $subtotals);
+        self::assertSame('0.21', $subtotals[0]['tax_rate']);
+        self::assertSame('350.00', $subtotals[0]['taxable_amount']);
+        self::assertSame('72.75', $subtotals[0]['tax_amount']);
     }
 
     public function testGetTwoProductItemsUsesAppliedTaxRateWhenConfiguredRateDiffers(): void
@@ -79,7 +76,7 @@ final class OrderBuilderTest extends TestCase
         $items = $module->getTwoProductItems($cart);
 
         self::assertCount(1, $items);
-        self::assertSame('0.205', $items[0]['tax_rate']);
+        self::assertSame('0.21', $items[0]['tax_rate']);
         self::assertSame('20.50', $items[0]['tax_amount']);
         self::assertSame('120.50', $items[0]['gross_amount']);
     }
@@ -427,7 +424,90 @@ final class OrderBuilderTest extends TestCase
         ]);
     }
 
-    public function testSnapshotHashChangesWhenTaxRateChangesBeyondTwoDecimals(): void
+    public function testCheckTwoOrderIntentApprovalAtPaymentDeclinesEvenWhenFrontendCookieSaysApproved(): void
+    {
+        $module = new class extends TwopaymentTestHarness {
+            public function getTwoIntentOrderData($cart, $customer, $currency, $address)
+            {
+                return ['currency' => 'EUR'];
+            }
+
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            {
+                return [
+                    'http_status' => 200,
+                    'approved' => false,
+                ];
+            }
+        };
+
+        $module->context->cookie->two_order_intent_approved = '1';
+        $module->context->cookie->two_order_intent_timestamp = (string) time();
+
+        $result = $module->checkTwoOrderIntentApprovalAtPayment(new Cart(1), new Customer(), new Currency(), new Address());
+
+        self::assertFalse($result['approved']);
+        self::assertSame('declined', $result['status']);
+    }
+
+    public function testCheckTwoOrderIntentApprovalAtPaymentAllowsApprovedResponse(): void
+    {
+        $module = new class extends TwopaymentTestHarness {
+            public function getTwoIntentOrderData($cart, $customer, $currency, $address)
+            {
+                return ['currency' => 'EUR'];
+            }
+
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            {
+                return [
+                    'http_status' => 200,
+                    'approved' => true,
+                    'message' => 'ok',
+                ];
+            }
+        };
+
+        $result = $module->checkTwoOrderIntentApprovalAtPayment(new Cart(1), new Customer(), new Currency(), new Address());
+
+        self::assertTrue($result['approved']);
+        self::assertSame('approved', $result['status']);
+    }
+
+    public function testCheckTwoOrderIntentApprovalAtPaymentHandlesProviderNetworkFailure(): void
+    {
+        $module = new class extends TwopaymentTestHarness {
+            public function getTwoIntentOrderData($cart, $customer, $currency, $address)
+            {
+                return ['currency' => 'EUR'];
+            }
+
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            {
+                return [
+                    'http_status' => 0,
+                    'error' => 'Connection error',
+                    'error_message' => 'Unable to connect',
+                ];
+            }
+        };
+
+        $result = $module->checkTwoOrderIntentApprovalAtPayment(new Cart(1), new Customer(), new Currency(), new Address());
+
+        self::assertFalse($result['approved']);
+        self::assertSame('provider_unavailable', $result['status']);
+    }
+
+    public function testExtractTwoProviderGrossAmountForValidationSupportsRootAndNestedPayloads(): void
+    {
+        $module = new TwopaymentTestHarness();
+
+        self::assertSame(121.10, $module->extractTwoProviderGrossAmountForValidation(['gross_amount' => '121.10']));
+        self::assertSame(1518.10, $module->extractTwoProviderGrossAmountForValidation(['data' => ['gross_amount' => '1518.10']]));
+        self::assertSame(null, $module->extractTwoProviderGrossAmountForValidation(['gross_amount' => '']));
+    }
+
+    public function testSnapshotHashIgnoresTaxRateChangesBeyondTwoDecimals(): void
     {
         $module = new TwopaymentTestHarness();
 
@@ -469,7 +549,7 @@ final class OrderBuilderTest extends TestCase
         $hashA = $module->calculateTwoCheckoutSnapshotHash($cart, $basePayload);
         $hashB = $module->calculateTwoCheckoutSnapshotHash($cart, $changedPayload);
 
-        self::assertNotSame($hashA, $hashB);
+        self::assertSame($hashA, $hashB);
     }
 
     public function testIsTwoAttemptCallbackAuthorizedWithMatchingKey(): void
