@@ -85,6 +85,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Address Selector Accuracy**:
   - Order-intent and company-cookie flows now read the selected (`:checked`) checkout address ID instead of the first address input in DOM
   - Order-intent server resolver now uses selected delivery/invoice address context consistently for country/company resolution
+- **Two Payload Parity Hardening (Phase 1)**:
+  - Intent/create/update payloads now share one server-side line-item builder and bottom-up amount derivation
+  - Shipping is represented as explicit `SHIPPING_FEE` line and cart discounts as explicit negative line items
+  - Added fail-closed order/cart reconciliation gate before outbound order payloads when totals drift beyond tolerance
+- **Order Intent Auth Boundary**:
+  - Added endpoint-aware header policy so `/v1/order_intent` never includes `X-API-Key`
+  - Server-to-server Two endpoints keep API-key authentication on backend requests
 
 ### Fixed
 - **Checkout Address Formatter Stability**:
@@ -94,6 +101,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Checkout Address Field Order**:
   - Restored country selector positioning immediately before company field in checkout addresses
   - Keeps core field metadata/validation intact by reordering existing formatter output instead of rebuilding fields
+- **Address Identification Number Guard**:
+  - Added frontend guard on checkout address submit to prevent backend failures when country requires identification number and `dni` is empty
+  - Auto-fills `dni` from `companyid`/`vat_number` when available before submit
+- **Checkout Country Switch (UK → ES) 500 Regression**:
+  - Fixed `CustomerAddressFormatter` override `setCountry()/getCountry()` to delegate to core formatter state
+  - Prevents stale country format when shopper switches address country during checkout (e.g. UK to Spain)
+  - Ensures ES-required `dni` validation is applied before persistence, avoiding `Property Address->dni is empty` fatals
+- **Discount Rule Description Warning**:
+  - Guarded optional `value` key access in cart-rule description builder to avoid PHP warnings on stores where cart-rule payload omits that key
 
 ### Technical
 - Added upgrade script `upgrade-2.4.0.php`

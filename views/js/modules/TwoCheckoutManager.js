@@ -254,17 +254,11 @@ class TwoCheckoutManager {
         this._accountTypeListenerAdded = true;
         accountTypeField.addEventListener('change', () => {
             const value = accountTypeField.value;
-            const wasBusiness = this.isBusinessAccount;
             this.isBusinessAccount = (value === 'business');
             try { sessionStorage.setItem('two_account_type', value); } catch (e) {}
-            // Re-init company search accordingly
-            if (this.config.companySearchEnabled) {
-                if (this.isBusinessAccount && !this.companySearch) {
-                    this.initializeCompanySearch();
-                } else if (!this.isBusinessAccount && this.companySearch && this.companySearch.destroy) {
-                    this.companySearch.destroy();
-                    this.companySearch = null;
-                }
+            // Keep company search available on address forms for reliable company selection.
+            if (this.config.companySearchEnabled && !this.companySearch) {
+                this.initializeCompanySearch();
             }
         });
     }
@@ -464,7 +458,7 @@ class TwoCheckoutManager {
             form.closest('.payment-confirmation')
         );
     }
-    
+
     /**
      * Handle Two payment selection specifically
      */
@@ -1500,9 +1494,7 @@ class TwoCheckoutManager {
                 this.companySearch.destroy();
                 this.companySearch = null;
             }
-            if (this.isBusinessAccount) {
-                this.initializeCompanySearch();
-            }
+            this.initializeCompanySearch();
         }
 
         // Clear cached intent state when address is edited so a new selection can trigger intent
@@ -1608,7 +1600,7 @@ class TwoCheckoutManager {
         this.initializeFieldValidation();
         
         // Initialize company search for address step
-        if (this.config.companySearchEnabled && this.currentStep === 'address' && this.isBusinessAccount) {
+        if (this.config.companySearchEnabled && this.currentStep === 'address') {
             this.initializeCompanySearch();
         }
         

@@ -32,6 +32,7 @@ class TwoCompanySearch {
         this.createOrganizationField();
         this.clearStaleOrganizationSelection();
         this.setupCompanyInputSync();
+        this.setupAddressIdentifierSync();
         this.setupAutocomplete();
         this.setupCountryChangeListener();
         this.isInitialized = true;
@@ -95,6 +96,56 @@ class TwoCompanySearch {
         this.companyField.on('input.twoCompanySync change.twoCompanySync', () => {
             this.clearStaleOrganizationSelection();
         });
+    }
+
+    setupAddressIdentifierSync() {
+        if (!this.companyField || this.companyField.length === 0) {
+            return;
+        }
+
+        const form = this.companyField.closest('form');
+        if (!form || form.length === 0) {
+            return;
+        }
+
+        form.off('submit.twoAddressIdentifierSync');
+        form.on('submit.twoAddressIdentifierSync', () => {
+            this.syncOrganizationToAddressIdentifiers();
+        });
+    }
+
+    syncOrganizationToAddressIdentifiers() {
+        if (!this.organizationField || this.organizationField.length === 0) {
+            return;
+        }
+
+        let orgNumber = String(this.organizationField.val() || '').trim();
+        const dniField = $("input[name='dni']");
+        const vatField = $("input[name='vat_number']");
+
+        const dniValue = dniField.length > 0 ? String(dniField.val() || '').trim() : '';
+        const vatValue = vatField.length > 0 ? String(vatField.val() || '').trim() : '';
+
+        // If user already filled DNI manually, reuse it as fallback org number for Two flow.
+        if (!orgNumber && dniValue) {
+            orgNumber = dniValue;
+            this.organizationField.val(orgNumber);
+            if (this.companyField && this.companyField.length > 0) {
+                this.organizationField.attr('data-two-company-name', this.companyField.val() || '');
+            }
+        }
+
+        if (!orgNumber) {
+            return;
+        }
+
+        if (dniField.length > 0 && !dniValue) {
+            dniField.val(orgNumber);
+        }
+
+        if (vatField.length > 0 && !vatValue) {
+            vatField.val(orgNumber);
+        }
     }
     
     /**

@@ -7,31 +7,26 @@
 
 class CustomerAddressFormatter extends CustomerAddressFormatterCore
 {
-
-    private $country;
     private $translator;
-    private $availableCountries;
     private $definition;
 
     public function __construct(Country $country, $translator, array $availableCountries)
     {
         parent::__construct($country, $translator, $availableCountries);
-        $this->country = $country;
         $this->translator = $translator;
-        $this->availableCountries = $availableCountries;
         $this->definition = Address::$definition['fields'];
     }
 
     public function setCountry(Country $country)
     {
-        $this->country = $country;
+        parent::setCountry($country);
 
         return $this;
     }
 
     public function getCountry()
     {
-        return $this->country;
+        return parent::getCountry();
     }
 
     public function getFormat()

@@ -26,10 +26,13 @@ class Twopayment extends PaymentModule
     const API_TIMEOUT_LONG = 60; // Extended timeout for file uploads
     
     // Constants for validation tolerances
-    const TAX_FORMULA_TOLERANCE = 0.01; // Tolerance for tax formula validation
+    const TAX_FORMULA_TOLERANCE = 0.02; // Tolerance for tax formula validation
     const NET_FORMULA_TOLERANCE = 0.05; // Tolerance for net formula validation
+    const ORDER_RECONCILIATION_TOLERANCE = 0.02; // Order-level parity tolerance against cart totals (PrestaShop rounding can drift by up to 2 cents)
     const TAX_RATE_PRECISION = 6; // Decimal precision for tax rates sent to Two
     const TAX_RATE_VARIANCE_TOLERANCE = 0.005; // Acceptable decimal variance between configured and applied rate
+    const RECONCILIATION_POLICY_STRICT = 'strict'; // Block payload on reconciliation mismatch
+    const RECONCILIATION_POLICY_PRECHECK = 'precheck'; // Allow payload and defer rejection to create-order path
     
     // Constants for delivery dates
     const DEFAULT_DELIVERY_DAYS_OFFSET = 7; // Default expected delivery date offset
@@ -1830,7 +1833,6 @@ class Twopayment extends PaymentModule
         foreach ($countries as $country) {
             $param_countries[$country['id_country']] = Tools::strtolower($country['iso_code']);
         }
-        
         // Build FE i18n (strings are translated by PrestaShop according to current language)
         $i18n = array(
             'checking_eligibility' => $this->l('Checking Two payment eligibility...'),
@@ -2042,6 +2044,195 @@ class Twopayment extends PaymentModule
         return $preTwoOption;
     }
 
+    /**
+     * Build shared pricing data for Two payloads from a single line-item source.
+     *
+     * @param Cart $cart
+     * @param string $contextLabel
+     * @param string $reconciliationPolicy strict|precheck
+     * @return array
+     * @throws Exception
+     */
+    private function buildTwoOrderPricingData(
+        $cart,
+        $contextLabel = 'order payload',
+        $reconciliationPolicy = self::RECONCILIATION_POLICY_STRICT
+    )
+    {
+        $line_items = $this->getTwoProductItems($cart);
+        if (empty($line_items)) {
+            PrestaShopLogger::addLog('TwoPayment: Cannot build ' . $contextLabel . ' - no valid line items', 3);
+            throw new Exception('No valid line items in cart');
+        }
+
+        if (!$this->validateTwoLineItems($line_items)) {
+            PrestaShopLogger::addLog('TwoPayment: Cannot build ' . $contextLabel . ' - invalid line item formulas', 3);
+            throw new Exception('Invalid line item formulas');
+        }
+
+        $lineTotals = $this->calculateTwoLineItemTotals($line_items);
+        if (!$this->validateTwoOrderReconciliationAgainstCart($cart, $lineTotals, $contextLabel)) {
+            if ($reconciliationPolicy !== self::RECONCILIATION_POLICY_PRECHECK) {
+                throw new Exception('Order totals do not reconcile with cart totals');
+            }
+
+            PrestaShopLogger::addLog(
+                'TwoPayment: ' . $contextLabel . ' continuing despite cart reconciliation drift (pre-check mode)',
+                2
+            );
+        }
+
+        $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
+        $subtotalsTotals = $this->calculateOrderTotalsFromTaxSubtotals($tax_subtotals);
+        if (
+            !$this->isTwoAmountWithinTolerance($lineTotals['net'], $subtotalsTotals['net']) ||
+            !$this->isTwoAmountWithinTolerance($lineTotals['tax'], $subtotalsTotals['tax']) ||
+            !$this->isTwoAmountWithinTolerance($lineTotals['gross'], $subtotalsTotals['gross'])
+        ) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Cannot build ' . $contextLabel . ' - tax subtotals mismatch line totals. ' .
+                'Line(net/tax/gross)=(' . $this->getTwoRoundAmount($lineTotals['net']) . '/' .
+                $this->getTwoRoundAmount($lineTotals['tax']) . '/' .
+                $this->getTwoRoundAmount($lineTotals['gross']) . ') vs Subtotals=(' .
+                $this->getTwoRoundAmount($subtotalsTotals['net']) . '/' .
+                $this->getTwoRoundAmount($subtotalsTotals['tax']) . '/' .
+                $this->getTwoRoundAmount($subtotalsTotals['gross']) . ')',
+                3
+            );
+            throw new Exception('Tax subtotals do not reconcile with line items');
+        }
+
+        return [
+            'line_items' => $line_items,
+            'tax_subtotals' => $tax_subtotals,
+            'net_amount' => $subtotalsTotals['net'],
+            'tax_amount' => $subtotalsTotals['tax'],
+            'gross_amount' => $subtotalsTotals['gross'],
+            'discount_amount' => abs((float)$cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS)),
+        ];
+    }
+
+    /**
+     * Sum line-item monetary fields with stable 2-decimal arithmetic.
+     *
+     * @param array $line_items
+     * @return array
+     */
+    private function calculateTwoLineItemTotals($line_items)
+    {
+        $net = 0.0;
+        $tax = 0.0;
+        $gross = 0.0;
+        foreach ($line_items as $item) {
+            $net = round($net + (float)(isset($item['net_amount']) ? $item['net_amount'] : 0), 2);
+            $tax = round($tax + (float)(isset($item['tax_amount']) ? $item['tax_amount'] : 0), 2);
+            $gross = round($gross + (float)(isset($item['gross_amount']) ? $item['gross_amount'] : 0), 2);
+        }
+
+        return [
+            'net' => $net,
+            'tax' => $tax,
+            'gross' => $gross,
+        ];
+    }
+
+    /**
+     * Validate line-based totals against cart totals before sending to Two.
+     *
+     * @param Cart $cart
+     * @param array $lineTotals
+     * @param string $contextLabel
+     * @return bool
+     */
+    private function validateTwoOrderReconciliationAgainstCart($cart, $lineTotals, $contextLabel)
+    {
+        $lineNet = round((float)$lineTotals['net'], 2);
+        $lineTax = round((float)$lineTotals['tax'], 2);
+        $lineGross = round((float)$lineTotals['gross'], 2);
+
+        if (!$this->isTwoAmountWithinTolerance($lineGross, $lineNet + $lineTax)) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: ' . $contextLabel . ' blocked - line totals fail gross equation. ' .
+                'gross=' . $this->getTwoRoundAmount($lineGross) . ', net+tax=' .
+                $this->getTwoRoundAmount($lineNet + $lineTax),
+                3
+            );
+            return false;
+        }
+
+        $cartGross = round((float)$cart->getOrderTotal(true, Cart::BOTH), 2);
+        $cartNet = round((float)$cart->getOrderTotal(false, Cart::BOTH), 2);
+        if ($cart->nbProducts() > 0 && $cartGross == 0.0 && $cartNet == 0.0) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Cart totals unavailable for ' . $contextLabel . '; skipping strict reconciliation gate.',
+                2
+            );
+            return true;
+        }
+
+        $cartTax = round($cartGross - $cartNet, 2);
+        $grossDiff = abs($lineGross - $cartGross);
+        $netDiff = abs($lineNet - $cartNet);
+        $taxDiff = abs($lineTax - $cartTax);
+
+        // Compare in cents to avoid float boundary artifacts (e.g. visible 0.02 diff treated as 0.0200000001).
+        $toleranceCents = $this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE);
+        $grossDiffCents = $this->convertAmountToCents($grossDiff);
+        $netDiffCents = $this->convertAmountToCents($netDiff);
+        $taxDiffCents = $this->convertAmountToCents($taxDiff);
+
+        if (
+            $grossDiffCents > $toleranceCents ||
+            $netDiffCents > $toleranceCents ||
+            $taxDiffCents > $toleranceCents
+        ) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: ' . $contextLabel . ' blocked - order totals mismatch cart totals. ' .
+                'Line(net/tax/gross)=(' . $this->getTwoRoundAmount($lineNet) . '/' .
+                $this->getTwoRoundAmount($lineTax) . '/' .
+                $this->getTwoRoundAmount($lineGross) . '), ' .
+                'Cart=(' . $this->getTwoRoundAmount($cartNet) . '/' .
+                $this->getTwoRoundAmount($cartTax) . '/' .
+                $this->getTwoRoundAmount($cartGross) . '), ' .
+                'Diff=(' . $this->getTwoRoundAmount($netDiffCents / 100) . '/' .
+                $this->getTwoRoundAmount($taxDiffCents / 100) . '/' .
+                $this->getTwoRoundAmount($grossDiffCents / 100) . ')',
+                3
+            );
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Normalize decimal amount to integer cents for stable boundary comparisons.
+     *
+     * @param float|int|string $amount
+     * @return int
+     */
+    private function convertAmountToCents($amount)
+    {
+        return (int) round(round((float)$amount, 2) * 100);
+    }
+
+    /**
+     * Amount comparison helper with configurable tolerance.
+     *
+     * @param float $left
+     * @param float $right
+     * @param float|null $tolerance
+     * @return bool
+     */
+    private function isTwoAmountWithinTolerance($left, $right, $tolerance = null)
+    {
+        if ($tolerance === null) {
+            $tolerance = self::ORDER_RECONCILIATION_TOLERANCE;
+        }
+
+        return abs(round((float)$left, 2) - round((float)$right, 2)) <= (float)$tolerance;
+    }
+
 
 
     public function getTwoIntentOrderData($cart, $customer, $currency, $address)
@@ -2052,31 +2243,19 @@ class Twopayment extends PaymentModule
             throw new Exception('Cart is empty or invalid');
         }
         
-        // Get line items (using PrestaShop's native values)
-        $line_items = $this->getTwoProductItems($cart);
-        
-        // Validate we have line items
-        if (empty($line_items)) {
-            PrestaShopLogger::addLog('TwoPayment: Cannot build order intent - no valid line items', 3);
-            throw new Exception('No valid line items in cart');
-        }
-
-        if (!$this->validateTwoLineItems($line_items)) {
-            PrestaShopLogger::addLog('TwoPayment: Cannot build order intent - invalid line item formulas', 3);
-            throw new Exception('Invalid line item formulas');
-        }
-        
-        // Calculate tax subtotals from line items first
-        $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
-        
-        // Calculate totals from tax_subtotals to ensure exact match
-        $totals = $this->calculateOrderTotalsFromTaxSubtotals($tax_subtotals);
-        $final_net = $totals['net'];
-        $final_tax = $totals['tax'];
-        $final_gross = $totals['gross'];
-        
-        // Get discount amount from PrestaShop (Two API expects positive discount amount)
-        $final_discount = abs((float)$cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS));
+        // Order intent is a pre-check only: do not hard-block checkout on cart reconciliation drift.
+        // Hard enforcement remains on actual order create/update flows.
+        $pricingData = $this->buildTwoOrderPricingData(
+            $cart,
+            'order intent',
+            self::RECONCILIATION_POLICY_PRECHECK
+        );
+        $line_items = $pricingData['line_items'];
+        $tax_subtotals = $pricingData['tax_subtotals'];
+        $final_net = $pricingData['net_amount'];
+        $final_tax = $pricingData['tax_amount'];
+        $final_gross = $pricingData['gross_amount'];
+        $final_discount = $pricingData['discount_amount'];
         
         // Get company data with fallback chain
         $companyData = $this->getCompanyDataWithFallbacks($address);
@@ -2141,32 +2320,13 @@ class Twopayment extends PaymentModule
             }
         }
 
-        // Get line items (using PrestaShop's native values)
-        $line_items = $this->getTwoProductItems($cart);
-        
-        // Validate we have line items
-        if (empty($line_items)) {
-            PrestaShopLogger::addLog('TwoPayment: Cannot build order data - no valid line items (Merchant order ID: ' . $merchant_order_id . ')', 3);
-            throw new Exception('No valid line items in cart');
-        }
-
-        if (!$this->validateTwoLineItems($line_items)) {
-            PrestaShopLogger::addLog('TwoPayment: Cannot build order data - invalid line item formulas (Merchant order ID: ' . $merchant_order_id . ')', 3);
-            throw new Exception('Invalid line item formulas');
-        }
-        
-        // Calculate tax subtotals from line items first
-        $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
-        
-        // Two API requires gross_amount = sum(tax_subtotals)
-        // Calculate totals from tax_subtotals to ensure exact match
-        $totals = $this->calculateOrderTotalsFromTaxSubtotals($tax_subtotals);
-        $final_net = $totals['net'];
-        $final_tax = $totals['tax'];
-        $final_gross = $totals['gross'];
-        
-        // Get discount amount from PrestaShop
-        $final_discount = abs((float)$cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS));
+        $pricingData = $this->buildTwoOrderPricingData($cart, 'order data (merchant_order_id=' . $merchant_order_id . ')');
+        $line_items = $pricingData['line_items'];
+        $tax_subtotals = $pricingData['tax_subtotals'];
+        $final_net = $pricingData['net_amount'];
+        $final_tax = $pricingData['tax_amount'];
+        $final_gross = $pricingData['gross_amount'];
+        $final_discount = $pricingData['discount_amount'];
 
         // Get company data with fallback chain (reused helper method)
         $buyerData = $this->getCompanyDataWithFallbacks($invoice_address);
@@ -2265,31 +2425,13 @@ class Twopayment extends PaymentModule
             }
         }
 
-        // Get line items (using PrestaShop's native values)
-        $line_items = $this->getTwoProductItems($cart);
-        
-        // Validate we have line items
-        if (empty($line_items)) {
-            PrestaShopLogger::addLog('TwoPayment: Cannot build update order data - no valid line items (Order ID: ' . $order->id . ')', 3);
-            throw new Exception('No valid line items in cart');
-        }
-
-        if (!$this->validateTwoLineItems($line_items)) {
-            PrestaShopLogger::addLog('TwoPayment: Cannot build update order data - invalid line item formulas (Order ID: ' . $order->id . ')', 3);
-            throw new Exception('Invalid line item formulas');
-        }
-        
-        // Calculate tax subtotals from line items first
-        $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
-        
-        // Calculate totals from tax_subtotals to ensure exact match
-        $totals = $this->calculateOrderTotalsFromTaxSubtotals($tax_subtotals);
-        $final_net = $totals['net'];
-        $final_tax = $totals['tax'];
-        $final_gross = $totals['gross'];
-        
-        // Get discount amount from PrestaShop
-        $final_discount = abs((float)$cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS));
+        $pricingData = $this->buildTwoOrderPricingData($cart, 'update order data (order_id=' . $order->id . ')');
+        $line_items = $pricingData['line_items'];
+        $tax_subtotals = $pricingData['tax_subtotals'];
+        $final_net = $pricingData['net_amount'];
+        $final_tax = $pricingData['tax_amount'];
+        $final_gross = $pricingData['gross_amount'];
+        $final_discount = $pricingData['discount_amount'];
 
         // Get company data with fallback chain (reused helper method)
         $buyerData = $this->getCompanyDataWithFallbacks($invoice_address);
@@ -2736,7 +2878,7 @@ class Twopayment extends PaymentModule
                     if ($rule['code']) {
                         $rule_desc .= ' (' . $rule['code'] . ')';
                     }
-                    if ($rule['value']) {
+                    if (isset($rule['value']) && $rule['value']) {
                         if ($rule['reduction_percent'] > 0) {
                             $rule_desc .= ' - ' . $rule['reduction_percent'] . '%';
                         } elseif ($rule['reduction_amount'] > 0) {
@@ -3704,15 +3846,7 @@ class Twopayment extends PaymentModule
             $url = sprintf('%s%s', $this->getTwoCheckoutHostUrl(), $endpoint);
             $url = $url . '?client=PS&client_v=' . $this->version;
             $params = empty($payload) ? '' : json_encode($payload);
-            $headers = [
-                'Content-Type: application/json; charset=utf-8',
-                'X-API-Key:' . $this->api_key,
-            ];
-            
-            // Merge additional headers (e.g., idempotency key)
-            if (!empty($additional_headers) && is_array($additional_headers)) {
-                $headers = array_merge($headers, $additional_headers);
-            }
+            $headers = $this->getTwoRequestHeaders($endpoint, $additional_headers);
             
             $ch = curl_init();
             curl_setopt($ch, CURLOPT_URL, $url);
@@ -3763,10 +3897,7 @@ class Twopayment extends PaymentModule
         } else {
             $url = sprintf('%s%s', $this->getTwoCheckoutHostUrl(), $endpoint);
             $url = $url . '?client=PS&client_v=' . $this->version;
-            $headers = [
-                'Content-Type: application/json; charset=utf-8',
-                'X-API-Key:' . $this->api_key,
-            ];
+            $headers = $this->getTwoRequestHeaders($endpoint, $additional_headers);
             $ch = curl_init();
             curl_setopt($ch, CURLOPT_URL, $url);
             curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
@@ -3812,6 +3943,75 @@ class Twopayment extends PaymentModule
                 'data' => $response_data,
             ], is_array($response_data) ? $response_data : []);
         }
+    }
+
+    /**
+     * Build outbound request headers for Two API calls.
+     * Security policy: never attach X-API-Key to order intent calls.
+     *
+     * @param string $endpoint
+     * @param array $additional_headers
+     * @return array
+     */
+    public function getTwoRequestHeaders($endpoint, $additional_headers = [])
+    {
+        $headers = [
+            'Content-Type: application/json; charset=utf-8',
+        ];
+
+        $includeApiKey = $this->shouldAttachTwoApiKey($endpoint);
+        if ($includeApiKey && !Tools::isEmpty($this->api_key)) {
+            $headers[] = 'X-API-Key:' . $this->api_key;
+        }
+
+        if (!empty($additional_headers) && is_array($additional_headers)) {
+            foreach ($additional_headers as $header) {
+                if (!is_string($header) || Tools::isEmpty(trim($header))) {
+                    continue;
+                }
+
+                // Hard block accidental auth header leakage on order-intent path.
+                if (!$includeApiKey && stripos(trim($header), 'X-API-Key:') === 0) {
+                    continue;
+                }
+
+                $headers[] = $header;
+            }
+        }
+
+        return $headers;
+    }
+
+    /**
+     * Determine if API key auth should be attached for a given endpoint.
+     *
+     * @param string $endpoint
+     * @return bool
+     */
+    private function shouldAttachTwoApiKey($endpoint)
+    {
+        $normalized = strtolower(trim((string)$endpoint));
+        if (Tools::isEmpty($normalized)) {
+            return true;
+        }
+
+        if (strpos($normalized, 'http://') === 0 || strpos($normalized, 'https://') === 0) {
+            $path = parse_url($normalized, PHP_URL_PATH);
+            if (is_string($path)) {
+                $normalized = strtolower($path);
+            }
+        } else {
+            $query_pos = strpos($normalized, '?');
+            if ($query_pos !== false) {
+                $normalized = substr($normalized, 0, $query_pos);
+            }
+        }
+
+        if ($normalized === '/v1/order_intent' || strpos($normalized, '/v1/order_intent/') === 0) {
+            return false;
+        }
+
+        return true;
     }
 
     /**
