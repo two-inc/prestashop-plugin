@@ -243,18 +243,11 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $companyName = $companyData['company'];
         $companyId = $companyData['companyid'];
         // Determine account type only when merchant explicitly enabled account-type mode.
-        // Keep resilience fallback for shops where custom address field is not persisted.
+        // In strict account-type mode, missing/invalid account_type must be blocked.
         $useAccountType = (int)Configuration::get('PS_TWO_USE_ACCOUNT_TYPE');
         $accountType = 'business';
         if ($useAccountType) {
             $accountType = property_exists($address, 'account_type') ? trim((string) $address->account_type) : '';
-            if (Tools::isEmpty($accountType) && !empty($companyName) && !empty($companyId)) {
-                $accountType = 'business';
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Account type missing in order intent; allowing business fallback from validated company data',
-                    2
-                );
-            }
         }
         
         // Store company data in PrestaShop session for future use

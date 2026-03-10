@@ -1997,20 +1997,8 @@ class Twopayment extends PaymentModule
         if ((int) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE')) {
             $account_type = property_exists($billing_address, 'account_type') ? trim((string) $billing_address->account_type) : '';
             if ($account_type !== 'business') {
-                $country_iso = Country::getIsoById((int) $billing_address->id_country);
-                $org_number = '';
-                if (!Tools::isEmpty($country_iso)) {
-                    $org_number = $this->extractOrgNumberFromAddress($billing_address, $country_iso);
-                }
-
-                // Resilience fallback: some shops may not persist custom account_type.
-                // If business identity is still clearly present, keep Two visible.
-                if (Tools::isEmpty($account_type) && !Tools::isEmpty($billing_address->company) && !Tools::isEmpty($org_number)) {
-                    PrestaShopLogger::addLog('TwoPayment: Account type missing, allowing payment option based on company + org number fallback', 2);
-                } else {
-                    PrestaShopLogger::addLog('TwoPayment: Payment option hidden - account type is not business (current: ' . ($account_type ?: 'not set') . ')', 1);
-                    return [];
-                }
+                PrestaShopLogger::addLog('TwoPayment: Payment option hidden - account type is not business (current: ' . ($account_type ?: 'not set') . ')', 1);
+                return [];
             }
             PrestaShopLogger::addLog('TwoPayment: Payment option shown for business account path', 1);
         } else {
@@ -2773,6 +2761,29 @@ class Twopayment extends PaymentModule
             $gross_amount_prestashop = round((float)$line_item['total_wt'], 2);
             $tax_amount_prestashop = round($gross_amount_prestashop - $net_amount_prestashop, 2);
             $quantity = (int)$line_item['cart_quantity'];
+
+            // CRITICAL: Validate quantity to prevent division by zero
+            if ($quantity <= 0) {
+                PrestaShopLogger::addLog('TwoPayment: Invalid quantity (0 or negative) for product ' . $line_item['id_product'], 3);
+                continue; // Skip invalid line items
+            }
+
+            $ecotax_service_line = null;
+            $ecotax_breakdown = $this->extractTwoEcotaxLineBreakdown(
+                $line_item,
+                $quantity,
+                $net_amount_prestashop,
+                $gross_amount_prestashop
+            );
+            if (!empty($ecotax_breakdown['enabled'])) {
+                $net_amount_prestashop = (float)$ecotax_breakdown['product_net'];
+                $gross_amount_prestashop = (float)$ecotax_breakdown['product_gross'];
+                $tax_amount_prestashop = round($gross_amount_prestashop - $net_amount_prestashop, 2);
+
+                if (isset($line_item['price']) && is_numeric($line_item['price'])) {
+                    $line_item['price'] = max(0, (float)$line_item['price'] - (float)$ecotax_breakdown['unit_net']);
+                }
+            }
             
             // DIAGNOSTIC LOGGING: Log tax data for debugging store-specific issues
             // Only log when debug mode is enabled to avoid excessive log entries in production
@@ -2824,12 +2835,6 @@ class Twopayment extends PaymentModule
             }
 
             $tax_rate = round(max(0, (float)$tax_rate), self::TAX_RATE_PRECISION);
-            
-            // CRITICAL: Validate quantity to prevent division by zero
-            if ($quantity <= 0) {
-                PrestaShopLogger::addLog('TwoPayment: Invalid quantity (0 or negative) for product ' . $line_item['id_product'], 3);
-                continue; // Skip invalid line items
-            }
             
             // Use PrestaShop unit price when available; otherwise derive from net total.
             $unit_price_net_prestashop = isset($line_item['price']) ? (float)$line_item['price'] : null;
@@ -2910,6 +2915,28 @@ class Twopayment extends PaymentModule
             }
 
             $items[] = $product;
+
+            if (!empty($ecotax_breakdown['enabled'])) {
+                $ecotax_rate = (float)$ecotax_breakdown['rate'];
+                $ecotax_rate_percent = round($ecotax_rate * 100, 2);
+                $ecotax_service_line = [
+                    'name' => $line_item['name'] . ' - ' . $this->l('Ecotax'),
+                    'description' => Tools::substr(strip_tags($this->l('Environmental tax (ecotax)')), 0, 255),
+                    'gross_amount' => (string)$this->getTwoRoundAmount($ecotax_breakdown['gross']),
+                    'net_amount' => (string)$this->getTwoRoundAmount($ecotax_breakdown['net']),
+                    'discount_amount' => '0.00',
+                    'tax_amount' => (string)$this->getTwoRoundAmount($ecotax_breakdown['tax']),
+                    'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($ecotax_rate_percent) . '%',
+                    'tax_rate' => $this->formatTwoTaxRate($ecotax_rate),
+                    'unit_price' => (string)$this->getTwoRoundAmount($ecotax_breakdown['net']),
+                    'quantity' => 1,
+                    'quantity_unit' => 'item',
+                    'image_url' => $imagePath,
+                    'product_page_url' => $this->context->link->getProductLink($line_item['id_product']),
+                    'type' => 'SERVICE',
+                ];
+                $items[] = $ecotax_service_line;
+            }
         }
 
         // Add shipping as a line item if applicable
@@ -3045,6 +3072,60 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Build ecotax split data for a product line when ecotax is available.
+     * PrestaShop can include ecotax in product totals, which can distort product VAT context.
+     * We model ecotax as a dedicated service line when a safe split is possible.
+     *
+     * @param array $line_item
+     * @param int $quantity
+     * @param float $line_net
+     * @param float $line_gross
+     * @return array{enabled:bool,net:float,tax:float,gross:float,rate:float,product_net:float,product_gross:float,unit_net:float}
+     */
+    private function extractTwoEcotaxLineBreakdown($line_item, $quantity, $line_net, $line_gross)
+    {
+        $quantity = (int)$quantity;
+        if ($quantity <= 0) {
+            return ['enabled' => false];
+        }
+
+        $ecotax_unit_net = isset($line_item['ecotax']) && is_numeric($line_item['ecotax'])
+            ? abs((float)$line_item['ecotax'])
+            : 0.0;
+        $ecotax_total_net = round($ecotax_unit_net * $quantity, 2);
+        if (isset($line_item['total_ecotax']) && is_numeric($line_item['total_ecotax'])) {
+            $ecotax_total_net = round(abs((float)$line_item['total_ecotax']), 2);
+        }
+        if ($ecotax_total_net <= 0) {
+            return ['enabled' => false];
+        }
+
+        $ecotax_rate_percent = isset($line_item['ecotax_tax_rate']) && is_numeric($line_item['ecotax_tax_rate'])
+            ? max(0, (float)$line_item['ecotax_tax_rate'])
+            : (isset($line_item['rate']) ? max(0, (float)$line_item['rate']) : 0.0);
+        $ecotax_rate_decimal = round($ecotax_rate_percent / 100, self::TAX_RATE_PRECISION);
+        $ecotax_total_tax = round($ecotax_total_net * $ecotax_rate_decimal, 2);
+        $ecotax_total_gross = round($ecotax_total_net + $ecotax_total_tax, 2);
+
+        $product_net = round((float)$line_net - $ecotax_total_net, 2);
+        $product_gross = round((float)$line_gross - $ecotax_total_gross, 2);
+        if ($product_net <= 0 || $product_gross < 0 || $product_gross < $product_net) {
+            return ['enabled' => false];
+        }
+
+        return [
+            'enabled' => true,
+            'net' => $ecotax_total_net,
+            'tax' => $ecotax_total_tax,
+            'gross' => $ecotax_total_gross,
+            'rate' => $ecotax_rate_decimal,
+            'product_net' => $product_net,
+            'product_gross' => $product_gross,
+            'unit_net' => round($ecotax_total_net / $quantity, 6),
+        ];
+    }
+
+    /**
      * Build discount lines from PrestaShop cart totals.
      * Splits discount across detected tax contexts to avoid blended synthetic rates.
      *
@@ -3069,8 +3150,43 @@ class Twopayment extends PaymentModule
             return $rule_scoped_lines;
         }
 
+        $lines = [];
+        $remaining_discount_gross = $discount_gross_total;
+        $remaining_discount_net = $discount_net_total;
+        $fallback_items = $existingItems;
+
+        // Edge-path hardening: if rule-level monetary metadata is incomplete, carve out free-shipping
+        // discount against the shipping context first to avoid blended shipping/product attribution.
+        $fallback_free_shipping = $this->buildTwoFallbackFreeShippingDiscountLine(
+            $cart,
+            $fallback_items,
+            $remaining_discount_gross,
+            $remaining_discount_net
+        );
+        if ($fallback_free_shipping !== null) {
+            $lines[] = $fallback_free_shipping['line'];
+            $remaining_discount_gross = round($remaining_discount_gross - $fallback_free_shipping['gross'], 2);
+            $remaining_discount_net = round($remaining_discount_net - $fallback_free_shipping['net'], 2);
+            if ($remaining_discount_gross < 0) {
+                $remaining_discount_gross = 0.0;
+            }
+            if ($remaining_discount_net < 0) {
+                $remaining_discount_net = 0.0;
+            }
+            $fallback_items = $this->filterTwoShippingFeeItems($fallback_items);
+        }
+
+        if ($remaining_discount_gross <= 0) {
+            return $lines;
+        }
+
+        if ($remaining_discount_net > $remaining_discount_gross) {
+            $remaining_discount_net = $remaining_discount_gross;
+        }
+        $remaining_discount_tax = round($remaining_discount_gross - $remaining_discount_net, 2);
+
         $descriptor = $this->buildTwoDiscountDescriptor($cart);
-        $contexts = $this->collectDiscountTaxContextsFromItems($existingItems);
+        $contexts = $this->collectDiscountTaxContextsFromItems($fallback_items);
 
         if (empty($contexts)) {
             $contexts = [
@@ -3084,17 +3200,18 @@ class Twopayment extends PaymentModule
 
         $net_weights = [];
         $tax_weights = [];
+        $known_context_rates = [];
         foreach ($contexts as $context_key => $context_data) {
             $net_weights[$context_key] = (float)$context_data['net_weight'];
             $tax_weights[$context_key] = (float)$context_data['tax_weight'];
+            $known_context_rates[] = (float)$context_data['tax_rate'];
         }
 
-        $allocated_nets = $this->allocateTwoAmountByWeights($discount_net_total, $net_weights);
+        $allocated_nets = $this->allocateTwoAmountByWeights($remaining_discount_net, $net_weights);
         $tax_weight_source = array_sum($tax_weights) > 0 ? $tax_weights : $net_weights;
-        $allocated_taxes = $this->allocateTwoAmountByWeights(max(0, $discount_tax_total), $tax_weight_source);
+        $allocated_taxes = $this->allocateTwoAmountByWeights(max(0, $remaining_discount_tax), $tax_weight_source);
 
-        $lines = [];
-        $is_split = count($contexts) > 1;
+        $is_context_split = count($contexts) > 1;
         foreach ($contexts as $context_key => $context_data) {
             $line_net = isset($allocated_nets[$context_key]) ? (float)$allocated_nets[$context_key] : 0.0;
             $line_tax = isset($allocated_taxes[$context_key]) ? (float)$allocated_taxes[$context_key] : 0.0;
@@ -3104,40 +3221,178 @@ class Twopayment extends PaymentModule
                 continue;
             }
 
-            // Discount splits can produce rounded net/tax pairs where 3dp tax-rate precision
-            // is not enough to satisfy strict formula checks on large amounts.
-            // Use higher precision for computed discount rates to keep:
-            // tax_amount ~= net_amount * tax_rate within validation tolerance.
-            $line_rate_raw = $line_net > 0
-                ? max(0, $line_tax / $line_net)
-                : max(0, (float)$context_data['tax_rate']);
-            $line_rate = $this->normalizeTwoTaxRateToPercentPrecision($line_rate_raw);
-            $line_rate_precision = 4;
-            $line_rate_percent = round($line_rate * 100, 2);
-            $line_name = $descriptor['name'];
-            if ($is_split) {
-                $line_name .= ' (' . $this->l('VAT') . ' ' . $this->getTwoRoundAmount($line_rate_percent) . '%)';
+            $segments = $this->buildTwoCanonicalDiscountRateSegments($line_net, $line_tax, $known_context_rates);
+            if (empty($segments)) {
+                $line_rate_raw = $line_net > 0
+                    ? max(0, $line_tax / $line_net)
+                    : max(0, (float)$context_data['tax_rate']);
+                $line_rate = $this->normalizeTwoTaxRateToPercentPrecision($line_rate_raw);
+                $segments = [[
+                    'net' => $line_net,
+                    'tax' => $line_tax,
+                    'gross' => $line_gross,
+                    'rate' => $line_rate,
+                    'precision' => 4,
+                ]];
             }
 
-            $lines[] = [
-                'name' => $line_name,
+            $is_segment_split = count($segments) > 1;
+            foreach ($segments as $segment) {
+                $segment_net = round((float)$segment['net'], 2);
+                $segment_tax = round((float)$segment['tax'], 2);
+                $segment_gross = round((float)$segment['gross'], 2);
+                if ($segment_gross <= 0) {
+                    continue;
+                }
+
+                $segment_rate = max(0, (float)$segment['rate']);
+                $segment_rate_percent = round($segment_rate * 100, 2);
+                $line_name = $descriptor['name'];
+                if ($is_context_split || $is_segment_split) {
+                    $line_name .= ' (' . $this->l('VAT') . ' ' . $this->getTwoRoundAmount($segment_rate_percent) . '%)';
+                }
+
+                $line_rate_precision = isset($segment['precision']) ? (int)$segment['precision'] : null;
+                $line_rate_formatted = $line_rate_precision === null
+                    ? $this->formatTwoTaxRate($segment_rate)
+                    : $this->formatTwoTaxRate($segment_rate, $line_rate_precision);
+
+                $lines[] = [
+                    'name' => $line_name,
+                    'description' => $descriptor['description'],
+                    'gross_amount' => (string)$this->getTwoRoundAmount(-$segment_gross),
+                    'net_amount' => (string)$this->getTwoRoundAmount(-$segment_net),
+                    'discount_amount' => '0.00',
+                    'tax_amount' => (string)$this->getTwoRoundAmount(-$segment_tax),
+                    'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($segment_rate_percent) . '%',
+                    'tax_rate' => $line_rate_formatted,
+                    'unit_price' => (string)$this->getTwoRoundAmount(-$segment_net),
+                    'quantity' => 1,
+                    'quantity_unit' => 'item',
+                    'image_url' => '',
+                    'product_page_url' => '',
+                    'type' => 'DIGITAL',
+                ];
+            }
+        }
+
+        return $lines;
+    }
+
+    /**
+     * Build a fallback free-shipping discount line when rule-level monetary metadata is incomplete.
+     * This keeps shipping discount attribution on shipping VAT context in fallback mode.
+     *
+     * @param Cart $cart
+     * @param array $existingItems
+     * @param float $discountGrossTotal
+     * @param float $discountNetTotal
+     * @return array|null
+     */
+    private function buildTwoFallbackFreeShippingDiscountLine($cart, $existingItems, $discountGrossTotal, $discountNetTotal)
+    {
+        $shipping_line = null;
+        foreach ($existingItems as $item) {
+            $line_type = isset($item['type']) ? (string)$item['type'] : '';
+            $line_gross = isset($item['gross_amount']) ? round((float)$item['gross_amount'], 2) : 0.0;
+            if ($line_type === 'SHIPPING_FEE' && $line_gross > 0) {
+                $shipping_line = $item;
+                break;
+            }
+        }
+        if ($shipping_line === null) {
+            return null;
+        }
+
+        $free_shipping_rules = [];
+        $free_shipping_gross = 0.0;
+        $cart_rules = $cart->getCartRules();
+        foreach ($cart_rules as $rule) {
+            if (empty($rule['free_shipping'])) {
+                continue;
+            }
+
+            $rule_gross = $this->extractTwoDiscountRuleGrossAmount($rule);
+            if ($rule_gross <= 0 && isset($rule['reduction_amount']) && is_numeric($rule['reduction_amount'])) {
+                $rule_gross = abs((float)$rule['reduction_amount']);
+            }
+            if ($rule_gross <= 0) {
+                continue;
+            }
+
+            $free_shipping_rules[] = $rule;
+            $free_shipping_gross = round($free_shipping_gross + $rule_gross, 2);
+        }
+
+        if ($free_shipping_gross <= 0) {
+            return null;
+        }
+
+        $shipping_gross = isset($shipping_line['gross_amount']) ? round((float)$shipping_line['gross_amount'], 2) : 0.0;
+        $shipping_net = isset($shipping_line['net_amount']) ? round((float)$shipping_line['net_amount'], 2) : 0.0;
+        $shipping_tax = round($shipping_gross - $shipping_net, 2);
+        if ($shipping_gross <= 0) {
+            return null;
+        }
+
+        $alloc_gross = min($free_shipping_gross, max(0, (float)$discountGrossTotal), $shipping_gross);
+        if ($alloc_gross <= 0) {
+            return null;
+        }
+
+        $shipping_ratio = $shipping_gross > 0 ? ($shipping_net / $shipping_gross) : 1.0;
+        $alloc_net = round($alloc_gross * $shipping_ratio, 2);
+        $alloc_net = min($alloc_net, round(max(0, (float)$discountNetTotal), 2), $alloc_gross);
+        $alloc_tax = round($alloc_gross - $alloc_net, 2);
+
+        $shipping_rate = $shipping_net > 0 ? ($shipping_tax / $shipping_net) : 0.0;
+        if ($shipping_rate < 0) {
+            $shipping_rate = 0.0;
+        }
+        $shipping_rate = $this->normalizeTwoTaxRateToPercentPrecision($shipping_rate);
+        $shipping_rate_percent = round($shipping_rate * 100, 2);
+        $descriptor = $this->buildTwoSingleDiscountDescriptor(reset($free_shipping_rules));
+
+        return [
+            'gross' => $alloc_gross,
+            'net' => $alloc_net,
+            'line' => [
+                'name' => $descriptor['name'],
                 'description' => $descriptor['description'],
-                'gross_amount' => (string)$this->getTwoRoundAmount(-$line_gross),
-                'net_amount' => (string)$this->getTwoRoundAmount(-$line_net),
+                'gross_amount' => (string)$this->getTwoRoundAmount(-$alloc_gross),
+                'net_amount' => (string)$this->getTwoRoundAmount(-$alloc_net),
                 'discount_amount' => '0.00',
-                'tax_amount' => (string)$this->getTwoRoundAmount(-$line_tax),
-                'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($line_rate_percent) . '%',
-                'tax_rate' => $this->formatTwoTaxRate($line_rate, $line_rate_precision),
-                'unit_price' => (string)$this->getTwoRoundAmount(-$line_net),
+                'tax_amount' => (string)$this->getTwoRoundAmount(-$alloc_tax),
+                'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($shipping_rate_percent) . '%',
+                'tax_rate' => $this->formatTwoTaxRate($shipping_rate),
+                'unit_price' => (string)$this->getTwoRoundAmount(-$alloc_net),
                 'quantity' => 1,
                 'quantity_unit' => 'item',
                 'image_url' => '',
                 'product_page_url' => '',
                 'type' => 'DIGITAL',
-            ];
+            ],
+        ];
+    }
+
+    /**
+     * Remove shipping fee line items from a line-item list.
+     *
+     * @param array $items
+     * @return array
+     */
+    private function filterTwoShippingFeeItems($items)
+    {
+        $filtered = [];
+        foreach ($items as $item) {
+            $line_type = isset($item['type']) ? (string)$item['type'] : '';
+            if ($line_type === 'SHIPPING_FEE') {
+                continue;
+            }
+            $filtered[] = $item;
         }
 
-        return $lines;
+        return $filtered;
     }
 
     /**
@@ -3221,35 +3476,251 @@ class Twopayment extends PaymentModule
                 $line_net = $line_gross;
             }
 
-            $line_tax = round($line_gross - $line_net, 2);
-            $line_rate_raw = $line_net > 0
-                ? max(0, $line_tax / $line_net)
-                : 0.0;
-            $line_rate = $this->normalizeTwoTaxRateToPercentPrecision($line_rate_raw);
-            $line_rate = $this->snapTwoTaxRateToKnownContexts($line_rate, $known_context_rates);
-            $line_rate_precision = 4;
-            $line_rate_percent = round($line_rate * 100, 2);
             $descriptor = $this->buildTwoSingleDiscountDescriptor($row['rule']);
+            $line_tax = round($line_gross - $line_net, 2);
+            $segments = $this->buildTwoCanonicalDiscountRateSegments($line_net, $line_tax, $known_context_rates);
+            if (empty($segments)) {
+                $segments = [[
+                    'net' => $line_net,
+                    'tax' => $line_tax,
+                    'gross' => round($line_net + $line_tax, 2),
+                    'rate' => $line_net > 0
+                        ? $this->normalizeTwoTaxRateToPercentPrecision(max(0, $line_tax / $line_net))
+                        : 0.0,
+                ]];
+            }
 
-            $lines[] = [
-                'name' => $descriptor['name'],
-                'description' => $descriptor['description'],
-                'gross_amount' => (string)$this->getTwoRoundAmount(-$line_gross),
-                'net_amount' => (string)$this->getTwoRoundAmount(-$line_net),
-                'discount_amount' => '0.00',
-                'tax_amount' => (string)$this->getTwoRoundAmount(-$line_tax),
-                'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($line_rate_percent) . '%',
-                'tax_rate' => $this->formatTwoTaxRate($line_rate, $line_rate_precision),
-                'unit_price' => (string)$this->getTwoRoundAmount(-$line_net),
-                'quantity' => 1,
-                'quantity_unit' => 'item',
-                'image_url' => '',
-                'product_page_url' => '',
-                'type' => 'DIGITAL',
-            ];
+            $is_split = count($segments) > 1;
+            foreach ($segments as $segment) {
+                $segment_net = round((float)$segment['net'], 2);
+                $segment_tax = round((float)$segment['tax'], 2);
+                $segment_gross = round((float)$segment['gross'], 2);
+                if ($segment_gross <= 0) {
+                    continue;
+                }
+
+                $segment_rate = max(0, (float)$segment['rate']);
+                $segment_rate_percent = round($segment_rate * 100, 2);
+                $segment_name = $descriptor['name'];
+                if ($is_split) {
+                    $segment_name .= ' (' . $this->l('VAT') . ' ' . $this->getTwoRoundAmount($segment_rate_percent) . '%)';
+                }
+
+                $lines[] = [
+                    'name' => $segment_name,
+                    'description' => $descriptor['description'],
+                    'gross_amount' => (string)$this->getTwoRoundAmount(-$segment_gross),
+                    'net_amount' => (string)$this->getTwoRoundAmount(-$segment_net),
+                    'discount_amount' => '0.00',
+                    'tax_amount' => (string)$this->getTwoRoundAmount(-$segment_tax),
+                    'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($segment_rate_percent) . '%',
+                    'tax_rate' => $this->formatTwoTaxRate($segment_rate),
+                    'unit_price' => (string)$this->getTwoRoundAmount(-$segment_net),
+                    'quantity' => 1,
+                    'quantity_unit' => 'item',
+                    'image_url' => '',
+                    'product_page_url' => '',
+                    'type' => 'DIGITAL',
+                ];
+            }
         }
 
         return $lines;
+    }
+
+    /**
+     * Split a discount row into canonical tax-rate segments when possible.
+     * This avoids blended synthetic rates while preserving row net/tax totals.
+     *
+     * @param float $line_net Positive net amount
+     * @param float $line_tax Positive tax amount
+     * @param array $known_rates Decimal tax-rate contexts detected from positive items
+     * @return array<int,array{net:float,tax:float,gross:float,rate:float}>
+     */
+    private function buildTwoCanonicalDiscountRateSegments($line_net, $line_tax, $known_rates)
+    {
+        $net_cents = $this->convertAmountToCents($line_net);
+        $tax_cents = $this->convertAmountToCents($line_tax);
+        if ($net_cents <= 0 || $tax_cents < 0) {
+            return [];
+        }
+
+        $rates = [];
+        foreach ((array)$known_rates as $rate) {
+            $normalized_rate = $this->normalizeTwoTaxRateToPercentPrecision((float)$rate);
+            $key = $this->formatTwoTaxRate($normalized_rate, 4);
+            $rates[$key] = $normalized_rate;
+        }
+        if (empty($rates)) {
+            return [];
+        }
+
+        $rates = array_values($rates);
+        sort($rates, SORT_NUMERIC);
+
+        foreach ($rates as $rate) {
+            if ((int)round($net_cents * $rate, 0) === $tax_cents) {
+                return [[
+                    'net' => round($net_cents / 100, 2),
+                    'tax' => round($tax_cents / 100, 2),
+                    'gross' => round(($net_cents + $tax_cents) / 100, 2),
+                    'rate' => $rate,
+                ]];
+            }
+        }
+
+        if (count($rates) < 2) {
+            return [];
+        }
+
+        $implied_rate = $net_cents > 0 ? ((float)$tax_cents / (float)$net_cents) : 0.0;
+        $pair_candidates = [];
+        for ($i = 0; $i < count($rates); $i++) {
+            for ($j = $i + 1; $j < count($rates); $j++) {
+                $low_rate = $rates[$i];
+                $high_rate = $rates[$j];
+                if ($high_rate <= $low_rate) {
+                    continue;
+                }
+
+                $outside_distance = 0.0;
+                if ($implied_rate < $low_rate) {
+                    $outside_distance = $low_rate - $implied_rate;
+                } elseif ($implied_rate > $high_rate) {
+                    $outside_distance = $implied_rate - $high_rate;
+                }
+
+                $pair_candidates[] = [
+                    'low' => $low_rate,
+                    'high' => $high_rate,
+                    'outside' => $outside_distance,
+                    'width' => $high_rate - $low_rate,
+                ];
+            }
+        }
+
+        usort($pair_candidates, function ($left, $right) {
+            if ($left['outside'] < $right['outside']) {
+                return -1;
+            }
+            if ($left['outside'] > $right['outside']) {
+                return 1;
+            }
+            if ($left['width'] < $right['width']) {
+                return -1;
+            }
+            if ($left['width'] > $right['width']) {
+                return 1;
+            }
+            return 0;
+        });
+
+        foreach ($pair_candidates as $pair) {
+            $split = $this->solveTwoRateDiscountSplitInCents(
+                $net_cents,
+                $tax_cents,
+                (float)$pair['low'],
+                (float)$pair['high']
+            );
+            if ($split === null) {
+                continue;
+            }
+
+            $segments = [];
+            if ($split['low_net_cents'] > 0 || $split['low_tax_cents'] > 0) {
+                $segments[] = [
+                    'net' => round($split['low_net_cents'] / 100, 2),
+                    'tax' => round($split['low_tax_cents'] / 100, 2),
+                    'gross' => round(($split['low_net_cents'] + $split['low_tax_cents']) / 100, 2),
+                    'rate' => (float)$pair['low'],
+                ];
+            }
+            if ($split['high_net_cents'] > 0 || $split['high_tax_cents'] > 0) {
+                $segments[] = [
+                    'net' => round($split['high_net_cents'] / 100, 2),
+                    'tax' => round($split['high_tax_cents'] / 100, 2),
+                    'gross' => round(($split['high_net_cents'] + $split['high_tax_cents']) / 100, 2),
+                    'rate' => (float)$pair['high'],
+                ];
+            }
+
+            if (!empty($segments)) {
+                return $segments;
+            }
+        }
+
+        return [];
+    }
+
+    /**
+     * Solve a two-rate split in cents where tax is computed as round(net * rate).
+     *
+     * @param int $net_cents
+     * @param int $tax_cents
+     * @param float $low_rate
+     * @param float $high_rate
+     * @return array|null
+     */
+    private function solveTwoRateDiscountSplitInCents($net_cents, $tax_cents, $low_rate, $high_rate)
+    {
+        if ($net_cents <= 0 || $high_rate <= $low_rate) {
+            return null;
+        }
+
+        $estimate_high_net = (int)round(
+            ((float)$tax_cents - ((float)$net_cents * $low_rate)) / ($high_rate - $low_rate),
+            0
+        );
+        $estimate_high_net = max(0, min($net_cents, $estimate_high_net));
+
+        $max_offset = min($net_cents, 5000);
+        for ($offset = 0; $offset <= $max_offset; $offset++) {
+            $candidates = [$estimate_high_net + $offset];
+            if ($offset > 0) {
+                $candidates[] = $estimate_high_net - $offset;
+            }
+
+            foreach ($candidates as $candidate_high_net) {
+                if ($candidate_high_net < 0 || $candidate_high_net > $net_cents) {
+                    continue;
+                }
+                $candidate_low_net = $net_cents - $candidate_high_net;
+                $candidate_low_tax = (int)round($candidate_low_net * $low_rate, 0);
+                $candidate_high_tax = (int)round($candidate_high_net * $high_rate, 0);
+                if (($candidate_low_tax + $candidate_high_tax) !== $tax_cents) {
+                    continue;
+                }
+
+                return [
+                    'low_net_cents' => $candidate_low_net,
+                    'low_tax_cents' => $candidate_low_tax,
+                    'high_net_cents' => $candidate_high_net,
+                    'high_tax_cents' => $candidate_high_tax,
+                ];
+            }
+        }
+
+        if ($net_cents > 50000) {
+            return null;
+        }
+
+        for ($candidate_high_net = 0; $candidate_high_net <= $net_cents; $candidate_high_net++) {
+            $candidate_low_net = $net_cents - $candidate_high_net;
+            $candidate_low_tax = (int)round($candidate_low_net * $low_rate, 0);
+            $candidate_high_tax = (int)round($candidate_high_net * $high_rate, 0);
+            if (($candidate_low_tax + $candidate_high_tax) !== $tax_cents) {
+                continue;
+            }
+
+            return [
+                'low_net_cents' => $candidate_low_net,
+                'low_tax_cents' => $candidate_low_tax,
+                'high_net_cents' => $candidate_high_net,
+                'high_tax_cents' => $candidate_high_tax,
+            ];
+        }
+
+        return null;
     }
 
     /**

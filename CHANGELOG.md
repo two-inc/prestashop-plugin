@@ -75,9 +75,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Session Company Country Safety**:
   - Legacy company cookies without `two_company_country` are now cleared when validating against a known address country
   - Prevents stale cross-country company/org-number reuse in mixed-country checkouts
-- **Business Account Gate Resilience**:
-  - When account-type mode is enabled but `account_type` is missing, module now falls back to company + org-number presence
-  - Avoids false-negative payment option hiding on installations where custom address fields are not reliably persisted
+- **Business Account Gate Strictness**:
+  - When account-type mode is enabled, checkout now requires explicit `account_type=business` for Two visibility and order-intent approval.
+  - Missing `account_type` no longer auto-falls back to company/org-number inference in strict mode.
 - **Order Intent Enforcement**:
   - Removed the admin toggle for order intent pre-approval from "Other Settings"
   - Enforced order intent as mandatory for Two checkout server-side validation
@@ -121,8 +121,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added explicit gift wrapping line-item construction so wrapping totals are represented in Two payloads and reconcile with PrestaShop grand totals.
 - **Order intent payload regression on rounded mixed discounts**:
   - Discount line-item tax rate now uses higher precision when derived from rounded net/tax splits to preserve `tax_amount = net_amount * tax_rate` validation in large cart-rule discount scenarios (including free-shipping combinations).
-- **Order intent account-type guard restoration**:
-  - Order intent now applies account-type enforcement only when the merchant enabled account-type mode, with controlled fallback for legacy address forms missing `account_type`.
+- **Cart-rule discount VAT context compliance**:
+  - Cart-rule discount rows now split into canonical tax-rate segments when needed, avoiding blended synthetic VAT rates while preserving per-rule net/gross totals.
+  - Improves provider compatibility on strict VAT validation paths for mixed discount baskets.
+- **Fallback free-shipping attribution hardening**:
+  - When cart-rule monetary metadata is incomplete, fallback discount logic now attributes free-shipping discounts to the shipping VAT context first.
+  - Reduces blended shipping/product discount attribution drift on mixed-tax baskets in fallback mode.
+- **Order intent account-type strict enforcement**:
+  - In account-type mode, order intent now blocks missing/non-business account types instead of treating missing values as business.
+- **Ecotax explicit line modeling**:
+  - Product lines now split ecotax into a dedicated `SERVICE` line when safe ecotax totals are present, preserving formula integrity and explicit tax context.
 - **Payment term cookie warnings in tests/runtime**:
   - Guarded cookie reads in `getSelectedPaymentTerm()` to avoid undefined property warnings.
 - **Buyer metadata warning suppression**:

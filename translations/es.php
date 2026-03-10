@@ -220,6 +220,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_ea9cf7e47ff33b2be14e6dd07cbcefc6'] 
 $_MODULE['<{twopayment}prestashop>twopayment_2b4ef6e3a316295ab176b9dae7ef46b6'] = 'Coste de envío del pedido';
 $_MODULE['<{twopayment}prestashop>twopayment_9091655deaca780040e501e02a1805b2'] = '(por peso)';
 $_MODULE['<{twopayment}prestashop>twopayment_329aa8486f4fde54cc4c9965faea9aa9'] = '(por precio)';
+$_MODULE['<{twopayment}prestashop>twopayment_e92cfa244b5eb9025d07522080468445'] = 'Ecotasa';
+$_MODULE['<{twopayment}prestashop>twopayment_893c937ba17594e25cd9b8a6baa9a923'] = 'Impuesto medioambiental (ecotasa)';
 $_MODULE['<{twopayment}prestashop>twopayment_484f5a79672cebe198ebdde45a1d672f'] = 'Envoltorio de regalo';
 $_MODULE['<{twopayment}prestashop>twopayment_b4d559d50e616b7eb46089c0734d1b1c'] = 'Envoltorio de regalo para este pedido';
 $_MODULE['<{twopayment}prestashop>twopayment_104d9898c04874d0fbac36e125fa1369'] = 'Descuento';
