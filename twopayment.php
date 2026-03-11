@@ -29,7 +29,6 @@ class Twopayment extends PaymentModule
     const TAX_FORMULA_TOLERANCE = 0.02; // Tolerance for tax formula validation
     const NET_FORMULA_TOLERANCE = 0.05; // Tolerance for net formula validation
     const ORDER_RECONCILIATION_TOLERANCE = 0.02; // Warn-level parity tolerance against cart totals (PrestaShop rounding can drift by up to 2 cents)
-    const ORDER_RECONCILIATION_HARD_BLOCK_TOLERANCE = 1.00; // Hard-block only for material mismatches
     const TAX_RATE_PRECISION = 3; // Decimal precision for line-item tax rates sent to Two
     const TAX_SUBTOTAL_RATE_PRECISION = 2; // Keep tax subtotal grouping stable for compatibility
     const SNAPSHOT_TAX_RATE_PRECISION = 2; // Keep snapshot hash behavior stable across minor rate precision drift
@@ -2125,11 +2124,17 @@ class Twopayment extends PaymentModule
         $max_reconciliation_diff_cents = 0;
         if (!$this->validateTwoOrderReconciliationAgainstCart($cart, $lineTotals, $contextLabel, $max_reconciliation_diff_cents)) {
             if ($this->shouldBlockOnReconciliationDrift($contextLabel, $max_reconciliation_diff_cents, (bool)$strictReconciliation)) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: ' . $contextLabel . ' blocked by reconciliation policy. ' .
+                    'Max drift=' . $this->getTwoRoundAmount($max_reconciliation_diff_cents / 100) .
+                    ', Tolerance=' . $this->getTwoRoundAmount(self::ORDER_RECONCILIATION_TOLERANCE),
+                    3
+                );
                 throw new Exception('Order totals do not reconcile with cart totals');
             }
 
             PrestaShopLogger::addLog(
-                'TwoPayment: ' . $contextLabel . ' continuing despite cart reconciliation drift; provider API call will decide validity.',
+                'TwoPayment: ' . $contextLabel . ' reconciliation drift logged as warning-only (intent precheck path).',
                 2
             );
         }
@@ -2279,8 +2284,9 @@ class Twopayment extends PaymentModule
             return false;
         }
 
-        $hardBlockCents = $this->convertAmountToCents(self::ORDER_RECONCILIATION_HARD_BLOCK_TOLERANCE);
-        return (int)$maxDiffCents > $hardBlockCents;
+        // Create/update payloads must fail-closed when drift exceeds default tolerance.
+        $createToleranceCents = $this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE);
+        return (int)$maxDiffCents > $createToleranceCents;
     }
 
     /**
@@ -3351,38 +3357,73 @@ class Twopayment extends PaymentModule
 
         $discount_net_total = round((float)$cart->getOrderTotal(false, Cart::ONLY_DISCOUNTS), 2);
         $discount_tax_total = round($discount_gross_total - $discount_net_total, 2);
-
-        // Prefer cart-rule monetary values when available to keep discount attribution
-        // aligned with PrestaShop invoice semantics. Fallback to context-based split.
-        $rule_scoped_lines = $this->buildTwoDiscountLinesFromCartRules($cart, $discount_net_total, $discount_gross_total, $existingItems);
-        if (!empty($rule_scoped_lines)) {
-            return $rule_scoped_lines;
-        }
-
         $lines = [];
         $remaining_discount_gross = $discount_gross_total;
         $remaining_discount_net = $discount_net_total;
-        $fallback_items = $existingItems;
 
-        // Edge-path hardening: if rule-level monetary metadata is incomplete, carve out free-shipping
-        // discount against the shipping context first to avoid blended shipping/product attribution.
-        $fallback_free_shipping = $this->buildTwoFallbackFreeShippingDiscountLine(
+        // Prefer cart-rule monetary values when available to keep discount attribution
+        // aligned with PrestaShop invoice semantics. Fallback to context-based split.
+        $rule_scope_meta = [];
+        $rule_scoped_lines = $this->buildTwoDiscountLinesFromCartRules(
             $cart,
-            $fallback_items,
+            $discount_net_total,
+            $discount_gross_total,
+            $existingItems,
+            $remaining_discount_net,
             $remaining_discount_gross,
-            $remaining_discount_net
+            $rule_scope_meta
         );
-        if ($fallback_free_shipping !== null) {
-            $lines[] = $fallback_free_shipping['line'];
-            $remaining_discount_gross = round($remaining_discount_gross - $fallback_free_shipping['gross'], 2);
-            $remaining_discount_net = round($remaining_discount_net - $fallback_free_shipping['net'], 2);
+        if (!empty($rule_scoped_lines)) {
+            foreach ($rule_scoped_lines as $rule_scoped_line) {
+                $lines[] = $rule_scoped_line;
+            }
             if ($remaining_discount_gross < 0) {
                 $remaining_discount_gross = 0.0;
             }
             if ($remaining_discount_net < 0) {
                 $remaining_discount_net = 0.0;
             }
-            $fallback_items = $this->filterTwoShippingFeeItems($fallback_items);
+            if ($remaining_discount_net > $remaining_discount_gross) {
+                $remaining_discount_net = $remaining_discount_gross;
+            }
+        }
+
+        $fallback_items = $existingItems;
+
+        // Edge-path hardening: if rule-level monetary metadata is incomplete, carve out unresolved
+        // free-shipping discount against the shipping context first to avoid blended attribution.
+        $should_attempt_free_shipping_fallback = empty($rule_scoped_lines);
+        $free_shipping_fallback_cap = null;
+        if (
+            !$should_attempt_free_shipping_fallback &&
+            $remaining_discount_gross > 0 &&
+            isset($rule_scope_meta['incomplete_free_shipping_gross']) &&
+            (float)$rule_scope_meta['incomplete_free_shipping_gross'] > 0
+        ) {
+            $should_attempt_free_shipping_fallback = true;
+            $free_shipping_fallback_cap = (float)$rule_scope_meta['incomplete_free_shipping_gross'];
+        }
+
+        if ($should_attempt_free_shipping_fallback) {
+            $fallback_free_shipping = $this->buildTwoFallbackFreeShippingDiscountLine(
+                $cart,
+                $fallback_items,
+                $remaining_discount_gross,
+                $remaining_discount_net,
+                $free_shipping_fallback_cap
+            );
+            if ($fallback_free_shipping !== null) {
+                $lines[] = $fallback_free_shipping['line'];
+                $remaining_discount_gross = round($remaining_discount_gross - $fallback_free_shipping['gross'], 2);
+                $remaining_discount_net = round($remaining_discount_net - $fallback_free_shipping['net'], 2);
+                if ($remaining_discount_gross < 0) {
+                    $remaining_discount_gross = 0.0;
+                }
+                if ($remaining_discount_net < 0) {
+                    $remaining_discount_net = 0.0;
+                }
+                $fallback_items = $this->filterTwoShippingFeeItems($fallback_items);
+            }
         }
 
         if ($remaining_discount_gross <= 0) {
@@ -3502,9 +3543,16 @@ class Twopayment extends PaymentModule
      * @param array $existingItems
      * @param float $discountGrossTotal
      * @param float $discountNetTotal
+     * @param float|null $freeShippingGrossOverride Positive unresolved free-shipping gross cap
      * @return array|null
      */
-    private function buildTwoFallbackFreeShippingDiscountLine($cart, $existingItems, $discountGrossTotal, $discountNetTotal)
+    private function buildTwoFallbackFreeShippingDiscountLine(
+        $cart,
+        $existingItems,
+        $discountGrossTotal,
+        $discountNetTotal,
+        $freeShippingGrossOverride = null
+    )
     {
         $shipping_line = null;
         foreach ($existingItems as $item) {
@@ -3537,6 +3585,10 @@ class Twopayment extends PaymentModule
 
             $free_shipping_rules[] = $rule;
             $free_shipping_gross = round($free_shipping_gross + $rule_gross, 2);
+        }
+
+        if ($freeShippingGrossOverride !== null) {
+            $free_shipping_gross = round(max(0, (float)$freeShippingGrossOverride), 2);
         }
 
         if ($free_shipping_gross <= 0) {
@@ -3573,7 +3625,10 @@ class Twopayment extends PaymentModule
             $shipping_rate = $snapped_shipping_rate;
         }
         $shipping_rate_percent = round($shipping_rate * 100, 2);
-        $descriptor = $this->buildTwoSingleDiscountDescriptor(reset($free_shipping_rules));
+        $descriptor_rule = !empty($free_shipping_rules) ? reset($free_shipping_rules) : null;
+        $descriptor = $descriptor_rule !== null
+            ? $this->buildTwoSingleDiscountDescriptor($descriptor_rule)
+            : $this->buildTwoDiscountDescriptor($cart);
 
         return [
             'gross' => $alloc_gross,
@@ -3626,8 +3681,24 @@ class Twopayment extends PaymentModule
      * @param float $discount_gross_total
      * @return array
      */
-    private function buildTwoDiscountLinesFromCartRules($cart, $discount_net_total, $discount_gross_total, $existingItems)
+    private function buildTwoDiscountLinesFromCartRules(
+        $cart,
+        $discount_net_total,
+        $discount_gross_total,
+        $existingItems,
+        &$remaining_discount_net = null,
+        &$remaining_discount_gross = null,
+        &$rule_scope_meta = null
+    )
     {
+        $remaining_discount_net = round(max(0, (float)$discount_net_total), 2);
+        $remaining_discount_gross = round(max(0, (float)$discount_gross_total), 2);
+        $rule_scope_meta = [
+            'has_incomplete_rows' => false,
+            'has_incomplete_free_shipping' => false,
+            'incomplete_free_shipping_gross' => 0.0,
+        ];
+
         $cart_rules = $cart->getCartRules();
         if (empty($cart_rules)) {
             return [];
@@ -3642,6 +3713,7 @@ class Twopayment extends PaymentModule
         }
 
         $rule_rows = [];
+        $complete_rule_rows = [];
         foreach ($cart_rules as $idx => $rule) {
             $gross_raw = $this->extractTwoDiscountRuleGrossAmount($rule);
             if ($gross_raw <= 0) {
@@ -3649,41 +3721,69 @@ class Twopayment extends PaymentModule
             }
 
             $net_raw = $this->extractTwoDiscountRuleNetAmount($rule, $gross_raw);
-            if ($net_raw === null) {
-                // Incomplete cart-rule monetary metadata; use fallback strategy.
-                return [];
-            }
-
-            $net_raw = max(0.0, (float)$net_raw);
             $gross_raw = max(0.0, (float)$gross_raw);
-            if ($net_raw > $gross_raw) {
-                $net_raw = $gross_raw;
+            if ($net_raw !== null) {
+                $net_raw = max(0.0, (float)$net_raw);
+                if ($net_raw > $gross_raw) {
+                    $net_raw = $gross_raw;
+                }
+            } else {
+                $rule_scope_meta['has_incomplete_rows'] = true;
+                if (!empty($rule['free_shipping'])) {
+                    $rule_scope_meta['has_incomplete_free_shipping'] = true;
+                    $rule_scope_meta['incomplete_free_shipping_gross'] = round(
+                        $rule_scope_meta['incomplete_free_shipping_gross'] + $gross_raw,
+                        2
+                    );
+                }
             }
 
-            $rule_rows[(string)$idx] = [
+            $rule_key = (string)$idx;
+            $row = [
                 'rule' => $rule,
                 'gross_raw' => $gross_raw,
                 'net_raw' => $net_raw,
             ];
+            $rule_rows[$rule_key] = $row;
+            if ($net_raw !== null) {
+                $complete_rule_rows[$rule_key] = $row;
+            }
         }
 
         if (empty($rule_rows)) {
             return [];
         }
 
-        $gross_weights = [];
-        $net_weights = [];
-        foreach ($rule_rows as $rule_key => $row) {
-            $gross_weights[$rule_key] = (float)$row['gross_raw'];
-            $net_weights[$rule_key] = (float)$row['net_raw'];
+        if (empty($complete_rule_rows)) {
+            return [];
         }
 
-        $allocated_gross = $this->allocateTwoAmountByWeights($discount_gross_total, $gross_weights);
+        $gross_weights = [];
+        $net_weights = [];
+        $complete_raw_gross_total = 0.0;
+        $complete_raw_net_total = 0.0;
+        foreach ($complete_rule_rows as $rule_key => $row) {
+            $gross_weights[$rule_key] = (float)$row['gross_raw'];
+            $net_weights[$rule_key] = (float)$row['net_raw'];
+            $complete_raw_gross_total = round($complete_raw_gross_total + (float)$row['gross_raw'], 2);
+            $complete_raw_net_total = round($complete_raw_net_total + (float)$row['net_raw'], 2);
+        }
+
+        $complete_gross_target = round(min((float)$discount_gross_total, $complete_raw_gross_total), 2);
+        $complete_net_target = round(min((float)$discount_net_total, $complete_raw_net_total), 2);
+        if ($complete_net_target > $complete_gross_target) {
+            $complete_net_target = $complete_gross_target;
+        }
+
+        $allocated_gross = $this->allocateTwoAmountByWeights($complete_gross_target, $gross_weights);
         $net_weight_source = array_sum($net_weights) > 0 ? $net_weights : $gross_weights;
-        $allocated_net = $this->allocateTwoAmountByWeights($discount_net_total, $net_weight_source);
+        $allocated_net = $this->allocateTwoAmountByWeights($complete_net_target, $net_weight_source);
 
         $lines = [];
-        foreach ($rule_rows as $rule_key => $row) {
+        $allocated_complete_gross_total = 0.0;
+        $allocated_complete_net_total = 0.0;
+
+        foreach ($complete_rule_rows as $rule_key => $row) {
             $line_gross = isset($allocated_gross[$rule_key]) ? (float)$allocated_gross[$rule_key] : 0.0;
             $line_net = isset($allocated_net[$rule_key]) ? (float)$allocated_net[$rule_key] : 0.0;
 
@@ -3753,6 +3853,19 @@ class Twopayment extends PaymentModule
                     'type' => 'DIGITAL',
                 ];
             }
+
+            $allocated_complete_gross_total = round($allocated_complete_gross_total + $line_gross, 2);
+            $allocated_complete_net_total = round($allocated_complete_net_total + $line_net, 2);
+        }
+
+        if (empty($lines)) {
+            return [];
+        }
+
+        $remaining_discount_gross = round(max(0, $remaining_discount_gross - $allocated_complete_gross_total), 2);
+        $remaining_discount_net = round(max(0, $remaining_discount_net - $allocated_complete_net_total), 2);
+        if ($remaining_discount_net > $remaining_discount_gross) {
+            $remaining_discount_net = $remaining_discount_gross;
         }
 
         return $lines;

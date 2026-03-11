@@ -77,10 +77,14 @@ final class OrderBuilderSpec
         self::testGetTwoIntentOrderDataContinuesWhenCartTotalsDoNotReconcile();
         self::testGetTwoNewOrderDataAllowsTwoCentReconciliationDrift();
         self::testGetTwoNewOrderDataAllowsTwoCentBoundaryForLargeTotals();
-        self::testGetTwoNewOrderDataAllowsThreeCentReconciliationDrift();
+        self::testGetTwoNewOrderDataBlocksThreeCentReconciliationDrift();
         self::testGetTwoNewOrderDataIncludesShippingAndDiscountLineItemsWhenReconciled();
         self::testGetTwoNewOrderDataFallbackFreeShippingUsesShippingTaxContext();
         self::testGetTwoNewOrderDataUsesCartRuleMonetaryValuesForDiscountLines();
+        self::testGetTwoNewOrderDataHandlesMixedCartRuleMetadataWithPartialFallback();
+        self::testGetTwoNewOrderDataMixedMetadataKeepsCompleteRuleValuesAndFreeShippingContext();
+        self::testGetTwoNewOrderDataSpanishOddDecimalsKeepCanonicalTwentyOneDiscountRates();
+        self::testGetTwoNewOrderDataSpanishTinyPartialFallbackKeepsCanonicalRates();
         self::testGetTwoNewOrderDataSnapsSmallDiscountRateToCanonicalContext();
         self::testGetTwoNewOrderDataKeepsDiscountTaxFormulaForLargeRoundedDiscounts();
         self::testMerchantCase1BuildsExpectedOrderPayload();
@@ -1267,7 +1271,7 @@ final class OrderBuilderSpec
         TinyAssert::same('21.00', $payload['tax_amount'], 'Expected line-derived tax total to remain unchanged');
     }
 
-    private static function testGetTwoNewOrderDataAllowsThreeCentReconciliationDrift(): void
+    private static function testGetTwoNewOrderDataBlocksThreeCentReconciliationDrift(): void
     {
         self::reset();
 
@@ -1350,16 +1354,16 @@ final class OrderBuilderSpec
             'average_products_tax_rate' => 21.0,
         ];
 
-        $payload = $module->getTwoNewOrderData('merchant-attempt-593', $cart, [
-            'merchant_confirmation_url' => 'https://shop.local/confirm',
-            'merchant_cancel_order_url' => 'https://shop.local/cancel',
-            'merchant_edit_order_url' => '',
-            'merchant_order_verification_failed_url' => '',
-            'merchant_invoice_url' => '',
-            'merchant_shipping_document_url' => '',
-        ]);
-
-        TinyAssert::same('121.00', $payload['gross_amount'], 'Expected create payload to proceed despite 3-cent drift');
+        TinyAssert::throws(function () use ($module, $cart): void {
+            $module->getTwoNewOrderData('merchant-attempt-593', $cart, [
+                'merchant_confirmation_url' => 'https://shop.local/confirm',
+                'merchant_cancel_order_url' => 'https://shop.local/cancel',
+                'merchant_edit_order_url' => '',
+                'merchant_order_verification_failed_url' => '',
+                'merchant_invoice_url' => '',
+                'merchant_shipping_document_url' => '',
+            ]);
+        }, 'Order totals do not reconcile with cart totals');
     }
 
     private static function testGetTwoNewOrderDataAllowsTwoCentBoundaryForLargeTotals(): void
@@ -1964,6 +1968,518 @@ final class OrderBuilderSpec
         TinyAssert::same('-560.74', number_format($aggregatedByRule['discount-rule']['net'], 2, '.', ''), 'Expected canonical net discount from cart rule value_tax_exc');
         TinyAssert::same('-58.00', number_format($aggregatedByRule['free shipping rule']['gross'], 2, '.', ''), 'Expected canonical gross discount from cart rule value_real');
         TinyAssert::same('-673.99', number_format($aggregatedByRule['discount-rule']['gross'], 2, '.', ''), 'Expected canonical gross discount from cart rule value_real');
+    }
+
+    private static function testGetTwoNewOrderDataHandlesMixedCartRuleMetadataWithPartialFallback(): void
+    {
+        self::reset();
+
+        $module = new TwopaymentTestHarness();
+
+        StubStore::$customers[497] = [
+            'email' => 'buyer@example.com',
+            'firstname' => 'Marta',
+            'lastname' => 'Perez',
+            'secure_key' => 'secure-key-497',
+            'loaded' => true,
+        ];
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$countries[34] = 'ES';
+        StubStore::$addresses[952] = [
+            'id_country' => 34,
+            'company' => 'SPAIN',
+            'companyid' => 'E20468708',
+            'address1' => 'Calle Mayor 1',
+            'city' => 'Madrid',
+            'postcode' => '28001',
+            'phone' => '666666668',
+            'loaded' => true,
+        ];
+        StubStore::$addresses[953] = StubStore::$addresses[952];
+
+        $cart = new Cart(497);
+        $cart->id_customer = 497;
+        $cart->id_currency = 978;
+        $cart->id_address_invoice = 952;
+        $cart->id_address_delivery = 953;
+        $cart->id_carrier = 0;
+        $cart->id_lang = 1;
+
+        StubStore::$cartProducts[497] = [[
+            'id_product' => 8302,
+            'link_rewrite' => 'single-taxed-product-2',
+            'name' => 'Single taxed product 2',
+            'description_short' => 'Product',
+            'manufacturer_name' => 'ACME',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 100.00,
+            'total_wt' => 121.00,
+            'cart_quantity' => 1,
+            'rate' => 21.0,
+            'price' => 100.00,
+            'reduction' => 0,
+        ]];
+        StubStore::$productCategories[8302] = [['name' => 'General']];
+        StubStore::$images[8302] = ['id_image' => 8302];
+        StubStore::$cartShipping[497] = [true => 0.00, false => 0.00];
+        StubStore::$cartTotals[497] = [
+            true => [
+                Cart::ONLY_DISCOUNTS => 30.00,
+                Cart::BOTH => 91.00,
+                Cart::ONLY_SHIPPING => 0.00,
+            ],
+            false => [
+                Cart::ONLY_DISCOUNTS => 24.79,
+                Cart::BOTH => 75.21,
+                Cart::ONLY_SHIPPING => 0.00,
+            ],
+            'average_products_tax_rate' => 21.0,
+        ];
+        StubStore::$cartRules[497] = [
+            [
+                'name' => 'fixed-10',
+                'code' => 'fixed-10',
+                'value' => -10.00,
+                'value_real' => 10.00,
+                'value_tax_exc' => 8.26,
+            ],
+            [
+                'name' => 'percent-metadata-missing',
+                'code' => 'percent-metadata-missing',
+                'value' => -20.00,
+                'value_real' => 20.00,
+                // Missing net metadata should fallback only for unresolved remainder.
+            ],
+        ];
+
+        $payload = $module->getTwoNewOrderData('merchant-attempt-497', $cart, [
+            'merchant_confirmation_url' => 'https://shop.local/confirm',
+            'merchant_cancel_order_url' => 'https://shop.local/cancel',
+            'merchant_edit_order_url' => '',
+            'merchant_order_verification_failed_url' => '',
+            'merchant_invoice_url' => '',
+            'merchant_shipping_document_url' => '',
+        ]);
+
+        $discountLines = [];
+        $discountGross = 0.0;
+        $fixedTenGross = 0.0;
+        $fixedTenNet = 0.0;
+        $fixedTenRates = [];
+        foreach ($payload['line_items'] as $line) {
+            if (!isset($line['gross_amount']) || (float)$line['gross_amount'] >= 0) {
+                continue;
+            }
+            $discountLines[] = $line;
+            $discountGross = round($discountGross + (float)$line['gross_amount'], 2);
+            if ((string)$line['name'] === 'fixed-10') {
+                $fixedTenGross = round($fixedTenGross + (float)$line['gross_amount'], 2);
+                $fixedTenNet = round($fixedTenNet + (float)$line['net_amount'], 2);
+                $fixedTenRates[] = (string)$line['tax_rate'];
+            }
+        }
+
+        TinyAssert::true(count($discountLines) >= 2, 'Expected mixed cart-rule metadata to produce rule-scoped + fallback discount lines');
+        TinyAssert::same('-10.00', number_format($fixedTenGross, 2, '.', ''), 'Expected complete fixed rule gross to remain canonical');
+        TinyAssert::same('-8.26', number_format($fixedTenNet, 2, '.', ''), 'Expected complete fixed rule net to remain canonical');
+        TinyAssert::same('0.21', (string)reset($fixedTenRates), 'Expected complete fixed rule tax rate to remain canonical');
+        TinyAssert::same('-30.00', number_format($discountGross, 2, '.', ''), 'Expected total discount gross to remain fully reconciled');
+    }
+
+    private static function testGetTwoNewOrderDataMixedMetadataKeepsCompleteRuleValuesAndFreeShippingContext(): void
+    {
+        self::reset();
+
+        $module = new TwopaymentTestHarness();
+
+        StubStore::$customers[596] = [
+            'email' => 'buyer@example.com',
+            'firstname' => 'Nora',
+            'lastname' => 'Vega',
+            'secure_key' => 'secure-key-596',
+            'loaded' => true,
+        ];
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$countries[34] = 'ES';
+        StubStore::$addresses[996] = [
+            'id_country' => 34,
+            'company' => 'SPAIN',
+            'companyid' => 'E20468708',
+            'address1' => 'Calle Norte 1',
+            'city' => 'Madrid',
+            'postcode' => '28006',
+            'phone' => '666666673',
+            'loaded' => true,
+        ];
+        StubStore::$addresses[997] = StubStore::$addresses[996];
+        StubStore::$carriers[596] = [
+            'name' => 'Carrier 596',
+            'delay' => '',
+            'shipping_method' => Carrier::SHIPPING_METHOD_PRICE,
+            'tax_rules_group_id' => 96,
+        ];
+        StubStore::$taxRuleRates[96] = 21.0;
+
+        $cart = new Cart(596);
+        $cart->id_customer = 596;
+        $cart->id_currency = 978;
+        $cart->id_address_invoice = 996;
+        $cart->id_address_delivery = 997;
+        $cart->id_carrier = 596;
+        $cart->id_lang = 1;
+
+        StubStore::$cartProducts[596] = [[
+            'id_product' => 8396,
+            'link_rewrite' => 'mixed-free-shipping-case',
+            'name' => 'Mixed free shipping case',
+            'description_short' => 'Product',
+            'manufacturer_name' => 'ACME',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 100.00,
+            'total_wt' => 110.00,
+            'cart_quantity' => 1,
+            'rate' => 10.0,
+            'price' => 100.00,
+            'reduction' => 0,
+        ]];
+        StubStore::$productCategories[8396] = [['name' => 'General']];
+        StubStore::$images[8396] = ['id_image' => 8396];
+        StubStore::$cartShipping[596] = [true => 12.10, false => 10.00];
+        StubStore::$cartTotals[596] = [
+            true => [
+                Cart::ONLY_DISCOUNTS => 23.10,
+                Cart::BOTH => 99.00,
+                Cart::ONLY_SHIPPING => 12.10,
+            ],
+            false => [
+                Cart::ONLY_DISCOUNTS => 20.00,
+                Cart::BOTH => 90.00,
+                Cart::ONLY_SHIPPING => 10.00,
+            ],
+            'average_products_tax_rate' => 10.0,
+        ];
+        StubStore::$cartRules[596] = [
+            [
+                'name' => 'fixed-voucher-11',
+                'code' => 'fixed-voucher-11',
+                'value' => -11.00,
+                'value_real' => 11.00,
+                'value_tax_exc' => 10.00,
+                'free_shipping' => 0,
+            ],
+            [
+                'name' => 'free-shipping-missing-net',
+                'code' => 'free-shipping-missing-net',
+                'value' => -12.10,
+                'value_real' => 12.10,
+                'free_shipping' => 1,
+                // Missing value_tax_exc should fallback on shipping context only.
+            ],
+        ];
+
+        $payload = $module->getTwoNewOrderData('merchant-attempt-596', $cart, [
+            'merchant_confirmation_url' => 'https://shop.local/confirm',
+            'merchant_cancel_order_url' => 'https://shop.local/cancel',
+            'merchant_edit_order_url' => '',
+            'merchant_order_verification_failed_url' => '',
+            'merchant_invoice_url' => '',
+            'merchant_shipping_document_url' => '',
+        ]);
+
+        $fixedGross = 0.0;
+        $fixedNet = 0.0;
+        $freeShippingGross = 0.0;
+        $freeShippingNet = 0.0;
+        $freeShippingRate = '';
+        $discountGross = 0.0;
+        foreach ($payload['line_items'] as $line) {
+            if (!isset($line['gross_amount']) || (float)$line['gross_amount'] >= 0) {
+                continue;
+            }
+            $discountGross = round($discountGross + (float)$line['gross_amount'], 2);
+
+            $lineName = (string)$line['name'];
+            if (strpos($lineName, 'fixed-voucher-11') === 0) {
+                $fixedGross = round($fixedGross + (float)$line['gross_amount'], 2);
+                $fixedNet = round($fixedNet + (float)$line['net_amount'], 2);
+            }
+            if (strpos($lineName, 'free-shipping-missing-net') === 0) {
+                $freeShippingGross = round($freeShippingGross + (float)$line['gross_amount'], 2);
+                $freeShippingNet = round($freeShippingNet + (float)$line['net_amount'], 2);
+                $freeShippingRate = (string)$line['tax_rate'];
+            }
+        }
+
+        TinyAssert::same('-11.00', number_format($fixedGross, 2, '.', ''), 'Expected complete non-shipping rule gross to remain canonical');
+        TinyAssert::same('-10.00', number_format($fixedNet, 2, '.', ''), 'Expected complete non-shipping rule net to remain canonical');
+        TinyAssert::same('-12.10', number_format($freeShippingGross, 2, '.', ''), 'Expected unresolved free-shipping gross to stay on shipping context');
+        TinyAssert::same('-10.00', number_format($freeShippingNet, 2, '.', ''), 'Expected unresolved free-shipping net to stay on shipping context');
+        TinyAssert::same('0.21', $freeShippingRate, 'Expected unresolved free-shipping rate to follow shipping VAT context');
+        TinyAssert::same('-23.10', number_format($discountGross, 2, '.', ''), 'Expected total discount gross to remain reconciled');
+    }
+
+    private static function testGetTwoNewOrderDataSpanishOddDecimalsKeepCanonicalTwentyOneDiscountRates(): void
+    {
+        self::reset();
+
+        $module = new TwopaymentTestHarness();
+
+        StubStore::$customers[597] = [
+            'email' => 'buyer@example.com',
+            'firstname' => 'Luis',
+            'lastname' => 'Marin',
+            'secure_key' => 'secure-key-597',
+            'loaded' => true,
+        ];
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$countries[34] = 'ES';
+        StubStore::$addresses[998] = [
+            'id_country' => 34,
+            'company' => 'SPAIN',
+            'companyid' => 'E20468708',
+            'address1' => 'Calle Uno 1',
+            'city' => 'Madrid',
+            'postcode' => '28007',
+            'phone' => '666666674',
+            'loaded' => true,
+        ];
+        StubStore::$addresses[999] = StubStore::$addresses[998];
+        StubStore::$carriers[597] = [
+            'name' => 'Carrier 597',
+            'delay' => '',
+            'shipping_method' => Carrier::SHIPPING_METHOD_PRICE,
+            'tax_rules_group_id' => 97,
+        ];
+        StubStore::$taxRuleRates[97] = 21.0;
+
+        $cart = new Cart(597);
+        $cart->id_customer = 597;
+        $cart->id_currency = 978;
+        $cart->id_address_invoice = 998;
+        $cart->id_address_delivery = 999;
+        $cart->id_carrier = 597;
+        $cart->id_lang = 1;
+
+        StubStore::$cartProducts[597] = [[
+            'id_product' => 8397,
+            'link_rewrite' => 'odd-decimal-es-product',
+            'name' => 'Odd decimal ES product',
+            'description_short' => 'Product',
+            'manufacturer_name' => 'ACME',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 551.83,
+            'total_wt' => 667.72,
+            'cart_quantity' => 1,
+            'rate' => 21.0,
+            'price' => 551.83,
+            'reduction' => 0,
+        ]];
+        StubStore::$productCategories[8397] = [['name' => 'General']];
+        StubStore::$images[8397] = ['id_image' => 8397];
+        StubStore::$cartShipping[597] = [true => 2.99, false => 2.47];
+        StubStore::$cartTotals[597] = [
+            true => [
+                Cart::ONLY_DISCOUNTS => 36.38,
+                Cart::BOTH => 634.33,
+                Cart::ONLY_SHIPPING => 2.99,
+            ],
+            false => [
+                Cart::ONLY_DISCOUNTS => 30.07,
+                Cart::BOTH => 524.23,
+                Cart::ONLY_SHIPPING => 2.47,
+            ],
+            'average_products_tax_rate' => 21.0,
+        ];
+        StubStore::$cartRules[597] = [
+            [
+                'name' => 'Envío gratis',
+                'code' => 'free-shipping-es',
+                'value' => -2.99,
+                'value_real' => 2.99,
+                'value_tax_exc' => 2.47,
+                'free_shipping' => 1,
+            ],
+            [
+                'name' => 'Promo cruzada| 5%',
+                'code' => 'promo-cruzada-5',
+                'value' => -33.39,
+                'value_real' => 33.39,
+                'value_tax_exc' => 27.60,
+                'free_shipping' => 0,
+            ],
+        ];
+
+        $payload = $module->getTwoNewOrderData('merchant-attempt-597', $cart, [
+            'merchant_confirmation_url' => 'https://shop.local/confirm',
+            'merchant_cancel_order_url' => 'https://shop.local/cancel',
+            'merchant_edit_order_url' => '',
+            'merchant_order_verification_failed_url' => '',
+            'merchant_invoice_url' => '',
+            'merchant_shipping_document_url' => '',
+        ]);
+
+        TinyAssert::same('634.33', (string)$payload['gross_amount']);
+        TinyAssert::same('524.23', (string)$payload['net_amount']);
+        TinyAssert::same('110.10', (string)$payload['tax_amount']);
+
+        $aggregatedByRule = [];
+        foreach ($payload['line_items'] as $line) {
+            if (!isset($line['gross_amount']) || (float)$line['gross_amount'] >= 0) {
+                continue;
+            }
+            $lineName = (string)$line['name'];
+            $baseName = preg_replace('/\s+\(VAT\s+[^)]+\)$/', '', $lineName);
+            if (!isset($aggregatedByRule[$baseName])) {
+                $aggregatedByRule[$baseName] = ['gross' => 0.0, 'net' => 0.0];
+            }
+            $aggregatedByRule[$baseName]['gross'] = round($aggregatedByRule[$baseName]['gross'] + (float)$line['gross_amount'], 2);
+            $aggregatedByRule[$baseName]['net'] = round($aggregatedByRule[$baseName]['net'] + (float)$line['net_amount'], 2);
+
+            $lineRate = (float)$line['tax_rate'];
+            TinyAssert::true(abs($lineRate - 0.21) <= 0.000001, 'Expected ES discount tax rate to be canonical 0.21, got: ' . $line['tax_rate']);
+        }
+
+        TinyAssert::same('-2.99', number_format($aggregatedByRule['Envío gratis']['gross'], 2, '.', ''));
+        TinyAssert::same('-2.47', number_format($aggregatedByRule['Envío gratis']['net'], 2, '.', ''));
+        TinyAssert::same('-33.39', number_format($aggregatedByRule['Promo cruzada| 5%']['gross'], 2, '.', ''));
+        TinyAssert::same('-27.60', number_format($aggregatedByRule['Promo cruzada| 5%']['net'], 2, '.', ''));
+    }
+
+    private static function testGetTwoNewOrderDataSpanishTinyPartialFallbackKeepsCanonicalRates(): void
+    {
+        self::reset();
+
+        $module = new TwopaymentTestHarness();
+
+        StubStore::$customers[598] = [
+            'email' => 'buyer@example.com',
+            'firstname' => 'Iria',
+            'lastname' => 'Paz',
+            'secure_key' => 'secure-key-598',
+            'loaded' => true,
+        ];
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$countries[34] = 'ES';
+        StubStore::$addresses[1000] = [
+            'id_country' => 34,
+            'company' => 'SPAIN',
+            'companyid' => 'E20468708',
+            'address1' => 'Calle Dos 2',
+            'city' => 'Madrid',
+            'postcode' => '28008',
+            'phone' => '666666675',
+            'loaded' => true,
+        ];
+        StubStore::$addresses[1001] = StubStore::$addresses[1000];
+        StubStore::$carriers[598] = [
+            'name' => 'Carrier 598',
+            'delay' => '',
+            'shipping_method' => Carrier::SHIPPING_METHOD_PRICE,
+            'tax_rules_group_id' => 98,
+        ];
+        StubStore::$taxRuleRates[98] = 21.0;
+
+        $cart = new Cart(598);
+        $cart->id_customer = 598;
+        $cart->id_currency = 978;
+        $cart->id_address_invoice = 1000;
+        $cart->id_address_delivery = 1001;
+        $cart->id_carrier = 598;
+        $cart->id_lang = 1;
+
+        StubStore::$cartProducts[598] = [[
+            'id_product' => 8398,
+            'link_rewrite' => 'tiny-partial-fallback-product',
+            'name' => 'Tiny partial fallback product',
+            'description_short' => 'Product',
+            'manufacturer_name' => 'ACME',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 11.55,
+            'total_wt' => 13.98,
+            'cart_quantity' => 7,
+            'rate' => 21.0,
+            'price' => 1.65,
+            'reduction' => 0,
+        ]];
+        StubStore::$productCategories[8398] = [['name' => 'General']];
+        StubStore::$images[8398] = ['id_image' => 8398];
+        StubStore::$cartShipping[598] = [true => 1.21, false => 1.00];
+        StubStore::$cartTotals[598] = [
+            true => [
+                Cart::ONLY_DISCOUNTS => 1.23,
+                Cart::BOTH => 13.96,
+                Cart::ONLY_SHIPPING => 1.21,
+            ],
+            false => [
+                Cart::ONLY_DISCOUNTS => 1.02,
+                Cart::BOTH => 11.53,
+                Cart::ONLY_SHIPPING => 1.00,
+            ],
+            'average_products_tax_rate' => 21.0,
+        ];
+        StubStore::$cartRules[598] = [
+            [
+                'name' => 'tiny-fixed-2c',
+                'code' => 'tiny-fixed-2c',
+                'value' => -0.02,
+                'value_real' => 0.02,
+                'value_tax_exc' => 0.02,
+                'free_shipping' => 0,
+            ],
+            [
+                'name' => 'tiny-free-shipping',
+                'code' => 'tiny-free-shipping',
+                'value' => -1.21,
+                'value_real' => 1.21,
+                'free_shipping' => 1,
+                // Missing net metadata by design.
+            ],
+        ];
+
+        $payload = $module->getTwoNewOrderData('merchant-attempt-598', $cart, [
+            'merchant_confirmation_url' => 'https://shop.local/confirm',
+            'merchant_cancel_order_url' => 'https://shop.local/cancel',
+            'merchant_edit_order_url' => '',
+            'merchant_order_verification_failed_url' => '',
+            'merchant_invoice_url' => '',
+            'merchant_shipping_document_url' => '',
+        ]);
+
+        TinyAssert::same('13.96', (string)$payload['gross_amount']);
+        TinyAssert::same('11.53', (string)$payload['net_amount']);
+        TinyAssert::same('2.43', (string)$payload['tax_amount']);
+
+        $tinyFixedGross = 0.0;
+        $tinyFixedNet = 0.0;
+        $tinyFreeShippingGross = 0.0;
+        $tinyFreeShippingNet = 0.0;
+        $tinyFreeShippingRate = '';
+        foreach ($payload['line_items'] as $line) {
+            if (!isset($line['gross_amount']) || (float)$line['gross_amount'] >= 0) {
+                continue;
+            }
+
+            $lineName = (string)$line['name'];
+            if (strpos($lineName, 'tiny-fixed-2c') === 0) {
+                $tinyFixedGross = round($tinyFixedGross + (float)$line['gross_amount'], 2);
+                $tinyFixedNet = round($tinyFixedNet + (float)$line['net_amount'], 2);
+            }
+            if (strpos($lineName, 'tiny-free-shipping') === 0) {
+                $tinyFreeShippingGross = round($tinyFreeShippingGross + (float)$line['gross_amount'], 2);
+                $tinyFreeShippingNet = round($tinyFreeShippingNet + (float)$line['net_amount'], 2);
+                $tinyFreeShippingRate = (string)$line['tax_rate'];
+            }
+        }
+
+        TinyAssert::same('-0.02', number_format($tinyFixedGross, 2, '.', ''), 'Expected tiny complete rule gross to remain exact');
+        TinyAssert::same('-0.02', number_format($tinyFixedNet, 2, '.', ''), 'Expected tiny complete rule net to remain exact');
+        TinyAssert::same('-1.21', number_format($tinyFreeShippingGross, 2, '.', ''), 'Expected tiny unresolved free-shipping gross to stay on shipping context');
+        TinyAssert::same('-1.00', number_format($tinyFreeShippingNet, 2, '.', ''), 'Expected tiny unresolved free-shipping net to stay on shipping context');
+        TinyAssert::same('0.21', $tinyFreeShippingRate, 'Expected tiny unresolved free-shipping rate to stay canonical 0.21');
     }
 
     private static function testGetTwoNewOrderDataSnapsSmallDiscountRateToCanonicalContext(): void

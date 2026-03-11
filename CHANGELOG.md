@@ -67,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cart-rule-aligned discount attribution**:
   - Discount line generation now prefers PrestaShop cart-rule monetary fields (`value_real`, `value_tax_exc`) to keep per-rule discount lines aligned with invoice semantics.
   - Weighted tax-context allocation remains as fallback when rule-level monetary metadata is unavailable.
+  - Mixed cart-rule metadata handling now preserves complete rule rows and falls back only for unresolved remainder, with unresolved free-shipping remainder carved out on shipping VAT context.
 - **Currency compatibility guardrails**:
   - Added explicit cart-currency compatibility checks in `hookPaymentOptions()` following PrestaShop payment-module patterns.
   - Added server-side currency guard in payment submit controller to fail fast before provider calls when currency is unsupported.

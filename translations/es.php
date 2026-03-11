@@ -193,6 +193,11 @@ $_MODULE['<{twopayment}prestashop>twopayment_5a431dd829057ede6d4675460f53e310'] 
 $_MODULE['<{twopayment}prestashop>twopayment_be89e29be0122074a933bea5d3813084'] = 'No pudimos encontrar tu empresa. Prueba con otro nombre de empresa o contacta con soporte.';
 $_MODULE['<{twopayment}prestashop>twopayment_ccf1aa7d0f1291cb8179d4434f85abb4'] = 'El pago con Two no está disponible para este pedido. Por favor, selecciona otro método de pago.';
 $_MODULE['<{twopayment}prestashop>twopayment_70121086cdb2e52ce9ac069b1781dc76'] = 'Se produjo un problema temporal al verificar tu pago. Inténtalo de nuevo o elige otro método de pago.';
+$_MODULE['<{twopayment}prestashop>twopayment_36db71f088bd580af6416fa507d77a58'] = 'Tu pedido no pudo ser aprobado por el pago con Two. Por favor, elige otro método de pago o contacta con el soporte.';
+$_MODULE['<{twopayment}prestashop>twopayment_990f982c41ce66c911e505fb58fa8e46'] = 'No se puede procesar tu pedido con el pago de Two.';
+$_MODULE['<{twopayment}prestashop>twopayment_2ead200be9922b9284cb1324bea07c33'] = 'No se puede procesar tu pedido con el pago de Two. Revisa tu carrito e inténtalo de nuevo.';
+$_MODULE['<{twopayment}prestashop>twopayment_0e59e4dd7c8466ff99df71f1e49cbfa1'] = 'Error de conexión con el proveedor de pago. Por favor, inténtalo de nuevo.';
+$_MODULE['<{twopayment}prestashop>twopayment_6c04b086d2a5eed8ae6b2beca8a4221f'] = 'El proveedor de pago no está disponible temporalmente. Por favor, inténtalo más tarde.';
 $_MODULE['<{twopayment}prestashop>twopayment_de62177e8fda33fee61addda5ea9eeb3'] = 'Resuelve el problema de pago antes de continuar.';
 $_MODULE['<{twopayment}prestashop>twopayment_0d8dfbcfe22598503672351254cbe691'] = 'Se requiere la aprobación del pago antes de continuar';
 $_MODULE['<{twopayment}prestashop>twopayment_c14c68d27f136772295166d1de2244ad'] = 'Tu factura con Two no puede ser aprobada en este momento. Por favor, selecciona otro método de pago.';
@@ -279,6 +284,12 @@ $_MODULE['<{twopayment}prestashop>orderintent_7d211a5d9cccb0df11ba75b9db2e28a5']
 $_MODULE['<{twopayment}prestashop>orderintent_a5428d68edede974fe71ad98080b8b5d'] = 'Datos de carrito o cliente no válidos.';
 $_MODULE['<{twopayment}prestashop>orderintent_e097593ef29856ae66e16694e76af874'] = 'El pago con Two solo está disponible para cuentas empresariales.';
 $_MODULE['<{twopayment}prestashop>orderintent_4f40188f22dbc3f6b5f5ea06152782ca'] = 'No se pudo generar la carga útil de Order Intent.';
+$_MODULE['<{twopayment}prestashop>twopayment_d540e424b208e0c024a497d3b0943502'] = 'Cuando está activado, los pedidos se marcan automáticamente como completados en Two cuando su estado cambia a uno de los estados de activación de cumplimiento que hayas configurado (ver Mapeo de estados de pedido). Esto activa los plazos de pago del comprador e inicia el ciclo de cobro. Si está desactivado, debes completar los pedidos manualmente en el portal de comerciantes de Two.';
+$_MODULE['<{twopayment}prestashop>twopayment_35e84df88a2aa8846a4a93cb66fa71bb'] = 'Actívalo SOLO si utilizas tus propias facturas en lugar de las facturas generadas por Two. Debe coordinarse con Two antes de activarlo.';
+$_MODULE['<{twopayment}prestashop>twopayment_dbb3d7e84474bdf7d44bfc20d73452d0'] = 'Edita tu plantilla de factura para incluir los datos de pago de Two SOLO PARA PEDIDOS DE TWO.';
+$_MODULE['<{twopayment}prestashop>twopayment_6552cb814030c8273f57fca901a9e6db'] = 'Anular la decisión de crédito de Two o los límites del comprador';
+$_MODULE['<{twopayment}prestashop>twopayment_f423c26e0163f13230f2eea772cf7850'] = 'La empresa puede haber alcanzado su límite de crédito o no haber superado la comprobación de crédito de Two.';
+$_MODULE['<{twopayment}prestashop>twopayment_43183e955e3019bf7f8c942e016b7b13'] = 'IVA';
 $_MODULE['<{twopayment}prestashop>configuration_52f4393e1b52ba63e27310ca92ba098c'] = 'Configuración general';
 $_MODULE['<{twopayment}prestashop>configuration_a8ad8ed0d7a57bafaf4fa86fda0dd87f'] = 'Otras configuraciones';
 $_MODULE['<{twopayment}prestashop>configuration_13831bd312b782daa4e11738a2fe3d04'] = 'Configuración de estados de pedido';
