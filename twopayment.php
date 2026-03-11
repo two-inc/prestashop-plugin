@@ -2572,10 +2572,10 @@ class Twopayment extends PaymentModule
         $environment = Configuration::get('PS_TWO_ENVIRONMENT');
         
         if ($environment === 'production') {
-            return 'https://portal.two.inc';
+            return 'https://buyer.two.inc';
         } else {
             // Development environment (default)
-            return 'https://portal.sandbox.two.inc';
+            return 'https://buyer.sandbox.two.inc';
         }
     }
 
@@ -2586,7 +2586,7 @@ class Twopayment extends PaymentModule
     public function getTwoBuyerPortalUrl()
     {
         $base = $this->getTwoPortalUrl();
-        return rtrim($base, '/') . '/auth/buyer/login';
+        return rtrim($base, '/') . '/login';
     }
 
     /**
