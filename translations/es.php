@@ -237,10 +237,12 @@ $_MODULE['<{twopayment}prestashop>twopayment_2e92ae79ff32b37fee4368a594792183'] 
 $_MODULE['<{twopayment}prestashop>twopayment_3c8437f18f50552a8624846ce272e57f'] = 'Ha ocurrido un error, por favor contacta con el propietario de la tienda.';
 $_MODULE['<{twopayment}prestashop>twopayment_66e6e619e3e72bb941b0d2d4947466c9'] = 'Código de respuesta de Two %d';
 $_MODULE['<{twopayment}prestashop>twopayment_d32e67e619603fc5368d087716b1afb4'] = 'La información de la empresa proporcionada no es válida. Por favor, vuelve a la dirección de facturación y busca el nombre de tu empresa para seleccionar una empresa válida.';
+$_MODULE['<{twopayment}prestashop>twopayment_80a7a49c92287a2654c268aa8afda4d6'] = 'Cumplimiento bloqueado: este pedido de Two está cancelado en el proveedor. El estado del pedido se ha revertido a cancelado.';
 $_MODULE['<{twopayment}prestashop>cancel_a18b98ac865c5099d00d15aa7955772e'] = 'No se pudo encontrar el pedido solicitado, por favor contacta con el propietario de la tienda.';
 $_MODULE['<{twopayment}prestashop>cancel_27a33767ea5cfba88612709325b07afa'] = 'No se pudo encontrar el intento de pago solicitado.';
 $_MODULE['<{twopayment}prestashop>cancel_68fc97fb527fe6d18d12d02199710634'] = 'No se pudo validar esta notificación de cancelación. Vuelve a intentarlo en el proceso de pago.';
 $_MODULE['<{twopayment}prestashop>cancel_693d87a10d7bf7577f44c12dfecb0559'] = 'Tu pedido ha sido cancelado.';
+$_MODULE['<{twopayment}prestashop>cancel_0ad05b9020f4d78e45efdacdb76e734b'] = 'No se pudo cargar el cliente del pedido.';
 $_MODULE['<{twopayment}prestashop>cancel_67205cb0f855142963b4901fed7b35de'] = 'No se pudo actualizar el estado a cancelado, por favor revisa con el administrador de Two para el id %s';
 $_MODULE['<{twopayment}prestashop>confirmation_a18b98ac865c5099d00d15aa7955772e'] = 'No se pudo encontrar el pedido solicitado, por favor contacta con el propietario de la tienda.';
 $_MODULE['<{twopayment}prestashop>confirmation_28c0653584b0c1c8ce2da709ece6a973'] = 'No se pudo encontrar el intento de pago solicitado. Vuelve a intentarlo en el proceso de pago.';
@@ -257,6 +259,7 @@ $_MODULE['<{twopayment}prestashop>confirmation_87265a2a96ebb4450eb89400cecdac4c'
 $_MODULE['<{twopayment}prestashop>confirmation_8725e3093da6c77204f4212866d6cdc1'] = 'Este intento de pago ya se ha finalizado.';
 $_MODULE['<{twopayment}prestashop>confirmation_a49e05d4125474b3a6cfc0caacc5a48f'] = 'No se pudo cargar el pedido creado. Contacta con soporte.';
 $_MODULE['<{twopayment}prestashop>confirmation_0ad05b9020f4d78e45efdacdb76e734b'] = 'No se pudo cargar el cliente del pedido.';
+$_MODULE['<{twopayment}prestashop>confirmation_693d87a10d7bf7577f44c12dfecb0559'] = 'Tu pedido ha sido cancelado.';
 $_MODULE['<{twopayment}prestashop>payment_3b8d62101f4aa1d63f9f4fb18f32f193'] = 'Para pagar con Two, selecciona tu empresa para que podamos verificar tu negocio y ofrecerte plazos de factura.';
 $_MODULE['<{twopayment}prestashop>payment_e2b7dec8fa4b498156dfee6e4c84b156'] = 'Este método de pago no está disponible.';
 $_MODULE['<{twopayment}prestashop>payment_27347f1b2aaf71eb152357081a0820b5'] = 'El cliente no es válido.';

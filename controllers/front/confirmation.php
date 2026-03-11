@@ -62,6 +62,18 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             $this->redirectWithNotifications('index.php?controller=order');
         }
 
+        if ($this->abortConfirmationIfAttemptCancelled($attempt_token, $attempt)) {
+            return;
+        }
+
+        $latest_attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
+        if (is_array($latest_attempt)) {
+            $attempt = $latest_attempt;
+            if ($this->abortConfirmationIfAttemptCancelled($attempt_token, $attempt)) {
+                return;
+            }
+        }
+
         $existing_attempt_order_id = (int)$attempt['id_order'];
         if ($existing_attempt_order_id > 0) {
             $existing_order = new Order($existing_attempt_order_id);
@@ -71,6 +83,13 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
                     $sync_ok = $this->syncTwoMerchantOrderId($existing_order, $existing_payment_data);
                     if ($sync_ok) {
                         $this->module->setTwoCheckoutAttemptMerchantOrderId($attempt_token, (string)$existing_order->id);
+                    }
+                }
+                $latest_attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
+                if (is_array($latest_attempt)) {
+                    $attempt = $latest_attempt;
+                    if ($this->abortConfirmationIfAttemptCancelled($attempt_token, $attempt)) {
+                        return;
                     }
                 }
                 $this->redirectToOrderConfirmation($existing_order, $customer);
@@ -153,11 +172,24 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
         $two_state = isset($response['state']) ? strtoupper((string)$response['state']) : '';
         $valid_states = array('VERIFIED', 'CONFIRMED', 'FULFILLED');
         if (!in_array($two_state, $valid_states, true)) {
-            $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED', array(
+            $extra_data = array(
                 'two_order_state' => isset($response['state']) ? $response['state'] : '',
                 'two_order_status' => isset($response['status']) ? $response['status'] : '',
-            ));
-            $message = $this->module->l('Payment has not been verified yet. Please try again or contact support.');
+            );
+
+            $resolved_order_id = (int)$this->module->resolveTwoAttemptOrderIdForCancellation($attempt);
+            if ($two_state === 'CANCELLED') {
+                if ($resolved_order_id > 0) {
+                    $extra_data['id_order'] = $resolved_order_id;
+                }
+                $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'CANCELLED', $extra_data);
+                $this->module->syncLocalOrderStatusFromTwoState($resolved_order_id, $two_state);
+                $message = $this->module->l('Your order is cancelled.');
+            } else {
+                $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED', $extra_data);
+                $message = $this->module->l('Payment has not been verified yet. Please try again or contact support.');
+            }
+
             $this->errors[] = $message;
             $this->redirectWithNotifications('index.php?controller=order');
         }
@@ -183,6 +215,15 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             $this->errors[] = $message;
             $this->redirectWithNotifications('index.php?controller=order');
             return;
+        }
+
+        // Re-read latest attempt status to close cancel/confirm race windows.
+        $latest_attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
+        if (is_array($latest_attempt)) {
+            $attempt = $latest_attempt;
+            if ($this->abortConfirmationIfAttemptCancelled($attempt_token, $attempt)) {
+                return;
+            }
         }
 
         $id_order = (int)$attempt['id_order'];
@@ -219,6 +260,14 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
         }
 
         if ($id_order <= 0) {
+            $latest_attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
+            if (is_array($latest_attempt)) {
+                $attempt = $latest_attempt;
+                if ($this->abortConfirmationIfAttemptCancelled($attempt_token, $attempt)) {
+                    return;
+                }
+            }
+
             $initial_status = $this->getInitialAwaitingStatus();
             $create_result = $this->module->createTwoLocalOrderAfterProviderVerification(
                 $cart,
@@ -263,6 +312,14 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             $this->redirectWithNotifications('index.php?controller=order');
         }
 
+        $latest_attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
+        if (is_array($latest_attempt)) {
+            $attempt = $latest_attempt;
+            if ($this->abortConfirmationIfAttemptCancelled($attempt_token, $attempt)) {
+                return;
+            }
+        }
+
         $invoice_id = isset($response['invoice_details']['id']) ? $response['invoice_details']['id'] : $attempt['two_invoice_id'];
         $invoice_url = isset($response['invoice_url']) ? $response['invoice_url'] : $attempt['two_invoice_url'];
         $resolved_terms = $this->module->resolveTwoPaymentTermsFromOrderResponse(
@@ -297,6 +354,14 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             'two_invoice_url' => $payment_data['two_invoice_url'],
             'two_invoice_id' => $payment_data['two_invoice_id'],
         ));
+
+        $latest_attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
+        if (is_array($latest_attempt)) {
+            $attempt = $latest_attempt;
+            if ($this->abortConfirmationIfAttemptCancelled($attempt_token, $attempt)) {
+                return;
+            }
+        }
 
         $this->module->changeOrderStatus($order->id, $this->getVerifiedStatus());
         $this->redirectToOrderConfirmation($order, $customer);
@@ -417,6 +482,16 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             $this->redirectWithNotifications('index.php?controller=order');
         }
 
+        if (!$this->isAuthorizedLegacyOrderAccess($order, $customer)) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Unauthorized legacy confirmation callback for order ' . (int)$order->id,
+                3
+            );
+            $message = $this->module->l('Unable to validate this payment callback. Please retry checkout.');
+            $this->errors[] = $message;
+            $this->redirectWithNotifications('index.php?controller=order');
+        }
+
         $orderpaymentdata = $this->module->getTwoOrderPaymentData($id_order);
         if ($orderpaymentdata && isset($orderpaymentdata['two_order_id'])) {
             $two_order_id = $orderpaymentdata['two_order_id'];
@@ -431,7 +506,15 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
                 $this->redirectWithNotifications('index.php?controller=order');
             }
 
-            if (isset($response['state']) && $response['state'] == 'VERIFIED') {
+            $two_state = isset($response['state']) ? strtoupper(trim((string)$response['state'])) : '';
+            if ($two_state === 'CANCELLED') {
+                $this->module->syncLocalOrderStatusFromTwoState((int)$order->id, 'CANCELLED');
+                $message = $this->module->l('Your order is cancelled.');
+                $this->errors[] = $message;
+                $this->redirectWithNotifications('index.php?controller=order');
+            }
+
+            if ($two_state === 'VERIFIED') {
                 // Order is verified, now confirm it to move to CONFIRMED state
                 $confirm_result = $this->module->confirmTwoOrder($two_order_id);
                 
@@ -461,6 +544,37 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
         $this->redirectToOrderConfirmation($order, $customer);
     }
 
+    /**
+     * Validate legacy callback authorization for order-based confirmation paths.
+     *
+     * @param Order $order
+     * @param Customer $customer
+     * @return bool
+     */
+    private function isAuthorizedLegacyOrderAccess($order, $customer)
+    {
+        if (!Validate::isLoadedObject($order) || !Validate::isLoadedObject($customer)) {
+            return false;
+        }
+
+        $expected_secure_key = trim((string)$customer->secure_key);
+        if (Tools::isEmpty($expected_secure_key)) {
+            return false;
+        }
+
+        $provided_key = trim((string)Tools::getValue('key'));
+        if (!Tools::isEmpty($provided_key)) {
+            return hash_equals($expected_secure_key, $provided_key);
+        }
+
+        $context_customer_id = isset($this->context->customer->id) ? (int)$this->context->customer->id : 0;
+        $context_customer_secure_key = isset($this->context->customer->secure_key) ? trim((string)$this->context->customer->secure_key) : '';
+
+        return $context_customer_id === (int)$order->id_customer &&
+            !Tools::isEmpty($context_customer_secure_key) &&
+            hash_equals($expected_secure_key, $context_customer_secure_key);
+    }
+
     private function getInitialAwaitingStatus()
     {
         $initial_status = Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION');
@@ -483,6 +597,39 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             }
         }
         return (int)$verified_status;
+    }
+
+    /**
+     * Stop confirmation flow when attempt is already cancelled.
+     *
+     * @param string $attempt_token
+     * @param array $attempt
+     * @return bool True when flow was aborted
+     */
+    private function abortConfirmationIfAttemptCancelled($attempt_token, $attempt)
+    {
+        $attempt_status = isset($attempt['status']) ? (string)$attempt['status'] : '';
+        if (!$this->module->shouldBlockTwoAttemptConfirmationByStatus($attempt_status)) {
+            return false;
+        }
+
+        $resolved_order_id = (int)$this->module->resolveTwoAttemptOrderIdForCancellation($attempt);
+        if ($resolved_order_id > 0) {
+            $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'CANCELLED', array(
+                'id_order' => $resolved_order_id,
+            ));
+            $this->module->syncLocalOrderStatusFromTwoState($resolved_order_id, 'CANCELLED');
+        }
+
+        if (!empty($attempt['two_order_id'])) {
+            $this->module->cancelTwoOrderBestEffort((string)$attempt['two_order_id'], 'confirmation_after_cancelled_attempt');
+        }
+
+        $message = $this->module->l('Your order is cancelled.');
+        $this->errors[] = $message;
+        $this->redirectWithNotifications('index.php?controller=order');
+
+        return true;
     }
 
     private function redirectToOrderConfirmation($order, $customer)

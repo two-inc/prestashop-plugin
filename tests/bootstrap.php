@@ -47,6 +47,8 @@ namespace {
                 'PS_TWO_DEBUG_MODE' => false,
                 'PS_TWO_PAYMENT_TERM_TYPE' => 'STANDARD',
                 'PS_TWO_ENVIRONMENT' => 'development',
+                'PS_OS_SHIPPING' => 4,
+                'PS_OS_CANCELED' => 6,
             ];
             self::$countries = [34 => 'ES', 47 => 'NO', 56 => 'BE'];
             self::$states = [
@@ -732,7 +734,43 @@ namespace {
     {
         public bool $loaded = true;
         public int $id = 1;
-        public array $name = [];
+        public $name = '';
+        public int $invoice = 0;
+        public int $delivery = 0;
+        public int $shipped = 0;
+        public int $paid = 0;
+        public int $logable = 0;
+        public int $send_email = 0;
+        public string $template = '';
+        public string $color = '';
+        public int $hidden = 0;
+
+        public function __construct($id = 1, $idLang = null)
+        {
+            $id = (int)$id;
+            if ($id > 0) {
+                $this->id = $id;
+            }
+
+            $shipping_status = (int)(StubStore::$configuration['PS_OS_SHIPPING'] ?? 4);
+            $cancelled_status = (int)(StubStore::$configuration['PS_OS_CANCELED'] ?? 6);
+            $two_cancelled_status = (int)(StubStore::$configuration['PS_TWO_OS_CANCELLED'] ?? 0);
+            $two_cancelled_map = (int)(StubStore::$configuration['PS_TWO_OS_CANCELLED_MAP'] ?? 0);
+
+            if ($this->id === $shipping_status) {
+                $this->name = 'Shipped';
+                $this->shipped = 1;
+                $this->logable = 1;
+                return;
+            }
+
+            if ($this->id === $cancelled_status || ($two_cancelled_status > 0 && $this->id === $two_cancelled_status) || ($two_cancelled_map > 0 && $this->id === $two_cancelled_map)) {
+                $this->name = 'Cancelled';
+                $this->shipped = 0;
+                $this->logable = 0;
+                return;
+            }
+        }
 
         public function add(): bool
         {

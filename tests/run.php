@@ -105,6 +105,21 @@ final class OrderBuilderSpec
         self::testIsTwoAttemptCallbackAuthorizedWithMatchingKey();
         self::testIsTwoAttemptCallbackAuthorizedFallsBackToContextCustomerKeyWhenRequestKeyMissing();
         self::testIsTwoAttemptCallbackAuthorizedRejectsMismatchedKeys();
+        self::testGetTwoBuyerPortalUrlUsesEnvironmentSpecificBuyerDomains();
+        self::testResolveTwoAttemptOrderIdForCancellationPrefersAttemptOrderId();
+        self::testResolveTwoAttemptOrderIdForCancellationFallsBackToCartOrderId();
+        self::testShouldBlockTwoAttemptConfirmationByStatusOnlyForCancelled();
+        self::testIsTwoAttemptStatusTerminalMatchesCancelledGuard();
+        self::testGetTwoCancelledOrderStatusIdUsesConfiguredFallbackChain();
+        self::testSyncLocalOrderStatusFromTwoStateCancelsOnlyWhenProviderCancelled();
+        self::testIsTwoOrderCancelledResponseRequires2xxAndCancelledState();
+        self::testShouldBlockTwoFulfillmentByTwoStateOnlyForCancelled();
+        self::testShouldBlockTwoStatusTransitionByCancelledStateCoversVerifiedAndFulfillment();
+        self::testIsTwoOrderFulfillableStateRequiresConfirmed();
+        self::testAddTwoBackOfficeWarningAppendsUniqueWarning();
+        self::testAddTwoBackOfficeWarningReturnsFalseWhenNoController();
+        self::testApplyTwoCancelledOrderStateProfileToStatusObjectUsesConfiguredCancelledState();
+        self::testForceTwoCancelledOrderHistoryStateBeforeInsertRewritesPendingStatus();
         self::testGetTwoCheckoutCompanyDataUsesAddressVatNumberForAnyCountry();
         self::testGetTwoCheckoutCompanyDataPrefersCurrentAddressOrgNumberOverSessionCompany();
         self::testGetTwoCheckoutCompanyDataUsesValidatedCookieFallback();
@@ -3396,6 +3411,246 @@ final class OrderBuilderSpec
         TinyAssert::false($module->isTwoAttemptCallbackAuthorized($attempt, '', 41, 'secure-key-42'));
     }
 
+    private static function testGetTwoBuyerPortalUrlUsesEnvironmentSpecificBuyerDomains(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'production');
+        TinyAssert::same('https://buyer.two.inc/login', $module->getTwoBuyerPortalUrl());
+
+        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'development');
+        TinyAssert::same('https://buyer.sandbox.two.inc/login', $module->getTwoBuyerPortalUrl());
+
+        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'staging');
+        TinyAssert::same('https://buyer.sandbox.two.inc/login', $module->getTwoBuyerPortalUrl());
+    }
+
+    private static function testResolveTwoAttemptOrderIdForCancellationPrefersAttemptOrderId(): void
+    {
+        self::reset();
+        $module = new class extends TwopaymentTestHarness {
+            public function getTwoOrderIdByCart($id_cart)
+            {
+                return 777;
+            }
+        };
+
+        $attempt = [
+            'id_order' => 321,
+            'id_cart' => 123,
+        ];
+
+        TinyAssert::same(321, $module->resolveTwoAttemptOrderIdForCancellation($attempt));
+    }
+
+    private static function testResolveTwoAttemptOrderIdForCancellationFallsBackToCartOrderId(): void
+    {
+        self::reset();
+        $module = new class extends TwopaymentTestHarness {
+            public function getTwoOrderIdByCart($id_cart)
+            {
+                return ((int)$id_cart === 123) ? 654 : 0;
+            }
+        };
+
+        $attempt = [
+            'id_order' => 0,
+            'id_cart' => 123,
+        ];
+
+        TinyAssert::same(654, $module->resolveTwoAttemptOrderIdForCancellation($attempt));
+    }
+
+    private static function testShouldBlockTwoAttemptConfirmationByStatusOnlyForCancelled(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        TinyAssert::true($module->shouldBlockTwoAttemptConfirmationByStatus('CANCELLED'));
+        TinyAssert::true($module->shouldBlockTwoAttemptConfirmationByStatus('cancelled'));
+        TinyAssert::false($module->shouldBlockTwoAttemptConfirmationByStatus('CREATED'));
+        TinyAssert::false($module->shouldBlockTwoAttemptConfirmationByStatus('CONFIRMED'));
+    }
+
+    private static function testIsTwoAttemptStatusTerminalMatchesCancelledGuard(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        TinyAssert::true($module->isTwoAttemptStatusTerminal('CANCELLED'));
+        TinyAssert::false($module->isTwoAttemptStatusTerminal('CONFIRMED'));
+    }
+
+    private static function testGetTwoCancelledOrderStatusIdUsesConfiguredFallbackChain(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        Configuration::updateValue('PS_TWO_OS_CANCELLED', 901);
+        Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', 902);
+        Configuration::updateValue('PS_OS_CANCELED', 903);
+        TinyAssert::same(901, $module->getTwoCancelledOrderStatusId());
+
+        Configuration::updateValue('PS_TWO_OS_CANCELLED', 0);
+        TinyAssert::same(902, $module->getTwoCancelledOrderStatusId());
+
+        Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', 0);
+        TinyAssert::same(903, $module->getTwoCancelledOrderStatusId());
+    }
+
+    private static function testSyncLocalOrderStatusFromTwoStateCancelsOnlyWhenProviderCancelled(): void
+    {
+        self::reset();
+        $module = new class extends TwopaymentTestHarness {
+            public $calls = [];
+
+            public function changeOrderStatus($id_order, $id_order_status)
+            {
+                $this->calls[] = [(int)$id_order, (int)$id_order_status];
+                return true;
+            }
+        };
+
+        Configuration::updateValue('PS_TWO_OS_CANCELLED', 901);
+        TinyAssert::true($module->syncLocalOrderStatusFromTwoState(55, 'CANCELLED'));
+        TinyAssert::count(1, $module->calls);
+        TinyAssert::same([55, 901], $module->calls[0]);
+
+        TinyAssert::false($module->syncLocalOrderStatusFromTwoState(56, 'CONFIRMED'));
+        TinyAssert::count(1, $module->calls);
+    }
+
+    private static function testIsTwoOrderCancelledResponseRequires2xxAndCancelledState(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        TinyAssert::true($module->isTwoOrderCancelledResponse([
+            'http_status' => 200,
+            'state' => 'CANCELLED',
+        ]));
+
+        TinyAssert::false($module->isTwoOrderCancelledResponse([
+            'http_status' => 200,
+            'state' => 'CONFIRMED',
+        ]));
+
+        TinyAssert::false($module->isTwoOrderCancelledResponse([
+            'http_status' => 500,
+            'state' => 'CANCELLED',
+        ]));
+
+        TinyAssert::false($module->isTwoOrderCancelledResponse([], 200));
+    }
+
+    private static function testShouldBlockTwoFulfillmentByTwoStateOnlyForCancelled(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        TinyAssert::true($module->shouldBlockTwoFulfillmentByTwoState('CANCELLED'));
+        TinyAssert::true($module->shouldBlockTwoFulfillmentByTwoState('cancelled'));
+        TinyAssert::false($module->shouldBlockTwoFulfillmentByTwoState('CONFIRMED'));
+        TinyAssert::false($module->shouldBlockTwoFulfillmentByTwoState(''));
+    }
+
+    private static function testShouldBlockTwoStatusTransitionByCancelledStateCoversVerifiedAndFulfillment(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+        Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT', 901);
+        Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', json_encode([4]));
+        Configuration::updateValue('PS_OS_SHIPPING', 4);
+
+        TinyAssert::true($module->shouldBlockTwoStatusTransitionByCancelledState(901));
+        TinyAssert::true($module->shouldBlockTwoStatusTransitionByCancelledState(4));
+        TinyAssert::false($module->shouldBlockTwoStatusTransitionByCancelledState(99));
+    }
+
+    private static function testIsTwoOrderFulfillableStateRequiresConfirmed(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        TinyAssert::true($module->isTwoOrderFulfillableState('CONFIRMED'));
+        TinyAssert::true($module->isTwoOrderFulfillableState('confirmed'));
+        TinyAssert::false($module->isTwoOrderFulfillableState('CANCELLED'));
+        TinyAssert::false($module->isTwoOrderFulfillableState('VERIFIED'));
+    }
+
+    private static function testAddTwoBackOfficeWarningAppendsUniqueWarning(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+        $module->context->controller = (object) ['warnings' => []];
+
+        TinyAssert::true($module->addTwoBackOfficeWarning('Fulfillment blocked warning'));
+        TinyAssert::count(1, $module->context->controller->warnings);
+
+        TinyAssert::true($module->addTwoBackOfficeWarning('Fulfillment blocked warning'));
+        TinyAssert::count(1, $module->context->controller->warnings);
+    }
+
+    private static function testAddTwoBackOfficeWarningReturnsFalseWhenNoController(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+        $module->context->controller = null;
+
+        TinyAssert::false($module->addTwoBackOfficeWarning('Fulfillment blocked warning'));
+    }
+
+    private static function testApplyTwoCancelledOrderStateProfileToStatusObjectUsesConfiguredCancelledState(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+        Configuration::updateValue('PS_TWO_OS_CANCELLED', 901);
+
+        $status = (object) [
+            'id' => 4,
+            'shipped' => 1,
+            'logable' => 1,
+        ];
+
+        TinyAssert::true($module->applyTwoCancelledOrderStateProfileToStatusObject($status, 1));
+        TinyAssert::same(901, (int)$status->id);
+        TinyAssert::same(0, (int)$status->shipped);
+        TinyAssert::same(0, (int)$status->logable);
+    }
+
+    private static function testForceTwoCancelledOrderHistoryStateBeforeInsertRewritesPendingStatus(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+        Configuration::updateValue('PS_TWO_OS_CANCELLED', 901);
+
+        $history = (object) [
+            'id_order_state' => 4,
+            'logable' => 1,
+        ];
+
+        $order = new class {
+            public $loaded = true;
+            public $id_lang = 1;
+            public $current_state = 4;
+            public $valid = true;
+            public $updated = false;
+
+            public function update()
+            {
+                $this->updated = true;
+                return true;
+            }
+        };
+
+        TinyAssert::true($module->forceTwoCancelledOrderHistoryStateBeforeInsert($history, $order, 'two-order-1', 'provider', 'CANCELLED'));
+        TinyAssert::same(901, (int)$history->id_order_state);
+        TinyAssert::same(901, (int)$order->current_state);
+        TinyAssert::false((bool)$order->valid);
+        TinyAssert::true($order->updated);
+    }
+
     private static function testGetTwoCheckoutCompanyDataUsesAddressVatNumberForAnyCountry(): void
     {
         self::reset();
@@ -4067,6 +4322,7 @@ final class OrderBuilderSpec
         StubStore::$dbExecuteSResponses[] = array(
             array(
                 'two_order_id' => 'two-fallback-1',
+                'status' => 'CANCELLED',
                 'two_day_on_invoice' => '60',
                 'two_payment_term_type' => 'STANDARD',
                 'two_order_state' => 'CONFIRMED',
@@ -4089,6 +4345,7 @@ final class OrderBuilderSpec
         TinyAssert::same('two-fallback-1', (string)$latest['two_order_id']);
         TinyAssert::true(!empty(StubStore::$dbLastExecuteS));
         TinyAssert::true(strpos(StubStore::$dbLastExecuteS[0], '`two_order_id`') !== false);
+        TinyAssert::true(strpos(StubStore::$dbLastExecuteS[0], '`status`') !== false);
         TinyAssert::true(strpos(StubStore::$dbLastExecuteS[0], '`id_order` = 57') !== false);
     }
 

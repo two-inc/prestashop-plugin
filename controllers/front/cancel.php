@@ -54,10 +54,12 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
             $this->redirectWithNotifications('index.php?controller=order');
         }
 
-        $attempt_order_id = (int)$attempt['id_order'];
+        $attempt_order_id = (int)$this->module->resolveTwoAttemptOrderIdForCancellation($attempt);
         if ($attempt_order_id > 0) {
             // Safety: if the attempt is already linked to a local order, reuse legacy cancellation behavior.
-            $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'CANCELLED');
+            $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'CANCELLED', array(
+                'id_order' => $attempt_order_id,
+            ));
             $this->handleLegacyOrderCancel($attempt_order_id);
             return;
         }
@@ -120,24 +122,35 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
             $this->redirectWithNotifications('index.php?controller=order');
         }
 
-        $this->module->restoreDuplicateCart($order->id, $order->id_customer);
-        $this->module->changeOrderStatus($order->id, $this->getCancelledStatus());
+        $customer = new Customer((int)$order->id_customer);
+        if (!Validate::isLoadedObject($customer)) {
+            $message = $this->module->l('Unable to load order customer.');
+            $this->errors[] = $message;
+            $this->redirectWithNotifications('index.php?controller=order');
+        }
+
+        if (!$this->isAuthorizedLegacyOrderAccess($order, $customer)) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Unauthorized legacy cancel callback for order ' . (int)$order->id,
+                3
+            );
+            $message = $this->module->l('Unable to validate this cancellation callback. Please retry checkout.');
+            $this->errors[] = $message;
+            $this->redirectWithNotifications('index.php?controller=order');
+        }
 
         $orderpaymentdata = $this->module->getTwoOrderPaymentData($id_order);
         if ($orderpaymentdata && isset($orderpaymentdata['two_order_id'])) {
             $two_order_id = $orderpaymentdata['two_order_id'];
             
-            $response = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/cancel', [], 'POST');
-            $cancel_http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
-            if ($cancel_http_status === 0 || $cancel_http_status >= Twopayment::HTTP_STATUS_BAD_REQUEST) {
-                $message = sprintf($this->module->l('Could not update status to cancelled, please check with Two admin for id %s'), $two_order_id);
-                $this->errors[] = $message;
-                $this->redirectWithNotifications('index.php?controller=order');
-            }
+            $cancel_response = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/cancel', [], 'POST');
+            $cancel_http_status = isset($cancel_response['http_status']) ? (int)$cancel_response['http_status'] : 0;
 
             $response = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
             $response_http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
-            if ($response_http_status > 0 && $response_http_status < Twopayment::HTTP_STATUS_BAD_REQUEST && isset($response['state']) && $response['state'] == 'CANCELLED') {
+            $provider_cancelled = $this->module->isTwoOrderCancelledResponse($response, $response_http_status);
+
+            if ($provider_cancelled) {
                 $resolved_terms = $this->module->resolveTwoPaymentTermsFromOrderResponse(
                     $response,
                     isset($orderpaymentdata['two_day_on_invoice']) ? (string)$orderpaymentdata['two_day_on_invoice'] : (string)$this->module->getSelectedPaymentTerm(),
@@ -153,8 +166,23 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
                     'two_payment_term_type' => $resolved_terms['two_payment_term_type'],
                 );
                 $this->module->setTwoOrderPaymentData($order->id, $payment_data);
+            } else {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Legacy cancel callback could not confirm CANCELLED provider state for order ' . (int)$order->id .
+                    ', Two order ' . $two_order_id .
+                    ', cancel_http=' . $cancel_http_status .
+                    ', fetch_http=' . $response_http_status .
+                    ', provider_state=' . (isset($response['state']) ? (string)$response['state'] : 'unknown'),
+                    2
+                );
+                $message = sprintf($this->module->l('Could not update status to cancelled, please check with Two admin for id %s'), $two_order_id);
+                $this->errors[] = $message;
+                $this->redirectWithNotifications('index.php?controller=order');
             }
         }
+
+        $this->module->restoreDuplicateCart($order->id, $order->id_customer);
+        $this->module->changeOrderStatus($order->id, $this->getCancelledStatus());
 
         $message = $this->module->l('Your order is cancelled.');
         $this->errors[] = $message;
@@ -188,6 +216,37 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
             $context_customer_id,
             $context_customer_secure_key
         );
+    }
+
+    /**
+     * Validate legacy callback authorization for order-based cancellation paths.
+     *
+     * @param Order $order
+     * @param Customer $customer
+     * @return bool
+     */
+    private function isAuthorizedLegacyOrderAccess($order, $customer)
+    {
+        if (!Validate::isLoadedObject($order) || !Validate::isLoadedObject($customer)) {
+            return false;
+        }
+
+        $expected_secure_key = trim((string)$customer->secure_key);
+        if (Tools::isEmpty($expected_secure_key)) {
+            return false;
+        }
+
+        $provided_key = trim((string)Tools::getValue('key'));
+        if (!Tools::isEmpty($provided_key)) {
+            return hash_equals($expected_secure_key, $provided_key);
+        }
+
+        $context_customer_id = isset($this->context->customer->id) ? (int)$this->context->customer->id : 0;
+        $context_customer_secure_key = isset($this->context->customer->secure_key) ? trim((string)$this->context->customer->secure_key) : '';
+
+        return $context_customer_id === (int)$order->id_customer &&
+            !Tools::isEmpty($context_customer_secure_key) &&
+            hash_equals($expected_secure_key, $context_customer_secure_key);
     }
 
 }

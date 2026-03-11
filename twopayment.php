@@ -86,6 +86,7 @@ class Twopayment extends PaymentModule
         
         // Ensure custom Two states exist (for existing installations)
         $this->ensureCustomStatesExist();
+        $this->ensureRequiredHooksRegistered();
     }
     
     /**
@@ -110,6 +111,26 @@ class Twopayment extends PaymentModule
             }
         }
     }
+
+    /**
+     * Register newly introduced hooks on existing installations.
+     */
+    private function ensureRequiredHooksRegistered()
+    {
+        if ((int)$this->id <= 0 || !Module::isInstalled($this->name)) {
+            return;
+        }
+
+        $required_hooks = array(
+            'actionObjectOrderHistoryAddBefore',
+        );
+
+        foreach ($required_hooks as $hook_name) {
+            if (!$this->isRegisteredInHook($hook_name)) {
+                $this->registerHook($hook_name);
+            }
+        }
+    }
     
 
     public function install()
@@ -122,6 +143,7 @@ class Twopayment extends PaymentModule
             $this->registerHook('actionAdminControllerSetMedia') &&
             $this->registerHook('actionFrontControllerSetMedia') &&
             $this->registerHook('actionOrderStatusUpdate') &&
+            $this->registerHook('actionObjectOrderHistoryAddBefore') &&
             $this->registerHook('paymentOptions') &&
             $this->registerHook('displayPaymentReturn') &&
             $this->registerHook('displayAdminOrderLeft') &&
@@ -341,6 +363,7 @@ class Twopayment extends PaymentModule
             $this->unregisterHook('actionAdminControllerSetMedia') &&
             $this->unregisterHook('actionFrontControllerSetMedia') &&
             $this->unregisterHook('actionOrderStatusUpdate') &&
+            $this->unregisterHook('actionObjectOrderHistoryAddBefore') &&
             $this->unregisterHook('paymentOptions') &&
             $this->unregisterHook('displayPaymentReturn') &&
             $this->unregisterHook('displayAdminOrderLeft') &&
@@ -1559,6 +1582,18 @@ class Twopayment extends PaymentModule
                     // Complete fulfillment using the new fulfillments endpoint - wrapped in try-catch for safety
                     try {
                         PrestaShopLogger::addLog('TwoPayment: Initiating complete fulfillment for Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Triggered by status: ' . $new_order_status->name . ' (ID: ' . $new_order_status->id . ')', 1);
+
+                        $stored_two_state = isset($orderpaymentdata['two_order_state']) ? strtoupper(trim((string)$orderpaymentdata['two_order_state'])) : '';
+                        if ($this->shouldBlockTwoFulfillmentByTwoState($stored_two_state)) {
+                            $this->applyTwoCancelledOrderStateProfileToStatusObject($new_order_status, (int)$order->id_lang);
+                            $this->addTwoBackOfficeWarning($this->l('Fulfillment blocked: this Two order is cancelled at provider. The order status has been reverted to cancelled.'));
+                            PrestaShopLogger::addLog(
+                                'TwoPayment: Fulfillment blocked for cancelled Two order ' . $two_order_id .
+                                ' (stored state=' . $stored_two_state . '). Fulfillment status change will be forced to cancelled for order ' . $id_order,
+                                2
+                            );
+                            return;
+                        }
                         
                         // Validate order state before attempting fulfillment
                         $current_two_order = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
@@ -1566,11 +1601,39 @@ class Twopayment extends PaymentModule
                             PrestaShopLogger::addLog('TwoPayment: Cannot retrieve Two order state for fulfillment. Two order ID: ' . $two_order_id, 3);
                             return;
                         }
+
+                        $provider_two_state = strtoupper(trim((string)$current_two_order['state']));
+                        if ($this->shouldBlockTwoFulfillmentByTwoState($provider_two_state)) {
+                            $resolved_terms = $this->resolveTwoPaymentTermsFromOrderResponse(
+                                $current_two_order,
+                                isset($orderpaymentdata['two_day_on_invoice']) ? (string)$orderpaymentdata['two_day_on_invoice'] : (string)$this->getSelectedPaymentTerm(),
+                                isset($orderpaymentdata['two_payment_term_type']) ? $orderpaymentdata['two_payment_term_type'] : Configuration::get('PS_TWO_PAYMENT_TERM_TYPE')
+                            );
+                            $payment_data = array(
+                                'two_order_id' => $two_order_id,
+                                'two_order_reference' => isset($current_two_order['merchant_reference']) ? $current_two_order['merchant_reference'] : (isset($orderpaymentdata['two_order_reference']) ? $orderpaymentdata['two_order_reference'] : ''),
+                                'two_order_state' => $provider_two_state,
+                                'two_order_status' => isset($current_two_order['status']) ? $current_two_order['status'] : (isset($orderpaymentdata['two_order_status']) ? $orderpaymentdata['two_order_status'] : ''),
+                                'two_day_on_invoice' => $resolved_terms['two_day_on_invoice'],
+                                'two_payment_term_type' => $resolved_terms['two_payment_term_type'],
+                                'two_invoice_url' => isset($current_two_order['invoice_url']) ? $current_two_order['invoice_url'] : (isset($orderpaymentdata['two_invoice_url']) ? $orderpaymentdata['two_invoice_url'] : ''),
+                                'two_invoice_id' => isset($current_two_order['invoice_details']['id']) ? $current_two_order['invoice_details']['id'] : (isset($orderpaymentdata['two_invoice_id']) ? $orderpaymentdata['two_invoice_id'] : null),
+                            );
+                            $this->setTwoOrderPaymentData((int)$id_order, $payment_data);
+                            $this->applyTwoCancelledOrderStateProfileToStatusObject($new_order_status, (int)$order->id_lang);
+                            $this->addTwoBackOfficeWarning($this->l('Fulfillment blocked: this Two order is cancelled at provider. The order status has been reverted to cancelled.'));
+                            PrestaShopLogger::addLog(
+                                'TwoPayment: Fulfillment blocked for cancelled Two order ' . $two_order_id .
+                                ' (provider state=' . $provider_two_state . '). Fulfillment status change will be forced to cancelled for order ' . $id_order,
+                                2
+                            );
+                            return;
+                        }
                         
                         // Only attempt fulfillment if order is in CONFIRMED state
                         // Only CONFIRMED orders can be fulfilled (VERIFIED orders must be confirmed first to ensure they have been sent to the checkout success page)
-                        if ($current_two_order['state'] !== 'CONFIRMED') {
-                            PrestaShopLogger::addLog('TwoPayment: Two order not in fulfillable state. Current state: ' . $current_two_order['state'] . ', Expected: CONFIRMED. Two order ID: ' . $two_order_id, 2);
+                        if (!$this->isTwoOrderFulfillableState($provider_two_state)) {
+                            PrestaShopLogger::addLog('TwoPayment: Two order not in fulfillable state. Current state: ' . $provider_two_state . ', Expected: CONFIRMED. Two order ID: ' . $two_order_id, 2);
                             return;
                         }
                         
@@ -1777,6 +1840,85 @@ class Twopayment extends PaymentModule
                 }
             }
         }
+    }
+
+    /**
+     * Intercept pending order-history inserts and force cancelled status when
+     * a cancelled Two order is incorrectly moved to a blocked forward-processing state
+     * (verified-ready or fulfillment-trigger states).
+     *
+     * @param array $params
+     * @return void
+     */
+    public function hookActionObjectOrderHistoryAddBefore($params)
+    {
+        if (!is_array($params) || !isset($params['object']) || !is_object($params['object'])) {
+            return;
+        }
+
+        $history = $params['object'];
+        if (!isset($history->id_order) || !isset($history->id_order_state)) {
+            return;
+        }
+
+        $id_order = (int)$history->id_order;
+        $target_status = (int)$history->id_order_state;
+        if ($id_order <= 0 || !$this->shouldBlockTwoStatusTransitionByCancelledState($target_status)) {
+            return;
+        }
+
+        $order = new Order($id_order);
+        if (!Validate::isLoadedObject($order) || !isset($order->module) || $order->module !== $this->name) {
+            return;
+        }
+
+        $latest_attempt = $this->getLatestTwoCheckoutAttemptByOrder($id_order);
+        $attempt_status = is_array($latest_attempt) && isset($latest_attempt['status']) ? (string)$latest_attempt['status'] : '';
+        if ($this->isTwoAttemptStatusTerminal($attempt_status)) {
+            $attempt_two_order_id = is_array($latest_attempt) && isset($latest_attempt['two_order_id']) ? (string)$latest_attempt['two_order_id'] : '';
+            $this->forceTwoCancelledOrderHistoryStateBeforeInsert($history, $order, $attempt_two_order_id, 'attempt', 'CANCELLED');
+            return;
+        }
+
+        $orderpaymentdata = $this->getTwoOrderPaymentData($id_order);
+        if (!is_array($orderpaymentdata) || !isset($orderpaymentdata['two_order_id']) || Tools::isEmpty($orderpaymentdata['two_order_id'])) {
+            return;
+        }
+
+        $two_order_id = $orderpaymentdata['two_order_id'];
+        $stored_two_state = isset($orderpaymentdata['two_order_state']) ? strtoupper(trim((string)$orderpaymentdata['two_order_state'])) : '';
+        if ($this->shouldBlockTwoFulfillmentByTwoState($stored_two_state)) {
+            $this->forceTwoCancelledOrderHistoryStateBeforeInsert($history, $order, $two_order_id, 'stored', $stored_two_state);
+            return;
+        }
+
+        $current_two_order = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
+        if (!is_array($current_two_order) || !isset($current_two_order['state'])) {
+            return;
+        }
+
+        $provider_two_state = strtoupper(trim((string)$current_two_order['state']));
+        if (!$this->shouldBlockTwoFulfillmentByTwoState($provider_two_state)) {
+            return;
+        }
+
+        $resolved_terms = $this->resolveTwoPaymentTermsFromOrderResponse(
+            $current_two_order,
+            isset($orderpaymentdata['two_day_on_invoice']) ? (string)$orderpaymentdata['two_day_on_invoice'] : (string)$this->getSelectedPaymentTerm(),
+            isset($orderpaymentdata['two_payment_term_type']) ? $orderpaymentdata['two_payment_term_type'] : Configuration::get('PS_TWO_PAYMENT_TERM_TYPE')
+        );
+        $payment_data = array(
+            'two_order_id' => isset($current_two_order['id']) ? $current_two_order['id'] : $two_order_id,
+            'two_order_reference' => isset($current_two_order['merchant_reference']) ? $current_two_order['merchant_reference'] : (isset($orderpaymentdata['two_order_reference']) ? $orderpaymentdata['two_order_reference'] : ''),
+            'two_order_state' => $provider_two_state,
+            'two_order_status' => isset($current_two_order['status']) ? $current_two_order['status'] : (isset($orderpaymentdata['two_order_status']) ? $orderpaymentdata['two_order_status'] : ''),
+            'two_day_on_invoice' => $resolved_terms['two_day_on_invoice'],
+            'two_payment_term_type' => $resolved_terms['two_payment_term_type'],
+            'two_invoice_url' => isset($current_two_order['invoice_url']) ? $current_two_order['invoice_url'] : (isset($orderpaymentdata['two_invoice_url']) ? $orderpaymentdata['two_invoice_url'] : ''),
+            'two_invoice_id' => isset($current_two_order['invoice_details']['id']) ? $current_two_order['invoice_details']['id'] : (isset($orderpaymentdata['two_invoice_id']) ? $orderpaymentdata['two_invoice_id'] : null),
+        );
+        $this->setTwoOrderPaymentData($id_order, $payment_data);
+        $this->forceTwoCancelledOrderHistoryStateBeforeInsert($history, $order, $two_order_id, 'provider', $provider_two_state);
     }
 
     public function hookActionFrontControllerSetMedia()
@@ -5103,8 +5245,13 @@ class Twopayment extends PaymentModule
      */
     public function getTwoBuyerPortalUrl()
     {
-        $base = $this->getTwoPortalUrl();
-        return rtrim($base, '/') . '/auth/buyer/login';
+        $environment = strtolower((string) Configuration::get('PS_TWO_ENVIRONMENT'));
+        if ($environment === 'production') {
+            return 'https://buyer.two.inc/login';
+        }
+
+        // Development/non-production environments use the sandbox buyer portal.
+        return 'https://buyer.sandbox.two.inc/login';
     }
 
     /**
@@ -5695,8 +5842,24 @@ class Twopayment extends PaymentModule
     {
         // Check if SSL verification is disabled via configuration (for corporate networks)
         $disable_ssl_verify = (bool)Configuration::get('PS_TWO_DISABLE_SSL_VERIFY', false);
+        $environment = (string)Configuration::get('PS_TWO_ENVIRONMENT', 'development');
         
         if ($disable_ssl_verify) {
+            if ($environment === 'production') {
+                // Production hardening: never allow insecure TLS in live traffic.
+                PrestaShopLogger::addLog(
+                    'TwoPayment: SSL verification disable flag ignored in production. Enforcing secure TLS verification.',
+                    3
+                );
+                curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+                $ca_bundle = $this->findCaBundle();
+                if ($ca_bundle) {
+                    curl_setopt($ch, CURLOPT_CAINFO, $ca_bundle);
+                }
+                return;
+            }
+
             // Only if explicitly configured (corporate networks with custom certificates)
             PrestaShopLogger::addLog(
                 'TwoPayment: SSL verification disabled by configuration (security risk - corporate networks only)',
@@ -6275,36 +6438,50 @@ class Twopayment extends PaymentModule
             return false;
         }
 
+        $normalized_status = $this->normalizeTwoAttemptStatus($status);
+        $existing_attempt = $this->getTwoCheckoutAttempt($attempt_token);
+        $existing_status = is_array($existing_attempt) && isset($existing_attempt['status']) ? (string)$existing_attempt['status'] : '';
+        $cancelled_terminal = $this->isTwoAttemptStatusTerminal($existing_status) && !$this->isTwoAttemptStatusTerminal($normalized_status);
+
+        if ($cancelled_terminal) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Ignoring non-terminal attempt status transition for token ' . $attempt_token .
+                ' (' . strtoupper(trim((string)$existing_status)) . ' -> ' . $normalized_status . ')',
+                2
+            );
+            $normalized_status = 'CANCELLED';
+        }
+
         $data = array(
-            'status' => pSQL($this->normalizeTwoAttemptStatus($status)),
+            'status' => pSQL($normalized_status),
             'updated_at' => pSQL(date('Y-m-d H:i:s')),
         );
 
         if (isset($extra_data['id_order'])) {
             $data['id_order'] = (int)$extra_data['id_order'];
         }
-        if (isset($extra_data['two_order_state'])) {
+        if (!$cancelled_terminal && isset($extra_data['two_order_state'])) {
             $data['two_order_state'] = pSQL($extra_data['two_order_state']);
         }
-        if (isset($extra_data['two_order_status'])) {
+        if (!$cancelled_terminal && isset($extra_data['two_order_status'])) {
             $data['two_order_status'] = pSQL($extra_data['two_order_status']);
         }
-        if (isset($extra_data['two_day_on_invoice'])) {
+        if (!$cancelled_terminal && isset($extra_data['two_day_on_invoice'])) {
             $data['two_day_on_invoice'] = pSQL($extra_data['two_day_on_invoice']);
         }
-        if (isset($extra_data['two_payment_term_type'])) {
+        if (!$cancelled_terminal && isset($extra_data['two_payment_term_type'])) {
             $data['two_payment_term_type'] = pSQL($extra_data['two_payment_term_type']);
         }
-        if (isset($extra_data['two_invoice_url'])) {
+        if (!$cancelled_terminal && isset($extra_data['two_invoice_url'])) {
             $data['two_invoice_url'] = pSQL($extra_data['two_invoice_url'], true);
         }
-        if (isset($extra_data['two_invoice_id'])) {
+        if (!$cancelled_terminal && isset($extra_data['two_invoice_id'])) {
             $data['two_invoice_id'] = pSQL($extra_data['two_invoice_id']);
         }
-        if (isset($extra_data['cart_snapshot_hash'])) {
+        if (!$cancelled_terminal && isset($extra_data['cart_snapshot_hash'])) {
             $data['cart_snapshot_hash'] = pSQL($extra_data['cart_snapshot_hash']);
         }
-        if (isset($extra_data['order_create_idempotency_key'])) {
+        if (!$cancelled_terminal && isset($extra_data['order_create_idempotency_key'])) {
             $data['order_create_idempotency_key'] = pSQL($extra_data['order_create_idempotency_key']);
         }
 
@@ -6373,6 +6550,315 @@ class Twopayment extends PaymentModule
 
         $sql = 'SELECT `id_order` FROM `' . _DB_PREFIX_ . 'orders` WHERE `id_cart` = ' . $id_cart . ' ORDER BY `id_order` DESC';
         return (int)Db::getInstance()->getValue($sql);
+    }
+
+    /**
+     * Resolve a local order ID from an attempt record for cancellation paths.
+     * Prefers direct attempt linkage and falls back to cart lookup for race windows.
+     *
+     * @param array $attempt
+     * @return int
+     */
+    public function resolveTwoAttemptOrderIdForCancellation($attempt)
+    {
+        if (!is_array($attempt)) {
+            return 0;
+        }
+
+        $attempt_order_id = isset($attempt['id_order']) ? (int)$attempt['id_order'] : 0;
+        if ($attempt_order_id > 0) {
+            return $attempt_order_id;
+        }
+
+        $attempt_cart_id = isset($attempt['id_cart']) ? (int)$attempt['id_cart'] : 0;
+        if ($attempt_cart_id <= 0) {
+            return 0;
+        }
+
+        return (int)$this->getTwoOrderIdByCart($attempt_cart_id);
+    }
+
+    /**
+     * Determine whether callback confirmation must be blocked by attempt status.
+     *
+     * @param string $status
+     * @return bool
+     */
+    public function shouldBlockTwoAttemptConfirmationByStatus($status)
+    {
+        $status = strtoupper(trim((string)$status));
+        return $status === 'CANCELLED';
+    }
+
+    /**
+     * Attempt status terminality guard for race-safe state transitions.
+     *
+     * @param string $status
+     * @return bool
+     */
+    public function isTwoAttemptStatusTerminal($status)
+    {
+        return $this->shouldBlockTwoAttemptConfirmationByStatus($status);
+    }
+
+    /**
+     * Block fulfillment flows for terminal provider-cancelled orders.
+     *
+     * @param string $two_state
+     * @return bool
+     */
+    public function shouldBlockTwoFulfillmentByTwoState($two_state)
+    {
+        $two_state = strtoupper(trim((string)$two_state));
+        return $two_state === 'CANCELLED';
+    }
+
+    /**
+     * Determine whether provider order is in a fulfillable state.
+     *
+     * @param string $two_state
+     * @return bool
+     */
+    public function isTwoOrderFulfillableState($two_state)
+    {
+        $two_state = strtoupper(trim((string)$two_state));
+        return $two_state === 'CONFIRMED';
+    }
+
+    /**
+     * Resolve the local status ID used when Two order is verified and ready for fulfillment.
+     *
+     * @return int
+     */
+    public function getTwoVerifiedPendingFulfillmentStatusId()
+    {
+        $verified_status = (int)Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT');
+        if ($verified_status <= 0) {
+            $verified_status = (int)Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP');
+            if ($verified_status <= 0) {
+                $verified_status = (int)Configuration::get('PS_OS_PREPARATION');
+            }
+        }
+
+        return (int)$verified_status;
+    }
+
+    /**
+     * Determine whether a local status transition must be blocked for cancelled Two orders.
+     *
+     * @param int $status_id
+     * @return bool
+     */
+    public function shouldBlockTwoStatusTransitionByCancelledState($status_id)
+    {
+        $status_id = (int)$status_id;
+        if ($status_id <= 0) {
+            return false;
+        }
+
+        if ($this->isFulfillmentTriggerStatus($status_id)) {
+            return true;
+        }
+
+        return $status_id === (int)$this->getTwoVerifiedPendingFulfillmentStatusId();
+    }
+
+    /**
+     * Check whether a provider order response confirms terminal cancellation.
+     *
+     * @param mixed $response
+     * @param int|null $http_status
+     * @return bool
+     */
+    public function isTwoOrderCancelledResponse($response, $http_status = null)
+    {
+        if (!is_array($response)) {
+            return false;
+        }
+
+        if ($http_status === null) {
+            $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
+        } else {
+            $http_status = (int)$http_status;
+        }
+
+        if ($http_status <= 0 || $http_status >= self::HTTP_STATUS_BAD_REQUEST) {
+            return false;
+        }
+
+        $state = isset($response['state']) ? strtoupper(trim((string)$response['state'])) : '';
+        return $state === 'CANCELLED';
+    }
+
+    /**
+     * Push a warning message to the current back-office controller when available.
+     *
+     * @param string $message
+     * @return bool True when warning queue was updated
+     */
+    public function addTwoBackOfficeWarning($message)
+    {
+        $message = trim((string)$message);
+        if (Tools::isEmpty($message)) {
+            return false;
+        }
+
+        if (!isset($this->context) || !is_object($this->context)) {
+            $this->context = Context::getContext();
+        }
+
+        $controller = isset($this->context->controller) ? $this->context->controller : null;
+        if (!is_object($controller)) {
+            return false;
+        }
+
+        if (!isset($controller->warnings) || !is_array($controller->warnings)) {
+            $controller->warnings = array();
+        }
+
+        if (!in_array($message, $controller->warnings, true)) {
+            $controller->warnings[] = $message;
+        }
+
+        return true;
+    }
+
+    /**
+     * Resolve configured PrestaShop cancelled status used for Two cancellations.
+     *
+     * @return int
+     */
+    public function getTwoCancelledOrderStatusId()
+    {
+        $cancelled_status = (int)Configuration::get('PS_TWO_OS_CANCELLED');
+        if ($cancelled_status <= 0) {
+            $cancelled_status = (int)Configuration::get('PS_TWO_OS_CANCELLED_MAP');
+            if ($cancelled_status <= 0) {
+                $cancelled_status = (int)Configuration::get('PS_OS_CANCELED');
+            }
+        }
+
+        return (int)$cancelled_status;
+    }
+
+    /**
+     * Morph a pending order-status object to the configured cancelled state profile.
+     * This reduces side effects (shipping stock movement, delivery toggles) when a
+     * cancelled Two order is forcefully moved to a fulfillment trigger status.
+     *
+     * @param object $order_status
+     * @param int|null $id_lang
+     * @return bool
+     */
+    public function applyTwoCancelledOrderStateProfileToStatusObject($order_status, $id_lang = null)
+    {
+        if (!is_object($order_status)) {
+            return false;
+        }
+
+        $cancelled_status = $this->getTwoCancelledOrderStatusId();
+        if ($cancelled_status <= 0) {
+            return false;
+        }
+
+        $id_lang = (int)$id_lang;
+        if ($id_lang <= 0) {
+            $id_lang = isset($this->context->language->id) ? (int)$this->context->language->id : 0;
+        }
+
+        $cancelled_state = $id_lang > 0 ? new OrderState($cancelled_status, $id_lang) : new OrderState($cancelled_status);
+        if (!Validate::isLoadedObject($cancelled_state)) {
+            $cancelled_state = new OrderState($cancelled_status);
+        }
+        if (!Validate::isLoadedObject($cancelled_state)) {
+            return false;
+        }
+
+        $order_status->id = (int)$cancelled_state->id;
+        $morph_fields = array('invoice', 'delivery', 'shipped', 'paid', 'logable', 'send_email', 'template', 'name', 'color', 'hidden');
+        foreach ($morph_fields as $field) {
+            if (isset($cancelled_state->{$field})) {
+                $order_status->{$field} = $cancelled_state->{$field};
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Replace a pending fulfillment-trigger history row with cancelled status before insert.
+     *
+     * @param object $history
+     * @param object $order
+     * @param string $two_order_id
+     * @param string $source
+     * @param string $two_state
+     * @return bool
+     */
+    public function forceTwoCancelledOrderHistoryStateBeforeInsert($history, $order, $two_order_id, $source, $two_state)
+    {
+        if (!is_object($history)) {
+            return false;
+        }
+
+        $cancelled_status = $this->getTwoCancelledOrderStatusId();
+        if ($cancelled_status <= 0) {
+            return false;
+        }
+
+        $history->id_order_state = $cancelled_status;
+
+        if (is_object($order) && Validate::isLoadedObject($order)) {
+            $order->current_state = $cancelled_status;
+
+            $cancelled_state = isset($order->id_lang) ? new OrderState($cancelled_status, (int)$order->id_lang) : new OrderState($cancelled_status);
+            if (!Validate::isLoadedObject($cancelled_state)) {
+                $cancelled_state = new OrderState($cancelled_status);
+            }
+            $order->valid = (Validate::isLoadedObject($cancelled_state) && isset($cancelled_state->logable)) ? (bool)$cancelled_state->logable : false;
+            $order->update();
+
+            if (method_exists('Order', 'cleanHistoryCache')) {
+                Order::cleanHistoryCache();
+            }
+        }
+
+        $this->addTwoBackOfficeWarning($this->l('Fulfillment blocked: this Two order is cancelled at provider. The order status has been reverted to cancelled.'));
+        PrestaShopLogger::addLog(
+            'TwoPayment: Blocked fulfillment status insert for cancelled Two order ' . $two_order_id .
+            ' (state=' . strtoupper(trim((string)$two_state)) . ', source=' . trim((string)$source) . '). ' .
+            'History row was rewritten to cancelled.',
+            2
+        );
+
+        return true;
+    }
+
+    /**
+     * Keep local order state aligned when provider reports terminal cancellation.
+     *
+     * @param int $id_order
+     * @param string $two_state
+     * @return bool
+     */
+    public function syncLocalOrderStatusFromTwoState($id_order, $two_state)
+    {
+        $id_order = (int)$id_order;
+        if ($id_order <= 0) {
+            return false;
+        }
+
+        $two_state = strtoupper(trim((string)$two_state));
+        if ($two_state !== 'CANCELLED') {
+            return false;
+        }
+
+        $cancelled_status = $this->getTwoCancelledOrderStatusId();
+        if ($cancelled_status <= 0) {
+            return false;
+        }
+
+        return (bool)$this->changeOrderStatus($id_order, $cancelled_status);
     }
 
     /**
@@ -6577,6 +7063,11 @@ class Twopayment extends PaymentModule
             $synced[$field] = $value;
         }
 
+        $this->syncLocalOrderStatusFromTwoState(
+            $id_order,
+            isset($synced['two_order_state']) ? (string)$synced['two_order_state'] : ''
+        );
+
         $request_cache[$cache_key] = $synced;
         return $synced;
     }
@@ -6658,7 +7149,7 @@ class Twopayment extends PaymentModule
             return false;
         }
 
-        $sql = 'SELECT `two_order_id`, `two_day_on_invoice`, `two_payment_term_type`, `two_order_state`, `two_order_status`, `two_invoice_url`, `two_invoice_id` ' .
+        $sql = 'SELECT `two_order_id`, `status`, `two_day_on_invoice`, `two_payment_term_type`, `two_order_state`, `two_order_status`, `two_invoice_url`, `two_invoice_id` ' .
             'FROM `' . _DB_PREFIX_ . 'twopayment_attempt` ' .
             'WHERE `id_order` = ' . (int)$id_order . ' ' .
             'ORDER BY `updated_at` DESC, `id_attempt` DESC';

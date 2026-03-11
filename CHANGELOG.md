@@ -5,9 +5,6 @@ All notable changes to the Two Payment module for PrestaShop will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-
-
-
 ## Latest Release: v2.4.0
 
 **Release Date:** 2026-02-25
@@ -36,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `order_create_idempotency_key`
 
 ### Changed
+- **Security hardening for callback and template surfaces**:
+  - Legacy `id_order` confirmation/cancel front-controller paths now require secure callback authorization (query `key` or matching logged-in customer secure key) before any order-state mutation.
+  - Buyer/admin/payment-return templates now escape dynamic Two/order fields before rendering links and text.
+  - Production environment now enforces TLS verification even if the optional SSL-disable flag is set.
 - **Order intent and callback hardening (provider-first parity)**:
   - Authoritative payment-submit order intent now fail-closes on strict reconciliation drift before provider `/v1/order_intent` call.
   - Callback-time local order creation now wraps `validateOrder()` with race-safe recovery using existing order-by-cart lookup.
@@ -89,6 +90,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Confirmation controller now supports `attempt_token` callback flow and creates local order only after verified provider state
   - Cancel controller now supports `attempt_token` cancellation without creating local orders
   - Both controllers keep legacy `id_order` paths for backward compatibility
+- **Two cancellation/verification consistency hardening**:
+  - Buyer portal URL resolution now uses explicit buyer domains by environment (`buyer.two.inc` for production and `buyer.sandbox.two.inc` for non-production), with a safe sandbox fallback for unknown environments.
+  - Checkout callback handling now treats canceled attempts as terminal during confirmation, and cancel flow resolves local order linkage via cart fallback to avoid race-driven state mismatches between Two (`CANCELLED`) and PrestaShop.
+  - Local order-state sync now force-maps provider `CANCELLED` to the configured PrestaShop cancellation status during confirmation handling and admin provider-sync refresh.
+  - Legacy cancel callback no longer sets local cancelled state unless provider order fetch confirms `CANCELLED`, preventing transient local cancel entries when provider cancellation did not complete.
+  - Fulfillment status updates now block/revert when the provider order is `CANCELLED` (using stored and fresh provider state checks), with explicit logs to prevent shipping progression on non-fulfillable Two orders.
+  - Back-office fulfillment blocking now also surfaces an on-screen warning in the admin controller when a cancelled Two order is reverted to cancelled status.
+  - Added `actionObjectOrderHistoryAddBefore` guard to rewrite pending `Verified` and fulfillment-trigger history inserts to the configured cancelled status when the provider order or attempt is terminally `CANCELLED`, preventing visible status flip-flops in order history.
+  - Late confirmation race handling now blocks post-cancel status rewrites (`CONFIRMED`/`FAILED`) so a buyer-backed-out checkout remains cancelled.
 - **Tax Payload Accuracy Hardening**:
   - Tax rates are now serialized to fixed 2 decimal places (`tax_rate` like `0.21`) across line items, tax subtotals, and checkout snapshots
   - Product tax rate selection now prioritizes applied PrestaShop amounts when configured and applied rates diverge
