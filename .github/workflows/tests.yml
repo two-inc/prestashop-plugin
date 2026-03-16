@@ -1,0 +1,36 @@
+name: Module Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: PHP ${{ matrix.php-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ["8.2", "8.3"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          coverage: none
+
+      - name: Syntax check test files
+        run: |
+          php -l twopayment.php
+          php -l controllers/front/payment.php
+          php -l tests/bootstrap.php
+          php -l tests/OrderBuilderTest.php
+          php -l tests/run.php
+
+      - name: Run offline test suite
+        run: php tests/run.php
