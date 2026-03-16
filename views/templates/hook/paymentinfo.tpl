@@ -15,7 +15,7 @@
     {* Header Section *}
     <div class="two-header">
         <div class="two-logo-container">
-            <img src="{$module_dir}views/img/TwoLogo.svg" alt="Two" class="two-logo" />
+            <img src="{$module_dir|escape:'html':'UTF-8'}views/img/TwoLogo.svg" alt="Two" class="two-logo" />
             <p class="two-tagline">
                 {l s='Business payments made simple' mod='twopayment'} 
                 <span class="two-info-tooltip">
@@ -52,7 +52,7 @@
     
     {* Payment Info Section - Dynamically populated by JavaScript *}
     <section class="two-payment-info" style="display: none;">
-        <p class="two-subtitle">{$subtitle}</p>
+        <p class="two-subtitle">{$subtitle|escape:'html':'UTF-8'}</p>
         <p class="two-payment-message"></p>
     </section>
     

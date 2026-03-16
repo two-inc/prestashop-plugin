@@ -17,64 +17,53 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
     public function postProcess()
     {
         parent::postProcess();
-        // Guard: Require company details when placing order with Two
-
-        //We check if the cart exists; if it doesn’t, we get it from the context
-        if (isset($cart) && !empty($cart)) {
-            $address = new Address($cart->id_address_invoice);    
-        } else {
-            $address = new Address(Context::getContext()->cart->id_address_invoice);    
-        }
-
-        $companyName = isset($address->company) ? trim($address->company) : '';
-        $companyId = '';
-        // Prefer companyid if present; fallback for ES to dni
-        if (!empty($address->companyid)) {
-            $companyId = trim($address->companyid);
-        } else {
-            $iso = Country::getIsoById($address->id_country);
-            if ($iso === 'ES' && !empty($address->dni)) {
-                $companyId = trim($address->dni);
-            }
-        }
-        // Fallback to cookie values saved during company selection (handles GB and others)
-        if (Tools::isEmpty($companyName) && isset($this->context->cookie->two_company_name)) {
-            $companyName = trim($this->context->cookie->two_company_name);
-        }
-        if (Tools::isEmpty($companyId) && isset($this->context->cookie->two_company_id)) {
-            $companyId = trim($this->context->cookie->two_company_id);
-        }
-
-        if (Tools::isEmpty($companyName) || Tools::isEmpty($companyId)) {
-            $msg = $this->module->l('To pay with Two, please select your company so we can verify your business and offer invoice terms.');
-            $this->errors[] = $msg;
-            $this->redirectWithNotifications('index.php?controller=order');
-        }
-
-
         $cart = $this->context->cart;
+        if (!Validate::isLoadedObject($cart)) {
+            $this->failCheckout(
+                '',
+                'TwoPayment: Invalid cart object in payment controller',
+                2
+            );
+            return;
+        }
+
         $currency = new Currency($cart->id_currency);
 
-        // Enhanced cart validation with detailed logging
-        if (!Validate::isLoadedObject($cart)) {
-            PrestaShopLogger::addLog('TwoPayment: Invalid cart object in payment controller', 2);
-            Tools::redirect('index.php?controller=order');
-        }
-
         if ($cart->id_customer == 0 || $cart->id_address_delivery == 0 || $cart->id_address_invoice == 0) {
-            PrestaShopLogger::addLog('TwoPayment: Incomplete cart data - Customer: ' . $cart->id_customer . ', Delivery: ' . $cart->id_address_delivery . ', Invoice: ' . $cart->id_address_invoice, 2);
-            Tools::redirect('index.php?controller=order');
+            $this->failCheckout(
+                '',
+                'TwoPayment: Incomplete cart data - Customer: ' . $cart->id_customer . ', Delivery: ' . $cart->id_address_delivery . ', Invoice: ' . $cart->id_address_invoice,
+                2
+            );
+            return;
         }
 
         if (!$this->module->active) {
-            PrestaShopLogger::addLog('TwoPayment: Payment attempt on inactive module', 2);
-            Tools::redirect('index.php?controller=order');
+            $this->failCheckout(
+                '',
+                'TwoPayment: Payment attempt on inactive module',
+                2
+            );
+            return;
         }
 
         // Validate currency
         if (!Validate::isLoadedObject($currency)) {
-            PrestaShopLogger::addLog('TwoPayment: Invalid currency for cart ' . $cart->id, 2);
-            Tools::redirect('index.php?controller=order');
+            $this->failCheckout(
+                '',
+                'TwoPayment: Invalid currency for cart ' . $cart->id,
+                2
+            );
+            return;
+        }
+
+        if (!$this->module->isCartCurrencySupportedByTwo($cart)) {
+            $this->failCheckout(
+                $this->module->l('This payment method is not available for your selected currency.'),
+                'TwoPayment: Unsupported currency ' . (int)$cart->id_currency . ' for cart ' . $cart->id,
+                2
+            );
+            return;
         }
 
         $authorized = false;
@@ -85,103 +74,139 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             }
         }
         if (!$authorized) {
-            $message = $this->module->l('This payment method is not available.');
-            $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
+            $this->failCheckout(
+                $this->module->l('This payment method is not available.')
+            );
+            return;
         }
 
         $customer = new Customer($cart->id_customer);
         if (!Validate::isLoadedObject($customer)) {
-            $message = $this->module->l('Customer is not valid.');
-            $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
+            $this->failCheckout(
+                $this->module->l('Customer is not valid.')
+            );
+            return;
         }
 
-        //  Validate order intent approval if enabled (server-side security layer)
-        if (Configuration::get('PS_TWO_ENABLE_ORDER_INTENT')) {
-            $orderIntentApproved = isset($this->context->cookie->two_order_intent_approved) 
-                ? $this->context->cookie->two_order_intent_approved === '1' 
-                : null;
-            
-            $orderIntentTimestamp = isset($this->context->cookie->two_order_intent_timestamp) 
-                ? (int)$this->context->cookie->two_order_intent_timestamp 
-                : 0;
-            
-            // Check if order intent was checked
-            if ($orderIntentApproved === null) {
-                // Order intent was never checked - log but allow (may be disabled or skipped)
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Order placed without order intent check (may be disabled or skipped) - Cart ID: ' . $cart->id,
-                    2
-                );
-            } elseif ($orderIntentApproved === false) {
-                // Order intent was checked and DECLINED - BLOCK ORDER
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Order BLOCKED - order intent was declined. Cart ID: ' . $cart->id . ', Customer ID: ' . $customer->id,
-                    3
-                );
-                
-                $message = $this->module->l('Your order could not be approved by Two payment. Please choose another payment method or contact support.');
-                $this->errors[] = $message;
-                $this->redirectWithNotifications('index.php?controller=order');
-                return; // Stop execution - prevent order creation
-            } elseif ($orderIntentTimestamp > 0) {
-                // Check if result is recent (within configured expiry time)
-                $age = time() - $orderIntentTimestamp;
-                if ($age > $this->module::ORDER_INTENT_EXPIRY_SECONDS) {
-                    PrestaShopLogger::addLog(
-                        'TwoPayment: Order intent result expired (age: ' . $age . ' seconds). Requiring re-check. Cart ID: ' . $cart->id,
-                        2
-                    );
-                    
-                    // Block order - require fresh order intent check
-                    $message = $this->module->l('Your payment approval has expired. Please refresh the page and try again.');
-                    $this->errors[] = $message;
-                    $this->redirectWithNotifications('index.php?controller=order');
-                    return; // Stop execution - prevent order creation
-                }
-            }
+        // Validate payment form token before any provider request.
+        $submittedToken = trim((string) Tools::getValue('token'));
+        if (Tools::isEmpty($submittedToken) || !hash_equals((string) Tools::getToken(false), $submittedToken)) {
+            $this->failCheckout(
+                $this->module->l('Your payment approval has expired. Please refresh the page and try again.'),
+                'TwoPayment: Payment submit blocked - invalid or missing checkout token for cart ' . $cart->id,
+                3
+            );
+            return;
         }
 
-        // CRITICAL: Create PrestaShop order FIRST to generate order ID for Two's callback URLs
-        // If Two rejects (non-201), we'll DELETE the order entirely (no phantom orders)
-        $initial_status = Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION');
-        if (!$initial_status) {
-            // Fallback to mapped state if custom state doesn't exist (for existing installations)
-            $initial_status = Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION_MAP');
-            if (!$initial_status) {
-                // Final fallback to preparation state
-                $initial_status = Configuration::get('PS_OS_PREPARATION');
-            }
+        $address = new Address((int) $cart->id_address_invoice);
+        if (!Validate::isLoadedObject($address)) {
+            $this->failCheckout(
+                '',
+                'TwoPayment: Invalid invoice address for cart ' . $cart->id . ' while preparing payment',
+                3
+            );
+            return;
         }
-        
-        $this->module->validateOrder($cart->id, $initial_status, $cart->getOrderTotal(true, Cart::BOTH), $this->module->displayName, null, array(), (int) $currency->id, false, $customer->secure_key);
-        $created_order_id = $this->module->currentOrder;
-        
-        PrestaShopLogger::addLog('TwoPayment: PrestaShop order created (ID: ' . $created_order_id . '), now calling Two API to create Two order', 1);
 
-        // Build Two order payload with PrestaShop order ID for callbacks
-        $paymentdata = $this->module->getTwoNewOrderData($created_order_id, $cart);
+        // Guard: Require company details when placing order with Two.
+        // Use shared module resolver so checkout and order payload logic stay consistent.
+        $companyData = $this->module->getTwoCheckoutCompanyData($address);
+        $companyName = isset($companyData['company_name']) ? trim((string) $companyData['company_name']) : '';
+        $companyId = isset($companyData['organization_number']) ? trim((string) $companyData['organization_number']) : '';
+        if (Tools::isEmpty($companyName) || Tools::isEmpty($companyId)) {
+            $this->failCheckout(
+                $this->module->l('To pay with Two, please select your company so we can verify your business and offer invoice terms.')
+            );
+            return;
+        }
+
+        // Keep attempt table bounded without adding cron requirements.
+        $this->module->maybeCleanupStaleTwoCheckoutAttempts();
+
+        // Authoritative server-side order intent check at payment submit.
+        $orderIntentResult = $this->module->checkTwoOrderIntentApprovalAtPayment($cart, $customer, $currency, $address);
+        $frontendIntentTelemetry = isset($this->context->cookie->two_order_intent_approved)
+            ? $this->context->cookie->two_order_intent_approved === '1'
+            : null;
+        if ($frontendIntentTelemetry !== null && $frontendIntentTelemetry !== (bool)$orderIntentResult['approved']) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Frontend order intent telemetry differs from backend authoritative result for cart ' .
+                $cart->id . '. Frontend=' . ($frontendIntentTelemetry ? 'approved' : 'declined') .
+                ', Backend=' . ((bool)$orderIntentResult['approved'] ? 'approved' : 'declined'),
+                2
+            );
+        }
+
+        if (!(bool)$orderIntentResult['approved']) {
+            $failureMessage = (isset($orderIntentResult['message']) && !Tools::isEmpty($orderIntentResult['message']))
+                ? (string)$orderIntentResult['message']
+                : $this->module->l('Your order could not be approved by Two payment. Please choose another payment method or contact support.');
+            $this->failCheckout(
+                $failureMessage,
+                'TwoPayment: Order blocked by authoritative backend order intent check for cart ' .
+                $cart->id . '. Status=' . (isset($orderIntentResult['status']) ? $orderIntentResult['status'] : 'unknown') .
+                ', HTTP=' . (isset($orderIntentResult['http_status']) ? (int)$orderIntentResult['http_status'] : 0),
+                3
+            );
+            return;
+        }
+
+        // Provider-first flow: create Two order first, then create PrestaShop order only after verified callback
+        $attempt_token = $this->module->generateTwoCheckoutAttemptToken($cart->id, $customer->id);
+        $merchant_order_id = $this->module->buildTwoMerchantOrderId($attempt_token, $cart->id);
+
+        $merchant_urls = [
+            'merchant_confirmation_url' => $this->context->link->getModuleLink($this->module->name, 'confirmation', ['attempt_token' => $attempt_token, 'key' => $customer->secure_key], true),
+            'merchant_cancel_order_url' => $this->context->link->getModuleLink($this->module->name, 'cancel', ['attempt_token' => $attempt_token, 'key' => $customer->secure_key], true),
+            'merchant_edit_order_url' => '',
+            'merchant_order_verification_failed_url' => '',
+            'merchant_invoice_url' => '',
+            'merchant_shipping_document_url' => ''
+        ];
+
+        try {
+            $paymentdata = $this->module->getTwoNewOrderData($merchant_order_id, $cart, $merchant_urls);
+            $cart_snapshot_hash = $this->module->calculateTwoCheckoutSnapshotHash($cart, $paymentdata);
+            $idempotency_key = $this->module->buildTwoOrderCreateIdempotencyKey($cart, $cart_snapshot_hash);
+        } catch (Exception $e) {
+            $this->failCheckout(
+                $this->module->l('Unable to process your order with Two payment. Please review your cart and try again.'),
+                'TwoPayment: Failed building order payload for cart ' . $cart->id . ' - ' . $e->getMessage(),
+                3
+            );
+            return;
+        }
 
         // Call Two API to create order
-        $response = $this->module->setTwoPaymentRequest('/v1/order', $paymentdata, 'POST');
+        $response = $this->module->setTwoPaymentRequest(
+            '/v1/order',
+            $paymentdata,
+            'POST',
+            ['X-Idempotency-Key: ' . $idempotency_key]
+        );
         
         // Extract HTTP status code from enhanced response structure
         $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
         
-        PrestaShopLogger::addLog('TwoPayment: Two API response - HTTP ' . $http_status . ' - Body: ' . json_encode($response), ($http_status === Twopayment::HTTP_STATUS_CREATED ? 1 : 3));
+        $response_summary = $this->module->buildTwoApiResponseLogSummary($response);
+        PrestaShopLogger::addLog(
+            'TwoPayment: Two API response summary - ' . json_encode($response_summary),
+            ($http_status === Twopayment::HTTP_STATUS_CREATED ? 1 : 3)
+        );
 
         // CRITICAL CHECK: Only proceed if Two returned 201 Created
-        // Any other status = order creation failed, delete PrestaShop order
+        // Any other status = order creation failed, and no local order should exist
         if ($http_status !== Twopayment::HTTP_STATUS_CREATED) {
-            // Two rejected the order - DELETE PrestaShop order completely (no phantom orders)
-            PrestaShopLogger::addLog('TwoPayment: Two API did not return 201 (got ' . $http_status . ') - DELETING PrestaShop order ' . $created_order_id, 3);
-            
-            // Delete order from database
-            $this->module->deleteOrder($created_order_id);
-            
-            // Restore cart so customer can try again
-            $this->module->restoreDuplicateCart($created_order_id, $customer->id);
+            PrestaShopLogger::addLog(
+                'TwoPayment: Two API did not return 201 (got ' . $http_status . ') - no local order created for cart ' . $cart->id . ', attempt ' . $attempt_token,
+                3
+            );
+            PrestaShopLogger::addLog(
+                'TwoPayment: Provider order lifecycle - create_failed for attempt ' . $attempt_token .
+                ', HTTP ' . $http_status,
+                2
+            );
             
             // Determine user-friendly error message based on response
             $message = $this->module->l('Unable to process your order with Two payment.');
@@ -209,23 +234,28 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
         if (isset($response['id']) && $response['id']) {
             // Extract invoice ID from response if available
             $invoice_id = isset($response['invoice_details']['id']) ? $response['invoice_details']['id'] : null;
+            $resolved_terms = $this->module->resolveTwoPaymentTermsFromOrderResponse(
+                $response,
+                (string)$this->module->getSelectedPaymentTerm(),
+                Configuration::get('PS_TWO_PAYMENT_TERM_TYPE')
+            );
             
             // Log invoice ID extraction for debugging
             if ($invoice_id) {
                 PrestaShopLogger::addLog(
-                    'TwoPayment: Invoice ID extracted from order creation - Order ' . $this->module->currentOrder . ', Invoice ID: ' . $invoice_id,
+                    'TwoPayment: Invoice ID extracted from order creation - attempt ' . $attempt_token . ', Invoice ID: ' . $invoice_id,
                     1,
                     null,
-                    'Order',
-                    $this->module->currentOrder
+                    'Cart',
+                    $cart->id
                 );
             } else {
                 PrestaShopLogger::addLog(
-                    'TwoPayment: No invoice ID in order creation response - Order ' . $this->module->currentOrder,
+                    'TwoPayment: No invoice ID in order creation response - attempt ' . $attempt_token,
                     2,
                     null,
-                    'Order',
-                    $this->module->currentOrder
+                    'Cart',
+                    $cart->id
                 );
             }
             
@@ -234,13 +264,35 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                 'two_order_reference' => $response['merchant_reference'],
                 'two_order_state' => $response['state'],
                 'two_order_status' => $response['status'],
-                'two_day_on_invoice' => (string)$this->module->getSelectedPaymentTerm(), // Selected payment term
-                'two_payment_term_type' => Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'), // Term type (STANDARD or EOM)
+                'two_day_on_invoice' => $resolved_terms['two_day_on_invoice'],
+                'two_payment_term_type' => $resolved_terms['two_payment_term_type'],
                 'two_invoice_url' => $response['invoice_url'],
                 'two_invoice_id' => $invoice_id,
             );
 
-            $this->module->setTwoOrderPaymentData($this->module->currentOrder, $payment_data);
+            $attempt_data = array_merge($payment_data, array(
+                'id_cart' => (int)$cart->id,
+                'id_customer' => (int)$customer->id,
+                'id_order' => null,
+                'customer_secure_key' => $customer->secure_key,
+                'merchant_order_id' => $merchant_order_id,
+                'cart_snapshot_hash' => $cart_snapshot_hash,
+                'order_create_idempotency_key' => $idempotency_key,
+                'status' => 'CREATED',
+            ));
+
+            if (!$this->module->setTwoCheckoutAttempt($attempt_token, $attempt_data)) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Failed to persist checkout attempt ' . $attempt_token . ' for cart ' . $cart->id,
+                    3
+                );
+                if (isset($response['id']) && $response['id']) {
+                    // Best effort cleanup when local attempt persistence fails.
+                    $this->module->cancelTwoOrderBestEffort((string)$response['id'], 'attempt_persist_failed');
+                }
+                $this->errors[] = $this->module->l('Temporary checkout issue. Please try again.');
+                $this->redirectWithNotifications('index.php?controller=order');
+            }
 
             // Fraud Verification Skip (Must be enabled by Two on request)
             // If merchant has set fraud_verification_skip=true in paymentdata, handle accordingly
@@ -249,43 +301,46 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             if ($fraudVerificationSkip) {
                 // Merchant wants to skip fraud verification - validate that Two verified the order
                 $orderState = isset($response['state']) ? strtoupper($response['state']) : '';
+                $validSkipStates = array('VERIFIED', 'CONFIRMED', 'FULFILLED');
                 
-                if ($orderState === 'VERIFIED') {
-                    // Order is verified - skip payment_url redirect and go directly to confirmation
+                if (in_array($orderState, $validSkipStates, true)) {
+                    // Order is verified - skip payment_url redirect and go directly to local confirmation callback
                     PrestaShopLogger::addLog(
-                        'TwoPayment: Fraud verification skipped for order ' . $this->module->currentOrder . ' - Order state is VERIFIED, proceeding to confirmation',
+                        'TwoPayment: Fraud verification skipped for attempt ' . $attempt_token . ' - Order state is ' . $orderState . ', proceeding to confirmation',
                         1,
                         null,
-                        'Order',
-                        $this->module->currentOrder
+                        'Cart',
+                        $cart->id
                     );
-                    
-                    // Update order status to "Two: Verified - Ready for Fulfillment"
-                    // This is the correct status for orders that are verified and awaiting fulfillment
-                    $verified_status = Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT');
-                    if (!$verified_status) {
-                        // Fallback to mapped state if custom state doesn't exist
-                        $verified_status = Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP');
-                        if (!$verified_status) {
-                            // Final fallback to payment accepted
-                            $verified_status = Configuration::get('PS_OS_PAYMENT');
-                        }
-                    }
-                    $this->module->changeOrderStatus($this->module->currentOrder, $verified_status);
-                    
-                    // Redirect to order confirmation page
-                    Tools::redirect('index.php?controller=order-confirmation&id_cart=' . $cart->id . '&id_module=' . $this->module->id . '&id_order=' . $this->module->currentOrder . '&key=' . $customer->secure_key);
+
+                    $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'REDIRECTED', array(
+                        'two_order_state' => $response['state'],
+                        'two_order_status' => $response['status'],
+                        'two_day_on_invoice' => $resolved_terms['two_day_on_invoice'],
+                        'two_payment_term_type' => $resolved_terms['two_payment_term_type'],
+                        'two_invoice_url' => isset($response['invoice_url']) ? $response['invoice_url'] : '',
+                        'two_invoice_id' => $invoice_id,
+                    ));
+
+                    Tools::redirect($this->context->link->getModuleLink($this->module->name, 'confirmation', ['attempt_token' => $attempt_token, 'key' => $customer->secure_key], true));
                 } else {
                     // Order is NOT verified but merchant requested to skip verification - this is an error
-                    $this->module->restoreDuplicateCart($this->module->currentOrder, $customer->id);
-                    $this->module->changeOrderStatus($this->module->currentOrder, Configuration::get('PS_TWO_OS_PAYMENT_ERROR_MAP'));
-                    
+                    $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED', array(
+                        'two_order_state' => isset($response['state']) ? $response['state'] : '',
+                        'two_order_status' => isset($response['status']) ? $response['status'] : '',
+                    ));
+
+                    // Best effort provider cleanup
+                    if (isset($response['id']) && $response['id']) {
+                        $this->module->cancelTwoOrderBestEffort((string)$response['id'], 'fraud_skip_state_invalid');
+                    }
+
                     PrestaShopLogger::addLog(
-                        'TwoPayment: Fraud verification skip requested for order ' . $this->module->currentOrder . ' but order state is "' . $orderState . '" (expected VERIFIED). Blocking checkout.',
+                        'TwoPayment: Fraud verification skip requested for attempt ' . $attempt_token . ' but order state is "' . $orderState . '" (expected one of ' . implode(', ', $validSkipStates) . '). Blocking checkout.',
                         3,
                         null,
-                        'Order',
-                        $this->module->currentOrder
+                        'Cart',
+                        $cart->id
                     );
                     
                     // Generic error message - don't expose fraud verification skip details to customer
@@ -295,15 +350,62 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                 }
             } else {
                 // Standard flow - redirect to Two's payment_url for verification
+                $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'REDIRECTED', array(
+                    'two_order_state' => isset($response['state']) ? $response['state'] : '',
+                    'two_order_status' => isset($response['status']) ? $response['status'] : '',
+                    'two_day_on_invoice' => $resolved_terms['two_day_on_invoice'],
+                    'two_payment_term_type' => $resolved_terms['two_payment_term_type'],
+                    'two_invoice_url' => isset($response['invoice_url']) ? $response['invoice_url'] : '',
+                    'two_invoice_id' => $invoice_id,
+                ));
+
+                if (!isset($response['payment_url']) || Tools::isEmpty($response['payment_url'])) {
+                    $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
+                    if (isset($response['id']) && !Tools::isEmpty($response['id'])) {
+                        $cancelled = $this->module->cancelTwoOrderBestEffort((string)$response['id'], 'missing_payment_url');
+                        PrestaShopLogger::addLog(
+                            'TwoPayment: Provider order lifecycle - created_without_redirect for attempt ' . $attempt_token .
+                            ', Two order ' . $response['id'] .
+                            ', cleanup=' . ($cancelled ? 'cancelled' : 'cancel_failed'),
+                            $cancelled ? 2 : 3
+                        );
+                    }
+                    $this->errors[] = $this->module->l('Unable to redirect to payment provider. Please try again.');
+                    $this->redirectWithNotifications('index.php?controller=order');
+                }
+
                 Tools::redirect($response['payment_url']);
             }
         } else {
-            $this->module->restoreDuplicateCart($this->module->currentOrder, $customer->id);
-            $this->module->changeOrderStatus($this->module->currentOrder, Configuration::get('PS_TWO_OS_PAYMENT_ERROR_MAP'));
+            PrestaShopLogger::addLog(
+                'TwoPayment: Two API created response without id for cart ' . $cart->id . ', attempt ' . $attempt_token,
+                3
+            );
             $message = $this->module->l('Something went wrong please contact store owner.');
             $this->errors[] = $message;
             $this->redirectWithNotifications('index.php?controller=order');
         }
+    }
+
+    /**
+     * Redirect checkout flow back to order page with optional user-facing error.
+     *
+     * @param string $message
+     * @param string $logMessage
+     * @param int $severity
+     * @return void
+     */
+    private function failCheckout($message = '', $logMessage = '', $severity = 2)
+    {
+        if (!Tools::isEmpty($logMessage)) {
+            PrestaShopLogger::addLog($logMessage, (int)$severity);
+        }
+        if (!Tools::isEmpty($message)) {
+            $this->errors[] = $message;
+            $this->redirectWithNotifications('index.php?controller=order');
+            return;
+        }
+        Tools::redirect('index.php?controller=order');
     }
 
 }

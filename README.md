@@ -33,6 +33,9 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 - Robust tax rate calculation with fallback validation
 - User-friendly error messages for API validation failures
 - Phone number fallback (phone → phone_mobile)
+- Provider-first checkout finalization (local order created after provider verification)
+- Cart snapshot validation before callback-time local order creation
+- Idempotency key header on provider order creation requests
 
 ## Requirements
 
@@ -171,10 +174,10 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 #### 3. Order Confirmation
 - Customer clicks "Place Order" with Two selected
 - Module verifies Order Intent server-side (defense-in-depth)
-- If valid, PrestaShop order created
-- Two order created via API
-- Payment data saved to database
-- Customer redirected to confirmation page
+- Module creates Two order first (provider-first)
+- If Two rejects, checkout stops and no PrestaShop order is created
+- If Two verifies, module creates PrestaShop order from callback and saves payment data
+- Customer is redirected to native PrestaShop order confirmation page
 
 ### Order Management
 
@@ -325,11 +328,40 @@ twopayment/
 - **TwoOrderIntent**: Order Intent validation (client-side)
 - **TwoCompanySearch**: Company search functionality
 
+## Developer & AI Quickstart
+
+### Start Here
+
+- [AI_CONTEXT.md](AI_CONTEXT.md): AI operating manual (architecture, invariants, pitfalls)
+- [AGENTS.md](AGENTS.md): repository guardrails for any coding agent
+- [tests/README.md](tests/README.md): test coverage and execution details
+- [CHANGELOG.md](CHANGELOG.md): behavior/history reference
+
+Compatibility note:
+- [CLAUDE.md](CLAUDE.md) is a pointer to `AI_CONTEXT.md` for tooling compatibility only.
+
+### Mandatory Invariants
+
+- Never create a local PrestaShop order if Two rejects order creation or verification.
+- Keep provider-first checkout flow and retry idempotency intact.
+- Apply rejection safeguards globally (not country-specific).
+- Keep tax and amount formulas aligned with PrestaShop totals and test expectations.
+- Update translation surfaces (`$this->l`, JS i18n map, `translations/es.php`) for user-facing text changes.
+
+### Minimum Verification Before Commit
+
+```bash
+php -l twopayment.php
+php tests/run.php
+```
+
+If you modified more PHP files, lint each touched file as well.
+
 ## API Integration
 
 ### Endpoints Used
 - `/v1/merchant/verify_api_key` - API key validation
-- `/v1/order/intent` - Order Intent check
+- `/v1/order_intent` - Order Intent check
 - `/v1/order` - Order creation
 - `/v1/order/{id}` - Order updates, refunds
 - `/v1/invoice/{id}/upload` - Invoice upload initiation

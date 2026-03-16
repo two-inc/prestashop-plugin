@@ -787,6 +787,14 @@
     font-weight: 600;
 }
 
+/* Admin order view payment terms must stay visible (separate from checkout animation class) */
+.two-admin-payment-terms {
+    color: #059669;
+    font-weight: 600;
+    opacity: 1;
+    transform: none;
+}
+
 /* Order State Styles */
 .two-order-state {
     display: inline-block;

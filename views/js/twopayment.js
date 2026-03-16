@@ -6,13 +6,72 @@
 // CRITICAL FIX: Ensure jQuery is available before executing
 (function() {
     'use strict';
-    
+    let localFallbackAttempted = false;
+
+    function getLocalJQueryCandidates() {
+        const candidates = [];
+        const base = (
+            window.prestashop &&
+            window.prestashop.urls &&
+            window.prestashop.urls.base_url
+        ) ? window.prestashop.urls.base_url : '/';
+
+        const normalizedBase = base.endsWith('/') ? base : (base + '/');
+        const versions = ['3.7.1', '3.6.0', '3.5.1', '2.2.4', '1.11.0'];
+
+        versions.forEach(function(version) {
+            candidates.push(normalizedBase + 'js/jquery/jquery-' + version + '.min.js');
+            candidates.push(normalizedBase + 'js/jquery/jquery-' + version + '.js');
+        });
+
+        return candidates;
+    }
+
+    function loadScriptSequentially(urls, done) {
+        if (!urls.length) {
+            done(false);
+            return;
+        }
+
+        const url = urls.shift();
+        const script = document.createElement('script');
+        script.src = url;
+        script.async = false;
+        script.onload = function() {
+            done(true);
+        };
+        script.onerror = function() {
+            loadScriptSequentially(urls, done);
+        };
+        document.head.appendChild(script);
+    }
+
+    function ensureLocalJQueryFallback(callback) {
+        if (localFallbackAttempted) {
+            callback();
+            return;
+        }
+
+        localFallbackAttempted = true;
+        loadScriptSequentially(getLocalJQueryCandidates(), function() {
+            callback();
+        });
+    }
+
     // Wait for jQuery to be available (with timeout)
     function waitForJQuery(callback, maxAttempts = 50) {
         if (typeof jQuery !== 'undefined' && typeof $ !== 'undefined') {
             // jQuery is available, proceed
             callback();
         } else if (maxAttempts > 0) {
+            if (maxAttempts === 25 && !localFallbackAttempted) {
+                ensureLocalJQueryFallback(function() {
+                    setTimeout(function() {
+                        waitForJQuery(callback, maxAttempts - 1);
+                    }, 100);
+                });
+                return;
+            }
             // jQuery not yet available, wait and retry
             setTimeout(function() {
                 waitForJQuery(callback, maxAttempts - 1);
@@ -42,10 +101,14 @@
     // DEFENSIVE: Retry initialization if DOM isn't ready
     function initializeTwoPayment() {
         try {
+            if (window.TwoCheckoutManager_Instance && typeof window.TwoCheckoutManager_Instance.cleanup === 'function') {
+                window.TwoCheckoutManager_Instance.cleanup();
+            }
+
             // Initialize the checkout manager with configuration
             const checkoutManager = new TwoCheckoutManager({
                 companySearchEnabled: twopayment.company_name_search === '1',
-                orderIntentEnabled: twopayment.enable_order_intent === '1',
+                orderIntentEnabled: true,
                 checkoutHost: twopayment.checkout_host,
                 orderIntentUrl: twopayment.order_intent_url,
                 ajaxToken: twopayment.ajax_token,
@@ -64,9 +127,13 @@
             setTimeout(() => {
                 try {
                     if (typeof TwoCheckoutManager !== 'undefined') {
+                        if (window.TwoCheckoutManager_Instance && typeof window.TwoCheckoutManager_Instance.cleanup === 'function') {
+                            window.TwoCheckoutManager_Instance.cleanup();
+                        }
+
                         const checkoutManager = new TwoCheckoutManager({
                             companySearchEnabled: twopayment.company_name_search === '1',
-                            orderIntentEnabled: twopayment.enable_order_intent === '1',
+                            orderIntentEnabled: true,
                             checkoutHost: twopayment.checkout_host,
                             orderIntentUrl: twopayment.order_intent_url,
                             ajaxToken: twopayment.ajax_token,
@@ -84,32 +151,12 @@
     
     // Initialize immediately
     initializeTwoPayment();
-    
-    // ADDITIONAL COMPATIBILITY: Listen for dynamic content changes (some themes load checkout content via AJAX)
-    if (typeof MutationObserver !== 'undefined') {
-        const observer = new MutationObserver((mutations) => {
-            let shouldReinit = false;
-            mutations.forEach((mutation) => {
-                if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
-                    for (let node of mutation.addedNodes) {
-                        if (node.nodeType === 1 && 
-                            (node.querySelector && 
-                             (node.querySelector('.payment-options') || 
-                              node.querySelector('.js-address-form')))) {
-                            shouldReinit = true;
-                            break;
-                        }
-                    }
-                }
-            });
-            
-            if (shouldReinit && typeof TwoCheckoutManager !== 'undefined' && !window.TwoCheckoutManager_Instance) {
-                setTimeout(initializeTwoPayment, 100);
-            }
-        });
-        
-        observer.observe(document.body, { childList: true, subtree: true });
-    }
+
+    window.addEventListener('beforeunload', function() {
+        if (window.TwoCheckoutManager_Instance && typeof window.TwoCheckoutManager_Instance.cleanup === 'function') {
+            window.TwoCheckoutManager_Instance.cleanup();
+        }
+    });
         }); 
     }); 
 })(); 

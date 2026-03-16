@@ -158,7 +158,8 @@ class TwoFieldValidation {
     showCompanyFieldError() {
         this.clearCompanyFieldError();
         
-        const errorMessage = 'Company name is required for business accounts.';
+        const errorMessage = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_name_required_business) ||
+            'Company name is required for business accounts.';
         const errorElement = $(`<div class="alert alert-danger company-field-error" role="alert">${errorMessage}</div>`);
         
         // Insert error message after the company field

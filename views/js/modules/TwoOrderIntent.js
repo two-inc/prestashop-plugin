@@ -17,6 +17,34 @@ class TwoOrderIntent {
         this.checkIntervalId = null;
         this.lastCompany = null;
     }
+
+    t(key, fallback) {
+        if (window.twopayment && window.twopayment.i18n && window.twopayment.i18n[key]) {
+            return window.twopayment.i18n[key];
+        }
+        return fallback;
+    }
+
+    buildPublicApiBeforeSend() {
+        return function (xhr) {
+            const blockedHeaders = {
+                'authorization': true,
+                'proxy-authorization': true,
+                'x-api-key': true
+            };
+            const originalSetRequestHeader = xhr && xhr.setRequestHeader ? xhr.setRequestHeader.bind(xhr) : null;
+            if (!originalSetRequestHeader) {
+                return;
+            }
+            xhr.setRequestHeader = function (name, value) {
+                const normalized = String(name || '').toLowerCase();
+                if (blockedHeaders[normalized]) {
+                    return;
+                }
+                originalSetRequestHeader(name, value);
+            };
+        };
+    }
     
     shouldRunOrderIntent() {
         if (!this.config.enabled) return false;
@@ -43,7 +71,18 @@ class TwoOrderIntent {
                 // Backend returns status codes: 'no_company', 'incomplete_company' if needed
                 return this.fetchOrderIntentPayload(formData);
             })
-            .then(payload => this.callTwoOrderIntent(payload))
+            .then(payload => {
+                const payloadCompany = (
+                    payload &&
+                    payload.buyer &&
+                    payload.buyer.company &&
+                    payload.buyer.company.company_name
+                ) ? String(payload.buyer.company.company_name).trim() : '';
+                if (payloadCompany) {
+                    this.lastCompany = payloadCompany;
+                }
+                return this.callTwoOrderIntent(payload);
+            })
             .then(result => this.processResult(result))
             .catch(error => this.handleError(error))
             .finally(() => { this.isProcessing = false; });
@@ -72,8 +111,9 @@ class TwoOrderIntent {
                 try { sessionStorage.removeItem('two_country_changed'); } catch (e) {}
             }
 
-            // If fields are empty (e.g., only payment step visible), try cookie fallback
-            if ((!company || !companyid) && window.twopayment && window.twopayment.order_intent_url && window.twopayment.ajax_token) {
+            // Only use cookie fallback when BOTH values are missing (e.g., payment step with no address form fields).
+            // If one value exists and the other is missing, keep form values as-is to avoid stale mixed company/companyid pairs.
+            if ((!company && !companyid) && window.twopayment && window.twopayment.order_intent_url && window.twopayment.ajax_token) {
                 $.ajax({
                     url: window.twopayment.order_intent_url,
                     type: 'POST',
@@ -82,22 +122,28 @@ class TwoOrderIntent {
                     timeout: 8000
                 }).done((res) => {
                     if (res && res.success) {
-                        formData.company = company || (res.company || '');
-                        formData.companyid = companyid || (res.companyid || '');
-                        // If stored company country mismatches address country or country changed, invalidate stored company
+                        formData.company = (res.company || '');
+                        formData.companyid = (res.companyid || '');
+                        // If stored company country/address mismatches current address context, invalidate stored company
                         const addressCountryIso = this.getCurrentAddressCountryISO();
                         const storedCountryMismatch = res.country && addressCountryIso && res.country.toUpperCase() !== addressCountryIso.toUpperCase();
-                        if (countryChanged || storedCountryMismatch) {
+                        const currentAddressId = this.getCurrentAddressId();
+                        const storedAddressId = res.address_id ? parseInt(res.address_id, 10) : 0;
+                        const storedAddressMismatch = storedAddressId > 0 && currentAddressId > 0 && storedAddressId !== currentAddressId;
+                        if (countryChanged || storedCountryMismatch || storedAddressMismatch) {
                             // DEBUG: Log country change details for troubleshooting
-                            console.log('Two Order Intent: Country change detected.', {
+                            console.log('Two Order Intent: Invalidating stored company context.', {
                                 countryChanged: countryChanged,
                                 storedCountryMismatch: storedCountryMismatch,
+                                storedAddressMismatch: storedAddressMismatch,
                                 storedCompanyCountry: res.country,
+                                storedAddressId: storedAddressId,
+                                currentAddressId: currentAddressId,
                                 currentAddressCountry: addressCountryIso,
                                 invalidatingCompany: res.company
                             });
-                            formData.company = company; // keep whatever is in the field (likely empty)
-                            formData.companyid = companyid;
+                            formData.company = '';
+                            formData.companyid = '';
                         }
                         // Persist last company for messaging
                         this.lastCompany = formData.company;
@@ -105,17 +151,19 @@ class TwoOrderIntent {
                         formData.company = company;
                         formData.companyid = companyid;
                     }
-                    const addressDeliveryField = document.querySelector("input[name='id_address_delivery']");
-                    if (addressDeliveryField) {
-                        formData.id_address_delivery = addressDeliveryField.value;
+                    const selectedAddressId = this.getCurrentAddressId();
+                    if (selectedAddressId > 0) {
+                        formData.id_address_invoice = selectedAddressId;
+                        formData.id_address_delivery = selectedAddressId;
                     }
                     resolve(formData);
                 }).fail(() => {
                     formData.company = company;
                     formData.companyid = companyid;
-                    const addressDeliveryField = document.querySelector("input[name='id_address_delivery']");
-                    if (addressDeliveryField) {
-                        formData.id_address_delivery = addressDeliveryField.value;
+                    const selectedAddressId = this.getCurrentAddressId();
+                    if (selectedAddressId > 0) {
+                        formData.id_address_invoice = selectedAddressId;
+                        formData.id_address_delivery = selectedAddressId;
                     }
                     resolve(formData);
                 });
@@ -124,9 +172,10 @@ class TwoOrderIntent {
             formData.company = company;
             formData.companyid = companyid;
             this.lastCompany = company;
-            const addressDeliveryField = document.querySelector("input[name='id_address_delivery']");
-            if (addressDeliveryField) {
-                formData.id_address_delivery = addressDeliveryField.value;
+            const selectedAddressId = this.getCurrentAddressId();
+            if (selectedAddressId > 0) {
+                formData.id_address_invoice = selectedAddressId;
+                formData.id_address_delivery = selectedAddressId;
             }
             resolve(formData);
         });
@@ -180,6 +229,49 @@ class TwoOrderIntent {
         return '';
     }
 
+    getCurrentAddressId() {
+        const checkedAddressSelectors = [
+            "input[name='id_address_invoice']:checked",
+            "input[name='id_address_delivery']:checked"
+        ];
+        for (const selector of checkedAddressSelectors) {
+            const field = document.querySelector(selector);
+            if (field && field.value) {
+                const parsed = parseInt(field.value, 10);
+                if (parsed > 0) {
+                    return parsed;
+                }
+            }
+        }
+
+        const addressForm = document.querySelector('.js-address-form form[data-id-address]');
+        if (addressForm) {
+            const attrValue = addressForm.getAttribute('data-id-address');
+            const parsed = parseInt(attrValue || '0', 10);
+            if (parsed > 0) {
+                return parsed;
+            }
+        }
+
+        const selectors = [
+            "input[name='id_address_invoice']",
+            "input[name='id_address_delivery']",
+            "input[name='id_address']"
+        ];
+
+        for (const selector of selectors) {
+            const field = document.querySelector(selector);
+            if (field && field.value) {
+                const parsed = parseInt(field.value, 10);
+                if (parsed > 0) {
+                    return parsed;
+                }
+            }
+        }
+
+        return 0;
+    }
+
     fetchOrderIntentPayload(formData) {
         return new Promise((resolve, reject) => {
             $.ajax({
@@ -209,9 +301,12 @@ class TwoOrderIntent {
             $.ajax({
                 url: (window.twopayment && window.twopayment.checkout_host ? window.twopayment.checkout_host : '') + '/v1/order_intent',
                 type: 'POST',
+                crossDomain: true,
                 dataType: 'json',
                 contentType: 'application/json',
                 data: JSON.stringify(payload),
+                xhrFields: { withCredentials: false },
+                beforeSend: this.buildPublicApiBeforeSend(),
                 timeout: 15000,
                 success: (response) => {
                     // Normalize to previous result shape
@@ -231,12 +326,14 @@ class TwoOrderIntent {
 
     processResult(response) {
         if (!response || typeof response !== 'object') {
-            return { success: false, approved: false, message: 'Invalid response from server' };
+            return { success: false, approved: false, message: this.t('invalid_response_from_server', 'Invalid response from server') };
         }
         const result = {
             success: !!response.success,
             approved: !!response.approved,
-            message: response.message || (response.approved ? 'Your invoice with Two is likely to be accepted' : 'Your invoice with Two cannot be approved at this time'),
+            message: response.message || (response.approved
+                ? this.t('invoice_likely_accepted', 'Your invoice with Two is likely to be accepted')
+                : this.t('invoice_cannot_be_approved', 'Your invoice with Two cannot be approved at this time')),
             rawResponse: response.rawResponse || response
         };
         const companyField = document.querySelector("input[name='company']");
@@ -245,9 +342,11 @@ class TwoOrderIntent {
         }
         // Inject company into message immediately to ensure UI gets the contextual string
         if (this.lastCompany && typeof this.lastCompany === 'string' && this.lastCompany.trim().length > 0) {
+            const approvedTemplate = this.t('invoice_likely_accepted_for', 'Your invoice with Two is likely to be accepted for %s');
+            const declinedTemplate = this.t('invoice_cannot_be_approved_for', 'Your invoice with Two cannot be approved at this time for %s');
             result.message = result.approved
-                ? `Your invoice with Two is likely to be accepted for ${this.lastCompany}`
-                : `Your invoice with Two cannot be approved at this time for ${this.lastCompany}`;
+                ? approvedTemplate.replace('%s', this.lastCompany)
+                : declinedTemplate.replace('%s', this.lastCompany);
         }
         this.lastResult = result;
         this.updateUI(result);
@@ -256,8 +355,10 @@ class TwoOrderIntent {
 
     getErrorMessage(errorString) {
         // Default fallback message (uses i18n)
-        const defaultMessage = window.twopayment?.i18n?.invoice_declined || 
-            'Your invoice with Two cannot be approved at this time. Please select an alternative payment method.';
+        const defaultMessage = this.t(
+            'invoice_declined',
+            'Your invoice with Two cannot be approved at this time. Please select an alternative payment method.'
+        );
             
         if (!errorString) {
             return defaultMessage;
@@ -267,39 +368,48 @@ class TwoOrderIntent {
         // Phone number validation errors (priority - specific error type)
         if (error.includes('invalid phone number') || 
             (error.includes('phone_number') && error.includes('value_error'))) {
-            return window.twopayment?.i18n?.invalid_phone_number || 
-                'The phone number in your billing address appears to be invalid. Please go back and ensure you have entered a valid phone number for your country.';
+            return this.t(
+                'invalid_phone_number',
+                'The phone number in your billing address appears to be invalid. Please go back and ensure you have entered a valid phone number for your country.'
+            );
         }
         
         // Email validation errors
         if (error.includes('invalid email') || 
             (error.includes('email') && error.includes('value_error'))) {
-            return window.twopayment?.i18n?.invalid_email || 
-                'The email address provided is invalid. Please check your email and try again.';
+            return this.t('invalid_email', 'The email address provided is invalid. Please check your email and try again.');
         }
         
         // Organization/company errors
         if (error.includes('organization_number') || error.includes('organization number')) {
-            return window.twopayment?.i18n?.company_incomplete || 
-                'Company information is incomplete. Go back to your billing address and select your company from the search results.';
+            return this.t(
+                'company_incomplete',
+                'Company information is incomplete. Go back to your billing address and select your company from the search results.'
+            );
         }
         
         // General validation errors
         if (error.includes('validation error') || error.includes('value_error')) {
-            return window.twopayment?.i18n?.validation_error || 
-                'Some of the information provided is invalid. Please check your billing address details and try again.';
+            return this.t(
+                'validation_error',
+                'Some of the information provided is invalid. Please check your billing address details and try again.'
+            );
         }
         
         // Invalid data errors
         if (error.includes('invalid')) {
-            return window.twopayment?.i18n?.invalid_company || 
-                'The company information provided is not valid. Go back to your billing address and select your company from the search results.';
+            return this.t(
+                'invalid_company',
+                'The company information provided is not valid. Go back to your billing address and select your company from the search results.'
+            );
         }
         
         // Not found errors
         if (error.includes('not found') || error.includes('404')) {
-            return window.twopayment?.i18n?.company_verify_failed || 
-                'Company information could not be verified. Go back to your billing address and select your company from the search results.';
+            return this.t(
+                'company_verify_failed',
+                'Company information could not be verified. Go back to your billing address and select your company from the search results.'
+            );
         }
         
         return defaultMessage;
@@ -322,8 +432,8 @@ class TwoOrderIntent {
     }
 
     updateUI(result) {
-        const $twoPaymentOption = $('.payment-option').filter(function() {
-            return $(this).find('[data-module-name="twopayment"]').length > 0;
+        const $twoPaymentOption = $('.payment-option').filter((_, element) => {
+            return $(element).find('[data-module-name="twopayment"]').length > 0;
         });
         if ($twoPaymentOption.length === 0) return;
         let $messageContainer = $twoPaymentOption.find('.two-order-intent-message');
@@ -334,10 +444,10 @@ class TwoOrderIntent {
         let messageText = result.message;
         if (this.lastCompany && typeof this.lastCompany === 'string' && this.lastCompany.trim().length > 0) {
             if (result.approved) {
-                const t = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.invoice_likely_accepted_for) || 'Your invoice with Two is likely to be accepted for %s';
+                const t = this.t('invoice_likely_accepted_for', 'Your invoice with Two is likely to be accepted for %s');
                 messageText = t.replace('%s', this.lastCompany);
             } else {
-                const t = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.invoice_cannot_be_approved_for) || 'Your invoice with Two cannot be approved at this time for %s';
+                const t = this.t('invoice_cannot_be_approved_for', 'Your invoice with Two cannot be approved at this time for %s');
                 messageText = t.replace('%s', this.lastCompany);
             }
         }
@@ -345,7 +455,7 @@ class TwoOrderIntent {
         $messageContainer
             .removeClass('approved declined loading')
             .addClass(result.approved ? 'approved' : 'declined')
-            .html(messageText);
+            .text(messageText);
         if (result.approved) {
             $twoPaymentOption.removeClass('disabled');
             $twoPaymentOption.find('input[type="radio"]').prop('disabled', false);
@@ -388,9 +498,11 @@ class TwoOrderIntent {
     }
 
     showOrderPreventionMessage() {
-        const message = this.lastResult ? this.lastResult.message : 'Please resolve the payment issue before continuing.';
-        const $twoPaymentOption = $('.payment-option').filter(function() {
-            return $(this).find('[data-module-name="twopayment"]').length > 0;
+        const message = this.lastResult
+            ? this.lastResult.message
+            : this.t('resolve_payment_issue_before_continuing', 'Please resolve the payment issue before continuing.');
+        const $twoPaymentOption = $('.payment-option').filter((_, element) => {
+            return $(element).find('[data-module-name="twopayment"]').length > 0;
         });
         $twoPaymentOption.addClass('pulse-highlight');
         setTimeout(() => { $twoPaymentOption.removeClass('pulse-highlight'); }, 2000);
@@ -404,8 +516,8 @@ class TwoOrderIntent {
     startMonitoring() {
         if (this.checkIntervalId) this.stopMonitoring();
         this.checkIntervalId = setInterval(() => {
-            const $twoPaymentOption = $('.payment-option').filter(function() {
-                return $(this).find('[data-module-name="twopayment"]').length > 0;
+            const $twoPaymentOption = $('.payment-option').filter((_, element) => {
+                return $(element).find('[data-module-name="twopayment"]').length > 0;
             });
             if ($twoPaymentOption.length > 0 && $twoPaymentOption.is(':visible')) {
                 // Check for country change - if country changed, user needs to re-select company
@@ -417,8 +529,11 @@ class TwoOrderIntent {
                     try { sessionStorage.removeItem('two_country_changed'); } catch (e) {}
                     const $msg = $twoPaymentOption.find('.two-order-intent-message');
                     if ($msg.length > 0) {
-                        const t = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.select_company_to_use_two) || 'To pay with Two, go back to your billing address and search for your company name. Select your company from the results to verify your business.';
-                        $msg.removeClass('approved declined loading').html(t).show();
+                        const t = this.t(
+                            'select_company_to_use_two',
+                            'To pay with Two, go back to your billing address and search for your company name. Select your company from the results to verify your business.'
+                        );
+                        $msg.removeClass('approved declined loading').text(t).show();
                     }
                     return;
                 }
@@ -439,8 +554,12 @@ class TwoOrderIntent {
     }
 
     getLastResult() { return this.lastResult; }
-    reset() { this.lastResult = null; this.isProcessing = false; this.stopMonitoring(); }
+    reset() {
+        this.lastResult = null;
+        this.lastCompany = null;
+        this.isProcessing = false;
+        this.stopMonitoring();
+    }
 }
 
 window.TwoOrderIntent = TwoOrderIntent;
-
