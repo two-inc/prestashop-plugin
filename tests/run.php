@@ -111,6 +111,7 @@ final class OrderBuilderSpec
         self::testShouldBlockTwoAttemptConfirmationByStatusOnlyForCancelled();
         self::testIsTwoAttemptStatusTerminalMatchesCancelledGuard();
         self::testGetTwoCancelledOrderStatusIdUsesConfiguredFallbackChain();
+        self::testHasTwoProviderOrderMappingRequiresNonEmptyTwoOrderId();
         self::testSyncLocalOrderStatusFromTwoStateCancelsOnlyWhenProviderCancelled();
         self::testIsTwoOrderCancelledResponseRequires2xxAndCancelledState();
         self::testShouldBlockTwoFulfillmentByTwoStateOnlyForCancelled();
@@ -3497,6 +3498,24 @@ final class OrderBuilderSpec
 
         Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', 0);
         TinyAssert::same(903, $module->getTwoCancelledOrderStatusId());
+    }
+
+    private static function testHasTwoProviderOrderMappingRequiresNonEmptyTwoOrderId(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        TinyAssert::false($module->hasTwoProviderOrderMapping(false));
+        TinyAssert::false($module->hasTwoProviderOrderMapping([]));
+        TinyAssert::false($module->hasTwoProviderOrderMapping([
+            'two_order_id' => '',
+        ]));
+        TinyAssert::false($module->hasTwoProviderOrderMapping([
+            'two_order_id' => '   ',
+        ]));
+        TinyAssert::true($module->hasTwoProviderOrderMapping([
+            'two_order_id' => 'two-order-123',
+        ]));
     }
 
     private static function testSyncLocalOrderStatusFromTwoStateCancelsOnlyWhenProviderCancelled(): void

@@ -140,45 +140,54 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
         }
 
         $orderpaymentdata = $this->module->getTwoOrderPaymentData($id_order);
-        if ($orderpaymentdata && isset($orderpaymentdata['two_order_id'])) {
-            $two_order_id = $orderpaymentdata['two_order_id'];
-            
-            $cancel_response = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/cancel', [], 'POST');
-            $cancel_http_status = isset($cancel_response['http_status']) ? (int)$cancel_response['http_status'] : 0;
+        if (!$this->module->hasTwoProviderOrderMapping($orderpaymentdata)) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Legacy cancel callback missing Two order mapping for order ' . (int)$order->id .
+                '. Local cancellation aborted to preserve provider-first consistency.',
+                3
+            );
+            $message = sprintf($this->module->l('Could not update status to cancelled, please check with Two admin for id %s'), (string)$order->id);
+            $this->errors[] = $message;
+            $this->redirectWithNotifications('index.php?controller=order');
+        }
 
-            $response = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
-            $response_http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
-            $provider_cancelled = $this->module->isTwoOrderCancelledResponse($response, $response_http_status);
+        $two_order_id = (string)$orderpaymentdata['two_order_id'];
 
-            if ($provider_cancelled) {
-                $resolved_terms = $this->module->resolveTwoPaymentTermsFromOrderResponse(
-                    $response,
-                    isset($orderpaymentdata['two_day_on_invoice']) ? (string)$orderpaymentdata['two_day_on_invoice'] : (string)$this->module->getSelectedPaymentTerm(),
-                    isset($orderpaymentdata['two_payment_term_type']) ? $orderpaymentdata['two_payment_term_type'] : Configuration::get('PS_TWO_PAYMENT_TERM_TYPE')
-                );
-                $payment_data = array(
-                    'two_order_id' => $response['id'],
-                    'two_order_reference' => $response['merchant_reference'],
-                    'two_order_state' => $response['state'],
-                    'two_order_status' => $response['status'],
-                    'two_day_on_invoice' => $resolved_terms['two_day_on_invoice'],
-                    'two_invoice_url' => $response['invoice_url'],
-                    'two_payment_term_type' => $resolved_terms['two_payment_term_type'],
-                );
-                $this->module->setTwoOrderPaymentData($order->id, $payment_data);
-            } else {
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Legacy cancel callback could not confirm CANCELLED provider state for order ' . (int)$order->id .
-                    ', Two order ' . $two_order_id .
-                    ', cancel_http=' . $cancel_http_status .
-                    ', fetch_http=' . $response_http_status .
-                    ', provider_state=' . (isset($response['state']) ? (string)$response['state'] : 'unknown'),
-                    2
-                );
-                $message = sprintf($this->module->l('Could not update status to cancelled, please check with Two admin for id %s'), $two_order_id);
-                $this->errors[] = $message;
-                $this->redirectWithNotifications('index.php?controller=order');
-            }
+        $cancel_response = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/cancel', [], 'POST');
+        $cancel_http_status = isset($cancel_response['http_status']) ? (int)$cancel_response['http_status'] : 0;
+
+        $response = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
+        $response_http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
+        $provider_cancelled = $this->module->isTwoOrderCancelledResponse($response, $response_http_status);
+
+        if ($provider_cancelled) {
+            $resolved_terms = $this->module->resolveTwoPaymentTermsFromOrderResponse(
+                $response,
+                isset($orderpaymentdata['two_day_on_invoice']) ? (string)$orderpaymentdata['two_day_on_invoice'] : (string)$this->module->getSelectedPaymentTerm(),
+                isset($orderpaymentdata['two_payment_term_type']) ? $orderpaymentdata['two_payment_term_type'] : Configuration::get('PS_TWO_PAYMENT_TERM_TYPE')
+            );
+            $payment_data = array(
+                'two_order_id' => $response['id'],
+                'two_order_reference' => $response['merchant_reference'],
+                'two_order_state' => $response['state'],
+                'two_order_status' => $response['status'],
+                'two_day_on_invoice' => $resolved_terms['two_day_on_invoice'],
+                'two_invoice_url' => $response['invoice_url'],
+                'two_payment_term_type' => $resolved_terms['two_payment_term_type'],
+            );
+            $this->module->setTwoOrderPaymentData($order->id, $payment_data);
+        } else {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Legacy cancel callback could not confirm CANCELLED provider state for order ' . (int)$order->id .
+                ', Two order ' . $two_order_id .
+                ', cancel_http=' . $cancel_http_status .
+                ', fetch_http=' . $response_http_status .
+                ', provider_state=' . (isset($response['state']) ? (string)$response['state'] : 'unknown'),
+                2
+            );
+            $message = sprintf($this->module->l('Could not update status to cancelled, please check with Two admin for id %s'), $two_order_id);
+            $this->errors[] = $message;
+            $this->redirectWithNotifications('index.php?controller=order');
         }
 
         $this->module->restoreDuplicateCart($order->id, $order->id_customer);
