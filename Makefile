@@ -50,6 +50,11 @@ install: clean
 	@echo "Enabling Two-supported countries and extending carrier coverage..."
 	docker exec $(DB_CONTAINER) mysql -uroot -padmin prestashop -e "\
 		UPDATE ps_country SET active=1 WHERE iso_code IN ('NO','GB','SE','DK','FI','NL','DE'); \
+		INSERT IGNORE INTO ps_module_country (id_module, id_shop, id_country) \
+		  SELECT m.id_module, 1, co.id_country FROM ps_module m \
+		  CROSS JOIN ps_country co \
+		  WHERE m.name='$(MODULE_NAME)' \
+		    AND co.iso_code IN ('NO','GB','SE','DK','FI','NL','DE'); \
 		INSERT IGNORE INTO ps_carrier_zone (id_carrier, id_zone) \
 		  SELECT c.id_carrier, co.id_zone FROM ps_carrier c \
 		  CROSS JOIN ps_country co \
