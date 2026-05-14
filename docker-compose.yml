@@ -1,0 +1,46 @@
+services:
+  db:
+    image: mariadb:10.11
+    container_name: prestashop-db
+    environment:
+      MYSQL_ROOT_PASSWORD: admin
+      MYSQL_DATABASE: prestashop
+    volumes:
+      - prestashop_db:/var/lib/mysql
+    networks:
+      - prestashop
+
+  prestashop:
+    image: ${PRESTASHOP_IMAGE:-prestashop/prestashop:8-apache}
+    container_name: prestashop
+    depends_on:
+      - db
+    ports:
+      - "${PORT:-1235}:80"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      DB_SERVER: db
+      DB_NAME: prestashop
+      DB_USER: root
+      DB_PASSWD: admin
+      PS_DOMAIN: ${PS_DOMAIN:-localhost:1235}
+      PS_INSTALL_AUTO: "1"
+      PS_DEV_MODE: "1"
+      PS_LANGUAGE: en
+      PS_COUNTRY: ${TWO_STORE_COUNTRY:-NO}
+      PS_ALL_LANGUAGES: "0"
+      PS_DEMO_MODE: "0"
+      PS_FOLDER_ADMIN: admin
+      ADMIN_MAIL: admin@two.inc
+      ADMIN_PASSWD: examplepassword123
+    volumes:
+      - .:/var/www/html/modules/twopayment
+    networks:
+      - prestashop
+
+networks:
+  prestashop:
+
+volumes:
+  prestashop_db:

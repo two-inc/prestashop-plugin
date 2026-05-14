@@ -49,3 +49,9 @@ Thumbs.db
 *.mov
 *.wmv
 
+# Local dev
+.env.local
+.frpc.pid
+*.zip
+
+
