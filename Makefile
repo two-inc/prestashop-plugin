@@ -7,11 +7,11 @@
 CONTAINER  := prestashop
 DB_CONTAINER := prestashop-db
 COMPOSE    := docker compose
-PORT       := 1235
+PORT       := 1237
 URL        := http://localhost:$(PORT)/
 
 MODULE_NAME := twopayment
-ADMIN_MAIL  := admin@two.inc
+ADMIN_MAIL  := exampleuser@two.inc
 ADMIN_PASSWD := examplepassword123
 export PORT
 
@@ -37,6 +37,14 @@ install: clean
 	docker exec $(CONTAINER) bash -c "chown -R www-data:www-data /var/www/html/var && chmod -R 775 /var/www/html/var"
 	@echo "Installing module $(MODULE_NAME)..."
 	docker exec $(CONTAINER) bash -c "cd /var/www/html && php -d memory_limit=512M bin/console prestashop:module install $(MODULE_NAME)"
+	@echo "Enabling Two-supported countries and extending carrier coverage..."
+	docker exec $(DB_CONTAINER) mysql -uroot -padmin prestashop -e "\
+		UPDATE ps_country SET active=1 WHERE iso_code IN ('NO','GB','SE','DK','FI','NL','DE'); \
+		INSERT IGNORE INTO ps_carrier_zone (id_carrier, id_zone) \
+		  SELECT c.id_carrier, co.id_zone FROM ps_carrier c \
+		  CROSS JOIN ps_country co \
+		  WHERE c.active=1 AND c.deleted=0 \
+		    AND co.iso_code IN ('NO','GB','SE','DK','FI','NL','DE');"
 	$(MAKE) configure TWO_API_KEY=$(or $(TWO_API_KEY),dummy-dev-key) TWO_ENVIRONMENT=$(TWO_ENVIRONMENT)
 	@./start-proxy.sh --background || true
 	@PROXY_URL=$$(./start-proxy.sh url 2>/dev/null); \
@@ -46,22 +54,21 @@ install: clean
 	echo ""; \
 	echo "========================================="; \
 	echo " PrestaShop store: $(URL)"; \
-	echo " Admin panel:      $(URL)admin"; \
+	echo " Admin panel:      $(URL)admin-dev"; \
 	if [ -n "$$PROXY_URL" ]; then \
 		echo " Proxy store:     $$PROXY_URL/"; \
-		echo " Proxy admin:     $$PROXY_URL/admin"; \
+		echo " Proxy admin:     $$PROXY_URL/admin-dev"; \
 	fi; \
 	echo " Credentials:      $(ADMIN_MAIL) / $(ADMIN_PASSWD)"; \
 	echo "========================================="
 
-## Update Two payment config: make configure TWO_API_KEY=xxx
+## Update Two payment config (writes key + calls verify_api_key so the
+## plugin actually appears at checkout): make configure TWO_API_KEY=xxx
 configure:
-	docker exec $(CONTAINER) php -r " \
-		define('_PS_ADMIN_DIR_', '/var/www/html/admin'); \
-		require '/var/www/html/config/config.inc.php'; \
-		Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', '$(TWO_API_KEY)'); \
-		Configuration::updateValue('PS_TWO_ENVIRONMENT', '$(TWO_ENVIRONMENT)'); \
-		echo 'Two config updated' . PHP_EOL;"
+	docker exec \
+		-e TWO_API_KEY=$(TWO_API_KEY) \
+		-e TWO_ENVIRONMENT=$(TWO_ENVIRONMENT) \
+		$(CONTAINER) php /var/www/html/modules/$(MODULE_NAME)/dev/configure.php
 	docker exec $(CONTAINER) bash -c "rm -rf /var/www/html/var/cache/*"
 
 ## Start PrestaShop containers and FRP proxy
@@ -75,10 +82,10 @@ run:
 	echo ""; \
 	echo "========================================="; \
 	echo " PrestaShop store: $(URL)"; \
-	echo " Admin panel:      $(URL)admin"; \
+	echo " Admin panel:      $(URL)admin-dev"; \
 	if [ -n "$$PROXY_URL" ]; then \
 		echo " Proxy store:     $$PROXY_URL/"; \
-		echo " Proxy admin:     $$PROXY_URL/admin"; \
+		echo " Proxy admin:     $$PROXY_URL/admin-dev"; \
 	fi; \
 	echo " Credentials:      $(ADMIN_MAIL) / $(ADMIN_PASSWD)"; \
 	echo "========================================="

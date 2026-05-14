@@ -16,7 +16,7 @@ services:
     depends_on:
       - db
     ports:
-      - "${PORT:-1235}:80"
+      - "${PORT:-1237}:80"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -24,15 +24,15 @@ services:
       DB_NAME: prestashop
       DB_USER: root
       DB_PASSWD: admin
-      PS_DOMAIN: ${PS_DOMAIN:-localhost:1235}
+      PS_DOMAIN: ${PS_DOMAIN:-localhost:1237}
       PS_INSTALL_AUTO: "1"
       PS_DEV_MODE: "1"
       PS_LANGUAGE: en
       PS_COUNTRY: ${TWO_STORE_COUNTRY:-NO}
       PS_ALL_LANGUAGES: "0"
       PS_DEMO_MODE: "0"
-      PS_FOLDER_ADMIN: admin
-      ADMIN_MAIL: admin@two.inc
+      PS_FOLDER_ADMIN: admin-dev
+      ADMIN_MAIL: exampleuser@two.inc
       ADMIN_PASSWD: examplepassword123
     volumes:
       - .:/var/www/html/modules/twopayment

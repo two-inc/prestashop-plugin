@@ -13,7 +13,7 @@ fi
 
 PROXY_USER="${PROXY_USER:-$USER}"
 export HOST="${HOST:-127.0.0.1}"
-export PORT="${PORT:-1235}"
+export PORT="${PORT:-1237}"
 PIDFILE=".frpc.pid"
 
 USER_LOWER=$(echo "${PROXY_USER}" | tr '[:upper:]' '[:lower:]')
