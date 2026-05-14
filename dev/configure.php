@@ -56,9 +56,14 @@ Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', $apiKey);
 Configuration::updateValue('PS_TWO_ENVIRONMENT', $pluginEnv);
 
 // --- Verify the API key against Two so merchant_short_name gets populated. ---
-$verifyHost = ($pluginEnv === 'production')
-    ? 'https://api.two.inc'
-    : 'https://api.sandbox.two.inc';
+// TWO_API_BASE_URL is set by the Makefile from gcloud identity:
+// @two.inc users hit api.staging.two.inc, external devs hit api.sandbox.two.inc.
+// Production builds always use api.two.inc regardless.
+if ($pluginEnv === 'production') {
+    $verifyHost = 'https://api.two.inc';
+} else {
+    $verifyHost = getenv('TWO_API_BASE_URL') ?: 'https://api.sandbox.two.inc';
+}
 $url = $verifyHost . '/v1/merchant/verify_api_key?client=PS&client_v=make-configure';
 
 $ch = curl_init();

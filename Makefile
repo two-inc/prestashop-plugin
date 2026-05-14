@@ -15,6 +15,14 @@ ADMIN_MAIL  := exampleuser@two.inc
 ADMIN_PASSWD := examplepassword123
 export PORT
 
+# Internal Two devs (@two.inc gcloud account) point at staging; everyone else
+# at sandbox. Mirrors the Magento plugin convention. Override either via
+# .env.local or `make ... TWO_ENV=...`.
+TWO_ENV              := $(shell gcloud config get-value account 2>/dev/null | grep -q '@two\.inc$$' && echo staging || echo sandbox)
+TWO_API_BASE_URL     ?= https://api.$(TWO_ENV).two.inc
+# Plugin admin config only exposes 'sandbox' vs 'production' â€” TWO_ENV
+# selects the API URL the dev loop hits, TWO_ENVIRONMENT selects the
+# plugin's admin-side mode.
 TWO_ENVIRONMENT      ?= sandbox
 TWO_STORE_COUNTRY    ?= NO
 export TWO_STORE_COUNTRY
@@ -68,6 +76,7 @@ configure:
 	docker exec \
 		-e TWO_API_KEY=$(TWO_API_KEY) \
 		-e TWO_ENVIRONMENT=$(TWO_ENVIRONMENT) \
+		-e TWO_API_BASE_URL=$(TWO_API_BASE_URL) \
 		$(CONTAINER) php /var/www/html/modules/$(MODULE_NAME)/dev/configure.php
 	docker exec $(CONTAINER) bash -c "rm -rf /var/www/html/var/cache/*"
 
