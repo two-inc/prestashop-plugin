@@ -20,6 +20,8 @@ export PORT
 # .env.local or `make ... TWO_ENV=...`.
 TWO_ENV              := $(shell gcloud config get-value account 2>/dev/null | grep -q '@two\.inc$$' && echo staging || echo sandbox)
 TWO_API_BASE_URL     ?= https://api.$(TWO_ENV).two.inc
+TWO_PORTAL_BASE_URL  ?= https://portal.$(TWO_ENV).two.inc
+export TWO_API_BASE_URL TWO_PORTAL_BASE_URL
 # Plugin admin config only exposes 'sandbox' vs 'production' â€” TWO_ENV
 # selects the API URL the dev loop hits, TWO_ENVIRONMENT selects the
 # plugin's admin-side mode.
