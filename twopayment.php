@@ -5154,14 +5154,11 @@ class Twopayment extends PaymentModule
 
     public function getTwoCheckoutHostUrl()
     {
-        $environment = Configuration::get('PS_TWO_ENVIRONMENT');
-        
-        if ($environment === 'production') {
-            return 'https://api.two.inc';
-        } else {
-            // Development environment (default)
-            return 'https://api.sandbox.two.inc';
+        $override = $this->getDevEnvOverride('TWO_API_BASE_URL');
+        if ($override !== null) {
+            return $override;
         }
+        return $this->getTwoCheckoutHostUrlForEnvironment(Configuration::get('PS_TWO_ENVIRONMENT'));
     }
 
     /**
@@ -5169,7 +5166,32 @@ class Twopayment extends PaymentModule
      */
     private function getTwoCheckoutHostUrlForEnvironment($environment)
     {
+        $override = $this->getDevEnvOverride('TWO_API_BASE_URL');
+        if ($override !== null) {
+            return $override;
+        }
         return ($environment === 'production') ? 'https://api.two.inc' : 'https://api.sandbox.two.inc';
+    }
+
+    /**
+     * Returns an env-var-supplied URL when PrestaShop is in dev mode (_PS_MODE_DEV_),
+     * or null otherwise. Lets internal devs route the plugin at staging / a local
+     * mock without exposing a staging mode in the merchant admin UI. Mirrors the
+     * convention used by magento-plugin (Model/Config/Repository::getCheckoutApiUrl).
+     *
+     * @param string $name Env var name (e.g. TWO_API_BASE_URL)
+     * @return string|null
+     */
+    private function getDevEnvOverride($name)
+    {
+        if (!defined('_PS_MODE_DEV_') || !_PS_MODE_DEV_) {
+            return null;
+        }
+        $value = getenv($name);
+        if ($value === false || $value === '') {
+            return null;
+        }
+        return $value;
     }
 
     /**
@@ -5229,14 +5251,15 @@ class Twopayment extends PaymentModule
      */
     public function getTwoPortalUrl()
     {
+        $override = $this->getDevEnvOverride('TWO_PORTAL_BASE_URL');
+        if ($override !== null) {
+            return $override;
+        }
         $environment = Configuration::get('PS_TWO_ENVIRONMENT');
-        
         if ($environment === 'production') {
             return 'https://portal.two.inc';
-        } else {
-            // Development environment (default)
-            return 'https://portal.sandbox.two.inc';
         }
+        return 'https://portal.sandbox.two.inc';
     }
 
     /**
