@@ -10,6 +10,7 @@
             <a class="list-group-item {if $twotabvalue == 1}active{/if}" href="#general-settings" aria-controls="general-settings" role="tab" data-toggle="tab">{l s='General Settings' mod='twopayment'}</a>
             <a class="list-group-item {if $twotabvalue == 2}active{/if}" href="#other-settings" aria-controls="other-settings" role="tab" data-toggle="tab">{l s='Other Settings' mod='twopayment'}</a>
             <a class="list-group-item {if $twotabvalue == 3}active{/if}" href="#order-status-settings" aria-controls="order-status-settings" role="tab" data-toggle="tab">{l s='Order Status Settings' mod='twopayment'}</a>
+            <a class="list-group-item {if $twotabvalue == 4}active{/if}" href="#plugin-info" aria-controls="plugin-info" role="tab" data-toggle="tab">{l s='Plugin Information' mod='twopayment'}</a>
         </div>
     </div>
     <div class="col-lg-10 col-md-9">
@@ -47,6 +48,9 @@
             <div id="order-status-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 3}active{/if}">
                 {$renderTwoOrderStatusForm nofilter}
             </div>
+            <div id="plugin-info" role="tabpanel" class="tab-pane {if $twotabvalue == 4}active{/if}">
+                {$renderTwoPluginInfo nofilter}
+            </div>
         </div>
     </div>
     <div class="clearfix"></div>
@@ -57,6 +61,34 @@
             $('#two-tabs a').click(function () {
                 $('#two-tabs a').removeClass('active');
                 $(this).addClass('active');
+            });
+            
+            // Payment Term Type - Dynamic show/hide of term options
+            // PHP 7.1+ compatible: Using ES5 syntax (no arrow functions)
+            function updatePaymentTermsVisibility() {
+                var termType = $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]:checked').val();
+                
+                if (termType === 'EOM') {
+                    // EOM: Only show 30, 45, 60 day options
+                    $('.two-term-standard').closest('.form-group').hide();
+                    $('.two-term-both').closest('.form-group').show();
+                    $('#two-payment-terms-desc-standard').hide();
+                    $('#two-payment-terms-desc-eom').show();
+                } else {
+                    // STANDARD: Show all options (7, 15, 20, 30, 45, 60, 90)
+                    $('.two-term-standard').closest('.form-group').show();
+                    $('.two-term-both').closest('.form-group').show();
+                    $('#two-payment-terms-desc-standard').show();
+                    $('#two-payment-terms-desc-eom').hide();
+                }
+            }
+            
+            // Run on page load
+            updatePaymentTermsVisibility();
+            
+            // Run when term type changes
+            $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]').on('change', function() {
+                updatePaymentTermsVisibility();
             });
         });
     </script>
