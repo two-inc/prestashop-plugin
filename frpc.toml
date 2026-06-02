@@ -10,4 +10,4 @@ localPort = {{ .Envs.PORT }}
 name = "{{ .Envs.SUBDOMAIN }}"
 type = "http"
 localIP = "{{ .Envs.HOST }}"
-subdomain = "{{ .Envs.SUBDOMAIN }}"
+customDomains = ["{{ .Envs.FRP_DOMAIN }}"]
