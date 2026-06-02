@@ -5,11 +5,16 @@
 # If no token is provided, attempts to fetch it from GCP Secret Manager
 # (requires an active @two.inc gcloud login).
 
+# Preserve an inline override (e.g. `FRP_ENV=release ./start-proxy.sh`) so
+# sourcing .env.local below doesn't clobber it.
+_FRP_ENV_OVERRIDE="${FRP_ENV}"
+
 if [ -f .env.local ]; then
   set -a
   source .env.local
   set +a
 fi
+FRP_ENV="${_FRP_ENV_OVERRIDE:-${FRP_ENV:-staging}}"
 
 PROXY_USER="${PROXY_USER:-$USER}"
 export HOST="${HOST:-127.0.0.1}"
@@ -20,7 +25,11 @@ USER_LOWER=$(echo "${PROXY_USER}" | tr '[:upper:]' '[:lower:]')
 SANITIZED_USER=$(echo "${USER_LOWER}" | sed -E 's/[^a-z0-9-]+/-/g' | sed -E 's/^-+|-+$//g' | sed -E 's/--+/-/g')
 export SUBDOMAIN="prestashop-${SANITIZED_USER}"
 
-PROXY_URL="https://${SUBDOMAIN}.frp.beta.two.inc"
+# FRP env the tunnel targets (only staging/release are provisioned). The
+# staging/release guard is enforced in start mode below so stop/url still work.
+export FRP_DOMAIN="${SUBDOMAIN}.frp.${FRP_ENV}.two.inc"
+
+PROXY_URL="https://${FRP_DOMAIN}"
 
 # ── stop mode ────────────────────────────────────────────────────────────────
 if [ "$1" = "stop" ]; then
@@ -72,6 +81,15 @@ else
   fi
   export FRP_AUTH_TOKEN
 fi
+
+# Per-env FRP is only provisioned for staging and release (routes/certs/DNS/authz).
+case "${FRP_ENV}" in
+  staging | release) ;;
+  *)
+    echo "FRP tunnels are only supported for staging or release (got FRP_ENV='${FRP_ENV}')"
+    exit 1
+    ;;
+esac
 
 frpc -c frpc.toml &
 FRP_PID=$!
