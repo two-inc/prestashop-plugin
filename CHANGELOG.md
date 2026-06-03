@@ -95,6 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Checkout callback handling now treats canceled attempts as terminal during confirmation, and cancel flow resolves local order linkage via cart fallback to avoid race-driven state mismatches between Two (`CANCELLED`) and PrestaShop.
   - Local order-state sync now force-maps provider `CANCELLED` to the configured PrestaShop cancellation status during confirmation handling and admin provider-sync refresh.
   - Legacy cancel callback no longer sets local cancelled state unless provider order fetch confirms `CANCELLED`, preventing transient local cancel entries when provider cancellation did not complete.
+  - Legacy cancel callback now fail-closes when stored `two_order_id` mapping is missing, preventing local cancellation without a verifiable provider order link.
   - Fulfillment status updates now block/revert when the provider order is `CANCELLED` (using stored and fresh provider state checks), with explicit logs to prevent shipping progression on non-fulfillable Two orders.
   - Back-office fulfillment blocking now also surfaces an on-screen warning in the admin controller when a cancelled Two order is reverted to cancelled status.
   - Added `actionObjectOrderHistoryAddBefore` guard to rewrite pending `Verified` and fulfillment-trigger history inserts to the configured cancelled status when the provider order or attempt is terminally `CANCELLED`, preventing visible status flip-flops in order history.

@@ -6691,6 +6691,25 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Verify that stored payment data contains a usable Two order mapping.
+     *
+     * @param mixed $orderpaymentdata
+     * @return bool
+     */
+    public function hasTwoProviderOrderMapping($orderpaymentdata)
+    {
+        if (!is_array($orderpaymentdata)) {
+            return false;
+        }
+
+        if (!isset($orderpaymentdata['two_order_id'])) {
+            return false;
+        }
+
+        return !Tools::isEmpty(trim((string)$orderpaymentdata['two_order_id']));
+    }
+
+    /**
      * Push a warning message to the current back-office controller when available.
      *
      * @param string $message
