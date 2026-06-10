@@ -2,14 +2,22 @@
 /**
  * Two brand configuration — the default brand of the base module.
  *
- * A partner edition supplies its own file with the same shape and the
- * module loads it instead (see Twopayment::getTwoBrand()). Every key
- * here has a runtime consumer — new keys land with the code that reads
- * them.
+ * A partner edition sets the PS_TWO_BRAND_CODE configuration value;
+ * Twopayment::getTwoBrand() resolves it to brands/{code}.php and merges
+ * that file over these defaults, so a partner file declares only what
+ * differs.
  *
- * `vendor_name` and `brand_tag` are sent in the create/intent/update
- * order payloads ONLY when non-empty, so the Two brand (empty values)
- * produces a byte-identical payload to the pre-brand-config module.
+ * Consumer map (every key has a runtime reader — new keys land with the
+ * code that reads them):
+ * - provider, display_name, description → module constructor identity
+ * - payment_title, payment_subtitle → payment-option defaults when the
+ *   merchant has not configured PS_TWO_TITLE / PS_TWO_SUB_TITLE
+ * - product_name, code → Smarty var {$two_brand.*} (assigned at
+ *   setMedia + payment-option render) and tests
+ * - support_email, documentation_url → admin help panel
+ * - vendor_name → order payload (create/intent/update) ONLY when
+ *   non-empty, so the Two brand (empty) produces a byte-identical
+ *   payload to the pre-brand-config module
  */
 
 return [
@@ -20,9 +28,7 @@ return [
     'description' => 'This module allows any merchant to accept payments with Two payment gateway.',
     'payment_title' => 'Pay with Two',
     'payment_subtitle' => 'Buy now, pay later - instant credit',
-    'logo_path' => 'views/img/TwoLogo.svg',
     'support_email' => 'support@two.inc',
     'documentation_url' => 'https://docs.two.inc',
     'vendor_name' => '',
-    'brand_tag' => '',
 ];
