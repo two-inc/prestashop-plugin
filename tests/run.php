@@ -151,6 +151,8 @@ final class OrderBuilderSpec
         self::testGetTwoErrorMessageReadsNestedDataMessage();
         self::testGetTwoErrorMessageIgnoresSuccessMessagePayload();
         self::testGetTwoProductItemsSkipsEmptyBarcodeEntries();
+        self::testGetTwoProductItemsThrowsOnNegativeDiscount();
+        self::testGetTwoProductItemsThrowsOnNegativeReduction();
         self::testExtractOrgNumberFromAddressKeepsNonCountryPrefixVatNumber();
         self::testExtractOrgNumberFromAddressStripsMatchingCountryPrefixVatNumber();
     }
@@ -277,6 +279,81 @@ final class OrderBuilderSpec
         TinyAssert::same('10.55', (string)$items[1]['gross_amount']);
         TinyAssert::same('0.55', (string)$items[1]['tax_amount']);
         TinyAssert::same('0.055', (string)$items[1]['tax_rate']);
+    }
+
+    private static function testGetTwoProductItemsThrowsOnNegativeDiscount(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $cart = new Cart(12);
+        $cart->id_lang = 1;
+        $cart->id_carrier = 999;
+
+        // quantity * unit_price (100.00) < net total (105.00) -> negative discount,
+        // previously clamped to 0, now surfaced as an error
+        StubStore::$cartProducts[12] = [[
+            'id_product' => 888,
+            'link_rewrite' => 'mispriced-product',
+            'name' => 'Mispriced Product',
+            'description_short' => 'Inconsistent pricing data',
+            'manufacturer_name' => 'Acme',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 105.00,
+            'total_wt' => 127.05,
+            'cart_quantity' => 1,
+            'rate' => 21.0,
+            'price' => 100.00,
+            'reduction' => 0,
+        ]];
+
+        StubStore::$productCategories[888] = [['name' => 'Misc']];
+        StubStore::$images[888] = ['id_image' => 9012];
+
+        TinyAssert::throws(
+            static function () use ($module, $cart): void {
+                $module->getTwoProductItems($cart);
+            },
+            'Negative discount calculated for product 888'
+        );
+    }
+
+    private static function testGetTwoProductItemsThrowsOnNegativeReduction(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $cart = new Cart(13);
+        $cart->id_lang = 1;
+        $cart->id_carrier = 999;
+
+        // No unit price -> reduction branch; a negative reduction is a data
+        // inconsistency, previously zeroed silently, now surfaced as an error
+        StubStore::$cartProducts[13] = [[
+            'id_product' => 889,
+            'link_rewrite' => 'negative-reduction-product',
+            'name' => 'Negative Reduction Product',
+            'description_short' => 'Inconsistent reduction data',
+            'manufacturer_name' => 'Acme',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 100.00,
+            'total_wt' => 121.00,
+            'cart_quantity' => 1,
+            'rate' => 21.0,
+            'reduction' => -2.00,
+        ]];
+
+        StubStore::$productCategories[889] = [['name' => 'Misc']];
+        StubStore::$images[889] = ['id_image' => 9013];
+
+        TinyAssert::throws(
+            static function () use ($module, $cart): void {
+                $module->getTwoProductItems($cart);
+            },
+            'Negative discount calculated for product 889'
+        );
     }
 
     private static function testGetTwoNewOrderDataSupportsFivePointFivePercentVat(): void
