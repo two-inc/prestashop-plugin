@@ -152,6 +152,8 @@ final class OrderBuilderSpec
         self::testGetTwoProductItemsSkipsEmptyBarcodeEntries();
         self::testGetTwoProductItemsThrowsOnNegativeDiscount();
         self::testGetTwoProductItemsThrowsOnNegativeReduction();
+        self::testGetTwoProductItemsAllowsPositiveDiscount();
+        self::testGetTwoProductItemsToleratesUnitPriceRoundingDrift();
         self::testExtractOrgNumberFromAddressKeepsNonCountryPrefixVatNumber();
         self::testExtractOrgNumberFromAddressStripsMatchingCountryPrefixVatNumber();
     }
@@ -159,6 +161,7 @@ final class OrderBuilderSpec
     private static function reset(): void
     {
         StubStore::reset();
+        PrestaShopLogger::reset();
     }
 
     private static function testValidateTwoLineItemsRejectsBrokenTaxFormula(): void
@@ -316,6 +319,13 @@ final class OrderBuilderSpec
             },
             'Negative discount calculated for product 888'
         );
+
+        TinyAssert::count(1, PrestaShopLogger::$logs);
+        TinyAssert::same(3, PrestaShopLogger::$logs[0]['severity']);
+        TinyAssert::true(
+            strpos(PrestaShopLogger::$logs[0]['message'], '100 = 100 < net total 105') !== false,
+            'Log line must include the computed amounts: ' . PrestaShopLogger::$logs[0]['message']
+        );
     }
 
     private static function testGetTwoProductItemsThrowsOnNegativeReduction(): void
@@ -351,8 +361,89 @@ final class OrderBuilderSpec
             static function () use ($module, $cart): void {
                 $module->getTwoProductItems($cart);
             },
-            'Negative discount calculated for product 889'
+            'Negative reduction for product 889'
         );
+
+        TinyAssert::count(1, PrestaShopLogger::$logs);
+        TinyAssert::same(3, PrestaShopLogger::$logs[0]['severity']);
+    }
+
+    private static function testGetTwoProductItemsAllowsPositiveDiscount(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $cart = new Cart(14);
+        $cart->id_lang = 1;
+        $cart->id_carrier = 999;
+
+        // quantity * unit_price (100.00) > net total (95.00) -> 5.00 discount,
+        // the healthy discounted-cart path must keep working
+        StubStore::$cartProducts[14] = [[
+            'id_product' => 890,
+            'link_rewrite' => 'discounted-product',
+            'name' => 'Discounted Product',
+            'description_short' => 'Cart-rule discounted',
+            'manufacturer_name' => 'Acme',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 95.00,
+            'total_wt' => 114.95,
+            'cart_quantity' => 1,
+            'rate' => 21.0,
+            'price' => 100.00,
+            'reduction' => 0,
+        ]];
+
+        StubStore::$productCategories[890] = [['name' => 'Misc']];
+        StubStore::$images[890] = ['id_image' => 9014];
+
+        $items = $module->getTwoProductItems($cart);
+
+        TinyAssert::count(1, $items);
+        TinyAssert::same('5.00', (string)$items[0]['discount_amount']);
+        TinyAssert::same('95.00', (string)$items[0]['net_amount']);
+        TinyAssert::count(0, PrestaShopLogger::$logs);
+    }
+
+    private static function testGetTwoProductItemsToleratesUnitPriceRoundingDrift(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $cart = new Cart(15);
+        $cart->id_lang = 1;
+        $cart->id_carrier = 999;
+
+        // PrestaShop stores unit prices at 6dp: 3 x 8.344 = 25.032, line total
+        // rounded to 25.03. Deriving the discount from the ROUNDED unit price
+        // (3 x 8.34 = 25.02) would manufacture a phantom -0.01 discount and
+        // fail the cart; deriving at full precision yields 0.00.
+        StubStore::$cartProducts[15] = [[
+            'id_product' => 891,
+            'link_rewrite' => 'six-decimal-product',
+            'name' => 'Six Decimal Product',
+            'description_short' => 'Unit price with 3rd-decimal precision',
+            'manufacturer_name' => 'Acme',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 25.03,
+            'total_wt' => 30.29,
+            'cart_quantity' => 3,
+            'rate' => 21.0,
+            'price' => 8.344,
+            'reduction' => 0,
+        ]];
+
+        StubStore::$productCategories[891] = [['name' => 'Misc']];
+        StubStore::$images[891] = ['id_image' => 9015];
+
+        $items = $module->getTwoProductItems($cart);
+
+        TinyAssert::count(1, $items);
+        TinyAssert::same('0.00', (string)$items[0]['discount_amount']);
+        TinyAssert::same('25.03', (string)$items[0]['net_amount']);
+        TinyAssert::count(0, PrestaShopLogger::$logs);
     }
 
     private static function testGetTwoNewOrderDataSupportsFivePointFivePercentVat(): void
