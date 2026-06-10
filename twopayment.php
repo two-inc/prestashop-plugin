@@ -14,7 +14,6 @@ if (!defined('_PS_VERSION_')) {
 class Twopayment extends PaymentModule
 {
     // Constants for order building logic
-    const GROSS_AMOUNT_TOLERANCE = 0.02; // 2 cents tolerance for rounding differences
     const ORDER_INTENT_EXPIRY_SECONDS = 1800; // 30 minutes
     
     // Constants for payment terms
@@ -3174,22 +3173,25 @@ class Twopayment extends PaymentModule
                 // Calculate discount from PrestaShop's values
                 $expected_total = $quantity * $unit_price_net;
                 $discount_amount = round($expected_total - $net_amount_prestashop, 2);
-                
-                // Ensure discount is not negative (protect against edge cases)
+
+                // A negative discount means quantity * unit_price < net total - a data
+                // inconsistency we must surface, not silently correct. The checkout-api
+                // validates order amounts and rejects bad payloads with a clear error.
                 if ($discount_amount < 0) {
-                    PrestaShopLogger::addLog('TwoPayment: Negative discount calculated for product ' . $line_item['id_product'] . ', clamping to 0', 2);
-                    $discount_amount = 0;
+                    PrestaShopLogger::addLog('TwoPayment: Negative discount calculated for product ' . $line_item['id_product'] . ' (quantity x unit_price < net total)', 3);
+                    throw new Exception('Negative discount calculated for product ' . $line_item['id_product']);
                 }
-                
+
                 $net_amount = $net_amount_prestashop;
             } else {
                 $discount_amount = isset($line_item['reduction']) ? (float)$line_item['reduction'] : 0;
-                
-                // Ensure discount is not negative
+
+                // Surface negative reductions instead of silently zeroing them (see above).
                 if ($discount_amount < 0) {
-                    $discount_amount = 0;
+                    PrestaShopLogger::addLog('TwoPayment: Negative reduction for product ' . $line_item['id_product'], 3);
+                    throw new Exception('Negative discount calculated for product ' . $line_item['id_product']);
                 }
-                
+
                 $unit_price_net = ($net_amount_prestashop + $discount_amount) / $quantity;
                 $unit_price_net = round($unit_price_net, 2);
                 
