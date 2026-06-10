@@ -29,7 +29,7 @@ TWO_ENVIRONMENT      ?= sandbox
 TWO_STORE_COUNTRY    ?= NO
 export TWO_STORE_COUNTRY
 
-.PHONY: help install configure run debug stop clean flush logs proxy archive
+.PHONY: help install configure run debug stop clean flush logs proxy archive test
 
 .DEFAULT_GOAL := help
 
@@ -85,6 +85,7 @@ configure:
 		-e TWO_API_KEY=$(TWO_API_KEY) \
 		-e TWO_ENVIRONMENT=$(TWO_ENVIRONMENT) \
 		-e TWO_API_BASE_URL=$(TWO_API_BASE_URL) \
+		-e TWO_BRAND_CODE=$(TWO_BRAND_CODE) \
 		$(CONTAINER) php /var/www/html/modules/$(MODULE_NAME)/dev/configure.php
 	docker exec $(CONTAINER) bash -c "rm -rf /var/www/html/var/cache/*"
 
@@ -134,6 +135,10 @@ proxy:
 ## Tail PrestaShop + module logs
 logs:
 	docker exec $(CONTAINER) bash -c "tail -f /var/www/html/var/logs/*.log /var/log/apache2/error.log 2>/dev/null"
+
+## Run the unit test harness (same suite CI runs)
+test:
+	docker run --rm -v "$(CURDIR)":/app -w /app php:8.2-cli php tests/run.php
 
 ## Create a versioned zip archive
 archive:
