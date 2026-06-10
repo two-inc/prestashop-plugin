@@ -67,22 +67,59 @@ class Twopayment extends PaymentModule
      * module was constructed (PrestaShop instantiation, AJAX
      * controllers, the test harness which skips the module constructor).
      *
+     * Partner editions set the PS_TWO_BRAND_CODE configuration value;
+     * it resolves to brands/{code}.php (basename-confined to brands/)
+     * and merges over the Two defaults, so a partner file declares only
+     * what differs. Missing or unresolvable files degrade to the Two
+     * defaults — a half-synced deploy must not fatal the checkout.
+     *
      * @return array
      */
     public function getTwoBrand()
     {
-        if ($this->brand === null) {
-            $this->brand = require dirname(__FILE__) . '/brands/two.php';
+        if ($this->brand !== null) {
+            return $this->brand;
         }
+
+        $defaults_file = dirname(__FILE__) . '/brands/two.php';
+        $defaults = is_file($defaults_file) ? require $defaults_file : array(
+            'code' => 'two',
+            'provider' => 'Two',
+            'product_name' => 'Two',
+            'display_name' => 'Two - BNPL for businesses',
+            'description' => 'This module allows any merchant to accept payments with Two payment gateway.',
+            'payment_title' => 'Pay with Two',
+            'payment_subtitle' => 'Buy now, pay later - instant credit',
+            'support_email' => 'support@two.inc',
+            'documentation_url' => 'https://docs.two.inc',
+            'vendor_name' => '',
+        );
+
+        $config = $defaults;
+        $brand_code = Configuration::get('PS_TWO_BRAND_CODE');
+        if ($brand_code && $brand_code !== 'two') {
+            $brand_file = dirname(__FILE__) . '/brands/' . basename((string)$brand_code) . '.php';
+            if (is_file($brand_file)) {
+                $config = array_merge($defaults, (array) require $brand_file);
+            }
+        }
+
+        $this->brand = $config;
         return $this->brand;
     }
 
     /**
-     * Add the brand's payload identity (vendor_name, brand_tag) to an
-     * order request body. Applied to create, intent AND update bodies so
-     * the brand identity cannot diverge between order lifecycle calls.
-     * Keys are only sent when the brand sets them, so the Two brand's
-     * payloads are unchanged.
+     * Add the brand's payload identity (vendor_name) to an order request
+     * body. Applied to create, intent AND update bodies so the brand
+     * identity cannot diverge between order lifecycle calls. The key is
+     * only sent when the brand sets it, so the Two brand's payloads are
+     * unchanged.
+     *
+     * vendor_name as a body field has cross-plugin precedent (the
+     * WooCommerce plugin sends it conditionally). brand_tag does NOT —
+     * the Magento plugin uses it solely as a checkout-URL query param —
+     * so it stays out of the body and lands with the checkout-URL code
+     * that consumes it.
      *
      * @param array $request_data
      *
@@ -93,9 +130,6 @@ class Twopayment extends PaymentModule
         $brand = $this->getTwoBrand();
         if (!empty($brand['vendor_name'])) {
             $request_data['vendor_name'] = $brand['vendor_name'];
-        }
-        if (!empty($brand['brand_tag'])) {
-            $request_data['brand_tag'] = $brand['brand_tag'];
         }
         return $request_data;
     }
@@ -1086,6 +1120,9 @@ class Twopayment extends PaymentModule
      */
     protected function renderTwoPluginInfo()
     {
+        $brand = $this->getTwoBrand();
+        $support_email = $brand['support_email'];
+        $documentation_url = $brand['documentation_url'];
         $html = '
         <div class="panel">
             <div class="panel-heading">
@@ -1152,8 +1189,8 @@ class Twopayment extends PaymentModule
             <div class="panel-body">
                 <p>' . $this->l('For technical support or questions about this plugin:') . '</p>
                 <ul>
-                    <li><strong>' . $this->l('Email:') . '</strong> <a href="mailto:' . $this->getTwoBrand()['support_email'] . '">' . $this->getTwoBrand()['support_email'] . '</a></li>
-                    <li><strong>' . $this->l('Documentation:') . '</strong> <a href="' . $this->getTwoBrand()['documentation_url'] . '" target="_blank">' . preg_replace('#^https?://#', '', $this->getTwoBrand()['documentation_url']) . '</a></li>
+                    <li><strong>' . $this->l('Email:') . '</strong> <a href="mailto:' . Tools::safeOutput($support_email) . '">' . Tools::safeOutput($support_email) . '</a></li>
+                    <li><strong>' . $this->l('Documentation:') . '</strong> <a href="' . Tools::safeOutput($documentation_url) . '" target="_blank">' . Tools::safeOutput(preg_replace('#^https?://#', '', $documentation_url)) . '</a></li>
                     <li><strong>' . $this->l('Merchant Portal:') . '</strong> <a href="' . $this->getTwoPortalUrl() . '" target="_blank">' . $this->l('Open Two Portal') . '</a></li>
                 </ul>
                 <p style="margin-top:15px;"><small class="text-muted">' . $this->l('Plugin Version:') . ' ' . $this->version . ' | ' . $this->l('PrestaShop:') . ' ' . _PS_VERSION_ . '</small></p>
