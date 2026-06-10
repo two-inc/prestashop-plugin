@@ -814,6 +814,16 @@ namespace {
         {
             return $string;
         }
+
+        public function setTwoBrand(array $brand): void
+        {
+            $this->brand = $brand;
+        }
+
+        public function applyTwoBrandPayloadIdentityForTests(array $request_data): array
+        {
+            return $this->applyTwoBrandPayloadIdentity($request_data);
+        }
     }
 
     StubStore::reset();

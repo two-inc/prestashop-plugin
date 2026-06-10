@@ -155,6 +155,9 @@ final class OrderBuilderSpec
         self::testGetTwoProductItemsThrowsOnNegativeReduction();
         self::testGetTwoProductItemsAllowsPositiveDiscount();
         self::testGetTwoProductItemsToleratesUnitPriceRoundingDrift();
+        self::testBrandConfigLoadsAndIsAccessibleFromModule();
+        self::testBrandPayloadIdentityOmittedForTwoBrand();
+        self::testBrandPayloadIdentityAppliedWhenBrandSetsIt();
         self::testExtractOrgNumberFromAddressKeepsNonCountryPrefixVatNumber();
         self::testExtractOrgNumberFromAddressStripsMatchingCountryPrefixVatNumber();
     }
@@ -367,6 +370,47 @@ final class OrderBuilderSpec
 
         TinyAssert::count(1, PrestaShopLogger::$logs);
         TinyAssert::same(3, PrestaShopLogger::$logs[0]['severity']);
+    }
+
+    private static function testBrandConfigLoadsAndIsAccessibleFromModule(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $brand = $module->getTwoBrand();
+
+        TinyAssert::same('two', $brand['code']);
+        TinyAssert::same('Two', $brand['product_name']);
+        TinyAssert::same('Two - BNPL for businesses', $brand['display_name']);
+        // The Two brand must not declare payload identity (payload parity
+        // with the pre-brand-config module)
+        TinyAssert::same('', $brand['vendor_name']);
+        TinyAssert::same('', $brand['brand_tag']);
+    }
+
+    private static function testBrandPayloadIdentityOmittedForTwoBrand(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $payload = $module->applyTwoBrandPayloadIdentityForTests(['currency' => 'EUR']);
+
+        TinyAssert::same(['currency' => 'EUR'], $payload);
+    }
+
+    private static function testBrandPayloadIdentityAppliedWhenBrandSetsIt(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+        $module->setTwoBrand([
+            'vendor_name' => 'Partner Vendor',
+            'brand_tag' => 'partnertag',
+        ]);
+
+        $payload = $module->applyTwoBrandPayloadIdentityForTests(['currency' => 'EUR']);
+
+        TinyAssert::same('Partner Vendor', $payload['vendor_name']);
+        TinyAssert::same('partnertag', $payload['brand_tag']);
     }
 
     private static function testGetTwoProductItemsAllowsPositiveDiscount(): void

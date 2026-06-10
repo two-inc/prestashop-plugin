@@ -57,21 +57,64 @@ class Twopayment extends PaymentModule
     protected $errors = array();
     protected $verifiedMerchantId = null;
     protected $verifiedMerchantShortName = null;
+    /** @var array|null Brand config, lazily loaded from brands/two.php */
+    protected $brand = null;
+
+    /**
+     * Brand configuration for this module edition.
+     *
+     * Lazy so every entry point gets the config regardless of how the
+     * module was constructed (PrestaShop instantiation, AJAX
+     * controllers, the test harness which skips the module constructor).
+     *
+     * @return array
+     */
+    public function getTwoBrand()
+    {
+        if ($this->brand === null) {
+            $this->brand = require dirname(__FILE__) . '/brands/two.php';
+        }
+        return $this->brand;
+    }
+
+    /**
+     * Add the brand's payload identity (vendor_name, brand_tag) to an
+     * order request body. Applied to create, intent AND update bodies so
+     * the brand identity cannot diverge between order lifecycle calls.
+     * Keys are only sent when the brand sets them, so the Two brand's
+     * payloads are unchanged.
+     *
+     * @param array $request_data
+     *
+     * @return array
+     */
+    protected function applyTwoBrandPayloadIdentity($request_data)
+    {
+        $brand = $this->getTwoBrand();
+        if (!empty($brand['vendor_name'])) {
+            $request_data['vendor_name'] = $brand['vendor_name'];
+        }
+        if (!empty($brand['brand_tag'])) {
+            $request_data['brand_tag'] = $brand['brand_tag'];
+        }
+        return $request_data;
+    }
 
     public function __construct()
     {
+        $brand = $this->getTwoBrand();
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
         $this->version = '2.4.0';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
-        $this->author = 'Two';
+        $this->author = $brand['provider'];
         $this->bootstrap = true;
         $this->module_key = '0dff0a98ae080e510d4e23d22abcfe9c';
         $this->author_address = '';
         parent::__construct();
         $this->languages = Language::getLanguages(false);
-        $this->displayName = $this->l('Two - BNPL for businesses');
-        $this->description = $this->l('This module allows any merchant to accept payments with Two payment gateway.');
+        $this->displayName = $this->l($brand['display_name']);
+        $this->description = $this->l($brand['description']);
         $this->merchant_short_name = Configuration::get('PS_TWO_MERCHANT_SHORT_NAME');
         $this->api_key = Configuration::get('PS_TWO_MERCHANT_API_KEY');
         $this->enable_company_name = Configuration::get('PS_TWO_ENABLE_COMPANY_NAME');
@@ -1109,8 +1152,8 @@ class Twopayment extends PaymentModule
             <div class="panel-body">
                 <p>' . $this->l('For technical support or questions about this plugin:') . '</p>
                 <ul>
-                    <li><strong>' . $this->l('Email:') . '</strong> <a href="mailto:support@two.inc">support@two.inc</a></li>
-                    <li><strong>' . $this->l('Documentation:') . '</strong> <a href="https://docs.two.inc" target="_blank">docs.two.inc</a></li>
+                    <li><strong>' . $this->l('Email:') . '</strong> <a href="mailto:' . $this->getTwoBrand()['support_email'] . '">' . $this->getTwoBrand()['support_email'] . '</a></li>
+                    <li><strong>' . $this->l('Documentation:') . '</strong> <a href="' . $this->getTwoBrand()['documentation_url'] . '" target="_blank">' . preg_replace('#^https?://#', '', $this->getTwoBrand()['documentation_url']) . '</a></li>
                     <li><strong>' . $this->l('Merchant Portal:') . '</strong> <a href="' . $this->getTwoPortalUrl() . '" target="_blank">' . $this->l('Open Two Portal') . '</a></li>
                 </ul>
                 <p style="margin-top:15px;"><small class="text-muted">' . $this->l('Plugin Version:') . ' ' . $this->version . ' | ' . $this->l('PrestaShop:') . ' ' . _PS_VERSION_ . '</small></p>
@@ -1938,6 +1981,11 @@ class Twopayment extends PaymentModule
             return;
         }
 
+        // Brand identity for templates ({$two_brand.product_name} etc.).
+        // Template {l s='...'} literals stay as-is until the translations
+        // pass (TWO-24760) so existing dictionaries keep matching.
+        $this->context->smarty->assign('two_brand', $this->getTwoBrand());
+
         // CRITICAL FIX FOR PRESTASHOP 1.7.6.5: Multi-layer jQuery loading strategy
         // Issue: addJquery() may exist but not output jQuery to HTML on some installations
         // Solution: Triple-layer approach ensures jQuery is ALWAYS available
@@ -2160,15 +2208,17 @@ class Twopayment extends PaymentModule
         $title = Configuration::get('PS_TWO_TITLE', $this->context->language->id);
         $subtitle = Configuration::get('PS_TWO_SUB_TITLE', $this->context->language->id);
 
+        $brand = $this->getTwoBrand();
         if (Tools::isEmpty($title)) {
-            $title = $this->l('Pay with Two');
+            $title = $this->l($brand['payment_title']);
         }
         if (Tools::isEmpty($subtitle)) {
-            $subtitle = $this->l('Buy now, pay later - instant credit');
+            $subtitle = $this->l($brand['payment_subtitle']);
         }
 
         // Order intent is now handled on frontend via AJAX
         $this->context->smarty->assign(array(
+            'two_brand' => $brand,
             'subtitle' => $subtitle,
             'enable_order_intent' => $this->enable_order_intent,
             'payment_enable' => true, // Always enable, frontend will handle approval
@@ -2551,7 +2601,7 @@ class Twopayment extends PaymentModule
             $request_data['tax_subtotals'] = $tax_subtotals;
         }
 
-        return $request_data;
+        return $this->applyTwoBrandPayloadIdentity($request_data);
     }
 
     /**
@@ -2907,6 +2957,8 @@ class Twopayment extends PaymentModule
             $request_data['tax_subtotals'] = $tax_subtotals;
         }
 
+        $request_data = $this->applyTwoBrandPayloadIdentity($request_data);
+
         PrestaShopLogger::addLog('TwoPayment: Order creation with terms - ' . json_encode($request_data['terms']), 1);
         
         return $request_data;
@@ -2998,7 +3050,7 @@ class Twopayment extends PaymentModule
             $request_data['tax_subtotals'] = $tax_subtotals;
         }
 
-        return $request_data;
+        return $this->applyTwoBrandPayloadIdentity($request_data);
     }
 
     public function getTwoNewRefundData($order, $two_order_snapshot = null)
