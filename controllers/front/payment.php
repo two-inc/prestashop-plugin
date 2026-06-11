@@ -223,6 +223,15 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                 } else {
                     $message = $this->module->l('Invalid order data. Please check your details and try again.');
                 }
+                // Fast-reject on the merchant/partner minimum order value
+                // carries a machine-readable error_code; surface the
+                // minimum in the buyer's currency
+                if (isset($response['error_code']) && $response['error_code'] === 'ORDER_BELOW_MIN_INVOICE_AMOUNT') {
+                    $minimum_hint = $this->module->getTwoMinimumOrderDeclineHint($response['error_code'], $cart);
+                    if (!Tools::isEmpty($minimum_hint)) {
+                        $message .= ' ' . $minimum_hint;
+                    }
+                }
             } elseif ($http_status >= Twopayment::HTTP_STATUS_SERVER_ERROR) {
                 $message = $this->module->l('Payment provider temporarily unavailable. Please try again later.');
             }
@@ -370,7 +379,27 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                             $cancelled ? 2 : 3
                         );
                     }
-                    $this->errors[] = $this->module->l('Unable to redirect to payment provider. Please try again.');
+                    if (isset($response['status']) && strtoupper((string)$response['status']) === 'REJECTED') {
+                        // Credit-declined orders come back 201 without a
+                        // payment_url; tell the buyer the product was
+                        // declined rather than implying a technical fault,
+                        // and surface the minimum when attributable to it
+                        $brand = $this->module->getTwoBrand();
+                        $message = sprintf(
+                            $this->module->l('Invoice purchase with %s is not available for this order.'),
+                            isset($brand['product_name']) ? $brand['product_name'] : 'Two'
+                        );
+                        $minimum_hint = $this->module->getTwoMinimumOrderDeclineHint(
+                            isset($response['decline_reason']) ? $response['decline_reason'] : null,
+                            $cart
+                        );
+                        if (!Tools::isEmpty($minimum_hint)) {
+                            $message .= ' ' . $minimum_hint;
+                        }
+                        $this->errors[] = $message;
+                    } else {
+                        $this->errors[] = $this->module->l('Unable to redirect to payment provider. Please try again.');
+                    }
                     $this->redirectWithNotifications('index.php?controller=order');
                 }
 
