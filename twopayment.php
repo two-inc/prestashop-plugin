@@ -115,11 +115,13 @@ class Twopayment extends PaymentModule
      * only sent when the brand sets it, so the Two brand's payloads are
      * unchanged.
      *
-     * vendor_name as a body field has cross-plugin precedent (the
-     * WooCommerce plugin sends it conditionally). brand_tag does NOT —
-     * the Magento plugin uses it solely as a checkout-URL query param —
-     * so it stays out of the body and lands with the checkout-URL code
-     * that consumes it.
+     * vendor_name as a body FIELD has cross-plugin precedent (the
+     * WooCommerce plugin sends it, though from a merchant gateway
+     * option rather than brand config — the source is not yet
+     * converged across plugins). brand_tag does NOT — the Magento
+     * plugin uses it solely as a checkout-URL query param — so it
+     * stays out of the body and lands with the checkout-URL code that
+     * consumes it.
      *
      * @param array $request_data
      *

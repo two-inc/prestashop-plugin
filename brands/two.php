@@ -5,7 +5,10 @@
  * A partner edition sets the PS_TWO_BRAND_CODE configuration value;
  * Twopayment::getTwoBrand() resolves it to brands/{code}.php and merges
  * that file over these defaults, so a partner file declares only what
- * differs.
+ * differs. PS_TWO_BRAND_CODE is the PRODUCTION selection mechanism —
+ * unlike the WooCommerce plugin's TWO_BRAND_CODE, which is a dev-only
+ * env override (its production selection is the overlay plugin's
+ * twoinc_brand_file filter).
  *
  * Consumer map (every key has a runtime reader — new keys land with the
  * code that reads them):
