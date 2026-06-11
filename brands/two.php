@@ -18,9 +18,6 @@
  * - product_name, code → Smarty var {$two_brand.*} (assigned at
  *   setMedia + payment-option render) and tests
  * - support_email, documentation_url → admin help panel
- * - vendor_name → order payload (create/intent/update) ONLY when
- *   non-empty, so the Two brand (empty) produces a byte-identical
- *   payload to the pre-brand-config module
  */
 
 return [
@@ -33,5 +30,4 @@ return [
     'payment_subtitle' => 'Buy now, pay later - instant credit',
     'support_email' => 'support@two.inc',
     'documentation_url' => 'https://docs.two.inc',
-    'vendor_name' => '',
 ];

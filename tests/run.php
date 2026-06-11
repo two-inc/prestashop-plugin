@@ -155,8 +155,6 @@ final class OrderBuilderSpec
         self::testGetTwoProductItemsAllowsPositiveDiscount();
         self::testGetTwoProductItemsToleratesUnitPriceRoundingDrift();
         self::testBrandConfigLoadsAndIsAccessibleFromModule();
-        self::testBrandPayloadIdentityOmittedForTwoBrand();
-        self::testBrandPayloadIdentityAppliedWhenBrandSetsIt();
         self::testExtractOrgNumberFromAddressKeepsNonCountryPrefixVatNumber();
         self::testExtractOrgNumberFromAddressStripsMatchingCountryPrefixVatNumber();
     }
@@ -381,35 +379,6 @@ final class OrderBuilderSpec
         TinyAssert::same('two', $brand['code']);
         TinyAssert::same('Two', $brand['product_name']);
         TinyAssert::same('Two - BNPL for businesses', $brand['display_name']);
-        // The Two brand must not declare payload identity (payload parity
-        // with the pre-brand-config module)
-        TinyAssert::same('', $brand['vendor_name']);
-    }
-
-    private static function testBrandPayloadIdentityOmittedForTwoBrand(): void
-    {
-        self::reset();
-        $module = new TwopaymentTestHarness();
-
-        $payload = $module->applyTwoBrandPayloadIdentityForTests(['currency' => 'EUR']);
-
-        TinyAssert::same(['currency' => 'EUR'], $payload);
-    }
-
-    private static function testBrandPayloadIdentityAppliedWhenBrandSetsIt(): void
-    {
-        self::reset();
-        $module = new TwopaymentTestHarness();
-        $module->setTwoBrand([
-            'vendor_name' => 'Partner Vendor',
-        ]);
-
-        $payload = $module->applyTwoBrandPayloadIdentityForTests(['currency' => 'EUR']);
-
-        TinyAssert::same('Partner Vendor', $payload['vendor_name']);
-        // brand_tag is deliberately NOT a payload field: the Magento
-        // reference uses it only as a checkout-URL query param.
-        TinyAssert::false(isset($payload['brand_tag']));
     }
 
     private static function testGetTwoProductItemsAllowsPositiveDiscount(): void
@@ -565,8 +534,10 @@ final class OrderBuilderSpec
         TinyAssert::same('105.50', $payload['gross_amount']);
         TinyAssert::same('100.00', $payload['net_amount']);
         TinyAssert::same('5.50', $payload['tax_amount']);
-        // Two-brand payload parity: the brand layer must not add identity
-        // keys to a real built payload (empty vendor_name stays omitted)
+        // Brand-layer payload parity: brand config must never add identity
+        // keys to the order body. vendor_name is a marketplace-seller field
+        // the merchant declares (see the parity plan), brand_tag is a
+        // checkout-URL param — neither belongs to a brand.
         TinyAssert::false(isset($payload['vendor_name']));
         TinyAssert::false(isset($payload['brand_tag']));
         TinyAssert::same('0.055', $payload['line_items'][0]['tax_rate']);
