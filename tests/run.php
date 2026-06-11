@@ -164,6 +164,7 @@ final class OrderBuilderSpec
         self::testAvailabilityGateGrossBasis();
         self::testMerchantMinimumGatesAlone();
         self::testPlatformMinimumConvertsToDefaultCurrency();
+        self::testMinimumOrderDeclineHint();
         self::testBrandPayloadIdentityOmittedForTwoBrand();
         self::testBrandPayloadIdentityAppliedWhenBrandSetsIt();
         self::testExtractOrgNumberFromAddressKeepsNonCountryPrefixVatNumber();
@@ -562,6 +563,45 @@ final class OrderBuilderSpec
         unset(StubStore::$currencies[978]);
         StubStore::$configuration['PS_CURRENCY_DEFAULT'] = 826;
         TinyAssert::same(null, $module->getTwoPlatformMinimumInDefaultCurrencyForTests($gate));
+    }
+
+    private static function testMinimumOrderDeclineHint(): void
+    {
+        self::reset();
+        StubStore::$currencies[826] = ['iso_code' => 'GBP', 'conversion_rate' => 1.0];
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'conversion_rate' => 1.16];
+        StubStore::$configuration['PS_CURRENCY_DEFAULT'] = 826;
+        $module = new TwopaymentTestHarness();
+        $module->setTwoBrand([
+            'product_name' => 'Testbrand',
+            'availability_gate' => [
+                'min_order_amount' => 250.0,
+                'currency' => 'EUR',
+                'basis' => 'net',
+                'billing_countries' => ['NL'],
+            ],
+        ]);
+
+        $cart = new Cart(31);
+        $cart->id_currency = 826;
+        StubStore::$cartTotals[31][false][Cart::BOTH] = 100.0;
+
+        // Machine-readable reason: hint in the cart currency (250 EUR -> 215.52 GBP)
+        $hint = $module->getTwoMinimumOrderDeclineHint('ORDER_BELOW_MIN_INVOICE_AMOUNT', $cart);
+        TinyAssert::same('Minimum order value is 215.52 GBP excluding tax.', $hint);
+
+        // Generic reason, basket strictly below the minimum: fallback hint fires
+        $hint = $module->getTwoMinimumOrderDeclineHint(null, $cart);
+        TinyAssert::same('Minimum order value is 215.52 GBP excluding tax.', $hint);
+
+        // Generic reason, basket at/above the minimum: no hint
+        StubStore::$cartTotals[31][false][Cart::BOTH] = 300.0;
+        TinyAssert::same('', $module->getTwoMinimumOrderDeclineHint(null, $cart));
+
+        // No usable rate: fail-soft, no hint even with the explicit reason
+        unset(StubStore::$currencies[978]);
+        StubStore::$cartTotals[31][false][Cart::BOTH] = 100.0;
+        TinyAssert::same('', $module->getTwoMinimumOrderDeclineHint('ORDER_BELOW_MIN_INVOICE_AMOUNT', $cart));
     }
 
     private static function testGetTwoProductItemsAllowsPositiveDiscount(): void
