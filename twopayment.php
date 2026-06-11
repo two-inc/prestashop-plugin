@@ -1065,15 +1065,73 @@ class Twopayment extends PaymentModule
         }
         $brand = $this->getTwoBrand();
         $gate = isset($brand['availability_gate']) ? $brand['availability_gate'] : null;
-        if ($gate && isset($gate['min_order_amount']) && (float) $value <= (float) $gate['min_order_amount']) {
-            // The brand minimum is the platform/partner floor; merchants
-            // may only raise the bar
-            $this->errors[] = sprintf(
-                $this->l('Minimum Order Value must exceed the platform minimum of %1$s %2$s.'),
-                $gate['min_order_amount'],
-                $gate['currency']
-            );
+        if (!$gate || !isset($gate['min_order_amount'], $gate['currency'])) {
+            return;
         }
+        // The brand minimum is the platform/partner floor; merchants may
+        // only raise the bar. The field is interpreted in the shop default
+        // currency, so the floor is converted before comparing. Without a
+        // usable rate the comparison is skipped here — the checkout gate
+        // enforces both minima independently and fails closed.
+        $floor = $this->getTwoPlatformMinimumInDefaultCurrency($gate);
+        if ($floor === null || (float) $value > $floor) {
+            return;
+        }
+        $default_currency = new Currency((int) Configuration::get('PS_CURRENCY_DEFAULT'));
+        $floor_display = $this->formatTwoMinimumForDisplay($floor, $default_currency->iso_code);
+        $native_display = $this->formatTwoMinimumForDisplay((float) $gate['min_order_amount'], $gate['currency']);
+        $this->errors[] = sprintf(
+            $this->l('Minimum Order Value must exceed the platform minimum of %1$s, %2$s tax.'),
+            $floor_display === $native_display ? $floor_display : $floor_display . ' (' . $native_display . ')',
+            (isset($gate['basis']) ? $gate['basis'] : 'net') === 'gross' ? $this->l('including') : $this->l('excluding')
+        );
+    }
+
+    /**
+     * The brand's platform minimum expressed in the shop default currency
+     * (the currency the merchant minimum field is interpreted in), or
+     * null when no usable conversion rate exists. PrestaShop stores each
+     * currency's rate against the shop default currency.
+     *
+     * @param array $gate
+     *
+     * @return float|null
+     */
+    protected function getTwoPlatformMinimumInDefaultCurrency($gate)
+    {
+        $default_currency = new Currency((int) Configuration::get('PS_CURRENCY_DEFAULT'));
+        if ($gate['currency'] === $default_currency->iso_code) {
+            return (float) $gate['min_order_amount'];
+        }
+        $brand_currency_id = Currency::getIdByIsoCode($gate['currency']);
+        $rate = $brand_currency_id ? (float) (new Currency((int) $brand_currency_id))->conversion_rate : 0.0;
+        if ($rate <= 0) {
+            return null;
+        }
+        return round((float) $gate['min_order_amount'] / $rate, 2);
+    }
+
+    /**
+     * A minimum-order amount formatted with its currency for admin
+     * display, via the locale price formatter when available (symbol,
+     * e.g. "£215.73"), falling back to "amount ISO".
+     *
+     * @param float $amount
+     * @param string $iso_code
+     *
+     * @return string
+     */
+    protected function formatTwoMinimumForDisplay($amount, $iso_code)
+    {
+        $context = Context::getContext();
+        if (method_exists($context, 'getCurrentLocale') && $context->getCurrentLocale()) {
+            try {
+                return $context->getCurrentLocale()->formatPrice($amount, $iso_code);
+            } catch (Exception $e) {
+                // Fall through to the plain format
+            }
+        }
+        return $amount . ' ' . $iso_code;
     }
 
     protected function saveTwoOtherFormValues()
@@ -2300,17 +2358,11 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The merchant's own optional minimum order value, as
-     * ['amount', 'currency', 'basis'] or null. Interpreted in the brand
-     * minimum's currency/basis when the brand declares a gate, otherwise
-     * the shop default currency, gross. Validated on save to exceed the
-     * brand minimum — merchants may only raise the bar.
-     *
-     * @return array|null
-     */
-    /**
      * Dynamic description for the Minimum Order Value setting: shows the
-     * brand minimum the merchant's value must exceed.
+     * brand minimum the merchant's value must exceed, converted into the
+     * shop default currency the field is interpreted in, with the native
+     * value in brackets — e.g. "Platform minimum £215.73 (€250.00)".
+     * Without a usable conversion rate the native value alone is shown.
      *
      * @return string
      */
@@ -2319,16 +2371,33 @@ class Twopayment extends PaymentModule
         $brand = $this->getTwoBrand();
         $gate = isset($brand['availability_gate']) ? $brand['availability_gate'] : null;
         if ($gate && isset($gate['min_order_amount'], $gate['currency'])) {
+            $native_display = $this->formatTwoMinimumForDisplay((float) $gate['min_order_amount'], $gate['currency']);
+            $minimum_display = $native_display;
+            $floor = $this->getTwoPlatformMinimumInDefaultCurrency($gate);
+            $default_currency = new Currency((int) Configuration::get('PS_CURRENCY_DEFAULT'));
+            if ($floor !== null && $gate['currency'] !== $default_currency->iso_code) {
+                $minimum_display = $this->formatTwoMinimumForDisplay($floor, $default_currency->iso_code)
+                    . ' (' . $native_display . ')';
+            }
             return sprintf(
-                $this->l('Platform minimum: %1$s %2$s (%3$s tax). A value here must exceed it and is interpreted in the same currency and tax basis.'),
-                $gate['min_order_amount'],
-                $gate['currency'],
+                $this->l('Platform minimum %1$s, %2$s tax. A value here is interpreted in the shop default currency on the same tax basis and must exceed it.'),
+                $minimum_display,
                 (isset($gate['basis']) ? $gate['basis'] : 'net') === 'gross' ? $this->l('including') : $this->l('excluding')
             );
         }
         return $this->l('Hide the payment option below this order value (shop default currency, including tax). Leave empty for no minimum.');
     }
 
+    /**
+     * The merchant's own optional minimum order value, as
+     * ['amount', 'currency', 'basis'] or null. Interpreted in the SHOP
+     * DEFAULT currency on the brand minimum's tax basis when the brand
+     * declares a gate, else gross. Validated on save to exceed the brand
+     * minimum converted to that currency — merchants may only raise the
+     * bar.
+     *
+     * @return array|null
+     */
     public function getTwoMerchantMinimumOrder()
     {
         $value = (float) Configuration::get('PS_TWO_MERCHANT_MIN_ORDER');
@@ -2340,7 +2409,7 @@ class Twopayment extends PaymentModule
         $default_currency = new Currency((int) Configuration::get('PS_CURRENCY_DEFAULT'));
         return [
             'amount' => $value,
-            'currency' => isset($gate['currency']) ? $gate['currency'] : $default_currency->iso_code,
+            'currency' => $default_currency->iso_code,
             'basis' => isset($gate['basis']) ? $gate['basis'] : 'gross',
         ];
     }

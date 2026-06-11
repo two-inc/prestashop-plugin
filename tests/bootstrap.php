@@ -831,6 +831,10 @@ namespace {
             $this->brand = $brand;
         }
 
+        public function getTwoPlatformMinimumInDefaultCurrencyForTests(array $gate)
+        {
+            return $this->getTwoPlatformMinimumInDefaultCurrency($gate);
+        }
     }
 
     StubStore::reset();
