@@ -3394,6 +3394,9 @@ class Twopayment extends PaymentModule
             'order_note' => '',
             'line_items' => $line_items,
             'terms' => $this->buildTermsPayload(),
+            // The set offered alongside the selection, for parity with the
+            // Magento/WooCommerce create payloads (TWO-24752)
+            'available_terms' => $this->getAvailablePaymentTerms(),
         ];
 
         if ($this->shouldIncludeTaxSubtotals()) {
@@ -5862,18 +5865,35 @@ class Twopayment extends PaymentModule
         }
         
         $available_terms = array();
-        
+
         foreach ($terms_to_check as $term) {
             if (Configuration::get('PS_TWO_PAYMENT_TERMS_' . $term)) {
                 $available_terms[] = (int)$term;
             }
         }
-        
+
+        // Brand constraint (TWO-24752): a partner edition may bound which
+        // terms can be offered at all; the admin checkboxes narrow within
+        // that set. This method is the term-availability seam - when the
+        // backend grows a term-availability surface it replaces only this
+        // resolution. Do not read term lists anywhere else.
+        $brand = $this->getTwoBrand();
+        $brand_terms = null;
+        if (isset($brand['available_terms']) && is_array($brand['available_terms'])) {
+            $brand_terms = array_map('intval', $brand['available_terms']);
+            $available_terms = array_values(array_intersect($available_terms, $brand_terms));
+        }
+
         // If no terms are configured, default to DEFAULT_PAYMENT_TERM_DAYS
+        // (the shortest brand term when a brand constraint excludes it)
         if (empty($available_terms)) {
             $available_terms = array(self::DEFAULT_PAYMENT_TERM_DAYS);
+            if (is_array($brand_terms) && !empty($brand_terms) && !in_array(self::DEFAULT_PAYMENT_TERM_DAYS, $brand_terms, true)) {
+                sort($brand_terms);
+                $available_terms = array($brand_terms[0]);
+            }
         }
-        
+
         sort($available_terms); // Ensure they're in ascending order
         return $available_terms;
     }

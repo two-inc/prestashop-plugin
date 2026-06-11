@@ -167,6 +167,8 @@ final class OrderBuilderSpec
         self::testMinimumOrderDeclineHint();
         self::testExtractOrgNumberFromAddressKeepsNonCountryPrefixVatNumber();
         self::testExtractOrgNumberFromAddressStripsMatchingCountryPrefixVatNumber();
+        self::testAvailableTermsRespectBrandConstraint();
+        self::testDefaultTermFallsToShortestBrandTermWhenConstrainedOut();
     }
 
     private static function reset(): void
@@ -4882,6 +4884,38 @@ final class OrderBuilderSpec
 
         TinyAssert::count(1, $items);
         TinyAssert::same([], $items[0]['details']['barcodes']);
+    }
+
+    private static function testAvailableTermsRespectBrandConstraint(): void
+    {
+        self::reset();
+        StubStore::$configuration['PS_TWO_PAYMENT_TERM_TYPE'] = 'STANDARD';
+        StubStore::$configuration['PS_TWO_PAYMENT_TERMS_30'] = 1;
+        StubStore::$configuration['PS_TWO_PAYMENT_TERMS_45'] = 1;
+        StubStore::$configuration['PS_TWO_PAYMENT_TERMS_60'] = 1;
+
+        // No brand constraint (Two default): admin checkboxes stand
+        $module = new TwopaymentTestHarness();
+        TinyAssert::same([30, 45, 60], $module->getAvailablePaymentTerms());
+
+        // Partner constraint narrows the admin selection
+        $module = new TwopaymentTestHarness();
+        $module->setTwoBrand(['available_terms' => [30, 60, 90]]);
+        TinyAssert::same([30, 60], $module->getAvailablePaymentTerms());
+    }
+
+    private static function testDefaultTermFallsToShortestBrandTermWhenConstrainedOut(): void
+    {
+        self::reset();
+        StubStore::$configuration['PS_TWO_PAYMENT_TERM_TYPE'] = 'STANDARD';
+        // Only a term outside the brand set is enabled: the resolved set
+        // would be empty, and the 30-day fallback is also outside the
+        // brand set, so the shortest brand term wins
+        StubStore::$configuration['PS_TWO_PAYMENT_TERMS_15'] = 1;
+
+        $module = new TwopaymentTestHarness();
+        $module->setTwoBrand(['available_terms' => [60, 90]]);
+        TinyAssert::same([60], $module->getAvailablePaymentTerms());
     }
 
     private static function testExtractOrgNumberFromAddressKeepsNonCountryPrefixVatNumber(): void

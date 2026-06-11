@@ -30,4 +30,13 @@ return [
     'payment_subtitle' => 'Buy now, pay later - instant credit',
     'support_email' => 'support@two.inc',
     'documentation_url' => 'https://docs.two.inc',
+    // Payment terms the brand allows in the checkout selector; the
+    // merchant's admin checkboxes narrow within this set. null = no
+    // brand constraint (the Two default - PS merchants already hold
+    // term selections in PS_TWO_PAYMENT_TERMS_* that must keep
+    // working; this differs from WooCommerce, where the brand list IS
+    // the offerable set because WC had no terms before). A partner
+    // edition sets e.g. [30, 60, 90]. Read only by
+    // getAvailablePaymentTerms() - the term-availability seam.
+    'available_terms' => null,
 ];
