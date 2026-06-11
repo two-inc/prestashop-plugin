@@ -162,6 +162,7 @@ final class OrderBuilderSpec
         self::testAvailabilityGateChecksBillingCountry();
         self::testAvailabilityGateGrossBasis();
         self::testMerchantMinimumGatesAlone();
+        self::testPlatformMinimumConvertsToDefaultCurrency();
         self::testBrandPayloadIdentityOmittedForTwoBrand();
         self::testBrandPayloadIdentityAppliedWhenBrandSetsIt();
         self::testExtractOrgNumberFromAddressKeepsNonCountryPrefixVatNumber();
@@ -536,6 +537,30 @@ final class OrderBuilderSpec
 
         StubStore::$cartTotals[22][true][Cart::BOTH] = 500.0;
         TinyAssert::true($module->isTwoBrandAvailabilityGateSatisfied($cart, $address));
+    }
+
+    private static function testPlatformMinimumConvertsToDefaultCurrency(): void
+    {
+        self::reset();
+        // Shop default GBP; brand minimum 250 EUR; EUR rate 1.16 per GBP
+        // -> floor 215.52 GBP. Missing rate -> null (validation skips,
+        // checkout gate fails closed instead).
+        StubStore::$currencies[826] = ['iso_code' => 'GBP', 'conversion_rate' => 1.0];
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'conversion_rate' => 1.16];
+        StubStore::$configuration['PS_CURRENCY_DEFAULT'] = 826;
+        $module = new TwopaymentTestHarness();
+
+        $gate = ['min_order_amount' => 250.0, 'currency' => 'EUR', 'basis' => 'net', 'billing_countries' => ['NL']];
+        TinyAssert::same(215.52, $module->getTwoPlatformMinimumInDefaultCurrencyForTests($gate));
+
+        // Same currency: no conversion
+        StubStore::$configuration['PS_CURRENCY_DEFAULT'] = 978;
+        TinyAssert::same(250.0, $module->getTwoPlatformMinimumInDefaultCurrencyForTests($gate));
+
+        // No rate for the brand currency
+        unset(StubStore::$currencies[978]);
+        StubStore::$configuration['PS_CURRENCY_DEFAULT'] = 826;
+        TinyAssert::same(null, $module->getTwoPlatformMinimumInDefaultCurrencyForTests($gate));
     }
 
     private static function testGetTwoProductItemsAllowsPositiveDiscount(): void
