@@ -2189,6 +2189,75 @@ class Twopayment extends PaymentModule
         }
     }
 
+    /**
+     * Brand product constraints (e.g. a partner edition's minimum NET
+     * order value in a specific currency/market) hide the payment option
+     * when unmet. NET because the funding partner's server-side risk
+     * rule compares the order's net value — a gross-compared gate would
+     * show the option on baskets the credit check then declines. Baskets
+     * in other currencies convert via PrestaShop's currency rates,
+     * failing closed without a usable rate. The Two brand sets no gate.
+     *
+     * @param Cart $cart
+     * @param Address $billing_address
+     *
+     * @return bool
+     */
+    public function isTwoBrandAvailabilityGateSatisfied($cart, $billing_address)
+    {
+        $brand = $this->getTwoBrand();
+        $gate = isset($brand['availability_gate']) ? $brand['availability_gate'] : null;
+        if (!$gate) {
+            return true;
+        }
+        if (!isset($gate['min_order_amount'], $gate['currency'], $gate['billing_countries'])) {
+            // Malformed gate config must not judge with missing criteria
+            return true;
+        }
+
+        $billing_country = Country::getIsoById((int) $billing_address->id_country);
+        if (!in_array($billing_country, $gate['billing_countries'], true)) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Payment option hidden - billing country ' . ($billing_country ?: 'unknown')
+                . ' outside the brand gate (' . implode(',', $gate['billing_countries']) . ')',
+                1
+            );
+            return false;
+        }
+
+        $net_total = (float) $cart->getOrderTotal(false, Cart::BOTH);
+        $cart_currency = new Currency((int) $cart->id_currency);
+        if ($cart_currency->iso_code !== $gate['currency']) {
+            // PrestaShop stores each currency's rate against the shop
+            // default currency; the cross rate is target/source
+            $from_rate = (float) $cart_currency->conversion_rate;
+            $to_id = Currency::getIdByIsoCode($gate['currency']);
+            $to_rate = $to_id ? (float) (new Currency((int) $to_id))->conversion_rate : 0.0;
+            if ($from_rate <= 0 || $to_rate <= 0) {
+                // Fail closed: without a rate we cannot prove the brand's
+                // minimum is met
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Payment option hidden - no conversion rate from '
+                    . $cart_currency->iso_code . ' to ' . $gate['currency'] . ' for the brand gate',
+                    2
+                );
+                return false;
+            }
+            $net_total = round($net_total / $from_rate * $to_rate, 2);
+        }
+
+        if ($net_total < (float) $gate['min_order_amount']) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Payment option hidden - net total ' . $net_total . ' ' . $gate['currency']
+                . ' below the brand minimum ' . $gate['min_order_amount'],
+                1
+            );
+            return false;
+        }
+
+        return true;
+    }
+
     public function hookPaymentOptions($params)
     {
         if (!$this->active) {
@@ -2217,6 +2286,10 @@ class Twopayment extends PaymentModule
                 'TwoPayment: Payment option hidden - unsupported cart currency for cart ' . (int)$cart->id,
                 2
             );
+            return [];
+        }
+
+        if (!$this->isTwoBrandAvailabilityGateSatisfied($cart, $billing_address)) {
             return [];
         }
 

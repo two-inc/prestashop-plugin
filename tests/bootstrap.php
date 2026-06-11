@@ -607,6 +607,17 @@ namespace {
         public bool $loaded = false;
         public int $id = 0;
         public string $iso_code = 'EUR';
+        public float $conversion_rate = 1.0;
+
+        public static function getIdByIsoCode($iso_code)
+        {
+            foreach (StubStore::$currencies as $id => $fields) {
+                if (($fields['iso_code'] ?? null) === $iso_code) {
+                    return (int) $id;
+                }
+            }
+            return 0;
+        }
 
         public function __construct($id = null)
         {
