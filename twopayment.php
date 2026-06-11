@@ -1090,8 +1090,7 @@ class Twopayment extends PaymentModule
     /**
      * The brand's platform minimum expressed in the shop default currency
      * (the currency the merchant minimum field is interpreted in), or
-     * null when no usable conversion rate exists. PrestaShop stores each
-     * currency's rate against the shop default currency.
+     * null when no usable conversion rate exists.
      *
      * @param array $gate
      *
@@ -1100,15 +1099,85 @@ class Twopayment extends PaymentModule
     protected function getTwoPlatformMinimumInDefaultCurrency($gate)
     {
         $default_currency = new Currency((int) Configuration::get('PS_CURRENCY_DEFAULT'));
-        if ($gate['currency'] === $default_currency->iso_code) {
-            return (float) $gate['min_order_amount'];
+        return $this->convertTwoAmount((float) $gate['min_order_amount'], $gate['currency'], $default_currency->iso_code);
+    }
+
+    /**
+     * Convert an amount between two currencies via PrestaShop's rates
+     * (each currency's rate is stored against the shop default currency;
+     * the cross rate is target/source), or null when either rate is
+     * unusable.
+     *
+     * @param float $amount
+     * @param string $from_iso
+     * @param string $to_iso
+     *
+     * @return float|null
+     */
+    protected function convertTwoAmount($amount, $from_iso, $to_iso)
+    {
+        if ($from_iso === $to_iso) {
+            return (float) $amount;
         }
-        $brand_currency_id = Currency::getIdByIsoCode($gate['currency']);
-        $rate = $brand_currency_id ? (float) (new Currency((int) $brand_currency_id))->conversion_rate : 0.0;
-        if ($rate <= 0) {
+        $from_id = Currency::getIdByIsoCode($from_iso);
+        $to_id = Currency::getIdByIsoCode($to_iso);
+        $from_rate = $from_id ? (float) (new Currency((int) $from_id))->conversion_rate : 0.0;
+        $to_rate = $to_id ? (float) (new Currency((int) $to_id))->conversion_rate : 0.0;
+        if ($from_rate <= 0 || $to_rate <= 0) {
             return null;
         }
-        return round((float) $gate['min_order_amount'] / $rate, 2);
+        return round((float) $amount / $from_rate * $to_rate, 2);
+    }
+
+    /**
+     * Buyer-facing hint when a Two decline is attributable to the brand
+     * minimum order value: keyed primarily on the API's machine-readable
+     * reason (decline_reason on intents and rejected orders, error_code
+     * on order-create 400s), with a strictly-below-minimum check as
+     * fallback while older backends carry only a generic reason. The
+     * minimum is shown in the CART currency via PrestaShop's rates.
+     * Fail-soft: an unresolvable conversion means no hint, never a
+     * blocked message.
+     *
+     * @param string|null $reason
+     * @param Cart $cart
+     *
+     * @return string Empty when the decline is not attributable to the minimum
+     */
+    public function getTwoMinimumOrderDeclineHint($reason, $cart)
+    {
+        $brand = $this->getTwoBrand();
+        $gate = isset($brand['availability_gate']) ? $brand['availability_gate'] : null;
+        if (!$gate || !isset($gate['min_order_amount'], $gate['currency'], $gate['basis'])) {
+            return '';
+        }
+
+        $cart_currency = new Currency((int) $cart->id_currency);
+        $declined_on_minimum = $reason === 'ORDER_BELOW_MIN_INVOICE_AMOUNT';
+        if (!$declined_on_minimum) {
+            $basket_value = (float) $cart->getOrderTotal($gate['basis'] === 'gross', Cart::BOTH);
+            $basket_in_gate_currency = $this->convertTwoAmount($basket_value, $cart_currency->iso_code, $gate['currency']);
+            $declined_on_minimum = $basket_in_gate_currency !== null
+                && $basket_in_gate_currency < (float) $gate['min_order_amount'];
+        }
+        if (!$declined_on_minimum) {
+            return '';
+        }
+
+        $minimum_in_cart_currency = $this->convertTwoAmount(
+            (float) $gate['min_order_amount'],
+            $gate['currency'],
+            $cart_currency->iso_code
+        );
+        if ($minimum_in_cart_currency === null) {
+            return '';
+        }
+
+        return sprintf(
+            $this->l('Minimum order value is %1$s %2$s tax.'),
+            $this->formatTwoMinimumForDisplay($minimum_in_cart_currency, $cart_currency->iso_code),
+            $gate['basis'] === 'gross' ? $this->l('including') : $this->l('excluding')
+        );
     }
 
     /**
@@ -2947,6 +3016,14 @@ class Twopayment extends PaymentModule
 
                     if (!Tools::isEmpty($provider_message)) {
                         $result['message'] = $provider_message;
+                    }
+
+                    $minimum_hint = $this->getTwoMinimumOrderDeclineHint(
+                        isset($response['decline_reason']) ? $response['decline_reason'] : null,
+                        $cart
+                    );
+                    if (!Tools::isEmpty($minimum_hint)) {
+                        $result['message'] .= ' ' . $minimum_hint;
                     }
                 }
 
