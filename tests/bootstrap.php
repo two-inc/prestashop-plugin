@@ -835,6 +835,11 @@ namespace {
         {
             return $this->applyTwoBrandPayloadIdentity($request_data);
         }
+
+        public function getTwoPlatformMinimumInDefaultCurrencyForTests(array $gate)
+        {
+            return $this->getTwoPlatformMinimumInDefaultCurrency($gate);
+        }
     }
 
     StubStore::reset();
