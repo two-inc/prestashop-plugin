@@ -160,6 +160,8 @@ final class OrderBuilderSpec
         self::testAvailabilityGateConvertsViaPrestashopRates();
         self::testAvailabilityGateFailsClosedWithoutRate();
         self::testAvailabilityGateChecksBillingCountry();
+        self::testAvailabilityGateGrossBasis();
+        self::testMerchantMinimumGatesAlone();
         self::testBrandPayloadIdentityOmittedForTwoBrand();
         self::testBrandPayloadIdentityAppliedWhenBrandSetsIt();
         self::testExtractOrgNumberFromAddressKeepsNonCountryPrefixVatNumber();
@@ -447,7 +449,7 @@ final class OrderBuilderSpec
     {
         self::reset();
         StubStore::$currencies[978] = ['iso_code' => 'EUR', 'conversion_rate' => 1.0];
-        $gate = ['min_order_amount' => 250.0, 'currency' => 'EUR', 'billing_countries' => ['NL']];
+        $gate = ['min_order_amount' => 250.0, 'currency' => 'EUR', 'basis' => 'net', 'billing_countries' => ['NL']];
         // 56 => BE in the stub country table; add NL
         StubStore::$countries[100] = 'NL';
 
@@ -466,7 +468,7 @@ final class OrderBuilderSpec
         StubStore::$currencies[978] = ['iso_code' => 'EUR', 'conversion_rate' => 1.0];
         StubStore::$currencies[826] = ['iso_code' => 'GBP', 'conversion_rate' => 0.85];
         StubStore::$countries[100] = 'NL';
-        $gate = ['min_order_amount' => 250.0, 'currency' => 'EUR', 'billing_countries' => ['NL']];
+        $gate = ['min_order_amount' => 250.0, 'currency' => 'EUR', 'basis' => 'net', 'billing_countries' => ['NL']];
 
         // GBP 230 net -> EUR 270.59: passes only because of conversion
         [$module, $cart, $address] = self::gateFixture($gate, 230.0, 826, 100);
@@ -483,7 +485,7 @@ final class OrderBuilderSpec
         // SEK exists but the gate currency EUR has no stub entry: no rate
         StubStore::$currencies[752] = ['iso_code' => 'SEK', 'conversion_rate' => 11.0];
         StubStore::$countries[100] = 'NL';
-        $gate = ['min_order_amount' => 250.0, 'currency' => 'EUR', 'billing_countries' => ['NL']];
+        $gate = ['min_order_amount' => 250.0, 'currency' => 'EUR', 'basis' => 'net', 'billing_countries' => ['NL']];
 
         [$module, $cart, $address] = self::gateFixture($gate, 10000.0, 752, 100);
         TinyAssert::false($module->isTwoBrandAvailabilityGateSatisfied($cart, $address));
@@ -493,11 +495,47 @@ final class OrderBuilderSpec
     {
         self::reset();
         StubStore::$currencies[978] = ['iso_code' => 'EUR', 'conversion_rate' => 1.0];
-        $gate = ['min_order_amount' => 250.0, 'currency' => 'EUR', 'billing_countries' => ['NL']];
+        $gate = ['min_order_amount' => 250.0, 'currency' => 'EUR', 'basis' => 'net', 'billing_countries' => ['NL']];
 
         // 47 => NO in the stub country table
         [$module, $cart, $address] = self::gateFixture($gate, 300.0, 978, 47);
         TinyAssert::false($module->isTwoBrandAvailabilityGateSatisfied($cart, $address));
+    }
+
+    private static function testAvailabilityGateGrossBasis(): void
+    {
+        self::reset();
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'conversion_rate' => 1.0];
+        StubStore::$countries[100] = 'NL';
+        $gate = ['min_order_amount' => 250.0, 'currency' => 'EUR', 'basis' => 'gross', 'billing_countries' => ['NL']];
+
+        // Gross basis compares the with-tax total
+        [$module, $cart, $address] = self::gateFixture($gate, 0.0, 978, 100);
+        StubStore::$cartTotals[21][true][Cart::BOTH] = 250.0;
+        TinyAssert::true($module->isTwoBrandAvailabilityGateSatisfied($cart, $address));
+        StubStore::$cartTotals[21][true][Cart::BOTH] = 249.99;
+        TinyAssert::false($module->isTwoBrandAvailabilityGateSatisfied($cart, $address));
+    }
+
+    private static function testMerchantMinimumGatesAlone(): void
+    {
+        self::reset();
+        // No brand gate (Two): the merchant's own minimum gates, gross,
+        // in the shop default currency
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'conversion_rate' => 1.0];
+        StubStore::$configuration['PS_CURRENCY_DEFAULT'] = 978;
+        StubStore::$configuration['PS_TWO_MERCHANT_MIN_ORDER'] = '500';
+        $module = new TwopaymentTestHarness();
+
+        $cart = new Cart(22);
+        $cart->id_currency = 978;
+        $address = new Address();
+
+        StubStore::$cartTotals[22][true][Cart::BOTH] = 499.0;
+        TinyAssert::false($module->isTwoBrandAvailabilityGateSatisfied($cart, $address));
+
+        StubStore::$cartTotals[22][true][Cart::BOTH] = 500.0;
+        TinyAssert::true($module->isTwoBrandAvailabilityGateSatisfied($cart, $address));
     }
 
     private static function testGetTwoProductItemsAllowsPositiveDiscount(): void

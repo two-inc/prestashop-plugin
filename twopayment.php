@@ -471,6 +471,7 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_FINALIZE_PURCHASE');
         Configuration::deleteByName('PS_TWO_USE_ACCOUNT_TYPE');
         Configuration::deleteByName('PS_TWO_DEBUG_MODE');
+        Configuration::deleteByName('PS_TWO_MERCHANT_MIN_ORDER');
         return true;
     }
 
@@ -1024,6 +1025,13 @@ class Twopayment extends PaymentModule
                         ),
                     ),
                     array(
+                        'type' => 'text',
+                        'label' => $this->l('Minimum Order Value'),
+                        'name' => 'PS_TWO_MERCHANT_MIN_ORDER',
+                        'desc' => $this->getTwoMerchantMinimumOrderDescription(),
+                        'required' => false,
+                    ),
+                    array(
                         'type' => 'switch',
                         'label' => $this->l('Enable Debug Mode'),
                         'name' => 'PS_TWO_DEBUG_MODE',
@@ -1066,12 +1074,32 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_ENABLE_TAX_SUBTOTALS'] = Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
         $fields_values['PS_TWO_DEBUG_MODE'] = Tools::getValue('PS_TWO_DEBUG_MODE', Configuration::get('PS_TWO_DEBUG_MODE'));
+        $fields_values['PS_TWO_MERCHANT_MIN_ORDER'] = Tools::getValue('PS_TWO_MERCHANT_MIN_ORDER', Configuration::get('PS_TWO_MERCHANT_MIN_ORDER'));
         return $fields_values;
     }
 
     protected function validTwoOtherFormValues()
     {
-        // No validation needed for current Other Settings
+        $value = trim((string) Tools::getValue('PS_TWO_MERCHANT_MIN_ORDER'));
+        if ($value === '') {
+            return;
+        }
+        $value = str_replace(',', '.', $value);
+        if (!is_numeric($value) || (float) $value < 0) {
+            $this->errors[] = $this->l('Minimum Order Value must be a non-negative number.');
+            return;
+        }
+        $brand = $this->getTwoBrand();
+        $gate = isset($brand['availability_gate']) ? $brand['availability_gate'] : null;
+        if ($gate && isset($gate['min_order_amount']) && (float) $value <= (float) $gate['min_order_amount']) {
+            // The brand minimum is the platform/partner floor; merchants
+            // may only raise the bar
+            $this->errors[] = sprintf(
+                $this->l('Minimum Order Value must exceed the platform minimum of %1$s %2$s.'),
+                $gate['min_order_amount'],
+                $gate['currency']
+            );
+        }
     }
 
     protected function saveTwoOtherFormValues()
@@ -1087,6 +1115,10 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', (int) Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
         Configuration::updateValue('PS_TWO_DEBUG_MODE', Tools::getValue('PS_TWO_DEBUG_MODE'));
+        Configuration::updateValue(
+            'PS_TWO_MERCHANT_MIN_ORDER',
+            str_replace(',', '.', trim((string) Tools::getValue('PS_TWO_MERCHANT_MIN_ORDER')))
+        );
 
         $this->output .= $this->displayConfirmation($this->l('Other settings are updated.'));
     }
@@ -2207,55 +2239,136 @@ class Twopayment extends PaymentModule
     {
         $brand = $this->getTwoBrand();
         $gate = isset($brand['availability_gate']) ? $brand['availability_gate'] : null;
-        if (!$gate) {
-            return true;
-        }
-        if (!isset($gate['min_order_amount'], $gate['currency'], $gate['billing_countries'])) {
+        if ($gate && !isset($gate['min_order_amount'], $gate['currency'], $gate['basis'], $gate['billing_countries'])) {
             // Malformed gate config must not judge with missing criteria
+            $gate = null;
+        }
+        $merchant_minimum = $this->getTwoMerchantMinimumOrder();
+        if (!$gate && !$merchant_minimum) {
             return true;
         }
 
-        $billing_country = Country::getIsoById((int) $billing_address->id_country);
-        if (!in_array($billing_country, $gate['billing_countries'], true)) {
-            PrestaShopLogger::addLog(
-                'TwoPayment: Payment option hidden - billing country ' . ($billing_country ?: 'unknown')
-                . ' outside the brand gate (' . implode(',', $gate['billing_countries']) . ')',
-                1
-            );
+        if ($gate) {
+            $billing_country = Country::getIsoById((int) $billing_address->id_country);
+            if (!in_array($billing_country, $gate['billing_countries'], true)) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Payment option hidden - billing country ' . ($billing_country ?: 'unknown')
+                    . ' outside the brand gate (' . implode(',', $gate['billing_countries']) . ')',
+                    1
+                );
+                return false;
+            }
+            if (!$this->cartSatisfiesTwoMinimum($cart, $gate['min_order_amount'], $gate['currency'], $gate['basis'], 'brand minimum')) {
+                return false;
+            }
+        }
+
+        if ($merchant_minimum
+            && !$this->cartSatisfiesTwoMinimum(
+                $cart,
+                $merchant_minimum['amount'],
+                $merchant_minimum['currency'],
+                $merchant_minimum['basis'],
+                'merchant minimum'
+            )
+        ) {
             return false;
         }
 
-        $net_total = (float) $cart->getOrderTotal(false, Cart::BOTH);
+        return true;
+    }
+
+    /**
+     * Whether the cart meets one minimum-order constraint, comparing on
+     * the declared basis (net = excl. tax, gross = incl.) and converting
+     * via PrestaShop's currency rates when the cart currency differs —
+     * failing closed without a usable rate.
+     *
+     * @param Cart $cart
+     * @param float $amount
+     * @param string $currency
+     * @param string $basis
+     * @param string $label For the log line
+     *
+     * @return bool
+     */
+    protected function cartSatisfiesTwoMinimum($cart, $amount, $currency, $basis, $label)
+    {
+        $basket_value = (float) $cart->getOrderTotal($basis === 'gross', Cart::BOTH);
         $cart_currency = new Currency((int) $cart->id_currency);
-        if ($cart_currency->iso_code !== $gate['currency']) {
+        if ($cart_currency->iso_code !== $currency) {
             // PrestaShop stores each currency's rate against the shop
             // default currency; the cross rate is target/source
             $from_rate = (float) $cart_currency->conversion_rate;
-            $to_id = Currency::getIdByIsoCode($gate['currency']);
+            $to_id = Currency::getIdByIsoCode($currency);
             $to_rate = $to_id ? (float) (new Currency((int) $to_id))->conversion_rate : 0.0;
             if ($from_rate <= 0 || $to_rate <= 0) {
-                // Fail closed: without a rate we cannot prove the brand's
-                // minimum is met
                 PrestaShopLogger::addLog(
                     'TwoPayment: Payment option hidden - no conversion rate from '
-                    . $cart_currency->iso_code . ' to ' . $gate['currency'] . ' for the brand gate',
+                    . $cart_currency->iso_code . ' to ' . $currency . ' for the ' . $label,
                     2
                 );
                 return false;
             }
-            $net_total = round($net_total / $from_rate * $to_rate, 2);
+            $basket_value = round($basket_value / $from_rate * $to_rate, 2);
         }
 
-        if ($net_total < (float) $gate['min_order_amount']) {
+        if ($basket_value < (float) $amount) {
             PrestaShopLogger::addLog(
-                'TwoPayment: Payment option hidden - net total ' . $net_total . ' ' . $gate['currency']
-                . ' below the brand minimum ' . $gate['min_order_amount'],
+                'TwoPayment: Payment option hidden - basket ' . $basket_value . ' ' . $currency
+                . ' (' . $basis . ') below the ' . $label . ' ' . $amount,
                 1
             );
             return false;
         }
 
         return true;
+    }
+
+    /**
+     * The merchant's own optional minimum order value, as
+     * ['amount', 'currency', 'basis'] or null. Interpreted in the brand
+     * minimum's currency/basis when the brand declares a gate, otherwise
+     * the shop default currency, gross. Validated on save to exceed the
+     * brand minimum — merchants may only raise the bar.
+     *
+     * @return array|null
+     */
+    /**
+     * Dynamic description for the Minimum Order Value setting: shows the
+     * brand minimum the merchant's value must exceed.
+     *
+     * @return string
+     */
+    protected function getTwoMerchantMinimumOrderDescription()
+    {
+        $brand = $this->getTwoBrand();
+        $gate = isset($brand['availability_gate']) ? $brand['availability_gate'] : null;
+        if ($gate && isset($gate['min_order_amount'], $gate['currency'])) {
+            return sprintf(
+                $this->l('Platform minimum: %1$s %2$s (%3$s tax). A value here must exceed it and is interpreted in the same currency and tax basis.'),
+                $gate['min_order_amount'],
+                $gate['currency'],
+                (isset($gate['basis']) ? $gate['basis'] : 'net') === 'gross' ? $this->l('including') : $this->l('excluding')
+            );
+        }
+        return $this->l('Hide the payment option below this order value (shop default currency, including tax). Leave empty for no minimum.');
+    }
+
+    public function getTwoMerchantMinimumOrder()
+    {
+        $value = (float) Configuration::get('PS_TWO_MERCHANT_MIN_ORDER');
+        if ($value <= 0) {
+            return null;
+        }
+        $brand = $this->getTwoBrand();
+        $gate = isset($brand['availability_gate']) ? $brand['availability_gate'] : null;
+        $default_currency = new Currency((int) Configuration::get('PS_CURRENCY_DEFAULT'));
+        return [
+            'amount' => $value,
+            'currency' => isset($gate['currency']) ? $gate['currency'] : $default_currency->iso_code,
+            'basis' => isset($gate['basis']) ? $gate['basis'] : 'gross',
+        ];
     }
 
     public function hookPaymentOptions($params)
