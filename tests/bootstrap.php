@@ -836,9 +836,22 @@ namespace {
             return $this->applyTwoBrandPayloadIdentity($request_data);
         }
 
-        public function getTwoPlatformMinimumInDefaultCurrencyForTests(array $gate)
+        public function getTwoPlatformMinimumInDefaultCurrencyForTests(array $platform_minimum)
         {
-            return $this->getTwoPlatformMinimumInDefaultCurrency($gate);
+            return $this->getTwoPlatformMinimumInDefaultCurrency($platform_minimum);
+        }
+
+        /**
+         * Injected API-resolved platform minimum; null = none configured.
+         * Overrides the real API fetch (no curl in unit tests).
+         *
+         * @var array|null
+         */
+        public $test_platform_minimum = null;
+
+        public function getTwoPlatformMinimumOrder()
+        {
+            return $this->test_platform_minimum;
         }
     }
 

@@ -425,7 +425,17 @@ final class OrderBuilderSpec
     private static function gateFixture(array $gate, float $netTotal, int $idCurrency, int $idCountry): array
     {
         $module = new TwopaymentTestHarness();
-        $module->setTwoBrand(['availability_gate' => $gate]);
+        // Split the legacy combined fixture: the value criteria inject as
+        // the API-resolved platform minimum, the brand gate keeps only
+        // the billing-country restriction.
+        if (isset($gate['min_order_amount'])) {
+            $module->test_platform_minimum = [
+                'amount' => (float) $gate['min_order_amount'],
+                'currency' => $gate['currency'],
+                'basis' => $gate['basis'],
+            ];
+        }
+        $module->setTwoBrand(['availability_gate' => ['billing_countries' => $gate['billing_countries']]]);
 
         $cart = new Cart(21);
         $cart->id_currency = $idCurrency;
@@ -552,17 +562,17 @@ final class OrderBuilderSpec
         StubStore::$configuration['PS_CURRENCY_DEFAULT'] = 826;
         $module = new TwopaymentTestHarness();
 
-        $gate = ['min_order_amount' => 250.0, 'currency' => 'EUR', 'basis' => 'net', 'billing_countries' => ['NL']];
-        TinyAssert::same(215.52, $module->getTwoPlatformMinimumInDefaultCurrencyForTests($gate));
+        $platform_minimum = ['amount' => 250.0, 'currency' => 'EUR', 'basis' => 'net'];
+        TinyAssert::same(215.52, $module->getTwoPlatformMinimumInDefaultCurrencyForTests($platform_minimum));
 
         // Same currency: no conversion
         StubStore::$configuration['PS_CURRENCY_DEFAULT'] = 978;
-        TinyAssert::same(250.0, $module->getTwoPlatformMinimumInDefaultCurrencyForTests($gate));
+        TinyAssert::same(250.0, $module->getTwoPlatformMinimumInDefaultCurrencyForTests($platform_minimum));
 
-        // No rate for the brand currency
+        // No rate for the platform-minimum currency
         unset(StubStore::$currencies[978]);
         StubStore::$configuration['PS_CURRENCY_DEFAULT'] = 826;
-        TinyAssert::same(null, $module->getTwoPlatformMinimumInDefaultCurrencyForTests($gate));
+        TinyAssert::same(null, $module->getTwoPlatformMinimumInDefaultCurrencyForTests($platform_minimum));
     }
 
     private static function testMinimumOrderDeclineHint(): void
@@ -572,15 +582,8 @@ final class OrderBuilderSpec
         StubStore::$currencies[978] = ['iso_code' => 'EUR', 'conversion_rate' => 1.16];
         StubStore::$configuration['PS_CURRENCY_DEFAULT'] = 826;
         $module = new TwopaymentTestHarness();
-        $module->setTwoBrand([
-            'product_name' => 'Testbrand',
-            'availability_gate' => [
-                'min_order_amount' => 250.0,
-                'currency' => 'EUR',
-                'basis' => 'net',
-                'billing_countries' => ['NL'],
-            ],
-        ]);
+        $module->setTwoBrand(['product_name' => 'Testbrand']);
+        $module->test_platform_minimum = ['amount' => 250.0, 'currency' => 'EUR', 'basis' => 'net'];
 
         $cart = new Cart(31);
         $cart->id_currency = 826;
