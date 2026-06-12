@@ -40,6 +40,8 @@ namespace {
         public static array $taxRuleRates = [];
         public static array $dbExecuteSResponses = [];
         public static array $dbLastExecuteS = [];
+        /** @var object|null returned by Module::getInstanceByName in tests */
+        public static $moduleInstance = null;
 
         public static function reset(): void
         {
@@ -78,6 +80,7 @@ namespace {
             self::$taxRuleRates = [];
             self::$dbExecuteSResponses = [];
             self::$dbLastExecuteS = [];
+            self::$moduleInstance = null;
 
             $context = Context::getContext();
             $context->cookie = new Cookie();
@@ -104,6 +107,11 @@ namespace {
     class Module
     {
         public int $id = 1;
+
+        public static function getInstanceByName($name)
+        {
+            return StubStore::$moduleInstance;
+        }
 
         public static function isInstalled($name): bool
         {
@@ -351,6 +359,8 @@ namespace {
 
     class Country
     {
+        public $iso_code = '';
+
         public static function getIsoById($id)
         {
             return StubStore::$countries[(int) $id] ?? false;
@@ -804,6 +814,10 @@ namespace {
         {
             return 1;
         }
+    }
+
+    if (!defined('_PS_MODULE_DIR_')) {
+        define('_PS_MODULE_DIR_', dirname(__DIR__, 2) . '/');
     }
 
     require_once dirname(__DIR__) . '/twopayment.php';

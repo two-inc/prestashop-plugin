@@ -4958,10 +4958,12 @@ final class OrderBuilderSpec
 }
 
 require __DIR__ . '/CustomerAddressFormatterOverrideSpec.php';
+require __DIR__ . '/TwoSoleTraderSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
     'CustomerAddressFormatterOverrideSpec::runAll' => [CustomerAddressFormatterOverrideSpec::class, 'runAll'],
+    'TwoSoleTraderSpec::runAll' => [TwoSoleTraderSpec::class, 'runAll'],
 ];
 
 $failed = 0;

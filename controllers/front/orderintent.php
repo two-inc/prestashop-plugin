@@ -67,6 +67,12 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             case 'clearOrderIntentResult':
                 $this->ajaxProcessClearOrderIntentResult();
                 break;
+            case 'soleTraderAvailability':
+                $this->ajaxProcessSoleTraderAvailability();
+                break;
+            case 'soleTraderTokens':
+                $this->ajaxProcessSoleTraderTokens();
+                break;
             default:
                 $this->sendJsonResponse(json_encode([
                     'success' => false,
@@ -97,6 +103,57 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $this->context->cookie->setExpire(time() + Twopayment::COOKIE_EXPIRY_ONE_HOUR);
         PrestaShopLogger::addLog('TwoPayment: Saved selected payment term ' . $days . ' days in cookie', 1);
         $this->sendJsonResponse(json_encode(['success' => true]));
+    }
+
+    /**
+     * Whether the sole trader account type applies for a billing country
+     * (TWO-24755). Combines the registry endpoint's country answer with the
+     * merchant toggle, both server-side; JS only renders the result.
+     */
+    public function ajaxProcessSoleTraderAvailability()
+    {
+        if (!$this->validateAjaxToken()) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Invalid token')]));
+            return;
+        }
+        $country = (string) Tools::getValue('country');
+        $this->sendJsonResponse(json_encode([
+            'success' => true,
+            'available' => TwoSoleTrader::isAvailable($this->module, $country),
+        ]));
+    }
+
+    /**
+     * Mint the delegation + autofill tokens for the sole-trader flow
+     * (TWO-24755) and hand the browser what it needs to open the hosted
+     * signup popup and autofill the buyer. The merchant API key stays
+     * server-side; tokens are scoped and short-lived by the Two API.
+     */
+    public function ajaxProcessSoleTraderTokens()
+    {
+        if (!$this->validateAjaxToken()) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Invalid token')]));
+            return;
+        }
+        if (!$this->isPost()) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Only POST requests allowed')]));
+            return;
+        }
+        if (!TwoSoleTrader::isEnabled()) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Sole trader checkout is not enabled')]));
+            return;
+        }
+        $tokens = TwoSoleTrader::mintTokens($this->module);
+        if ($tokens === null) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Could not initialise the sole trader flow')]));
+            return;
+        }
+        $this->sendJsonResponse(json_encode([
+            'success' => true,
+            'delegation_token' => $tokens['delegation_token'],
+            'autofill_token' => $tokens['autofill_token'],
+            'signup_url' => TwoSoleTrader::getSignupPageUrl(),
+        ]));
     }
 
     /**
@@ -279,9 +336,12 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         }
         
 
-        // SECURITY LAYER: Verify account type (kept for defense-in-depth)
-        if (empty($accountType) || $accountType !== 'business') {
-            PrestaShopLogger::addLog('TwoPayment: Order intent blocked - non-business account type: ' . $accountType, 2);
+        // SECURITY LAYER: Verify account type (kept for defense-in-depth).
+        // Business always passes; sole trader only where the feature is
+        // available for the billing country (TWO-24755).
+        $countryIso = (string) Country::getIsoById((int) $address->id_country);
+        if (empty($accountType) || !TwoSoleTrader::isAccountTypeAllowed($this->module, $accountType, $countryIso)) {
+            PrestaShopLogger::addLog('TwoPayment: Order intent blocked - ineligible account type: ' . $accountType, 2);
             $this->sendJsonResponse(json_encode([
                 'success' => false,
                 'error' => $this->module->l('Two payment is only available for business accounts')
