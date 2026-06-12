@@ -40,7 +40,7 @@ final class TwoSoleTraderSpec
             'testHiddenWhenToggleOff',
             'testHiddenWhenAccountTypeModeOff',
             'testHiddenWhenRegistryOmitsIt',
-            'testRegistryErrorFallsBackToRegisteredBusiness',
+            'testRegistryErrorFallsBackToNoSoleTrader',
             'testRegistryRejectsMalformedCountry',
             'testRegistryResponseCachedPerRequest',
             'testAccountTypeAllowedMatrix',
@@ -85,7 +85,7 @@ final class TwoSoleTraderSpec
     {
         $module = self::harness(
             ['PS_TWO_ENABLE_SOLE_TRADER' => 1, 'PS_TWO_USE_ACCOUNT_TYPE' => 1],
-            ['/registry/v1/supported-company-types/' => self::registryOk(['REGISTERED_BUSINESS', 'SOLE_TRADER'])]
+            ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
         );
         TinyAssert::true(TwoSoleTrader::isAvailable($module, 'GB'));
         // Lowercase input normalises to the same country
@@ -97,7 +97,7 @@ final class TwoSoleTraderSpec
     {
         $module = self::harness(
             ['PS_TWO_ENABLE_SOLE_TRADER' => 0, 'PS_TWO_USE_ACCOUNT_TYPE' => 1],
-            ['/registry/v1/supported-company-types/' => self::registryOk(['REGISTERED_BUSINESS', 'SOLE_TRADER'])]
+            ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
         );
         TinyAssert::false(TwoSoleTrader::isAvailable($module, 'GB'));
     }
@@ -108,7 +108,7 @@ final class TwoSoleTraderSpec
         // feature cannot surface no matter what the toggle says.
         $module = self::harness(
             ['PS_TWO_ENABLE_SOLE_TRADER' => 1, 'PS_TWO_USE_ACCOUNT_TYPE' => 0],
-            ['/registry/v1/supported-company-types/' => self::registryOk(['REGISTERED_BUSINESS', 'SOLE_TRADER'])]
+            ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
         );
         TinyAssert::false(TwoSoleTrader::isAvailable($module, 'GB'));
     }
@@ -117,42 +117,42 @@ final class TwoSoleTraderSpec
     {
         $module = self::harness(
             ['PS_TWO_ENABLE_SOLE_TRADER' => 1, 'PS_TWO_USE_ACCOUNT_TYPE' => 1],
-            ['/registry/v1/supported-company-types/' => self::registryOk(['REGISTERED_BUSINESS'])]
+            ['/registry/v1/supported-company-types/' => self::registryOk([])]
         );
         TinyAssert::false(TwoSoleTrader::isAvailable($module, 'NO'));
     }
 
-    private static function testRegistryErrorFallsBackToRegisteredBusiness(): void
+    private static function testRegistryErrorFallsBackToNoSoleTrader(): void
     {
         // Network error (transport returns false)
         $module = self::harness(['PS_TWO_ENABLE_SOLE_TRADER' => 1, 'PS_TWO_USE_ACCOUNT_TYPE' => 1], []);
-        TinyAssert::same(['REGISTERED_BUSINESS'], TwoSoleTrader::getSupportedCompanyTypes($module, 'GB'));
+        TinyAssert::same([], TwoSoleTrader::getSupportedCompanyTypes($module, 'GB'));
 
         // Non-200
         TwoSoleTrader::resetCache();
         $module->cannedResponses = [
             '/registry/v1/supported-company-types/' => ['http_status' => 404],
         ];
-        TinyAssert::same(['REGISTERED_BUSINESS'], TwoSoleTrader::getSupportedCompanyTypes($module, 'GB'));
+        TinyAssert::same([], TwoSoleTrader::getSupportedCompanyTypes($module, 'GB'));
 
         // 200 with malformed body
         TwoSoleTrader::resetCache();
         $module->cannedResponses = [
             '/registry/v1/supported-company-types/' => ['http_status' => 200, 'data' => 'junk'],
         ];
-        TinyAssert::same(['REGISTERED_BUSINESS'], TwoSoleTrader::getSupportedCompanyTypes($module, 'GB'));
+        TinyAssert::same([], TwoSoleTrader::getSupportedCompanyTypes($module, 'GB'));
     }
 
     private static function testRegistryRejectsMalformedCountry(): void
     {
         $module = self::harness(
             ['PS_TWO_ENABLE_SOLE_TRADER' => 1, 'PS_TWO_USE_ACCOUNT_TYPE' => 1],
-            ['/registry/v1/supported-company-types/' => self::registryOk(['REGISTERED_BUSINESS', 'SOLE_TRADER'])]
+            ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
         );
         // Never hits the API for junk country input
-        TinyAssert::same(['REGISTERED_BUSINESS'], TwoSoleTrader::getSupportedCompanyTypes($module, ''));
-        TinyAssert::same(['REGISTERED_BUSINESS'], TwoSoleTrader::getSupportedCompanyTypes($module, 'G'));
-        TinyAssert::same(['REGISTERED_BUSINESS'], TwoSoleTrader::getSupportedCompanyTypes($module, 'GBR'));
+        TinyAssert::same([], TwoSoleTrader::getSupportedCompanyTypes($module, ''));
+        TinyAssert::same([], TwoSoleTrader::getSupportedCompanyTypes($module, 'G'));
+        TinyAssert::same([], TwoSoleTrader::getSupportedCompanyTypes($module, 'GBR'));
         TinyAssert::count(0, $module->requests);
     }
 
@@ -160,7 +160,7 @@ final class TwoSoleTraderSpec
     {
         $module = self::harness(
             ['PS_TWO_ENABLE_SOLE_TRADER' => 1, 'PS_TWO_USE_ACCOUNT_TYPE' => 1],
-            ['/registry/v1/supported-company-types/' => self::registryOk(['REGISTERED_BUSINESS', 'SOLE_TRADER'])]
+            ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
         );
         TwoSoleTrader::getSupportedCompanyTypes($module, 'GB');
         TwoSoleTrader::getSupportedCompanyTypes($module, 'GB');
@@ -175,7 +175,7 @@ final class TwoSoleTraderSpec
     {
         $module = self::harness(
             ['PS_TWO_ENABLE_SOLE_TRADER' => 1, 'PS_TWO_USE_ACCOUNT_TYPE' => 1],
-            ['/registry/v1/supported-company-types/' => self::registryOk(['REGISTERED_BUSINESS', 'SOLE_TRADER'])]
+            ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
         );
         TinyAssert::true(TwoSoleTrader::isAccountTypeAllowed($module, 'business', 'NO'));
         TinyAssert::true(TwoSoleTrader::isAccountTypeAllowed($module, 'sole_trader', 'GB'));
@@ -247,7 +247,7 @@ final class TwoSoleTraderSpec
 
         $module = self::harness(
             ['PS_TWO_ENABLE_SOLE_TRADER' => 1, 'PS_TWO_USE_ACCOUNT_TYPE' => 1],
-            ['/registry/v1/supported-company-types/' => self::registryOk(['REGISTERED_BUSINESS', 'SOLE_TRADER'])]
+            ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
         );
 
         $country = new Country();
@@ -259,7 +259,7 @@ final class TwoSoleTraderSpec
 
         // Unsupported country: no third option
         TwoSoleTrader::resetCache();
-        $module->cannedResponses = ['/registry/v1/supported-company-types/' => self::registryOk(['REGISTERED_BUSINESS'])];
+        $module->cannedResponses = ['/registry/v1/supported-company-types/' => self::registryOk([])];
         $country = new Country();
         $country->iso_code = 'NO';
         $format = (new CustomerAddressFormatter($country, $translator, []))->getFormat();

@@ -24,7 +24,6 @@
  */
 class TwoSoleTrader
 {
-    const REGISTERED_BUSINESS = 'REGISTERED_BUSINESS';
     const SOLE_TRADER = 'SOLE_TRADER';
 
     /** Cookie key prefix; full key is prefix + ISO country code. */
@@ -84,11 +83,15 @@ class TwoSoleTrader
     }
 
     /**
-     * The buyer company types Two supports for a country, from
-     * GET /registry/v1/supported-company-types/<ISO>. Cached in the
-     * context cookie for the endpoint's own max-age. Fail-soft: any error
-     * (network, non-200, malformed body) resolves to registered-business
-     * only — checkout never blocks, the option just doesn't show.
+     * The buyer company types the Two registry supports for a country,
+     * from GET /registry/v1/supported-company-types/<ISO> — only the
+     * types that need registry enrollment before they can buy (sole
+     * traders). Registered businesses need no enrollment and are always
+     * supported, so the endpoint deliberately omits them: an empty list
+     * means business-only checkout. Cached in the context cookie for the
+     * endpoint's own max-age. Fail-soft: any error (network, non-200,
+     * malformed body) also resolves to an empty list — checkout never
+     * blocks, the option just doesn't show.
      *
      * @param TwoPayment $module
      * @param string $countryIso
@@ -99,7 +102,7 @@ class TwoSoleTrader
     {
         $countryIso = strtoupper(trim((string) $countryIso));
         if (!preg_match('/^[A-Z]{2}$/', $countryIso)) {
-            return array(self::REGISTERED_BUSINESS);
+            return array();
         }
 
         if (array_key_exists($countryIso, self::$types_cache)) {
@@ -149,10 +152,9 @@ class TwoSoleTrader
             || !isset($response['supported_company_types'])
             || !is_array($response['supported_company_types'])
         ) {
-            return array(self::REGISTERED_BUSINESS);
+            return array();
         }
-        $types = array_values(array_filter($response['supported_company_types'], 'is_string'));
-        return count($types) > 0 ? $types : array(self::REGISTERED_BUSINESS);
+        return array_values(array_filter($response['supported_company_types'], 'is_string'));
     }
 
     /**
