@@ -1,0 +1,51 @@
+services:
+  db:
+    image: mariadb:10.11
+    container_name: prestashop-db
+    environment:
+      MYSQL_ROOT_PASSWORD: admin
+      MYSQL_DATABASE: prestashop
+    volumes:
+      - prestashop_db:/var/lib/mysql
+    networks:
+      - prestashop
+
+  prestashop:
+    image: ${PRESTASHOP_IMAGE:-prestashop/prestashop:8-apache}
+    container_name: prestashop
+    depends_on:
+      - db
+    ports:
+      - "${PORT:-1237}:80"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      DB_SERVER: db
+      DB_NAME: prestashop
+      DB_USER: root
+      DB_PASSWD: admin
+      PS_DOMAIN: ${PS_DOMAIN:-localhost:1237}
+      PS_INSTALL_AUTO: "1"
+      PS_DEV_MODE: "1"
+      PS_LANGUAGE: en
+      PS_COUNTRY: ${TWO_STORE_COUNTRY:-NO}
+      PS_ALL_LANGUAGES: "0"
+      PS_DEMO_MODE: "0"
+      PS_FOLDER_ADMIN: admin-dev
+      ADMIN_MAIL: exampleuser@two.inc
+      ADMIN_PASSWD: examplepassword123
+      # Dev-loop overrides for the Two API/portal hosts; only honoured when
+      # PS_DEV_MODE=1. Empty in defaults so external devs still get
+      # api.sandbox / portal.sandbox via the plugin's normal env switch.
+      TWO_API_BASE_URL: ${TWO_API_BASE_URL:-}
+      TWO_PORTAL_BASE_URL: ${TWO_PORTAL_BASE_URL:-}
+    volumes:
+      - .:/var/www/html/modules/twopayment
+    networks:
+      - prestashop
+
+networks:
+  prestashop:
+
+volumes:
+  prestashop_db:
