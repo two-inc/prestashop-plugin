@@ -36,14 +36,14 @@ class TwoSoleTrader
     private static $types_cache = array();
 
     /**
-     * Whether the merchant has opted into sole trader checkout. Requires
-     * account-type mode: the Sole Trader option is a third value on the
-     * existing Personal/Business selector.
+     * Whether the merchant has opted into sole trader checkout. Surfaced as
+     * a Business / Sole-trader toggle on the payment step (TWO-24755), the
+     * same model the Magento and WooCommerce plugins use — there is no
+     * account-type selector on the address form.
      */
     public static function isEnabled()
     {
-        return (int) Configuration::get('PS_TWO_ENABLE_SOLE_TRADER') === 1
-            && (int) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE') === 1;
+        return (int) Configuration::get('PS_TWO_ENABLE_SOLE_TRADER') === 1;
     }
 
     /**
@@ -59,27 +59,6 @@ class TwoSoleTrader
     {
         return self::isEnabled()
             && in_array(self::SOLE_TRADER, self::getSupportedCompanyTypes($module, $countryIso), true);
-    }
-
-    /**
-     * Whether an account type is allowed to pay with Two. Business always
-     * is; sole trader only when the feature is available for the country.
-     *
-     * @param TwoPayment $module
-     * @param string $accountType
-     * @param string $countryIso
-     *
-     * @return bool
-     */
-    public static function isAccountTypeAllowed($module, $accountType, $countryIso)
-    {
-        if ($accountType === 'business') {
-            return true;
-        }
-        if ($accountType === 'sole_trader') {
-            return self::isAvailable($module, $countryIso);
-        }
-        return false;
     }
 
     /**

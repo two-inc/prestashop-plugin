@@ -299,14 +299,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $companyData = $this->getCompanyDataWithFallbacks();
         $companyName = $companyData['company'];
         $companyId = $companyData['companyid'];
-        // Determine account type only when merchant explicitly enabled account-type mode.
-        // In strict account-type mode, missing/invalid account_type must be blocked.
-        $useAccountType = (int)Configuration::get('PS_TWO_USE_ACCOUNT_TYPE');
-        $accountType = 'business';
-        if ($useAccountType) {
-            $accountType = property_exists($address, 'account_type') ? trim((string) $address->account_type) : '';
-        }
-        
+
         // Store company data in PrestaShop session for future use
         $this->storeCompanyDataInSession($companyData);
         
@@ -334,20 +327,11 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             ]));
             return;
         }
-        
 
-        // SECURITY LAYER: Verify account type (kept for defense-in-depth).
-        // Business always passes; sole trader only where the feature is
-        // available for the billing country (TWO-24755).
-        $countryIso = (string) Country::getIsoById((int) $address->id_country);
-        if (empty($accountType) || !TwoSoleTrader::isAccountTypeAllowed($this->module, $accountType, $countryIso)) {
-            PrestaShopLogger::addLog('TwoPayment: Order intent blocked - ineligible account type: ' . $accountType, 2);
-            $this->sendJsonResponse(json_encode([
-                'success' => false,
-                'error' => $this->module->l('Two payment is only available for business accounts')
-            ]));
-            return;
-        }
+        // A company name plus a verified org number is the business guard:
+        // registered businesses search/select their company, and enrolled
+        // sole traders carry the synthetic org number their Two registration
+        // minted (TWO-24755), so both arrive here as a valid business.
 
         try {
             // Set address with validated form data for API call (form-first approach)

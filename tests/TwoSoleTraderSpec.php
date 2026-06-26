@@ -3,9 +3,10 @@
 declare(strict_types=1);
 
 /**
- * Unit spec for the sole-trader business logic (TWO-24755): both gates
+ * Unit spec for the sole-trader business logic (TWO-24755): the two gates
  * (registry endpoint + merchant toggle), fail-soft registry handling,
- * fail-closed token minting, and the account_type form option.
+ * fail-closed token minting, and that the address form carries no
+ * account-type selector (sole traders enrol via the payment-step toggle).
  */
 
 /**
@@ -37,16 +38,15 @@ final class TwoSoleTraderSpec
     {
         $tests = [
             'testAvailableWhenRegistryAndToggleAgree',
+            'testEnabledFollowsToggleOnly',
             'testHiddenWhenToggleOff',
-            'testHiddenWhenAccountTypeModeOff',
             'testHiddenWhenRegistryOmitsIt',
             'testRegistryErrorFallsBackToNoSoleTrader',
             'testRegistryRejectsMalformedCountry',
             'testRegistryResponseCachedPerRequest',
-            'testAccountTypeAllowedMatrix',
             'testTokenMintReadsHeaderAndFailsClosed',
             'testSignupUrlFollowsEnvironment',
-            'testFormatterAddsThirdOptionOnlyWhenAvailable',
+            'testFormatterHasNoAccountTypeField',
         ];
         foreach ($tests as $test) {
             self::reset();
@@ -84,7 +84,7 @@ final class TwoSoleTraderSpec
     private static function testAvailableWhenRegistryAndToggleAgree(): void
     {
         $module = self::harness(
-            ['PS_TWO_ENABLE_SOLE_TRADER' => 1, 'PS_TWO_USE_ACCOUNT_TYPE' => 1],
+            ['PS_TWO_ENABLE_SOLE_TRADER' => 1],
             ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
         );
         TinyAssert::true(TwoSoleTrader::isAvailable($module, 'GB'));
@@ -96,27 +96,27 @@ final class TwoSoleTraderSpec
     private static function testHiddenWhenToggleOff(): void
     {
         $module = self::harness(
-            ['PS_TWO_ENABLE_SOLE_TRADER' => 0, 'PS_TWO_USE_ACCOUNT_TYPE' => 1],
+            ['PS_TWO_ENABLE_SOLE_TRADER' => 0],
             ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
         );
         TinyAssert::false(TwoSoleTrader::isAvailable($module, 'GB'));
     }
 
-    private static function testHiddenWhenAccountTypeModeOff(): void
+    private static function testEnabledFollowsToggleOnly(): void
     {
-        // The option rides the account_type selector; without that mode the
-        // feature cannot surface no matter what the toggle says.
-        $module = self::harness(
-            ['PS_TWO_ENABLE_SOLE_TRADER' => 1, 'PS_TWO_USE_ACCOUNT_TYPE' => 0],
-            ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
-        );
-        TinyAssert::false(TwoSoleTrader::isAvailable($module, 'GB'));
+        // The feature is gated solely by the merchant toggle now — there is
+        // no account-type mode to also satisfy (TWO-24755 alignment).
+        self::harness(['PS_TWO_ENABLE_SOLE_TRADER' => 1], []);
+        TinyAssert::true(TwoSoleTrader::isEnabled());
+
+        Configuration::updateValue('PS_TWO_ENABLE_SOLE_TRADER', 0);
+        TinyAssert::false(TwoSoleTrader::isEnabled());
     }
 
     private static function testHiddenWhenRegistryOmitsIt(): void
     {
         $module = self::harness(
-            ['PS_TWO_ENABLE_SOLE_TRADER' => 1, 'PS_TWO_USE_ACCOUNT_TYPE' => 1],
+            ['PS_TWO_ENABLE_SOLE_TRADER' => 1],
             ['/registry/v1/supported-company-types/' => self::registryOk([])]
         );
         TinyAssert::false(TwoSoleTrader::isAvailable($module, 'NO'));
@@ -125,7 +125,7 @@ final class TwoSoleTraderSpec
     private static function testRegistryErrorFallsBackToNoSoleTrader(): void
     {
         // Network error (transport returns false)
-        $module = self::harness(['PS_TWO_ENABLE_SOLE_TRADER' => 1, 'PS_TWO_USE_ACCOUNT_TYPE' => 1], []);
+        $module = self::harness(['PS_TWO_ENABLE_SOLE_TRADER' => 1], []);
         TinyAssert::same([], TwoSoleTrader::getSupportedCompanyTypes($module, 'GB'));
 
         // Non-200
@@ -146,7 +146,7 @@ final class TwoSoleTraderSpec
     private static function testRegistryRejectsMalformedCountry(): void
     {
         $module = self::harness(
-            ['PS_TWO_ENABLE_SOLE_TRADER' => 1, 'PS_TWO_USE_ACCOUNT_TYPE' => 1],
+            ['PS_TWO_ENABLE_SOLE_TRADER' => 1],
             ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
         );
         // Never hits the API for junk country input
@@ -159,7 +159,7 @@ final class TwoSoleTraderSpec
     private static function testRegistryResponseCachedPerRequest(): void
     {
         $module = self::harness(
-            ['PS_TWO_ENABLE_SOLE_TRADER' => 1, 'PS_TWO_USE_ACCOUNT_TYPE' => 1],
+            ['PS_TWO_ENABLE_SOLE_TRADER' => 1],
             ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
         );
         TwoSoleTrader::getSupportedCompanyTypes($module, 'GB');
@@ -171,27 +171,9 @@ final class TwoSoleTraderSpec
         TinyAssert::count(2, $module->requests);
     }
 
-    private static function testAccountTypeAllowedMatrix(): void
-    {
-        $module = self::harness(
-            ['PS_TWO_ENABLE_SOLE_TRADER' => 1, 'PS_TWO_USE_ACCOUNT_TYPE' => 1],
-            ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
-        );
-        TinyAssert::true(TwoSoleTrader::isAccountTypeAllowed($module, 'business', 'NO'));
-        TinyAssert::true(TwoSoleTrader::isAccountTypeAllowed($module, 'sole_trader', 'GB'));
-        TinyAssert::false(TwoSoleTrader::isAccountTypeAllowed($module, 'personal', 'GB'));
-        TinyAssert::false(TwoSoleTrader::isAccountTypeAllowed($module, '', 'GB'));
-
-        // Toggle off: sole_trader rejected even for GB, business still fine
-        Configuration::updateValue('PS_TWO_ENABLE_SOLE_TRADER', 0);
-        TwoSoleTrader::resetCache();
-        TinyAssert::false(TwoSoleTrader::isAccountTypeAllowed($module, 'sole_trader', 'GB'));
-        TinyAssert::true(TwoSoleTrader::isAccountTypeAllowed($module, 'business', 'GB'));
-    }
-
     private static function testTokenMintReadsHeaderAndFailsClosed(): void
     {
-        $module = self::harness(['PS_TWO_ENABLE_SOLE_TRADER' => 1, 'PS_TWO_USE_ACCOUNT_TYPE' => 1], []);
+        $module = self::harness(['PS_TWO_ENABLE_SOLE_TRADER' => 1], []);
 
         // Happy path: both mints return the token header (case handled by
         // the transport, which lower-cases header names)
@@ -231,7 +213,7 @@ final class TwoSoleTraderSpec
         TinyAssert::same('https://checkout.sandbox.two.inc/soletrader/signup', TwoSoleTrader::getSignupPageUrl());
     }
 
-    private static function testFormatterAddsThirdOptionOnlyWhenAvailable(): void
+    private static function testFormatterHasNoAccountTypeField(): void
     {
         $overridePath = dirname(__DIR__) . '/override/classes/form/CustomerAddressFormatter.php';
         if (!class_exists('CustomerAddressFormatter', false)) {
@@ -245,32 +227,19 @@ final class TwoSoleTraderSpec
             }
         };
 
-        $module = self::harness(
-            ['PS_TWO_ENABLE_SOLE_TRADER' => 1, 'PS_TWO_USE_ACCOUNT_TYPE' => 1],
+        // Even with sole trader enabled and the registry returning it, the
+        // address form carries no account-type selector — buyers always
+        // enter company details (B2B) and sole traders enrol via the
+        // payment-step toggle (TWO-24755).
+        self::harness(
+            ['PS_TWO_ENABLE_SOLE_TRADER' => 1],
             ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
         );
 
         $country = new Country();
         $country->iso_code = 'GB';
-        $formatter = new CustomerAddressFormatter($country, $translator, []);
-        $format = $formatter->getFormat();
-        TinyAssert::true(isset($format['account_type']), 'Expected account_type field');
-        TinyAssert::same('Sole trader', $format['account_type']->getAvailableValue('sole_trader'), 'Expected sole_trader option for GB with toggle on');
-
-        // Unsupported country: no third option
-        TwoSoleTrader::resetCache();
-        $module->cannedResponses = ['/registry/v1/supported-company-types/' => self::registryOk([])];
-        $country = new Country();
-        $country->iso_code = 'NO';
         $format = (new CustomerAddressFormatter($country, $translator, []))->getFormat();
-        TinyAssert::same(null, $format['account_type']->getAvailableValue('sole_trader'), 'No sole_trader option for NO');
-
-        // Toggle off: no third option even for GB
-        Configuration::updateValue('PS_TWO_ENABLE_SOLE_TRADER', 0);
-        TwoSoleTrader::resetCache();
-        $country = new Country();
-        $country->iso_code = 'GB';
-        $format = (new CustomerAddressFormatter($country, $translator, []))->getFormat();
-        TinyAssert::same(null, $format['account_type']->getAvailableValue('sole_trader'), 'No sole_trader option when toggle off');
+        TinyAssert::false(isset($format['account_type']), 'Address form must not add an account_type field');
+        TinyAssert::true(isset($format['company']), 'Company field is still present for B2B checkout');
     }
 }

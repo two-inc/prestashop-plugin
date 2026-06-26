@@ -2,12 +2,21 @@
  * Two Sole Trader - presentation layer for the sole-trader checkout flow
  * (TWO-24755).
  *
- * All decisioning lives server-side in classes/TwoSoleTrader.php (whether
- * the option shows for a country, token minting); this module only reacts
- * to the buyer's account_type, opens Two's hosted signup popup, autofills
- * the company data from GET /autofill/v1/buyer/current, and persists it
- * through the existing saveCompany action so the regular order-intent and
- * payment paths run unchanged. Mirrors the Magento reference flow.
+ * Renders a Business / Sole trader toggle on the payment step — the same
+ * model as the Magento and WooCommerce plugins — shown only where Two's
+ * registry says the billing country supports sole traders AND the merchant
+ * has enabled the feature. There is no account-type selector on the address
+ * form; the buyer always enters company details (B2B), and sole traders
+ * enrol from this toggle.
+ *
+ * Picking "Sole trader" mints the delegation + autofill tokens server-side,
+ * opens Two's hosted signup popup, and autofills the company fields from
+ * GET /autofill/v1/buyer/current. An enrolled sole trader then checks out as
+ * a regular business — the synthetic organization number their registration
+ * minted carries the semantics, so the order payload is unchanged.
+ *
+ * All decisioning (country eligibility, token minting) lives server-side in
+ * classes/TwoSoleTrader.php; this module only renders the result.
  */
 class TwoSoleTrader {
     constructor(config) {
@@ -17,11 +26,18 @@ class TwoSoleTrader {
             orderIntentUrl: '',
             ajaxToken: '',
             signupUrl: '',
+            shopCountry: '',
+            i18n: {},
             ...config
         };
+        this.mode = 'business';
         this.tokens = null;
         this.flowStarted = false;
         this.messageListenerBound = false;
+        // Server-resolved availability, cached per billing country for the
+        // page's lifetime so the toggle settles without re-fetching.
+        this.availabilityByCountry = {};
+        this.renderedForCountry = null;
 
         if (this.config.enabled) {
             this.init();
@@ -30,55 +46,26 @@ class TwoSoleTrader {
 
     init() {
         const self = this;
-        // The account_type select lives on the address step; the payment
-        // box renders later. Watch both: select changes and DOM arrival of
-        // the payment container (checkout step transitions re-render).
+        // The payment box and the billing country can both re-render across
+        // checkout step transitions; re-evaluate availability on each change.
         document.addEventListener('change', function (event) {
-            if (event.target && event.target.matches("select[name='account_type']")) {
-                self.evaluate();
+            if (event.target && event.target.matches("select[name='id_country'], select[name='country']")) {
+                self.refreshAvailability();
             }
         });
         const observer = new MutationObserver(function () {
-            self.evaluate();
+            self.refreshAvailability();
         });
         observer.observe(document.body, { childList: true, subtree: true });
-        this.evaluate();
-    }
-
-    accountType() {
-        const field = document.querySelector("select[name='account_type']");
-        if (field && field.value) {
-            return field.value;
-        }
-        try {
-            return sessionStorage.getItem('two_account_type') || '';
-        } catch (e) {
-            return '';
-        }
+        this.refreshAvailability();
     }
 
     container() {
         return document.querySelector('.two-sole-trader');
     }
 
-    /**
-     * Show/hide the sole-trader block and kick the flow off exactly once
-     * per page when the buyer is in sole-trader mode at the payment step.
-     */
-    evaluate() {
-        const container = this.container();
-        if (!container) {
-            return;
-        }
-        if (this.accountType() === 'sole_trader') {
-            container.style.display = 'block';
-            if (!this.flowStarted) {
-                this.flowStarted = true;
-                this.fetchTokens();
-            }
-        } else {
-            container.style.display = 'none';
-        }
+    text(key, fallback) {
+        return (this.config.i18n && this.config.i18n[key]) || fallback;
     }
 
     moduleUrl(action) {
@@ -87,6 +74,148 @@ class TwoSoleTrader {
         url.searchParams.set('action', action);
         url.searchParams.set('token', this.config.ajaxToken);
         return url.toString();
+    }
+
+    billingCountry() {
+        const field = document.querySelector("select[name='id_country'], select[name='country']");
+        if (field && field.selectedOptions && field.selectedOptions.length) {
+            const iso = field.selectedOptions[0].getAttribute('data-iso-code');
+            if (iso) {
+                return iso.toUpperCase();
+            }
+        }
+        return (this.config.shopCountry || '').toUpperCase();
+    }
+
+    /**
+     * Decide whether to show the toggle for the current billing country.
+     * Availability (registry endpoint + merchant toggle) is resolved
+     * server-side; fail-soft to "not available" so checkout never blocks.
+     */
+    refreshAvailability() {
+        const container = this.container();
+        if (!container) {
+            return;
+        }
+        const country = this.billingCountry();
+        if (!country) {
+            this.hide();
+            return;
+        }
+        if (country === this.renderedForCountry) {
+            return; // already settled for this country
+        }
+        if (country in this.availabilityByCountry) {
+            this.apply(country, this.availabilityByCountry[country]);
+            return;
+        }
+        const self = this;
+        fetch(this.moduleUrl('soleTraderAvailability') + '&country=' + encodeURIComponent(country), { method: 'GET' })
+            .then(function (response) { return response.json(); })
+            .then(function (json) {
+                const available = !!(json && json.success && json.available);
+                self.availabilityByCountry[country] = available;
+                // The buyer may have changed country mid-request; only apply
+                // if the answer is still for the current one.
+                if (self.billingCountry() === country) {
+                    self.apply(country, available);
+                }
+            })
+            .catch(function () {
+                if (self.billingCountry() === country) {
+                    self.apply(country, false);
+                }
+            });
+    }
+
+    apply(country, available) {
+        this.renderedForCountry = country;
+        if (available) {
+            this.render();
+        } else {
+            this.hide();
+        }
+    }
+
+    hide() {
+        const container = this.container();
+        if (container) {
+            container.style.display = 'none';
+        }
+        if (this.mode === 'sole_trader') {
+            this.setMode('business');
+        }
+    }
+
+    /**
+     * Render the Business / Sole trader toggle into the payment-step
+     * container. Chips are built once; subsequent calls just reveal it.
+     */
+    render() {
+        const container = this.container();
+        if (!container) {
+            return;
+        }
+        container.style.display = 'block';
+        const toggle = container.querySelector('.two-sole-trader__toggle');
+        if (toggle && toggle.dataset.twoBuilt !== '1') {
+            const self = this;
+            [
+                { value: 'business', label: this.text('registered_business', 'Registered business') },
+                { value: 'sole_trader', label: this.text('sole_trader', 'Sole trader') }
+            ].forEach(function (option) {
+                const chip = document.createElement('span');
+                chip.className = 'two-sole-trader__mode';
+                chip.setAttribute('role', 'button');
+                chip.setAttribute('tabindex', '0');
+                chip.dataset.mode = option.value;
+                chip.textContent = option.label;
+                chip.addEventListener('click', function (event) {
+                    event.preventDefault();
+                    self.setMode(option.value);
+                });
+                chip.addEventListener('keypress', function (event) {
+                    if (event.which === 13 || event.which === 32) {
+                        event.preventDefault();
+                        self.setMode(option.value);
+                    }
+                });
+                toggle.appendChild(chip);
+            });
+            toggle.dataset.twoBuilt = '1';
+        }
+        this.updateChips();
+    }
+
+    updateChips() {
+        const container = this.container();
+        if (!container) {
+            return;
+        }
+        const self = this;
+        container.querySelectorAll('.two-sole-trader__mode').forEach(function (chip) {
+            chip.classList.toggle('two-sole-trader__mode--selected', chip.dataset.mode === self.mode);
+        });
+    }
+
+    /**
+     * Switch mode. Sole trader mints tokens then autofills (or prompts the
+     * signup popup) once per page; business just hides the prompt. The popup
+     * opens from the prompt link's own click so the blocker lets it through.
+     */
+    setMode(mode) {
+        this.mode = mode;
+        this.updateChips();
+        if (mode === 'sole_trader') {
+            if (!this.flowStarted) {
+                this.flowStarted = true;
+                this.fetchTokens();
+            } else if (this.tokens) {
+                this.getCurrentBuyer();
+            }
+        } else {
+            this.hidePrompt();
+        }
     }
 
     fetchTokens() {
@@ -174,17 +303,6 @@ class TwoSoleTrader {
             });
     }
 
-    billingCountry() {
-        const field = document.querySelector("select[name='id_country'], select[name='country']");
-        if (field && field.selectedOptions && field.selectedOptions.length) {
-            const iso = field.selectedOptions[0].getAttribute('data-iso-code');
-            if (iso) {
-                return iso;
-            }
-        }
-        return (window.twopayment && window.twopayment.shop_country) || '';
-    }
-
     openPopup() {
         if (!this.tokens) {
             return;
@@ -222,7 +340,7 @@ class TwoSoleTrader {
         this.messageListenerBound = true;
         const self = this;
         window.addEventListener('message', function (event) {
-            if (self.accountType() !== 'sole_trader' || !self.tokens) {
+            if (self.mode !== 'sole_trader' || !self.tokens) {
                 return;
             }
             if (event.origin !== new URL(self.tokens.signup_url).origin) {
@@ -256,6 +374,10 @@ class TwoSoleTrader {
         const prompt = this.container() && this.container().querySelector('.two-sole-trader__prompt');
         if (prompt) {
             prompt.style.display = 'none';
+        }
+        const status = this.container() && this.container().querySelector('.two-sole-trader__status');
+        if (status) {
+            status.style.display = 'none';
         }
     }
 

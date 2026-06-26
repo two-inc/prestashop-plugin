@@ -133,7 +133,9 @@
                     checkoutHost: twopayment.checkout_host,
                     orderIntentUrl: twopayment.order_intent_url,
                     ajaxToken: twopayment.ajax_token,
-                    signupUrl: twopayment.sole_trader.signup_url
+                    signupUrl: twopayment.sole_trader.signup_url,
+                    shopCountry: twopayment.shop_country,
+                    i18n: twopayment.sole_trader.i18n || {}
                 });
             }
 

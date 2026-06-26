@@ -1698,67 +1698,6 @@ final class OrderBuilderTest extends TestCase
         self::assertCount(0, $controller->styles);
     }
 
-    public function testHookPaymentOptionsBlocksWhenAccountTypeMissingInStrictMode(): void
-    {
-        $module = new class extends TwopaymentTestHarness {
-            protected function getTwoPaymentOption()
-            {
-                return (object) ['method' => 'two'];
-            }
-        };
-
-        Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', 1);
-        StubStore::$countries[826] = 'GB';
-        StubStore::$addresses[901] = [
-            'id_country' => 826,
-            'company' => 'Acme UK Ltd',
-            'vat_number' => 'GB123456789',
-            'loaded' => true,
-        ];
-
-        $cart = new Cart(501);
-        $cart->id_address_invoice = 901;
-        $cart->id_currency = 978;
-        $module->context->cart = $cart;
-        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
-        StubStore::$moduleCurrencies['twopayment'] = [['id_currency' => 978]];
-
-        $options = $module->hookPaymentOptions([]);
-
-        self::assertCount(0, $options);
-    }
-
-    public function testHookPaymentOptionsBlocksNonBusinessWhenAccountTypePresent(): void
-    {
-        $module = new class extends TwopaymentTestHarness {
-            protected function getTwoPaymentOption()
-            {
-                return (object) ['method' => 'two'];
-            }
-        };
-
-        Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', 1);
-        StubStore::$countries[34] = 'ES';
-        StubStore::$addresses[902] = [
-            'id_country' => 34,
-            'company' => 'Acme ES S.L.',
-            'dni' => 'B12345678',
-            'account_type' => 'private',
-            'loaded' => true,
-        ];
-
-        $cart = new Cart(502);
-        $cart->id_address_invoice = 902;
-        $cart->id_currency = 978;
-        $module->context->cart = $cart;
-        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
-        StubStore::$moduleCurrencies['twopayment'] = [['id_currency' => 978]];
-
-        $options = $module->hookPaymentOptions([]);
-
-        self::assertCount(0, $options);
-    }
-
     public function testHookPaymentOptionsAllowsTwoCoveredCurrencies(): void
     {
         $module = new class extends TwopaymentTestHarness {
@@ -1768,7 +1707,6 @@ final class OrderBuilderTest extends TestCase
             }
         };
 
-        Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', 0);
         StubStore::$countries[826] = 'GB';
         StubStore::$addresses[904] = [
             'id_country' => 826,
@@ -1809,7 +1747,6 @@ final class OrderBuilderTest extends TestCase
             }
         };
 
-        Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', 0);
         StubStore::$countries[826] = 'GB';
         StubStore::$addresses[903] = [
             'id_country' => 826,

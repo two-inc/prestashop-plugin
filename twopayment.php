@@ -132,7 +132,6 @@ class Twopayment extends PaymentModule
         $this->enable_project = Configuration::get('PS_TWO_ENABLE_PROJECT');
         // Order intent pre-check is mandatory for all checkouts.
         $this->enable_order_intent = 1;
-        $this->use_account_type = Configuration::get('PS_TWO_USE_ACCOUNT_TYPE');
         $this->finalize_purchase_shipping = Configuration::get('PS_TWO_FINALIZE_PURCHASE');
         
         // Ensure custom Two states exist (for existing installations)
@@ -228,7 +227,6 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', 1);
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_ID', 1);
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', 1);
-        Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', 0);
         Configuration::updateValue('PS_TWO_ENABLE_SOLE_TRADER', 0);
         Configuration::updateValue('PS_TWO_USE_OWN_INVOICES', 0); // Disabled by default - must be enabled after coordinating with Two
         Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', 'STANDARD'); // Default: Standard payment terms (not EOM)
@@ -445,7 +443,6 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_ENABLE_PROJECT');
         Configuration::deleteByName('PS_TWO_ENABLE_TAX_SUBTOTALS');
         Configuration::deleteByName('PS_TWO_FINALIZE_PURCHASE');
-        Configuration::deleteByName('PS_TWO_USE_ACCOUNT_TYPE');
         Configuration::deleteByName('PS_TWO_ENABLE_SOLE_TRADER');
         Configuration::deleteByName('PS_TWO_DEBUG_MODE');
         Configuration::deleteByName('PS_TWO_MERCHANT_MIN_ORDER');
@@ -808,30 +805,10 @@ class Twopayment extends PaymentModule
                 'input' => array(
                     array(
                         'type' => 'switch',
-                        'label' => $this->l('Use Account Type selection'),
-                        'name' => 'PS_TWO_USE_ACCOUNT_TYPE',
-                        'is_bool' => true,
-                        'desc' => $this->l('If Yes, the address form will show Account Type and company fields become required for business. If No, the address form will not show Account Type and Two will prompt for company only at payment time.'),
-                        'required' => true,
-                        'values' => array(
-                            array(
-                                'id' => 'PS_TWO_USE_ACCOUNT_TYPE_ON',
-                                'value' => 1,
-                                'label' => $this->l('Yes')
-                            ),
-                            array(
-                                'id' => 'PS_TWO_USE_ACCOUNT_TYPE_OFF',
-                                'value' => 0,
-                                'label' => $this->l('No')
-                            ),
-                        ),
-                    ),
-                    array(
-                        'type' => 'switch',
                         'label' => $this->l('Enable sole trader checkout'),
                         'name' => 'PS_TWO_ENABLE_SOLE_TRADER',
                         'is_bool' => true,
-                        'desc' => $this->l('Adds a Sole Trader option to the Account Type selector for buyers in countries where Two supports sole traders (currently the UK and US). Requires Account Type selection to be enabled.'),
+                        'desc' => $this->l('Shows a Business / Sole trader toggle on the payment step for buyers in countries where Two supports sole traders (currently the UK and US).'),
                         'required' => true,
                         'values' => array(
                             array(
@@ -1083,7 +1060,6 @@ class Twopayment extends PaymentModule
     protected function getTwoOtherFormValues()
     {
         $fields_values = array();
-        $fields_values['PS_TWO_USE_ACCOUNT_TYPE'] = Tools::getValue('PS_TWO_USE_ACCOUNT_TYPE', Configuration::get('PS_TWO_USE_ACCOUNT_TYPE'));
         $fields_values['PS_TWO_ENABLE_SOLE_TRADER'] = Tools::getValue('PS_TWO_ENABLE_SOLE_TRADER', Configuration::get('PS_TWO_ENABLE_SOLE_TRADER'));
         $fields_values['PS_TWO_ENABLE_COMPANY_NAME'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME', Configuration::get('PS_TWO_ENABLE_COMPANY_NAME'));
         $fields_values['PS_TWO_ENABLE_COMPANY_ID'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_ID', Configuration::get('PS_TWO_ENABLE_COMPANY_ID'));
@@ -1254,7 +1230,6 @@ class Twopayment extends PaymentModule
 
     protected function saveTwoOtherFormValues()
     {
-        Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', Tools::getValue('PS_TWO_USE_ACCOUNT_TYPE'));
         Configuration::updateValue('PS_TWO_ENABLE_SOLE_TRADER', Tools::getValue('PS_TWO_ENABLE_SOLE_TRADER'));
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME'));
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_ID', Tools::getValue('PS_TWO_ENABLE_COMPANY_ID'));
@@ -1399,7 +1374,7 @@ class Twopayment extends PaymentModule
         $api_verified = (bool) Configuration::get('PS_TWO_API_KEY_VERIFIED');
         $ssl_disabled = (bool) Configuration::get('PS_TWO_DISABLE_SSL_VERIFY');
         $order_intent_enabled = true;
-        $use_account_type = (bool) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE');
+        $sole_trader_enabled = (bool) Configuration::get('PS_TWO_ENABLE_SOLE_TRADER');
         $term_type = (string) Configuration::get('PS_TWO_PAYMENT_TERM_TYPE', 'STANDARD');
         $available_terms = $this->getAvailablePaymentTerms();
 
@@ -1430,8 +1405,8 @@ class Twopayment extends PaymentModule
                 'ok' => true,
             ),
             array(
-                'label' => $this->l('Account type mode'),
-                'value' => $use_account_type ? $this->l('Enabled') : $this->l('Disabled'),
+                'label' => $this->l('Sole trader checkout'),
+                'value' => $sole_trader_enabled ? $this->l('Enabled') : $this->l('Disabled'),
                 'ok' => true,
             ),
             array(
@@ -2304,11 +2279,12 @@ class Twopayment extends PaymentModule
                 'enable_department' => $this->enable_department,
                 'enable_project' => $this->enable_project,
                 'enable_order_intent' => $this->enable_order_intent,
-                'use_account_type' => (int) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE'),
                 'sole_trader' => array(
                     'enabled' => TwoSoleTrader::isEnabled() ? 1 : 0,
                     'signup_url' => TwoSoleTrader::getSignupPageUrl(),
                     'i18n' => array(
+                        'registered_business' => $this->l('Registered business'),
+                        'sole_trader' => $this->l('Sole trader'),
                         'popup_prompt' => $this->l('Click here to log in or sign up as a sole trader with Two.'),
                         'error' => $this->l('Something went wrong setting up sole trader checkout. Please try again.'),
                     ),
@@ -2318,6 +2294,7 @@ class Twopayment extends PaymentModule
                 'module_dir' => $this->_path,
                 'client' => 'PS',
                 'client_version' => $this->version,
+                'shop_country' => (string) Context::getContext()->country->iso_code,
                 'countries' => $param_countries,
                 'available_payment_terms' => $this->getAvailablePaymentTerms(),
                 'default_payment_term' => $this->getDefaultPaymentTerm(),
@@ -2653,21 +2630,12 @@ class Twopayment extends PaymentModule
             return [];
         }
 
-        // If merchant uses account type selection, gate payment option to
-        // business accounts — or sole traders where available (TWO-24755).
-        if ((int) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE')) {
-            $account_type = property_exists($billing_address, 'account_type') ? trim((string) $billing_address->account_type) : '';
-            $billing_country_iso = (string) Country::getIsoById((int) $billing_address->id_country);
-            if (!TwoSoleTrader::isAccountTypeAllowed($this, $account_type, $billing_country_iso)) {
-                PrestaShopLogger::addLog('TwoPayment: Payment option hidden - account type not eligible (current: ' . ($account_type ?: 'not set') . ')', 1);
-                return [];
-            }
-            PrestaShopLogger::addLog('TwoPayment: Payment option shown for ' . $account_type . ' account path', 1);
-        } else {
-            // When account type selection is disabled, allow showing Two option; FE will prompt for company selection as needed
-            PrestaShopLogger::addLog('TwoPayment: Payment option shown (account type disabled)', 1);
-        }
-        
+        // B2B checkout: Two shows for any company-bearing buyer. The
+        // front-end prompts for the company at payment time when needed, and
+        // sole traders enrol through the payment-step toggle (TWO-24755);
+        // the order-intent pre-check enforces a verified company + org number.
+        PrestaShopLogger::addLog('TwoPayment: Payment option shown', 1);
+
         $payment_options = [
             $this->getTwoPaymentOption(),
         ];

@@ -38,33 +38,13 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
 
         $format = $this->moveFieldBefore($format, 'id_country', 'company');
 
-        $useAccountType = (int) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE') === 1;
-
-        if ($useAccountType && !isset($format['account_type'])) {
-            $accountTypeField = (new FormField())
-                ->setName('account_type')
-                ->setType('select')
-                ->setRequired(true)
-                ->addAvailableValue('personal', $this->getFieldLabel('personal_type'))
-                ->addAvailableValue('business', $this->getFieldLabel('business_type'))
-                ->setLabel($this->getFieldLabel('account_type'));
-            // Sole trader (TWO-24755): third option, only where the country
-            // legally supports it AND the merchant opted in. The address form
-            // re-renders per country, so the decision stays server-side.
-            if ($this->isSoleTraderAvailable()) {
-                $accountTypeField->addAvailableValue('sole_trader', $this->getFieldLabel('sole_trader_type'));
-            }
-            $this->applyFieldDefinitionMetadata($accountTypeField, 'account_type');
-            $format = $this->insertFieldAfter($format, 'token', 'account_type', $accountTypeField);
-        }
-
+        // B2B checkout: the company field is always present (the buyer types
+        // or searches their company). Sole traders enrol through the
+        // payment-step Sole-trader toggle (TWO-24755), which autofills this
+        // field from their Two registration — there is no account-type
+        // selector here, matching the Magento and WooCommerce plugins.
         if (isset($format['company']) && $format['company'] instanceof FormField) {
             $format['company']->addAvailableValue('placeholder', $this->translator->trans('Search your company name', [], 'Shop.Forms.Labels'));
-            if ($useAccountType) {
-                $format['company']->addAvailableValue('data-conditional-field', 'business');
-                $format['company']->addAvailableValue('data-conditional-required', 'business');
-                $format['company']->addAvailableValue('data-initial-state', 'hidden');
-            }
         }
 
         if (isset($format['phone']) && $format['phone'] instanceof FormField) {
@@ -91,28 +71,6 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
         }
 
         return $format;
-    }
-
-    /**
-     * Whether the Sole Trader account type applies for this form's country.
-     * Delegates to the module's business-logic class (TWO-24755); rendering
-     * stays here, decisioning there.
-     */
-    private function isSoleTraderAvailable()
-    {
-        if (!class_exists('TwoSoleTrader')) {
-            $classFile = _PS_MODULE_DIR_ . 'twopayment/classes/TwoSoleTrader.php';
-            if (!file_exists($classFile)) {
-                return false;
-            }
-            require_once $classFile;
-        }
-        $module = Module::getInstanceByName('twopayment');
-        $country = $this->getCountry();
-        if (!$module || !$country || empty($country->iso_code)) {
-            return false;
-        }
-        return TwoSoleTrader::isAvailable($module, $country->iso_code);
     }
 
     private function insertFieldAfter(array $format, $afterKey, $newKey, FormField $field)
@@ -236,14 +194,6 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
                 return $this->translator->trans('Identification number', [], 'Shop.Forms.Labels');
             case 'other':
                 return $this->translator->trans('Other', [], 'Shop.Forms.Labels');
-            case 'account_type':
-                return $this->translator->trans('Account Type', [], 'Shop.Forms.Labels');
-            case 'personal_type':
-                return $this->translator->trans('Personal', [], 'Shop.Forms.Labels');
-            case 'business_type':
-                return $this->translator->trans('Business', [], 'Shop.Forms.Labels');
-            case 'sole_trader_type':
-                return $this->translator->trans('Sole trader', [], 'Shop.Forms.Labels');
             case 'companyid':
                 return $this->translator->trans('Company ID', [], 'Shop.Forms.Labels');
             case 'department':
