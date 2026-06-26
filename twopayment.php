@@ -6387,7 +6387,7 @@ class Twopayment extends PaymentModule
      * @param resource|CurlHandle $ch cURL handle
      * @return void
      */
-    private function configureSslVerification($ch)
+    public function configureSslVerification($ch)
     {
         // Check if SSL verification is disabled via configuration (for corporate networks)
         $disable_ssl_verify = (bool)Configuration::get('PS_TWO_DISABLE_SSL_VERIFY', false);

@@ -216,6 +216,10 @@ class TwoSoleTrader
                 return strlen($header);
             },
         ));
+        // Honour the merchant's SSL-verify setting (and its production
+        // hardening) the same way every other Two API call does, rather
+        // than leaving this curl on libcurl defaults.
+        $module->configureSslVerification($ch);
         $body = curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $error = curl_error($ch);
