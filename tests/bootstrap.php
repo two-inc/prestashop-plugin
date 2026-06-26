@@ -831,11 +831,6 @@ namespace {
             $this->brand = $brand;
         }
 
-        public function applyTwoBrandPayloadIdentityForTests(array $request_data): array
-        {
-            return $this->applyTwoBrandPayloadIdentity($request_data);
-        }
-
         public function getTwoPlatformMinimumInDefaultCurrencyForTests(array $platform_minimum)
         {
             return $this->getTwoPlatformMinimumInDefaultCurrency($platform_minimum);

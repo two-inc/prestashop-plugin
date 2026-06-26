@@ -92,7 +92,6 @@ class Twopayment extends PaymentModule
             'payment_subtitle' => 'Buy now, pay later - instant credit',
             'support_email' => 'support@two.inc',
             'documentation_url' => 'https://docs.two.inc',
-            'vendor_name' => '',
         );
 
         $config = $defaults;
@@ -106,32 +105,6 @@ class Twopayment extends PaymentModule
 
         $this->brand = $config;
         return $this->brand;
-    }
-
-    /**
-     * Add the brand's payload identity (vendor_name) to an order request
-     * body. Applied to create, intent AND update bodies so the brand
-     * identity cannot diverge between order lifecycle calls. The key is
-     * only sent when the brand sets it, so the Two brand's payloads are
-     * unchanged.
-     *
-     * vendor_name as a body field has cross-plugin precedent (the
-     * WooCommerce plugin sends it conditionally). brand_tag does NOT —
-     * the Magento plugin uses it solely as a checkout-URL query param —
-     * so it stays out of the body and lands with the checkout-URL code
-     * that consumes it.
-     *
-     * @param array $request_data
-     *
-     * @return array
-     */
-    protected function applyTwoBrandPayloadIdentity($request_data)
-    {
-        $brand = $this->getTwoBrand();
-        if (!empty($brand['vendor_name'])) {
-            $request_data['vendor_name'] = $brand['vendor_name'];
-        }
-        return $request_data;
     }
 
     public function __construct()
@@ -3063,7 +3036,7 @@ class Twopayment extends PaymentModule
             $request_data['tax_subtotals'] = $tax_subtotals;
         }
 
-        return $this->applyTwoBrandPayloadIdentity($request_data);
+        return $request_data;
     }
 
     /**
@@ -3427,8 +3400,6 @@ class Twopayment extends PaymentModule
             $request_data['tax_subtotals'] = $tax_subtotals;
         }
 
-        $request_data = $this->applyTwoBrandPayloadIdentity($request_data);
-
         PrestaShopLogger::addLog('TwoPayment: Order creation with terms - ' . json_encode($request_data['terms']), 1);
         
         return $request_data;
@@ -3520,7 +3491,7 @@ class Twopayment extends PaymentModule
             $request_data['tax_subtotals'] = $tax_subtotals;
         }
 
-        return $this->applyTwoBrandPayloadIdentity($request_data);
+        return $request_data;
     }
 
     public function getTwoNewRefundData($order, $two_order_snapshot = null)
