@@ -1547,6 +1547,94 @@ class Twopayment extends PaymentModule
         }
     }
 
+    /**
+     * Push the tracking number to Two when it is set in the admin shipping
+     * panel (TWO-24762). The hook has been registered on install all along;
+     * this is its first handler. Fired by
+     * UpdateOrderShippingDetailsHandler with ['order', 'customer',
+     * 'carrier'].
+     *
+     * Best-effort by design: the Two API only accepts order edits before
+     * fulfilment, so a tracking number added after the order was fulfilled
+     * is rejected server-side. Nothing here may break the admin action
+     * that saved the tracking number — failures are logged and surfaced
+     * as a back-office warning instead.
+     */
+    public function hookActionAdminOrdersTrackingNumberUpdate($params)
+    {
+        $order = isset($params['order']) ? $params['order'] : null;
+        if (!$order || !Validate::isLoadedObject($order) || $order->module != $this->name) {
+            return;
+        }
+
+        try {
+            $orderpaymentdata = $this->getTwoOrderPaymentData($order->id);
+            if (!$orderpaymentdata || empty($orderpaymentdata['two_order_id'])) {
+                return;
+            }
+
+            $paymentdata = $this->getTwoUpdateOrderData($order, $orderpaymentdata);
+            $response = $this->setTwoPaymentRequest('/v1/order/' . $orderpaymentdata['two_order_id'], $paymentdata, 'PUT');
+
+            $http_status = is_array($response) && isset($response['http_status']) ? (int)$response['http_status'] : 0;
+            if ($http_status < 200 || $http_status >= 300) {
+                // Most commonly the order was already fulfilled at Two
+                // (edits are rejected after fulfilment): the invoice will
+                // not carry the tracking number. Log with the pushed
+                // amount so any accepted-elsewhere drift stays
+                // reconstructible, and tell the admin who just typed it.
+                PrestaShopLogger::addLog(
+                    'TwoPayment: tracking number update was not accepted by Two'
+                    . ' (Order ID: ' . (int)$order->id
+                    . ', Two order ID: ' . $orderpaymentdata['two_order_id']
+                    . ', HTTP ' . $http_status
+                    . ', gross_amount: ' . (isset($paymentdata['gross_amount']) ? $paymentdata['gross_amount'] : '?')
+                    . ', response: ' . (string)$this->getTwoErrorMessage($response) . ')',
+                    2
+                );
+                $this->addTwoBackOfficeWarning(
+                    $this->l('The tracking number could not be forwarded to the invoice provider; the invoice will be sent without it.')
+                );
+            }
+        } catch (Throwable $e) {
+            // e.g. the order's cart no longer loads (purged carts, deleted
+            // catalog products on legacy orders) — tracking was still
+            // saved locally; the push is best-effort. Throwable, not
+            // Exception: an engine-level Error in payload building must
+            // not break the admin save either.
+            PrestaShopLogger::addLog(
+                'TwoPayment: tracking number update skipped - ' . $e->getMessage()
+                . ' (Order ID: ' . (int)$order->id . ')',
+                3
+            );
+        }
+    }
+
+    /**
+     * Tracking number from the order's carrier record (order_carrier is
+     * the canonical store; Order::$shipping_number is its legacy mirror).
+     * Empty string when none is set.
+     *
+     * @param Order $order
+     *
+     * @return string
+     */
+    public function getTwoOrderTrackingNumber($order)
+    {
+        $id_order_carrier = (int)$order->getIdOrderCarrier();
+        if ($id_order_carrier) {
+            $order_carrier = new OrderCarrier($id_order_carrier);
+            if (Validate::isLoadedObject($order_carrier)) {
+                // A loaded carrier row is canonical: return its value even
+                // when empty (or '0'), never fall through to the stale
+                // legacy mirror.
+                return trim((string)$order_carrier->tracking_number);
+            }
+        }
+
+        return trim((string)$order->shipping_number);
+    }
+
     public function hookActionOrderStatusUpdate($params)
     {
         $id_order = $params['id_order'];
@@ -2928,9 +3016,13 @@ class Twopayment extends PaymentModule
         $invoice_address = new Address($cart->id_address_invoice);
         $delivery_address = new Address($cart->id_address_delivery);
         $carrier_name = '';
-        $tracking_number = '';
         $expected_delivery_days = self::DEFAULT_DELIVERY_DAYS_OFFSET; // Default fallback
-        $carrier = new Carrier($cart->id_carrier, $cart->id_lang);
+        // Carrier from the ORDER, not the cart: the admin shipping panel
+        // updates the order's carrier alongside the tracking number, and
+        // sending the stale cart carrier with a fresh tracking number would
+        // mismatch. Cart carrier is the fallback for legacy orders.
+        $id_carrier = (int)$order->id_carrier ? (int)$order->id_carrier : (int)$cart->id_carrier;
+        $carrier = new Carrier($id_carrier, $cart->id_lang);
         if (Validate::isLoadedObject($carrier)) {
             $carrier_name = $carrier->name;
             // Use carrier's max_delivery_days if available, otherwise use default
@@ -2941,6 +3033,7 @@ class Twopayment extends PaymentModule
                 $expected_delivery_days = (int)$carrier->min_delivery_days;
             }
         }
+        $tracking_number = $this->getTwoOrderTrackingNumber($order);
 
         $pricingData = $this->buildTwoOrderPricingData($cart, 'update order data (order_id=' . $order->id . ')');
         $line_items = $pricingData['line_items'];
