@@ -57,6 +57,13 @@ final class TrackingNumberTest extends TestCase
 
         // No order_carrier row loaded: legacy Order::$shipping_number mirror wins.
         self::assertSame('LEGACY-1', $module->getTwoOrderTrackingNumber($this->makeOrder(0, 'LEGACY-1')));
+
+        // Legacy fallback is trimmed too.
+        self::assertSame('LEGACY-2', $module->getTwoOrderTrackingNumber($this->makeOrder(0, '  LEGACY-2  ')));
+
+        // id_order_carrier set but the row no longer loads (deleted row):
+        // fall back to the legacy mirror.
+        self::assertSame('LEGACY-3', $module->getTwoOrderTrackingNumber($this->makeOrder(99, 'LEGACY-3')));
     }
 
     public function testTrackingNumberEmptyWhenNoneSet(): void
@@ -108,7 +115,7 @@ final class TrackingNumberTest extends TestCase
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
             {
                 $this->requests[] = [$endpoint, $payload, $method];
-                return null;
+                return ['http_status' => 200, 'data' => []];
             }
         };
 
@@ -122,11 +129,17 @@ final class TrackingNumberTest extends TestCase
 
     public function testTrackingHookIgnoresForeignAndMissingOrders(): void
     {
+        // Gated orders must be rejected BEFORE any Two lookup: asserting
+        // on the lookup (not just the request) keeps this test meaningful
+        // even though the handler's try/catch would swallow downstream
+        // failures of a deleted gate.
         $module = new class () extends TwopaymentTestHarness {
+            public array $lookups = [];
             public array $requests = [];
 
             public function getTwoOrderPaymentData($id_order)
             {
+                $this->lookups[] = $id_order;
                 return ['two_order_id' => 'two-order-uuid'];
             }
 
@@ -144,6 +157,7 @@ final class TrackingNumberTest extends TestCase
         $unloaded->loaded = false;
         $module->hookActionAdminOrdersTrackingNumberUpdate(['order' => $unloaded]);
 
+        self::assertSame([], $module->lookups);
         self::assertSame([], $module->requests);
     }
 
@@ -319,6 +333,39 @@ final class TrackingNumberTest extends TestCase
         self::assertSame('NO123456789', $payload['shipping_details']['tracking_number']);
         self::assertSame('Order Carrier Express', $payload['shipping_details']['carrier_name']);
         self::assertSame('125.00', $payload['gross_amount']);
+    }
+
+    public function testTrackingHookSilentWhenTwoOrderIdIsEmpty(): void
+    {
+        // A payment row with an empty two_order_id has no Two order to
+        // edit: stay silent instead of PUTting to /v1/order/ and warning
+        // the admin about an order Two never knew about.
+        $module = new class () extends TwopaymentTestHarness {
+            public array $requests = [];
+            public array $warnings = [];
+
+            public function getTwoOrderPaymentData($id_order)
+            {
+                return ['two_order_id' => ''];
+            }
+
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            {
+                $this->requests[] = $endpoint;
+                return null;
+            }
+
+            public function addTwoBackOfficeWarning($message)
+            {
+                $this->warnings[] = $message;
+                return true;
+            }
+        };
+
+        $module->hookActionAdminOrdersTrackingNumberUpdate(['order' => $this->makeOrder(77)]);
+
+        self::assertSame([], $module->requests);
+        self::assertSame([], $module->warnings);
     }
 
     public function testTrackingHookSilentWhenOrderHasNoTwoRecord(): void

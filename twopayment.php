@@ -1569,7 +1569,7 @@ class Twopayment extends PaymentModule
 
         try {
             $orderpaymentdata = $this->getTwoOrderPaymentData($order->id);
-            if (!$orderpaymentdata || !isset($orderpaymentdata['two_order_id'])) {
+            if (!$orderpaymentdata || empty($orderpaymentdata['two_order_id'])) {
                 return;
             }
 
@@ -1596,10 +1596,12 @@ class Twopayment extends PaymentModule
                     $this->l('The tracking number could not be forwarded to the invoice provider; the invoice will be sent without it.')
                 );
             }
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             // e.g. the order's cart no longer loads (purged carts, deleted
             // catalog products on legacy orders) — tracking was still
-            // saved locally; the push is best-effort.
+            // saved locally; the push is best-effort. Throwable, not
+            // Exception: an engine-level Error in payload building must
+            // not break the admin save either.
             PrestaShopLogger::addLog(
                 'TwoPayment: tracking number update skipped - ' . $e->getMessage()
                 . ' (Order ID: ' . (int)$order->id . ')',
@@ -1623,11 +1625,10 @@ class Twopayment extends PaymentModule
         if ($id_order_carrier) {
             $order_carrier = new OrderCarrier($id_order_carrier);
             if (Validate::isLoadedObject($order_carrier)) {
-                // strict comparison, not truthiness: '0' is a value, and a
-                // loaded carrier row is canonical — never fall through to
-                // the stale legacy mirror just because its value is falsy.
-                $tracking_number = trim((string)$order_carrier->tracking_number);
-                return $tracking_number;
+                // A loaded carrier row is canonical: return its value even
+                // when empty (or '0'), never fall through to the stale
+                // legacy mirror.
+                return trim((string)$order_carrier->tracking_number);
             }
         }
 
