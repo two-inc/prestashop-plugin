@@ -41,6 +41,7 @@ namespace {
         public static array $dbExecuteSResponses = [];
         public static array $dbLastExecuteS = [];
         public static array $orderCarriers = [];
+        public static array $carts = [];
 
         public static function reset(): void
         {
@@ -65,6 +66,7 @@ namespace {
             self::$cartShipping = [];
             self::$cartRules = [];
             self::$orderCarriers = [];
+            self::$carts = [];
             self::$moduleCurrencies = [
                 'twopayment' => [
                     ['id_currency' => 578], // NOK
@@ -635,6 +637,11 @@ namespace {
             $id = (int) $id;
             if ($id > 0) {
                 $this->id = $id;
+                // Hydrate by id so code that constructs its own Cart from
+                // an order (getTwoUpdateOrderData) sees the fixture.
+                foreach (StubStore::$carts[$id] ?? [] as $property => $value) {
+                    $this->$property = $value;
+                }
             }
         }
 

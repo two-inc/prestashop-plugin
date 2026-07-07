@@ -1556,8 +1556,9 @@ class Twopayment extends PaymentModule
      *
      * Best-effort by design: the Two API only accepts order edits before
      * fulfilment, so a tracking number added after the order was fulfilled
-     * is rejected server-side (setTwoPaymentRequest logs the response) and
-     * the invoice goes out without it.
+     * is rejected server-side. Nothing here may break the admin action
+     * that saved the tracking number — failures are logged and surfaced
+     * as a back-office warning instead.
      */
     public function hookActionAdminOrdersTrackingNumberUpdate($params)
     {
@@ -1566,10 +1567,44 @@ class Twopayment extends PaymentModule
             return;
         }
 
-        $orderpaymentdata = $this->getTwoOrderPaymentData($order->id);
-        if ($orderpaymentdata && isset($orderpaymentdata['two_order_id'])) {
+        try {
+            $orderpaymentdata = $this->getTwoOrderPaymentData($order->id);
+            if (!$orderpaymentdata || !isset($orderpaymentdata['two_order_id'])) {
+                return;
+            }
+
             $paymentdata = $this->getTwoUpdateOrderData($order, $orderpaymentdata);
-            $this->setTwoPaymentRequest('/v1/order/' . $orderpaymentdata['two_order_id'], $paymentdata, 'PUT');
+            $response = $this->setTwoPaymentRequest('/v1/order/' . $orderpaymentdata['two_order_id'], $paymentdata, 'PUT');
+
+            $http_status = is_array($response) && isset($response['http_status']) ? (int)$response['http_status'] : 0;
+            if ($http_status < 200 || $http_status >= 300) {
+                // Most commonly the order was already fulfilled at Two
+                // (edits are rejected after fulfilment): the invoice will
+                // not carry the tracking number. Log with the pushed
+                // amount so any accepted-elsewhere drift stays
+                // reconstructible, and tell the admin who just typed it.
+                PrestaShopLogger::addLog(
+                    'TwoPayment: tracking number update was not accepted by Two'
+                    . ' (Order ID: ' . (int)$order->id
+                    . ', Two order ID: ' . $orderpaymentdata['two_order_id']
+                    . ', HTTP ' . $http_status
+                    . ', gross_amount: ' . (isset($paymentdata['gross_amount']) ? $paymentdata['gross_amount'] : '?')
+                    . ', response: ' . (string)$this->getTwoErrorMessage($response) . ')',
+                    2
+                );
+                $this->addTwoBackOfficeWarning(
+                    $this->l('The tracking number could not be forwarded to the invoice provider; the invoice will be sent without it.')
+                );
+            }
+        } catch (Exception $e) {
+            // e.g. the order's cart no longer loads (purged carts, deleted
+            // catalog products on legacy orders) — tracking was still
+            // saved locally; the push is best-effort.
+            PrestaShopLogger::addLog(
+                'TwoPayment: tracking number update skipped - ' . $e->getMessage()
+                . ' (Order ID: ' . (int)$order->id . ')',
+                3
+            );
         }
     }
 
@@ -1587,12 +1622,16 @@ class Twopayment extends PaymentModule
         $id_order_carrier = (int)$order->getIdOrderCarrier();
         if ($id_order_carrier) {
             $order_carrier = new OrderCarrier($id_order_carrier);
-            if (Validate::isLoadedObject($order_carrier) && $order_carrier->tracking_number) {
-                return (string)$order_carrier->tracking_number;
+            if (Validate::isLoadedObject($order_carrier)) {
+                // strict comparison, not truthiness: '0' is a value, and a
+                // loaded carrier row is canonical — never fall through to
+                // the stale legacy mirror just because its value is falsy.
+                $tracking_number = trim((string)$order_carrier->tracking_number);
+                return $tracking_number;
             }
         }
 
-        return $order->shipping_number ? (string)$order->shipping_number : '';
+        return trim((string)$order->shipping_number);
     }
 
     public function hookActionOrderStatusUpdate($params)
