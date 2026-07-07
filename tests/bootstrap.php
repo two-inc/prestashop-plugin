@@ -40,6 +40,7 @@ namespace {
         public static array $taxRuleRates = [];
         public static array $dbExecuteSResponses = [];
         public static array $dbLastExecuteS = [];
+        public static array $orderCarriers = [];
 
         public static function reset(): void
         {
@@ -63,6 +64,7 @@ namespace {
             self::$cartTotals = [];
             self::$cartShipping = [];
             self::$cartRules = [];
+            self::$orderCarriers = [];
             self::$moduleCurrencies = [
                 'twopayment' => [
                     ['id_currency' => 578], // NOK
@@ -787,6 +789,22 @@ namespace {
     }
 
     require_once dirname(__DIR__) . '/twopayment.php';
+
+    class OrderCarrier
+    {
+        public bool $loaded = false;
+        public $tracking_number = '';
+
+        public function __construct($id = null)
+        {
+            $id = (int) $id;
+            if ($id > 0 && isset(StubStore::$orderCarriers[$id])) {
+                $data = StubStore::$orderCarriers[$id];
+                $this->loaded = true;
+                $this->tracking_number = $data['tracking_number'] ?? '';
+            }
+        }
+    }
 
     class TwopaymentTestHarness extends Twopayment
     {
