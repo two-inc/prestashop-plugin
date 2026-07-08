@@ -46,7 +46,7 @@ install: clean
 	@echo "Fixing var/ permissions (admin 500 fix)..."
 	docker exec $(CONTAINER) bash -c "chown -R www-data:www-data /var/www/html/var && chmod -R 775 /var/www/html/var"
 	@echo "Installing module $(MODULE_NAME)..."
-	docker exec $(CONTAINER) bash -c "cd /var/www/html && php -d memory_limit=512M bin/console prestashop:module install $(MODULE_NAME)"
+	docker exec -u www-data $(CONTAINER) bash -c "cd /var/www/html && php -d memory_limit=512M bin/console prestashop:module install $(MODULE_NAME)"
 	@echo "Enabling Two-supported countries and extending carrier coverage..."
 	docker exec $(DB_CONTAINER) mysql -uroot -padmin prestashop -e "\
 		UPDATE ps_country SET active=1 WHERE iso_code IN ('NO','GB','SE','DK','FI','NL','DE'); \
@@ -81,6 +81,7 @@ install: clean
 ## plugin actually appears at checkout): make configure TWO_API_KEY=xxx
 configure:
 	docker exec \
+		-u www-data \
 		-e TWO_API_KEY=$(TWO_API_KEY) \
 		-e TWO_ENVIRONMENT=$(TWO_ENVIRONMENT) \
 		-e TWO_API_BASE_URL=$(TWO_API_BASE_URL) \
