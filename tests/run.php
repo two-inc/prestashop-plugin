@@ -154,6 +154,16 @@ final class OrderBuilderSpec
         self::testExtractOrgNumberFromAddressKeepsNonCountryPrefixVatNumber();
         self::testExtractOrgNumberFromAddressStripsMatchingCountryPrefixVatNumber();
         self::testGetTwoRequestHeadersSkipAuthForOrderIntent();
+        self::testGetAvailablePaymentTermsIntersectsBackendWithAdminSubset();
+        self::testGetAvailablePaymentTermsWithdrawnBackendTermDrops();
+        self::testGetAvailablePaymentTermsFallsBackToHardcodedWhenBackendUnresolved();
+        self::testGetAvailablePaymentTermsEomConstrainsToEomSubset();
+        self::testGetAvailablePaymentTermsEmptyOfferFallsBackToDefault();
+        self::testGetMerchantAvailableTermsCacheOnlyNeverFetches();
+        self::testGetMerchantAvailableTermsRefreshNormalisesCachesAndServesStale();
+        self::testGetMerchantAvailableTermsRespectsExplicitEmptyList();
+        self::testGetMerchantAvailableTermsSkipsFetchWithoutIdentity();
+        self::testInvalidateMerchantAvailableTermsClearsCache();
     }
 
     private static function reset(): void
@@ -4142,6 +4152,184 @@ final class OrderBuilderSpec
 
         TinyAssert::same('45', (string)$resolved['two_day_on_invoice']);
         TinyAssert::same('STANDARD', (string)$resolved['two_payment_term_type']);
+    }
+
+    /**
+     * Gateway harness whose backend available_terms set is injectable, so the
+     * runtime intersection seam can be tested without HTTP (TWO-24813).
+     */
+    private static function termsHarness(array $backend): TwopaymentTestHarness
+    {
+        return new class ($backend) extends TwopaymentTestHarness {
+            public $backend;
+            public function __construct($backend = [])
+            {
+                parent::__construct();
+                $this->backend = $backend;
+            }
+            public function getMerchantAvailableTerms($refresh = false)
+            {
+                return $this->backend;
+            }
+        };
+    }
+
+    private static function testGetAvailablePaymentTermsIntersectsBackendWithAdminSubset(): void
+    {
+        self::reset();
+        // Backend owns the offerable set; the admin narrows FROM it. A tick for
+        // a term the backend does not carry (7) is irrelevant.
+        $module = self::termsHarness([14, 30, 60, 90]);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_60', 1);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_7', 1);
+        TinyAssert::same([30, 60], $module->getAvailablePaymentTerms());
+    }
+
+    private static function testGetAvailablePaymentTermsWithdrawnBackendTermDrops(): void
+    {
+        self::reset();
+        // The admin still ticks 60, but the backend has withdrawn it -> it drops.
+        $module = self::termsHarness([30]);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_60', 1);
+        TinyAssert::same([30], $module->getAvailablePaymentTerms());
+    }
+
+    private static function testGetAvailablePaymentTermsFallsBackToHardcodedWhenBackendUnresolved(): void
+    {
+        self::reset();
+        // Cold cache (unresolved backend): degrade to the historical hardcoded
+        // option list rather than blanking the term set.
+        $module = self::termsHarness([]);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_7', 1);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_90', 1);
+        TinyAssert::same([7, 90], $module->getAvailablePaymentTerms());
+    }
+
+    private static function testGetAvailablePaymentTermsEomConstrainsToEomSubset(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', 'EOM');
+        // 90 is offered by the backend and ticked, but EOM only allows 30/45/60.
+        $module = self::termsHarness([30, 45, 60, 90]);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_90', 1);
+        TinyAssert::same([30], $module->getAvailablePaymentTerms());
+    }
+
+    private static function testGetAvailablePaymentTermsEmptyOfferFallsBackToDefault(): void
+    {
+        self::reset();
+        // Backend resolves a set but the admin ticks nothing offerable -> the
+        // account default term (pre-feature degrade posture).
+        $module = self::termsHarness([60]);
+        TinyAssert::same([Twopayment::DEFAULT_PAYMENT_TERM_DAYS], $module->getAvailablePaymentTerms());
+    }
+
+    /**
+     * Fetch/cache harness: canned setTwoPaymentRequest responses, call counter.
+     */
+    private static function fetchHarness(): TwopaymentTestHarness
+    {
+        return new class extends TwopaymentTestHarness {
+            public $responses = [];
+            public $calls = 0;
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+            {
+                $this->calls++;
+                $r = array_shift($this->responses);
+                return $r === null ? ['http_status' => 0] : $r;
+            }
+        };
+    }
+
+    private static function testGetMerchantAvailableTermsCacheOnlyNeverFetches(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
+        $module = self::fetchHarness();
+        // Cache-only read never fetches, even with a cold cache: the seam is
+        // reached from render paths that must not block on HTTP.
+        TinyAssert::same([], $module->getMerchantAvailableTerms());
+        TinyAssert::same(0, $module->calls);
+    }
+
+    private static function testGetMerchantAvailableTermsRefreshNormalisesCachesAndServesStale(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
+        $module = self::fetchHarness();
+        $expire = static function () {
+            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time() - 901);
+        };
+
+        // First refresh: normalised (ints, dedup, non-positive dropped, non-numeric
+        // dropped rather than intval'd to a phantom 1, sorted).
+        $module->responses[] = ['http_status' => 200, 'available_terms' => [60, 30, 30, 0, -5, 90, [7], true, null]];
+        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms(true));
+        TinyAssert::same(1, $module->calls);
+
+        // Within the TTL: served from cache, no request; cache-only reads agree.
+        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms(true));
+        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms());
+        TinyAssert::same(1, $module->calls);
+
+        // Fetch failure after expiry: last-known list served, not blanked.
+        $expire();
+        $module->responses[] = ['http_status' => 0];
+        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms(true));
+        TinyAssert::same(2, $module->calls);
+
+        // ...and the failure still bumped the clock: an immediate re-refresh does
+        // NOT hammer the API (one stall per TTL, not per view).
+        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms(true));
+        TinyAssert::same(2, $module->calls);
+
+        // Successful response WITHOUT the field (older backend): stale kept.
+        $expire();
+        $module->responses[] = ['http_status' => 200, 'due_in_days' => 14];
+        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms(true));
+    }
+
+    private static function testGetMerchantAvailableTermsRespectsExplicitEmptyList(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
+        $module = self::fetchHarness();
+        // Seed a stale list, then an explicit [] must overwrite it (the backend
+        // says nothing is offerable) - distinct from a failure serving stale.
+        $module->responses[] = ['http_status' => 200, 'available_terms' => [30, 60]];
+        TinyAssert::same([30, 60], $module->getMerchantAvailableTerms(true));
+        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time() - 901);
+        $module->responses[] = ['http_status' => 200, 'available_terms' => []];
+        TinyAssert::same([], $module->getMerchantAvailableTerms(true));
+    }
+
+    private static function testGetMerchantAvailableTermsSkipsFetchWithoutIdentity(): void
+    {
+        self::reset();
+        // No merchant id / API key: no fetch even on refresh with an expired TTL
+        // and a queued response.
+        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time() - 901);
+        $module = self::fetchHarness();
+        $module->responses[] = ['http_status' => 200, 'available_terms' => [7]];
+        $module->getMerchantAvailableTerms(true);
+        TinyAssert::same(0, $module->calls);
+    }
+
+    private static function testInvalidateMerchantAvailableTermsClearsCache(): void
+    {
+        self::reset();
+        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS, '[30,60]');
+        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, 999);
+        $module = new TwopaymentTestHarness();
+        TinyAssert::same([30, 60], $module->getMerchantAvailableTerms());
+        $module->invalidateMerchantAvailableTerms();
+        TinyAssert::same([], $module->getMerchantAvailableTerms());
     }
 
     private static function testSyncTwoAdminOrderPaymentDataFromProviderPullsLatestTermsFromTwo(): void
