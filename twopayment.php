@@ -780,8 +780,16 @@ class Twopayment extends PaymentModule
             Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', $term_type);
         }
         
-        // Save payment terms checkboxes
-        $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
+        // Save payment terms checkboxes. Iterate ONLY the terms the admin form
+        // actually rendered (the backend-restricted offerable source), NOT the
+        // full hardcoded list. buildPaymentTermCheckboxQuery() renders a checkbox
+        // per offerable term, so a term the backend has withdrawn is hidden and
+        // never POSTed; iterating the hardcoded list here would read its absent
+        // POST value as unchecked and silently zero the merchant's stored
+        // preference on any unrelated save. Leaving hidden keys untouched
+        // preserves that preference for when the backend re-offers the term
+        // (TWO-24813).
+        $payment_terms = array_map('strval', $this->getOfferableTermSource(false));
         foreach ($payment_terms as $term) {
             Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . $term, Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term) ? 1 : 0);
         }

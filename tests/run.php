@@ -164,6 +164,7 @@ final class OrderBuilderSpec
         self::testGetMerchantAvailableTermsRespectsExplicitEmptyList();
         self::testGetMerchantAvailableTermsSkipsFetchWithoutIdentity();
         self::testInvalidateMerchantAvailableTermsClearsCache();
+        self::testSaveGeneralFormPreservesHiddenBackendWithdrawnTermPreference();
     }
 
     private static function reset(): void
@@ -4330,6 +4331,49 @@ final class OrderBuilderSpec
         TinyAssert::same([30, 60], $module->getMerchantAvailableTerms());
         $module->invalidateMerchantAvailableTerms();
         TinyAssert::same([], $module->getMerchantAvailableTerms());
+    }
+
+    /**
+     * Regression (TWO-24813): the admin checkbox form only renders terms in the
+     * backend-restricted offerable source, so a term the backend has withdrawn
+     * is hidden and never POSTed. Saving the general form (e.g. after changing an
+     * unrelated field) must NOT read that absent POST value as "unchecked" and
+     * zero the merchant's stored preference - the save loop iterates the same
+     * rendered source, leaving hidden keys untouched.
+     */
+    private static function testSaveGeneralFormPreservesHiddenBackendWithdrawnTermPreference(): void
+    {
+        self::reset();
+        Tools::resetTestValues();
+        // Merchant previously ticked both 30 and 60.
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_60', 1);
+
+        // Backend has since narrowed the offerable set to [30]; 60 is hidden.
+        $module = new class extends TwopaymentTestHarness {
+            public function getMerchantAvailableTerms($refresh = false)
+            {
+                return [30];
+            }
+            public function saveGeneralForTest(): void
+            {
+                $this->saveTwoGeneralFormValues();
+            }
+        };
+
+        // The form rendered only the 30 checkbox, so only 30 is POSTed.
+        Tools::setTestValue('PS_TWO_ENVIRONMENT', 'development');
+        Tools::setTestValue('PS_TWO_TITLE_1', 'Two title');
+        Tools::setTestValue('PS_TWO_SUB_TITLE_1', 'Two subtitle');
+        Tools::setTestValue('PS_TWO_MERCHANT_SHORT_NAME', 'merchant');
+        Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', 'api-key');
+        Tools::setTestValue('PS_TWO_PAYMENT_TERMS_30', 1);
+
+        $module->saveGeneralForTest();
+
+        // 30 stays on; 60's preference is PRESERVED, not silently zeroed.
+        TinyAssert::same(1, (int) Configuration::get('PS_TWO_PAYMENT_TERMS_30'));
+        TinyAssert::same(1, (int) Configuration::get('PS_TWO_PAYMENT_TERMS_60'));
     }
 
     private static function testSyncTwoAdminOrderPaymentDataFromProviderPullsLatestTermsFromTwo(): void
