@@ -1142,9 +1142,9 @@ class TwoCheckoutManager {
                     <h4 class="two-terms-title">${this.t('choose_payment_terms', 'Choose the Buy Now, Pay Later option that works best for you')}</h4>
                     <p class="two-terms-description">${this.t('payment_period_starts', 'Your payment period starts when your order is fulfilled')}</p>
                 </div>
-                <div class="two-terms-slider-container">
-                    <div class="two-terms-slider" id="two-terms-slider">
-                        <!-- Terms will be populated by JavaScript -->
+                <div class="two-term-chips">
+                    <div class="two-term-chips__container" id="two-terms-chips">
+                        <!-- Chips will be populated by JavaScript -->
                     </div>
                     <div class="two-terms-selected">
                         <span class="two-terms-selected-days" id="two-selected-days"></span>
@@ -1164,10 +1164,10 @@ class TwoCheckoutManager {
      * ENHANCED: Initialize payment terms selector with robust error handling
      */
     initializePaymentTerms() {
-        // Try multiple selectors for terms slider
-        let termsSlider = document.querySelector('#two-terms-slider');
-        if (!termsSlider) {
-            termsSlider = document.querySelector('.two-terms-slider');
+        // Try multiple selectors for the chip container
+        let termsContainer = document.querySelector('#two-terms-chips');
+        if (!termsContainer) {
+            termsContainer = document.querySelector('.two-term-chips__container');
         }
         
         let selectedDays = document.querySelector('#two-selected-days');
@@ -1175,19 +1175,19 @@ class TwoCheckoutManager {
             selectedDays = document.querySelector('.two-terms-selected-days');
         }
         
-        if (!termsSlider) {
-            console.error('Two Payment: Terms slider element not found');
+        if (!termsContainer) {
+            console.error('Two Payment: Terms chip container not found');
             return;
         }
         
-        // Check if already initialized with our terms
-        if (termsSlider.hasChildNodes() && termsSlider.querySelector('.two-term-option')) {
+        // Check if already initialized with our chips
+        if (termsContainer.hasChildNodes() && termsContainer.querySelector('.two-term-chip')) {
             return;
         }
         
-        if (termsSlider.hasChildNodes()) {
+        if (termsContainer.hasChildNodes()) {
             // Clear existing content to reinitialize
-            termsSlider.innerHTML = '';
+            termsContainer.innerHTML = '';
         }
         
         // Get payment terms from admin configuration (passed via template)
@@ -1216,38 +1216,52 @@ class TwoCheckoutManager {
             }
         }
         
-        // Create term options
+        // A single offered term is applied silently (no selectable chips).
+        const singleTerm = availableTerms.length === 1;
+
+        // Create term chips (parity with Magento/WooCommerce chip selector)
         availableTerms.forEach((days, index) => {
-            const termOption = document.createElement('div');
-            termOption.className = 'two-term-option';
-            
+            const termChip = document.createElement('button');
+            termChip.type = 'button';
+            termChip.className = 'two-term-chip' + (singleTerm ? ' two-term-chip--single' : '');
+
+            const daysLabel = document.createElement('span');
+            daysLabel.className = 'two-term-chip__days';
+
             // Format display based on term type (EOM+X for End-of-Month, X for Standard)
             if (termType === 'EOM') {
-                termOption.textContent = 'EOM+' + days;
-                termOption.title = this.t('end_of_month_plus_days', 'End of Month + %s days').replace('%s', days);
+                daysLabel.textContent = 'EOM+' + days;
+                termChip.title = this.t('end_of_month_plus_days', 'End of Month + %s days').replace('%s', days);
             } else {
-                termOption.textContent = days;
-                termOption.title = days + ' ' + this.t('days', 'days');
+                daysLabel.textContent = days;
+                termChip.title = days + ' ' + this.t('days', 'days');
             }
-            
-            termOption.dataset.days = days;
-            
-            // Set default term: use configured default, or if only one term, make it active, or first term
-            const isDefaultTerm = defaultTerm ? (days === defaultTerm) : 
-                                 (availableTerms.length === 1 ? true : index === 0);
-            
+            termChip.appendChild(daysLabel);
+
+            termChip.dataset.days = days;
+
+            // Set default term: use configured default, or if only one term, make it selected, or first term
+            const isDefaultTerm = defaultTerm ? (days === defaultTerm) :
+                                 (singleTerm ? true : index === 0);
+
             if (isDefaultTerm) {
-                termOption.classList.add('active');
+                termChip.classList.add('two-term-chip--selected');
             }
-            
-            termOption.addEventListener('click', () => {
-                // Remove active class from all options
-                termsSlider.querySelectorAll('.two-term-option').forEach(opt => {
-                    opt.classList.remove('active');
+
+            // A single term is non-selectable; skip the click handler.
+            if (singleTerm) {
+                termsContainer.appendChild(termChip);
+                return;
+            }
+
+            termChip.addEventListener('click', () => {
+                // Remove selected state from all chips
+                termsContainer.querySelectorAll('.two-term-chip').forEach(chip => {
+                    chip.classList.remove('two-term-chip--selected');
                 });
                 
-                // Add active class to selected option
-                termOption.classList.add('active');
+                // Mark clicked chip as selected
+                termChip.classList.add('two-term-chip--selected');
                 
                 // Update selected term display
                 if (selectedDays) {
@@ -1286,7 +1300,7 @@ class TwoCheckoutManager {
                 }
             });
             
-            termsSlider.appendChild(termOption);
+            termsContainer.appendChild(termChip);
         });
         
         // Set initial selected term display
