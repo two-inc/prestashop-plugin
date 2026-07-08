@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<phpunit bootstrap="tests/bootstrap.php" colors="true" cacheDirectory=".phpunit.cache" failOnWarning="true" failOnNotice="true" displayDetailsOnTestsThatTriggerWarnings="true" displayDetailsOnTestsThatTriggerNotices="true">
-  <testsuites>
-    <testsuite name="twopayment">
-      <directory>tests</directory>
-    </testsuite>
-  </testsuites>
-</phpunit>

@@ -50,7 +50,7 @@ For every user-facing string change:
 - `controllers/front/orderintent.php`: order intent API and gating data
 - `views/js/modules/*.js`: checkout UX logic and client validation
 - `views/templates/hook/*.tpl`: admin and checkout rendering
-- `tests/OrderBuilderTest.php`: tax/amount/order payload invariants
+- `tests/run.php`: tax/amount/order payload invariants (self-contained runner, no composer deps)
 
 ## Change Quality Rules
 
