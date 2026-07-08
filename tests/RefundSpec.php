@@ -15,6 +15,8 @@ final class RefundSpec
         self::testSequentialSlipsSameAmountIssueTwoDistinctCalls();
         self::testFullAmountSlipAfterStatusRefundIsSuppressed();
         self::testAmountExceedingRemainingBalanceIsRejected();
+        self::testMissingGrossAmountFailsClosed();
+        self::testEmptyCurrencyFailsClosed();
         self::testSlipOnNonTwoOrderMakesNoApiCall();
         self::testGrossAmountSumsProductsAndShippingTaxIncl();
         self::testPayloadBuilderFormatsAmountAsTwoDecimalString();
@@ -159,7 +161,7 @@ final class RefundSpec
 
         $refunds = $module->refundCalls();
         TinyAssert::count(1, $refunds);
-        TinyAssert::same(['X-Idempotency-Key: partial_refund_slip_742'], $refunds[0]['headers']);
+        TinyAssert::same(['X-Idempotency-Key: partial_refund_two-order-uuid_slip_742'], $refunds[0]['headers']);
     }
 
     private static function testSequentialSlipsSameAmountIssueTwoDistinctCalls(): void
@@ -183,8 +185,8 @@ final class RefundSpec
         TinyAssert::count(2, $refunds);
         TinyAssert::same('30.00', $refunds[0]['payload']['amount']);
         TinyAssert::same('30.00', $refunds[1]['payload']['amount']);
-        TinyAssert::same(['X-Idempotency-Key: partial_refund_slip_801'], $refunds[0]['headers']);
-        TinyAssert::same(['X-Idempotency-Key: partial_refund_slip_802'], $refunds[1]['headers']);
+        TinyAssert::same(['X-Idempotency-Key: partial_refund_two-order-uuid_slip_801'], $refunds[0]['headers']);
+        TinyAssert::same(['X-Idempotency-Key: partial_refund_two-order-uuid_slip_802'], $refunds[1]['headers']);
         TinyAssert::notSame($refunds[0]['headers'][0], $refunds[1]['headers'][0]);
     }
 
@@ -226,6 +228,48 @@ final class RefundSpec
         ]);
         TinyAssert::count(1, $ok->refundCalls());
         TinyAssert::same('20.00', $ok->refundCalls()[0]['payload']['amount']);
+    }
+
+    private static function testMissingGrossAmountFailsClosed(): void
+    {
+        StubStore::reset();
+        // Two GET returns a valid order (has id + refundable state) but NO
+        // gross_amount. The balance guard cannot be evaluated, so the refund
+        // must be refused (fail closed) - NOT posted with an unbounded amount.
+        $degraded = [
+            'id' => 'two-order-uuid',
+            'state' => 'FULFILLED',
+            'status' => 'APPROVED',
+            'currency' => 'GBP',
+            'refunds' => [],
+            // gross_amount deliberately absent
+        ];
+        $module = self::makeModule($degraded);
+
+        $module->hookActionOrderSlipAdd([
+            'order' => self::makeOrder(),
+            'order_slip' => self::makeSlip(930, 40.00),
+        ]);
+
+        // GET was made, but no /refund POST.
+        TinyAssert::count(0, $module->refundCalls());
+    }
+
+    private static function testEmptyCurrencyFailsClosed(): void
+    {
+        StubStore::reset();
+        // Two GET carries an empty currency and the order's currency cannot be
+        // resolved (no StubStore currency for id 826 -> Currency not loaded).
+        // Posting {currency: ''} risks a wrong-currency refund, so fail closed.
+        $noCurrency = self::fulfilledOrder(100.00, [], '');
+        $module = self::makeModule($noCurrency);
+
+        $module->hookActionOrderSlipAdd([
+            'order' => self::makeOrder(),
+            'order_slip' => self::makeSlip(940, 30.00),
+        ]);
+
+        TinyAssert::count(0, $module->refundCalls());
     }
 
     private static function testSlipOnNonTwoOrderMakesNoApiCall(): void

@@ -2016,9 +2016,9 @@ class Twopayment extends PaymentModule
      *
      * Idempotency + duplicate-refund protection:
      *  - The idempotency key is derived from the credit slip ID
-     *    (partial_refund_slip_{id}), NOT order id + amount. Two separate
-     *    partial refunds of the same amount on one order have distinct slip
-     *    IDs and therefore distinct keys - they must NOT collide.
+     *    (partial_refund_{two_order_id}_slip_{id}), NOT order id + amount. Two
+     *    separate partial refunds of the same amount on one order have distinct
+     *    slip IDs and therefore distinct keys - they must NOT collide.
      *  - A remaining-refundable-balance guard (gross_amount minus the sum of
      *    existing Two refunds) is enforced BEFORE calling the API. This
      *    generalises the full-refund path's "already fully refunded" guards:
@@ -2098,10 +2098,21 @@ class Twopayment extends PaymentModule
             $already_refunded = $this->getTwoOrderRefundedTotal($current_two_order);
             $remaining = $gross_amount - $already_refunded;
 
+            // Fail CLOSED when we can't establish the order gross. Unlike the
+            // full-refund path (which posts a body-less refund whose amount Two
+            // computes server-side), this path sends a client-specified amount,
+            // so a missing/zero gross_amount would otherwise disable the
+            // over-refund guard entirely and allow an unbounded, arbitrary-many
+            // refund. If we cannot validate the balance, do not refund.
+            if ($gross_amount <= 0) {
+                PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - cannot determine order gross amount to validate refundable balance. Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id, 3);
+                return;
+            }
+
             // Reject if this slip would push total refunds past the order gross.
             // The 0.01 tolerance absorbs 2dp rounding. This blocks over-refunding
             // and the full-amount-slip + status-change double-refund race.
-            if ($gross_amount > 0 && $slip_amount > ($remaining + 0.01)) {
+            if ($slip_amount > ($remaining + 0.01)) {
                 PrestaShopLogger::addLog('TwoPayment: Partial refund rejected - amount ' . $slip_amount . ' exceeds remaining refundable balance ' . $remaining . ' (gross: ' . $gross_amount . ', already refunded: ' . $already_refunded . '). Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id, 2);
                 return;
             }
@@ -2111,11 +2122,23 @@ class Twopayment extends PaymentModule
                 ? $current_two_order['currency']
                 : $this->getTwoOrderCurrencyIso($order);
 
+            // Fail CLOSED on an unresolved currency rather than POSTing a
+            // malformed {amount, currency:''} body: an empty/missing currency
+            // could be silently coerced server-side to a different currency,
+            // turning a correct amount into a wrong-magnitude refund.
+            if ($currency === '' || $currency === null) {
+                PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - could not resolve refund currency. Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id, 3);
+                return;
+            }
+
             $payload = $this->buildTwoPartialRefundPayload($slip_amount, $currency);
 
             // Idempotency key derived from the credit slip ID (NOT amount) so
             // two same-amount partial refunds on one order don't collide.
-            $idempotency_key = 'partial_refund_slip_' . $slip_id;
+            // Scoped by the Two order ID as well so the key is unambiguous even
+            // if two PrestaShop installs sharing one Two merchant account
+            // happen to mint the same autoincrement slip ID.
+            $idempotency_key = 'partial_refund_' . $two_order_id . '_slip_' . $slip_id;
 
             $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/refund', $payload, 'POST', ['X-Idempotency-Key: ' . $idempotency_key]);
 
