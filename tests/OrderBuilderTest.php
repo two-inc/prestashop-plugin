@@ -866,7 +866,7 @@ final class OrderBuilderTest extends TestCase
                 return false;
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 return [
                     'http_status' => 200,
@@ -897,7 +897,7 @@ final class OrderBuilderTest extends TestCase
                 return false;
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 return [
                     'http_status' => 200,
@@ -926,7 +926,7 @@ final class OrderBuilderTest extends TestCase
                 return false;
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 return [
                     'http_status' => 0,
@@ -977,7 +977,7 @@ final class OrderBuilderTest extends TestCase
                 return $this->forcedLineItems;
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 $this->providerCalled = true;
                 return [
@@ -1137,7 +1137,7 @@ final class OrderBuilderTest extends TestCase
     public function testCancelTwoOrderBestEffortReturnsTrueOnSuccessAndFalseOnFailure(): void
     {
         $successModule = new class extends TwopaymentTestHarness {
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 return ['http_status' => 200];
             }
@@ -1145,7 +1145,7 @@ final class OrderBuilderTest extends TestCase
         self::assertTrue($successModule->cancelTwoOrderBestEffort('two-success', 'test'));
 
         $failureModule = new class extends TwopaymentTestHarness {
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 return ['http_status' => 500];
             }
@@ -1920,7 +1920,7 @@ final class OrderBuilderTest extends TestCase
             public $lastSavedOrderId = null;
             public $lastSavedPaymentData = null;
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 if ($method === 'GET' && $endpoint === '/v1/order/two-123') {
                     return [
@@ -1982,7 +1982,7 @@ final class OrderBuilderTest extends TestCase
             public $lastSavedOrderId = null;
             public $lastSavedPaymentData = null;
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 if ($method === 'GET' && $endpoint === '/v1/order/two-456') {
                     return [
@@ -2051,7 +2051,7 @@ final class OrderBuilderTest extends TestCase
                 );
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 if ($method === 'GET' && $endpoint === '/v1/order/two-789') {
                     return [

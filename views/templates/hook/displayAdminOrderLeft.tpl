@@ -11,6 +11,11 @@
         </div>
     </div>
     <div class="panel-body two-admin-content">
+        {if isset($two_invoice_notice) && $two_invoice_notice}
+        <div class="alert {if $two_invoice_notice.level == 'error'}alert-danger{else}alert-info{/if}">
+            {$two_invoice_notice.message|escape:'html':'UTF-8'}
+        </div>
+        {/if}
         {* Order Details Section *}
         <div class="two-details-section">
             {if $twopaymentdata.two_order_id}

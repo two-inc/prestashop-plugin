@@ -28,8 +28,12 @@ jobs:
         run: |
           php -l twopayment.php
           php -l controllers/front/payment.php
+          php -l controllers/front/invoice.php
+          php -l controllers/admin/AdminTwopaymentInvoiceController.php
+          php -l classes/TwoInvoiceRetrievalService.php
           php -l tests/bootstrap.php
           php -l tests/OrderBuilderTest.php
+          php -l tests/TwoInvoiceRetrievalSpec.php
           php -l tests/run.php
 
       - name: Run offline test suite
