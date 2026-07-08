@@ -24,6 +24,7 @@ class Twopayment extends PaymentModule
     // Constants for API timeouts (seconds)
     const API_TIMEOUT_SHORT = 30; // Standard API timeout
     const API_TIMEOUT_LONG = 60; // Extended timeout for file uploads
+    const API_TIMEOUT_STATE_CHECK = 10; // Tight timeout for the invoice-download order state check
     
     // Constants for validation tolerances
     const TAX_FORMULA_TOLERANCE = 0.02; // Tolerance for tax formula validation
@@ -87,6 +88,7 @@ class Twopayment extends PaymentModule
         // Ensure custom Two states exist (for existing installations)
         $this->ensureCustomStatesExist();
         $this->ensureRequiredHooksRegistered();
+        $this->ensureTwoInvoiceAdminTabRegistered();
     }
     
     /**
@@ -131,7 +133,66 @@ class Twopayment extends PaymentModule
             }
         }
     }
-    
+
+    /**
+     * Register the invisible admin tab backing the invoice download controller
+     * on existing installations (mirrors ensureRequiredHooksRegistered).
+     */
+    private function ensureTwoInvoiceAdminTabRegistered()
+    {
+        if ((int)$this->id <= 0 || !Module::isInstalled($this->name)) {
+            return;
+        }
+
+        if ((int)Tab::getIdFromClassName('AdminTwopaymentInvoice') > 0) {
+            return;
+        }
+
+        $this->installTwoInvoiceAdminTab();
+    }
+
+    /**
+     * Install the invisible admin tab that exposes AdminTwopaymentInvoiceController.
+     * PrestaShop enforces employee authentication + token + profile permissions
+     * for controllers registered through a tab.
+     *
+     * @return bool
+     */
+    protected function installTwoInvoiceAdminTab()
+    {
+        if ((int)Tab::getIdFromClassName('AdminTwopaymentInvoice') > 0) {
+            return true;
+        }
+
+        $tab = new Tab();
+        $tab->class_name = 'AdminTwopaymentInvoice';
+        $tab->module = $this->name;
+        $tab->id_parent = -1; // Invisible: no menu entry, still permission-gated
+        $tab->active = 1;
+        $tab->name = array();
+        foreach (Language::getLanguages(true) as $language) {
+            $tab->name[(int)$language['id_lang']] = 'Invoice Download';
+        }
+
+        return (bool)$tab->add();
+    }
+
+    /**
+     * Remove the invoice download admin tab.
+     *
+     * @return bool
+     */
+    protected function uninstallTwoInvoiceAdminTab()
+    {
+        $id_tab = (int)Tab::getIdFromClassName('AdminTwopaymentInvoice');
+        if ($id_tab <= 0) {
+            return true;
+        }
+
+        $tab = new Tab($id_tab);
+        return (bool)$tab->delete();
+    }
+
 
     public function install()
     {
@@ -153,6 +214,7 @@ class Twopayment extends PaymentModule
             $this->registerHook('actionOrderEdited') &&
             $this->registerHook('actionAdminOrdersTrackingNumberUpdate') &&
             $this->registerHook('actionCustomerAddressSave') &&
+            $this->installTwoInvoiceAdminTab() &&
             $this->installTwoSettings() &&
             $this->createTwoOrderState() &&
             $this->createTwoTables();
@@ -373,6 +435,7 @@ class Twopayment extends PaymentModule
             $this->unregisterHook('actionOrderEdited') &&
             $this->unregisterHook('actionAdminOrdersTrackingNumberUpdate') &&
             $this->unregisterHook('actionCustomerAddressSave') &&
+            $this->uninstallTwoInvoiceAdminTab() &&
             $this->uninstallTwoSettings() &&
             $this->deleteTwoTables();
     }
@@ -5396,8 +5459,121 @@ class Twopayment extends PaymentModule
         if (!empty($params)) {
             $pdf_url .= '?' . http_build_query($params);
         }
-        
+
         return $pdf_url;
+    }
+
+    /**
+     * Fetch the invoice PDF bytes for a Two order.
+     *
+     * Unlike setTwoPaymentRequest this returns the raw response body (a PDF must
+     * not be run through json_decode) together with the response content type and,
+     * when the API returned a JSON error body, the decoded error code/payload.
+     *
+     * @param string $two_order_id The Two order ID
+     * @param array $params Optional query parameters (e.g. lang)
+     * @param int|null $timeout Optional per-call timeout override (seconds)
+     * @return array{http_status:int, body:string, content_type:string, error_code:string, data:array|null}
+     */
+    public function getTwoInvoicePdf($two_order_id, $params = [], $timeout = null)
+    {
+        $url = $this->getTwoCheckoutHostUrl() . '/v1/invoice/' . urlencode($two_order_id) . '/pdf';
+        $query = array_merge(
+            array('client' => 'PS', 'client_v' => $this->version),
+            is_array($params) ? $params : array()
+        );
+        $url .= '?' . http_build_query($query);
+
+        $headers = $this->getTwoRequestHeaders('/v1/invoice/' . $two_order_id . '/pdf');
+
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, $timeout !== null ? max(1, (int)$timeout) : self::API_TIMEOUT_SHORT);
+        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'GET');
+
+        // SSL VERIFICATION - Secure by default
+        $this->configureSslVerification($ch);
+
+        $response_body = curl_exec($ch);
+        $http_status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $content_type = (string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+        $curl_error = curl_error($ch);
+        curl_close($ch);
+
+        if ($response_body === false || !empty($curl_error)) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: cURL error on invoice PDF fetch - ' . $curl_error . ' (Two order: ' . $two_order_id . ')',
+                3
+            );
+
+            return array(
+                'http_status' => 0,
+                'body' => '',
+                'content_type' => '',
+                'error_code' => '',
+                'data' => array(
+                    'error' => 'Connection error',
+                    'error_message' => 'Unable to connect to Two API. Please check your server configuration.',
+                ),
+            );
+        }
+
+        $decoded = null;
+        $error_code = '';
+        $looks_like_pdf = strncmp((string)$response_body, '%PDF-', 5) === 0;
+        if (!$looks_like_pdf) {
+            $decoded = json_decode((string)$response_body, true);
+            if (is_array($decoded)) {
+                if (isset($decoded['error_code']) && is_scalar($decoded['error_code'])) {
+                    $error_code = strtoupper(trim((string)$decoded['error_code']));
+                } elseif (isset($decoded['data']['error_code']) && is_scalar($decoded['data']['error_code'])) {
+                    $error_code = strtoupper(trim((string)$decoded['data']['error_code']));
+                }
+            }
+        }
+
+        return array(
+            'http_status' => (int)$http_status,
+            'body' => (string)$response_body,
+            'content_type' => $content_type,
+            'error_code' => $error_code,
+            'data' => is_array($decoded) ? $decoded : null,
+        );
+    }
+
+    /**
+     * Resolve the Two order ID for invoice retrieval from the persisted order row,
+     * falling back to attempt telemetry (public wrapper around the admin resolver).
+     *
+     * @param int $id_order
+     * @param array $twopaymentdata
+     * @return string Empty string when no Two order reference exists
+     */
+    public function resolveTwoOrderIdForInvoice($id_order, $twopaymentdata)
+    {
+        return $this->resolveTwoOrderIdForAdmin((int)$id_order, is_array($twopaymentdata) ? $twopaymentdata : array());
+    }
+
+    /**
+     * Fetch the current Two order state via GET /v1/order/{id}.
+     *
+     * @param string $two_order_id
+     * @param int|null $timeout Optional per-call timeout override (seconds)
+     * @return array{http_status:int, state:string} Normalized (uppercase, trimmed) state; empty when unavailable
+     */
+    public function fetchTwoOrderStateFromApi($two_order_id, $timeout = null)
+    {
+        $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, array(), 'GET', array(), $timeout);
+        $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
+        $payload = $this->extractTwoOrderPayloadFromApiResponse($response);
+        $state = isset($payload['state']) ? strtoupper(trim((string)$payload['state'])) : '';
+
+        return array(
+            'http_status' => $http_status,
+            'state' => $state,
+        );
     }
 
     /**
@@ -5766,8 +5942,9 @@ class Twopayment extends PaymentModule
         );
     }
 
-    public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+    public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
     {
+        $request_timeout = $timeout !== null ? max(1, (int)$timeout) : self::API_TIMEOUT_LONG;
         if ($method == "POST" || $method == "PUT") {
             $url = sprintf('%s%s', $this->getTwoCheckoutHostUrl(), $endpoint);
             $url = $url . '?client=PS&client_v=' . $this->version;
@@ -5778,7 +5955,7 @@ class Twopayment extends PaymentModule
             curl_setopt($ch, CURLOPT_URL, $url);
             curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, self::API_TIMEOUT_LONG);
+            curl_setopt($ch, CURLOPT_TIMEOUT, $request_timeout);
             
             // SSL VERIFICATION - Secure by default
             $this->configureSslVerification($ch);
@@ -5828,7 +6005,7 @@ class Twopayment extends PaymentModule
             curl_setopt($ch, CURLOPT_URL, $url);
             curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, self::API_TIMEOUT_LONG);
+            curl_setopt($ch, CURLOPT_TIMEOUT, $request_timeout);
             
             // SSL VERIFICATION - Secure by default
             $this->configureSslVerification($ch);
@@ -6278,6 +6455,126 @@ class Twopayment extends PaymentModule
         }
 
         return false;
+    }
+
+    /**
+     * Shared customer-ownership guard for order-scoped front controller access
+     * (invoice download, legacy cancel/confirmation callbacks).
+     *
+     * Grants access when either:
+     * - a `key` query parameter matching the order customer's secure key is provided
+     *   (timing-safe compare; this path also covers guest checkout), or
+     * - the logged-in context customer owns the order and their secure key matches.
+     *
+     * @param Order $order
+     * @param Customer $customer Customer that owns the order
+     * @param string $provided_key Optional key from the query string
+     * @param int $context_customer_id Current context customer ID
+     * @param string $context_customer_secure_key Current context customer secure key
+     * @return bool
+     */
+    public function isTwoOrderCustomerAccessAuthorized($order, $customer, $provided_key = '', $context_customer_id = 0, $context_customer_secure_key = '')
+    {
+        if (!Validate::isLoadedObject($order) || !Validate::isLoadedObject($customer)) {
+            return false;
+        }
+
+        $expected_secure_key = trim((string)$customer->secure_key);
+        if (Tools::isEmpty($expected_secure_key)) {
+            return false;
+        }
+
+        $provided_key = trim((string)$provided_key);
+        if (!Tools::isEmpty($provided_key)) {
+            return hash_equals($expected_secure_key, $provided_key);
+        }
+
+        $context_customer_id = (int)$context_customer_id;
+        $context_customer_secure_key = trim((string)$context_customer_secure_key);
+
+        return $context_customer_id === (int)$order->id_customer &&
+            !Tools::isEmpty($context_customer_secure_key) &&
+            hash_equals($expected_secure_key, $context_customer_secure_key);
+    }
+
+    /**
+     * Translated, brand-safe user-facing message for an invoice download notice code.
+     *
+     * @param string $code One of TwoInvoiceRetrievalService::NOTICE_* codes
+     * @param string $state Two order state (only used by the unavailable-state message)
+     * @return string
+     */
+    public function getTwoInvoiceNoticeMessage($code, $state = '')
+    {
+        switch ($code) {
+            case 'not_ready':
+                return $this->l('The invoice is not ready yet because the order is still being fulfilled. Please try again later.');
+            case 'unavailable_state':
+                return sprintf(
+                    $this->l('No invoice is available because the order is in state: %s.'),
+                    $state !== '' ? $state : $this->l('UNKNOWN')
+                );
+            case 'no_reference':
+                return $this->l('No payment provider order reference is set for this order.');
+            case 'error':
+            default:
+                return $this->l('The invoice could not be retrieved. Please try again later or contact the store owner.');
+        }
+    }
+
+    /**
+     * Read an invoice download notice from the current request query string
+     * (set by the admin invoice controller redirect). Only whitelisted notice
+     * codes are honored and the state token is sanitized, so a crafted URL can
+     * only ever surface one of the module's own messages.
+     *
+     * @return array{level:string, code:string, message:string}|null
+     */
+    public function getTwoInvoiceNoticeFromRequest()
+    {
+        $allowed = array(
+            'not_ready' => 'info',
+            'unavailable_state' => 'info',
+            'no_reference' => 'error',
+            'error' => 'error',
+        );
+
+        $code = trim((string)Tools::getValue('two_invoice_notice'));
+        if (!isset($allowed[$code])) {
+            return null;
+        }
+
+        $state = strtoupper((string)preg_replace('/[^A-Za-z0-9_]/', '', (string)Tools::getValue('two_invoice_state')));
+        $state = Tools::substr($state, 0, 32);
+
+        return array(
+            'level' => $allowed[$code],
+            'code' => $code,
+            'message' => $this->getTwoInvoiceNoticeMessage($code, $state),
+        );
+    }
+
+    /**
+     * Stream a resolved invoice PDF to the browser and terminate the request.
+     *
+     * @param array $result Stream result from TwoInvoiceRetrievalService (action=stream)
+     * @param string $order_reference Local order reference used to build the filename
+     * @return void
+     */
+    public function streamTwoInvoicePdf($result, $order_reference)
+    {
+        $reference = preg_replace('/[^A-Za-z0-9_-]/', '', (string)$order_reference);
+        $filename = 'invoice-' . ($reference !== '' ? $reference : 'order') . '.pdf';
+        $body = isset($result['body']) ? (string)$result['body'] : '';
+
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Content-Length: ' . strlen($body));
+        header('Cache-Control: no-store, no-cache, must-revalidate');
+        header('Pragma: no-cache');
+
+        echo $body;
+        exit;
     }
 
     /**
@@ -7384,12 +7681,21 @@ class Twopayment extends PaymentModule
         $id_order = $params['order']->id;
         $twopaymentdata = $this->getTwoOrderPaymentData($id_order);
         if ($twopaymentdata) {
-            // Generate PDF URL if Two order ID is available
+            // Route the invoice download through the module front controller so the
+            // plugin can check the Two order state instead of exposing a raw API URL
+            // (which returns a bare 400 ORDER_NOT_FULFILLED before fulfillment).
             $pdf_url = null;
             if (!empty($twopaymentdata['two_order_id'])) {
-                $pdf_url = $this->getTwoPdfUrl($twopaymentdata['two_order_id']);
+                $link_params = array('id_order' => (int)$id_order);
+                $order_customer = new Customer((int)$params['order']->id_customer);
+                if (Validate::isLoadedObject($order_customer) && !Tools::isEmpty((string)$order_customer->secure_key)) {
+                    // Same secure-key fallback the cancel/confirmation callbacks use;
+                    // this keeps guest-checkout invoice access working.
+                    $link_params['key'] = (string)$order_customer->secure_key;
+                }
+                $pdf_url = $this->context->link->getModuleLink($this->name, 'invoice', $link_params, true);
             }
-            
+
             $this->context->smarty->assign(array(
                 'twopaymentdata' => $twopaymentdata,
                 'two_portal_url' => $this->getTwoPortalUrl(),
@@ -7408,10 +7714,17 @@ class Twopayment extends PaymentModule
             $twopaymentdata = $this->enrichTwoAdminOrderPaymentData((int)$id_order, $twopaymentdata);
             $invoice_actions_available = $this->shouldExposeTwoInvoiceActions($twopaymentdata);
 
-            // Generate PDF URL if Two order ID is available
+            // Route the invoice download through the module admin controller so the
+            // plugin can check the Two order state (covers the race where the order
+            // just flipped to FULFILLED but the PDF is not generated yet).
             $pdf_url = null;
             if ($invoice_actions_available && !empty($twopaymentdata['two_order_id'])) {
-                $pdf_url = $this->getTwoPdfUrl($twopaymentdata['two_order_id']);
+                $pdf_url = $this->context->link->getAdminLink(
+                    'AdminTwopaymentInvoice',
+                    true,
+                    array(),
+                    array('id_order' => (int)$id_order)
+                );
             }
             
             $this->context->smarty->assign(array(
@@ -7419,6 +7732,7 @@ class Twopayment extends PaymentModule
                 'two_portal_url' => $this->getTwoPortalUrl(), // Dynamic portal URL based on environment
                 'two_pdf_url' => $pdf_url, // PDF invoice URL if available
                 'two_invoice_actions_available' => $invoice_actions_available,
+                'two_invoice_notice' => $this->getTwoInvoiceNoticeFromRequest(),
             ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayAdminOrderLeft.tpl');
         }
@@ -7443,10 +7757,17 @@ class Twopayment extends PaymentModule
             $twopaymentdata = $this->enrichTwoAdminOrderPaymentData((int)$id_order, $twopaymentdata);
             $invoice_actions_available = $this->shouldExposeTwoInvoiceActions($twopaymentdata);
 
-            // Generate PDF URL if Two order ID is available
+            // Route the invoice download through the module admin controller so the
+            // plugin can check the Two order state (covers the race where the order
+            // just flipped to FULFILLED but the PDF is not generated yet).
             $pdf_url = null;
             if ($invoice_actions_available && !empty($twopaymentdata['two_order_id'])) {
-                $pdf_url = $this->getTwoPdfUrl($twopaymentdata['two_order_id']);
+                $pdf_url = $this->context->link->getAdminLink(
+                    'AdminTwopaymentInvoice',
+                    true,
+                    array(),
+                    array('id_order' => (int)$id_order)
+                );
             }
             
             $this->context->smarty->assign(array(
@@ -7455,6 +7776,7 @@ class Twopayment extends PaymentModule
                 'two_pdf_url' => $pdf_url, // PDF invoice URL if available
                 'use_own_invoices' => (bool)Configuration::get('PS_TWO_USE_OWN_INVOICES'),
                 'two_invoice_actions_available' => $invoice_actions_available,
+                'two_invoice_notice' => $this->getTwoInvoiceNoticeFromRequest(),
             ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayAdminOrderTabContent.tpl');
         }

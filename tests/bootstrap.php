@@ -241,6 +241,12 @@ namespace {
             $query = http_build_query((array) $params);
             return 'https://shop.local/module/' . $module . '/' . $controller . ($query !== '' ? '?' . $query : '');
         }
+
+        public function getAdminLink($controller, $withToken = true, $sfRouteParams = [], $params = []): string
+        {
+            $query = http_build_query((array) $params);
+            return 'https://shop.local/admin/' . $controller . ($query !== '' ? '?' . $query : '');
+        }
     }
 
     class Validate

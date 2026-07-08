@@ -112,7 +112,7 @@ final class TrackingNumberTest extends TestCase
                 return ['marker' => 'update-body'];
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 $this->requests[] = [$endpoint, $payload, $method];
                 return ['http_status' => 200, 'data' => []];
@@ -143,7 +143,7 @@ final class TrackingNumberTest extends TestCase
                 return ['two_order_id' => 'two-order-uuid'];
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 $this->requests[] = $endpoint;
                 return null;
@@ -179,7 +179,7 @@ final class TrackingNumberTest extends TestCase
                 throw new Exception('Cart is empty or invalid');
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 $this->requests[] = $endpoint;
                 return null;
@@ -206,7 +206,7 @@ final class TrackingNumberTest extends TestCase
                 return ['gross_amount' => '105.50'];
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 // The shape a post-fulfilment rejection comes back as.
                 return ['http_status' => 400, 'data' => ['error_message' => 'Order cannot be edited']];
@@ -237,7 +237,7 @@ final class TrackingNumberTest extends TestCase
                 return ['gross_amount' => '105.50'];
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 return ['http_status' => 200, 'data' => []];
             }
@@ -349,7 +349,7 @@ final class TrackingNumberTest extends TestCase
                 return ['two_order_id' => ''];
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 $this->requests[] = $endpoint;
                 return null;
@@ -378,7 +378,7 @@ final class TrackingNumberTest extends TestCase
                 return null;
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 $this->requests[] = $endpoint;
                 return null;

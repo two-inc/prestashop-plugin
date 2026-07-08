@@ -2983,7 +2983,7 @@ final class OrderBuilderSpec
                 return false;
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 return [
                     'http_status' => 200,
@@ -3016,7 +3016,7 @@ final class OrderBuilderSpec
                 return false;
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 return [
                     'http_status' => 200,
@@ -3047,7 +3047,7 @@ final class OrderBuilderSpec
                 return false;
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 return [
                     'http_status' => 0,
@@ -3100,7 +3100,7 @@ final class OrderBuilderSpec
                 return $this->forcedLineItems;
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 $this->providerCalled = true;
                 return [
@@ -3266,7 +3266,7 @@ final class OrderBuilderSpec
         self::reset();
 
         $successModule = new class extends TwopaymentTestHarness {
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 return ['http_status' => 200];
             }
@@ -3274,7 +3274,7 @@ final class OrderBuilderSpec
         TinyAssert::true($successModule->cancelTwoOrderBestEffort('two-success', 'test'));
 
         $failureModule = new class extends TwopaymentTestHarness {
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 return ['http_status' => 500];
             }
@@ -4150,7 +4150,7 @@ final class OrderBuilderSpec
             public $lastSavedOrderId = null;
             public $lastSavedPaymentData = null;
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 if ($method === 'GET' && $endpoint === '/v1/order/two-123') {
                     return [
@@ -4213,7 +4213,7 @@ final class OrderBuilderSpec
             public $lastSavedOrderId = null;
             public $lastSavedPaymentData = null;
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 if ($method === 'GET' && $endpoint === '/v1/order/two-456') {
                     return [
@@ -4283,7 +4283,7 @@ final class OrderBuilderSpec
                 );
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 if ($method === 'GET' && $endpoint === '/v1/order/two-789') {
                     return [
@@ -4543,10 +4543,12 @@ final class OrderBuilderSpec
 }
 
 require __DIR__ . '/CustomerAddressFormatterOverrideSpec.php';
+require __DIR__ . '/TwoInvoiceRetrievalSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
     'CustomerAddressFormatterOverrideSpec::runAll' => [CustomerAddressFormatterOverrideSpec::class, 'runAll'],
+    'TwoInvoiceRetrievalSpec::runAll' => [TwoInvoiceRetrievalSpec::class, 'runAll'],
 ];
 
 $failed = 0;
