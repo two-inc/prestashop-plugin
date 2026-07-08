@@ -42,6 +42,10 @@ namespace {
         public static array $dbLastExecuteS = [];
         public static array $orderCarriers = [];
         public static array $carts = [];
+        /** @var array<string,int> Registered admin tab ids by class name */
+        public static array $tabIds = ['AdminTwopaymentInvoice' => 1];
+        /** @var string[] Class names passed to Tab::add() */
+        public static array $tabAddCalls = [];
 
         public static function reset(): void
         {
@@ -67,6 +71,8 @@ namespace {
             self::$cartRules = [];
             self::$orderCarriers = [];
             self::$carts = [];
+            self::$tabIds = ['AdminTwopaymentInvoice' => 1];
+            self::$tabAddCalls = [];
             self::$moduleCurrencies = [
                 'twopayment' => [
                     ['id_currency' => 578], // NOK
@@ -793,11 +799,47 @@ namespace {
         }
     }
 
+    #[\AllowDynamicProperties]
     class Tab
     {
+        public $id = 0;
+        public $class_name = '';
+        public $module = '';
+        public $id_parent = 0;
+        public $active = 0;
+        public $name = [];
+
+        public function __construct($id = null)
+        {
+            $id = (int) $id;
+            if ($id > 0) {
+                $this->id = $id;
+                $className = array_search($id, StubStore::$tabIds, true);
+                if ($className !== false) {
+                    $this->class_name = (string) $className;
+                }
+            }
+        }
+
         public static function getIdFromClassName($className): int
         {
-            return 1;
+            return (int) (StubStore::$tabIds[(string) $className] ?? 0);
+        }
+
+        public function add(): bool
+        {
+            StubStore::$tabAddCalls[] = (string) $this->class_name;
+            $this->id = count(StubStore::$tabIds) + 1;
+            StubStore::$tabIds[(string) $this->class_name] = $this->id;
+            return true;
+        }
+
+        public function delete(): bool
+        {
+            if ($this->class_name !== '') {
+                unset(StubStore::$tabIds[$this->class_name]);
+            }
+            return true;
         }
     }
 

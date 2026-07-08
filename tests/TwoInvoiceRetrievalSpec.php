@@ -16,11 +16,13 @@ class TwoInvoiceRetrievalHarness extends TwopaymentTestHarness
     public $orderResponse = ['http_status' => 500];
     public $orderCalls = 0;
     public $lastOrderTimeout = null;
+    public $lastPdfTimeout = null;
     public $attemptRow = false;
 
     public function getTwoInvoicePdf($two_order_id, $params = [], $timeout = null)
     {
         $this->pdfCalls++;
+        $this->lastPdfTimeout = $timeout;
         if (count($this->pdfResponses) > 1) {
             return array_shift($this->pdfResponses);
         }
@@ -42,6 +44,17 @@ class TwoInvoiceRetrievalHarness extends TwopaymentTestHarness
     }
 }
 
+/**
+ * Harness exposing the protected admin-tab self-heal path.
+ */
+class TwoInvoiceTabHarness extends TwopaymentTestHarness
+{
+    public function ensureTab(): void
+    {
+        $this->ensureTwoInvoiceAdminTabRegistered();
+    }
+}
+
 final class TwoInvoiceRetrievalSpec
 {
     public static function runAll(): void
@@ -60,6 +73,9 @@ final class TwoInvoiceRetrievalSpec
         self::testGuestWithWrongKeyDenied();
         self::testLoggedInCustomerMismatchDenied();
         self::testLoggedInOwnerWithMatchingSecureKeyAllowed();
+        self::testErrorNoticeNeverEchoesUpstreamText();
+        self::testAdminTabInstalledWhenMissing();
+        self::testAdminTabNotReinstalledWhenAlreadyRegistered();
     }
 
     private static function pdfOk(): array
@@ -113,6 +129,11 @@ final class TwoInvoiceRetrievalSpec
         TinyAssert::same("%PDF-1.4 test-invoice", $result['body']);
         TinyAssert::same(1, $module->pdfCalls, 'Invoice fetch should be called exactly once');
         TinyAssert::same(0, $module->orderCalls, 'Order GET must not run on a successful fetch');
+        TinyAssert::same(
+            Twopayment::API_TIMEOUT_PDF_FETCH,
+            $module->lastPdfTimeout,
+            'Synchronous PDF fetch must use the tight timeout, not the 30s default'
+        );
     }
 
     private static function testFulfillingReturnsInfoNotice(): void
@@ -141,6 +162,11 @@ final class TwoInvoiceRetrievalSpec
 
         TinyAssert::same('stream', $result['action']);
         TinyAssert::same(2, $module->pdfCalls, 'FULFILLED must retry the invoice fetch exactly once');
+        TinyAssert::same(
+            Twopayment::API_TIMEOUT_PDF_FETCH,
+            $module->lastPdfTimeout,
+            'The FULFILLED retry fetch must also use the tight timeout'
+        );
     }
 
     private static function testFulfilledRetryFailsIsError(): void
@@ -290,5 +316,68 @@ final class TwoInvoiceRetrievalSpec
         $customer = (object) ['secure_key' => 'sk-owner'];
 
         TinyAssert::true($module->isTwoOrderCustomerAccessAuthorized($order, $customer, '', 5, 'sk-owner'));
+    }
+
+    private static function testErrorNoticeNeverEchoesUpstreamText(): void
+    {
+        $module = new TwoInvoiceRetrievalHarness();
+        $module->pdfResponses = [[
+            'http_status' => 400,
+            'body' => '{"error_code":"SOMETHING_ELSE","error_message":"internal upstream detail"}',
+            'content_type' => 'application/json',
+            'error_code' => 'SOMETHING_ELSE',
+            'data' => ['error_code' => 'SOMETHING_ELSE', 'error_message' => 'internal upstream detail'],
+        ]];
+
+        $result = self::service($module)->resolveInvoiceDownload(7, self::baseRow());
+
+        TinyAssert::same('error', $result['level']);
+        TinyAssert::same(TwoInvoiceRetrievalService::NOTICE_ERROR, $result['code']);
+        TinyAssert::same(
+            $module->getTwoInvoiceNoticeMessage(TwoInvoiceRetrievalService::NOTICE_ERROR),
+            $result['message'],
+            'Error notices must carry only the whitelisted generic message'
+        );
+        TinyAssert::false(
+            strpos($result['message'], 'internal upstream detail') !== false,
+            'Raw upstream API error text must never reach the user-facing message'
+        );
+    }
+
+    private static function testAdminTabInstalledWhenMissing(): void
+    {
+        StubStore::$tabIds = [];
+        StubStore::$tabAddCalls = [];
+
+        $module = new TwoInvoiceTabHarness();
+        $module->ensureTab();
+
+        TinyAssert::same(
+            ['AdminTwopaymentInvoice'],
+            StubStore::$tabAddCalls,
+            'A missing invoice admin tab must be installed by the self-heal path'
+        );
+        TinyAssert::true(
+            Tab::getIdFromClassName('AdminTwopaymentInvoice') > 0,
+            'The tab must be registered after self-heal'
+        );
+
+        StubStore::$tabIds = ['AdminTwopaymentInvoice' => 1];
+        StubStore::$tabAddCalls = [];
+    }
+
+    private static function testAdminTabNotReinstalledWhenAlreadyRegistered(): void
+    {
+        StubStore::$tabIds = ['AdminTwopaymentInvoice' => 42];
+        StubStore::$tabAddCalls = [];
+
+        $module = new TwoInvoiceTabHarness();
+        $module->ensureTab();
+
+        TinyAssert::same([], StubStore::$tabAddCalls, 'An already-registered tab must not be reinstalled');
+        TinyAssert::same(42, Tab::getIdFromClassName('AdminTwopaymentInvoice'), 'Existing tab id must be untouched');
+
+        StubStore::$tabIds = ['AdminTwopaymentInvoice' => 1];
+        StubStore::$tabAddCalls = [];
     }
 }

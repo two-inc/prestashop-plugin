@@ -64,7 +64,10 @@ class TwoInvoiceRetrievalService
             $params['lang'] = $lang;
         }
 
-        $fetch = $this->module->getTwoInvoicePdf($two_order_id, $params);
+        // Tight timeout: this fetch runs synchronously inside a buyer/admin
+        // download request, so it must never pin a PHP worker for the default
+        // 30s API timeout during an API brownout.
+        $fetch = $this->module->getTwoInvoicePdf($two_order_id, $params, Twopayment::API_TIMEOUT_PDF_FETCH);
         if ($this->isPdfSuccess($fetch)) {
             return $this->stream($fetch);
         }
@@ -92,7 +95,7 @@ class TwoInvoiceRetrievalService
 
         if ($state === 'FULFILLED') {
             // The order just became FULFILLED; the PDF may exist now. Retry once.
-            $retry = $this->module->getTwoInvoicePdf($two_order_id, $params);
+            $retry = $this->module->getTwoInvoicePdf($two_order_id, $params, Twopayment::API_TIMEOUT_PDF_FETCH);
             if ($this->isPdfSuccess($retry)) {
                 return $this->stream($retry);
             }
@@ -149,7 +152,11 @@ class TwoInvoiceRetrievalService
     }
 
     /**
-     * Error notice preserving today's error rendering (getTwoErrorMessage).
+     * Error notice. The raw upstream API error text is logged for merchant
+     * diagnostics but never surfaced: the returned message is always the
+     * module's own whitelisted generic error message, so neither the buyer
+     * front controller nor the admin controller can echo arbitrary upstream
+     * text to the browser.
      *
      * @param array $fetch Response from Twopayment::getTwoInvoicePdf
      * @return array
@@ -157,9 +164,12 @@ class TwoInvoiceRetrievalService
     private function errorNotice($fetch)
     {
         $body = (is_array($fetch) && isset($fetch['data']) && is_array($fetch['data'])) ? $fetch['data'] : null;
-        $message = $body !== null ? $this->module->getTwoErrorMessage($body) : null;
-        if (Tools::isEmpty($message)) {
-            $message = $this->module->getTwoInvoiceNoticeMessage(self::NOTICE_ERROR);
+        $upstream = $body !== null ? $this->module->getTwoErrorMessage($body) : null;
+        if (!Tools::isEmpty($upstream)) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: invoice retrieval failed - ' . (string)$upstream,
+                2
+            );
         }
 
         return array(
@@ -167,7 +177,7 @@ class TwoInvoiceRetrievalService
             'level' => 'error',
             'code' => self::NOTICE_ERROR,
             'state' => '',
-            'message' => (string)$message,
+            'message' => $this->module->getTwoInvoiceNoticeMessage(self::NOTICE_ERROR),
         );
     }
 

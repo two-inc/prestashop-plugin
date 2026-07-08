@@ -25,6 +25,8 @@ class Twopayment extends PaymentModule
     const API_TIMEOUT_SHORT = 30; // Standard API timeout
     const API_TIMEOUT_LONG = 60; // Extended timeout for file uploads
     const API_TIMEOUT_STATE_CHECK = 10; // Tight timeout for the invoice-download order state check
+    const API_TIMEOUT_PDF_FETCH = 10; // Tight timeout for synchronous invoice PDF fetches (buyer + admin download clicks)
+    const API_CONNECT_TIMEOUT = 5; // Connection-establishment timeout for all Two API calls
     
     // Constants for validation tolerances
     const TAX_FORMULA_TOLERANCE = 0.02; // Tolerance for tax formula validation
@@ -137,8 +139,9 @@ class Twopayment extends PaymentModule
     /**
      * Register the invisible admin tab backing the invoice download controller
      * on existing installations (mirrors ensureRequiredHooksRegistered).
+     * Protected (not private) so the test suite can exercise the self-heal path.
      */
-    private function ensureTwoInvoiceAdminTabRegistered()
+    protected function ensureTwoInvoiceAdminTabRegistered()
     {
         if ((int)$this->id <= 0 || !Module::isInstalled($this->name)) {
             return;
@@ -5491,6 +5494,7 @@ class Twopayment extends PaymentModule
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, $timeout !== null ? max(1, (int)$timeout) : self::API_TIMEOUT_SHORT);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, self::API_CONNECT_TIMEOUT);
         curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'GET');
 
         // SSL VERIFICATION - Secure by default
@@ -5956,6 +5960,7 @@ class Twopayment extends PaymentModule
             curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_TIMEOUT, $request_timeout);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, self::API_CONNECT_TIMEOUT);
             
             // SSL VERIFICATION - Secure by default
             $this->configureSslVerification($ch);
@@ -6006,6 +6011,7 @@ class Twopayment extends PaymentModule
             curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_TIMEOUT, $request_timeout);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, self::API_CONNECT_TIMEOUT);
             
             // SSL VERIFICATION - Secure by default
             $this->configureSslVerification($ch);
@@ -6566,6 +6572,17 @@ class Twopayment extends PaymentModule
         $reference = preg_replace('/[^A-Za-z0-9_-]/', '', (string)$order_reference);
         $filename = 'invoice-' . ($reference !== '' ? $reference : 'order') . '.pdf';
         $body = isset($result['body']) ? (string)$result['body'] : '';
+
+        // Discard any open output buffers (stray notices, BOMs, template output)
+        // and disable on-the-fly compression: gzip re-encoding would make the
+        // response body diverge from the exact Content-Length declared below.
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+        @ini_set('zlib.output_compression', '0');
+        if (function_exists('apache_setenv')) {
+            @apache_setenv('no-gzip', '1');
+        }
 
         header('Content-Type: application/pdf');
         header('Content-Disposition: attachment; filename="' . $filename . '"');
