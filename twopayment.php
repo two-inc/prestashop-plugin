@@ -22,6 +22,15 @@ class Twopayment extends PaymentModule
     // Constants for payment terms
     const DEFAULT_PAYMENT_TERM_DAYS = 30; // Default payment term in days
     const PAYMENT_TERMS_OPTIONS = [7, 15, 20, 30, 45, 60, 90]; // Available payment term options
+    // EOM (End-of-Month) terms are only offerable for these durations.
+    const EOM_PAYMENT_TERMS_OPTIONS = [30, 45, 60];
+    // TTL (seconds) for the cached GET /v1/merchant available_terms list (TWO-24813).
+    const MERCHANT_AVAILABLE_TERMS_TTL = 900; // 15 minutes
+    // Dedicated Configuration keys for the cached merchant term list (kept OUT
+    // of the general-settings save path so a checkout-render refresh can never
+    // race a concurrent admin save into reverting other settings - TWO-24813).
+    const CONFIG_MERCHANT_AVAILABLE_TERMS = 'PS_TWO_MERCHANT_AVAILABLE_TERMS';
+    const CONFIG_MERCHANT_AVAILABLE_TERMS_TS = 'PS_TWO_MERCHANT_AVAILABLE_TERMS_TS';
     
     // Constants for API timeouts (seconds)
     const API_TIMEOUT_SHORT = 30; // Standard API timeout
@@ -622,50 +631,10 @@ class Twopayment extends PaymentModule
                         'name' => 'PS_TWO_PAYMENT_TERMS',
                         'desc' => '<span id="two-payment-terms-desc-standard" style="display: none;">' . $this->l('Select which payment terms you want to offer. Standard terms are calculated from the fulfillment date.') . '</span><span id="two-payment-terms-desc-eom" style="display: none;">' . $this->l('Select which payment terms you want to offer. EOM (End-of-Month) terms are calculated from the end of the month at fulfillment, plus the selected days. Only 30, 45, and 60 day terms are available for EOM.') . '</span>',
                         'values' => array(
-                            'query' => array(
-                                array(
-                                    'id' => '7',
-                                    'name' => $this->l('7 days'),
-                                    'val' => '1',
-                                    'class' => 'two-term-option two-term-7 two-term-standard'
-                                ),
-                                array(
-                                    'id' => '15',
-                                    'name' => $this->l('15 days'),
-                                    'val' => '1',
-                                    'class' => 'two-term-option two-term-15 two-term-standard'
-                                ),
-                                array(
-                                    'id' => '20',
-                                    'name' => $this->l('20 days'),
-                                    'val' => '1',
-                                    'class' => 'two-term-option two-term-20 two-term-standard'
-                                ),
-                                array(
-                                    'id' => '30',
-                                    'name' => $this->l('30 days'),
-                                    'val' => '1',
-                                    'class' => 'two-term-option two-term-30 two-term-both'
-                                ),
-                                array(
-                                    'id' => '45',
-                                    'name' => $this->l('45 days'),
-                                    'val' => '1',
-                                    'class' => 'two-term-option two-term-45 two-term-both'
-                                ),
-                                array(
-                                    'id' => '60',
-                                    'name' => $this->l('60 days'),
-                                    'val' => '1',
-                                    'class' => 'two-term-option two-term-60 two-term-both'
-                                ),
-                                array(
-                                    'id' => '90',
-                                    'name' => $this->l('90 days'),
-                                    'val' => '1',
-                                    'class' => 'two-term-option two-term-90 two-term-standard'
-                                ),
-                            ),
+                            // Restrict the tickable set to the merchant's backend
+                            // available_terms (TWO-24813); admin render is one of
+                            // the two sanctioned refresh points.
+                            'query' => $this->buildPaymentTermCheckboxQuery(),
                             'id' => 'id',
                             'name' => 'name'
                         )
@@ -677,6 +646,36 @@ class Twopayment extends PaymentModule
             ),
         );
         return $fields_form;
+    }
+
+    /**
+     * Build the "Available Payment Terms" checkbox rows, restricted to the
+     * merchant's backend available_terms (TWO-24813) and falling back to the
+     * hardcoded option list on a cold cache. The class drives the client-side
+     * STANDARD/EOM show-hide toggle: 30/45/60 are valid under both, the rest are
+     * STANDARD-only. Refreshes the cache (admin config render is a sanctioned
+     * refresh point).
+     *
+     * @return array<int, array{id:string,name:string,val:string,class:string}>
+     */
+    protected function buildPaymentTermCheckboxQuery()
+    {
+        $source = $this->getOfferableTermSource(true);
+        sort($source);
+        $query = array();
+        foreach ($source as $term) {
+            $term = (int) $term;
+            $type_class = in_array($term, self::EOM_PAYMENT_TERMS_OPTIONS, true)
+                ? 'two-term-both'
+                : 'two-term-standard';
+            $query[] = array(
+                'id' => (string) $term,
+                'name' => sprintf($this->l('%d days'), $term),
+                'val' => '1',
+                'class' => 'two-term-option two-term-' . $term . ' ' . $type_class,
+            );
+        }
+        return $query;
     }
 
     protected function getTwoGeneralFormValues()
@@ -767,6 +766,11 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY')));
         Configuration::updateValue('PS_TWO_ENVIRONMENT', Tools::getValue('PS_TWO_ENVIRONMENT'));
         if ($this->verifiedMerchantId) {
+            if ((string) Configuration::get('PS_TWO_MERCHANT_ID') !== (string) $this->verifiedMerchantId) {
+                // Merchant identity changed: drop the cached term list so
+                // serve-stale never bridges the old merchant's terms (TWO-24813).
+                $this->invalidateMerchantAvailableTerms();
+            }
             Configuration::updateValue('PS_TWO_MERCHANT_ID', $this->verifiedMerchantId);
             Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 1);
         } else {
@@ -780,8 +784,16 @@ class Twopayment extends PaymentModule
             Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', $term_type);
         }
         
-        // Save payment terms checkboxes
-        $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
+        // Save payment terms checkboxes. Iterate ONLY the terms the admin form
+        // actually rendered (the backend-restricted offerable source), NOT the
+        // full hardcoded list. buildPaymentTermCheckboxQuery() renders a checkbox
+        // per offerable term, so a term the backend has withdrawn is hidden and
+        // never POSTed; iterating the hardcoded list here would read its absent
+        // POST value as unchecked and silently zero the merchant's stored
+        // preference on any unrelated save. Leaving hidden keys untouched
+        // preserves that preference for when the backend re-offers the term
+        // (TWO-24813).
+        $payment_terms = array_map('strval', $this->getOfferableTermSource(false));
         foreach ($payment_terms as $term) {
             Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . $term, Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term) ? 1 : 0);
         }
@@ -2461,6 +2473,11 @@ class Twopayment extends PaymentModule
             'from_end_of_month' => $this->l('from end of month'),
             'end_of_month_plus_days' => $this->l('End of Month + %s days'),
         );
+
+        // Checkout media render is a sanctioned refresh point for the backend
+        // term list (TWO-24813); prime the cache before the cache-only reads
+        // in getAvailablePaymentTerms / getDefaultPaymentTerm below.
+        $this->getMerchantAvailableTerms(true);
 
         Media::addJsDef(array('twopayment' => array(
                 'search_empty_text' => $this->l('No result found'),
@@ -5918,12 +5935,137 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Get available payment terms configured by the merchant
-     * @return array Array of available payment terms in days
+     * The merchant's offerable payment terms (net days, ascending) sourced from
+     * `available_terms` on GET /v1/merchant/{id} - the backend resolves them from
+     * the merchant's pricing packages, so this is the authoritative set the admin
+     * narrows from (TWO-24813). An empty result means the set is not currently
+     * resolved (no verified API key / merchant id yet, or no successful fetch yet)
+     * OR the backend explicitly returned an empty list.
+     *
+     * Cache-only by default: this is read from checkout / cart / admin-render
+     * paths that must not stall on HTTP. A TTL-gated fetch (15 min, 10s request
+     * cap) runs only when $refresh === true, from the two sanctioned refresh
+     * points (the checkout media hook and the admin config render). The cached
+     * list is overwritten only by a successful response carrying an
+     * `available_terms` array; a fetch failure (or an older backend omitting the
+     * field) serves the last-known list for another TTL rather than blanking the
+     * term set on an API blip.
+     *
+     * The cache lives in two dedicated Configuration keys, NOT the general
+     * settings blob, so a checkout-render refresh can never race a concurrent
+     * admin settings save.
+     *
+     * @param bool $refresh Allow a TTL-gated backend fetch on this call.
+     * @return int[] Ascending, unique day counts; empty when unresolved.
      */
+    public function getMerchantAvailableTerms($refresh = false)
+    {
+        if ($refresh) {
+            $checked_on = (int) Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS);
+            if ($checked_on <= 0 || ($checked_on + self::MERCHANT_AVAILABLE_TERMS_TTL) <= time()) {
+                $merchant_id = Configuration::get('PS_TWO_MERCHANT_ID');
+                $api_key = Configuration::get('PS_TWO_MERCHANT_API_KEY');
+                if (!Tools::isEmpty($merchant_id) && !Tools::isEmpty($api_key)) {
+                    // On a render path even when refreshing, so cap tight.
+                    $response = $this->setTwoPaymentRequest(
+                        '/v1/merchant/' . rawurlencode((string) $merchant_id),
+                        array(),
+                        'GET',
+                        array(),
+                        self::API_TIMEOUT_STATE_CHECK
+                    );
+                    $http_status = isset($response['http_status']) ? (int) $response['http_status'] : 0;
+                    if (
+                        $http_status === self::HTTP_STATUS_OK
+                        && isset($response['available_terms'])
+                        && is_array($response['available_terms'])
+                    ) {
+                        $normalised = $this->normaliseMerchantTerms($response['available_terms']);
+                        Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS, json_encode($normalised));
+                    }
+                    // Bump the clock even on failure so a cold cache does not
+                    // hammer the API on every checkout / admin render (one stall
+                    // per TTL, not per view).
+                    Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time());
+                }
+            }
+        }
+
+        $cached = Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS);
+        if (Tools::isEmpty($cached)) {
+            return array();
+        }
+        $decoded = json_decode($cached, true);
+        if (!is_array($decoded)) {
+            return array();
+        }
+        return $this->normaliseMerchantTerms($decoded);
+    }
+
     /**
-     * Get available payment terms filtered by term type (STANDARD or EOM)
-     * @return array Array of available payment term durations (e.g., [30, 45, 60])
+     * Normalise a raw term list into ascending, unique, positive int day counts.
+     * The is_numeric guard drops malformed elements (nested arrays, bools, null)
+     * rather than intval'ing them into a phantom "1 day" term.
+     *
+     * @param mixed $terms
+     * @return int[]
+     */
+    private function normaliseMerchantTerms($terms)
+    {
+        $days = array();
+        foreach ((array) $terms as $t) {
+            if (!is_numeric($t)) {
+                continue;
+            }
+            $d = (int) $t;
+            if ($d > 0) {
+                $days[$d] = $d;
+            }
+        }
+        $days = array_values($days);
+        sort($days);
+        return $days;
+    }
+
+    /**
+     * Drop the cached merchant term list. Called when the merchant identity
+     * changes (new API key / merchant id) - serve-stale caching must never
+     * serve the old merchant's terms under a new identity (TWO-24813).
+     */
+    public function invalidateMerchantAvailableTerms()
+    {
+        Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS, '');
+        Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, 0);
+    }
+
+    /**
+     * The offerable term source set (before the admin narrows it): the backend's
+     * `available_terms` when resolved, else the historical hardcoded option list.
+     * The fallback preserves pre-feature behaviour on a cold cache (fresh install
+     * / API blip) rather than blanking the term UI and checkout - the serve-stale
+     * degrade posture (TWO-24813).
+     *
+     * @param bool $refresh Allow a TTL-gated backend fetch.
+     * @return int[]
+     */
+    private function getOfferableTermSource($refresh = false)
+    {
+        $backend = $this->getMerchantAvailableTerms($refresh);
+        if (!empty($backend)) {
+            return $backend;
+        }
+        return array_map('intval', self::PAYMENT_TERMS_OPTIONS);
+    }
+
+    /**
+     * Available payment terms offered at checkout (ascending). THE runtime seam:
+     * the backend's offerable set (GET /v1/merchant `available_terms`), narrowed
+     * by the merchant's admin checkbox subset, then constrained by the term type
+     * (EOM only supports 30/45/60). A term the backend has withdrawn drops out
+     * even while the admin box is still ticked (TWO-24813). Cache-only - never
+     * blocks on HTTP; the sanctioned refresh points prime the cache.
+     *
+     * @return int[] Array of available payment term durations (e.g., [30, 45, 60])
      */
     /* ===================================================================
      * Offset pricing fee (buyer surcharge) — TWO-24752 / TWO-24893.
@@ -6426,29 +6568,27 @@ class Twopayment extends PaymentModule
     public function getAvailablePaymentTerms()
     {
         $term_type = Configuration::get('PS_TWO_PAYMENT_TERM_TYPE');
-        
-        // Determine which terms to check based on type
+
+        // Source set the admin narrows FROM (backend list, else hardcoded).
+        $source = $this->getOfferableTermSource(false);
+
+        // EOM is only offerable for a fixed subset; intersect the source with it.
         if ($term_type === 'EOM') {
-            // EOM only supports 30, 45, 60 day terms
-            $terms_to_check = array('30', '45', '60');
-        } else {
-            // STANDARD supports all terms
-            $terms_to_check = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
+            $source = array_values(array_intersect($source, self::EOM_PAYMENT_TERMS_OPTIONS));
         }
-        
+
         $available_terms = array();
-        
-        foreach ($terms_to_check as $term) {
-            if (Configuration::get('PS_TWO_PAYMENT_TERMS_' . $term)) {
-                $available_terms[] = (int)$term;
+        foreach ($source as $term) {
+            if (Configuration::get('PS_TWO_PAYMENT_TERMS_' . (int) $term)) {
+                $available_terms[] = (int) $term;
             }
         }
-        
-        // If no terms are configured, default to DEFAULT_PAYMENT_TERM_DAYS
+
+        // If nothing is configured/offerable, default to DEFAULT_PAYMENT_TERM_DAYS
         if (empty($available_terms)) {
             $available_terms = array(self::DEFAULT_PAYMENT_TERM_DAYS);
         }
-        
+
         sort($available_terms); // Ensure they're in ascending order
         return $available_terms;
     }
