@@ -37,6 +37,8 @@ final class SurchargeSpec
         self::testSurchargeLineItemPassesThroughApiTaxRate();
         self::testSurchargeLineItemDisabledReturnsNull();
         self::testSurchargeLineItemRoundsTaxOnBoundary();
+        self::testSurchargeLineItemTaxRateSelfConsistentAtHighPrecision();
+        self::testSurchargeLineItemHonorsExplicitTermOverride();
         self::testOrderPayloadInjectsSurchargeLineAndBumpsTotals();
     }
 
@@ -367,6 +369,63 @@ final class SurchargeSpec
         TinyAssert::same('12.63', $line['gross_amount']);
         // The constructed line must satisfy the Two line-item formulas.
         TinyAssert::true($module->validateTwoLineItems([$line]));
+    }
+
+    private static function testSurchargeLineItemTaxRateSelfConsistentAtHighPrecision(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '2');
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        $module = new class extends TwopaymentTestHarness {
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+            {
+                // Tax rate needing more than TAX_RATE_PRECISION (3dp) decimals.
+                // Tax must be computed from the SNAPPED rate that is actually
+                // sent, else the line fails validateTwoLineItems and is dropped.
+                return [
+                    'http_status' => 200,
+                    'buyer_fee_share' => '1000.00',
+                    'total_fee_tax_rate' => '0.210098',
+                    'currency' => 'EUR',
+                ];
+            }
+        };
+        $cart = new Cart(1);
+        $cart->id_currency = 978;
+        $line = $module->buildTwoSurchargeLineItemForCart($cart, 5000.0);
+        TinyAssert::same('0.21', $line['tax_rate'], 'rate is snapped to the sent precision');
+        TinyAssert::same('210.00', $line['tax_amount'], 'tax computed from the sent (snapped) rate, not full precision');
+        TinyAssert::same('1210.00', $line['gross_amount']);
+        TinyAssert::true($module->validateTwoLineItems([$line]), 'high-precision fee tax rate must not silently drop the line');
+    }
+
+    private static function testSurchargeLineItemHonorsExplicitTermOverride(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_60', 1);
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '2');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_60', '4');
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        // No buyer cookie set, so getSelectedPaymentTerm() would default to 30 —
+        // the explicit override (the update/admin path's persisted term) must win.
+        $module = new class extends TwopaymentTestHarness {
+            public $capturedDays = null;
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+            {
+                $this->capturedDays = isset($payload['order_terms']['duration_days'])
+                    ? $payload['order_terms']['duration_days']
+                    : null;
+                return ['http_status' => 200, 'buyer_fee_share' => '5.00', 'total_fee_tax_rate' => '0.25', 'currency' => 'EUR'];
+            }
+        };
+        $cart = new Cart(1);
+        $cart->id_currency = 978;
+        $line = $module->buildTwoSurchargeLineItemForCart($cart, 100.0, 60);
+        TinyAssert::same(60, $module->capturedDays, 'explicit term override must reach the fee quote, not the default term');
+        TinyAssert::same('SERVICE', $line['type']);
     }
 
     private static function testOrderPayloadInjectsSurchargeLineAndBumpsTotals(): void

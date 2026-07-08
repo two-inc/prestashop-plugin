@@ -2687,7 +2687,7 @@ class Twopayment extends PaymentModule
      * @return array
      * @throws Exception
      */
-    private function buildTwoOrderPricingData($cart, $contextLabel = 'order payload', $strictReconciliation = false)
+    private function buildTwoOrderPricingData($cart, $contextLabel = 'order payload', $strictReconciliation = false, $paymentTermDays = null)
     {
         $line_items = $this->getTwoProductItems($cart);
         if (empty($line_items)) {
@@ -2746,7 +2746,7 @@ class Twopayment extends PaymentModule
         // shared pricing builder keeps the intent, create and update payloads
         // consistent, so the order-intent approval reconciles against the same
         // gross the create call sends. TWO-24752 / TWO-24893.
-        $surchargeLine = $this->buildTwoSurchargeLineItemForCart($cart, $subtotalsTotals['gross']);
+        $surchargeLine = $this->buildTwoSurchargeLineItemForCart($cart, $subtotalsTotals['gross'], $paymentTermDays);
         if ($surchargeLine !== null && $this->validateTwoLineItems(array($surchargeLine))) {
             $line_items[] = $surchargeLine;
             $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
@@ -3399,7 +3399,14 @@ class Twopayment extends PaymentModule
         }
         $tracking_number = $this->getTwoOrderTrackingNumber($order);
 
-        $pricingData = $this->buildTwoOrderPricingData($cart, 'update order data (order_id=' . $order->id . ')');
+        // The update path runs in admin/webhook context with no buyer term
+        // cookie, so pass the persisted order term to the surcharge builder;
+        // otherwise the fee would be recomputed for the default term and the
+        // update gross would diverge from the created-order gross. TWO-24752.
+        $storedTerm = (isset($orderpaymentdata['two_day_on_invoice']) && $orderpaymentdata['two_day_on_invoice'] !== '')
+            ? (int) $orderpaymentdata['two_day_on_invoice']
+            : null;
+        $pricingData = $this->buildTwoOrderPricingData($cart, 'update order data (order_id=' . $order->id . ')', false, $storedTerm);
         $line_items = $pricingData['line_items'];
         $tax_subtotals = $pricingData['tax_subtotals'];
         $final_net = $pricingData['net_amount'];
@@ -6119,18 +6126,25 @@ class Twopayment extends PaymentModule
      * hard-coded zero, TWO-24752); net/tax/gross satisfy the Two line-item
      * formulas so validateTwoLineItems accepts it.
      *
-     * @param Cart  $cart
-     * @param float $gross_basis product + shipping gross (fee basis)
+     * @param Cart     $cart
+     * @param float    $gross_basis product + shipping gross (fee basis)
+     * @param int|null $paymentTermDays explicit term (update/admin context has no
+     *                 buyer cookie); null falls back to the selected term.
      * @return array|null
      */
-    public function buildTwoSurchargeLineItemForCart($cart, $gross_basis)
+    public function buildTwoSurchargeLineItemForCart($cart, $gross_basis, $paymentTermDays = null)
     {
         $settings = $this->getTwoSurchargeSettings();
         if (empty($settings['enabled'])) {
             return null;
         }
 
-        $days = $this->getSelectedPaymentTerm();
+        // In the create/intent (buyer) path the term comes from the buyer's
+        // cookie; in the update path (admin edit / tracking webhook) there is no
+        // cookie, so the caller passes the persisted order term instead —
+        // otherwise the fee would be recomputed for the default term and the
+        // update gross would diverge from the created-order gross. TWO-24752.
+        $days = $paymentTermDays !== null ? (int) $paymentTermDays : $this->getSelectedPaymentTerm();
         $currencyIso = '';
         $currency = new Currency((int) $cart->id_currency);
         if (Validate::isLoadedObject($currency)) {
@@ -6147,8 +6161,17 @@ class Twopayment extends PaymentModule
         if ($net <= 0) {
             return null;
         }
+        // Compute tax from the SAME rate string that is sent (formatTwoTaxRate
+        // snaps to TAX_RATE_PRECISION dp). Using the full-precision rate to
+        // compute tax while sending a rounded rate makes the line fail
+        // validateTwoLineItems (tax_amount vs net*sent_rate) for any rate that
+        // needs more than TAX_RATE_PRECISION decimals, silently dropping the
+        // whole surcharge line. Snapping first mirrors the product-line
+        // convention (snapped_product_rate). TWO-24752.
         $taxRate = $this->normalizeTwoFeeTaxRate($fee['total_fee_tax_rate']);
-        $tax = round($net * $taxRate, 2);
+        $taxRateString = $this->formatTwoTaxRate($taxRate);
+        $sentRate = (float) $taxRateString;
+        $tax = round($net * $sentRate, 2);
         $gross = round($net + $tax, 2);
         $label = $this->getTwoSurchargeLineLabel($days);
 
@@ -6159,8 +6182,8 @@ class Twopayment extends PaymentModule
             'net_amount' => (string) $this->getTwoRoundAmount($net),
             'discount_amount' => '0.00',
             'tax_amount' => (string) $this->getTwoRoundAmount($tax),
-            'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount(round($taxRate * 100, 2)) . '%',
-            'tax_rate' => $this->formatTwoTaxRate($taxRate),
+            'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount(round($sentRate * 100, 2)) . '%',
+            'tax_rate' => $taxRateString,
             'unit_price' => (string) $this->getTwoRoundAmount($net),
             'quantity' => 1,
             'quantity_unit' => 'item',
