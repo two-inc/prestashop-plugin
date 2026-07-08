@@ -21,16 +21,27 @@ class Twopayment extends PaymentModule
     
     // Constants for payment terms
     const DEFAULT_PAYMENT_TERM_DAYS = 30; // Default payment term in days
-    const PAYMENT_TERMS_OPTIONS = [7, 15, 20, 30, 45, 60, 90]; // Available payment term options
+    const PAYMENT_TERMS_OPTIONS = [7, 15, 20, 30, 45, 60, 90]; // Available payment term options (all > 0: getMerchantDueInDays() treats a cached 0 as "unset")
     // EOM (End-of-Month) terms are only offerable for these durations.
     const EOM_PAYMENT_TERMS_OPTIONS = [30, 45, 60];
-    // TTL (seconds) for the cached GET /v1/merchant available_terms list (TWO-24813).
+    // TTL (seconds) for the cached GET /v1/merchant record - shared by the
+    // available_terms list (TWO-24813) and the due_in_days default (TWO-24859),
+    // which are both sourced from a SINGLE fetch of the same endpoint.
     const MERCHANT_AVAILABLE_TERMS_TTL = 900; // 15 minutes
-    // Dedicated Configuration keys for the cached merchant term list (kept OUT
+    // On a FAILED merchant-record fetch, retry after this short backoff instead
+    // of waiting the full TTL, so a transient blip does not lock in a stale
+    // term list / wrong default for 15 minutes (TWO-24859 review).
+    const MERCHANT_RECORD_RETRY_BACKOFF = 300; // 5 minutes
+    // Dedicated Configuration keys for the cached merchant record (kept OUT
     // of the general-settings save path so a checkout-render refresh can never
     // race a concurrent admin save into reverting other settings - TWO-24813).
+    // The value keys share one timestamp (fetched together, expire together).
     const CONFIG_MERCHANT_AVAILABLE_TERMS = 'PS_TWO_MERCHANT_AVAILABLE_TERMS';
     const CONFIG_MERCHANT_AVAILABLE_TERMS_TS = 'PS_TWO_MERCHANT_AVAILABLE_TERMS_TS';
+    // Cached GET /v1/merchant `due_in_days` (the merchant's default invoice
+    // term). Populated by the SAME fetch as CONFIG_MERCHANT_AVAILABLE_TERMS and
+    // gated by the shared CONFIG_MERCHANT_AVAILABLE_TERMS_TS (TWO-24859).
+    const CONFIG_MERCHANT_DUE_IN_DAYS = 'PS_TWO_MERCHANT_DUE_IN_DAYS';
     
     // Constants for API timeouts (seconds)
     const API_TIMEOUT_SHORT = 30; // Standard API timeout
@@ -5966,6 +5977,10 @@ class Twopayment extends PaymentModule
                 $merchant_id = Configuration::get('PS_TWO_MERCHANT_ID');
                 $api_key = Configuration::get('PS_TWO_MERCHANT_API_KEY');
                 if (!Tools::isEmpty($merchant_id) && !Tools::isEmpty($api_key)) {
+                    // Bump the shared clock BEFORE the wire call so a concurrent
+                    // render at expiry serves the stale cache instead of firing a
+                    // second, redundant fetch (anti-stampede - TWO-24859 review).
+                    Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time());
                     // On a render path even when refreshing, so cap tight.
                     $response = $this->setTwoPaymentRequest(
                         '/v1/merchant/' . rawurlencode((string) $merchant_id),
@@ -5975,18 +5990,32 @@ class Twopayment extends PaymentModule
                         self::API_TIMEOUT_STATE_CHECK
                     );
                     $http_status = isset($response['http_status']) ? (int) $response['http_status'] : 0;
-                    if (
-                        $http_status === self::HTTP_STATUS_OK
-                        && isset($response['available_terms'])
-                        && is_array($response['available_terms'])
-                    ) {
-                        $normalised = $this->normaliseMerchantTerms($response['available_terms']);
-                        Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS, json_encode($normalised));
+                    if ($http_status === self::HTTP_STATUS_OK && is_array($response)) {
+                        // ONE fetch feeds BOTH merchant-record caches: the
+                        // offerable term list (TWO-24813) and the default-term
+                        // seed (due_in_days, TWO-24859). A field absent from an
+                        // otherwise-valid response is a legitimate answer (leave
+                        // the term list untouched; treat an absent default as
+                        // "unset" = 0), NOT a fetch failure to retry.
+                        if (isset($response['available_terms']) && is_array($response['available_terms'])) {
+                            $normalised = $this->normaliseMerchantTerms($response['available_terms']);
+                            Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS, json_encode($normalised));
+                        }
+                        $due = isset($response['due_in_days']) ? $response['due_in_days'] : null;
+                        $due_days = (is_numeric($due) && (int) $due > 0) ? (int) $due : 0;
+                        Configuration::updateValue(self::CONFIG_MERCHANT_DUE_IN_DAYS, $due_days);
+                        // Success: keep the full-TTL clock set above.
+                    } else {
+                        // Failed fetch (network blip / 5xx / bad body). Roll the
+                        // pre-bumped clock back so retry happens after the short
+                        // backoff, not a whole TTL, while a concurrent burst is
+                        // still absorbed until then. Last-known-good values keep
+                        // being served meanwhile (serve-stale - TWO-24859 review).
+                        Configuration::updateValue(
+                            self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS,
+                            time() - self::MERCHANT_AVAILABLE_TERMS_TTL + self::MERCHANT_RECORD_RETRY_BACKOFF
+                        );
                     }
-                    // Bump the clock even on failure so a cold cache does not
-                    // hammer the API on every checkout / admin render (one stall
-                    // per TTL, not per view).
-                    Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time());
                 }
             }
         }
@@ -6035,6 +6064,11 @@ class Twopayment extends PaymentModule
     public function invalidateMerchantAvailableTerms()
     {
         Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS, '');
+        // Clear the sibling default-term cache too: both are sourced from the
+        // same merchant record, so an identity change must drop both together
+        // or the new merchant would inherit the old merchant's default term
+        // (TWO-24859). Shared timestamp reset last, forcing a re-fetch.
+        Configuration::updateValue(self::CONFIG_MERCHANT_DUE_IN_DAYS, 0);
         Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, 0);
     }
 
@@ -6594,23 +6628,65 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Get the default payment term (first available term or 30 days)
+     * The merchant's default invoice payment term (the API `due_in_days` field
+     * on GET /v1/merchant), in net days, or null when it is unset or unresolved.
+     *
+     * CACHE-ONLY - never blocks on HTTP. The value is primed by the SAME fetch
+     * as the available_terms list (see getMerchantAvailableTerms): the sanctioned
+     * refresh points (checkout media render, admin config render) call
+     * getMerchantAvailableTerms(true), which populates both caches from one wire
+     * call. On a cold cache this returns null and getDefaultPaymentTerm() falls
+     * back to the historical 30-day default - the same serve-stale degrade
+     * posture the available_terms seam uses (TWO-24813 / TWO-24859).
+     *
+     * `due_in_days` is NOT guaranteed to be a member of the offered term set -
+     * callers must honour it only when it is an available term (see
+     * getDefaultPaymentTerm). A cached 0 means "unset" (all real terms are > 0).
+     *
+     * @return int|null
+     */
+    public function getMerchantDueInDays()
+    {
+        $cached = (int) Configuration::get(self::CONFIG_MERCHANT_DUE_IN_DAYS);
+        return $cached > 0 ? $cached : null;
+    }
+
+    /**
+     * Get the default payment term.
+     *
+     * Preference order when more than one term is offered:
+     *   1. the merchant's API default term (due_in_days) when it is offered;
+     *   2. the historical DEFAULT_PAYMENT_TERM_DAYS (30) when it is offered;
+     *   3. the lowest offered term.
+     * A single offered term always wins outright.
+     *
      * @return int Default payment term in days
      */
     public function getDefaultPaymentTerm()
     {
         $available_terms = $this->getAvailablePaymentTerms();
-        
+
         // If only one term is available, use it as default
         if (count($available_terms) === 1) {
             return $available_terms[0];
         }
-        
+
+        // Prefer the merchant's API default term (due_in_days) when it is one
+        // of the offered terms, so a freshly-installed or never-tuned plugin
+        // lands on the merchant's real default out of the box - matching
+        // magento-plugin and woocommerce-plugin (TWO-24859). Read-only and
+        // non-destructive: it never overwrites the merchant's own term config,
+        // it only chooses among terms that are already offered.
+        $api_default = $this->getMerchantDueInDays();
+        if ($api_default !== null && in_array($api_default, $available_terms, true)) {
+            return $api_default;
+        }
+
         // If DEFAULT_PAYMENT_TERM_DAYS is available, use it as default
         if (in_array(self::DEFAULT_PAYMENT_TERM_DAYS, $available_terms)) {
             return self::DEFAULT_PAYMENT_TERM_DAYS;
         }
-        
+
         // Otherwise, use the first available term
         return !empty($available_terms) ? $available_terms[0] : self::DEFAULT_PAYMENT_TERM_DAYS;
     }
