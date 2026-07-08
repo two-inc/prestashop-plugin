@@ -207,6 +207,7 @@ class Twopayment extends PaymentModule
             $this->registerHook('actionAdminControllerSetMedia') &&
             $this->registerHook('actionFrontControllerSetMedia') &&
             $this->registerHook('actionOrderStatusUpdate') &&
+            $this->registerHook('actionOrderSlipAdd') &&
             $this->registerHook('actionObjectOrderHistoryAddBefore') &&
             $this->registerHook('paymentOptions') &&
             $this->registerHook('displayPaymentReturn') &&
@@ -428,6 +429,7 @@ class Twopayment extends PaymentModule
             $this->unregisterHook('actionAdminControllerSetMedia') &&
             $this->unregisterHook('actionFrontControllerSetMedia') &&
             $this->unregisterHook('actionOrderStatusUpdate') &&
+            $this->unregisterHook('actionOrderSlipAdd') &&
             $this->unregisterHook('actionObjectOrderHistoryAddBefore') &&
             $this->unregisterHook('paymentOptions') &&
             $this->unregisterHook('displayPaymentReturn') &&
@@ -1994,6 +1996,275 @@ class Twopayment extends PaymentModule
                 }
             }
         }
+    }
+
+    /**
+     * Handle PrestaShop credit slip creation (partial refunds).
+     *
+     * PrestaShop credit slips are the mechanism for partial refunds. The
+     * full-refund path in hookActionOrderStatusUpdate only fires on a status
+     * change to "Refunded" and issues a body-less full refund; it does NOT
+     * cover credit slips, so partial refunds previously reached Two only when
+     * the merchant used the Two merchant portal.
+     *
+     * This hook builds an {amount, currency} partial-refund payload from the
+     * credit slip and calls POST /v1/order/{id}/refund. Two's refund endpoint
+     * accepts a simple {amount, currency} body for partial refunds (line_items
+     * optional) - confirmed against the checkout-api RefundRequestSchema
+     * (PartialRefundRequestSchema) - so we avoid mapping PrestaShop's
+     * credit-slip product list to Two line items.
+     *
+     * Idempotency + duplicate-refund protection:
+     *  - The idempotency key is derived from the credit slip ID
+     *    (partial_refund_{two_order_id}_slip_{id}), NOT order id + amount. Two
+     *    separate partial refunds of the same amount on one order have distinct
+     *    slip IDs and therefore distinct keys - they must NOT collide.
+     *  - A remaining-refundable-balance guard (gross_amount minus the sum of
+     *    existing Two refunds) is enforced BEFORE calling the API. This
+     *    generalises the full-refund path's "already fully refunded" guards:
+     *    it blocks over-refunding and blocks the double-refund race where a
+     *    full-amount slip fires alongside a status change to Refunded (both
+     *    hooks can fire for a full-amount slip, and the status hook's own
+     *    guards do NOT protect this hook). It deliberately does NOT
+     *    blanket-skip on Two state == REFUNDED, because Two reports REFUNDED
+     *    even after a partial refund; a blanket skip would break legitimate
+     *    sequential partial refunds.
+     *
+     * Best-effort: any failure is logged and swallowed so the admin's
+     * credit-slip action is never broken.
+     *
+     * @param array $params PrestaShop hook params; expects order_slip.
+     * @return void
+     */
+    public function hookActionOrderSlipAdd($params)
+    {
+        try {
+            if (!is_array($params) || !isset($params['order_slip']) || !is_object($params['order_slip'])) {
+                return;
+            }
+
+            $slip = $params['order_slip'];
+            $slip_id = isset($slip->id) ? (int)$slip->id : 0;
+            if ($slip_id <= 0) {
+                PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - credit slip has no usable ID.', 2);
+                return;
+            }
+
+            $order = isset($params['order']) && is_object($params['order']) ? $params['order'] : null;
+            if ($order === null) {
+                $id_order = isset($slip->id_order) ? (int)$slip->id_order : 0;
+                if ($id_order > 0) {
+                    $order = new Order($id_order);
+                }
+            }
+            if (!$order || !Validate::isLoadedObject($order) || $order->module != $this->name) {
+                return;
+            }
+            $id_order = (int)$order->id;
+
+            $orderpaymentdata = $this->getTwoOrderPaymentData($id_order);
+            if (!$orderpaymentdata || empty($orderpaymentdata['two_order_id'])) {
+                // Not a Two order (or no Two mapping): nothing to refund at Two.
+                return;
+            }
+            $two_order_id = $orderpaymentdata['two_order_id'];
+
+            $slip_amount = $this->getTwoCreditSlipGrossAmount($slip);
+            if ($slip_amount <= 0) {
+                PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - non-positive slip amount for Two order ID: ' . $two_order_id . ', Slip ID: ' . $slip_id, 2);
+                return;
+            }
+
+            PrestaShopLogger::addLog('TwoPayment: Initiating partial refund for Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id . ', Amount: ' . $slip_amount, 1);
+
+            // Fetch the current Two order to validate refundable state and remaining balance.
+            $current_two_order = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
+            if (!$current_two_order || !isset($current_two_order['id'])) {
+                PrestaShopLogger::addLog('TwoPayment: Cannot retrieve Two order for partial refund check. Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order, 3);
+                return;
+            }
+
+            // Two only allows refunds for FULFILLED orders. REFUNDED is allowed
+            // too: the state shows REFUNDED even after a partial refund, and
+            // further partial refunds within the remaining balance are valid.
+            $order_state = isset($current_two_order['state']) ? $current_two_order['state'] : null;
+            if ($order_state !== 'FULFILLED' && $order_state !== 'REFUNDED') {
+                PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - order not in refundable state. Current state: ' . $order_state . '. Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order, 2);
+                return;
+            }
+
+            // Remaining-balance guard: gross minus the sum of existing refunds.
+            $gross_amount = isset($current_two_order['gross_amount']) ? (float)$current_two_order['gross_amount'] : 0.0;
+            $already_refunded = $this->getTwoOrderRefundedTotal($current_two_order);
+            $remaining = $gross_amount - $already_refunded;
+
+            // Fail CLOSED when we can't establish the order gross. Unlike the
+            // full-refund path (which posts a body-less refund whose amount Two
+            // computes server-side), this path sends a client-specified amount,
+            // so a missing/zero gross_amount would otherwise disable the
+            // over-refund guard entirely and allow an unbounded, arbitrary-many
+            // refund. If we cannot validate the balance, do not refund.
+            if ($gross_amount <= 0) {
+                PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - cannot determine order gross amount to validate refundable balance. Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id, 3);
+                return;
+            }
+
+            // Reject if this slip would push total refunds past the order gross.
+            // The 0.01 tolerance absorbs 2dp rounding. This blocks over-refunding
+            // and the full-amount-slip + status-change double-refund race.
+            if ($slip_amount > ($remaining + 0.01)) {
+                PrestaShopLogger::addLog('TwoPayment: Partial refund rejected - amount ' . $slip_amount . ' exceeds remaining refundable balance ' . $remaining . ' (gross: ' . $gross_amount . ', already refunded: ' . $already_refunded . '). Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id, 2);
+                return;
+            }
+
+            // The refund currency must match the Two order currency.
+            $currency = isset($current_two_order['currency']) && $current_two_order['currency']
+                ? $current_two_order['currency']
+                : $this->getTwoOrderCurrencyIso($order);
+
+            // Fail CLOSED on an unresolved currency rather than POSTing a
+            // malformed {amount, currency:''} body: an empty/missing currency
+            // could be silently coerced server-side to a different currency,
+            // turning a correct amount into a wrong-magnitude refund.
+            if ($currency === '' || $currency === null) {
+                PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - could not resolve refund currency. Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id, 3);
+                return;
+            }
+
+            $payload = $this->buildTwoPartialRefundPayload($slip_amount, $currency);
+
+            // Idempotency key derived from the credit slip ID (NOT amount) so
+            // two same-amount partial refunds on one order don't collide.
+            // Scoped by the Two order ID as well so the key is unambiguous even
+            // if two PrestaShop installs sharing one Two merchant account
+            // happen to mint the same autoincrement slip ID.
+            $idempotency_key = 'partial_refund_' . $two_order_id . '_slip_' . $slip_id;
+
+            $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/refund', $payload, 'POST', ['X-Idempotency-Key: ' . $idempotency_key]);
+
+            $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
+            if ($http_status === self::HTTP_STATUS_CREATED && isset($response['id']) && $response['id']) {
+                PrestaShopLogger::addLog('TwoPayment: Partial refund successful (HTTP ' . self::HTTP_STATUS_CREATED . ') for Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id . ', Idempotency Key: ' . $idempotency_key, 1);
+
+                // Refresh stored payment data with the latest order snapshot.
+                $order_after = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
+                if (isset($order_after['id']) && $order_after['id']) {
+                    $resolved_terms = $this->resolveTwoPaymentTermsFromOrderResponse(
+                        $order_after,
+                        isset($orderpaymentdata['two_day_on_invoice']) ? (string)$orderpaymentdata['two_day_on_invoice'] : (string)$this->getSelectedPaymentTerm(),
+                        isset($orderpaymentdata['two_payment_term_type']) ? $orderpaymentdata['two_payment_term_type'] : Configuration::get('PS_TWO_PAYMENT_TERM_TYPE')
+                    );
+                    $payment_data = array(
+                        'two_order_id' => $two_order_id,
+                        'two_order_reference' => isset($order_after['merchant_reference']) ? $order_after['merchant_reference'] : (isset($orderpaymentdata['two_order_reference']) ? $orderpaymentdata['two_order_reference'] : ''),
+                        'two_order_state' => isset($order_after['state']) ? $order_after['state'] : (isset($orderpaymentdata['two_order_state']) ? $orderpaymentdata['two_order_state'] : ''),
+                        'two_order_status' => isset($order_after['status']) ? $order_after['status'] : (isset($orderpaymentdata['two_order_status']) ? $orderpaymentdata['two_order_status'] : ''),
+                        'two_day_on_invoice' => $resolved_terms['two_day_on_invoice'],
+                        'two_payment_term_type' => $resolved_terms['two_payment_term_type'],
+                        'two_invoice_url' => isset($order_after['invoice_url']) ? $order_after['invoice_url'] : (isset($orderpaymentdata['two_invoice_url']) ? $orderpaymentdata['two_invoice_url'] : ''),
+                        'two_invoice_id' => isset($order_after['invoice_details']['id']) ? $order_after['invoice_details']['id'] : (isset($orderpaymentdata['two_invoice_id']) ? $orderpaymentdata['two_invoice_id'] : null),
+                    );
+                    $this->setTwoOrderPaymentData($id_order, $payment_data);
+                }
+            } else {
+                $error_message = 'Unknown error';
+                if (isset($response['error'])) {
+                    $error_message = is_array($response['error']) ? json_encode($response['error']) : $response['error'];
+                } elseif (isset($response['message'])) {
+                    $error_message = $response['message'];
+                }
+                $log_message = 'TwoPayment: Partial refund FAILED for Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id;
+                $log_message .= ', HTTP Status: ' . ($http_status > 0 ? $http_status : 'Unknown');
+                $log_message .= ', Error: ' . $error_message;
+                $log_message .= ', Idempotency Key: ' . $idempotency_key;
+                $log_message .= ', Response Summary: ' . json_encode($this->buildTwoApiResponseLogSummary($response));
+                PrestaShopLogger::addLog($log_message, 3);
+            }
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Exception during partial refund. Exception: ' . $e->getMessage() . ', Trace: ' . $e->getTraceAsString(), 3);
+        }
+    }
+
+    /**
+     * Compute the gross (tax-inclusive) refund amount from a PrestaShop credit
+     * slip: refunded products (tax incl) plus refunded shipping (tax incl).
+     * Falls back to the legacy amount / shipping_cost_amount fields when the
+     * tax-incl totals are absent.
+     *
+     * @param object $slip OrderSlip
+     * @return float
+     */
+    public function getTwoCreditSlipGrossAmount($slip)
+    {
+        $products = 0.0;
+        if (isset($slip->total_products_tax_incl) && $slip->total_products_tax_incl !== null && $slip->total_products_tax_incl !== '') {
+            $products = (float)$slip->total_products_tax_incl;
+        } elseif (isset($slip->amount)) {
+            $products = (float)$slip->amount;
+        }
+
+        $shipping = 0.0;
+        if (isset($slip->total_shipping_tax_incl) && $slip->total_shipping_tax_incl !== null && $slip->total_shipping_tax_incl !== '') {
+            $shipping = (float)$slip->total_shipping_tax_incl;
+        } elseif (isset($slip->shipping_cost_amount)) {
+            $shipping = (float)$slip->shipping_cost_amount;
+        }
+
+        return round($products + $shipping, 2);
+    }
+
+    /**
+     * Sum the absolute value of every existing Two refund total on an order
+     * response. Two records refund total_amount as a negative number.
+     *
+     * @param array $two_order Two order API response
+     * @return float
+     */
+    public function getTwoOrderRefundedTotal($two_order)
+    {
+        $total = 0.0;
+        if (isset($two_order['refunds']) && is_array($two_order['refunds'])) {
+            foreach ($two_order['refunds'] as $refund) {
+                if (isset($refund['total_amount'])) {
+                    $total += abs((float)$refund['total_amount']);
+                }
+            }
+        }
+        return round($total, 2);
+    }
+
+    /**
+     * Build the {amount, currency} partial-refund payload for Two. Amount is a
+     * 2dp decimal string, matching Two's Money format.
+     *
+     * @param float $amount Gross refund amount
+     * @param string $currency ISO currency code
+     * @return array
+     */
+    public function buildTwoPartialRefundPayload($amount, $currency)
+    {
+        return array(
+            'amount' => number_format((float)$amount, 2, '.', ''),
+            'currency' => $currency,
+        );
+    }
+
+    /**
+     * Resolve the ISO currency code for a PrestaShop order (fallback when the
+     * Two order response carries no currency).
+     *
+     * @param object $order Order
+     * @return string
+     */
+    public function getTwoOrderCurrencyIso($order)
+    {
+        if (isset($order->id_currency) && (int)$order->id_currency > 0) {
+            $currency = new Currency((int)$order->id_currency);
+            if (Validate::isLoadedObject($currency)) {
+                return (string)$currency->iso_code;
+            }
+        }
+        return '';
     }
 
     /**
