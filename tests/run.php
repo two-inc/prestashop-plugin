@@ -153,6 +153,7 @@ final class OrderBuilderSpec
         self::testGetTwoProductItemsSkipsEmptyBarcodeEntries();
         self::testExtractOrgNumberFromAddressKeepsNonCountryPrefixVatNumber();
         self::testExtractOrgNumberFromAddressStripsMatchingCountryPrefixVatNumber();
+        self::testGetTwoRequestHeadersSkipAuthForOrderIntent();
     }
 
     private static function reset(): void
@@ -4540,15 +4541,44 @@ final class OrderBuilderSpec
 
         TinyAssert::same('123456789', $orgNumber);
     }
+
+    private static function testGetTwoRequestHeadersSkipAuthForOrderIntent(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $orderIntentHeaders = $module->getTwoRequestHeaders(
+            '/v1/order_intent',
+            ['Authorization: Bearer should-not-leak', 'X-API-Key: should-not-leak']
+        );
+        $createOrderHeaders = $module->getTwoRequestHeaders('/v1/order');
+
+        foreach ($orderIntentHeaders as $header) {
+            TinyAssert::false(strpos($header, 'X-API-Key:') === 0);
+            TinyAssert::false(strpos($header, 'Authorization:') === 0);
+            TinyAssert::false(strpos($header, 'Proxy-Authorization:') === 0);
+        }
+
+        $createOrderHasApiKey = false;
+        foreach ($createOrderHeaders as $header) {
+            if (strpos($header, 'X-API-Key:') === 0) {
+                $createOrderHasApiKey = true;
+                break;
+            }
+        }
+        TinyAssert::true($createOrderHasApiKey);
+    }
 }
 
 require __DIR__ . '/CustomerAddressFormatterOverrideSpec.php';
 require __DIR__ . '/TwoInvoiceRetrievalSpec.php';
+require __DIR__ . '/TrackingNumberSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
     'CustomerAddressFormatterOverrideSpec::runAll' => [CustomerAddressFormatterOverrideSpec::class, 'runAll'],
     'TwoInvoiceRetrievalSpec::runAll' => [TwoInvoiceRetrievalSpec::class, 'runAll'],
+    'TrackingNumberSpec::runAll' => [TrackingNumberSpec::class, 'runAll'],
 ];
 
 $failed = 0;

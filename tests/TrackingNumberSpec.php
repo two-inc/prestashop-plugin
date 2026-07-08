@@ -2,23 +2,31 @@
 
 declare(strict_types=1);
 
-use PHPUnit\Framework\TestCase;
-
 /**
  * TWO-24762 — tracking number sourcing and the admin tracking-update hook.
  */
-final class TrackingNumberTest extends TestCase
+final class TrackingNumberSpec
 {
-    protected function setUp(): void
+    public static function runAll(): void
     {
-        StubStore::reset();
+        self::testTrackingNumberComesFromOrderCarrier();
+        self::testTrackingNumberFallsBackToLegacyShippingNumber();
+        self::testTrackingNumberEmptyWhenNoneSet();
+        self::testTrackingNumberCarrierRecordWinsOverLegacyMirror();
+        self::testTrackingHookPutsOrderUpdateForTwoOrders();
+        self::testTrackingHookIgnoresForeignAndMissingOrders();
+        self::testTrackingHookSurvivesOrderDataBuildFailure();
+        self::testTrackingHookWarnsAdminWhenTwoRejectsTheEdit();
+        self::testUpdateOrderDataCarriesTrackingAndOrderCarrier();
+        self::testTrackingHookSilentWhenTwoOrderIdIsEmpty();
+        self::testTrackingHookSilentWhenOrderHasNoTwoRecord();
     }
 
     /**
      * Order-shaped stub: getTwoOrderTrackingNumber and the hook handler
      * only touch these members, and Twopayment does not type-hint Order.
      */
-    private function makeOrder(int $idOrderCarrier, string $shippingNumber = '', string $module = 'twopayment'): object
+    private static function makeOrder(int $idOrderCarrier, string $shippingNumber = '', string $module = 'twopayment'): object
     {
         return new class ($idOrderCarrier, $shippingNumber, $module) {
             public bool $loaded = true;
@@ -43,40 +51,44 @@ final class TrackingNumberTest extends TestCase
         };
     }
 
-    public function testTrackingNumberComesFromOrderCarrier(): void
+    private static function testTrackingNumberComesFromOrderCarrier(): void
     {
+        StubStore::reset();
         $module = new TwopaymentTestHarness();
         StubStore::$orderCarriers[77] = ['tracking_number' => 'PN123456789SE'];
 
-        self::assertSame('PN123456789SE', $module->getTwoOrderTrackingNumber($this->makeOrder(77)));
+        TinyAssert::same('PN123456789SE', $module->getTwoOrderTrackingNumber(self::makeOrder(77)));
     }
 
-    public function testTrackingNumberFallsBackToLegacyShippingNumber(): void
+    private static function testTrackingNumberFallsBackToLegacyShippingNumber(): void
     {
+        StubStore::reset();
         $module = new TwopaymentTestHarness();
 
         // No order_carrier row loaded: legacy Order::$shipping_number mirror wins.
-        self::assertSame('LEGACY-1', $module->getTwoOrderTrackingNumber($this->makeOrder(0, 'LEGACY-1')));
+        TinyAssert::same('LEGACY-1', $module->getTwoOrderTrackingNumber(self::makeOrder(0, 'LEGACY-1')));
 
         // Legacy fallback is trimmed too.
-        self::assertSame('LEGACY-2', $module->getTwoOrderTrackingNumber($this->makeOrder(0, '  LEGACY-2  ')));
+        TinyAssert::same('LEGACY-2', $module->getTwoOrderTrackingNumber(self::makeOrder(0, '  LEGACY-2  ')));
 
         // id_order_carrier set but the row no longer loads (deleted row):
         // fall back to the legacy mirror.
-        self::assertSame('LEGACY-3', $module->getTwoOrderTrackingNumber($this->makeOrder(99, 'LEGACY-3')));
+        TinyAssert::same('LEGACY-3', $module->getTwoOrderTrackingNumber(self::makeOrder(99, 'LEGACY-3')));
     }
 
-    public function testTrackingNumberEmptyWhenNoneSet(): void
+    private static function testTrackingNumberEmptyWhenNoneSet(): void
     {
+        StubStore::reset();
         $module = new TwopaymentTestHarness();
         StubStore::$orderCarriers[78] = ['tracking_number' => ''];
 
-        self::assertSame('', $module->getTwoOrderTrackingNumber($this->makeOrder(78)));
-        self::assertSame('', $module->getTwoOrderTrackingNumber($this->makeOrder(0)));
+        TinyAssert::same('', $module->getTwoOrderTrackingNumber(self::makeOrder(78)));
+        TinyAssert::same('', $module->getTwoOrderTrackingNumber(self::makeOrder(0)));
     }
 
-    public function testTrackingNumberCarrierRecordWinsOverLegacyMirror(): void
+    private static function testTrackingNumberCarrierRecordWinsOverLegacyMirror(): void
     {
+        StubStore::reset();
         $module = new TwopaymentTestHarness();
 
         // order_carrier is canonical: it wins when both are set, and a
@@ -84,21 +96,22 @@ final class TrackingNumberTest extends TestCase
         // mirror (that is how a cleared tracking number gets cleared at
         // Two instead of resurrecting an old value).
         StubStore::$orderCarriers[79] = ['tracking_number' => 'FRESH-1'];
-        self::assertSame('FRESH-1', $module->getTwoOrderTrackingNumber($this->makeOrder(79, 'STALE-1')));
+        TinyAssert::same('FRESH-1', $module->getTwoOrderTrackingNumber(self::makeOrder(79, 'STALE-1')));
 
         StubStore::$orderCarriers[80] = ['tracking_number' => ''];
-        self::assertSame('', $module->getTwoOrderTrackingNumber($this->makeOrder(80, 'STALE-1')));
+        TinyAssert::same('', $module->getTwoOrderTrackingNumber(self::makeOrder(80, 'STALE-1')));
 
         // '0' is a value, not an absence; whitespace is trimmed away.
         StubStore::$orderCarriers[81] = ['tracking_number' => '0'];
-        self::assertSame('0', $module->getTwoOrderTrackingNumber($this->makeOrder(81, 'STALE-1')));
+        TinyAssert::same('0', $module->getTwoOrderTrackingNumber(self::makeOrder(81, 'STALE-1')));
 
         StubStore::$orderCarriers[82] = ['tracking_number' => '  PN1  '];
-        self::assertSame('PN1', $module->getTwoOrderTrackingNumber($this->makeOrder(82)));
+        TinyAssert::same('PN1', $module->getTwoOrderTrackingNumber(self::makeOrder(82)));
     }
 
-    public function testTrackingHookPutsOrderUpdateForTwoOrders(): void
+    private static function testTrackingHookPutsOrderUpdateForTwoOrders(): void
     {
+        StubStore::reset();
         $module = new class () extends TwopaymentTestHarness {
             public array $requests = [];
 
@@ -119,16 +132,17 @@ final class TrackingNumberTest extends TestCase
             }
         };
 
-        $module->hookActionAdminOrdersTrackingNumberUpdate(['order' => $this->makeOrder(77)]);
+        $module->hookActionAdminOrdersTrackingNumberUpdate(['order' => self::makeOrder(77)]);
 
-        self::assertCount(1, $module->requests);
-        self::assertSame('/v1/order/two-order-uuid', $module->requests[0][0]);
-        self::assertSame(['marker' => 'update-body'], $module->requests[0][1]);
-        self::assertSame('PUT', $module->requests[0][2]);
+        TinyAssert::count(1, $module->requests);
+        TinyAssert::same('/v1/order/two-order-uuid', $module->requests[0][0]);
+        TinyAssert::same(['marker' => 'update-body'], $module->requests[0][1]);
+        TinyAssert::same('PUT', $module->requests[0][2]);
     }
 
-    public function testTrackingHookIgnoresForeignAndMissingOrders(): void
+    private static function testTrackingHookIgnoresForeignAndMissingOrders(): void
     {
+        StubStore::reset();
         // Gated orders must be rejected BEFORE any Two lookup: asserting
         // on the lookup (not just the request) keeps this test meaningful
         // even though the handler's try/catch would swallow downstream
@@ -150,19 +164,20 @@ final class TrackingNumberTest extends TestCase
             }
         };
 
-        $module->hookActionAdminOrdersTrackingNumberUpdate(['order' => $this->makeOrder(77, '', 'ps_checkpayment')]);
+        $module->hookActionAdminOrdersTrackingNumberUpdate(['order' => self::makeOrder(77, '', 'ps_checkpayment')]);
         $module->hookActionAdminOrdersTrackingNumberUpdate([]);
 
-        $unloaded = $this->makeOrder(77);
+        $unloaded = self::makeOrder(77);
         $unloaded->loaded = false;
         $module->hookActionAdminOrdersTrackingNumberUpdate(['order' => $unloaded]);
 
-        self::assertSame([], $module->lookups);
-        self::assertSame([], $module->requests);
+        TinyAssert::same([], $module->lookups);
+        TinyAssert::same([], $module->requests);
     }
 
-    public function testTrackingHookSurvivesOrderDataBuildFailure(): void
+    private static function testTrackingHookSurvivesOrderDataBuildFailure(): void
     {
+        StubStore::reset();
         // Legacy orders can have purged/emptied carts; the push is
         // best-effort and must never break the admin action that saved
         // the tracking number.
@@ -186,13 +201,14 @@ final class TrackingNumberTest extends TestCase
             }
         };
 
-        $module->hookActionAdminOrdersTrackingNumberUpdate(['order' => $this->makeOrder(77)]);
+        $module->hookActionAdminOrdersTrackingNumberUpdate(['order' => self::makeOrder(77)]);
 
-        self::assertSame([], $module->requests);
+        TinyAssert::same([], $module->requests);
     }
 
-    public function testTrackingHookWarnsAdminWhenTwoRejectsTheEdit(): void
+    private static function testTrackingHookWarnsAdminWhenTwoRejectsTheEdit(): void
     {
+        StubStore::reset();
         $module = new class () extends TwopaymentTestHarness {
             public array $warnings = [];
 
@@ -219,9 +235,9 @@ final class TrackingNumberTest extends TestCase
             }
         };
 
-        $module->hookActionAdminOrdersTrackingNumberUpdate(['order' => $this->makeOrder(77)]);
+        $module->hookActionAdminOrdersTrackingNumberUpdate(['order' => self::makeOrder(77)]);
 
-        self::assertCount(1, $module->warnings);
+        TinyAssert::count(1, $module->warnings);
 
         // And a 2xx acceptance stays quiet.
         $accepted = new class () extends TwopaymentTestHarness {
@@ -249,13 +265,14 @@ final class TrackingNumberTest extends TestCase
             }
         };
 
-        $accepted->hookActionAdminOrdersTrackingNumberUpdate(['order' => $this->makeOrder(77)]);
+        $accepted->hookActionAdminOrdersTrackingNumberUpdate(['order' => self::makeOrder(77)]);
 
-        self::assertSame([], $accepted->warnings);
+        TinyAssert::same([], $accepted->warnings);
     }
 
-    public function testUpdateOrderDataCarriesTrackingAndOrderCarrier(): void
+    private static function testUpdateOrderDataCarriesTrackingAndOrderCarrier(): void
     {
+        StubStore::reset();
         // End-to-end wiring: the payload builder must source the tracking
         // number from order_carrier and the carrier name from the ORDER's
         // carrier, not the stale cart carrier.
@@ -321,7 +338,7 @@ final class TrackingNumberTest extends TestCase
         StubStore::$carriers[602] = ['name' => 'Order Carrier Express', 'max_delivery_days' => 5];
         StubStore::$orderCarriers[91] = ['tracking_number' => 'NO123456789'];
 
-        $order = $this->makeOrder(91);
+        $order = self::makeOrder(91);
         $order->id_cart = 7300;
         $order->id_carrier = 602;
 
@@ -330,13 +347,14 @@ final class TrackingNumberTest extends TestCase
             'two_order_reference' => 'ref-7300',
         ]);
 
-        self::assertSame('NO123456789', $payload['shipping_details']['tracking_number']);
-        self::assertSame('Order Carrier Express', $payload['shipping_details']['carrier_name']);
-        self::assertSame('125.00', $payload['gross_amount']);
+        TinyAssert::same('NO123456789', $payload['shipping_details']['tracking_number']);
+        TinyAssert::same('Order Carrier Express', $payload['shipping_details']['carrier_name']);
+        TinyAssert::same('125.00', $payload['gross_amount']);
     }
 
-    public function testTrackingHookSilentWhenTwoOrderIdIsEmpty(): void
+    private static function testTrackingHookSilentWhenTwoOrderIdIsEmpty(): void
     {
+        StubStore::reset();
         // A payment row with an empty two_order_id has no Two order to
         // edit: stay silent instead of PUTting to /v1/order/ and warning
         // the admin about an order Two never knew about.
@@ -362,14 +380,15 @@ final class TrackingNumberTest extends TestCase
             }
         };
 
-        $module->hookActionAdminOrdersTrackingNumberUpdate(['order' => $this->makeOrder(77)]);
+        $module->hookActionAdminOrdersTrackingNumberUpdate(['order' => self::makeOrder(77)]);
 
-        self::assertSame([], $module->requests);
-        self::assertSame([], $module->warnings);
+        TinyAssert::same([], $module->requests);
+        TinyAssert::same([], $module->warnings);
     }
 
-    public function testTrackingHookSilentWhenOrderHasNoTwoRecord(): void
+    private static function testTrackingHookSilentWhenOrderHasNoTwoRecord(): void
     {
+        StubStore::reset();
         $module = new class () extends TwopaymentTestHarness {
             public array $requests = [];
 
@@ -385,8 +404,8 @@ final class TrackingNumberTest extends TestCase
             }
         };
 
-        $module->hookActionAdminOrdersTrackingNumberUpdate(['order' => $this->makeOrder(77)]);
+        $module->hookActionAdminOrdersTrackingNumberUpdate(['order' => self::makeOrder(77)]);
 
-        self::assertSame([], $module->requests);
+        TinyAssert::same([], $module->requests);
     }
 }

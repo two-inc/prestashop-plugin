@@ -32,8 +32,9 @@ jobs:
           php -l controllers/admin/AdminTwopaymentInvoiceController.php
           php -l classes/TwoInvoiceRetrievalService.php
           php -l tests/bootstrap.php
-          php -l tests/OrderBuilderTest.php
           php -l tests/TwoInvoiceRetrievalSpec.php
+          php -l tests/CustomerAddressFormatterOverrideSpec.php
+          php -l tests/TrackingNumberSpec.php
           php -l tests/run.php
 
       - name: Run offline test suite
