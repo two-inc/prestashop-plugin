@@ -388,3 +388,9 @@ $_MODULE['<{twopayment}prestashop>displayadminorderleft_a89e7ebb73476ac3150d2697
 $_MODULE['<{twopayment}prestashop>displayadminorderleft_e468fef315b479c151460e6174ce9782'] = 'Descargar factura';
 $_MODULE['<{twopayment}prestashop>displayadminorderleft_7cf626ac15afd59a810ec768f6d1b767'] = 'URL de la factura';
 $_MODULE['<{twopayment}prestashop>displayadminorderleft_11335f7aaa473442d803c43c8b8d804d'] = 'Los enlaces de factura estarán disponibles cuando el pedido de Two se haya completado.';
+$_MODULE['<{twopayment}prestashop>twopayment_8c597b2f3bc899e1e04f301844c44482'] = 'La factura aún no está lista porque el pedido todavía se está procesando. Por favor, inténtalo de nuevo más tarde.';
+$_MODULE['<{twopayment}prestashop>twopayment_29f0af925c4f989abdeabb32936251f8'] = 'No hay ninguna factura disponible porque el pedido está en estado: %s.';
+$_MODULE['<{twopayment}prestashop>twopayment_696b031073e74bf2cb98e5ef201d4aa3'] = 'DESCONOCIDO';
+$_MODULE['<{twopayment}prestashop>twopayment_6825c19161f9f1b9a4047b08720ac98c'] = 'Este pedido no tiene asignada una referencia de pedido del proveedor de pagos.';
+$_MODULE['<{twopayment}prestashop>twopayment_c86427e7020aa074399a2ecdb9c42a1d'] = 'No se pudo recuperar la factura. Por favor, inténtalo de nuevo más tarde o contacta con el propietario de la tienda.';
+$_MODULE['<{twopayment}prestashop>twopayment_7de934009c752b9208f359e4db589fa0'] = 'No tienes permiso para acceder a esta factura.';

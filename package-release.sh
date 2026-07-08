@@ -6,8 +6,8 @@
 set -e
 
 MODULE_NAME="twopayment"
-PARENT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-MODULE_DIR="${PARENT_DIR}/${MODULE_NAME}"
+MODULE_DIR="$(cd "$(dirname "$0")" && pwd)"
+PARENT_DIR="$(dirname "${MODULE_DIR}")"
 TEMP_DIR="/tmp/${MODULE_NAME}-package-$$"
 
 # Check we're in the right directory
@@ -63,6 +63,8 @@ if command -v rsync &> /dev/null; then
         --exclude='__MACOSX' \
         --exclude='.cursor' \
         --exclude='.ai' \
+        --exclude='.review' \
+        --exclude='.phpunit.cache' \
         --exclude='CLAUDE.md' \
         --exclude='PRODUCTION_REVIEW.md' \
         --exclude='package-release.sh' \
@@ -84,6 +86,8 @@ else
         ! -path './.git/*' \
         ! -path './.cursor/*' \
         ! -path './.ai/*' \
+        ! -path './.review/*' \
+        ! -path './.phpunit.cache/*' \
         ! -name '.gitignore' \
         ! -name '.DS_Store' \
         ! -name 'CLAUDE.md' \

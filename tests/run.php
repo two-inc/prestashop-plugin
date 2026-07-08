@@ -153,6 +153,7 @@ final class OrderBuilderSpec
         self::testGetTwoProductItemsSkipsEmptyBarcodeEntries();
         self::testExtractOrgNumberFromAddressKeepsNonCountryPrefixVatNumber();
         self::testExtractOrgNumberFromAddressStripsMatchingCountryPrefixVatNumber();
+        self::testGetTwoRequestHeadersSkipAuthForOrderIntent();
     }
 
     private static function reset(): void
@@ -2983,7 +2984,7 @@ final class OrderBuilderSpec
                 return false;
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 return [
                     'http_status' => 200,
@@ -3016,7 +3017,7 @@ final class OrderBuilderSpec
                 return false;
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 return [
                     'http_status' => 200,
@@ -3047,7 +3048,7 @@ final class OrderBuilderSpec
                 return false;
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 return [
                     'http_status' => 0,
@@ -3100,7 +3101,7 @@ final class OrderBuilderSpec
                 return $this->forcedLineItems;
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 $this->providerCalled = true;
                 return [
@@ -3266,7 +3267,7 @@ final class OrderBuilderSpec
         self::reset();
 
         $successModule = new class extends TwopaymentTestHarness {
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 return ['http_status' => 200];
             }
@@ -3274,7 +3275,7 @@ final class OrderBuilderSpec
         TinyAssert::true($successModule->cancelTwoOrderBestEffort('two-success', 'test'));
 
         $failureModule = new class extends TwopaymentTestHarness {
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 return ['http_status' => 500];
             }
@@ -4150,7 +4151,7 @@ final class OrderBuilderSpec
             public $lastSavedOrderId = null;
             public $lastSavedPaymentData = null;
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 if ($method === 'GET' && $endpoint === '/v1/order/two-123') {
                     return [
@@ -4213,7 +4214,7 @@ final class OrderBuilderSpec
             public $lastSavedOrderId = null;
             public $lastSavedPaymentData = null;
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 if ($method === 'GET' && $endpoint === '/v1/order/two-456') {
                     return [
@@ -4283,7 +4284,7 @@ final class OrderBuilderSpec
                 );
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 if ($method === 'GET' && $endpoint === '/v1/order/two-789') {
                     return [
@@ -4540,13 +4541,44 @@ final class OrderBuilderSpec
 
         TinyAssert::same('123456789', $orgNumber);
     }
+
+    private static function testGetTwoRequestHeadersSkipAuthForOrderIntent(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $orderIntentHeaders = $module->getTwoRequestHeaders(
+            '/v1/order_intent',
+            ['Authorization: Bearer should-not-leak', 'X-API-Key: should-not-leak']
+        );
+        $createOrderHeaders = $module->getTwoRequestHeaders('/v1/order');
+
+        foreach ($orderIntentHeaders as $header) {
+            TinyAssert::false(strpos($header, 'X-API-Key:') === 0);
+            TinyAssert::false(strpos($header, 'Authorization:') === 0);
+            TinyAssert::false(strpos($header, 'Proxy-Authorization:') === 0);
+        }
+
+        $createOrderHasApiKey = false;
+        foreach ($createOrderHeaders as $header) {
+            if (strpos($header, 'X-API-Key:') === 0) {
+                $createOrderHasApiKey = true;
+                break;
+            }
+        }
+        TinyAssert::true($createOrderHasApiKey);
+    }
 }
 
 require __DIR__ . '/CustomerAddressFormatterOverrideSpec.php';
+require __DIR__ . '/TwoInvoiceRetrievalSpec.php';
+require __DIR__ . '/TrackingNumberSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
     'CustomerAddressFormatterOverrideSpec::runAll' => [CustomerAddressFormatterOverrideSpec::class, 'runAll'],
+    'TwoInvoiceRetrievalSpec::runAll' => [TwoInvoiceRetrievalSpec::class, 'runAll'],
+    'TrackingNumberSpec::runAll' => [TrackingNumberSpec::class, 'runAll'],
 ];
 
 $failed = 0;

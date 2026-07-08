@@ -236,26 +236,13 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
      */
     private function isAuthorizedLegacyOrderAccess($order, $customer)
     {
-        if (!Validate::isLoadedObject($order) || !Validate::isLoadedObject($customer)) {
-            return false;
-        }
-
-        $expected_secure_key = trim((string)$customer->secure_key);
-        if (Tools::isEmpty($expected_secure_key)) {
-            return false;
-        }
-
-        $provided_key = trim((string)Tools::getValue('key'));
-        if (!Tools::isEmpty($provided_key)) {
-            return hash_equals($expected_secure_key, $provided_key);
-        }
-
-        $context_customer_id = isset($this->context->customer->id) ? (int)$this->context->customer->id : 0;
-        $context_customer_secure_key = isset($this->context->customer->secure_key) ? trim((string)$this->context->customer->secure_key) : '';
-
-        return $context_customer_id === (int)$order->id_customer &&
-            !Tools::isEmpty($context_customer_secure_key) &&
-            hash_equals($expected_secure_key, $context_customer_secure_key);
+        return $this->module->isTwoOrderCustomerAccessAuthorized(
+            $order,
+            $customer,
+            trim((string)Tools::getValue('key')),
+            isset($this->context->customer->id) ? (int)$this->context->customer->id : 0,
+            isset($this->context->customer->secure_key) ? trim((string)$this->context->customer->secure_key) : ''
+        );
     }
 
 }

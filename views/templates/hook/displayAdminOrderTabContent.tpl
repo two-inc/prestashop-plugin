@@ -12,6 +12,11 @@
     </div>
     
     <div class="two-tab-content">
+        {if isset($two_invoice_notice) && $two_invoice_notice}
+        <div class="alert {if $two_invoice_notice.level == 'error'}alert-danger{else}alert-info{/if}">
+            {$two_invoice_notice.message|escape:'html':'UTF-8'}
+        </div>
+        {/if}
         {* Order Information Section *}
         <div class="two-section">
             <h4 class="two-section-title">{l s='Order Information' mod='twopayment'}</h4>
