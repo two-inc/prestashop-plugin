@@ -625,6 +625,11 @@
     outline: none;
 }
 
+.two-term-chip:focus-visible {
+    outline: 2px solid #374151;
+    outline-offset: 2px;
+}
+
 .two-term-chip--selected,
 .two-term-chip--selected:hover,
 .two-term-chip--selected:focus {
@@ -635,17 +640,7 @@
 }
 
 .two-term-chip--single {
-    border-color: #374151;
-    background: #374151;
-    color: white;
-    font-weight: 500;
     cursor: default;
-}
-
-.two-term-chip--single:hover {
-    border-color: #374151;
-    background: #374151;
-    color: white;
 }
 
 .two-term-chip__days {
