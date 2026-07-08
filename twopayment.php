@@ -11,6 +11,8 @@ if (!defined('_PS_VERSION_')) {
     exit;
 }
 
+require_once dirname(__FILE__) . '/classes/TwoSurchargeCalculator.php';
+
 class Twopayment extends PaymentModule
 {
     // Constants for order building logic
@@ -1041,6 +1043,15 @@ class Twopayment extends PaymentModule
                 ),
             ),
         );
+
+        // Offset pricing fee (buyer surcharge) fields — appended so the
+        // per-term grid reflects the merchant's currently-offered terms.
+        // TWO-24752 / TWO-24893.
+        $fields_form['form']['input'] = array_merge(
+            $fields_form['form']['input'],
+            $this->getTwoSurchargeFormInputs()
+        );
+
         return $fields_form;
     }
 
@@ -1058,12 +1069,13 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_ENABLE_TAX_SUBTOTALS'] = Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
         $fields_values['PS_TWO_DEBUG_MODE'] = Tools::getValue('PS_TWO_DEBUG_MODE', Configuration::get('PS_TWO_DEBUG_MODE'));
+        $fields_values = array_merge($fields_values, $this->getTwoSurchargeFormValues());
         return $fields_values;
     }
 
     protected function validTwoOtherFormValues()
     {
-        // No validation needed for current Other Settings
+        $this->validTwoSurchargeFormValues();
     }
 
     protected function saveTwoOtherFormValues()
@@ -1079,6 +1091,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', (int) Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
         Configuration::updateValue('PS_TWO_DEBUG_MODE', Tools::getValue('PS_TWO_DEBUG_MODE'));
+        $this->saveTwoSurchargeFormValues();
 
         $this->output .= $this->displayConfirmation($this->l('Other settings are updated.'));
     }
@@ -2724,6 +2737,20 @@ class Twopayment extends PaymentModule
                 3
             );
             throw new Exception('Tax subtotals do not reconcile with line items');
+        }
+
+        // Offset pricing fee (buyer surcharge) — appended AFTER product-line
+        // reconciliation so it never perturbs the cart-vs-lines gate. The fee
+        // is quoted from POST /v1/pricing/order/fee (fail-soft: a missing quote
+        // simply omits the line and never blocks checkout). Applying it in the
+        // shared pricing builder keeps the intent, create and update payloads
+        // consistent, so the order-intent approval reconciles against the same
+        // gross the create call sends. TWO-24752 / TWO-24893.
+        $surchargeLine = $this->buildTwoSurchargeLineItemForCart($cart, $subtotalsTotals['gross']);
+        if ($surchargeLine !== null && $this->validateTwoLineItems(array($surchargeLine))) {
+            $line_items[] = $surchargeLine;
+            $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
+            $subtotalsTotals = $this->calculateOrderTotalsFromTaxSubtotals($tax_subtotals);
         }
 
         return [
@@ -5891,6 +5918,488 @@ class Twopayment extends PaymentModule
      * Get available payment terms filtered by term type (STANDARD or EOM)
      * @return array Array of available payment term durations (e.g., [30, 45, 60])
      */
+    /* ===================================================================
+     * Offset pricing fee (buyer surcharge) — TWO-24752 / TWO-24893.
+     *
+     * All fee decisioning lives here in PHP; templates/JS only render the
+     * results (ps_checkout compatibility, TWO-24770). Arithmetic is done
+     * server-side by POST /v1/pricing/order/fee — the plugin relays a
+     * buyer_fee_share block via TwoSurchargeCalculator, mirroring Magento's
+     * Service/Order/SurchargeCalculator and the WooCommerce plugin's
+     * WC_Twoinc_Payment_Terms::build_buyer_fee_share.
+     * =================================================================== */
+
+    /** @var array request-scoped fee-quote cache keyed by term|gross|country|currency */
+    protected $twoFeeCache = array();
+
+    /**
+     * Read a brand-config value (brands/two.php), cached per request. Returns
+     * null for unknown keys. A minimal seam pending the full brand-config
+     * foundation (TWO-24746); mirrors the WooCommerce plugin's WC_Twoinc_Brand.
+     *
+     * @param string $key
+     * @return mixed
+     */
+    public function getTwoBrandConfig($key)
+    {
+        static $brand = null;
+        if ($brand === null) {
+            $file = dirname(__FILE__) . '/brands/two.php';
+            $brand = is_file($file) ? (array) (require $file) : array();
+        }
+
+        return array_key_exists($key, $brand) ? $brand[$key] : null;
+    }
+
+    /**
+     * Resolve the surcharge settings from module Configuration into the shape
+     * TwoSurchargeCalculator expects. Mirrors the WooCommerce plugin's
+     * get_surcharge_settings.
+     *
+     * @return array
+     */
+    public function getTwoSurchargeSettings()
+    {
+        $type = TwoSurchargeCalculator::normalizeType(Configuration::get('PS_TWO_SURCHARGE_TYPE'));
+
+        $grid = array();
+        foreach ($this->getAvailablePaymentTerms() as $days) {
+            $days = (int) $days;
+            $grid[$days] = array(
+                'percentage' => (float) Configuration::get('PS_TWO_SURCHARGE_PCT_' . $days),
+                'fixed' => (float) Configuration::get('PS_TWO_SURCHARGE_FIXED_' . $days),
+                'limit' => (float) Configuration::get('PS_TWO_SURCHARGE_CAP_' . $days),
+            );
+        }
+
+        $step = (float) Configuration::get('PS_TWO_SURCHARGE_ROUNDING_STEP');
+
+        return array(
+            'type' => $type,
+            'enabled' => $type !== 'none',
+            'differential' => (bool) Configuration::get('PS_TWO_SURCHARGE_DIFFERENTIAL'),
+            'grid' => $grid,
+            'rounding_basis' => (string) Configuration::get('PS_TWO_SURCHARGE_ROUNDING_BASIS'),
+            'rounding_step' => $step > 0 ? $step : null,
+        );
+    }
+
+    /**
+     * Build the buyer_fee_share block for one term (or null when no surcharge
+     * is configured), from module Configuration.
+     *
+     * @param int $days
+     * @return array|null
+     */
+    public function buildTwoBuyerFeeShare($days)
+    {
+        $settings = $this->getTwoSurchargeSettings();
+        $isEom = Configuration::get('PS_TWO_PAYMENT_TERM_TYPE') === 'EOM';
+        $default = $this->getDefaultPaymentTerm();
+
+        return TwoSurchargeCalculator::buildBuyerFeeShare($settings, (int) $days, $default, $isEom);
+    }
+
+    /**
+     * Quote the buyer's fee share for one term via POST /v1/pricing/order/fee.
+     * Fail-soft: returns null on any error (the fee line is simply omitted and
+     * checkout is never blocked on a quote, TWO-24752). Request-scoped cache.
+     *
+     * @param int    $days
+     * @param float  $gross_amount fee basis (product + shipping gross)
+     * @param string $buyer_country ISO-2 code
+     * @param string $currency_iso  store currency
+     * @return array|null {buyer_fee_share, total_fee_tax_rate, currency}
+     */
+    public function fetchTwoTermFee($days, $gross_amount, $buyer_country, $currency_iso)
+    {
+        $days = (int) $days;
+        $gross_amount = (float) $gross_amount;
+        $cacheKey = $days . '|' . $this->getTwoRoundAmount($gross_amount) . '|' . $buyer_country . '|' . $currency_iso;
+        if (array_key_exists($cacheKey, $this->twoFeeCache)) {
+            return $this->twoFeeCache[$cacheKey];
+        }
+
+        $share = $this->buildTwoBuyerFeeShare($days);
+        if ($share === null || $gross_amount <= 0) {
+            return $this->twoFeeCache[$cacheKey] = null;
+        }
+
+        $isEom = Configuration::get('PS_TWO_PAYMENT_TERM_TYPE') === 'EOM';
+        $payload = array(
+            'currency' => (string) $currency_iso,
+            'gross_amount' => $this->getTwoRoundAmount($gross_amount),
+            'buyer_country_code' => (string) $buyer_country,
+            // Hardcoded false for parity with Magento/WooCommerce — no admin
+            // recourse-pricing config on any plugin yet.
+            'approved_on_recourse' => false,
+            'order_terms' => TwoSurchargeCalculator::buildTermsBlock($days, $isEom),
+            'buyer_fee_share' => $share,
+        );
+
+        // Tight timeout: this sits on the checkout/order-build path and must
+        // never stall checkout on a slow pricing call.
+        $response = $this->setTwoPaymentRequest('/v1/pricing/order/fee', $payload, 'POST', array(), self::API_TIMEOUT_STATE_CHECK);
+        if (!is_array($response)) {
+            return $this->twoFeeCache[$cacheKey] = null;
+        }
+        $status = isset($response['http_status']) ? (int) $response['http_status'] : 0;
+        if ($status < 200 || $status >= 300) {
+            return $this->twoFeeCache[$cacheKey] = null;
+        }
+        if (!isset($response['buyer_fee_share'])) {
+            return $this->twoFeeCache[$cacheKey] = null;
+        }
+
+        // Guard against a reinterpreted currency — applying a figure quoted in
+        // a different currency would need FX the plugin does not do.
+        $respCurrency = isset($response['currency']) ? (string) $response['currency'] : (string) $currency_iso;
+        if ($currency_iso !== '' && $respCurrency !== (string) $currency_iso) {
+            return $this->twoFeeCache[$cacheKey] = null;
+        }
+
+        return $this->twoFeeCache[$cacheKey] = array(
+            'buyer_fee_share' => (string) $response['buyer_fee_share'],
+            'total_fee_tax_rate' => isset($response['total_fee_tax_rate']) ? (string) $response['total_fee_tax_rate'] : null,
+            'currency' => $respCurrency,
+        );
+    }
+
+    /**
+     * Normalise the API's fee tax rate to the plugin's decimal-fraction
+     * convention (e.g. 0.25 for 25%). Guards against a percentage form (25) by
+     * scaling anything > 1. Never hard-codes zero — the API rate passes
+     * through (TWO-24752).
+     *
+     * @param mixed $rate
+     * @return float
+     */
+    private function normalizeTwoFeeTaxRate($rate)
+    {
+        if ($rate === null || $rate === '') {
+            return 0.0;
+        }
+        $rate = (float) $rate;
+        if ($rate <= 0) {
+            return 0.0;
+        }
+        if ($rate > 1.0) {
+            $rate = $rate / 100.0;
+        }
+
+        return $rate;
+    }
+
+    /**
+     * Resolve the buyer's country ISO from the cart's invoice address.
+     *
+     * @param Cart $cart
+     * @return string
+     */
+    private function resolveTwoBuyerCountryIso($cart)
+    {
+        if (!Validate::isLoadedObject($cart)) {
+            return '';
+        }
+        $address = new Address((int) $cart->id_address_invoice);
+        if (Validate::isLoadedObject($address) && (int) $address->id_country > 0) {
+            $iso = Country::getIsoById((int) $address->id_country);
+            if (!empty($iso)) {
+                return (string) $iso;
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * Build the buyer-surcharge line item for the Two order payload, or null
+     * when no surcharge is configured / the quote fails / the fee is zero.
+     * The line's tax_rate carries the API's total_fee_tax_rate (never a
+     * hard-coded zero, TWO-24752); net/tax/gross satisfy the Two line-item
+     * formulas so validateTwoLineItems accepts it.
+     *
+     * @param Cart  $cart
+     * @param float $gross_basis product + shipping gross (fee basis)
+     * @return array|null
+     */
+    public function buildTwoSurchargeLineItemForCart($cart, $gross_basis)
+    {
+        $settings = $this->getTwoSurchargeSettings();
+        if (empty($settings['enabled'])) {
+            return null;
+        }
+
+        $days = $this->getSelectedPaymentTerm();
+        $currencyIso = '';
+        $currency = new Currency((int) $cart->id_currency);
+        if (Validate::isLoadedObject($currency)) {
+            $currencyIso = (string) $currency->iso_code;
+        }
+        $buyerCountry = $this->resolveTwoBuyerCountryIso($cart);
+
+        $fee = $this->fetchTwoTermFee($days, (float) $gross_basis, $buyerCountry, $currencyIso);
+        if ($fee === null) {
+            return null;
+        }
+
+        $net = round((float) $fee['buyer_fee_share'], 2);
+        if ($net <= 0) {
+            return null;
+        }
+        $taxRate = $this->normalizeTwoFeeTaxRate($fee['total_fee_tax_rate']);
+        $tax = round($net * $taxRate, 2);
+        $gross = round($net + $tax, 2);
+        $label = $this->getTwoSurchargeLineLabel($days);
+
+        return array(
+            'name' => $label,
+            'description' => Tools::substr(strip_tags($label), 0, 255),
+            'gross_amount' => (string) $this->getTwoRoundAmount($gross),
+            'net_amount' => (string) $this->getTwoRoundAmount($net),
+            'discount_amount' => '0.00',
+            'tax_amount' => (string) $this->getTwoRoundAmount($tax),
+            'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount(round($taxRate * 100, 2)) . '%',
+            'tax_rate' => $this->formatTwoTaxRate($taxRate),
+            'unit_price' => (string) $this->getTwoRoundAmount($net),
+            'quantity' => 1,
+            'quantity_unit' => 'item',
+            'type' => 'SERVICE',
+        );
+    }
+
+    /**
+     * Buyer-facing label for the surcharge line. A merchant-set description
+     * wins (with %s replaced by the term days, Magento/WooCommerce parity);
+     * else the brand label; else a translated default.
+     *
+     * @param int $days
+     * @return string
+     */
+    public function getTwoSurchargeLineLabel($days)
+    {
+        $template = trim((string) Configuration::get('PS_TWO_SURCHARGE_LINE_DESC'));
+        if ($template !== '') {
+            return str_replace('%s', (string) (int) $days, $template);
+        }
+        $brandLabel = $this->getTwoBrandConfig('fee_line_label');
+        if (!empty($brandLabel)) {
+            return $this->l((string) $brandLabel);
+        }
+
+        return $this->l('Service charge');
+    }
+
+    /**
+     * Brand-driven rounding-step options for the admin select, formatted to a
+     * canonical two-decimal string so the stored value round-trips. Mirrors the
+     * WooCommerce plugin's get_rounding_step_options and Magento's RoundingStep.
+     *
+     * @return array<string, string>
+     */
+    public function getTwoRoundingStepOptions()
+    {
+        $options = array();
+        $steps = $this->getTwoBrandConfig('rounding_steps');
+        foreach (is_array($steps) ? $steps : array() as $step) {
+            if (!is_numeric($step) || (float) $step <= 0) {
+                continue;
+            }
+            $value = number_format((float) $step, 2, '.', '');
+            $options[$value] = $value;
+        }
+        ksort($options, SORT_NUMERIC);
+
+        return $options;
+    }
+
+    /**
+     * Reset the request-scoped fee cache (tests).
+     */
+    public function resetTwoFeeCache()
+    {
+        $this->twoFeeCache = array();
+    }
+
+    /**
+     * HelperForm input entries for the surcharge settings (appended to the
+     * Other Settings form). Presentation only — all decisioning is in the
+     * methods above.
+     *
+     * @return array
+     */
+    protected function getTwoSurchargeFormInputs()
+    {
+        $inputs = array();
+        $inputs[] = array(
+            'type' => 'select',
+            'label' => $this->l('Buyer Surcharge Method'),
+            'name' => 'PS_TWO_SURCHARGE_TYPE',
+            'desc' => $this->l('Add an offset pricing fee to the buyer for the selected payment term. The fee amount is computed by Two; the plugin only sends the configuration.'),
+            'options' => array(
+                'query' => array(
+                    array('id' => 'none', 'name' => $this->l('No surcharge applied')),
+                    array('id' => 'percentage', 'name' => $this->l('Percentage')),
+                    array('id' => 'fixed', 'name' => $this->l('Fixed fee')),
+                    array('id' => 'fixed_and_percentage', 'name' => $this->l('Fixed fee and percentage')),
+                ),
+                'id' => 'id',
+                'name' => 'name',
+            ),
+        );
+        $inputs[] = array(
+            'type' => 'switch',
+            'label' => $this->l('Surcharge Calculation Basis'),
+            'name' => 'PS_TWO_SURCHARGE_DIFFERENTIAL',
+            'is_bool' => true,
+            'desc' => $this->l('Total fee charges the configured surcharge for the chosen term. Fee difference charges only the difference versus the default payment term.'),
+            'values' => array(
+                array('id' => 'PS_TWO_SURCHARGE_DIFFERENTIAL_ON', 'value' => 1, 'label' => $this->l('Fee difference vs default term')),
+                array('id' => 'PS_TWO_SURCHARGE_DIFFERENTIAL_OFF', 'value' => 0, 'label' => $this->l('Total fee for selected term')),
+            ),
+        );
+        $inputs[] = array(
+            'type' => 'text',
+            'label' => $this->l('Surcharge Line Description'),
+            'name' => 'PS_TWO_SURCHARGE_LINE_DESC',
+            'desc' => $this->l('Buyer-facing label for the surcharge line. Use %s for the term length in days. Leave blank to use the brand default.'),
+        );
+        $inputs[] = array(
+            'type' => 'select',
+            'label' => $this->l('Surcharge Rounding'),
+            'name' => 'PS_TWO_SURCHARGE_ROUNDING_BASIS',
+            'desc' => $this->l('Snap the buyer surcharge line to a clean increment. Select None for standard two-decimal amounts.'),
+            'options' => array(
+                'query' => array(
+                    array('id' => 'none', 'name' => $this->l('None')),
+                    array('id' => 'up', 'name' => $this->l('Up')),
+                    array('id' => 'down', 'name' => $this->l('Down')),
+                    array('id' => 'standard', 'name' => $this->l('Standard')),
+                ),
+                'id' => 'id',
+                'name' => 'name',
+            ),
+        );
+        $stepQuery = array(array('id' => '', 'name' => $this->l('No rounding')));
+        foreach ($this->getTwoRoundingStepOptions() as $value => $label) {
+            $stepQuery[] = array('id' => $value, 'name' => $label);
+        }
+        $inputs[] = array(
+            'type' => 'select',
+            'label' => $this->l('Rounding Step'),
+            'name' => 'PS_TWO_SURCHARGE_ROUNDING_STEP',
+            'desc' => $this->l('Increment the surcharge is rounded to (e.g. 1 = whole units, 0.50 = nearest half). Applies only when a rounding direction is selected.'),
+            'options' => array('query' => $stepQuery, 'id' => 'id', 'name' => 'name'),
+        );
+        foreach ($this->getAvailablePaymentTerms() as $days) {
+            $days = (int) $days;
+            $inputs[] = array(
+                'type' => 'text',
+                'label' => sprintf($this->l('%d-day term: percentage'), $days),
+                'name' => 'PS_TWO_SURCHARGE_PCT_' . $days,
+                'class' => 'fixed-width-sm',
+                'suffix' => '%',
+            );
+            $inputs[] = array(
+                'type' => 'text',
+                'label' => sprintf($this->l('%d-day term: fixed fee'), $days),
+                'name' => 'PS_TWO_SURCHARGE_FIXED_' . $days,
+                'class' => 'fixed-width-sm',
+            );
+            $inputs[] = array(
+                'type' => 'text',
+                'label' => sprintf($this->l('%d-day term: cap on percentage'), $days),
+                'name' => 'PS_TWO_SURCHARGE_CAP_' . $days,
+                'class' => 'fixed-width-sm',
+            );
+        }
+
+        return $inputs;
+    }
+
+    /**
+     * Current values for the surcharge form fields.
+     *
+     * @return array
+     */
+    protected function getTwoSurchargeFormValues()
+    {
+        $values = array(
+            'PS_TWO_SURCHARGE_TYPE' => Tools::getValue('PS_TWO_SURCHARGE_TYPE', Configuration::get('PS_TWO_SURCHARGE_TYPE')),
+            'PS_TWO_SURCHARGE_DIFFERENTIAL' => Tools::getValue('PS_TWO_SURCHARGE_DIFFERENTIAL', Configuration::get('PS_TWO_SURCHARGE_DIFFERENTIAL')),
+            'PS_TWO_SURCHARGE_LINE_DESC' => Tools::getValue('PS_TWO_SURCHARGE_LINE_DESC', Configuration::get('PS_TWO_SURCHARGE_LINE_DESC')),
+            'PS_TWO_SURCHARGE_ROUNDING_BASIS' => Tools::getValue('PS_TWO_SURCHARGE_ROUNDING_BASIS', Configuration::get('PS_TWO_SURCHARGE_ROUNDING_BASIS')),
+            'PS_TWO_SURCHARGE_ROUNDING_STEP' => Tools::getValue('PS_TWO_SURCHARGE_ROUNDING_STEP', Configuration::get('PS_TWO_SURCHARGE_ROUNDING_STEP')),
+        );
+        foreach ($this->getAvailablePaymentTerms() as $days) {
+            $days = (int) $days;
+            foreach (array('PCT', 'FIXED', 'CAP') as $suffix) {
+                $name = 'PS_TWO_SURCHARGE_' . $suffix . '_' . $days;
+                $values[$name] = Tools::getValue($name, Configuration::get($name));
+            }
+        }
+
+        return $values;
+    }
+
+    /**
+     * Validate the surcharge form: enforce rounding-step membership and
+     * non-negative numeric grid values. Appends to $this->errors.
+     */
+    protected function validTwoSurchargeFormValues()
+    {
+        $type = TwoSurchargeCalculator::normalizeType(Tools::getValue('PS_TWO_SURCHARGE_TYPE'));
+        if ($type === 'none') {
+            return;
+        }
+        $step = trim((string) Tools::getValue('PS_TWO_SURCHARGE_ROUNDING_STEP'));
+        if ($step !== '' && !array_key_exists($step, $this->getTwoRoundingStepOptions())) {
+            $this->errors[] = $this->l('Rounding step must be one of the offered values.');
+        }
+        foreach ($this->getAvailablePaymentTerms() as $days) {
+            $days = (int) $days;
+            foreach (array('PCT', 'FIXED', 'CAP') as $suffix) {
+                $raw = Tools::getValue('PS_TWO_SURCHARGE_' . $suffix . '_' . $days);
+                if ($raw !== false && $raw !== '' && (!is_numeric($raw) || (float) $raw < 0)) {
+                    $this->errors[] = $this->l('Surcharge values must be non-negative numbers.');
+
+                    return;
+                }
+            }
+        }
+    }
+
+    /**
+     * Persist the surcharge form values, coercing to safe stored forms.
+     */
+    protected function saveTwoSurchargeFormValues()
+    {
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', TwoSurchargeCalculator::normalizeType(Tools::getValue('PS_TWO_SURCHARGE_TYPE')));
+        Configuration::updateValue('PS_TWO_SURCHARGE_DIFFERENTIAL', (int) Tools::getValue('PS_TWO_SURCHARGE_DIFFERENTIAL', 0));
+        Configuration::updateValue('PS_TWO_SURCHARGE_LINE_DESC', (string) Tools::getValue('PS_TWO_SURCHARGE_LINE_DESC', ''));
+
+        $basis = (string) Tools::getValue('PS_TWO_SURCHARGE_ROUNDING_BASIS', 'none');
+        if ($basis !== 'none' && !array_key_exists($basis, TwoSurchargeCalculator::ROUNDING_BASIS_TO_API)) {
+            $basis = 'none';
+        }
+        Configuration::updateValue('PS_TWO_SURCHARGE_ROUNDING_BASIS', $basis);
+
+        $step = trim((string) Tools::getValue('PS_TWO_SURCHARGE_ROUNDING_STEP', ''));
+        if ($step !== '' && !array_key_exists($step, $this->getTwoRoundingStepOptions())) {
+            $step = '';
+        }
+        Configuration::updateValue('PS_TWO_SURCHARGE_ROUNDING_STEP', $step);
+
+        foreach ($this->getAvailablePaymentTerms() as $days) {
+            $days = (int) $days;
+            foreach (array('PCT', 'FIXED', 'CAP') as $suffix) {
+                $name = 'PS_TWO_SURCHARGE_' . $suffix . '_' . $days;
+                $raw = Tools::getValue($name, '');
+                Configuration::updateValue($name, is_numeric($raw) ? (string) (float) $raw : '');
+            }
+        }
+    }
+
     public function getAvailablePaymentTerms()
     {
         $term_type = Configuration::get('PS_TWO_PAYMENT_TERM_TYPE');
