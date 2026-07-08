@@ -4574,6 +4574,7 @@ require __DIR__ . '/CustomerAddressFormatterOverrideSpec.php';
 require __DIR__ . '/TwoInvoiceRetrievalSpec.php';
 require __DIR__ . '/TrackingNumberSpec.php';
 require __DIR__ . '/RefundSpec.php';
+require __DIR__ . '/SurchargeSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
@@ -4581,6 +4582,7 @@ $tests = [
     'TwoInvoiceRetrievalSpec::runAll' => [TwoInvoiceRetrievalSpec::class, 'runAll'],
     'TrackingNumberSpec::runAll' => [TrackingNumberSpec::class, 'runAll'],
     'RefundSpec::runAll' => [RefundSpec::class, 'runAll'],
+    'SurchargeSpec::runAll' => [SurchargeSpec::class, 'runAll'],
 ];
 
 $failed = 0;
