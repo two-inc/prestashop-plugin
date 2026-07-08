@@ -64,9 +64,9 @@
                 {l s='Your payment period starts when your order is fulfilled' mod='twopayment'}
             </p>
         </div>
-        <div class="two-terms-slider-container">
-            <div class="two-terms-slider" id="two-terms-slider">
-                {* Terms will be populated by JavaScript *}
+        <div class="two-term-chips">
+            <div class="two-term-chips__container" id="two-terms-chips">
+                {* Chips will be populated by JavaScript *}
             </div>
             <div class="two-terms-selected">
                 <span class="two-terms-selected-days" id="two-selected-days">30</span>

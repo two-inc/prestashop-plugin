@@ -572,66 +572,86 @@
     line-height: 1.4;
 }
 
-.two-terms-slider-container {
+/*
+ * Payment terms chip selector (TWO-24752). Replaces the previous slider.
+ * Structure/behaviour mirrors the Magento (Hyva) and WooCommerce chip
+ * selectors; the palette keeps PrestaShop's existing slate accent
+ * (#374151) so the chips stay consistent with the rest of this checkout.
+ * The column layout leaves room for a per-chip surcharge sub-label.
+ */
+.two-term-chips {
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 10px;
 }
 
-.two-terms-slider {
+.two-term-chips__container {
     display: flex;
     justify-content: center;
-    align-items: center;
-    gap: 6px;
+    align-items: stretch;
+    gap: 8px;
     flex-wrap: wrap;
     width: 100%;
     max-width: 350px;
 }
 
-.two-term-option {
+.two-term-chip {
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    min-width: 40px;
-    height: 32px;
-    padding: 6px 10px;
+    min-width: 44px;
+    padding: 8px 14px;
     border: 1px solid #d1d5db;
-    border-radius: 16px;
+    border-radius: 8px;
     background: white;
     color: #6b7280;
     font-size: 12px;
     font-weight: 400;
+    font-family: inherit;
     cursor: pointer;
     transition: all 0.15s ease;
     user-select: none;
-    position: relative;
 }
 
-.two-term-option:hover {
+.two-term-chip:hover {
     border-color: #9ca3af;
     color: #374151;
     background: #f9fafb;
 }
 
-.two-term-option.active {
+.two-term-chip:focus {
+    outline: none;
+}
+
+.two-term-chip:focus-visible {
+    outline: 2px solid #374151;
+    outline-offset: 2px;
+}
+
+.two-term-chip--selected,
+.two-term-chip--selected:hover,
+.two-term-chip--selected:focus {
     border-color: #374151;
     background: #374151;
     color: white;
     font-weight: 500;
 }
 
-.two-term-option.active::after {
-    content: '';
-    position: absolute;
-    bottom: -6px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 0;
-    height: 0;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-top: 4px solid #374151;
+.two-term-chip--single {
+    cursor: default;
+}
+
+.two-term-chip__days {
+    font-weight: inherit;
+    line-height: 1.3;
+}
+
+.two-term-chip__surcharge {
+    font-size: 0.85em;
+    line-height: 1.3;
+    opacity: 0.85;
 }
 
 .two-terms-selected {
@@ -662,13 +682,12 @@
         margin-top: 12px;
     }
     
-    .two-terms-slider {
+    .two-term-chips__container {
         gap: 6px;
     }
     
-    .two-term-option {
+    .two-term-chip {
         min-width: 40px;
-        height: 32px;
         padding: 6px 10px;
         font-size: 12px;
     }
