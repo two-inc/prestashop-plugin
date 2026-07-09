@@ -654,15 +654,23 @@ class Twopayment extends PaymentModule
     {
         $source = $this->getOfferableTermSource(true);
         sort($source);
+        // Configured per-term fee preview (days => "+2.5%" / "+2.5% +$5.00"),
+        // only for terms with a non-zero surcharge. Appended to the checkbox
+        // label so the merchant sees the fee next to each offered term.
+        $fee_preview = $this->getTwoSurchargeChipPreview();
         $query = array();
         foreach ($source as $term) {
             $term = (int) $term;
             $type_class = in_array($term, self::EOM_PAYMENT_TERMS_OPTIONS, true)
                 ? 'two-term-both'
                 : 'two-term-standard';
+            $label = sprintf($this->l('%d days'), $term);
+            if (isset($fee_preview[$term]) && $fee_preview[$term] !== '') {
+                $label .= ' (' . $fee_preview[$term] . ')';
+            }
             $query[] = array(
                 'id' => (string) $term,
-                'name' => sprintf($this->l('%d days'), $term),
+                'name' => $label,
                 'val' => '1',
                 'class' => 'two-term-option two-term-' . $term . ' ' . $type_class,
             );
@@ -6260,6 +6268,52 @@ class Twopayment extends PaymentModule
             'rounding_basis' => (string) Configuration::get('PS_TWO_SURCHARGE_ROUNDING_BASIS'),
             'rounding_step' => $step > 0 ? $step : null,
         );
+    }
+
+    /**
+     * Per-term surcharge preview text keyed by days, for display alongside the
+     * term (e.g. the "Available Payment Terms" checkboxes and the checkout chip
+     * selector).
+     *
+     * Deliberately NOT the live-quoted buyer_fee_share (that requires a real
+     * POST /v1/pricing/order/fee call per term via fetchTwoTermFee — fine for
+     * one term at order-intent time, too many synchronous calls to make on
+     * every checkout page load for a whole term list). This instead previews
+     * the raw configured rate (the same percentage/fixed values the merchant
+     * already sees in the admin grid), not the final rounded/capped amount.
+     *
+     * @return array<int, string> days => preview text, only for terms with a
+     *                            non-zero configured rate
+     */
+    public function getTwoSurchargeChipPreview()
+    {
+        $settings = $this->getTwoSurchargeSettings();
+        if (!$settings['enabled']) {
+            return array();
+        }
+
+        $preview = array();
+        foreach ($settings['grid'] as $days => $row) {
+            $parts = array();
+            if ((float) $row['percentage'] > 0) {
+                $parts[] = '+' . rtrim(rtrim(sprintf('%.2f', $row['percentage']), '0'), '.') . '%';
+            }
+            if ((float) $row['fixed'] > 0) {
+                // Tools::displayPrice() needs the Symfony kernel container;
+                // fail-soft to a plain number rather than fatal the checkout
+                // page media hook if it's unavailable in some bootstrap path.
+                try {
+                    $parts[] = '+' . Tools::displayPrice($row['fixed']);
+                } catch (\Throwable $e) {
+                    $parts[] = '+' . sprintf('%.2f', $row['fixed']);
+                }
+            }
+            if (!empty($parts)) {
+                $preview[(int) $days] = implode(' ', $parts);
+            }
+        }
+
+        return $preview;
     }
 
     /**
