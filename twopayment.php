@@ -513,6 +513,18 @@ class Twopayment extends PaymentModule
             }
         }
 
+        if (((bool) Tools::isSubmit('submitTwoPaymentSettingsForm')) == true) {
+            Configuration::updateValue('PS_TWO_TAB_VALUE', 5);
+            $this->validTwoPaymentSettingsFormValues();
+            if (!count($this->errors)) {
+                $this->saveTwoPaymentSettingsFormValues();
+            } else {
+                foreach ($this->errors as $err) {
+                    $this->output .= $this->displayError($err);
+                }
+            }
+        }
+
         if (((bool) Tools::isSubmit('submitTwoOtherForm')) == true) {
             Configuration::updateValue('PS_TWO_TAB_VALUE', 2);
             $this->validTwoOtherFormValues();
@@ -533,6 +545,7 @@ class Twopayment extends PaymentModule
         $this->context->smarty->assign(
             array(
                 'renderTwoGeneralForm' => $this->renderTwoGeneralForm(),
+                'renderTwoPaymentSettingsForm' => $this->renderTwoPaymentSettingsForm(),
                 'renderTwoOtherForm' => $this->renderTwoOtherForm(),
                 'renderTwoOrderStatusForm' => $this->renderTwoOrderStatusForm(),
                 'renderTwoPluginInfo' => $this->renderTwoPluginInfo(),
@@ -618,39 +631,6 @@ class Twopayment extends PaymentModule
                             'name' => 'name'
                         )
                     ),
-                    array(
-                        'type' => 'radio',
-                        'label' => $this->l('Payment Term Type'),
-                        'name' => 'PS_TWO_PAYMENT_TERM_TYPE',
-                        'desc' => $this->l('Choose how payment terms are calculated:') . '<br><br><strong>' . $this->l('Standard Terms:') . '</strong> ' . $this->l('Payment due X days from fulfillment date. Example: If you fulfill an order on January 15th with 30-day terms, payment is due February 14th.') . '<br><br><strong>' . $this->l('End-of-Month (EOM) Terms:') . '</strong> ' . $this->l('Payment due at the end of the current month plus X days from fulfillment date. Example: If you fulfill an order on January 15th with EOM+30 terms, payment is due February 28th (end of January + 30 days). This is common for B2B invoicing.'),
-                        'is_bool' => false,
-                        'values' => array(
-                            array(
-                                'id' => 'term_type_standard',
-                                'value' => 'STANDARD',
-                                'label' => $this->l('Standard Terms (e.g., 30 days from fulfillment)')
-                            ),
-                            array(
-                                'id' => 'term_type_eom',
-                                'value' => 'EOM',
-                                'label' => $this->l('End-of-Month Terms (e.g., EOM + 30 days)')
-                            ),
-                        ),
-                    ),
-                    array(
-                        'type' => 'checkbox',
-                        'label' => $this->l('Available Payment Terms'),
-                        'name' => 'PS_TWO_PAYMENT_TERMS',
-                        'desc' => '<span id="two-payment-terms-desc-standard" style="display: none;">' . $this->l('Select which payment terms you want to offer. Standard terms are calculated from the fulfillment date.') . '</span><span id="two-payment-terms-desc-eom" style="display: none;">' . $this->l('Select which payment terms you want to offer. EOM (End-of-Month) terms are calculated from the end of the month at fulfillment, plus the selected days. Only 30, 45, and 60 day terms are available for EOM.') . '</span>',
-                        'values' => array(
-                            // Restrict the tickable set to the merchant's backend
-                            // available_terms (TWO-24813); admin render is one of
-                            // the two sanctioned refresh points.
-                            'query' => $this->buildPaymentTermCheckboxQuery(),
-                            'id' => 'id',
-                            'name' => 'name'
-                        )
-                    ),
                 ),
                 'submit' => array(
                     'title' => $this->l('Save'),
@@ -700,15 +680,6 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_MERCHANT_SHORT_NAME'] = Tools::getValue('PS_TWO_MERCHANT_SHORT_NAME', Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'));
         $fields_values['PS_TWO_MERCHANT_API_KEY'] = Tools::getValue('PS_TWO_MERCHANT_API_KEY', Configuration::get('PS_TWO_MERCHANT_API_KEY'));
         $fields_values['PS_TWO_ENVIRONMENT'] = Tools::getValue('PS_TWO_ENVIRONMENT', Configuration::get('PS_TWO_ENVIRONMENT'));
-        
-        // Payment term type (STANDARD or EOM)
-        $fields_values['PS_TWO_PAYMENT_TERM_TYPE'] = Tools::getValue('PS_TWO_PAYMENT_TERM_TYPE', Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'));
-        
-        // Payment terms checkboxes
-        $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
-        foreach ($payment_terms as $term) {
-            $fields_values['PS_TWO_PAYMENT_TERMS_' . $term] = Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term, Configuration::get('PS_TWO_PAYMENT_TERMS_' . $term));
-        }
         return $fields_values;
     }
 
@@ -732,18 +703,6 @@ class Twopayment extends PaymentModule
             $this->errors[] = $this->l('Please select a valid environment (Production, Development or Staging).');
         }
         
-        // Validate payment terms
-        $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
-        $selected_terms = array();
-        foreach ($payment_terms as $term) {
-            if (Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term)) {
-                $selected_terms[] = $term;
-            }
-        }
-        
-        if (empty($selected_terms)) {
-            $this->errors[] = $this->l('You must select at least one payment term.');
-        }
         // Verify API key with Two against selected environment and capture merchant id and short name
         $apiKey = trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY'));
         $env = Tools::getValue('PS_TWO_ENVIRONMENT');
@@ -789,13 +748,132 @@ class Twopayment extends PaymentModule
             // Ensure flag not stale when verification fails/non-run
             Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 0);
         }
-        
+
+        $this->output .= $this->displayConfirmation($this->l('General settings are updated.'));
+    }
+
+    protected function renderTwoPaymentSettingsForm()
+    {
+        $helper = new HelperForm();
+        $helper->show_toolbar = false;
+        $helper->table = $this->table;
+        $helper->default_form_language = (int) Configuration::get('PS_LANG_DEFAULT');
+        $helper->module = $this;
+        $helper->allow_employee_form_lang = Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG') ? Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG') : 0;
+        $helper->identifier = $this->identifier;
+        $helper->submit_action = 'submitTwoPaymentSettingsForm';
+        $helper->currentIndex = $this->context->link->getAdminLink('AdminModules', false) . '&configure=' . $this->name . '&tab_module=' . $this->tab . '&module_name=' . $this->name;
+        $helper->token = Tools::getAdminTokenLite('AdminModules');
+        $helper->tpl_vars = array(
+            'uri' => $this->getPathUri(),
+            'fields_value' => $this->getTwoPaymentSettingsFormValues(),
+            'languages' => $this->context->controller->getLanguages(),
+            'id_language' => $this->context->language->id,
+        );
+        return $helper->generateForm(array($this->getTwoPaymentSettingsForm()));
+    }
+
+    protected function getTwoPaymentSettingsForm()
+    {
+        $inputs = array(
+            array(
+                'type' => 'radio',
+                'label' => $this->l('Payment Term Type'),
+                'name' => 'PS_TWO_PAYMENT_TERM_TYPE',
+                'desc' => $this->l('Choose how payment terms are calculated:') . '<br><br><strong>' . $this->l('Standard Terms:') . '</strong> ' . $this->l('Payment due X days from fulfillment date. Example: If you fulfill an order on January 15th with 30-day terms, payment is due February 14th.') . '<br><br><strong>' . $this->l('End-of-Month (EOM) Terms:') . '</strong> ' . $this->l('Payment due at the end of the current month plus X days from fulfillment date. Example: If you fulfill an order on January 15th with EOM+30 terms, payment is due February 28th (end of January + 30 days). This is common for B2B invoicing.'),
+                'is_bool' => false,
+                'values' => array(
+                    array(
+                        'id' => 'term_type_standard',
+                        'value' => 'STANDARD',
+                        'label' => $this->l('Standard Terms (e.g., 30 days from fulfillment)')
+                    ),
+                    array(
+                        'id' => 'term_type_eom',
+                        'value' => 'EOM',
+                        'label' => $this->l('End-of-Month Terms (e.g., EOM + 30 days)')
+                    ),
+                ),
+            ),
+            array(
+                'type' => 'checkbox',
+                'label' => $this->l('Available Payment Terms'),
+                'name' => 'PS_TWO_PAYMENT_TERMS',
+                'desc' => '<span id="two-payment-terms-desc-standard" style="display: none;">' . $this->l('Select which payment terms you want to offer. Standard terms are calculated from the fulfillment date.') . '</span><span id="two-payment-terms-desc-eom" style="display: none;">' . $this->l('Select which payment terms you want to offer. EOM (End-of-Month) terms are calculated from the end of the month at fulfillment, plus the selected days. Only 30, 45, and 60 day terms are available for EOM.') . '</span>',
+                'values' => array(
+                    // Restrict the tickable set to the merchant's backend
+                    // available_terms (TWO-24813); admin render is one of
+                    // the two sanctioned refresh points.
+                    'query' => $this->buildPaymentTermCheckboxQuery(),
+                    'id' => 'id',
+                    'name' => 'name'
+                )
+            ),
+        );
+
+        // Offset pricing fee (buyer surcharge) fields — appended so the
+        // per-term grid reflects the merchant's currently-offered terms.
+        // TWO-24752 / TWO-24893.
+        $inputs = array_merge($inputs, $this->getTwoSurchargeFormInputs());
+
+        return array(
+            'form' => array(
+                'legend' => array(
+                    'title' => $this->l('Payment Settings'),
+                    'icon' => 'icon-money',
+                ),
+                'input' => $inputs,
+                'submit' => array(
+                    'title' => $this->l('Save'),
+                ),
+            ),
+        );
+    }
+
+    protected function getTwoPaymentSettingsFormValues()
+    {
+        $fields_values = array();
+
+        // Payment term type (STANDARD or EOM)
+        $fields_values['PS_TWO_PAYMENT_TERM_TYPE'] = Tools::getValue('PS_TWO_PAYMENT_TERM_TYPE', Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'));
+
+        // Payment terms checkboxes
+        $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
+        foreach ($payment_terms as $term) {
+            $fields_values['PS_TWO_PAYMENT_TERMS_' . $term] = Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term, Configuration::get('PS_TWO_PAYMENT_TERMS_' . $term));
+        }
+
+        $fields_values = array_merge($fields_values, $this->getTwoSurchargeFormValues());
+
+        return $fields_values;
+    }
+
+    protected function validTwoPaymentSettingsFormValues()
+    {
+        // Validate payment terms
+        $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
+        $selected_terms = array();
+        foreach ($payment_terms as $term) {
+            if (Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term)) {
+                $selected_terms[] = $term;
+            }
+        }
+
+        if (empty($selected_terms)) {
+            $this->errors[] = $this->l('You must select at least one payment term.');
+        }
+
+        $this->validTwoSurchargeFormValues();
+    }
+
+    protected function saveTwoPaymentSettingsFormValues()
+    {
         // Save payment term type (STANDARD or EOM)
         $term_type = Tools::getValue('PS_TWO_PAYMENT_TERM_TYPE');
         if ($term_type === 'STANDARD' || $term_type === 'EOM') {
             Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', $term_type);
         }
-        
+
         // Save payment terms checkboxes. Iterate ONLY the terms the admin form
         // actually rendered (the backend-restricted offerable source), NOT the
         // full hardcoded list. buildPaymentTermCheckboxQuery() renders a checkbox
@@ -810,7 +888,9 @@ class Twopayment extends PaymentModule
             Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . $term, Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term) ? 1 : 0);
         }
 
-        $this->output .= $this->displayConfirmation($this->l('General settings are updated.'));
+        $this->saveTwoSurchargeFormValues();
+
+        $this->output .= $this->displayConfirmation($this->l('Payment settings are updated.'));
     }
 
     protected function renderTwoOtherForm()
@@ -1068,14 +1148,6 @@ class Twopayment extends PaymentModule
             ),
         );
 
-        // Offset pricing fee (buyer surcharge) fields — appended so the
-        // per-term grid reflects the merchant's currently-offered terms.
-        // TWO-24752 / TWO-24893.
-        $fields_form['form']['input'] = array_merge(
-            $fields_form['form']['input'],
-            $this->getTwoSurchargeFormInputs()
-        );
-
         return $fields_form;
     }
 
@@ -1093,13 +1165,11 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_ENABLE_TAX_SUBTOTALS'] = Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
         $fields_values['PS_TWO_DEBUG_MODE'] = Tools::getValue('PS_TWO_DEBUG_MODE', Configuration::get('PS_TWO_DEBUG_MODE'));
-        $fields_values = array_merge($fields_values, $this->getTwoSurchargeFormValues());
         return $fields_values;
     }
 
     protected function validTwoOtherFormValues()
     {
-        $this->validTwoSurchargeFormValues();
     }
 
     protected function saveTwoOtherFormValues()
@@ -1115,7 +1185,6 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', (int) Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
         Configuration::updateValue('PS_TWO_DEBUG_MODE', Tools::getValue('PS_TWO_DEBUG_MODE'));
-        $this->saveTwoSurchargeFormValues();
 
         $this->output .= $this->displayConfirmation($this->l('Other settings are updated.'));
     }
@@ -6516,30 +6585,61 @@ class Twopayment extends PaymentModule
             'desc' => $this->l('Increment the surcharge is rounded to (e.g. 1 = whole units, 0.50 = nearest half). Applies only when a rounding direction is selected.'),
             'options' => array('query' => $stepQuery, 'id' => 'id', 'name' => 'name'),
         );
-        foreach ($this->getAvailablePaymentTerms() as $days) {
-            $days = (int) $days;
-            $inputs[] = array(
-                'type' => 'text',
-                'label' => sprintf($this->l('%d-day term: percentage'), $days),
-                'name' => 'PS_TWO_SURCHARGE_PCT_' . $days,
-                'class' => 'fixed-width-sm',
-                'suffix' => '%',
-            );
-            $inputs[] = array(
-                'type' => 'text',
-                'label' => sprintf($this->l('%d-day term: fixed fee'), $days),
-                'name' => 'PS_TWO_SURCHARGE_FIXED_' . $days,
-                'class' => 'fixed-width-sm',
-            );
-            $inputs[] = array(
-                'type' => 'text',
-                'label' => sprintf($this->l('%d-day term: cap on percentage'), $days),
-                'name' => 'PS_TWO_SURCHARGE_CAP_' . $days,
-                'class' => 'fixed-width-sm',
-            );
-        }
+        $inputs[] = array(
+            'type' => 'html',
+            'label' => $this->l('Per-term surcharge'),
+            'name' => 'PS_TWO_SURCHARGE_GRID',
+            'html_content' => $this->getTwoSurchargeGridHtml(),
+        );
 
         return $inputs;
+    }
+
+    /**
+     * Build the per-term surcharge grid as an HTML table. HelperForm does NOT
+     * auto-populate values for type=>'html' fields, so each input's current
+     * value is read here (POSTed value, falling back to the stored config) and
+     * written into the value="" attribute, htmlspecialchars-escaped. Field
+     * names are IDENTICAL to the previous per-term text inputs so the existing
+     * save/validation path (saveTwoSurchargeFormValues / validTwoSurchargeFormValues)
+     * is unchanged.
+     *
+     * @return string
+     */
+    protected function getTwoSurchargeGridHtml()
+    {
+        $cell_style = 'width:110px;';
+        $html = '<table class="table" style="width:auto;margin-bottom:0;">';
+        $html .= '<thead><tr>'
+            . '<th>' . $this->l('Term') . '</th>'
+            . '<th>' . $this->l('Percentage') . '</th>'
+            . '<th>' . $this->l('Fixed fee') . '</th>'
+            . '<th>' . $this->l('Cap on percentage') . '</th>'
+            . '</tr></thead><tbody>';
+
+        foreach ($this->getAvailablePaymentTerms() as $days) {
+            $days = (int) $days;
+            $pct_name = 'PS_TWO_SURCHARGE_PCT_' . $days;
+            $fixed_name = 'PS_TWO_SURCHARGE_FIXED_' . $days;
+            $cap_name = 'PS_TWO_SURCHARGE_CAP_' . $days;
+
+            $pct = htmlspecialchars((string) Tools::getValue($pct_name, Configuration::get($pct_name)), ENT_QUOTES, 'UTF-8');
+            $fixed = htmlspecialchars((string) Tools::getValue($fixed_name, Configuration::get($fixed_name)), ENT_QUOTES, 'UTF-8');
+            $cap = htmlspecialchars((string) Tools::getValue($cap_name, Configuration::get($cap_name)), ENT_QUOTES, 'UTF-8');
+
+            $html .= '<tr>'
+                . '<td style="vertical-align:middle;">' . sprintf($this->l('%d days'), $days) . '</td>'
+                . '<td><div class="input-group" style="' . $cell_style . '">'
+                . '<input type="text" class="form-control" name="' . $pct_name . '" value="' . $pct . '">'
+                . '<span class="input-group-addon">%</span></div></td>'
+                . '<td><input type="text" class="form-control" style="' . $cell_style . '" name="' . $fixed_name . '" value="' . $fixed . '"></td>'
+                . '<td><input type="text" class="form-control" style="' . $cell_style . '" name="' . $cap_name . '" value="' . $cap . '"></td>'
+                . '</tr>';
+        }
+
+        $html .= '</tbody></table>';
+
+        return $html;
     }
 
     /**
