@@ -94,6 +94,20 @@
             $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]').on('change', function() {
                 updatePaymentTermsVisibility();
             });
+
+            // Surcharge Rounding Step - hide the step selector when the rounding
+            // basis is None (no rounding direction means the step is irrelevant).
+            function updateRoundingStepVisibility() {
+                var basis = $('select[name="PS_TWO_SURCHARGE_ROUNDING_BASIS"]').val();
+                var stepGroup = $('select[name="PS_TWO_SURCHARGE_ROUNDING_STEP"]').closest('.form-group');
+                if (!basis || basis === 'none') {
+                    stepGroup.hide();
+                } else {
+                    stepGroup.show();
+                }
+            }
+            updateRoundingStepVisibility();
+            $('select[name="PS_TWO_SURCHARGE_ROUNDING_BASIS"]').on('change', updateRoundingStepVisibility);
         });
     </script>
 {/literal}
