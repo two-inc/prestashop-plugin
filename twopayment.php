@@ -631,6 +631,28 @@ class Twopayment extends PaymentModule
                             'name' => 'name'
                         )
                     ),
+                    // Debug mode lives in General Settings for parity with
+                    // Magento's two_general > general group (which includes it).
+                    array(
+                        'type' => 'switch',
+                        'label' => $this->l('Enable Debug Mode'),
+                        'name' => 'PS_TWO_DEBUG_MODE',
+                        'is_bool' => true,
+                        'desc' => $this->l('Enable detailed logging for troubleshooting. Logs tax calculations and other diagnostic data. Only enable when requested by Two support.'),
+                        'required' => false,
+                        'values' => array(
+                            array(
+                                'id' => 'PS_TWO_DEBUG_MODE_ON',
+                                'value' => 1,
+                                'label' => $this->l('Yes')
+                            ),
+                            array(
+                                'id' => 'PS_TWO_DEBUG_MODE_OFF',
+                                'value' => 0,
+                                'label' => $this->l('No')
+                            ),
+                        ),
+                    ),
                 ),
                 'submit' => array(
                     'title' => $this->l('Save'),
@@ -688,6 +710,7 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_MERCHANT_SHORT_NAME'] = Tools::getValue('PS_TWO_MERCHANT_SHORT_NAME', Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'));
         $fields_values['PS_TWO_MERCHANT_API_KEY'] = Tools::getValue('PS_TWO_MERCHANT_API_KEY', Configuration::get('PS_TWO_MERCHANT_API_KEY'));
         $fields_values['PS_TWO_ENVIRONMENT'] = Tools::getValue('PS_TWO_ENVIRONMENT', Configuration::get('PS_TWO_ENVIRONMENT'));
+        $fields_values['PS_TWO_DEBUG_MODE'] = Tools::getValue('PS_TWO_DEBUG_MODE', Configuration::get('PS_TWO_DEBUG_MODE'));
         return $fields_values;
     }
 
@@ -744,6 +767,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', $shortNameToSave);
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY')));
         Configuration::updateValue('PS_TWO_ENVIRONMENT', Tools::getValue('PS_TWO_ENVIRONMENT'));
+        Configuration::updateValue('PS_TWO_DEBUG_MODE', Tools::getValue('PS_TWO_DEBUG_MODE'));
         if ($this->verifiedMerchantId) {
             if ((string) Configuration::get('PS_TWO_MERCHANT_ID') !== (string) $this->verifiedMerchantId) {
                 // Merchant identity changed: drop the cached term list so
@@ -819,6 +843,50 @@ class Twopayment extends PaymentModule
             ),
         );
 
+        // Checkout fields (Magento two_payment > checkout_fields parity):
+        // optional buyer inputs, placed after the term selection and before
+        // the surcharge configuration.
+        $inputs[] = array(
+            'type' => 'switch',
+            'label' => $this->l('Show Department field'),
+            'name' => 'PS_TWO_ENABLE_DEPARTMENT',
+            'is_bool' => true,
+            'desc' => $this->l('If you choose YES then customers will see department field in checkout.'),
+            'required' => true,
+            'values' => array(
+                array(
+                    'id' => 'PS_TWO_ENABLE_DEPARTMENT_ON',
+                    'value' => 1,
+                    'label' => $this->l('Yes')
+                ),
+                array(
+                    'id' => 'PS_TWO_ENABLE_DEPARTMENT_OFF',
+                    'value' => 0,
+                    'label' => $this->l('No')
+                ),
+            ),
+        );
+        $inputs[] = array(
+            'type' => 'switch',
+            'label' => $this->l('Show Project field'),
+            'name' => 'PS_TWO_ENABLE_PROJECT',
+            'is_bool' => true,
+            'desc' => $this->l('If you choose YES then customers will see project field in checkout.'),
+            'required' => true,
+            'values' => array(
+                array(
+                    'id' => 'PS_TWO_ENABLE_PROJECT_ON',
+                    'value' => 1,
+                    'label' => $this->l('Yes')
+                ),
+                array(
+                    'id' => 'PS_TWO_ENABLE_PROJECT_OFF',
+                    'value' => 0,
+                    'label' => $this->l('No')
+                ),
+            ),
+        );
+
         // Offset pricing fee (buyer surcharge) fields — appended so the
         // per-term grid reflects the merchant's currently-offered terms.
         // TWO-24752 / TWO-24893.
@@ -844,6 +912,10 @@ class Twopayment extends PaymentModule
 
         // Payment term type (STANDARD or EOM)
         $fields_values['PS_TWO_PAYMENT_TERM_TYPE'] = Tools::getValue('PS_TWO_PAYMENT_TERM_TYPE', Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'));
+
+        // Checkout fields (moved from the former "Other Settings" tab).
+        $fields_values['PS_TWO_ENABLE_DEPARTMENT'] = Tools::getValue('PS_TWO_ENABLE_DEPARTMENT', Configuration::get('PS_TWO_ENABLE_DEPARTMENT'));
+        $fields_values['PS_TWO_ENABLE_PROJECT'] = Tools::getValue('PS_TWO_ENABLE_PROJECT', Configuration::get('PS_TWO_ENABLE_PROJECT'));
 
         // Payment terms checkboxes
         $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
@@ -881,6 +953,10 @@ class Twopayment extends PaymentModule
         if ($term_type === 'STANDARD' || $term_type === 'EOM') {
             Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', $term_type);
         }
+
+        // Checkout fields (moved from the former "Other Settings" tab).
+        Configuration::updateValue('PS_TWO_ENABLE_DEPARTMENT', Tools::getValue('PS_TWO_ENABLE_DEPARTMENT'));
+        Configuration::updateValue('PS_TWO_ENABLE_PROJECT', Tools::getValue('PS_TWO_ENABLE_PROJECT'));
 
         // Save payment terms checkboxes. Iterate ONLY the terms the admin form
         // actually rendered (the backend-restricted offerable source), NOT the
@@ -927,7 +1003,7 @@ class Twopayment extends PaymentModule
         $fields_form = array(
             'form' => array(
                 'legend' => array(
-                    'title' => $this->l('Other Settings'),
+                    'title' => $this->l('Advanced Settings'),
                     'icon' => 'icon-cogs',
                 ),
                 'input' => array(
@@ -986,46 +1062,6 @@ class Twopayment extends PaymentModule
                             ),
                             array(
                                 'id' => 'PS_TWO_ENABLE_COMPANY_ID_OFF',
-                                'value' => 0,
-                                'label' => $this->l('No')
-                            ),
-                        ),
-                    ),
-                    array(
-                        'type' => 'switch',
-                        'label' => $this->l('Show Department field'),
-                        'name' => 'PS_TWO_ENABLE_DEPARTMENT',
-                        'is_bool' => true,
-                        'desc' => $this->l('If you choose YES then customers will see department field in checkout.'),
-                        'required' => true,
-                        'values' => array(
-                            array(
-                                'id' => 'PS_TWO_ENABLE_DEPARTMENT_ON',
-                                'value' => 1,
-                                'label' => $this->l('Yes')
-                            ),
-                            array(
-                                'id' => 'PS_TWO_ENABLE_DEPARTMENT_OFF',
-                                'value' => 0,
-                                'label' => $this->l('No')
-                            ),
-                        ),
-                    ),
-                    array(
-                        'type' => 'switch',
-                        'label' => $this->l('Show Project field'),
-                        'name' => 'PS_TWO_ENABLE_PROJECT',
-                        'is_bool' => true,
-                        'desc' => $this->l('If you choose YES then customers will see project field in checkout.'),
-                        'required' => true,
-                        'values' => array(
-                            array(
-                                'id' => 'PS_TWO_ENABLE_PROJECT_ON',
-                                'value' => 1,
-                                'label' => $this->l('Yes')
-                            ),
-                            array(
-                                'id' => 'PS_TWO_ENABLE_PROJECT_OFF',
                                 'value' => 0,
                                 'label' => $this->l('No')
                             ),
@@ -1129,26 +1165,6 @@ class Twopayment extends PaymentModule
                             ),
                         ),
                     ),
-                    array(
-                        'type' => 'switch',
-                        'label' => $this->l('Enable Debug Mode'),
-                        'name' => 'PS_TWO_DEBUG_MODE',
-                        'is_bool' => true,
-                        'desc' => $this->l('Enable detailed logging for troubleshooting. Logs tax calculations and other diagnostic data. Only enable when requested by Two support.'),
-                        'required' => false,
-                        'values' => array(
-                            array(
-                                'id' => 'PS_TWO_DEBUG_MODE_ON',
-                                'value' => 1,
-                                'label' => $this->l('Yes')
-                            ),
-                            array(
-                                'id' => 'PS_TWO_DEBUG_MODE_OFF',
-                                'value' => 0,
-                                'label' => $this->l('No')
-                            ),
-                        ),
-                    ),
                 ),
                 'submit' => array(
                     'title' => $this->l('Save'),
@@ -1165,14 +1181,11 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_USE_ACCOUNT_TYPE'] = Tools::getValue('PS_TWO_USE_ACCOUNT_TYPE', Configuration::get('PS_TWO_USE_ACCOUNT_TYPE'));
         $fields_values['PS_TWO_ENABLE_COMPANY_NAME'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME', Configuration::get('PS_TWO_ENABLE_COMPANY_NAME'));
         $fields_values['PS_TWO_ENABLE_COMPANY_ID'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_ID', Configuration::get('PS_TWO_ENABLE_COMPANY_ID'));
-        $fields_values['PS_TWO_ENABLE_DEPARTMENT'] = Tools::getValue('PS_TWO_ENABLE_DEPARTMENT', Configuration::get('PS_TWO_ENABLE_DEPARTMENT'));
-        $fields_values['PS_TWO_ENABLE_PROJECT'] = Tools::getValue('PS_TWO_ENABLE_PROJECT', Configuration::get('PS_TWO_ENABLE_PROJECT'));
         $fields_values['PS_TWO_FINALIZE_PURCHASE'] = Tools::getValue('PS_TWO_FINALIZE_PURCHASE', Configuration::get('PS_TWO_FINALIZE_PURCHASE'));
         $fields_values['PS_TWO_USE_OWN_INVOICES'] = Tools::getValue('PS_TWO_USE_OWN_INVOICES', Configuration::get('PS_TWO_USE_OWN_INVOICES'));
         $fields_values['PS_TWO_ENABLE_B2B_B2C'] = Tools::getValue('PS_TWO_ENABLE_B2B_B2C', Configuration::get('PS_TWO_ENABLE_B2B_B2C'));
         $fields_values['PS_TWO_ENABLE_TAX_SUBTOTALS'] = Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
-        $fields_values['PS_TWO_DEBUG_MODE'] = Tools::getValue('PS_TWO_DEBUG_MODE', Configuration::get('PS_TWO_DEBUG_MODE'));
         return $fields_values;
     }
 
@@ -1185,16 +1198,13 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', Tools::getValue('PS_TWO_USE_ACCOUNT_TYPE'));
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME'));
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_ID', Tools::getValue('PS_TWO_ENABLE_COMPANY_ID'));
-        Configuration::updateValue('PS_TWO_ENABLE_DEPARTMENT', Tools::getValue('PS_TWO_ENABLE_DEPARTMENT'));
-        Configuration::updateValue('PS_TWO_ENABLE_PROJECT', Tools::getValue('PS_TWO_ENABLE_PROJECT'));
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', Tools::getValue('PS_TWO_FINALIZE_PURCHASE'));
         Configuration::updateValue('PS_TWO_USE_OWN_INVOICES', Tools::getValue('PS_TWO_USE_OWN_INVOICES'));
         Configuration::updateValue('PS_TWO_ENABLE_B2B_B2C', Tools::getValue('PS_TWO_ENABLE_B2B_B2C'));
         Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', (int) Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
-        Configuration::updateValue('PS_TWO_DEBUG_MODE', Tools::getValue('PS_TWO_DEBUG_MODE'));
 
-        $this->output .= $this->displayConfirmation($this->l('Other settings are updated.'));
+        $this->output .= $this->displayConfirmation($this->l('Advanced settings are updated.'));
     }
 
     protected function renderTwoOrderStatusForm()
@@ -1280,7 +1290,7 @@ class Twopayment extends PaymentModule
                     <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Buyer rejected?') . '</strong> ' . $this->l('The company may have reached their credit limit or failed Two\'s credit check') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Company not found?') . '</strong> ' . $this->l('Customer must enter their official registered company name') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Phone invalid?') . '</strong> ' . $this->l('Ensure the phone number includes country code and is in a valid format') . '</li>
-                    <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Amount mismatch errors?') . '</strong> ' . $this->l('Enable Debug Mode in Other Settings and contact Two support with the logs') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Amount mismatch errors?') . '</strong> ' . $this->l('Enable Debug Mode in General Settings and contact Two support with the logs') . '</li>
                 </ul>
             </div>
         </div>
@@ -6571,7 +6581,7 @@ class Twopayment extends PaymentModule
 
     /**
      * HelperForm input entries for the surcharge settings (appended to the
-     * Other Settings form). Presentation only — all decisioning is in the
+     * Payment Settings form). Presentation only — all decisioning is in the
      * methods above.
      *
      * @return array
