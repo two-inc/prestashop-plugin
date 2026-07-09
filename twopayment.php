@@ -6617,12 +6617,15 @@ class Twopayment extends PaymentModule
     protected function getTwoSurchargeGridHtml()
     {
         $cell_style = 'width:110px;';
-        $html = '<table class="table" style="width:auto;margin-bottom:0;">';
+        // id + per-column classes let the admin JS (configuration.tpl) show/hide
+        // the whole grid and individual columns by the selected surcharge type,
+        // without fragile positional selectors.
+        $html = '<table id="two-surcharge-grid" class="table" style="width:auto;margin-bottom:0;">';
         $html .= '<thead><tr>'
             . '<th>' . $this->l('Term') . '</th>'
-            . '<th>' . $this->l('Percentage') . '</th>'
-            . '<th>' . $this->l('Fixed fee') . '</th>'
-            . '<th>' . $this->l('Cap on percentage') . '</th>'
+            . '<th class="two-col-percentage">' . $this->l('Percentage') . '</th>'
+            . '<th class="two-col-fixed">' . $this->l('Fixed fee') . '</th>'
+            . '<th class="two-col-cap">' . $this->l('Cap on percentage') . '</th>'
             . '</tr></thead><tbody>';
 
         foreach ($this->getAvailablePaymentTerms() as $days) {
@@ -6637,11 +6640,11 @@ class Twopayment extends PaymentModule
 
             $html .= '<tr>'
                 . '<td style="vertical-align:middle;">' . sprintf($this->l('%d days'), $days) . '</td>'
-                . '<td><div class="input-group" style="' . $cell_style . '">'
+                . '<td class="two-col-percentage"><div class="input-group" style="' . $cell_style . '">'
                 . '<input type="text" class="form-control" name="' . $pct_name . '" value="' . $pct . '">'
                 . '<span class="input-group-addon">%</span></div></td>'
-                . '<td><input type="text" class="form-control" style="' . $cell_style . '" name="' . $fixed_name . '" value="' . $fixed . '"></td>'
-                . '<td><input type="text" class="form-control" style="' . $cell_style . '" name="' . $cap_name . '" value="' . $cap . '"></td>'
+                . '<td class="two-col-fixed"><input type="text" class="form-control" style="' . $cell_style . '" name="' . $fixed_name . '" value="' . $fixed . '"></td>'
+                . '<td class="two-col-cap"><input type="text" class="form-control" style="' . $cell_style . '" name="' . $cap_name . '" value="' . $cap . '"></td>'
                 . '</tr>';
         }
 

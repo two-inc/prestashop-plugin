@@ -108,6 +108,31 @@
             }
             updateRoundingStepVisibility();
             $('select[name="PS_TWO_SURCHARGE_ROUNDING_BASIS"]').on('change', updateRoundingStepVisibility);
+
+            // Surcharge grid - hide the whole grid when no surcharge is applied,
+            // and hide the columns that don't apply to the selected method:
+            //   none                 -> hide entire grid
+            //   percentage           -> Percentage + Cap (hide Fixed fee)
+            //   fixed                -> Fixed fee only (hide Percentage + Cap)
+            //   fixed_and_percentage -> all columns
+            function updateSurchargeGridVisibility() {
+                var type = $('select[name="PS_TWO_SURCHARGE_TYPE"]').val();
+                var grid = $('#two-surcharge-grid');
+                var gridGroup = grid.closest('.form-group');
+                if (!type || type === 'none') {
+                    gridGroup.hide();
+                    return;
+                }
+                gridGroup.show();
+                var showPercentage = (type === 'percentage' || type === 'fixed_and_percentage');
+                var showFixed = (type === 'fixed' || type === 'fixed_and_percentage');
+                var showCap = (type === 'percentage' || type === 'fixed_and_percentage');
+                grid.find('.two-col-percentage').toggle(showPercentage);
+                grid.find('.two-col-fixed').toggle(showFixed);
+                grid.find('.two-col-cap').toggle(showCap);
+            }
+            updateSurchargeGridVisibility();
+            $('select[name="PS_TWO_SURCHARGE_TYPE"]').on('change', updateSurchargeGridVisibility);
         });
     </script>
 {/literal}
