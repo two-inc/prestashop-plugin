@@ -631,6 +631,28 @@ class Twopayment extends PaymentModule
                             'name' => 'name'
                         )
                     ),
+                    // Debug mode lives in General Settings for parity with
+                    // Magento's two_general > general group (which includes it).
+                    array(
+                        'type' => 'switch',
+                        'label' => $this->l('Enable Debug Mode'),
+                        'name' => 'PS_TWO_DEBUG_MODE',
+                        'is_bool' => true,
+                        'desc' => $this->l('Enable detailed logging for troubleshooting. Logs tax calculations and other diagnostic data. Only enable when requested by Two support.'),
+                        'required' => false,
+                        'values' => array(
+                            array(
+                                'id' => 'PS_TWO_DEBUG_MODE_ON',
+                                'value' => 1,
+                                'label' => $this->l('Yes')
+                            ),
+                            array(
+                                'id' => 'PS_TWO_DEBUG_MODE_OFF',
+                                'value' => 0,
+                                'label' => $this->l('No')
+                            ),
+                        ),
+                    ),
                 ),
                 'submit' => array(
                     'title' => $this->l('Save'),
@@ -654,15 +676,23 @@ class Twopayment extends PaymentModule
     {
         $source = $this->getOfferableTermSource(true);
         sort($source);
+        // Configured per-term fee preview (days => "+2.5%" / "+2.5% +$5.00"),
+        // only for terms with a non-zero surcharge. Appended to the checkbox
+        // label so the merchant sees the fee next to each offered term.
+        $fee_preview = $this->getTwoSurchargeChipPreview();
         $query = array();
         foreach ($source as $term) {
             $term = (int) $term;
             $type_class = in_array($term, self::EOM_PAYMENT_TERMS_OPTIONS, true)
                 ? 'two-term-both'
                 : 'two-term-standard';
+            $label = sprintf($this->l('%d days'), $term);
+            if (isset($fee_preview[$term]) && $fee_preview[$term] !== '') {
+                $label .= ' (' . $fee_preview[$term] . ')';
+            }
             $query[] = array(
                 'id' => (string) $term,
-                'name' => sprintf($this->l('%d days'), $term),
+                'name' => $label,
                 'val' => '1',
                 'class' => 'two-term-option two-term-' . $term . ' ' . $type_class,
             );
@@ -680,6 +710,7 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_MERCHANT_SHORT_NAME'] = Tools::getValue('PS_TWO_MERCHANT_SHORT_NAME', Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'));
         $fields_values['PS_TWO_MERCHANT_API_KEY'] = Tools::getValue('PS_TWO_MERCHANT_API_KEY', Configuration::get('PS_TWO_MERCHANT_API_KEY'));
         $fields_values['PS_TWO_ENVIRONMENT'] = Tools::getValue('PS_TWO_ENVIRONMENT', Configuration::get('PS_TWO_ENVIRONMENT'));
+        $fields_values['PS_TWO_DEBUG_MODE'] = Tools::getValue('PS_TWO_DEBUG_MODE', Configuration::get('PS_TWO_DEBUG_MODE'));
         return $fields_values;
     }
 
@@ -736,6 +767,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', $shortNameToSave);
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY')));
         Configuration::updateValue('PS_TWO_ENVIRONMENT', Tools::getValue('PS_TWO_ENVIRONMENT'));
+        Configuration::updateValue('PS_TWO_DEBUG_MODE', Tools::getValue('PS_TWO_DEBUG_MODE'));
         if ($this->verifiedMerchantId) {
             if ((string) Configuration::get('PS_TWO_MERCHANT_ID') !== (string) $this->verifiedMerchantId) {
                 // Merchant identity changed: drop the cached term list so
@@ -811,6 +843,50 @@ class Twopayment extends PaymentModule
             ),
         );
 
+        // Checkout fields (Magento two_payment > checkout_fields parity):
+        // optional buyer inputs, placed after the term selection and before
+        // the surcharge configuration.
+        $inputs[] = array(
+            'type' => 'switch',
+            'label' => $this->l('Show Department field'),
+            'name' => 'PS_TWO_ENABLE_DEPARTMENT',
+            'is_bool' => true,
+            'desc' => $this->l('If you choose YES then customers will see department field in checkout.'),
+            'required' => true,
+            'values' => array(
+                array(
+                    'id' => 'PS_TWO_ENABLE_DEPARTMENT_ON',
+                    'value' => 1,
+                    'label' => $this->l('Yes')
+                ),
+                array(
+                    'id' => 'PS_TWO_ENABLE_DEPARTMENT_OFF',
+                    'value' => 0,
+                    'label' => $this->l('No')
+                ),
+            ),
+        );
+        $inputs[] = array(
+            'type' => 'switch',
+            'label' => $this->l('Show Project field'),
+            'name' => 'PS_TWO_ENABLE_PROJECT',
+            'is_bool' => true,
+            'desc' => $this->l('If you choose YES then customers will see project field in checkout.'),
+            'required' => true,
+            'values' => array(
+                array(
+                    'id' => 'PS_TWO_ENABLE_PROJECT_ON',
+                    'value' => 1,
+                    'label' => $this->l('Yes')
+                ),
+                array(
+                    'id' => 'PS_TWO_ENABLE_PROJECT_OFF',
+                    'value' => 0,
+                    'label' => $this->l('No')
+                ),
+            ),
+        );
+
         // Offset pricing fee (buyer surcharge) fields — appended so the
         // per-term grid reflects the merchant's currently-offered terms.
         // TWO-24752 / TWO-24893.
@@ -836,6 +912,10 @@ class Twopayment extends PaymentModule
 
         // Payment term type (STANDARD or EOM)
         $fields_values['PS_TWO_PAYMENT_TERM_TYPE'] = Tools::getValue('PS_TWO_PAYMENT_TERM_TYPE', Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'));
+
+        // Checkout fields (moved from the former "Other Settings" tab).
+        $fields_values['PS_TWO_ENABLE_DEPARTMENT'] = Tools::getValue('PS_TWO_ENABLE_DEPARTMENT', Configuration::get('PS_TWO_ENABLE_DEPARTMENT'));
+        $fields_values['PS_TWO_ENABLE_PROJECT'] = Tools::getValue('PS_TWO_ENABLE_PROJECT', Configuration::get('PS_TWO_ENABLE_PROJECT'));
 
         // Payment terms checkboxes
         $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
@@ -873,6 +953,10 @@ class Twopayment extends PaymentModule
         if ($term_type === 'STANDARD' || $term_type === 'EOM') {
             Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', $term_type);
         }
+
+        // Checkout fields (moved from the former "Other Settings" tab).
+        Configuration::updateValue('PS_TWO_ENABLE_DEPARTMENT', Tools::getValue('PS_TWO_ENABLE_DEPARTMENT'));
+        Configuration::updateValue('PS_TWO_ENABLE_PROJECT', Tools::getValue('PS_TWO_ENABLE_PROJECT'));
 
         // Save payment terms checkboxes. Iterate ONLY the terms the admin form
         // actually rendered (the backend-restricted offerable source), NOT the
@@ -919,7 +1003,7 @@ class Twopayment extends PaymentModule
         $fields_form = array(
             'form' => array(
                 'legend' => array(
-                    'title' => $this->l('Other Settings'),
+                    'title' => $this->l('Advanced Settings'),
                     'icon' => 'icon-cogs',
                 ),
                 'input' => array(
@@ -978,46 +1062,6 @@ class Twopayment extends PaymentModule
                             ),
                             array(
                                 'id' => 'PS_TWO_ENABLE_COMPANY_ID_OFF',
-                                'value' => 0,
-                                'label' => $this->l('No')
-                            ),
-                        ),
-                    ),
-                    array(
-                        'type' => 'switch',
-                        'label' => $this->l('Show Department field'),
-                        'name' => 'PS_TWO_ENABLE_DEPARTMENT',
-                        'is_bool' => true,
-                        'desc' => $this->l('If you choose YES then customers will see department field in checkout.'),
-                        'required' => true,
-                        'values' => array(
-                            array(
-                                'id' => 'PS_TWO_ENABLE_DEPARTMENT_ON',
-                                'value' => 1,
-                                'label' => $this->l('Yes')
-                            ),
-                            array(
-                                'id' => 'PS_TWO_ENABLE_DEPARTMENT_OFF',
-                                'value' => 0,
-                                'label' => $this->l('No')
-                            ),
-                        ),
-                    ),
-                    array(
-                        'type' => 'switch',
-                        'label' => $this->l('Show Project field'),
-                        'name' => 'PS_TWO_ENABLE_PROJECT',
-                        'is_bool' => true,
-                        'desc' => $this->l('If you choose YES then customers will see project field in checkout.'),
-                        'required' => true,
-                        'values' => array(
-                            array(
-                                'id' => 'PS_TWO_ENABLE_PROJECT_ON',
-                                'value' => 1,
-                                'label' => $this->l('Yes')
-                            ),
-                            array(
-                                'id' => 'PS_TWO_ENABLE_PROJECT_OFF',
                                 'value' => 0,
                                 'label' => $this->l('No')
                             ),
@@ -1121,26 +1165,6 @@ class Twopayment extends PaymentModule
                             ),
                         ),
                     ),
-                    array(
-                        'type' => 'switch',
-                        'label' => $this->l('Enable Debug Mode'),
-                        'name' => 'PS_TWO_DEBUG_MODE',
-                        'is_bool' => true,
-                        'desc' => $this->l('Enable detailed logging for troubleshooting. Logs tax calculations and other diagnostic data. Only enable when requested by Two support.'),
-                        'required' => false,
-                        'values' => array(
-                            array(
-                                'id' => 'PS_TWO_DEBUG_MODE_ON',
-                                'value' => 1,
-                                'label' => $this->l('Yes')
-                            ),
-                            array(
-                                'id' => 'PS_TWO_DEBUG_MODE_OFF',
-                                'value' => 0,
-                                'label' => $this->l('No')
-                            ),
-                        ),
-                    ),
                 ),
                 'submit' => array(
                     'title' => $this->l('Save'),
@@ -1157,14 +1181,11 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_USE_ACCOUNT_TYPE'] = Tools::getValue('PS_TWO_USE_ACCOUNT_TYPE', Configuration::get('PS_TWO_USE_ACCOUNT_TYPE'));
         $fields_values['PS_TWO_ENABLE_COMPANY_NAME'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME', Configuration::get('PS_TWO_ENABLE_COMPANY_NAME'));
         $fields_values['PS_TWO_ENABLE_COMPANY_ID'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_ID', Configuration::get('PS_TWO_ENABLE_COMPANY_ID'));
-        $fields_values['PS_TWO_ENABLE_DEPARTMENT'] = Tools::getValue('PS_TWO_ENABLE_DEPARTMENT', Configuration::get('PS_TWO_ENABLE_DEPARTMENT'));
-        $fields_values['PS_TWO_ENABLE_PROJECT'] = Tools::getValue('PS_TWO_ENABLE_PROJECT', Configuration::get('PS_TWO_ENABLE_PROJECT'));
         $fields_values['PS_TWO_FINALIZE_PURCHASE'] = Tools::getValue('PS_TWO_FINALIZE_PURCHASE', Configuration::get('PS_TWO_FINALIZE_PURCHASE'));
         $fields_values['PS_TWO_USE_OWN_INVOICES'] = Tools::getValue('PS_TWO_USE_OWN_INVOICES', Configuration::get('PS_TWO_USE_OWN_INVOICES'));
         $fields_values['PS_TWO_ENABLE_B2B_B2C'] = Tools::getValue('PS_TWO_ENABLE_B2B_B2C', Configuration::get('PS_TWO_ENABLE_B2B_B2C'));
         $fields_values['PS_TWO_ENABLE_TAX_SUBTOTALS'] = Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
-        $fields_values['PS_TWO_DEBUG_MODE'] = Tools::getValue('PS_TWO_DEBUG_MODE', Configuration::get('PS_TWO_DEBUG_MODE'));
         return $fields_values;
     }
 
@@ -1177,16 +1198,13 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', Tools::getValue('PS_TWO_USE_ACCOUNT_TYPE'));
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME'));
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_ID', Tools::getValue('PS_TWO_ENABLE_COMPANY_ID'));
-        Configuration::updateValue('PS_TWO_ENABLE_DEPARTMENT', Tools::getValue('PS_TWO_ENABLE_DEPARTMENT'));
-        Configuration::updateValue('PS_TWO_ENABLE_PROJECT', Tools::getValue('PS_TWO_ENABLE_PROJECT'));
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', Tools::getValue('PS_TWO_FINALIZE_PURCHASE'));
         Configuration::updateValue('PS_TWO_USE_OWN_INVOICES', Tools::getValue('PS_TWO_USE_OWN_INVOICES'));
         Configuration::updateValue('PS_TWO_ENABLE_B2B_B2C', Tools::getValue('PS_TWO_ENABLE_B2B_B2C'));
         Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', (int) Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
-        Configuration::updateValue('PS_TWO_DEBUG_MODE', Tools::getValue('PS_TWO_DEBUG_MODE'));
 
-        $this->output .= $this->displayConfirmation($this->l('Other settings are updated.'));
+        $this->output .= $this->displayConfirmation($this->l('Advanced settings are updated.'));
     }
 
     protected function renderTwoOrderStatusForm()
@@ -1272,7 +1290,7 @@ class Twopayment extends PaymentModule
                     <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Buyer rejected?') . '</strong> ' . $this->l('The company may have reached their credit limit or failed Two\'s credit check') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Company not found?') . '</strong> ' . $this->l('Customer must enter their official registered company name') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Phone invalid?') . '</strong> ' . $this->l('Ensure the phone number includes country code and is in a valid format') . '</li>
-                    <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Amount mismatch errors?') . '</strong> ' . $this->l('Enable Debug Mode in Other Settings and contact Two support with the logs') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Amount mismatch errors?') . '</strong> ' . $this->l('Enable Debug Mode in General Settings and contact Two support with the logs') . '</li>
                 </ul>
             </div>
         </div>
@@ -6263,6 +6281,52 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Per-term surcharge preview text keyed by days, for display alongside the
+     * term (e.g. the "Available Payment Terms" checkboxes and the checkout chip
+     * selector).
+     *
+     * Deliberately NOT the live-quoted buyer_fee_share (that requires a real
+     * POST /v1/pricing/order/fee call per term via fetchTwoTermFee — fine for
+     * one term at order-intent time, too many synchronous calls to make on
+     * every checkout page load for a whole term list). This instead previews
+     * the raw configured rate (the same percentage/fixed values the merchant
+     * already sees in the admin grid), not the final rounded/capped amount.
+     *
+     * @return array<int, string> days => preview text, only for terms with a
+     *                            non-zero configured rate
+     */
+    public function getTwoSurchargeChipPreview()
+    {
+        $settings = $this->getTwoSurchargeSettings();
+        if (!$settings['enabled']) {
+            return array();
+        }
+
+        $preview = array();
+        foreach ($settings['grid'] as $days => $row) {
+            $parts = array();
+            if ((float) $row['percentage'] > 0) {
+                $parts[] = '+' . rtrim(rtrim(sprintf('%.2f', $row['percentage']), '0'), '.') . '%';
+            }
+            if ((float) $row['fixed'] > 0) {
+                // Tools::displayPrice() needs the Symfony kernel container;
+                // fail-soft to a plain number rather than fatal the checkout
+                // page media hook if it's unavailable in some bootstrap path.
+                try {
+                    $parts[] = '+' . Tools::displayPrice($row['fixed']);
+                } catch (\Throwable $e) {
+                    $parts[] = '+' . sprintf('%.2f', $row['fixed']);
+                }
+            }
+            if (!empty($parts)) {
+                $preview[(int) $days] = implode(' ', $parts);
+            }
+        }
+
+        return $preview;
+    }
+
+    /**
      * Build the buyer_fee_share block for one term (or null when no surcharge
      * is configured), from module Configuration.
      *
@@ -6517,7 +6581,7 @@ class Twopayment extends PaymentModule
 
     /**
      * HelperForm input entries for the surcharge settings (appended to the
-     * Other Settings form). Presentation only — all decisioning is in the
+     * Payment Settings form). Presentation only — all decisioning is in the
      * methods above.
      *
      * @return array
@@ -6542,14 +6606,22 @@ class Twopayment extends PaymentModule
             ),
         );
         $inputs[] = array(
-            'type' => 'switch',
+            'type' => 'select',
             'label' => $this->l('Surcharge Calculation Basis'),
             'name' => 'PS_TWO_SURCHARGE_DIFFERENTIAL',
-            'is_bool' => true,
             'desc' => $this->l('Total fee charges the configured surcharge for the chosen term. Fee difference charges only the difference versus the default payment term.'),
-            'values' => array(
-                array('id' => 'PS_TWO_SURCHARGE_DIFFERENTIAL_ON', 'value' => 1, 'label' => $this->l('Fee difference vs default term')),
-                array('id' => 'PS_TWO_SURCHARGE_DIFFERENTIAL_OFF', 'value' => 0, 'label' => $this->l('Total fee for selected term')),
+            // Presented as a dropdown to match Magento's Surcharge Calculation
+            // Basis field (Two\Gateway\Model\Config\Source\SurchargeCalculationBasis).
+            // Values keep the original 0/1 boolean semantics: 0 = total fee,
+            // 1 = differential — so the stored config and downstream behaviour
+            // (getTwoSurchargeSettings 'differential') are unchanged.
+            'options' => array(
+                'query' => array(
+                    array('id' => 0, 'name' => $this->l('Total fee for selected term')),
+                    array('id' => 1, 'name' => $this->l('Fee difference vs default payment term')),
+                ),
+                'id' => 'id',
+                'name' => 'name',
             ),
         );
         $inputs[] = array(
@@ -6609,12 +6681,15 @@ class Twopayment extends PaymentModule
     protected function getTwoSurchargeGridHtml()
     {
         $cell_style = 'width:110px;';
-        $html = '<table class="table" style="width:auto;margin-bottom:0;">';
+        // id + per-column classes let the admin JS (configuration.tpl) show/hide
+        // the whole grid and individual columns by the selected surcharge type,
+        // without fragile positional selectors.
+        $html = '<table id="two-surcharge-grid" class="table" style="width:auto;margin-bottom:0;">';
         $html .= '<thead><tr>'
             . '<th>' . $this->l('Term') . '</th>'
-            . '<th>' . $this->l('Percentage') . '</th>'
-            . '<th>' . $this->l('Fixed fee') . '</th>'
-            . '<th>' . $this->l('Cap on percentage') . '</th>'
+            . '<th class="two-col-percentage">' . $this->l('Percentage') . '</th>'
+            . '<th class="two-col-fixed">' . $this->l('Fixed fee') . '</th>'
+            . '<th class="two-col-cap">' . $this->l('Cap on percentage') . '</th>'
             . '</tr></thead><tbody>';
 
         foreach ($this->getAvailablePaymentTerms() as $days) {
@@ -6629,11 +6704,11 @@ class Twopayment extends PaymentModule
 
             $html .= '<tr>'
                 . '<td style="vertical-align:middle;">' . sprintf($this->l('%d days'), $days) . '</td>'
-                . '<td><div class="input-group" style="' . $cell_style . '">'
+                . '<td class="two-col-percentage"><div class="input-group" style="' . $cell_style . '">'
                 . '<input type="text" class="form-control" name="' . $pct_name . '" value="' . $pct . '">'
                 . '<span class="input-group-addon">%</span></div></td>'
-                . '<td><input type="text" class="form-control" style="' . $cell_style . '" name="' . $fixed_name . '" value="' . $fixed . '"></td>'
-                . '<td><input type="text" class="form-control" style="' . $cell_style . '" name="' . $cap_name . '" value="' . $cap . '"></td>'
+                . '<td class="two-col-fixed"><input type="text" class="form-control" style="' . $cell_style . '" name="' . $fixed_name . '" value="' . $fixed . '"></td>'
+                . '<td class="two-col-cap"><input type="text" class="form-control" style="' . $cell_style . '" name="' . $cap_name . '" value="' . $cap . '"></td>'
                 . '</tr>';
         }
 
