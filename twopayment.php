@@ -606,11 +606,12 @@ class Twopayment extends PaymentModule
                         'type' => 'select',
                         'label' => $this->l('Environment'),
                         'name' => 'PS_TWO_ENVIRONMENT',
-                        'desc' => $this->l('Select the Two API environment to use. Production for live transactions, Development for testing.'),
+                        'desc' => $this->l('Select the Two API environment to use. Production for live transactions, Staging/Development for testing.'),
                         'required' => true,
                         'options' => array(
                             'query' => array(
                                 array('id_option' => 'development', 'name' => $this->l('Development')),
+                                array('id_option' => 'staging', 'name' => $this->l('Staging')),
                                 array('id_option' => 'production', 'name' => $this->l('Production')),
                             ),
                             'id' => 'id_option',
@@ -5654,6 +5655,18 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Explicit environment -> API host map, mirroring the Woo/Magento plugins'
+     * templated 'api.<mode>.two.inc' host builder. Any value not in this map
+     * (including the legacy 'development' option and empty/unset config)
+     * falls back to sandbox — the same default this plugin has always used
+     * for "not production".
+     */
+    private const ENVIRONMENT_HOSTS = array(
+        'production' => 'https://api.two.inc',
+        'staging' => 'https://api.staging.two.inc',
+    );
+
+    /**
      * Get base API host for a specific environment value (without relying on saved config)
      */
     private function getTwoCheckoutHostUrlForEnvironment($environment)
@@ -5662,7 +5675,7 @@ class Twopayment extends PaymentModule
         if ($override !== null) {
             return $override;
         }
-        return ($environment === 'production') ? 'https://api.two.inc' : 'https://api.sandbox.two.inc';
+        return self::ENVIRONMENT_HOSTS[$environment] ?? 'https://api.sandbox.two.inc';
     }
 
     /**
