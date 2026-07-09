@@ -5695,7 +5695,7 @@ class Twopayment extends PaymentModule
         if ($override !== null) {
             return $override;
         }
-        return self::ENVIRONMENT_HOSTS[$environment] ?? 'https://api.sandbox.two.inc';
+        return self::ENVIRONMENT_HOSTS[strtolower((string) $environment)] ?? 'https://api.sandbox.two.inc';
     }
 
     /**
