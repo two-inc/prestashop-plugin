@@ -1271,6 +1271,20 @@ class TwoCheckoutManager {
             termChip.title = formatChipLabel(days);
             termChip.appendChild(daysLabel);
 
+            // Per-term surcharge preview (configured-rate text, not a live quote
+            // — see getTwoSurchargeChipPreview() in twopayment.php). The PHP side
+            // decides show/hide (Magento allZero parity): the map is empty when
+            // all terms are zero-rated, and carries a non-empty string for every
+            // term otherwise (a "No fee" marker for zero-rate terms), so a simple
+            // presence check renders the fee on every chip or none.
+            const surchargePreview = this.config.payment_term_surcharge_preview;
+            if (surchargePreview && surchargePreview[days]) {
+                const surchargeLabel = document.createElement('span');
+                surchargeLabel.className = 'two-term-chip__surcharge';
+                surchargeLabel.textContent = surchargePreview[days];
+                termChip.appendChild(surchargeLabel);
+            }
+
             termChip.dataset.days = days;
 
             // Set default term: use configured default, or if only one term, make it selected, or first term

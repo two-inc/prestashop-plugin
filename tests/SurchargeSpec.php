@@ -31,6 +31,7 @@ final class SurchargeSpec
         self::testBuildTwoBuyerFeeShareWiresConfigAndDefaultTerm();
         self::testRoundingStepOptionsAreBrandDrivenSortedAndFormatted();
         self::testSurchargeLineLabelTemplateBrandAndDefault();
+        self::testSurchargeChipPreviewAllZeroHiddenElseShownOnEveryTerm();
         self::testFetchTermFeeFailsSoftOnHttpError();
         self::testFetchTermFeeFailsSoftOnCurrencyMismatch();
         self::testFetchTermFeeParsesSuccess();
@@ -239,11 +240,57 @@ final class SurchargeSpec
     {
         self::reset();
         $module = new TwopaymentTestHarness();
-        // Default (no config, brand label null).
-        TinyAssert::same('Service charge', $module->getTwoSurchargeLineLabel(30));
-        // Merchant template with %s term substitution.
+        // Default (no config, brand label null): term-naming default label.
+        TinyAssert::same('Payment terms fee - 30 days', $module->getTwoSurchargeLineLabel(30));
+        TinyAssert::same('Payment terms fee - 60 days', $module->getTwoSurchargeLineLabel(60));
+        // Merchant template with %s term substitution still wins over the default.
         Configuration::updateValue('PS_TWO_SURCHARGE_LINE_DESC', 'Financing fee (%s days)');
         TinyAssert::same('Financing fee (30 days)', $module->getTwoSurchargeLineLabel(30));
+    }
+
+    /**
+     * Chip fee preview mirrors Magento's "allZero" rule: hidden on every chip
+     * when all offered terms are zero-rated, shown on every chip (with a
+     * "No fee" marker for a zero-rate term) as soon as one term carries a fee.
+     * Preview parts are gated by the configured surcharge type.
+     */
+    private static function testSurchargeChipPreviewAllZeroHiddenElseShownOnEveryTerm(): void
+    {
+        // Offer two terms so "all zero" vs "some non-zero" is observable.
+        self::reset();
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_60', 1);
+        $module = new TwopaymentTestHarness();
+
+        // Surcharge disabled -> nothing to preview.
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'none');
+        TinyAssert::same([], $module->getTwoSurchargeChipPreview());
+
+        // Percentage type, every offered term zero-rated -> hide on all chips.
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '0');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_60', '0');
+        TinyAssert::same([], $module->getTwoSurchargeChipPreview());
+
+        // One term now carries a fee -> every chip shows a preview; the
+        // zero-rate term renders the "No fee" marker (Magento allZero parity).
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_60', '2.5');
+        $preview = $module->getTwoSurchargeChipPreview();
+        TinyAssert::same('No fee', $preview[30]);
+        TinyAssert::same('+2.5%', $preview[60]);
+
+        // Type gating: a fixed-only surcharge must ignore a stray percentage
+        // value left over from a previous type, and preview the fixed amount.
+        self::reset();
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_60', 1);
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'fixed');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '5'); // stray, must be ignored
+        Configuration::updateValue('PS_TWO_SURCHARGE_FIXED_60', '10');
+        $moduleFixed = new TwopaymentTestHarness();
+        $previewFixed = $moduleFixed->getTwoSurchargeChipPreview();
+        TinyAssert::same('No fee', $previewFixed[30]);
+        TinyAssert::same('+10.00', $previewFixed[60]);
     }
 
     private static function testFetchTermFeeFailsSoftOnHttpError(): void
@@ -321,7 +368,7 @@ final class SurchargeSpec
         $cart->id_address_invoice = 900;
         $line = $module->buildTwoSurchargeLineItemForCart($cart, 100.0);
         TinyAssert::same('SERVICE', $line['type']);
-        TinyAssert::same('Service charge', $line['name']);
+        TinyAssert::same('Payment terms fee - 30 days', $line['name']);
         TinyAssert::same('5.00', $line['net_amount']);
         TinyAssert::same('0.25', $line['tax_rate'], 'API tax rate passes through (percentage normalised), never hard-coded zero');
         TinyAssert::same('1.25', $line['tax_amount']);
@@ -519,7 +566,7 @@ final class SurchargeSpec
         TinyAssert::same('6.75', $payload['tax_amount']);
 
         $feeLines = array_values(array_filter($payload['line_items'], function ($item) {
-            return isset($item['type']) && $item['type'] === 'SERVICE' && $item['name'] === 'Service charge';
+            return isset($item['type']) && $item['type'] === 'SERVICE' && $item['name'] === 'Payment terms fee - 30 days';
         }));
         TinyAssert::count(1, $feeLines);
         TinyAssert::same('5.00', $feeLines[0]['net_amount']);

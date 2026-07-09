@@ -2596,6 +2596,7 @@ class Twopayment extends PaymentModule
                 'available_payment_terms' => $this->getAvailablePaymentTerms(),
                 'default_payment_term' => $this->getDefaultPaymentTerm(),
                 'payment_term_type' => Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'),
+                'payment_term_surcharge_preview' => $this->getTwoSurchargeChipPreview(),
                 'i18n' => $i18n,
                 'phone_i18n' => array(
                     'invalid_number' => $this->l('Invalid phone number'),
@@ -6282,18 +6283,29 @@ class Twopayment extends PaymentModule
 
     /**
      * Per-term surcharge preview text keyed by days, for display alongside the
-     * term (e.g. the "Available Payment Terms" checkboxes and the checkout chip
-     * selector).
+     * term: the "Available Payment Terms" checkboxes in admin and the checkout
+     * chip selector share this single calculation.
      *
      * Deliberately NOT the live-quoted buyer_fee_share (that requires a real
      * POST /v1/pricing/order/fee call per term via fetchTwoTermFee — fine for
      * one term at order-intent time, too many synchronous calls to make on
      * every checkout page load for a whole term list). This instead previews
      * the raw configured rate (the same percentage/fixed values the merchant
-     * already sees in the admin grid), not the final rounded/capped amount.
+     * already sees in the admin grid, gated by the configured surcharge type),
+     * not the final rounded/capped amount.
      *
-     * @return array<int, string> days => preview text, only for terms with a
-     *                            non-zero configured rate
+     * Display rule mirrors Magento's gateway_method.js term-chip "allZero"
+     * logic: when EVERY offered term has a zero fee, the fee is hidden on all
+     * chips (empty array); when AT LEAST ONE term carries a fee, every chip
+     * shows its fee — a zero-fee term in that set renders a "No fee" marker
+     * rather than being blank, so the row is consistent. (Magento renders the
+     * zero term as a formatted "+0.00"; because this preview is rate-based, not
+     * amount-based, a "No fee" marker is the closest faithful equivalent.) This
+     * also governs the admin checkbox suffix, so the merchant sees the same
+     * "no fee shown to buyer" signal the checkout chip will render.
+     *
+     * @return array<int, string> days => preview text; empty when all offered
+     *                            terms are zero-rated (Magento allZero-hide)
      */
     public function getTwoSurchargeChipPreview()
     {
@@ -6302,13 +6314,21 @@ class Twopayment extends PaymentModule
             return array();
         }
 
-        $preview = array();
+        // Gate the preview parts by the configured surcharge type, mirroring
+        // TwoSurchargeCalculator::buildBuyerFeeShare, so the chip never previews
+        // a component (percentage or fixed) the API will not actually charge.
+        $type = $settings['type'];
+        $hasPercentage = in_array($type, array('percentage', 'fixed_and_percentage'), true);
+        $hasFixed = in_array($type, array('fixed', 'fixed_and_percentage'), true);
+
+        $rawParts = array();
+        $anyNonZero = false;
         foreach ($settings['grid'] as $days => $row) {
             $parts = array();
-            if ((float) $row['percentage'] > 0) {
+            if ($hasPercentage && (float) $row['percentage'] > 0) {
                 $parts[] = '+' . rtrim(rtrim(sprintf('%.2f', $row['percentage']), '0'), '.') . '%';
             }
-            if ((float) $row['fixed'] > 0) {
+            if ($hasFixed && (float) $row['fixed'] > 0) {
                 // Tools::displayPrice() needs the Symfony kernel container;
                 // fail-soft to a plain number rather than fatal the checkout
                 // page media hook if it's unavailable in some bootstrap path.
@@ -6318,9 +6338,22 @@ class Twopayment extends PaymentModule
                     $parts[] = '+' . sprintf('%.2f', $row['fixed']);
                 }
             }
+            $rawParts[(int) $days] = $parts;
             if (!empty($parts)) {
-                $preview[(int) $days] = implode(' ', $parts);
+                $anyNonZero = true;
             }
+        }
+
+        // All offered terms zero-rated -> hide the fee on every chip (allZero).
+        if (!$anyNonZero) {
+            return array();
+        }
+
+        // At least one term carries a fee -> show every chip's fee; a zero-fee
+        // term renders the "No fee" marker so the row is not visually ragged.
+        $preview = array();
+        foreach ($rawParts as $days => $parts) {
+            $preview[$days] = !empty($parts) ? implode(' ', $parts) : $this->l('No fee');
         }
 
         return $preview;
@@ -6529,7 +6562,11 @@ class Twopayment extends PaymentModule
     /**
      * Buyer-facing label for the surcharge line. A merchant-set description
      * wins (with %s replaced by the term days, Magento/WooCommerce parity);
-     * else the brand label; else a translated default.
+     * else the brand label; else a translated default that names the term.
+     *
+     * The default is "Payment terms fee - <n> days" (with the selected term's
+     * day count); a merchant who has typed their own Surcharge Line Description
+     * keeps it — this default only applies when that field is left blank.
      *
      * @param int $days
      * @return string
@@ -6545,7 +6582,7 @@ class Twopayment extends PaymentModule
             return $this->l((string) $brandLabel);
         }
 
-        return $this->l('Service charge');
+        return sprintf($this->l('Payment terms fee - %d days'), (int) $days);
     }
 
     /**
