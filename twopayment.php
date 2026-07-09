@@ -6542,14 +6542,22 @@ class Twopayment extends PaymentModule
             ),
         );
         $inputs[] = array(
-            'type' => 'switch',
+            'type' => 'select',
             'label' => $this->l('Surcharge Calculation Basis'),
             'name' => 'PS_TWO_SURCHARGE_DIFFERENTIAL',
-            'is_bool' => true,
             'desc' => $this->l('Total fee charges the configured surcharge for the chosen term. Fee difference charges only the difference versus the default payment term.'),
-            'values' => array(
-                array('id' => 'PS_TWO_SURCHARGE_DIFFERENTIAL_ON', 'value' => 1, 'label' => $this->l('Fee difference vs default term')),
-                array('id' => 'PS_TWO_SURCHARGE_DIFFERENTIAL_OFF', 'value' => 0, 'label' => $this->l('Total fee for selected term')),
+            // Presented as a dropdown to match Magento's Surcharge Calculation
+            // Basis field (Two\Gateway\Model\Config\Source\SurchargeCalculationBasis).
+            // Values keep the original 0/1 boolean semantics: 0 = total fee,
+            // 1 = differential — so the stored config and downstream behaviour
+            // (getTwoSurchargeSettings 'differential') are unchanged.
+            'options' => array(
+                'query' => array(
+                    array('id' => 0, 'name' => $this->l('Total fee for selected term')),
+                    array('id' => 1, 'name' => $this->l('Fee difference vs default payment term')),
+                ),
+                'id' => 'id',
+                'name' => 'name',
             ),
         );
         $inputs[] = array(
