@@ -606,11 +606,12 @@ class Twopayment extends PaymentModule
                         'type' => 'select',
                         'label' => $this->l('Environment'),
                         'name' => 'PS_TWO_ENVIRONMENT',
-                        'desc' => $this->l('Select the Two API environment to use. Production for live transactions, Development for testing.'),
+                        'desc' => $this->l('Select the Two API environment to use. Production for live transactions, Staging/Development for testing.'),
                         'required' => true,
                         'options' => array(
                             'query' => array(
                                 array('id_option' => 'development', 'name' => $this->l('Development')),
+                                array('id_option' => 'staging', 'name' => $this->l('Staging')),
                                 array('id_option' => 'production', 'name' => $this->l('Production')),
                             ),
                             'id' => 'id_option',
@@ -727,8 +728,8 @@ class Twopayment extends PaymentModule
         
         // Validate environment
         $environment = Tools::getValue('PS_TWO_ENVIRONMENT');
-        if (Tools::isEmpty($environment) || !in_array($environment, array('production', 'development'))) {
-            $this->errors[] = $this->l('Please select a valid environment (Production or Development).');
+        if (Tools::isEmpty($environment) || !in_array($environment, array('production', 'development', 'staging'))) {
+            $this->errors[] = $this->l('Please select a valid environment (Production, Development or Staging).');
         }
         
         // Validate payment terms
@@ -746,7 +747,7 @@ class Twopayment extends PaymentModule
         // Verify API key with Two against selected environment and capture merchant id and short name
         $apiKey = trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY'));
         $env = Tools::getValue('PS_TWO_ENVIRONMENT');
-        if (!empty($apiKey) && in_array($env, array('production','development'))) {
+        if (!empty($apiKey) && in_array($env, array('production','development','staging'))) {
             $verify = $this->verifyTwoApiKey($apiKey, $env);
             if ($verify === false) {
                 $this->errors[] = $this->l('API key verification failed. Please check your API key.');
@@ -5654,6 +5655,38 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Explicit environment -> API host map, mirroring the Woo/Magento plugins'
+     * templated 'api.<mode>.two.inc' host builder. Any value not in this map
+     * (including the legacy 'development' option and empty/unset config)
+     * falls back to sandbox — the same default this plugin has always used
+     * for "not production".
+     */
+    private const ENVIRONMENT_HOSTS = array(
+        'production' => 'https://api.two.inc',
+        'staging' => 'https://api.staging.two.inc',
+    );
+
+    /**
+     * Explicit environment -> merchant portal host map, mirroring ENVIRONMENT_HOSTS.
+     * Any value not in this map (legacy 'development', empty/unset) falls back to
+     * the sandbox portal.
+     */
+    private const PORTAL_HOSTS = array(
+        'production' => 'https://portal.two.inc',
+        'staging' => 'https://portal.staging.two.inc',
+    );
+
+    /**
+     * Explicit environment -> buyer portal login URL map, mirroring ENVIRONMENT_HOSTS.
+     * Any value not in this map (legacy 'development', empty/unset) falls back to
+     * the sandbox buyer portal.
+     */
+    private const BUYER_PORTAL_HOSTS = array(
+        'production' => 'https://buyer.two.inc/login',
+        'staging' => 'https://buyer.staging.two.inc/login',
+    );
+
+    /**
      * Get base API host for a specific environment value (without relying on saved config)
      */
     private function getTwoCheckoutHostUrlForEnvironment($environment)
@@ -5662,7 +5695,7 @@ class Twopayment extends PaymentModule
         if ($override !== null) {
             return $override;
         }
-        return ($environment === 'production') ? 'https://api.two.inc' : 'https://api.sandbox.two.inc';
+        return self::ENVIRONMENT_HOSTS[strtolower((string) $environment)] ?? 'https://api.sandbox.two.inc';
     }
 
     /**
@@ -5747,11 +5780,8 @@ class Twopayment extends PaymentModule
         if ($override !== null) {
             return $override;
         }
-        $environment = Configuration::get('PS_TWO_ENVIRONMENT');
-        if ($environment === 'production') {
-            return 'https://portal.two.inc';
-        }
-        return 'https://portal.sandbox.two.inc';
+        $environment = strtolower((string) Configuration::get('PS_TWO_ENVIRONMENT'));
+        return self::PORTAL_HOSTS[$environment] ?? 'https://portal.sandbox.two.inc';
     }
 
     /**
@@ -5761,12 +5791,8 @@ class Twopayment extends PaymentModule
     public function getTwoBuyerPortalUrl()
     {
         $environment = strtolower((string) Configuration::get('PS_TWO_ENVIRONMENT'));
-        if ($environment === 'production') {
-            return 'https://buyer.two.inc/login';
-        }
-
-        // Development/non-production environments use the sandbox buyer portal.
-        return 'https://buyer.sandbox.two.inc/login';
+        // Development/non-production environments fall back to the sandbox buyer portal.
+        return self::BUYER_PORTAL_HOSTS[$environment] ?? 'https://buyer.sandbox.two.inc/login';
     }
 
     /**

@@ -3436,7 +3436,7 @@ final class OrderBuilderSpec
         TinyAssert::same('https://buyer.sandbox.two.inc/login', $module->getTwoBuyerPortalUrl());
 
         Configuration::updateValue('PS_TWO_ENVIRONMENT', 'staging');
-        TinyAssert::same('https://buyer.sandbox.two.inc/login', $module->getTwoBuyerPortalUrl());
+        TinyAssert::same('https://buyer.staging.two.inc/login', $module->getTwoBuyerPortalUrl());
     }
 
     private static function testResolveTwoAttemptOrderIdForCancellationPrefersAttemptOrderId(): void
