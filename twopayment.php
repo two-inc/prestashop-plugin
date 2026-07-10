@@ -78,6 +78,15 @@ class Twopayment extends PaymentModule
     const COOKIE_EXPIRY_ONE_HOUR = 3600; // 1 hour
     const ATTEMPT_RETENTION_DAYS = 90; // Keep attempt telemetry for 90 days
     const ATTEMPT_CLEANUP_INTERVAL_SECONDS = 86400; // Run cleanup at most once per day
+    // Cross-request cache for the buyer fee-share quote (POST /v1/pricing/order/fee).
+    // fetchTwoTermFee() already request-scopes the quote via $this->twoFeeCache, but
+    // that array is rebuilt from scratch on every HTTP request (e.g. each order-intent
+    // poll from the Payment step), so repeat polls with an unchanged cart/address/term
+    // were re-quoting the fee every time. Session-cache the quote for a short TTL,
+    // keyed on the same signature (days|gross|country|currency) already used for the
+    // request-scoped cache, so it is invalidated the instant any of those change.
+    // TWO-25040 / order-intent poll perf.
+    const FEE_QUOTE_CACHE_TTL_SECONDS = 60;
 
     protected $output = '';
     protected $errors = array();
@@ -6395,6 +6404,11 @@ class Twopayment extends PaymentModule
             return $this->twoFeeCache[$cacheKey];
         }
 
+        $sessionCached = $this->getTwoFeeQuoteFromSession($cacheKey);
+        if ($sessionCached !== null) {
+            return $this->twoFeeCache[$cacheKey] = $sessionCached;
+        }
+
         $share = $this->buildTwoBuyerFeeShare($days);
         if ($share === null || $gross_amount <= 0) {
             return $this->twoFeeCache[$cacheKey] = null;
@@ -6433,11 +6447,84 @@ class Twopayment extends PaymentModule
             return $this->twoFeeCache[$cacheKey] = null;
         }
 
-        return $this->twoFeeCache[$cacheKey] = array(
+        $quote = array(
             'buyer_fee_share' => (string) $response['buyer_fee_share'],
             'total_fee_tax_rate' => isset($response['total_fee_tax_rate']) ? (string) $response['total_fee_tax_rate'] : null,
             'currency' => $respCurrency,
         );
+        $this->storeTwoFeeQuoteInSession($cacheKey, $quote);
+
+        return $this->twoFeeCache[$cacheKey] = $quote;
+    }
+
+    /**
+     * Read a cross-request-cached fee quote from the session cookie, honouring
+     * FEE_QUOTE_CACHE_TTL_SECONDS and requiring an exact signature match
+     * (days|gross|country|currency) — any change in cart total, term, buyer
+     * country or currency invalidates the cache immediately regardless of TTL.
+     * Fail-soft: any malformed/missing cache data is treated as a miss.
+     *
+     * @param string $cacheKey
+     * @return array|null
+     */
+    private function getTwoFeeQuoteFromSession($cacheKey)
+    {
+        if (!isset($this->context->cookie)) {
+            return null;
+        }
+        $cachedKey = isset($this->context->cookie->two_fee_quote_key) ? (string) $this->context->cookie->two_fee_quote_key : '';
+        if ($cachedKey === '' || $cachedKey !== $cacheKey) {
+            return null;
+        }
+        $cachedTs = isset($this->context->cookie->two_fee_quote_ts) ? (int) $this->context->cookie->two_fee_quote_ts : 0;
+        if ($cachedTs <= 0 || (time() - $cachedTs) > self::FEE_QUOTE_CACHE_TTL_SECONDS) {
+            return null;
+        }
+        $cachedData = isset($this->context->cookie->two_fee_quote_data) ? (string) $this->context->cookie->two_fee_quote_data : '';
+        if ($cachedData === '') {
+            return null;
+        }
+        $decoded = json_decode($cachedData, true);
+        if (!is_array($decoded) || !isset($decoded['buyer_fee_share'])) {
+            return null;
+        }
+
+        return array(
+            'buyer_fee_share' => (string) $decoded['buyer_fee_share'],
+            'total_fee_tax_rate' => isset($decoded['total_fee_tax_rate']) ? $decoded['total_fee_tax_rate'] : null,
+            'currency' => isset($decoded['currency']) ? (string) $decoded['currency'] : '',
+        );
+    }
+
+    /**
+     * Persist a freshly-fetched fee quote to the session cookie for reuse by
+     * subsequent requests within FEE_QUOTE_CACHE_TTL_SECONDS (e.g. repeat
+     * order-intent polls on the Payment step). Best-effort: failures to write
+     * the cookie never block the quote itself being returned to the caller.
+     *
+     * @param string $cacheKey
+     * @param array  $quote
+     * @return void
+     */
+    private function storeTwoFeeQuoteInSession($cacheKey, array $quote)
+    {
+        if (!isset($this->context->cookie)) {
+            return;
+        }
+        try {
+            // Deliberately do NOT call $this->context->cookie->setExpire() here:
+            // PrestaShop's cookie has a single expiry for the whole cookie (not
+            // per-key), and other code paths rely on it being COOKIE_EXPIRY_ONE_HOUR
+            // (company verification cache, rate limiting, order-intent-approved
+            // flag). Shortening it to this cache's TTL would silently truncate
+            // those. Staleness here is bounded instead by the two_fee_quote_ts
+            // field checked in getTwoFeeQuoteFromSession().
+            $this->context->cookie->two_fee_quote_key = $cacheKey;
+            $this->context->cookie->two_fee_quote_data = json_encode($quote);
+            $this->context->cookie->two_fee_quote_ts = (string) time();
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Failed to cache fee quote in session - ' . $e->getMessage(), 2);
+        }
     }
 
     /**
