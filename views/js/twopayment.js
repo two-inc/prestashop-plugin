@@ -114,7 +114,8 @@
                 ajaxToken: twopayment.ajax_token,
                 available_payment_terms: twopayment.available_payment_terms || [30],
                 default_payment_term: twopayment.default_payment_term || 30,
-                payment_term_type: twopayment.payment_term_type
+                payment_term_type: twopayment.payment_term_type,
+                payment_term_surcharge_preview: twopayment.payment_term_surcharge_preview || {}
             });
             
             // Store global reference for modules
@@ -138,7 +139,9 @@
                             orderIntentUrl: twopayment.order_intent_url,
                             ajaxToken: twopayment.ajax_token,
                             available_payment_terms: twopayment.available_payment_terms || [30],
-                            default_payment_term: twopayment.default_payment_term || 30
+                            default_payment_term: twopayment.default_payment_term || 30,
+                            payment_term_type: twopayment.payment_term_type,
+                            payment_term_surcharge_preview: twopayment.payment_term_surcharge_preview || {}
                         });
                         window.TwoCheckoutManager_Instance = checkoutManager;
                     }
