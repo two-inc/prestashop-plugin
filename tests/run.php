@@ -4844,6 +4844,7 @@ require __DIR__ . '/RefundSpec.php';
 require __DIR__ . '/SurchargeSpec.php';
 require __DIR__ . '/DefaultPaymentTermSpec.php';
 require __DIR__ . '/DeployVersionInfoSpec.php';
+require __DIR__ . '/MerchantFeeRatesSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
@@ -4854,6 +4855,7 @@ $tests = [
     'SurchargeSpec::runAll' => [SurchargeSpec::class, 'runAll'],
     'DefaultPaymentTermSpec::runAll' => [DefaultPaymentTermSpec::class, 'runAll'],
     'DeployVersionInfoSpec::runAll' => [DeployVersionInfoSpec::class, 'runAll'],
+    'MerchantFeeRatesSpec::runAll' => [MerchantFeeRatesSpec::class, 'runAll'],
 ];
 
 $failed = 0;

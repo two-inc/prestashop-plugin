@@ -563,6 +563,14 @@ class Twopayment extends PaymentModule
                 'two_merchant_id' => Configuration::get('PS_TWO_MERCHANT_ID'),
                 'two_merchant_short_name' => Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'),
                 'two_env' => Configuration::get('PS_TWO_ENVIRONMENT'),
+                // Module admin AJAX endpoint for the inline merchant-fee
+                // display beside each payment-term checkbox. Dispatched by
+                // AdminController::postProcess() to
+                // ajaxProcessFetchMerchantFeeRates() on this module.
+                'two_fee_rates_url' => $this->context->link->getAdminLink('AdminModules', false)
+                    . '&configure=' . $this->name
+                    . '&token=' . Tools::getAdminTokenLite('AdminModules')
+                    . '&ajax=1&action=FetchMerchantFeeRates',
             )
         );
 
@@ -679,20 +687,18 @@ class Twopayment extends PaymentModule
      * STANDARD-only. Refreshes the cache (admin config render is a sanctioned
      * refresh point).
      *
-     * Deliberately does NOT append a fee preview to the label. A prior change
-     * appended getTwoSurchargeChipPreview() here, but that helper previews the
-     * BUYER surcharge (computed from the merchant's own PS_TWO_SURCHARGE_*
-     * config) - the wrong concept for this screen. This admin form is where
-     * the merchant decides which terms to OFFER, so the figure that belongs
-     * here is the FEE TWO CHARGES THE MERCHANT for offering that term.
-     * Magento's admin equivalent sources percentage_fee/fixed_fee per term
-     * from a dedicated POST /pricing/v1/merchant/rates call (see
-     * Controller/Adminhtml/Config/Fees.php + payment-terms-config.js in
-     * magento-plugin) - entirely separate from its checkout-side
-     * buyer_fee_share. This plugin does not fetch that merchant-rates data
-     * anywhere yet, so rather than fabricate a number the label is left
-     * plain; wiring the real merchant-fee API call is follow-up work, not
-     * faked here.
+     * Each label carries an empty `.two-term-fee` placeholder span. The
+     * figure that belongs on this screen is the FEE TWO CHARGES THE MERCHANT
+     * for offering that term (NOT the buyer surcharge - a prior change
+     * wrongly appended getTwoSurchargeChipPreview() here and was reverted).
+     * The span is populated live by admin AJAX against
+     * POST /pricing/v1/merchant/rates (fetchTwoMerchantFeeRates /
+     * ajaxProcessFetchMerchantFeeRates), mirroring magento-plugin's
+     * Controller/Adminhtml/Config/Fees.php + payment-terms-config.js: fees
+     * are never pre-fetched synchronously on page render, and on API failure
+     * the span silently stays empty so the admin page never breaks. The raw
+     * HTML is safe here: the core HelperForm checkbox template emits the
+     * label name unescaped ({$value[$input.values.name]}).
      *
      * @return array<int, array{id:string,name:string,val:string,class:string}>
      */
@@ -708,7 +714,8 @@ class Twopayment extends PaymentModule
                 : 'two-term-standard';
             $query[] = array(
                 'id' => (string) $term,
-                'name' => sprintf($this->l('%d days'), $term),
+                'name' => sprintf($this->l('%d days'), $term)
+                    . ' <span class="two-term-fee text-muted" data-term="' . $term . '"></span>',
                 'val' => '1',
                 'class' => 'two-term-option two-term-' . $term . ' ' . $type_class,
             );
@@ -6275,6 +6282,124 @@ class Twopayment extends PaymentModule
         // (TWO-24859). Shared timestamp reset last, forcing a re-fetch.
         Configuration::updateValue(self::CONFIG_MERCHANT_DUE_IN_DAYS, 0);
         Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, 0);
+    }
+
+    /**
+     * Fetch the merchant fee (what Two charges the merchant, NOT the buyer
+     * surcharge) per net-term via POST /pricing/v1/merchant/rates, for the
+     * inline fee display beside each "Available Payment Terms" checkbox on
+     * the admin config page. Mirrors magento-plugin's
+     * Controller/Adminhtml/Config/Fees.php.
+     *
+     * Fail-soft contract (identical to Magento's): ANY failure - missing API
+     * key, empty term list, connection error, non-200, malformed body -
+     * returns array('success' => false) and the admin page renders without
+     * fees. This method must never throw and never block long (tight
+     * timeout): it sits behind an AJAX call on a config-page render path.
+     *
+     * The buyer_country_code is a best-effort stand-in (store default
+     * country): there is no cart/buyer context on a config page. Magento
+     * uses its store's default country the same way.
+     *
+     * @param array $days Requested term day-counts (raw, will be normalised).
+     * @return array{success:bool,currency?:string,fees?:array<string,array{percentage:float,fixed:float}>}
+     */
+    public function fetchTwoMerchantFeeRates($days)
+    {
+        $net_terms = $this->normaliseMerchantTerms($days);
+        if (empty($net_terms)) {
+            return array('success' => false);
+        }
+        $api_key = Configuration::get('PS_TWO_MERCHANT_API_KEY');
+        if (Tools::isEmpty($api_key)) {
+            return array('success' => false);
+        }
+
+        $response = $this->setTwoPaymentRequest(
+            '/pricing/v1/merchant/rates',
+            array(
+                'buyer_country_code' => $this->getTwoAdminBuyerCountryCode(),
+                // No admin recourse-pricing config exists (Magento parity:
+                // its Fees controller hardcodes false too).
+                'recourse_pricing' => false,
+                'net_terms' => $net_terms,
+            ),
+            'POST',
+            array(),
+            // Render-path call: cap tight rather than block the admin page.
+            self::API_TIMEOUT_STATE_CHECK
+        );
+
+        $http_status = (is_array($response) && isset($response['http_status'])) ? (int) $response['http_status'] : 0;
+        if ($http_status !== self::HTTP_STATUS_OK || !isset($response['rates']) || !is_array($response['rates'])) {
+            return array('success' => false);
+        }
+
+        $fees = array();
+        foreach ($response['rates'] as $rate) {
+            if (!is_array($rate) || !isset($rate['net_terms']) || !is_numeric($rate['net_terms'])) {
+                continue;
+            }
+            $fee_days = (int) $rate['net_terms'];
+            if ($fee_days <= 0) {
+                continue;
+            }
+            $fees[(string) $fee_days] = array(
+                // API sends numbers as strings - cast for JSON numeric output.
+                'percentage' => isset($rate['percentage_fee']) && is_numeric($rate['percentage_fee']) ? (float) $rate['percentage_fee'] : 0.0,
+                'fixed' => isset($rate['fixed_fee']) && is_numeric($rate['fixed_fee']) ? (float) $rate['fixed_fee'] : 0.0,
+            );
+        }
+
+        return array(
+            'success' => true,
+            // Currency MUST come from the response - the fee amounts do too.
+            // The JS appends it as a code suffix; an empty value makes the JS
+            // drop the fixed component rather than guess its currency.
+            'currency' => isset($response['currency']) ? (string) $response['currency'] : '',
+            'fees' => $fees,
+        );
+    }
+
+    /**
+     * Buyer country stand-in for admin-side rate previews: the shop's default
+     * country (PS_COUNTRY_DEFAULT resolved to ISO), since a config page has
+     * no cart/buyer context. Falls back to 'NL' - the same stand-in
+     * magento-plugin's Fees controller uses when no country is configured.
+     *
+     * @return string Two-letter uppercase ISO country code.
+     */
+    private function getTwoAdminBuyerCountryCode()
+    {
+        $id_country = (int) Configuration::get('PS_COUNTRY_DEFAULT');
+        if ($id_country > 0) {
+            $iso = Country::getIsoById($id_country);
+            if (is_string($iso) && trim($iso) !== '') {
+                return strtoupper(trim($iso));
+            }
+        }
+        return 'NL';
+    }
+
+    /**
+     * Admin AJAX entry point for the inline term-fee display. PrestaShop's
+     * AdminController::postProcess() dispatches
+     * index.php?controller=AdminModules&configure=twopayment&ajax=1&action=FetchMerchantFeeRates
+     * to this module method (core dispatches ajax actions to the configured
+     * module on the AdminModules controller; present in 1.7.x and 8.x). The
+     * admin token is validated by the controller before postProcess runs.
+     *
+     * Reads a JSON-encoded `terms` array from the request and echoes the
+     * normalised fee payload. Always responds 200 with {"success":false} on
+     * failure - the JS blanks the fee spans silently (Magento parity).
+     */
+    public function ajaxProcessFetchMerchantFeeRates()
+    {
+        $raw = Tools::getValue('terms', '');
+        $decoded = is_string($raw) ? json_decode($raw, true) : $raw;
+        $result = $this->fetchTwoMerchantFeeRates(is_array($decoded) ? $decoded : array());
+        header('Content-Type: application/json');
+        die(json_encode($result));
     }
 
     /**
