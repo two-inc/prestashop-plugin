@@ -312,8 +312,8 @@ final class SurchargeSpec
         Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '2.5');
         Configuration::updateValue('PS_TWO_SURCHARGE_PCT_60', '5');
 
-        $module = new class () extends TwopaymentTestHarness {
-            public function buildPaymentTermCheckboxQueryPublic()
+        $module = new class extends TwopaymentTestHarness {
+            public function buildPaymentTermCheckboxQueryPublic(): array
             {
                 return $this->buildPaymentTermCheckboxQuery();
             }
