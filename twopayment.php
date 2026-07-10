@@ -1236,6 +1236,16 @@ class Twopayment extends PaymentModule
      */
     protected function renderTwoPluginInfo()
     {
+        $commit_hash = $this->getTwoDeployedCommitHash();
+        $deployed_at = $this->getTwoDeployedAtLabel();
+        $version_line = $this->l('Plugin Version:') . ' ' . $this->version . ' | ' . $this->l('PrestaShop:') . ' ' . _PS_VERSION_;
+        if ($commit_hash !== null) {
+            $version_line .= ' | ' . $this->l('Commit:') . ' ' . htmlspecialchars($commit_hash, ENT_QUOTES, 'UTF-8');
+        }
+        if ($deployed_at !== null) {
+            $version_line .= ' | ' . $this->l('Deployed:') . ' ' . htmlspecialchars($deployed_at, ENT_QUOTES, 'UTF-8');
+        }
+
         $html = '
         <div class="panel">
             <div class="panel-heading">
@@ -1306,11 +1316,96 @@ class Twopayment extends PaymentModule
                     <li><strong>' . $this->l('Documentation:') . '</strong> <a href="https://docs.two.inc" target="_blank">docs.two.inc</a></li>
                     <li><strong>' . $this->l('Merchant Portal:') . '</strong> <a href="' . $this->getTwoPortalUrl() . '" target="_blank">' . $this->l('Open Two Portal') . '</a></li>
                 </ul>
-                <p style="margin-top:15px;"><small class="text-muted">' . $this->l('Plugin Version:') . ' ' . $this->version . ' | ' . $this->l('PrestaShop:') . ' ' . _PS_VERSION_ . '</small></p>
+                <p style="margin-top:15px;"><small class="text-muted">' . $version_line . '</small></p>
             </div>
         </div>';
         
         return $html;
+    }
+
+    /**
+     * Best-effort short commit hash from a co-located .git directory, if one exists
+     * on disk (this plugin's git-sync deploy mechanism may or may not leave one).
+     * Plain file reads only — no exec. Returns null (never throws/fatals) if unavailable.
+     *
+     * @param string|null $git_dir Overridable for tests; defaults to this module's .git
+     *
+     * @return string|null
+     */
+    private function getTwoDeployedCommitHash($git_dir = null)
+    {
+        if ($git_dir === null) {
+            $git_dir = __DIR__ . '/.git';
+        }
+        if (!is_dir($git_dir) || !is_readable($git_dir)) {
+            return null;
+        }
+
+        $head_file = $git_dir . '/HEAD';
+        if (!is_file($head_file) || !is_readable($head_file)) {
+            return null;
+        }
+
+        $head_contents = trim((string) @file_get_contents($head_file));
+        if ($head_contents === '') {
+            return null;
+        }
+
+        $sha = null;
+        if (strpos($head_contents, 'ref:') === 0) {
+            $ref_path = trim(substr($head_contents, 4));
+            $ref_file = $git_dir . '/' . $ref_path;
+            if (is_file($ref_file) && is_readable($ref_file)) {
+                $sha = trim((string) @file_get_contents($ref_file));
+            } else {
+                // Fall back to packed-refs (loose ref file may not exist after a gc/pack).
+                $packed_refs_file = $git_dir . '/packed-refs';
+                if (is_file($packed_refs_file) && is_readable($packed_refs_file)) {
+                    $packed = @file($packed_refs_file, FILE_IGNORE_NEW_LINES);
+                    if (is_array($packed)) {
+                        foreach ($packed as $line) {
+                            // Skip comments/pragmas ("# pack-refs...") and peeled-tag lines ("^<sha>").
+                            if ($line === '' || $line[0] === '#' || $line[0] === '^') {
+                                continue;
+                            }
+                            $space_pos = strpos($line, ' ');
+                            if ($space_pos === false) {
+                                continue;
+                            }
+                            $line_ref = substr($line, $space_pos + 1);
+                            if ($line_ref === $ref_path) {
+                                $sha = substr($line, 0, $space_pos);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        } elseif (preg_match('/^[0-9a-f]{40}$/i', $head_contents)) {
+            // Detached HEAD: file contains the sha directly.
+            $sha = $head_contents;
+        }
+
+        if (!$sha || !preg_match('/^[0-9a-f]{7,40}$/i', $sha)) {
+            return null;
+        }
+
+        return substr($sha, 0, 7);
+    }
+
+    /**
+     * Best-effort deployment timestamp label based on this file's mtime.
+     * Returns null (never throws/fatals) if unavailable.
+     *
+     * @return string|null
+     */
+    private function getTwoDeployedAtLabel()
+    {
+        $mtime = @filemtime(__FILE__);
+        if (!$mtime) {
+            return null;
+        }
+        return date('Y-m-d H:i:s', $mtime);
     }
 
     /**
@@ -1323,20 +1418,14 @@ class Twopayment extends PaymentModule
         $environment = (string) Configuration::get('PS_TWO_ENVIRONMENT', 'development');
         $api_verified = (bool) Configuration::get('PS_TWO_API_KEY_VERIFIED');
         $ssl_disabled = (bool) Configuration::get('PS_TWO_DISABLE_SSL_VERIFY');
-        $order_intent_enabled = true;
-        $use_account_type = (bool) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE');
-        $term_type = (string) Configuration::get('PS_TWO_PAYMENT_TERM_TYPE', 'STANDARD');
-        $available_terms = $this->getAvailablePaymentTerms();
-
-        $term_labels = array();
-        foreach ($available_terms as $term) {
-            $term_labels[] = (int) $term;
-        }
+        $merchant_short_name = (string) Configuration::get('PS_TWO_MERCHANT_SHORT_NAME');
 
         $status_rows = array(
             array(
                 'label' => $this->l('API key'),
-                'value' => $api_verified ? $this->l('Verified') : $this->l('Not verified'),
+                'value' => $api_verified
+                    ? $this->l('Verified') . ($merchant_short_name !== '' ? ' (' . htmlspecialchars($merchant_short_name, ENT_QUOTES, 'UTF-8') . ')' : '')
+                    : $this->l('Not verified'),
                 'ok' => $api_verified,
             ),
             array(
@@ -1348,21 +1437,6 @@ class Twopayment extends PaymentModule
                 'label' => $this->l('SSL verification'),
                 'value' => $ssl_disabled ? $this->l('Disabled') : $this->l('Enabled'),
                 'ok' => !$ssl_disabled,
-            ),
-            array(
-                'label' => $this->l('Order intent pre-check'),
-                'value' => $order_intent_enabled ? $this->l('Enabled') : $this->l('Disabled'),
-                'ok' => true,
-            ),
-            array(
-                'label' => $this->l('Account type mode'),
-                'value' => $use_account_type ? $this->l('Enabled') : $this->l('Disabled'),
-                'ok' => true,
-            ),
-            array(
-                'label' => $this->l('Payment terms'),
-                'value' => $term_type . ' (' . implode(', ', $term_labels) . ')',
-                'ok' => !empty($term_labels),
             ),
         );
 
