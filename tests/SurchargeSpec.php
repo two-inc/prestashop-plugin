@@ -31,8 +31,8 @@ final class SurchargeSpec
         self::testBuildTwoBuyerFeeShareWiresConfigAndDefaultTerm();
         self::testRoundingStepOptionsAreBrandDrivenSortedAndFormatted();
         self::testSurchargeLineLabelTemplateBrandAndDefault();
-        self::testSurchargeChipPreviewAllZeroHiddenElseShownOnEveryTerm();
         self::testPaymentTermCheckboxLabelsNeverCarrySurchargePreview();
+        self::testSurchargeGridRendersEveryOfferableTermRowWithVisibilityState();
         self::testFetchTermFeeFailsSoftOnHttpError();
         self::testFetchTermFeeFailsSoftOnCurrencyMismatch();
         self::testFetchTermFeeParsesSuccess();
@@ -250,58 +250,14 @@ final class SurchargeSpec
     }
 
     /**
-     * Chip fee preview mirrors Magento's "allZero" rule: hidden on every chip
-     * when all offered terms are zero-rated, shown on every chip (with a
-     * "No fee" marker for a zero-rate term) as soon as one term carries a fee.
-     * Preview parts are gated by the configured surcharge type.
-     */
-    private static function testSurchargeChipPreviewAllZeroHiddenElseShownOnEveryTerm(): void
-    {
-        // Offer two terms so "all zero" vs "some non-zero" is observable.
-        self::reset();
-        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
-        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_60', 1);
-        $module = new TwopaymentTestHarness();
-
-        // Surcharge disabled -> nothing to preview.
-        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'none');
-        TinyAssert::same([], $module->getTwoSurchargeChipPreview());
-
-        // Percentage type, every offered term zero-rated -> hide on all chips.
-        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
-        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '0');
-        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_60', '0');
-        TinyAssert::same([], $module->getTwoSurchargeChipPreview());
-
-        // One term now carries a fee -> every chip shows a preview; the
-        // zero-rate term renders the "No fee" marker (Magento allZero parity).
-        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_60', '2.5');
-        $preview = $module->getTwoSurchargeChipPreview();
-        TinyAssert::same('No fee', $preview[30]);
-        TinyAssert::same('+2.5%', $preview[60]);
-
-        // Type gating: a fixed-only surcharge must ignore a stray percentage
-        // value left over from a previous type, and preview the fixed amount.
-        self::reset();
-        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
-        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_60', 1);
-        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'fixed');
-        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '5'); // stray, must be ignored
-        Configuration::updateValue('PS_TWO_SURCHARGE_FIXED_60', '10');
-        $moduleFixed = new TwopaymentTestHarness();
-        $previewFixed = $moduleFixed->getTwoSurchargeChipPreview();
-        TinyAssert::same('No fee', $previewFixed[30]);
-        TinyAssert::same('+10.00', $previewFixed[60]);
-    }
-
-    /**
      * Regression: the admin "Available Payment Terms" checkbox
-     * labels (buildPaymentTermCheckboxQuery) must never carry the buyer
+     * labels (buildPaymentTermCheckboxQuery) must never carry a buyer
      * surcharge preview, even when a non-zero surcharge is configured. That
      * screen is where the merchant picks which terms to OFFER, not a place
      * to preview what the BUYER will be charged - conflating the two showed
-     * the wrong fee concept next to each term. getTwoSurchargeChipPreview()
-     * itself (and its checkout-chip consumer) is untouched by this fix.
+     * the wrong fee concept next to each term. (The configured-rate preview
+     * itself has since been removed everywhere: the checkout chip now shows
+     * a loading indicator until the real quoted amount resolves.)
      */
     private static function testPaymentTermCheckboxLabelsNeverCarrySurchargePreview(): void
     {
@@ -318,13 +274,6 @@ final class SurchargeSpec
                 return $this->buildPaymentTermCheckboxQuery();
             }
         };
-
-        // Sanity check: the surcharge preview itself IS non-empty for these
-        // terms, so an empty checkbox result below is a real assertion, not
-        // an artefact of an unconfigured surcharge.
-        $preview = $module->getTwoSurchargeChipPreview();
-        TinyAssert::same('+2.5%', $preview[30]);
-        TinyAssert::same('+5%', $preview[60]);
 
         $rows = $module->buildPaymentTermCheckboxQueryPublic();
         TinyAssert::true(count($rows) > 0, 'expected at least one offered term');
@@ -343,6 +292,62 @@ final class SurchargeSpec
                 $row['name']
             );
         }
+    }
+
+    /**
+     * Regression: the admin per-term surcharge grid renders a row for EVERY
+     * offerable term (not just the saved/available subset), so the admin JS
+     * can show/hide rows live as term checkboxes are toggled. Initial
+     * visibility (inline display:none) mirrors getAvailablePaymentTerms():
+     * checkbox config truthy AND valid for the current term type.
+     */
+    private static function testSurchargeGridRendersEveryOfferableTermRowWithVisibilityState(): void
+    {
+        $harness = static function (): object {
+            return new class extends TwopaymentTestHarness {
+                public function getTwoSurchargeGridHtmlPublic(): string
+                {
+                    return $this->getTwoSurchargeGridHtml();
+                }
+            };
+        };
+        $rowPattern = static function (int $days, bool $visible): string {
+            $style = $visible ? '' : ' style="display:none"';
+            return '<tr class="two-surcharge-row two-surcharge-row-' . $days . ' '
+                . (in_array($days, Twopayment::EOM_PAYMENT_TERMS_OPTIONS, true) ? 'two-term-both' : 'two-term-standard')
+                . '" data-term="' . $days . '"' . $style . '>';
+        };
+
+        // STANDARD type: every offerable term gets a row; only checked terms
+        // start visible.
+        self::reset();
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_60', 1);
+        $html = $harness()->getTwoSurchargeGridHtmlPublic();
+        foreach (Twopayment::PAYMENT_TERMS_OPTIONS as $days) {
+            $days = (int) $days;
+            $visible = in_array($days, [30, 60], true);
+            TinyAssert::true(
+                strpos($html, $rowPattern($days, $visible)) !== false,
+                'expected ' . ($visible ? 'visible' : 'hidden') . ' grid row for ' . $days . ' days'
+            );
+            // Inputs exist for every offerable term regardless of visibility.
+            TinyAssert::true(
+                strpos($html, 'name="PS_TWO_SURCHARGE_PCT_' . $days . '"') !== false,
+                'expected percentage input for ' . $days . ' days'
+            );
+        }
+
+        // EOM type: a checked non-EOM term (90) starts hidden; a checked EOM
+        // term (30) starts visible; an unchecked EOM term (45) starts hidden.
+        self::reset();
+        Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', 'EOM');
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_90', 1);
+        $html = $harness()->getTwoSurchargeGridHtmlPublic();
+        TinyAssert::true(strpos($html, $rowPattern(30, true)) !== false, 'checked EOM term row must start visible');
+        TinyAssert::true(strpos($html, $rowPattern(45, false)) !== false, 'unchecked EOM term row must start hidden');
+        TinyAssert::true(strpos($html, $rowPattern(90, false)) !== false, 'checked non-EOM term row must start hidden under EOM');
     }
 
     private static function testFetchTermFeeFailsSoftOnHttpError(): void

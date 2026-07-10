@@ -139,6 +139,32 @@
             updateSurchargeGridVisibility();
             $('select[name="PS_TWO_SURCHARGE_TYPE"]').on('change', updateSurchargeGridVisibility);
 
+            // Surcharge grid ROWS - one row is server-rendered per offerable
+            // term; show a row only while its "Available Payment Terms"
+            // checkbox is ticked AND the term is valid for the selected term
+            // type (EOM only allows the .two-term-both terms - same split the
+            // checkboxes use). Orthogonal to updateSurchargeGridVisibility(),
+            // which toggles COLUMNS by surcharge type: a cell is visible only
+            // when both its row and its column are (display:none on either
+            // axis wins), so the two functions compose without coordination.
+            function updateSurchargeGridRows() {
+                var termType = $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]:checked').val();
+                $('#two-surcharge-grid .two-surcharge-row').each(function () {
+                    var $row = $(this);
+                    var term = parseInt($row.data('term'), 10);
+                    var checked = $('input[name="PS_TWO_PAYMENT_TERMS_' + term + '"]').is(':checked');
+                    var validForType = termType !== 'EOM' || $row.hasClass('two-term-both');
+                    $row.toggle(checked && validForType);
+                });
+            }
+            $('input[name^="PS_TWO_PAYMENT_TERMS_"]').on('change', updateSurchargeGridRows);
+            $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]').on('change', updateSurchargeGridRows);
+            // Run once on load (after the checkbox-group and column-visibility
+            // passes above) so row state always derives from the live checkbox
+            // DOM, even if it disagrees with the server-rendered initial state
+            // (e.g. a failed-validation re-render with POSTed values).
+            updateSurchargeGridRows();
+
             // Inline merchant fee beside each "Available Payment Terms"
             // checkbox - the fee Two charges the merchant per term, fetched
             // live from the module's admin AJAX endpoint (which proxies
