@@ -16,7 +16,6 @@ require_once dirname(__FILE__) . '/classes/TwoSurchargeCalculator.php';
 class Twopayment extends PaymentModule
 {
     // Constants for order building logic
-    const GROSS_AMOUNT_TOLERANCE = 0.02; // 2 cents tolerance for rounding differences
     const ORDER_INTENT_EXPIRY_SECONDS = 1800; // 30 minutes
     
     // Constants for payment terms
@@ -3861,27 +3860,36 @@ class Twopayment extends PaymentModule
             $unit_price_net_prestashop = isset($line_item['price']) ? (float)$line_item['price'] : null;
             
             if ($unit_price_net_prestashop !== null) {
-                $unit_price_net = round($unit_price_net_prestashop, 2);
-                
-                // Calculate discount from PrestaShop's values
-                $expected_total = $quantity * $unit_price_net;
+                // Derive the discount at PrestaShop's native precision (6dp) and
+                // round once at the payload boundary. Rounding the unit price to
+                // 2dp before multiplying manufactures phantom +/-0.01 discounts
+                // whenever the third decimal of the unit price rounds opposite to
+                // the line total (e.g. 3 x 8.344: 3x8.34=25.02 vs total 25.03).
+                $expected_total = $quantity * $unit_price_net_prestashop;
                 $discount_amount = round($expected_total - $net_amount_prestashop, 2);
-                
-                // Ensure discount is not negative (protect against edge cases)
+
+                // A negative discount means quantity * unit_price < net total - a data
+                // inconsistency we must surface, not silently correct. The checkout-api
+                // validates order amounts and rejects bad payloads with a clear error.
                 if ($discount_amount < 0) {
-                    PrestaShopLogger::addLog('TwoPayment: Negative discount calculated for product ' . $line_item['id_product'] . ', clamping to 0', 2);
-                    $discount_amount = 0;
+                    PrestaShopLogger::addLog('TwoPayment: Negative discount calculated for product ' . $line_item['id_product'] . ' (quantity ' . $quantity . ' x unit price ' . $unit_price_net_prestashop . ' = ' . $expected_total . ' < net total ' . $net_amount_prestashop . ')', 3);
+                    throw new Exception('Negative discount calculated for product ' . $line_item['id_product']);
                 }
-                
+
+                $unit_price_net = round($unit_price_net_prestashop, 2);
                 $net_amount = $net_amount_prestashop;
             } else {
-                $discount_amount = isset($line_item['reduction']) ? (float)$line_item['reduction'] : 0;
-                
-                // Ensure discount is not negative
+                // Round to currency precision before the sign check; sub-cent float
+                // residue in PrestaShop's computed reduction is not a data error.
+                $discount_amount = isset($line_item['reduction']) ? round((float)$line_item['reduction'], 2) : 0;
+
+                // A negative reduction is a data inconsistency; surface it rather
+                // than silently zeroing it.
                 if ($discount_amount < 0) {
-                    $discount_amount = 0;
+                    PrestaShopLogger::addLog('TwoPayment: Negative reduction for product ' . $line_item['id_product'] . ' (reduction ' . $discount_amount . ')', 3);
+                    throw new Exception('Negative reduction for product ' . $line_item['id_product']);
                 }
-                
+
                 $unit_price_net = ($net_amount_prestashop + $discount_amount) / $quantity;
                 $unit_price_net = round($unit_price_net, 2);
                 

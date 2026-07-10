@@ -287,9 +287,18 @@ namespace {
 
     class PrestaShopLogger
     {
+        /** @var array<int,array{message:string,severity:int}> */
+        public static array $logs = [];
+
         public static function addLog($message, $severity = 1, $errorCode = null, $objectType = null, $objectId = null, $allowDuplicate = false): bool
         {
+            self::$logs[] = ['message' => (string) $message, 'severity' => (int) $severity];
             return true;
+        }
+
+        public static function reset(): void
+        {
+            self::$logs = [];
         }
     }
 
