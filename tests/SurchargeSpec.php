@@ -32,6 +32,7 @@ final class SurchargeSpec
         self::testRoundingStepOptionsAreBrandDrivenSortedAndFormatted();
         self::testSurchargeLineLabelTemplateBrandAndDefault();
         self::testSurchargeChipPreviewAllZeroHiddenElseShownOnEveryTerm();
+        self::testPaymentTermCheckboxLabelsNeverCarrySurchargePreview();
         self::testFetchTermFeeFailsSoftOnHttpError();
         self::testFetchTermFeeFailsSoftOnCurrencyMismatch();
         self::testFetchTermFeeParsesSuccess();
@@ -291,6 +292,49 @@ final class SurchargeSpec
         $previewFixed = $moduleFixed->getTwoSurchargeChipPreview();
         TinyAssert::same('No fee', $previewFixed[30]);
         TinyAssert::same('+10.00', $previewFixed[60]);
+    }
+
+    /**
+     * Regression: the admin "Available Payment Terms" checkbox
+     * labels (buildPaymentTermCheckboxQuery) must never carry the buyer
+     * surcharge preview, even when a non-zero surcharge is configured. That
+     * screen is where the merchant picks which terms to OFFER, not a place
+     * to preview what the BUYER will be charged - conflating the two showed
+     * the wrong fee concept next to each term. getTwoSurchargeChipPreview()
+     * itself (and its checkout-chip consumer) is untouched by this fix.
+     */
+    private static function testPaymentTermCheckboxLabelsNeverCarrySurchargePreview(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_60', 1);
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '2.5');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_60', '5');
+
+        $module = new class extends TwopaymentTestHarness {
+            public function buildPaymentTermCheckboxQueryPublic(): array
+            {
+                return $this->buildPaymentTermCheckboxQuery();
+            }
+        };
+
+        // Sanity check: the surcharge preview itself IS non-empty for these
+        // terms, so an empty checkbox result below is a real assertion, not
+        // an artefact of an unconfigured surcharge.
+        $preview = $module->getTwoSurchargeChipPreview();
+        TinyAssert::same('+2.5%', $preview[30]);
+        TinyAssert::same('+5%', $preview[60]);
+
+        $rows = $module->buildPaymentTermCheckboxQueryPublic();
+        TinyAssert::true(count($rows) > 0, 'expected at least one offered term');
+        foreach ($rows as $row) {
+            TinyAssert::false(
+                strpos($row['name'], '(') !== false,
+                'checkbox label must not carry a surcharge preview: ' . $row['name']
+            );
+            TinyAssert::same(sprintf('%d days', (int) $row['id']), $row['name']);
+        }
     }
 
     private static function testFetchTermFeeFailsSoftOnHttpError(): void
