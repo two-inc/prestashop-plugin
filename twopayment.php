@@ -670,29 +670,36 @@ class Twopayment extends PaymentModule
      * STANDARD-only. Refreshes the cache (admin config render is a sanctioned
      * refresh point).
      *
+     * Deliberately does NOT append a fee preview to the label. A prior change
+     * appended getTwoSurchargeChipPreview() here, but that helper previews the
+     * BUYER surcharge (computed from the merchant's own PS_TWO_SURCHARGE_*
+     * config) - the wrong concept for this screen. This admin form is where
+     * the merchant decides which terms to OFFER, so the figure that belongs
+     * here is the FEE TWO CHARGES THE MERCHANT for offering that term.
+     * Magento's admin equivalent sources percentage_fee/fixed_fee per term
+     * from a dedicated POST /pricing/v1/merchant/rates call (see
+     * Controller/Adminhtml/Config/Fees.php + payment-terms-config.js in
+     * magento-plugin) - entirely separate from its checkout-side
+     * buyer_fee_share. This plugin does not fetch that merchant-rates data
+     * anywhere yet, so rather than fabricate a number the label is left
+     * plain; wiring the real merchant-fee API call is follow-up work, not
+     * faked here.
+     *
      * @return array<int, array{id:string,name:string,val:string,class:string}>
      */
     protected function buildPaymentTermCheckboxQuery()
     {
         $source = $this->getOfferableTermSource(true);
         sort($source);
-        // Configured per-term fee preview (days => "+2.5%" / "+2.5% +$5.00"),
-        // only for terms with a non-zero surcharge. Appended to the checkbox
-        // label so the merchant sees the fee next to each offered term.
-        $fee_preview = $this->getTwoSurchargeChipPreview();
         $query = array();
         foreach ($source as $term) {
             $term = (int) $term;
             $type_class = in_array($term, self::EOM_PAYMENT_TERMS_OPTIONS, true)
                 ? 'two-term-both'
                 : 'two-term-standard';
-            $label = sprintf($this->l('%d days'), $term);
-            if (isset($fee_preview[$term]) && $fee_preview[$term] !== '') {
-                $label .= ' (' . $fee_preview[$term] . ')';
-            }
             $query[] = array(
                 'id' => (string) $term,
-                'name' => $label,
+                'name' => sprintf($this->l('%d days'), $term),
                 'val' => '1',
                 'class' => 'two-term-option two-term-' . $term . ' ' . $type_class,
             );
