@@ -1340,16 +1340,29 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Best-effort short commit hash from a co-located .git directory, if one exists
-     * on disk (this plugin's git-sync deploy mechanism may or may not leave one).
+     * Best-effort short commit hash of the deployed module code.
+     * Checks a flat sidecar file first (written at deploy time by the git-sync
+     * materialise loop, where .git is a worktree gitlink file this method can't
+     * read), then falls back to a co-located .git directory (local dev).
      * Plain file reads only — no exec. Returns null (never throws/fatals) if unavailable.
      *
      * @param string|null $git_dir Overridable for tests; defaults to this module's .git
+     * @param string|null $sidecar_file Overridable for tests; defaults to this module's sidecar file
      *
      * @return string|null
      */
-    private function getTwoDeployedCommitHash($git_dir = null)
+    private function getTwoDeployedCommitHash($git_dir = null, $sidecar_file = null)
     {
+        if ($sidecar_file === null) {
+            $sidecar_file = __DIR__ . '/.two-deployed-commit';
+        }
+        if (is_file($sidecar_file) && is_readable($sidecar_file)) {
+            $sidecar_contents = trim((string) @file_get_contents($sidecar_file));
+            if ($sidecar_contents !== '' && preg_match('/^[0-9a-f]{7,40}$/i', $sidecar_contents)) {
+                return substr($sidecar_contents, 0, 7);
+            }
+        }
+
         if ($git_dir === null) {
             $git_dir = __DIR__ . '/.git';
         }
