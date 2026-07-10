@@ -15,7 +15,11 @@ class TwoCompanySearch {
         this.organizationField = null;
         this.isInitialized = false;
         this.countryListener = null;
-        
+
+        // Race-condition guards for company search (see searchCompanies())
+        this._companySearchSeq = 0;
+        this._companySearchXhr = null;
+
         this.init();
     }
     
@@ -262,6 +266,23 @@ class TwoCompanySearch {
             list.style.display = 'block';
         };
 
+        // Minimal loading indicator so a slow-but-alive request is visually
+        // distinguishable from a dead one (goal: no spinner component, just
+        // a text row matching the existing list rendering).
+        const searchingText = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_searching)
+            || 'Searching...';
+        const renderLoading = () => {
+            list.innerHTML = '';
+            const row = document.createElement('div');
+            row.className = 'two-autocomplete-item two-autocomplete-loading';
+            row.style.padding = '6px 10px';
+            row.style.color = '#888';
+            row.style.fontStyle = 'italic';
+            row.textContent = searchingText;
+            list.appendChild(row);
+            list.style.display = 'block';
+        };
+
         // Debounced input
         let debounceId = null;
         inputEl.addEventListener('input', () => {
@@ -278,7 +299,14 @@ class TwoCompanySearch {
                     renderResults(cached.v);
                     return;
                 }
+                renderLoading();
                 this.searchCompanies(term, (results) => {
+                    // Discard results if the input has moved on to a different
+                    // term since this request was fired (belt-and-braces on
+                    // top of the sequence/abort guard in searchCompanies()).
+                    if ((inputEl.value || '') !== term) {
+                        return;
+                    }
                     cache.set(key, { v: results, t: now() });
                     renderResults(results);
                 });
@@ -294,24 +322,65 @@ class TwoCompanySearch {
     }
     
     /**
-     * Search for companies via Two API
+     * Abort any in-flight company search request. Used both when a new
+     * search fires (to stop a stale request racing a fresh one) and on
+     * teardown.
+     */
+    _abortPendingCompanySearch() {
+        if (this._companySearchXhr && typeof this._companySearchXhr.abort === 'function') {
+            try {
+                this._companySearchXhr.abort();
+            } catch (e) {
+                // no-op
+            }
+        }
+        this._companySearchXhr = null;
+    }
+
+    /**
+     * Search for companies via Two API.
+     *
+     * Race-condition fix: successive keystrokes across the debounce boundary
+     * (jQuery UI's `delay`, or the custom fallback's setTimeout) can have
+     * multiple requests in flight at once. Without cancellation, responses
+     * can arrive out of order and whichever resolves LAST wins - even if
+     * it's for a stale/shorter search term typed earlier. select2 (used by
+     * the Magento/Woo plugins) avoids this natively by aborting the previous
+     * in-flight request whenever a new query fires; we replicate that
+     * behavior here without introducing a new dependency:
+     *   1. Bump a monotonically increasing sequence number BEFORE aborting
+     *      the previous request, so if abort() synchronously invokes the
+     *      old request's error handler, it already sees a stale sequence
+     *      number and discards itself silently (no flicker to empty state).
+     *   2. Abort the previous jqXHR so the network request itself is
+     *      cancelled, not just ignored.
+     *   3. Guard both success and error handlers with the sequence check so
+     *      even a response that arrives after abort (or a response that
+     *      raced in before the abort took effect) is discarded unless it
+     *      matches the CURRENT request.
      */
     searchCompanies(term, responseCallback) {
         if (term.length < 3) {
+            // Empty/short term cancels any pending search rather than racing it.
+            this._companySearchSeq += 1;
+            this._abortPendingCompanySearch();
             responseCallback([]);
             return;
         }
-        
+
         // Get country ISO from the selected option if available; otherwise omit
         const country = this.getCurrentCountry();
-        
+
         // Build URL with correct API parameters
         const params = new URLSearchParams({ q: term });
         if (country) params.set('country', country);
         // Direct Two API call from frontend as required
         const searchUrl = `${this.config.checkoutHost}/companies/v2/company?${params}`;
-        
-        $.ajax({
+
+        const seq = (this._companySearchSeq += 1);
+        this._abortPendingCompanySearch();
+
+        this._companySearchXhr = $.ajax({
             url: searchUrl,
             method: 'GET',
             crossDomain: true,
@@ -320,6 +389,12 @@ class TwoCompanySearch {
             beforeSend: this.buildPublicApiBeforeSend(),
             timeout: 10000,
             success: (data) => {
+                if (seq !== this._companySearchSeq) {
+                    // Stale response for a superseded request; discard.
+                    return;
+                }
+                this._companySearchXhr = null;
+
                 const companies = data.items || [];
                 const formattedResults = companies.map(company => {
                     // Prefer various keys for broader country support (GB, etc.)
@@ -340,11 +415,16 @@ class TwoCompanySearch {
                         organization_number: orgNumber
                     };
                 });
-                
+
                 responseCallback(formattedResults);
             },
             error: (xhr, status, error) => {
-                
+                if (seq !== this._companySearchSeq) {
+                    // Aborted (superseded) or otherwise stale; nothing to report.
+                    return;
+                }
+                this._companySearchXhr = null;
+
                 responseCallback([]);
             }
         });
@@ -728,6 +808,10 @@ class TwoCompanySearch {
 
     destroy() {
         try {
+            // Cancel any in-flight company search so it can't resolve after teardown.
+            this._companySearchSeq += 1;
+            this._abortPendingCompanySearch();
+
             // Remove country change listener
             const countryField = document.querySelector("select[name='id_country']");
             if (countryField && this.countryListener) {
