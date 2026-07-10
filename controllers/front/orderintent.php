@@ -58,6 +58,9 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             case 'savePaymentTerm':
                 $this->ajaxProcessSavePaymentTerm();
                 break;
+            case 'fetchTermSurcharges':
+                $this->ajaxProcessFetchTermSurcharges();
+                break;
             case 'checkOrderIntent':
                 $this->ajaxProcessCheckOrderIntent();
                 break;
@@ -97,6 +100,22 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $this->context->cookie->setExpire(time() + Twopayment::COOKIE_EXPIRY_ONE_HOUR);
         PrestaShopLogger::addLog('TwoPayment: Saved selected payment term ' . $days . ' days in cookie', 1);
         $this->sendJsonResponse(json_encode(['success' => true]));
+    }
+
+    /**
+     * Live per-term buyer surcharge amounts for the checkout term chips.
+     * Reads nothing from POST beyond the token - the current cart is ambient
+     * via the context. Fail-soft: any failure inside the module method yields
+     * {success:false} and the frontend keeps its static rate preview (always
+     * a 200 JSON response, never breaks checkout).
+     */
+    public function ajaxProcessFetchTermSurcharges()
+    {
+        if (!$this->validateAjaxToken()) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Invalid token')]));
+            return;
+        }
+        $this->sendJsonResponse(json_encode($this->module->getTwoOfferedTermSurchargeAmounts()));
     }
 
     /**

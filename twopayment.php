@@ -6886,6 +6886,83 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Live per-term buyer surcharge amounts for the checkout term chips: the
+     * REAL quoted fee (buyer_fee_share net, via POST /v1/pricing/order/fee per
+     * offered term through fetchTwoTermFee) for the CURRENT cart, replacing
+     * the configured-rate text from getTwoSurchargeChipPreview() when it
+     * resolves. Mirrors magento-plugin's Model/Webapi/Surcharges.php: basis
+     * from the live cart, loop over every offered term, per-term failure
+     * degrades that term to 0.0 while the others keep their quotes.
+     *
+     * Fail-soft contract (same discipline as fetchTwoMerchantFeeRates): this
+     * sits behind a checkout-render AJAX call and must never throw and never
+     * break checkout. {success:false} — surcharge disabled, no loaded cart,
+     * no offered terms, or a zero/empty cart basis — tells the JS to keep the
+     * static rate preview. A nonzero basis where every term's quote fails
+     * still returns {success:true} with all-zero amounts (per-term degrade,
+     * Magento parity), NOT {success:false}.
+     *
+     * @return array{success:bool,currency?:string,amounts?:array<int,float>}
+     */
+    public function getTwoOfferedTermSurchargeAmounts()
+    {
+        try {
+            $settings = $this->getTwoSurchargeSettings();
+            if (empty($settings['enabled'])) {
+                return array('success' => false);
+            }
+
+            $cart = isset($this->context->cart) ? $this->context->cart : null;
+            if (!Validate::isLoadedObject($cart)) {
+                return array('success' => false);
+            }
+
+            $terms = $this->getAvailablePaymentTerms();
+            if (empty($terms)) {
+                return array('success' => false);
+            }
+
+            // Lightweight cart-gross read (products + shipping, tax incl.) —
+            // the same idiom the order builder uses for its reconciliation
+            // gross (getTwoNewOrderData) — NOT the full line-item pipeline,
+            // which is far too heavy for a render-time preview call.
+            $gross_basis = round((float) $cart->getOrderTotal(true, Cart::BOTH), 2);
+            if ($gross_basis <= 0) {
+                // Empty cart / anonymous probe: nothing to quote against —
+                // the JS keeps the static percentage preview entirely.
+                return array('success' => false);
+            }
+
+            $currencyIso = '';
+            $currency = new Currency((int) $cart->id_currency);
+            if (Validate::isLoadedObject($currency)) {
+                $currencyIso = (string) $currency->iso_code;
+            }
+            $buyerCountry = $this->resolveTwoBuyerCountryIso($cart);
+
+            $amounts = array();
+            foreach ($terms as $days) {
+                $days = (int) $days;
+                $fee = $this->fetchTwoTermFee($days, $gross_basis, $buyerCountry, $currencyIso);
+                // Per-term degrade: a failed quote zeroes THAT chip's fee
+                // (the JS hides a zero fee) without failing the whole map.
+                $amounts[$days] = ($fee !== null && isset($fee['buyer_fee_share']))
+                    ? round((float) $fee['buyer_fee_share'], 2)
+                    : 0.0;
+            }
+
+            return array(
+                'success' => true,
+                'currency' => $currencyIso,
+                'amounts' => $amounts,
+            );
+        } catch (\Throwable $e) {
+            // Checkout render must never break on a preview quote.
+            return array('success' => false);
+        }
+    }
+
+    /**
      * Buyer-facing label for the surcharge line. A merchant-set description
      * wins (with %s replaced by the term days, Magento/WooCommerce parity);
      * else the brand label; else a translated default that names the term.
