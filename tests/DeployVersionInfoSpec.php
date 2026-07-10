@@ -18,15 +18,17 @@ final class DeployVersionInfoSpec
         self::testDetachedHeadReturnsShortSha();
         self::testGarbageHeadReturnsNull();
         self::testMissingRefAndPackedRefsReturnsNull();
+        self::testSidecarFileTakesPrecedenceOverGitDir();
+        self::testInvalidSidecarFallsBackToGitDir();
         self::testDeployedAtLabelMatchesModuleFileMtime();
     }
 
-    private static function callCommitHash(?string $gitDir): ?string
+    private static function callCommitHash(?string $gitDir, ?string $sidecarFile = null): ?string
     {
         $module = new TwopaymentTestHarness();
         $method = new ReflectionMethod(Twopayment::class, 'getTwoDeployedCommitHash');
 
-        return $method->invoke($module, $gitDir);
+        return $method->invoke($module, $gitDir, $sidecarFile);
     }
 
     private static function makeTempGitDir(): string
@@ -123,6 +125,36 @@ final class DeployVersionInfoSpec
         file_put_contents($git . '/HEAD', "ref: refs/heads/staging\n");
 
         TinyAssert::same(null, self::callCommitHash($git));
+        self::removeDir(dirname($git));
+    }
+
+    private static function testSidecarFileTakesPrecedenceOverGitDir(): void
+    {
+        // Deploy-time sidecar file (written by the git-sync materialise loop) must win
+        // over a co-located .git directory when both exist.
+        $git = self::makeTempGitDir();
+        file_put_contents($git . '/HEAD', "ref: refs/heads/staging\n");
+        mkdir($git . '/refs/heads', 0777, true);
+        file_put_contents($git . '/refs/heads/staging', "abcdef0123456789abcdef0123456789abcdef01\n");
+        $sidecar = dirname($git) . '/.two-deployed-commit';
+        file_put_contents($sidecar, "1234abc\n");
+
+        TinyAssert::same('1234abc', self::callCommitHash($git, $sidecar));
+        self::removeDir(dirname($git));
+    }
+
+    private static function testInvalidSidecarFallsBackToGitDir(): void
+    {
+        // A sidecar file with non-sha contents (or empty) must not short-circuit the
+        // .git-directory fallback.
+        $git = self::makeTempGitDir();
+        file_put_contents($git . '/HEAD', "ref: refs/heads/staging\n");
+        mkdir($git . '/refs/heads', 0777, true);
+        file_put_contents($git . '/refs/heads/staging', "abcdef0123456789abcdef0123456789abcdef01\n");
+        $sidecar = dirname($git) . '/.two-deployed-commit';
+        file_put_contents($sidecar, "not a sha\n");
+
+        TinyAssert::same('abcdef0', self::callCommitHash($git, $sidecar));
         self::removeDir(dirname($git));
     }
 
