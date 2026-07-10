@@ -689,7 +689,7 @@ class Twopayment extends PaymentModule
      * Each label carries an empty `.two-term-fee` placeholder span. The
      * figure that belongs on this screen is the FEE TWO CHARGES THE MERCHANT
      * for offering that term (NOT the buyer surcharge - a prior change
-     * wrongly appended getTwoSurchargeChipPreview() here and was reverted).
+     * wrongly appended a buyer-surcharge rate preview here and was reverted).
      * The span is populated live by admin AJAX against
      * POST /pricing/v1/merchant/rates (fetchTwoMerchantFeeRates /
      * ajaxProcessFetchMerchantFeeRates), mirroring magento-plugin's
@@ -2706,7 +2706,6 @@ class Twopayment extends PaymentModule
                 'available_payment_terms' => $this->getAvailablePaymentTerms(),
                 'default_payment_term' => $this->getDefaultPaymentTerm(),
                 'payment_term_type' => Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'),
-                'payment_term_surcharge_preview' => $this->getTwoSurchargeChipPreview(),
                 'i18n' => $i18n,
                 'phone_i18n' => array(
                     'invalid_number' => $this->l('Invalid phone number'),
@@ -6519,84 +6518,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Per-term surcharge preview text keyed by days, for display alongside the
-     * term: the "Available Payment Terms" checkboxes in admin and the checkout
-     * chip selector share this single calculation.
-     *
-     * Deliberately NOT the live-quoted buyer_fee_share (that requires a real
-     * POST /v1/pricing/order/fee call per term via fetchTwoTermFee — fine for
-     * one term at order-intent time, too many synchronous calls to make on
-     * every checkout page load for a whole term list). This instead previews
-     * the raw configured rate (the same percentage/fixed values the merchant
-     * already sees in the admin grid, gated by the configured surcharge type),
-     * not the final rounded/capped amount.
-     *
-     * Display rule mirrors Magento's gateway_method.js term-chip "allZero"
-     * logic: when EVERY offered term has a zero fee, the fee is hidden on all
-     * chips (empty array); when AT LEAST ONE term carries a fee, every chip
-     * shows its fee — a zero-fee term in that set renders a "No fee" marker
-     * rather than being blank, so the row is consistent. (Magento renders the
-     * zero term as a formatted "+0.00"; because this preview is rate-based, not
-     * amount-based, a "No fee" marker is the closest faithful equivalent.) This
-     * also governs the admin checkbox suffix, so the merchant sees the same
-     * "no fee shown to buyer" signal the checkout chip will render.
-     *
-     * @return array<int, string> days => preview text; empty when all offered
-     *                            terms are zero-rated (Magento allZero-hide)
-     */
-    public function getTwoSurchargeChipPreview()
-    {
-        $settings = $this->getTwoSurchargeSettings();
-        if (!$settings['enabled']) {
-            return array();
-        }
-
-        // Gate the preview parts by the configured surcharge type, mirroring
-        // TwoSurchargeCalculator::buildBuyerFeeShare, so the chip never previews
-        // a component (percentage or fixed) the API will not actually charge.
-        $type = $settings['type'];
-        $hasPercentage = in_array($type, array('percentage', 'fixed_and_percentage'), true);
-        $hasFixed = in_array($type, array('fixed', 'fixed_and_percentage'), true);
-
-        $rawParts = array();
-        $anyNonZero = false;
-        foreach ($settings['grid'] as $days => $row) {
-            $parts = array();
-            if ($hasPercentage && (float) $row['percentage'] > 0) {
-                $parts[] = '+' . rtrim(rtrim(sprintf('%.2f', $row['percentage']), '0'), '.') . '%';
-            }
-            if ($hasFixed && (float) $row['fixed'] > 0) {
-                // Tools::displayPrice() needs the Symfony kernel container;
-                // fail-soft to a plain number rather than fatal the checkout
-                // page media hook if it's unavailable in some bootstrap path.
-                try {
-                    $parts[] = '+' . Tools::displayPrice($row['fixed']);
-                } catch (\Throwable $e) {
-                    $parts[] = '+' . sprintf('%.2f', $row['fixed']);
-                }
-            }
-            $rawParts[(int) $days] = $parts;
-            if (!empty($parts)) {
-                $anyNonZero = true;
-            }
-        }
-
-        // All offered terms zero-rated -> hide the fee on every chip (allZero).
-        if (!$anyNonZero) {
-            return array();
-        }
-
-        // At least one term carries a fee -> show every chip's fee; a zero-fee
-        // term renders the "No fee" marker so the row is not visually ragged.
-        $preview = array();
-        foreach ($rawParts as $days => $parts) {
-            $preview[$days] = !empty($parts) ? implode(' ', $parts) : $this->l('No fee');
-        }
-
-        return $preview;
-    }
-
-    /**
      * Build the buyer_fee_share block for one term (or null when no surcharge
      * is configured), from module Configuration.
      *
@@ -6889,16 +6810,18 @@ class Twopayment extends PaymentModule
      * Live per-term buyer surcharge amounts for the checkout term chips: the
      * REAL quoted fee (buyer_fee_share net, via POST /v1/pricing/order/fee per
      * offered term through fetchTwoTermFee) for the CURRENT cart, replacing
-     * the configured-rate text from getTwoSurchargeChipPreview() when it
-     * resolves. Mirrors magento-plugin's Model/Webapi/Surcharges.php: basis
+     * each chip's loading indicator when it resolves (the buyer is never
+     * shown the configured rate). Mirrors magento-plugin's
+     * Model/Webapi/Surcharges.php: basis
      * from the live cart, loop over every offered term, per-term failure
      * degrades that term to 0.0 while the others keep their quotes.
      *
      * Fail-soft contract (same discipline as fetchTwoMerchantFeeRates): this
      * sits behind a checkout-render AJAX call and must never throw and never
      * break checkout. {success:false} — surcharge disabled, no loaded cart,
-     * no offered terms, or a zero/empty cart basis — tells the JS to keep the
-     * static rate preview. A nonzero basis where every term's quote fails
+     * no offered terms, or a zero/empty cart basis — tells the JS to clear
+     * the chips' loading indicators (no fee text is shown; the buyer is never
+     * shown a configured rate). A nonzero basis where every term's quote fails
      * still returns {success:true} with all-zero amounts (per-term degrade,
      * Magento parity), NOT {success:false}.
      *
@@ -6929,7 +6852,7 @@ class Twopayment extends PaymentModule
             $gross_basis = round((float) $cart->getOrderTotal(true, Cart::BOTH), 2);
             if ($gross_basis <= 0) {
                 // Empty cart / anonymous probe: nothing to quote against —
-                // the JS keeps the static percentage preview entirely.
+                // the JS clears the chips' loading indicators to blank.
                 return array('success' => false);
             }
 
@@ -7116,6 +7039,16 @@ class Twopayment extends PaymentModule
      * save/validation path (saveTwoSurchargeFormValues / validTwoSurchargeFormValues)
      * is unchanged.
      *
+     * A row is rendered for EVERY offerable term (getOfferableTermSource — the
+     * same set the "Available Payment Terms" checkboxes render for), NOT just
+     * the saved/available subset, so the admin JS (configuration.tpl,
+     * updateSurchargeGridRows) can show/hide rows live as term checkboxes are
+     * toggled without a save+reload. Initial visibility is computed
+     * server-side with the same gates getAvailablePaymentTerms() applies: the
+     * term's checkbox config is truthy AND the term is valid for the current
+     * term type (EOM only allows EOM_PAYMENT_TERMS_OPTIONS). Row classes
+     * mirror the checkbox type split (two-term-both / two-term-standard).
+     *
      * @return string
      */
     protected function getTwoSurchargeGridHtml()
@@ -7132,7 +7065,10 @@ class Twopayment extends PaymentModule
             . '<th class="two-col-cap">' . $this->l('Cap on percentage') . '</th>'
             . '</tr></thead><tbody>';
 
-        foreach ($this->getAvailablePaymentTerms() as $days) {
+        $term_type = Configuration::get('PS_TWO_PAYMENT_TERM_TYPE');
+        $source = $this->getOfferableTermSource(false);
+        sort($source);
+        foreach ($source as $days) {
             $days = (int) $days;
             $pct_name = 'PS_TWO_SURCHARGE_PCT_' . $days;
             $fixed_name = 'PS_TWO_SURCHARGE_FIXED_' . $days;
@@ -7142,7 +7078,14 @@ class Twopayment extends PaymentModule
             $fixed = htmlspecialchars((string) Tools::getValue($fixed_name, Configuration::get($fixed_name)), ENT_QUOTES, 'UTF-8');
             $cap = htmlspecialchars((string) Tools::getValue($cap_name, Configuration::get($cap_name)), ENT_QUOTES, 'UTF-8');
 
-            $html .= '<tr>'
+            $is_eom_capable = in_array($days, self::EOM_PAYMENT_TERMS_OPTIONS, true);
+            $type_class = $is_eom_capable ? 'two-term-both' : 'two-term-standard';
+            $checked = (bool) Configuration::get('PS_TWO_PAYMENT_TERMS_' . $days);
+            $valid_for_type = $term_type !== 'EOM' || $is_eom_capable;
+            $row_style = ($checked && $valid_for_type) ? '' : ' style="display:none"';
+
+            $html .= '<tr class="two-surcharge-row two-surcharge-row-' . $days . ' ' . $type_class . '"'
+                . ' data-term="' . $days . '"' . $row_style . '>'
                 . '<td style="vertical-align:middle;">' . sprintf($this->l('%d days'), $days) . '</td>'
                 . '<td class="two-col-percentage"><div class="input-group" style="' . $cell_style . '">'
                 . '<input type="text" class="form-control" name="' . $pct_name . '" value="' . $pct . '">'

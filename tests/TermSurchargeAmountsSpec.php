@@ -14,7 +14,7 @@ declare(strict_types=1);
  *    even EVERY term failing on a nonzero basis still returns success:true
  *    with all-zero amounts (the JS hides zero fees per chip).
  *  - {success: false} ONLY for: surcharge disabled, no loaded cart, or a
- *    zero/empty cart basis - the JS then keeps the static rate preview.
+ *    zero/empty cart basis - the JS then clears the chips' loading dots.
  *  - Never throws: this sits behind a checkout-render AJAX call.
  */
 final class TermSurchargeAmountsSpec
@@ -160,8 +160,8 @@ final class TermSurchargeAmountsSpec
 
     private static function testZeroCartBasisFailsWithoutWireCall(): void
     {
-        // Empty cart / anonymous probe: gross basis is 0 - the JS falls back
-        // to the static percentage preview entirely.
+        // Empty cart / anonymous probe: gross basis is 0 - the JS clears
+        // the chips' loading indicators to blank.
         self::reset(0.0);
         $module = self::moduleWithPerTermResponses([30 => self::okQuote('5.00')]);
 

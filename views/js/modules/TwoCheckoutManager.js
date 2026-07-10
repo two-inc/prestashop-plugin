@@ -1271,19 +1271,23 @@ class TwoCheckoutManager {
             termChip.title = formatChipLabel(days);
             termChip.appendChild(daysLabel);
 
-            // Per-term surcharge preview (configured-rate text, not a live quote
-            // — see getTwoSurchargeChipPreview() in twopayment.php). The PHP side
-            // decides show/hide (Magento allZero parity): the map is empty when
-            // all terms are zero-rated, and carries a non-empty string for every
-            // term otherwise (a "No fee" marker for zero-rate terms), so a simple
-            // presence check renders the fee on every chip or none.
-            const surchargePreview = this.config.payment_term_surcharge_preview;
-            if (surchargePreview && surchargePreview[days]) {
-                const surchargeLabel = document.createElement('span');
-                surchargeLabel.className = 'two-term-chip__surcharge';
-                surchargeLabel.textContent = surchargePreview[days];
-                termChip.appendChild(surchargeLabel);
+            // Per-term surcharge slot: starts as a loading indicator (three
+            // animated dots, Magento gateway_method.html parity) on EVERY
+            // chip, unconditionally. The buyer must never see the configured
+            // surcharge RATE — only the real quoted amount for this cart once
+            // refreshTermSurchargeAmounts() resolves, or nothing on failure.
+            const surchargeLabel = document.createElement('span');
+            surchargeLabel.className = 'two-term-chip__surcharge';
+            const loadingDots = document.createElement('span');
+            loadingDots.className = 'two-term-chip__loading';
+            loadingDots.setAttribute('aria-hidden', 'true');
+            for (let i = 0; i < 3; i++) {
+                const dot = document.createElement('span');
+                dot.textContent = '.';
+                loadingDots.appendChild(dot);
             }
+            surchargeLabel.appendChild(loadingDots);
+            termChip.appendChild(surchargeLabel);
 
             termChip.dataset.days = days;
 
@@ -1357,30 +1361,49 @@ class TwoCheckoutManager {
             selectedDays.textContent = formatPayInLabel(activeTerm);
         }
 
-        // Upgrade the static rate preview to the REAL quoted amount for this
-        // cart, asynchronously — the chips above already rendered with the
-        // configured-rate text as an instant fallback.
+        // Resolve each chip's loading indicator to the REAL quoted amount for
+        // this cart, asynchronously — or to blank if the quote fails.
         this.refreshTermSurchargeAmounts(termsContainer);
     }
 
     /**
-     * Replace each term chip's static configured-rate surcharge preview with
-     * the live quoted fee amount for the current cart (server proxies
+     * Clear every chip's surcharge slot (removes the loading dots) so a
+     * failed/absent quote reads as a deliberate empty state, never as a
+     * permanently-animating loader.
+     */
+    clearTermSurchargeLoading(termsContainer) {
+        if (!termsContainer) {
+            return;
+        }
+        termsContainer.querySelectorAll('.two-term-chip .two-term-chip__surcharge').forEach((label) => {
+            label.textContent = '';
+        });
+    }
+
+    /**
+     * Replace each term chip's loading indicator with the live quoted fee
+     * amount for the current cart (server proxies
      * POST /v1/pricing/order/fee per offered term — see
      * getTwoOfferedTermSurchargeAmounts() in twopayment.php). Magento parity:
      * gateway_method.js renders '+' + formatted amount per chip.
      *
-     * Fail-soft by design: any failure (network error, non-200, success:false)
-     * is a silent no-op — the already-rendered static rate preview stays as
-     * the fallback. A zero amount for a term hides that chip's fee text
+     * Fail-soft by design: any failure (network error, non-200, success:false,
+     * missing config) clears every chip's surcharge slot to blank — the buyer
+     * must never see the configured rate, and a loader that never resolves
+     * reads as broken. A zero amount for a term hides that chip's fee text
      * ("no fee" semantics), it is NOT a failure signal. Only the
-     * .two-term-chip__surcharge text nodes are touched — never the chip's
+     * .two-term-chip__surcharge nodes are touched — never the chip's
      * selected/aria state, so a buyer clicking before the fetch resolves is
      * never clobbered.
      */
     refreshTermSurchargeAmounts(termsContainer) {
         try {
-            if (!termsContainer || !window.twopayment || !window.twopayment.order_intent_url || !window.twopayment.ajax_token) {
+            if (!termsContainer) {
+                return;
+            }
+            if (!window.twopayment || !window.twopayment.order_intent_url || !window.twopayment.ajax_token) {
+                // Can't quote at all — don't leave the dots animating forever.
+                this.clearTermSurchargeLoading(termsContainer);
                 return;
             }
             $.ajax({
@@ -1391,7 +1414,8 @@ class TwoCheckoutManager {
                 timeout: 10000
             }).done((response) => {
                 if (!response || !response.success || !response.amounts) {
-                    return; // keep the static rate preview
+                    this.clearTermSurchargeLoading(termsContainer);
+                    return;
                 }
                 // Same amount + space + currency-code composition as the admin
                 // merchant-fee display (configuration.tpl) — deliberately plain
@@ -1399,34 +1423,28 @@ class TwoCheckoutManager {
                 const currency = String(response.currency || '').toUpperCase().replace(/^\s+|\s+$/g, '');
                 const suffix = currency !== '' ? ' ' + currency : '';
                 termsContainer.querySelectorAll('.two-term-chip').forEach((chip) => {
-                    const days = chip.dataset.days;
-                    if (!days || !(days in response.amounts)) {
-                        return; // no quote for this term — leave its fallback text
-                    }
-                    const amount = Number(response.amounts[days]);
-                    let surchargeLabel = chip.querySelector('.two-term-chip__surcharge');
-                    if (!isFinite(amount) || amount <= 0) {
-                        // Zero/invalid quote for THIS term only: show no fee
-                        // rather than "+0.00" (Magento zero-hide semantics).
-                        if (surchargeLabel) {
-                            surchargeLabel.textContent = '';
-                        }
+                    const surchargeLabel = chip.querySelector('.two-term-chip__surcharge');
+                    if (!surchargeLabel) {
                         return;
                     }
-                    if (!surchargeLabel) {
-                        // Chip rendered without a fallback label (all-zero
-                        // configured rates) but a real fee exists — add one.
-                        surchargeLabel = document.createElement('span');
-                        surchargeLabel.className = 'two-term-chip__surcharge';
-                        chip.appendChild(surchargeLabel);
+                    const days = chip.dataset.days;
+                    const amount = (days && (days in response.amounts)) ? Number(response.amounts[days]) : 0;
+                    if (!isFinite(amount) || amount <= 0) {
+                        // Zero/invalid/absent quote for THIS term: show no fee
+                        // rather than "+0.00" (Magento zero-hide semantics) —
+                        // and never leave the loading dots behind.
+                        surchargeLabel.textContent = '';
+                        return;
                     }
                     surchargeLabel.textContent = '+' + amount.toFixed(2) + suffix;
                 });
             }).fail(() => {
-                // Silent no-op: the static rate preview stays rendered.
+                this.clearTermSurchargeLoading(termsContainer);
             });
         } catch (e) {
-            // Never let a preview upgrade break the checkout render.
+            // Never let a fee-quote failure break the checkout render — but
+            // still clear the loaders so chips don't animate forever.
+            this.clearTermSurchargeLoading(termsContainer);
         }
     }
 
