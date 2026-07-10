@@ -14,6 +14,7 @@ final class DeployVersionInfoSpec
         self::testMissingGitDirReturnsNull();
         self::testRefHeadWithLooseRefReturnsShortSha();
         self::testRefHeadFallsBackToPackedRefs();
+        self::testPackedRefsExactMatchIgnoresSuffixDecoy();
         self::testDetachedHeadReturnsShortSha();
         self::testGarbageHeadReturnsNull();
         self::testMissingRefAndPackedRefsReturnsNull();
@@ -71,6 +72,26 @@ final class DeployVersionInfoSpec
             $git . '/packed-refs',
             "# pack-refs with: peeled fully-peeled sorted\n"
             . "1111111111111111111111111111111111111111 refs/heads/other\n"
+            . "fedcba9876543210fedcba9876543210fedcba98 refs/heads/staging\n"
+        );
+
+        TinyAssert::same('fedcba9', self::callCommitHash($git));
+        self::removeDir(dirname($git));
+    }
+
+    private static function testPackedRefsExactMatchIgnoresSuffixDecoy(): void
+    {
+        // A packed-refs line whose full ref merely *ends with* the same string as our
+        // target ref (e.g. a nested/differently-prefixed namespace) must NOT be treated
+        // as a match — only an exact ref-path match is acceptable. The decoy is listed
+        // first (and would win under a naive suffix comparison since it breaks on first
+        // hit), the real ref is listed second with a different sha.
+        $git = self::makeTempGitDir();
+        file_put_contents($git . '/HEAD', "ref: refs/heads/staging\n");
+        file_put_contents(
+            $git . '/packed-refs',
+            "# pack-refs with: peeled fully-peeled sorted\n"
+            . "decadedecadedecadedecadedecadedecadedeca refs/namespaces/foo/refs/heads/staging\n"
             . "fedcba9876543210fedcba9876543210fedcba98 refs/heads/staging\n"
         );
 

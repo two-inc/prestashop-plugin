@@ -1364,11 +1364,17 @@ class Twopayment extends PaymentModule
                     $packed = @file($packed_refs_file, FILE_IGNORE_NEW_LINES);
                     if (is_array($packed)) {
                         foreach ($packed as $line) {
-                            if (substr($line, -strlen($ref_path)) === $ref_path) {
-                                $parts = explode(' ', $line);
-                                if (!empty($parts[0])) {
-                                    $sha = $parts[0];
-                                }
+                            // Skip comments/pragmas ("# pack-refs...") and peeled-tag lines ("^<sha>").
+                            if ($line === '' || $line[0] === '#' || $line[0] === '^') {
+                                continue;
+                            }
+                            $space_pos = strpos($line, ' ');
+                            if ($space_pos === false) {
+                                continue;
+                            }
+                            $line_ref = substr($line, $space_pos + 1);
+                            if ($line_ref === $ref_path) {
+                                $sha = substr($line, 0, $space_pos);
                                 break;
                             }
                         }
