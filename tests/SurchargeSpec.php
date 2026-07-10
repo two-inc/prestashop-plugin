@@ -333,7 +333,15 @@ final class SurchargeSpec
                 strpos($row['name'], '(') !== false,
                 'checkbox label must not carry a surcharge preview: ' . $row['name']
             );
-            TinyAssert::same(sprintf('%d days', (int) $row['id']), $row['name']);
+            // The label is the plain "%d days" text plus an EMPTY merchant-fee
+            // placeholder span - populated client-side from the merchant-rates
+            // AJAX endpoint (fetchTwoMerchantFeeRates), never pre-injected
+            // server-side, and never sourced from the buyer surcharge config.
+            TinyAssert::same(
+                sprintf('%d days', (int) $row['id'])
+                    . ' <span class="two-term-fee text-muted" data-term="' . (int) $row['id'] . '"></span>',
+                $row['name']
+            );
         }
     }
 

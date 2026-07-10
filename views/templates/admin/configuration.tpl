@@ -59,6 +59,11 @@
     </div>
     <div class="clearfix"></div>
 </div>
+<script type="text/javascript">
+    // Module admin AJAX endpoint for the inline merchant-fee display
+    // (assigned outside the literal block so Smarty expands the URL).
+    var twoMerchantFeeRatesUrl = '{$two_fee_rates_url|escape:'javascript':'UTF-8'}';
+</script>
 {literal}
     <script type="text/javascript">
         $(document).ready(function () {
@@ -133,6 +138,97 @@
             }
             updateSurchargeGridVisibility();
             $('select[name="PS_TWO_SURCHARGE_TYPE"]').on('change', updateSurchargeGridVisibility);
+
+            // Inline merchant fee beside each "Available Payment Terms"
+            // checkbox - the fee Two charges the merchant per term, fetched
+            // live from the module's admin AJAX endpoint (which proxies
+            // POST /pricing/v1/merchant/rates). Mirrors magento-plugin's
+            // payment-terms-config.js loadFees(): fetch on page load and on
+            // any term-checkbox change, dedupe identical term-set requests,
+            // and on failure blank the fee spans silently - the config page
+            // must never break on an API outage.
+            var lastFeesKey = null;
+
+            function formatTwoFeeAmount(n) {
+                return Number(n).toFixed(2);
+            }
+
+            function loadTwoMerchantFees() {
+                if (typeof twoMerchantFeeRatesUrl === 'undefined' || !twoMerchantFeeRatesUrl) {
+                    return;
+                }
+                // Fees render beside EVERY rendered term option regardless of
+                // checked state (Magento parity), so collect all term inputs.
+                var terms = [];
+                $('input[name^="PS_TWO_PAYMENT_TERMS_"]').each(function () {
+                    var match = String($(this).attr('name') || '').match(/_(\d+)$/);
+                    var days = match ? parseInt(match[1], 10) : 0;
+                    if (days > 0 && terms.indexOf(days) === -1) {
+                        terms.push(days);
+                    }
+                });
+                terms.sort(function (a, b) { return a - b; });
+                if (!terms.length) {
+                    return;
+                }
+                var key = terms.join(',');
+                if (key === lastFeesKey) {
+                    return; // identical term set already requested
+                }
+                lastFeesKey = key;
+                $.ajax({
+                    url: twoMerchantFeeRatesUrl,
+                    type: 'POST',
+                    dataType: 'json',
+                    data: { terms: JSON.stringify(terms) }
+                }).done(function (response) {
+                    if (!response || !response.success || !response.fees) {
+                        $('.two-term-fee').text('');
+                        return;
+                    }
+                    // Currency must come from the API response - the fee
+                    // amounts do too. Without it, any fixed amount would be
+                    // ambiguous, so only the percentage is shown then.
+                    var currency = String(response.currency || '').toUpperCase().replace(/^\s+|\s+$/g, '');
+                    var suffix = currency !== '' ? ' ' + currency : '';
+                    $('.two-term-fee').each(function () {
+                        var $span = $(this);
+                        var fee = response.fees[String($span.data('term'))];
+                        if (!fee) {
+                            $span.text('');
+                            return;
+                        }
+                        var pctStr = formatTwoFeeAmount(fee.percentage || 0);
+                        var fixedStr = formatTwoFeeAmount(fee.fixed || 0);
+                        var zero = formatTwoFeeAmount(0);
+                        var pctZero = pctStr === zero;
+                        var fixedZero = fixedStr === zero;
+                        if (currency === '') {
+                            $span.text(pctZero ? '' : '(' + pctStr + '%)');
+                            return;
+                        }
+                        var inner;
+                        if (pctZero && fixedZero) {
+                            inner = zero + suffix;
+                        } else if (pctZero) {
+                            inner = fixedStr + suffix;
+                        } else if (fixedZero) {
+                            inner = pctStr + '%';
+                        } else {
+                            inner = pctStr + '% + ' + fixedStr + suffix;
+                        }
+                        $span.text('(' + inner + ')');
+                    });
+                }).fail(function () {
+                    // Allow a retry on the same term set after a transient
+                    // error, and clear any half-populated spans.
+                    lastFeesKey = null;
+                    $('.two-term-fee').text('');
+                });
+            }
+
+            $('input[name^="PS_TWO_PAYMENT_TERMS_"]').on('change', loadTwoMerchantFees);
+            loadTwoMerchantFees();
         });
     </script>
 {/literal}
