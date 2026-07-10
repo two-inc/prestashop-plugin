@@ -5013,6 +5013,7 @@ require __DIR__ . '/SurchargeSpec.php';
 require __DIR__ . '/DefaultPaymentTermSpec.php';
 require __DIR__ . '/DeployVersionInfoSpec.php';
 require __DIR__ . '/MerchantFeeRatesSpec.php';
+require __DIR__ . '/TermSurchargeAmountsSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
@@ -5024,6 +5025,7 @@ $tests = [
     'DefaultPaymentTermSpec::runAll' => [DefaultPaymentTermSpec::class, 'runAll'],
     'DeployVersionInfoSpec::runAll' => [DeployVersionInfoSpec::class, 'runAll'],
     'MerchantFeeRatesSpec::runAll' => [MerchantFeeRatesSpec::class, 'runAll'],
+    'TermSurchargeAmountsSpec::runAll' => [TermSurchargeAmountsSpec::class, 'runAll'],
 ];
 
 $failed = 0;

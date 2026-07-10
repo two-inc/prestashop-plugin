@@ -1356,8 +1356,80 @@ class TwoCheckoutManager {
         if (selectedDays && activeTerm) {
             selectedDays.textContent = formatPayInLabel(activeTerm);
         }
+
+        // Upgrade the static rate preview to the REAL quoted amount for this
+        // cart, asynchronously — the chips above already rendered with the
+        // configured-rate text as an instant fallback.
+        this.refreshTermSurchargeAmounts(termsContainer);
     }
-    
+
+    /**
+     * Replace each term chip's static configured-rate surcharge preview with
+     * the live quoted fee amount for the current cart (server proxies
+     * POST /v1/pricing/order/fee per offered term — see
+     * getTwoOfferedTermSurchargeAmounts() in twopayment.php). Magento parity:
+     * gateway_method.js renders '+' + formatted amount per chip.
+     *
+     * Fail-soft by design: any failure (network error, non-200, success:false)
+     * is a silent no-op — the already-rendered static rate preview stays as
+     * the fallback. A zero amount for a term hides that chip's fee text
+     * ("no fee" semantics), it is NOT a failure signal. Only the
+     * .two-term-chip__surcharge text nodes are touched — never the chip's
+     * selected/aria state, so a buyer clicking before the fetch resolves is
+     * never clobbered.
+     */
+    refreshTermSurchargeAmounts(termsContainer) {
+        try {
+            if (!termsContainer || !window.twopayment || !window.twopayment.order_intent_url || !window.twopayment.ajax_token) {
+                return;
+            }
+            $.ajax({
+                url: window.twopayment.order_intent_url,
+                type: 'POST',
+                dataType: 'json',
+                data: { ajax: 1, action: 'fetchTermSurcharges', token: window.twopayment.ajax_token },
+                timeout: 10000
+            }).done((response) => {
+                if (!response || !response.success || !response.amounts) {
+                    return; // keep the static rate preview
+                }
+                // Same amount + space + currency-code composition as the admin
+                // merchant-fee display (configuration.tpl) — deliberately plain
+                // number formatting, no client-side price-locale guessing.
+                const currency = String(response.currency || '').toUpperCase().replace(/^\s+|\s+$/g, '');
+                const suffix = currency !== '' ? ' ' + currency : '';
+                termsContainer.querySelectorAll('.two-term-chip').forEach((chip) => {
+                    const days = chip.dataset.days;
+                    if (!days || !(days in response.amounts)) {
+                        return; // no quote for this term — leave its fallback text
+                    }
+                    const amount = Number(response.amounts[days]);
+                    let surchargeLabel = chip.querySelector('.two-term-chip__surcharge');
+                    if (!isFinite(amount) || amount <= 0) {
+                        // Zero/invalid quote for THIS term only: show no fee
+                        // rather than "+0.00" (Magento zero-hide semantics).
+                        if (surchargeLabel) {
+                            surchargeLabel.textContent = '';
+                        }
+                        return;
+                    }
+                    if (!surchargeLabel) {
+                        // Chip rendered without a fallback label (all-zero
+                        // configured rates) but a real fee exists — add one.
+                        surchargeLabel = document.createElement('span');
+                        surchargeLabel.className = 'two-term-chip__surcharge';
+                        chip.appendChild(surchargeLabel);
+                    }
+                    surchargeLabel.textContent = '+' + amount.toFixed(2) + suffix;
+                });
+            }).fail(() => {
+                // Silent no-op: the static rate preview stays rendered.
+            });
+        } catch (e) {
+            // Never let a preview upgrade break the checkout render.
+        }
+    }
+
     /**
      * Update payment terms description based on term type
      * Separated for reusability and early initialization
