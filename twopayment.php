@@ -2571,6 +2571,7 @@ class Twopayment extends PaymentModule
             'days' => $this->l('days'),
             'from_end_of_month' => $this->l('from end of month'),
             'end_of_month_plus_days' => $this->l('End of Month + %s days'),
+            'company_search_searching' => $this->l('Searching...'),
         );
 
         // Checkout media render is a sanctioned refresh point for the backend
