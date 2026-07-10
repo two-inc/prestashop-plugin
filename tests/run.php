@@ -165,6 +165,7 @@ final class OrderBuilderSpec
         self::testGetMerchantAvailableTermsSkipsFetchWithoutIdentity();
         self::testInvalidateMerchantAvailableTermsClearsCache();
         self::testSaveGeneralFormPreservesHiddenBackendWithdrawnTermPreference();
+        self::testStoreTwoFeeQuoteInSessionForcesImmediateCookieWrite();
     }
 
     private static function reset(): void
@@ -4374,6 +4375,40 @@ final class OrderBuilderSpec
         // 30 stays on; 60's preference is PRESERVED, not silently zeroed.
         TinyAssert::same(1, (int) Configuration::get('PS_TWO_PAYMENT_TERMS_30'));
         TinyAssert::same(1, (int) Configuration::get('PS_TWO_PAYMENT_TERMS_60'));
+    }
+
+    /**
+     * Regression: storeTwoFeeQuoteInSession() must not rely solely on Cookie's
+     * destructor to persist the cache - AJAX controllers (order-intent polling)
+     * end the request via ajaxDie()/exit, which is not guaranteed to run
+     * __destruct() in every PHP/webserver configuration. write() must be
+     * called explicitly so the cache is durable.
+     */
+    private static function testStoreTwoFeeQuoteInSessionForcesImmediateCookieWrite(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $spyCookie = new class extends Cookie {
+            public $writeCalls = 0;
+            public function write(): void
+            {
+                $this->writeCalls++;
+            }
+        };
+        $module->context->cookie = $spyCookie;
+
+        // storeTwoFeeQuoteInSession() is private; invoke via reflection rather
+        // than widening its visibility just for the test.
+        $method = new ReflectionMethod(Twopayment::class, 'storeTwoFeeQuoteInSession');
+        $method->invoke($module, '7|100.00|GB|GBP', [
+            'buyer_fee_share' => '1.23',
+            'total_fee_tax_rate' => '0.20',
+            'currency' => 'GBP',
+        ]);
+
+        TinyAssert::same(1, $spyCookie->writeCalls);
+        TinyAssert::same('7|100.00|GB|GBP', (string) $spyCookie->two_fee_quote_key);
     }
 
     private static function testSyncTwoAdminOrderPaymentDataFromProviderPullsLatestTermsFromTwo(): void

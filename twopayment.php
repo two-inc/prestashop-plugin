@@ -6522,6 +6522,17 @@ class Twopayment extends PaymentModule
             $this->context->cookie->two_fee_quote_key = $cacheKey;
             $this->context->cookie->two_fee_quote_data = json_encode($quote);
             $this->context->cookie->two_fee_quote_ts = (string) time();
+
+            // AJAX controllers (e.g. order-intent polling in orderintent.php's
+            // ajaxProcessCheckOrderIntent()) end the request via ajaxDie()/exit
+            // rather than returning normally, which is not guaranteed to run
+            // PrestaShop's Cookie::__destruct() in every PHP/webserver
+            // configuration. Force an immediate write so the quote is durably
+            // cached rather than relying on destructor timing (precedent:
+            // getTwoValidatedSessionCompanyData() above does the same).
+            if (method_exists($this->context->cookie, 'write')) {
+                $this->context->cookie->write();
+            }
         } catch (Exception $e) {
             PrestaShopLogger::addLog('TwoPayment: Failed to cache fee quote in session - ' . $e->getMessage(), 2);
         }
