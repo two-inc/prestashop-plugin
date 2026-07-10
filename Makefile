@@ -85,7 +85,6 @@ configure:
 		-e TWO_API_KEY=$(TWO_API_KEY) \
 		-e TWO_ENVIRONMENT=$(TWO_ENVIRONMENT) \
 		-e TWO_API_BASE_URL=$(TWO_API_BASE_URL) \
-		-e TWO_BRAND_CODE=$(TWO_BRAND_CODE) \
 		$(CONTAINER) php /var/www/html/modules/$(MODULE_NAME)/dev/configure.php
 	docker exec $(CONTAINER) bash -c "rm -rf /var/www/html/var/cache/*"
 

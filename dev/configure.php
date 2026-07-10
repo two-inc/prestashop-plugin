@@ -31,7 +31,6 @@ $keys = [
     'PS_TWO_MERCHANT_SHORT_NAME',
     'PS_TWO_MERCHANT_ID',
     'PS_TWO_API_KEY_VERIFIED',
-    'PS_TWO_BRAND_CODE',
 ];
 $db = Db::getInstance();
 foreach ($keys as $key) {
@@ -55,13 +54,6 @@ Configuration::resetStaticCache();
 
 Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', $apiKey);
 Configuration::updateValue('PS_TWO_ENVIRONMENT', $pluginEnv);
-
-// Brand selection (TWO-24746): resolves brands/{code}.php in the module.
-$brandCode = getenv('TWO_BRAND_CODE');
-if ($brandCode !== false && $brandCode !== '') {
-    Configuration::updateValue('PS_TWO_BRAND_CODE', $brandCode);
-    echo "Brand code set to {$brandCode}" . PHP_EOL;
-}
 
 // --- Verify the API key against Two so merchant_short_name gets populated. ---
 // TWO_API_BASE_URL is set by the Makefile from gcloud identity:
