@@ -6,6 +6,15 @@ namespace {
     if (!defined('_PS_VERSION_')) {
         define('_PS_VERSION_', '8.0.0');
     }
+    if (!defined('_MYSQL_ENGINE_')) {
+        define('_MYSQL_ENGINE_', 'InnoDB');
+    }
+    if (!function_exists('pSQL')) {
+        function pSQL($value, $htmlOK = false)
+        {
+            return addslashes((string) $value);
+        }
+    }
     if (!defined('_PS_CACHE_DIR_')) {
         define('_PS_CACHE_DIR_', sys_get_temp_dir() . DIRECTORY_SEPARATOR);
     }
@@ -58,6 +67,12 @@ namespace {
         public static array $taxRulesGroups = [];
         /** @var array<int,array> Tax rules by id */
         public static array $taxRules = [];
+        /** @var array<string,bool> Held MySQL advisory locks (GET_LOCK stubs) */
+        public static array $dbLocks = [];
+        /** @var array<int,int> Last-applied surcharge sync seq by cart id */
+        public static array $surchargeSyncSeqs = [];
+        /** @var array<int,array{id_order:int,product_id:int}> order_detail rows */
+        public static array $orderDetails = [];
         /** @var int Shared auto-increment for ObjectModel-style stubs */
         public static int $nextId = 90000;
 
@@ -108,6 +123,9 @@ namespace {
             self::$taxes = [];
             self::$taxRulesGroups = [];
             self::$taxRules = [];
+            self::$dbLocks = [];
+            self::$surchargeSyncSeqs = [];
+            self::$orderDetails = [];
             self::$nextId = 90000;
 
             $context = Context::getContext();
@@ -1154,7 +1172,47 @@ namespace {
 
         public function execute($sql): bool
         {
+            $sql = (string) $sql;
+            if (preg_match('/REPLACE INTO `ps_twopayment_surcharge_sync` \(`id_cart`, `seq`, `updated_at`\) VALUES \((\d+), (\d+)/', $sql, $m)) {
+                StubStore::$surchargeSyncSeqs[(int) $m[1]] = (int) $m[2];
+            }
             return true;
+        }
+
+        /**
+         * Recognises exactly the scalar queries the module issues; anything
+         * else answers false (core Db returns false on empty results).
+         */
+        public function getValue($sql)
+        {
+            $sql = (string) $sql;
+            if (preg_match("/GET_LOCK\\('([^']+)'/", $sql, $m)) {
+                if (!empty(StubStore::$dbLocks[$m[1]])) {
+                    return '0'; // held by a simulated concurrent request
+                }
+                StubStore::$dbLocks[$m[1]] = true;
+                return '1';
+            }
+            if (preg_match("/RELEASE_LOCK\\('([^']+)'/", $sql, $m)) {
+                unset(StubStore::$dbLocks[$m[1]]);
+                return '1';
+            }
+            if (preg_match('/SELECT `seq` FROM `ps_twopayment_surcharge_sync` WHERE `id_cart` = (\d+)/', $sql, $m)) {
+                return StubStore::$surchargeSyncSeqs[(int) $m[1]] ?? false;
+            }
+            if (preg_match('/SELECT COUNT\(\*\) FROM `ps_order_detail` WHERE `id_order` = (\d+) AND `product_id` = (\d+)/', $sql, $m)) {
+                $count = 0;
+                foreach (StubStore::$orderDetails as $row) {
+                    if ((int) $row['id_order'] === (int) $m[1] && (int) $row['product_id'] === (int) $m[2]) {
+                        $count++;
+                    }
+                }
+                return (string) $count;
+            }
+            if (preg_match("/SELECT `value` FROM `ps_configuration` WHERE `name` = '([A-Za-z0-9_]+)'/", $sql, $m)) {
+                return StubStore::$configuration[$m[1]] ?? false;
+            }
+            return false;
         }
 
         public function executeS($sql): array

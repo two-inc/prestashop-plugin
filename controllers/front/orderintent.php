@@ -142,7 +142,13 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             return;
         }
         $selected = (int) Tools::getValue('selected') === 1;
-        $result = $this->module->syncTwoSurchargeCartLine($this->context->cart, $selected);
+        // Ordering guard: the checkout JS sends a monotonically increasing
+        // sequence number so a slower, older request (rapid method switches)
+        // cannot overwrite a newer one server-side. Absent/invalid seq
+        // (legacy cached JS) falls back to unguarded behaviour.
+        $seqRaw = Tools::getValue('seq');
+        $syncSeq = (is_numeric($seqRaw) && (float) $seqRaw > 0) ? (int) $seqRaw : null;
+        $result = $this->module->syncTwoSurchargeCartLine($this->context->cart, $selected, $syncSeq);
         $this->sendJsonResponse(json_encode($result));
     }
 

@@ -28,8 +28,12 @@ class TwoCheckoutManager {
         this._initialIntentTriggered = false;
         // Monotonic sequence for surcharge cart-line syncs: only the LATEST
         // selection's response may drive the UI (last-wins against re-ordered
-        // AJAX responses when the buyer clicks between options quickly).
-        this._surchargeSyncSeq = 0;
+        // AJAX responses when the buyer clicks between options quickly), and
+        // the same value is sent to the server so a slower OLDER request can
+        // never overwrite a newer one there either. Seeded with Date.now()
+        // (not 0) so the sequence stays monotonic across page reloads - the
+        // server persists the last-applied value per cart.
+        this._surchargeSyncSeq = Date.now();
         this._surchargeRestoreKey = 'two_restore_payment_selection';
 
         this.init();
@@ -427,7 +431,10 @@ class TwoCheckoutManager {
                     ajax: 1,
                     action: 'syncSurchargeLine',
                     token: window.twopayment.ajax_token,
-                    selected: selected ? 1 : 0
+                    selected: selected ? 1 : 0,
+                    // Server-side ordering guard: requests carrying a lower
+                    // seq than the last applied one are ignored server-side.
+                    seq: seq
                 }
             }).done(resolve).fail(reject);
         });

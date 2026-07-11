@@ -40,6 +40,9 @@ final class SurchargeCartLineSpec
         self::testStaleGuardRemovesLineWhenSessionMarkerLost();
         self::testStaleGuardKeepsLegitimateLine();
         self::testHiddenProductShapeAndLazyCreation();
+        self::testStaleSequencedSyncRequestIsIgnoredServerSide();
+        self::testAuthoritativeSyncBypassesSequenceGuard();
+        self::testSequencedSyncFailsSoftWhenLockHeldByConcurrentRequest();
     }
 
     /* ---- fixtures ---- */
@@ -344,7 +347,7 @@ final class SurchargeCartLineSpec
                 return ['http_status' => 200, 'buyer_fee_share' => '5.00', 'currency' => 'EUR'];
             }
 
-            public function syncTwoSurchargeCartLine($cart, $selected)
+            public function syncTwoSurchargeCartLine($cart, $selected, $syncSeq = null)
             {
                 return ['success' => false, 'changed' => false, 'present' => true];
             }
@@ -411,6 +414,76 @@ final class SurchargeCartLineSpec
         $ownController->module = (object) ['name' => 'twopayment'];
         $module->hookActionFrontControllerInitAfter(['controller' => $ownController]);
         TinyAssert::count(1, self::feeLines());
+    }
+
+    /* ---- server-side request-ordering guard (rapid method switches) ---- */
+
+    private static function testStaleSequencedSyncRequestIsIgnoredServerSide(): void
+    {
+        $module = self::makeModule();
+        $cart = self::makeCart();
+
+        // Buyer clicks: away from Two (seq 100, still in flight), then back
+        // to Two (seq 200). The NEWER request completes first ...
+        $newer = $module->syncTwoSurchargeCartLine($cart, true, 200);
+        TinyAssert::true($newer['success']);
+        TinyAssert::true($newer['present']);
+        TinyAssert::count(1, self::feeLines());
+
+        // ... then the OLDER "remove" request lands: it must be a no-op that
+        // reports the CURRENT state, not strip the line the newer click added.
+        $older = $module->syncTwoSurchargeCartLine($cart, false, 100);
+        TinyAssert::true($older['success']);
+        TinyAssert::false($older['changed'], 'stale request must not mutate the cart');
+        TinyAssert::true($older['present'], 'stale request reports the current state');
+        TinyAssert::count(1, self::feeLines());
+        TinyAssert::same(111.75, round((float) $cart->getOrderTotal(true, Cart::BOTH), 2));
+
+        // Equal seq (transport retry of an already-applied request) is stale too.
+        $replay = $module->syncTwoSurchargeCartLine($cart, true, 200);
+        TinyAssert::true($replay['success']);
+        TinyAssert::false($replay['changed']);
+
+        // A genuinely newer request still applies.
+        $newest = $module->syncTwoSurchargeCartLine($cart, false, 300);
+        TinyAssert::true($newest['success']);
+        TinyAssert::true($newest['changed']);
+        TinyAssert::count(0, self::feeLines());
+    }
+
+    private static function testAuthoritativeSyncBypassesSequenceGuard(): void
+    {
+        $module = self::makeModule();
+        $cart = self::makeCart();
+
+        // Buyer AJAX stored seq 500 and removed the line.
+        $module->syncTwoSurchargeCartLine($cart, true, 400);
+        $module->syncTwoSurchargeCartLine($cart, false, 500);
+        TinyAssert::count(0, self::feeLines());
+
+        // The order-create self-heal (buildTwoOrderPricingData) passes NO
+        // seq: it is the final authoritative sync before charging and must
+        // always apply, whatever the stored sequence says.
+        $selfHeal = $module->syncTwoSurchargeCartLine($cart, true);
+        TinyAssert::true($selfHeal['success']);
+        TinyAssert::true($selfHeal['changed']);
+        TinyAssert::count(1, self::feeLines());
+    }
+
+    private static function testSequencedSyncFailsSoftWhenLockHeldByConcurrentRequest(): void
+    {
+        $module = self::makeModule();
+        $cart = self::makeCart();
+
+        // Another request holds this cart's sync lock: the sequenced call
+        // reports success=false (frontend retries / server gate stays
+        // authoritative) and mutates nothing.
+        StubStore::$dbLocks['two_surcharge_sync_' . self::CART_ID] = true;
+        $result = $module->syncTwoSurchargeCartLine($cart, true, 100);
+        TinyAssert::false($result['success']);
+        TinyAssert::false($result['changed']);
+        TinyAssert::count(0, self::feeLines());
+        unset(StubStore::$dbLocks['two_surcharge_sync_' . self::CART_ID]);
     }
 
     /* ---- requirement 1: hidden product shape ---- */

@@ -455,6 +455,16 @@ class Twopayment extends PaymentModule
             KEY `idx_attempt_two_order_id` (`two_order_id`),
             KEY `idx_attempt_updated_at` (`updated_at`)
         ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8;';
+
+        // Per-cart last-applied surcharge sync sequence (buyer AJAX ordering
+        // guard). Also lazily created in ensureTwoSurchargeSyncTable() for
+        // installations upgraded from versions without it.
+        $sql[] = 'CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'twopayment_surcharge_sync` (
+            `id_cart` INT(11) UNSIGNED NOT NULL,
+            `seq` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            `updated_at` DATETIME NOT NULL,
+            PRIMARY KEY (`id_cart`)
+        ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8;';
         // Note: invoice_details (payment info) is NOT stored in DB - fetched from Two API when needed
         // This ensures payment details are always current and avoids stale data issues
 
@@ -536,6 +546,7 @@ class Twopayment extends PaymentModule
     protected function deleteTwoTables()
     {
         $sql = array();
+        $sql[] = 'DROP TABLE IF EXISTS `' . _DB_PREFIX_ . 'twopayment_surcharge_sync`';
         foreach ($sql as $query) {
             if (Db::getInstance()->execute($query) == false) {
                 return false;
@@ -7304,6 +7315,104 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * MySQL advisory lock (GET_LOCK). Used to serialise the surcharge
+     * check-then-create/check-then-act sequences across concurrent requests.
+     * NOTE: paths below may hold two differently-named locks at once; that
+     * requires MySQL >= 5.7.5 or MariaDB >= 10.0.2 (older servers silently
+     * release the first lock on the second GET_LOCK) - both far below any
+     * realistic PrestaShop 8 database floor.
+     *
+     * @param string $name
+     * @param int $timeoutSeconds
+     * @return bool
+     */
+    protected function acquireTwoDbLock($name, $timeoutSeconds = 5)
+    {
+        try {
+            return (string) Db::getInstance()->getValue(
+                "SELECT GET_LOCK('" . pSQL($name) . "', " . (int) $timeoutSeconds . ')'
+            ) === '1';
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: GET_LOCK failed for ' . $name . ' - ' . $e->getMessage(), 3);
+            return false;
+        }
+    }
+
+    /**
+     * Release a lock taken with acquireTwoDbLock. Callers use try/finally so
+     * the lock is released even when the guarded section throws.
+     *
+     * @param string $name
+     */
+    protected function releaseTwoDbLock($name)
+    {
+        try {
+            Db::getInstance()->getValue("SELECT RELEASE_LOCK('" . pSQL($name) . "')");
+        } catch (Exception $e) {
+            // Session teardown releases the lock anyway; log only.
+            PrestaShopLogger::addLog('TwoPayment: RELEASE_LOCK failed for ' . $name . ' - ' . $e->getMessage(), 2);
+        }
+    }
+
+    /**
+     * Lazily create the per-cart surcharge sync-sequence table. Also created
+     * at install; the lazy path covers module upgrades from versions without
+     * it (install() does not re-run on upgrade).
+     */
+    protected function ensureTwoSurchargeSyncTable()
+    {
+        static $ensured = false;
+        if ($ensured) {
+            return;
+        }
+        Db::getInstance()->execute(
+            'CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'twopayment_surcharge_sync` (
+                `id_cart` INT(11) UNSIGNED NOT NULL,
+                `seq` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+                `updated_at` DATETIME NOT NULL,
+                PRIMARY KEY (`id_cart`)
+            ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8'
+        );
+        $ensured = true;
+    }
+
+    /**
+     * Last-applied buyer-driven sync sequence for a cart, or null when the
+     * cart has never synced with a sequence number.
+     *
+     * @param int $cartId
+     * @return int|null
+     */
+    protected function getTwoSurchargeSyncLastSeq($cartId)
+    {
+        $this->ensureTwoSurchargeSyncTable();
+        $value = Db::getInstance()->getValue(
+            'SELECT `seq` FROM `' . _DB_PREFIX_ . 'twopayment_surcharge_sync` WHERE `id_cart` = ' . (int) $cartId
+        );
+        if ($value === false || $value === null) {
+            return null;
+        }
+
+        return (int) $value;
+    }
+
+    /**
+     * Persist the last-applied sync sequence for a cart (caller holds the
+     * per-cart advisory lock, so plain REPLACE is race-free here).
+     *
+     * @param int $cartId
+     * @param int $seq
+     */
+    protected function setTwoSurchargeSyncLastSeq($cartId, $seq)
+    {
+        $this->ensureTwoSurchargeSyncTable();
+        Db::getInstance()->execute(
+            'REPLACE INTO `' . _DB_PREFIX_ . 'twopayment_surcharge_sync` (`id_cart`, `seq`, `updated_at`) ' .
+            'VALUES (' . (int) $cartId . ', ' . (int) $seq . ", '" . pSQL(date('Y-m-d H:i:s')) . "')"
+        );
+    }
+
+    /**
      * The surcharge product's line in the given cart, or null when absent.
      * Amounts are PrestaShop's OWN applied totals for the line (the figures
      * the buyer sees), used both for idempotency checks and for the
@@ -7356,11 +7465,74 @@ class Twopayment extends PaymentModule
      * is corrected by delete + re-add. Never throws (fail-soft AJAX
      * contract); 'success' => false tells the caller nothing was reconciled.
      *
+     * ORDERING (buyer-driven AJAX only): two rapid selection changes can have
+     * their requests complete on the server in the wrong order (switch away
+     * from Two, then back - the "back" request may finish first). When the
+     * caller passes a monotonically increasing $syncSeq (the checkout JS
+     * sends one), the last-applied sequence is stored per cart and any
+     * request whose sequence is not strictly greater is a no-op that reports
+     * the current state unchanged. Callers that pass null (the order-create
+     * self-heal in buildTwoOrderPricingData - the final authoritative sync
+     * before charging - and legacy frontends) bypass the guard entirely and
+     * always apply.
+     *
      * @param Cart $cart
      * @param bool $selected Two is the buyer's selected payment option
+     * @param int|null $syncSeq buyer-driven request ordering guard (null = authoritative, always applies)
      * @return array{success:bool,changed:bool,present:bool}
      */
-    public function syncTwoSurchargeCartLine($cart, $selected)
+    public function syncTwoSurchargeCartLine($cart, $selected, $syncSeq = null)
+    {
+        $result = array('success' => false, 'changed' => false, 'present' => false);
+        if ($syncSeq === null) {
+            return $this->applyTwoSurchargeCartLineSync($cart, $selected);
+        }
+
+        try {
+            if (!Validate::isLoadedObject($cart)) {
+                return $result;
+            }
+            // Serialise buyer-driven syncs per cart so the seq check-then-act
+            // and the cart mutation cannot interleave between two requests.
+            $lockName = 'two_surcharge_sync_' . (int) $cart->id;
+            if (!$this->acquireTwoDbLock($lockName)) {
+                PrestaShopLogger::addLog('TwoPayment: Surcharge sync lock not acquired for cart ' . (int) $cart->id, 2);
+                return $result;
+            }
+            try {
+                $lastSeq = $this->getTwoSurchargeSyncLastSeq((int) $cart->id);
+                if ($lastSeq !== null && (int) $syncSeq <= $lastSeq) {
+                    // Stale request (an out-of-order older click): leave the
+                    // cart exactly as the newer request left it.
+                    PrestaShopLogger::addLog(
+                        'TwoPayment: Ignored stale surcharge sync (seq ' . (int) $syncSeq . ' <= ' . $lastSeq . ') for cart ' . (int) $cart->id,
+                        1
+                    );
+                    $result['success'] = true;
+                    $result['present'] = $this->getTwoSurchargeCartLine($cart) !== null;
+                    return $result;
+                }
+                $this->setTwoSurchargeSyncLastSeq((int) $cart->id, (int) $syncSeq);
+                return $this->applyTwoSurchargeCartLineSync($cart, $selected);
+            } finally {
+                $this->releaseTwoDbLock($lockName);
+            }
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Surcharge sync ordering guard failed for cart ' . (isset($cart->id) ? (int) $cart->id : 0) . ' - ' . $e->getMessage(), 3);
+            return $result;
+        }
+    }
+
+    /**
+     * The actual reconciliation body of syncTwoSurchargeCartLine (see its
+     * docblock); split out so the buyer-AJAX ordering guard wraps it without
+     * touching the money logic.
+     *
+     * @param Cart $cart
+     * @param bool $selected
+     * @return array{success:bool,changed:bool,present:bool}
+     */
+    protected function applyTwoSurchargeCartLineSync($cart, $selected)
     {
         $result = array('success' => false, 'changed' => false, 'present' => false);
         try {
