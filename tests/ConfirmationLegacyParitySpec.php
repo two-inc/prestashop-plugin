@@ -65,7 +65,11 @@ final class ConfirmationLegacyParitySpec
         StubStore::reset();
         Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
         Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '5');
-        Configuration::updateValue('PS_TWO_SURCHARGE_TAX_RATE', '25');
+        // Merchant-selected tax rules group: covers the cart's destination
+        // (FR, country 33) at 25%.
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+        StubStore::$taxRulesGroups[400] = ['name' => 'FR standard rate', 'active' => 1];
+        StubStore::$taxRuleRates[400] = [33 => 25.0];
         Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS, '[30]');
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', '1');
         Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION', 12);

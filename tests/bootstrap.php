@@ -46,6 +46,18 @@ namespace {
         public static array $moduleCurrencies = [];
         public static array $productCategories = [];
         public static array $images = [];
+        /**
+         * Effective tax rates by tax rules group, mirroring core's
+         * TaxManagerFactory resolution (live-container verified on PS 8.2.6):
+         *   - float: flat rate for EVERY destination (legacy shape)
+         *   - array<int,float|float[]>: rate by COUNTRY id; a missing country
+         *     resolves 0 (core: no matching TaxRule -> untaxed destination);
+         *     a float[] value SUMS (core: combined multi-rate rules stack
+         *     additively, e.g. 6% + 2% -> 8%).
+         * Group id 0 always resolves 0 (core "No tax" sentinel).
+         *
+         * @var array<int,float|array<int,float|float[]>>
+         */
         public static array $taxRuleRates = [];
         public static array $dbExecuteSResponses = [];
         public static array $dbLastExecuteS = [];
@@ -55,6 +67,34 @@ namespace {
         public static array $tabIds = ['AdminTwopaymentInvoice' => 1];
         /** @var string[] Class names passed to Tab::add() */
         public static array $tabAddCalls = [];
+
+        /**
+         * Resolve a tax rules group's effective rate for a destination
+         * country - the stub twin of core's
+         * TaxManagerFactory::getManager($address, $groupId)
+         *     ->getTaxCalculator()->getTotalRate().
+         * See $taxRuleRates for the fixture shapes.
+         */
+        public static function resolveTaxRate(int $groupId, int $countryId): float
+        {
+            if ($groupId <= 0 || !isset(self::$taxRuleRates[$groupId])) {
+                return 0.0;
+            }
+            $entry = self::$taxRuleRates[$groupId];
+            if (is_array($entry)) {
+                $entry = $entry[$countryId] ?? 0.0;
+            }
+            if (is_array($entry)) {
+                // Combined multi-rate rules stack additively (core-verified).
+                $sum = 0.0;
+                foreach ($entry as $rate) {
+                    $sum += (float) $rate;
+                }
+                return $sum;
+            }
+
+            return (float) $entry;
+        }
         /** @var array<int,array> Catalog products by id (surcharge cart-line feature) */
         public static array $products = [];
         /** @var array<int,array> Specific prices by id */
@@ -90,6 +130,7 @@ namespace {
                 'PS_TWO_ENVIRONMENT' => 'development',
                 'PS_OS_SHIPPING' => 4,
                 'PS_OS_CANCELED' => 6,
+                'PS_TAX' => 1, // core default: taxes enabled shop-wide
             ];
             self::$countries = [34 => 'ES', 47 => 'NO', 56 => 'BE'];
             self::$states = [
@@ -240,6 +281,11 @@ namespace {
             return (string) $message;
         }
 
+        public function displayWarning($message): string
+        {
+            return (string) $message;
+        }
+
         public function display($file, $template): string
         {
             return '';
@@ -365,6 +411,12 @@ namespace {
         public static function updateValue($key, $value): bool
         {
             StubStore::$configuration[$key] = $value;
+            return true;
+        }
+
+        public static function deleteByName($key): bool
+        {
+            unset(StubStore::$configuration[$key]);
             return true;
         }
     }
@@ -706,6 +758,23 @@ namespace {
             StubStore::$taxRulesGroups[$this->id] = ['name' => $this->name, 'active' => $this->active];
             return true;
         }
+
+        /** Core-shape rows: id_tax_rules_group / name / active. */
+        public static function getTaxRulesGroups($onlyActive = true): array
+        {
+            $rows = [];
+            foreach (StubStore::$taxRulesGroups as $id => $data) {
+                if ($onlyActive && empty($data['active'])) {
+                    continue;
+                }
+                $rows[] = [
+                    'id_tax_rules_group' => $id,
+                    'name' => (string) ($data['name'] ?? ''),
+                    'active' => (int) ($data['active'] ?? 0),
+                ];
+            }
+            return $rows;
+        }
     }
 
     class TaxRule
@@ -754,10 +823,6 @@ namespace {
             $data = get_object_vars($this);
             unset($data['loaded']);
             StubStore::$taxRules[$this->id] = $data;
-            // Mirror core behavior for the TaxManager stub: the group now
-            // applies the referenced tax's rate.
-            $tax = new Tax((int) $this->id_tax);
-            StubStore::$taxRuleRates[(int) $this->id_tax_rules_group] = (float) $tax->rate;
         }
     }
 
@@ -795,15 +860,17 @@ namespace {
     class TaxManager
     {
         private int $groupId;
+        private int $countryId;
 
-        public function __construct(int $groupId)
+        public function __construct(int $groupId, int $countryId)
         {
             $this->groupId = $groupId;
+            $this->countryId = $countryId;
         }
 
         public function getTaxCalculator(): TaxCalculator
         {
-            return new TaxCalculator((float) (StubStore::$taxRuleRates[$this->groupId] ?? 0.0));
+            return new TaxCalculator(StubStore::resolveTaxRate($this->groupId, $this->countryId));
         }
     }
 
@@ -811,7 +878,8 @@ namespace {
     {
         public static function getManager($address, $taxRulesGroupId): TaxManager
         {
-            return new TaxManager((int) $taxRulesGroupId);
+            $countryId = is_object($address) && isset($address->id_country) ? (int) $address->id_country : 0;
+            return new TaxManager((int) $taxRulesGroupId, $countryId);
         }
     }
 
@@ -1076,7 +1144,22 @@ namespace {
             if ($net === null) {
                 $net = $product->loaded ? (float) $product->price : 0.0;
             }
-            $rate = (float) (StubStore::$taxRuleRates[(int) $product->id_tax_rules_group] ?? 0.0);
+            // Destination-based rate, exactly like core Product::priceCalculation:
+            // the product's tax rules group resolved against the cart's
+            // PS_TAX_ADDRESS_TYPE address (invoice unless configured delivery).
+            $taxAddressField = Configuration::get('PS_TAX_ADDRESS_TYPE') === 'id_address_delivery'
+                ? 'id_address_delivery'
+                : 'id_address_invoice';
+            $taxAddress = new Address((int) $this->{$taxAddressField});
+            // vatnumber-module B2B exemption, exactly like core
+            // Product::priceCalculation: VAT number present, buyer country
+            // differs from the module's configured country, management on.
+            $vatExempt = !empty($taxAddress->vat_number)
+                && (int) $taxAddress->id_country !== (int) Configuration::get('VATNUMBER_COUNTRY')
+                && Configuration::get('VATNUMBER_MANAGEMENT');
+            $rate = (Configuration::get('PS_TAX') && !$vatExempt)
+                ? StubStore::resolveTaxRate((int) $product->id_tax_rules_group, (int) $taxAddress->id_country)
+                : 0.0;
 
             $found = false;
             foreach ($rows as $i => $row) {

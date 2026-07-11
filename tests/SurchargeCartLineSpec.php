@@ -13,8 +13,11 @@ declare(strict_types=1);
  *   computation path as the Two payload's fee line
  *   (buildTwoSurchargeLineItemForCart over the shared quote cache), asserted
  *   end-to-end through getTwoNewOrderData,
- * - tax: PrestaShop applies exactly getTwoSurchargeTaxRate() to the line via
- *   the module-managed Tax/TaxRulesGroup/TaxRule graph.
+ * - tax: PrestaShop applies the merchant-selected TaxRulesGroup
+ *   (CONFIG_SURCHARGE_TAX_RULES_GROUP) to the line natively - the hidden fee
+ *   product carries the group on its id_tax_rules_group field like any real
+ *   product, and the Two payload resolves the SAME group for the SAME
+ *   destination (getTwoSurchargeTaxRateForCart), so the sides cannot drift.
  *
  * Plus the money-protective guards: the order-create parity gate (fail
  * closed on cart-vs-payload fee divergence) and the front-controller
@@ -25,6 +28,10 @@ final class SurchargeCartLineSpec
     private const CART_ID = 8101;
     private const PRODUCT_NET = 100.00;
     private const PRODUCT_GROSS = 105.50;
+    /** Merchant's own (pre-existing) tax rules group used by the fixtures. */
+    private const TAX_GROUP_ID = 400;
+    /** Fixture buyer country (FR) covered by the group at 25%. */
+    private const COUNTRY_FR = 33;
 
     public static function runAll(): void
     {
@@ -44,7 +51,10 @@ final class SurchargeCartLineSpec
         self::testAuthoritativeSyncBypassesSequenceGuard();
         self::testSequencedSyncFailsSoftWhenLockHeldByConcurrentRequest();
         self::testConcurrentFirstUseCreatesNoDuplicateHiddenProduct();
-        self::testConcurrentFirstUseCreatesNoDuplicateTaxSetup();
+        self::testSyncAppliesSelectedTaxRulesGroupToFeeProductAndNeverCreatesTaxObjects();
+        self::testFeeTaxFollowsDestinationRulesOfSelectedGroup();
+        self::testNoTaxSentinelZeroesFeeTaxForEveryDestination();
+        self::testVatExemptB2BCartUntaxedOnBothCartLineAndPayload();
         self::testAdminManualAddOfFeeProductToOrderIsBlocked();
         self::testDuplicateFeeOrderDetailRowIsRejectedInAnyContext();
         self::testFirstFeeOrderDetailRowFromOrderCreationIsAllowed();
@@ -60,7 +70,12 @@ final class SurchargeCartLineSpec
         Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
         Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '5');
         Configuration::updateValue('PS_TWO_SURCHARGE_PCT_60', '8');
-        Configuration::updateValue('PS_TWO_SURCHARGE_TAX_RATE', '25');
+        // Merchant's own tax rules group, selected in the module config:
+        // covers the fixture buyer's country (FR) at 25%. Destinations the
+        // group has no rule for resolve 0 (core behaviour).
+        StubStore::$taxRulesGroups[self::TAX_GROUP_ID] = ['name' => 'FR standard rate', 'active' => 1];
+        StubStore::$taxRuleRates[self::TAX_GROUP_ID] = [self::COUNTRY_FR => 25.0];
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, (string) self::TAX_GROUP_ID);
         Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS, '[30,60]');
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', '1');
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_60', '1');
@@ -175,8 +190,8 @@ final class SurchargeCartLineSpec
         $lines = self::feeLines();
         TinyAssert::count(1, $lines);
         TinyAssert::same(1, (int) $lines[0]['cart_quantity']);
-        // Net = quoted buyer_fee_share (5.00); gross applies the ADMIN
-        // configured 25% surcharge tax rate through the tax rules group.
+        // Net = quoted buyer_fee_share (5.00); gross applies the merchant's
+        // selected tax rules group rate for the buyer's country (FR -> 25%).
         TinyAssert::same(5.00, round((float) $lines[0]['total'], 2));
         TinyAssert::same(6.25, round((float) $lines[0]['total_wt'], 2));
         TinyAssert::same(25.0, round((float) $lines[0]['rate'], 2));
@@ -521,33 +536,169 @@ final class SurchargeCartLineSpec
         TinyAssert::same($productsAfterWinner, count(StubStore::$products), 'no duplicate hidden product after the race');
     }
 
-    private static function testConcurrentFirstUseCreatesNoDuplicateTaxSetup(): void
+    /**
+     * TWO-25071: the module assigns the MERCHANT's selected TaxRulesGroup to
+     * the hidden product's id_tax_rules_group (the same field every real
+     * product uses) and never creates Tax/TaxRulesGroup/TaxRule objects of
+     * its own (the synthetic-graph machinery is gone).
+     */
+    private static function testSyncAppliesSelectedTaxRulesGroupToFeeProductAndNeverCreatesTaxObjects(): void
+    {
+        $module = self::makeModule([30 => '5.00', 60 => '8.00']);
+        $cart = self::makeCart();
+
+        $module->syncTwoSurchargeCartLine($cart, true);
+        $productId = (int) Configuration::get('PS_TWO_SURCHARGE_PRODUCT_ID');
+        TinyAssert::same(self::TAX_GROUP_ID, (int) (new Product($productId))->id_tax_rules_group, 'fee product carries the merchant-selected group');
+        TinyAssert::count(0, StubStore::$taxes, 'module must not create a Tax');
+        TinyAssert::count(1, StubStore::$taxRulesGroups, 'only the merchant-owned fixture group exists');
+        TinyAssert::count(0, StubStore::$taxRules, 'module must not create a TaxRule');
+
+        // Merchant re-points the selection in the module config: the next
+        // sync self-heals the product assignment (no new objects, ever).
+        StubStore::$taxRulesGroups[401] = ['name' => 'Reduced rate', 'active' => 1];
+        StubStore::$taxRuleRates[401] = [self::COUNTRY_FR => 10.0];
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '401');
+        Context::getContext()->cookie->two_payment_term = 60; // amount change forces a re-ensure
+        $module->syncTwoSurchargeCartLine($cart, true);
+        TinyAssert::same(401, (int) (new Product($productId))->id_tax_rules_group, 'selection change re-points the product on the next sync');
+        TinyAssert::count(0, StubStore::$taxes);
+        TinyAssert::count(0, StubStore::$taxRules);
+        // And the re-priced line applies the NEW group's FR rate (10%) to
+        // the 60-day quote (8.00 net -> 8.80 gross).
+        $lines = self::feeLines();
+        TinyAssert::count(1, $lines);
+        TinyAssert::same(8.00, round((float) $lines[0]['total'], 2));
+        TinyAssert::same(8.80, round((float) $lines[0]['total_wt'], 2));
+    }
+
+    /**
+     * TWO-25071: destination-based rates. The selected group taxes the fee
+     * for a covered destination and zero-rates it for a destination the
+     * group has NO rule for - and the Two payload line resolves the SAME
+     * rate as the PS cart line in both cases (parity by construction),
+     * including a genuine multi-rate stacking destination (6% + 2% -> 8%).
+     */
+    private static function testFeeTaxFollowsDestinationRulesOfSelectedGroup(): void
     {
         $module = self::makeModule();
         $cart = self::makeCart();
 
-        // Another request holds the tax-setup lock: ensure fails soft (sync
-        // reports failure, frontend retries) and creates NO tax objects.
-        StubStore::$dbLocks['two_surcharge_tax_setup'] = true;
-        $result = $module->syncTwoSurchargeCartLine($cart, true);
-        TinyAssert::false($result['success']);
-        TinyAssert::count(0, StubStore::$taxes, 'lock loser must not create a Tax');
-        TinyAssert::count(0, StubStore::$taxRulesGroups, 'lock loser must not create a TaxRulesGroup');
-        TinyAssert::count(0, StubStore::$taxRules, 'lock loser must not create a TaxRule');
-        TinyAssert::count(0, self::feeLines());
-        unset(StubStore::$dbLocks['two_surcharge_tax_setup']);
+        // Group covers FR at 25%, CA-style stacked 6%+2% for country 40,
+        // and has NO rule for country 47 (NO).
+        StubStore::$taxRuleRates[self::TAX_GROUP_ID] = [
+            self::COUNTRY_FR => 25.0,
+            40 => [6.0, 2.0],
+        ];
+        StubStore::$countries[40] = 'CA';
+        StubStore::$addresses[8203] = ['id_country' => 40, 'loaded' => true] + StubStore::$addresses[8201];
+        StubStore::$addresses[8204] = ['id_country' => 47, 'loaded' => true] + StubStore::$addresses[8201];
 
-        // Lock released (winner finished): setup proceeds and repeated syncs
-        // reuse the SAME single object graph.
+        // Covered destination (FR, 25%): 5.00 net -> 6.25 gross.
         $module->syncTwoSurchargeCartLine($cart, true);
-        TinyAssert::count(1, StubStore::$taxes);
-        TinyAssert::count(1, StubStore::$taxRulesGroups);
-        TinyAssert::count(1, StubStore::$taxRules);
-        Context::getContext()->cookie->two_payment_term = 60;
-        $module->syncTwoSurchargeCartLine($cart, true); // amount change forces a re-ensure
-        TinyAssert::count(1, StubStore::$taxes, 'tax graph must be reused, not duplicated');
-        TinyAssert::count(1, StubStore::$taxRulesGroups);
-        TinyAssert::count(1, StubStore::$taxRules);
+        TinyAssert::same(6.25, round((float) self::feeLines()[0]['total_wt'], 2));
+        $payloadLine = $module->buildTwoSurchargeLineItemForCart($cart, self::PRODUCT_GROSS);
+        TinyAssert::same('0.25', $payloadLine['tax_rate']);
+        TinyAssert::same('6.25', $payloadLine['gross_amount']);
+
+        // Stacking destination (6% + 2% combined = 8%): both sides at 8%.
+        $cart->id_address_invoice = 8203;
+        $cart->id_address_delivery = 8203;
+        $module->syncTwoSurchargeCartLine($cart, true);
+        $lines = self::feeLines();
+        TinyAssert::same(5.00, round((float) $lines[0]['total'], 2));
+        TinyAssert::same(5.40, round((float) $lines[0]['total_wt'], 2), 'stacked 6%+2% must apply additively (8%)');
+        $payloadLine = $module->buildTwoSurchargeLineItemForCart($cart, self::PRODUCT_GROSS);
+        TinyAssert::same('0.08', $payloadLine['tax_rate']);
+        TinyAssert::same('0.40', $payloadLine['tax_amount']);
+        TinyAssert::same('5.40', $payloadLine['gross_amount'], 'payload gross matches the PS line gross for the stacked destination');
+
+        // Uncovered destination (NO rule): zero-rated on BOTH sides.
+        $cart->id_address_invoice = 8204;
+        $cart->id_address_delivery = 8204;
+        $module->syncTwoSurchargeCartLine($cart, true);
+        $lines = self::feeLines();
+        TinyAssert::same(5.00, round((float) $lines[0]['total'], 2));
+        TinyAssert::same(5.00, round((float) $lines[0]['total_wt'], 2), 'no rule for the destination -> untaxed line');
+        $payloadLine = $module->buildTwoSurchargeLineItemForCart($cart, self::PRODUCT_GROSS);
+        TinyAssert::same('0', $payloadLine['tax_rate']);
+        TinyAssert::same('5.00', $payloadLine['gross_amount']);
+    }
+
+    /**
+     * TWO-25071: selecting the "No tax" sentinel (id 0) zeroes the fee tax
+     * for EVERY destination - no special-case code, it is core's own
+     * untaxed-group semantics (live-container verified).
+     */
+    private static function testNoTaxSentinelZeroesFeeTaxForEveryDestination(): void
+    {
+        $module = self::makeModule();
+        $cart = self::makeCart();
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '0');
+
+        foreach ([self::COUNTRY_FR => 8201, 47 => 8205] as $countryId => $addressId) {
+            StubStore::$countries[47] = 'NO';
+            StubStore::$addresses[8205] = ['id_country' => 47, 'loaded' => true] + StubStore::$addresses[8201];
+            $cart->id_address_invoice = $addressId;
+            $cart->id_address_delivery = $addressId;
+            $module->syncTwoSurchargeCartLine($cart, true);
+            $lines = self::feeLines();
+            TinyAssert::count(1, $lines);
+            TinyAssert::same(5.00, round((float) $lines[0]['total'], 2));
+            TinyAssert::same(5.00, round((float) $lines[0]['total_wt'], 2), 'No tax sentinel must produce an untaxed line for country ' . $countryId);
+            $payloadLine = $module->buildTwoSurchargeLineItemForCart($cart, self::PRODUCT_GROSS);
+            TinyAssert::same('0', $payloadLine['tax_rate']);
+            TinyAssert::same('5.00', $payloadLine['gross_amount']);
+        }
+    }
+
+    /**
+     * TWO-25071: vatnumber-module B2B exemption. A cross-border business
+     * buyer with a VAT number (management on) is untaxed by core's
+     * Product::priceCalculation on the PS cart line AND by
+     * getTwoSurchargeTaxRateForCart on the Two payload side - both sides of
+     * the SAME cart must agree, exactly like the destination-rules /
+     * multi-rate / no-tax cases above. Guards the hand-replicated exemption
+     * condition in getTwoSurchargeTaxRateForCart against drifting from the
+     * cart-line behaviour.
+     */
+    private static function testVatExemptB2BCartUntaxedOnBothCartLineAndPayload(): void
+    {
+        // Cross-border B2B: merchant country NO (47), buyer FR with a VAT
+        // number -> exempt. Untaxed on BOTH sides.
+        $module = self::makeModule();
+        $cart = self::makeCart();
+        Configuration::updateValue('VATNUMBER_MANAGEMENT', 1);
+        Configuration::updateValue('VATNUMBER_COUNTRY', 47);
+        StubStore::$addresses[8201]['vat_number'] = 'FR999999999';
+        StubStore::$addresses[8202]['vat_number'] = 'FR999999999';
+
+        $module->syncTwoSurchargeCartLine($cart, true);
+        $lines = self::feeLines();
+        TinyAssert::count(1, $lines);
+        TinyAssert::same(5.00, round((float) $lines[0]['total'], 2));
+        TinyAssert::same(5.00, round((float) $lines[0]['total_wt'], 2), 'VAT-exempt B2B cart must carry an UNTAXED PS fee line');
+        $payloadLine = $module->buildTwoSurchargeLineItemForCart($cart, self::PRODUCT_GROSS);
+        TinyAssert::same('0', $payloadLine['tax_rate'], 'payload side must apply the same B2B exemption as the cart line');
+        TinyAssert::same('5.00', $payloadLine['gross_amount'], 'payload gross matches the untaxed PS line gross');
+
+        // Domestic B2B (buyer country == VATNUMBER_COUNTRY): NOT exempt -
+        // both sides tax at the group's FR rate (25%). Fresh fixture so the
+        // re-price cannot be masked by sync idempotency.
+        $module = self::makeModule();
+        $cart = self::makeCart();
+        Configuration::updateValue('VATNUMBER_MANAGEMENT', 1);
+        Configuration::updateValue('VATNUMBER_COUNTRY', self::COUNTRY_FR);
+        StubStore::$addresses[8201]['vat_number'] = 'FR999999999';
+        StubStore::$addresses[8202]['vat_number'] = 'FR999999999';
+
+        $module->syncTwoSurchargeCartLine($cart, true);
+        $lines = self::feeLines();
+        TinyAssert::count(1, $lines);
+        TinyAssert::same(6.25, round((float) $lines[0]['total_wt'], 2), 'domestic B2B stays taxed on the PS line');
+        $payloadLine = $module->buildTwoSurchargeLineItemForCart($cart, self::PRODUCT_GROSS);
+        TinyAssert::same('0.25', $payloadLine['tax_rate'], 'domestic B2B stays taxed on the payload side');
+        TinyAssert::same('6.25', $payloadLine['gross_amount']);
     }
 
     /* ---- order-level guard: no manual/duplicate fee rows (BO order edit) ---- */
