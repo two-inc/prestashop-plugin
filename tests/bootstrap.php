@@ -281,6 +281,11 @@ namespace {
             return (string) $message;
         }
 
+        public function displayWarning($message): string
+        {
+            return (string) $message;
+        }
+
         public function display($file, $template): string
         {
             return '';
@@ -406,6 +411,12 @@ namespace {
         public static function updateValue($key, $value): bool
         {
             StubStore::$configuration[$key] = $value;
+            return true;
+        }
+
+        public static function deleteByName($key): bool
+        {
+            unset(StubStore::$configuration[$key]);
             return true;
         }
     }
@@ -1140,7 +1151,13 @@ namespace {
                 ? 'id_address_delivery'
                 : 'id_address_invoice';
             $taxAddress = new Address((int) $this->{$taxAddressField});
-            $rate = Configuration::get('PS_TAX')
+            // vatnumber-module B2B exemption, exactly like core
+            // Product::priceCalculation: VAT number present, buyer country
+            // differs from the module's configured country, management on.
+            $vatExempt = !empty($taxAddress->vat_number)
+                && (int) $taxAddress->id_country !== (int) Configuration::get('VATNUMBER_COUNTRY')
+                && Configuration::get('VATNUMBER_MANAGEMENT');
+            $rate = (Configuration::get('PS_TAX') && !$vatExempt)
                 ? StubStore::resolveTaxRate((int) $product->id_tax_rules_group, (int) $taxAddress->id_country)
                 : 0.0;
 

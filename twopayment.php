@@ -78,6 +78,12 @@ class Twopayment extends PaymentModule
     // sentinel. TWO-25071 (replaces the module-managed synthetic
     // Tax/TaxRulesGroup/TaxRule graph + flat PS_TWO_SURCHARGE_TAX_RATE).
     const CONFIG_SURCHARGE_TAX_RULES_GROUP = 'PS_TWO_SURCHARGE_TAX_RULES_GROUP';
+    // Set by upgrade-2.5.0.php when a pre-release flat surcharge tax rate
+    // (PS_TWO_SURCHARGE_TAX_RATE) was configured but no TaxRulesGroup has
+    // been selected yet: on upgrade the fee silently became untaxed, so a
+    // persistent back-office warning nags until the merchant saves a
+    // selection (any explicit save - including "No tax" - clears it).
+    const CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE = 'PS_TWO_SURCHARGE_TAX_MIGRATION_NOTICE';
 
     // Constants for delivery dates
     const DEFAULT_DELIVERY_DAYS_OFFSET = 7; // Default expected delivery date offset
@@ -111,7 +117,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.4.0';
+        $this->version = '2.5.0';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -540,6 +546,7 @@ class Twopayment extends PaymentModule
         // are no longer created and no longer cleaned up here.
         Configuration::deleteByName('PS_TWO_SURCHARGE_TAX_RATE');
         Configuration::deleteByName('PS_TWO_SURCHARGE_TAX_SETUP');
+        Configuration::deleteByName(self::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE);
         return true;
     }
 
@@ -617,6 +624,15 @@ class Twopayment extends PaymentModule
         if (((bool) Tools::isSubmit('submitTwoOrderStatusForm')) == true) {
             Configuration::updateValue('PS_TWO_TAB_VALUE', 3);
             $this->saveTwoOrderStatusFormValues();
+        }
+
+        // Post-upgrade nag (upgrade-2.5.0.php): a pre-release flat surcharge
+        // tax rate existed but no TaxRulesGroup is selected - the fee is
+        // untaxed until the merchant re-selects. Rendered on every config
+        // page load until a surcharge-settings save clears the flag.
+        $migrationNotice = $this->getTwoSurchargeTaxMigrationNotice();
+        if ($migrationNotice !== '') {
+            $this->output .= $this->displayWarning($migrationNotice);
         }
 
         $this->context->smarty->assign(
@@ -6864,6 +6880,35 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Post-upgrade "surcharge tax needs re-selection" warning text, or ''
+     * when no warning is due. Due when upgrade-2.5.0.php flagged a shop that
+     * had the pre-release flat rate (PS_TWO_SURCHARGE_TAX_RATE) configured
+     * and no TaxRulesGroup has been saved since: the surcharge is silently
+     * untaxed until the merchant picks a group. Self-retires if a selection
+     * exists (covers saves made outside this module's own form path).
+     *
+     * @return string
+     */
+    public function getTwoSurchargeTaxMigrationNotice()
+    {
+        if (!Configuration::get(self::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE)) {
+            return '';
+        }
+        $stored = Configuration::get(self::CONFIG_SURCHARGE_TAX_RULES_GROUP);
+        if ($stored !== false && $stored !== null && trim((string) $stored) !== '') {
+            Configuration::updateValue(self::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE, '');
+
+            return '';
+        }
+
+        return $this->l(
+            'Surcharge tax needs re-selection: this shop previously used a flat surcharge tax rate,'
+            . ' which has been replaced by a tax rules group. Until you select and save a'
+            . ' "Surcharge Tax Rules Group" under Payment settings, the surcharge is NOT taxed.'
+        );
+    }
+
+    /**
      * Effective tax rate (decimal FRACTION, e.g. 0.25) the selected
      * TaxRulesGroup applies to the surcharge for THIS cart's tax destination
      * - resolved through the SAME core machinery PrestaShop's own cart
@@ -8288,7 +8333,11 @@ class Twopayment extends PaymentModule
      * groups - the same list core's own product-edit page offers (its
      * TaxRulesGroup::getTaxRulesGroupsForOptions duplicates a group per
      * rate, so the deduplicated getTaxRulesGroups source is used with the
-     * same manual "No tax" prepend).
+     * same manual "No tax" prepend). The currently-configured group is
+     * ALWAYS present even when deactivated (suffixed "(inactive)"): if a
+     * stale selection dropped out of the list, the browser would submit the
+     * first option ("No tax", id 0) on the next unrelated settings save and
+     * silently detax the surcharge.
      *
      * @return array<int,array{id:int,name:string}>
      */
@@ -8298,14 +8347,28 @@ class Twopayment extends PaymentModule
             array('id' => 0, 'name' => $this->l('No tax')),
         );
         $groups = TaxRulesGroup::getTaxRulesGroups(true);
+        $seen = array(0 => true);
         foreach ((array) $groups as $group) {
             if (!isset($group['id_tax_rules_group'])) {
                 continue;
             }
+            $id = (int) $group['id_tax_rules_group'];
             $options[] = array(
-                'id' => (int) $group['id_tax_rules_group'],
+                'id' => $id,
                 'name' => (string) $group['name'],
             );
+            $seen[$id] = true;
+        }
+
+        $configuredId = $this->getTwoSurchargeTaxRulesGroupId();
+        if ($configuredId > 0 && !isset($seen[$configuredId])) {
+            $configured = new TaxRulesGroup($configuredId);
+            if (Validate::isLoadedObject($configured)) {
+                $options[] = array(
+                    'id' => $configuredId,
+                    'name' => (string) $configured->name . ' (' . $this->l('inactive') . ')',
+                );
+            }
         }
 
         return $options;
@@ -8313,12 +8376,12 @@ class Twopayment extends PaymentModule
 
     /**
      * Pre-selection for the surcharge tax rules group dropdown: the stored
-     * selection, else the merchant's "standard" group - the one most of
-     * their catalog uses (Product::getIdTaxRulesGroupMostUsed, the same
-     * default heuristic core's product page uses for new products). Display
-     * default only: runtime behaviour for an UNSAVED config stays "No tax"
-     * (getTwoSurchargeTaxRulesGroupId) - the module never taxes the fee on
-     * a rate the merchant did not confirm by saving.
+     * selection, else "No tax" (0) - the merchant must make an explicit
+     * choice. Deliberately NOT Product::getIdTaxRulesGroupMostUsed(): that
+     * is a full-catalog COUNT/GROUP BY re-run on every unsaved config page
+     * render, and pre-selecting a taxing group the merchant never chose
+     * invites an accidental save. Matches runtime behaviour for an UNSAVED
+     * config (getTwoSurchargeTaxRulesGroupId falls back to "No tax").
      *
      * @return int
      */
@@ -8327,9 +8390,6 @@ class Twopayment extends PaymentModule
         $stored = Configuration::get(self::CONFIG_SURCHARGE_TAX_RULES_GROUP);
         if ($stored !== false && $stored !== null && $stored !== '' && is_numeric($stored)) {
             return max(0, (int) $stored);
-        }
-        if (method_exists('Product', 'getIdTaxRulesGroupMostUsed')) {
-            return max(0, (int) Product::getIdTaxRulesGroupMostUsed());
         }
 
         return 0;
@@ -8428,6 +8488,9 @@ class Twopayment extends PaymentModule
             $groupId = 0;
         }
         Configuration::updateValue(self::CONFIG_SURCHARGE_TAX_RULES_GROUP, (string) $groupId);
+        // Explicit merchant save (any value, "No tax" included) retires the
+        // post-upgrade "needs re-selection" nag from upgrade-2.5.0.php.
+        Configuration::updateValue(self::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE, '');
 
         // Apply the selection to the hidden fee product immediately (the
         // same id_tax_rules_group field every real Product uses); if the

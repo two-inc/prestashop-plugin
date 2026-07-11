@@ -54,6 +54,7 @@ final class SurchargeCartLineSpec
         self::testSyncAppliesSelectedTaxRulesGroupToFeeProductAndNeverCreatesTaxObjects();
         self::testFeeTaxFollowsDestinationRulesOfSelectedGroup();
         self::testNoTaxSentinelZeroesFeeTaxForEveryDestination();
+        self::testVatExemptB2BCartUntaxedOnBothCartLineAndPayload();
         self::testAdminManualAddOfFeeProductToOrderIsBlocked();
         self::testDuplicateFeeOrderDetailRowIsRejectedInAnyContext();
         self::testFirstFeeOrderDetailRowFromOrderCreationIsAllowed();
@@ -649,6 +650,55 @@ final class SurchargeCartLineSpec
             TinyAssert::same('0', $payloadLine['tax_rate']);
             TinyAssert::same('5.00', $payloadLine['gross_amount']);
         }
+    }
+
+    /**
+     * TWO-25071: vatnumber-module B2B exemption. A cross-border business
+     * buyer with a VAT number (management on) is untaxed by core's
+     * Product::priceCalculation on the PS cart line AND by
+     * getTwoSurchargeTaxRateForCart on the Two payload side - both sides of
+     * the SAME cart must agree, exactly like the destination-rules /
+     * multi-rate / no-tax cases above. Guards the hand-replicated exemption
+     * condition in getTwoSurchargeTaxRateForCart against drifting from the
+     * cart-line behaviour.
+     */
+    private static function testVatExemptB2BCartUntaxedOnBothCartLineAndPayload(): void
+    {
+        // Cross-border B2B: merchant country NO (47), buyer FR with a VAT
+        // number -> exempt. Untaxed on BOTH sides.
+        $module = self::makeModule();
+        $cart = self::makeCart();
+        Configuration::updateValue('VATNUMBER_MANAGEMENT', 1);
+        Configuration::updateValue('VATNUMBER_COUNTRY', 47);
+        StubStore::$addresses[8201]['vat_number'] = 'FR999999999';
+        StubStore::$addresses[8202]['vat_number'] = 'FR999999999';
+
+        $module->syncTwoSurchargeCartLine($cart, true);
+        $lines = self::feeLines();
+        TinyAssert::count(1, $lines);
+        TinyAssert::same(5.00, round((float) $lines[0]['total'], 2));
+        TinyAssert::same(5.00, round((float) $lines[0]['total_wt'], 2), 'VAT-exempt B2B cart must carry an UNTAXED PS fee line');
+        $payloadLine = $module->buildTwoSurchargeLineItemForCart($cart, self::PRODUCT_GROSS);
+        TinyAssert::same('0', $payloadLine['tax_rate'], 'payload side must apply the same B2B exemption as the cart line');
+        TinyAssert::same('5.00', $payloadLine['gross_amount'], 'payload gross matches the untaxed PS line gross');
+
+        // Domestic B2B (buyer country == VATNUMBER_COUNTRY): NOT exempt -
+        // both sides tax at the group's FR rate (25%). Fresh fixture so the
+        // re-price cannot be masked by sync idempotency.
+        $module = self::makeModule();
+        $cart = self::makeCart();
+        Configuration::updateValue('VATNUMBER_MANAGEMENT', 1);
+        Configuration::updateValue('VATNUMBER_COUNTRY', self::COUNTRY_FR);
+        StubStore::$addresses[8201]['vat_number'] = 'FR999999999';
+        StubStore::$addresses[8202]['vat_number'] = 'FR999999999';
+
+        $module->syncTwoSurchargeCartLine($cart, true);
+        $lines = self::feeLines();
+        TinyAssert::count(1, $lines);
+        TinyAssert::same(6.25, round((float) $lines[0]['total_wt'], 2), 'domestic B2B stays taxed on the PS line');
+        $payloadLine = $module->buildTwoSurchargeLineItemForCart($cart, self::PRODUCT_GROSS);
+        TinyAssert::same('0.25', $payloadLine['tax_rate'], 'domestic B2B stays taxed on the payload side');
+        TinyAssert::same('6.25', $payloadLine['gross_amount']);
     }
 
     /* ---- order-level guard: no manual/duplicate fee rows (BO order edit) ---- */

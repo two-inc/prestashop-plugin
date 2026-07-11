@@ -20,7 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Surcharge tax now uses the merchant's own tax rules group** (TWO-25071)
-  - The flat "Surcharge Tax Rate (%)" field is replaced by a "Surcharge Tax Rules Group" dropdown - the same tax rules groups assigned to products, pre-selecting the group most of the catalog uses
+  - The flat "Surcharge Tax Rate (%)" field is replaced by a "Surcharge Tax Rules Group" dropdown - the same tax rules groups assigned to products; an unsaved config pre-selects "No tax" so taxing the fee is always an explicit merchant choice
+  - A deactivated tax rules group that is still the configured selection stays in the dropdown (flagged "(inactive)") so an unrelated settings save can never silently reset the surcharge tax to "No tax"
+  - Module version bumped to `2.5.0`; the upgrade script does NOT auto-convert a previously configured flat rate (inventing a tax rules group from a bare percentage is destination-blind) - instead shops that had the flat rate set and no group selected get a logged warning and a persistent module-config notice ("surcharge tax needs re-selection", surcharge untaxed until saved)
   - The hidden fee product carries the selected group on its `id_tax_rules_group` like any real product, so PrestaShop's native tax engine applies per-country/state rules, combined multi-rate stacking, and destination-based zero-rating (no rule for the destination = untaxed) to the fee line
   - The tax rate reported to Two's order API is resolved through the same core machinery (`TaxManagerFactory`) for the cart's tax address, with the same shop-wide gates (taxes disabled, VAT-number B2B exemption), so the PrestaShop line and the Two payload cannot drift and the order-create parity gate holds on cross-border orders
   - Selecting "No tax" (PrestaShop's built-in id-0 group) keeps the fee untaxed for every destination; an unset/invalid selection fails safe to "No tax"
