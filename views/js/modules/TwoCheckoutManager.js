@@ -249,6 +249,36 @@ class TwoCheckoutManager {
             prestashop.on('checkout', (event) => {
                 this.handleCheckoutEvent(event);
             });
+
+            // Cart-content changes while Two is selected (quantity spinners /
+            // remove links on the checkout order-summary widget): core emits
+            // 'updatedCart' AFTER it re-renders the summary (verified against
+            // classic theme theme.js - distinct from the 'updateCart' event
+            // this module itself emits to REQUEST a refresh). The fee is a
+            // percentage of the cart basis, so re-quote and resync the line.
+            // No loop risk: the server endpoint is idempotent - when nothing
+            // changed it reports changed=false and no further refresh fires.
+            //
+            // ACCEPTED LIMITATION - admin mid-session tax-rate change: there
+            // is no push channel from the back office into an open buyer
+            // session, so a live payment step can display the old rate until
+            // any of these triggers fires. The order-create self-heal always
+            // reprices authoritatively and the server-side parity gate fails
+            // closed, so the buyer can never be CHARGED off a stale rate.
+            prestashop.on('updatedCart', () => {
+                if (this.isTwoPaymentSelected()) {
+                    this.syncSurchargeCartLine(true);
+                }
+            });
+        }
+
+        // Page-load resync: currency switching is a plain link in core (full
+        // page reload - verified against ps_currencyselector), so if the
+        // theme restores the Two selection after the reload the existing
+        // line still carries the OLD currency's amount until resynced.
+        // Idempotent no-op in the common case where nothing changed.
+        if (this.isTwoPaymentSelected()) {
+            this.syncSurchargeCartLine(true);
         }
         
         // CRITICAL: Listen for payment option selection (theme-independent)
