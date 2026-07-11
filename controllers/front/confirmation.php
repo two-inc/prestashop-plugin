@@ -325,10 +325,27 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
                     return;
                 }
             } else {
-                // Legacy attempt without a stored snapshot hash: still force
-                // the authoritative surcharge self-heal adjacent to the
-                // charge (the validateOrder amount check remains the gate).
-                $this->module->syncTwoSurchargeCartLine($cart, true);
+                // Legacy attempt without a stored snapshot hash: run the SAME
+                // fail-closed parity gate as the hashed path above. Building
+                // the comparison payload with sync=true both self-heals the
+                // cart's surcharge line AND enforces cart-vs-payload fee
+                // parity, throwing on divergence (core validateOrder performs
+                // NO such check itself - a bare sync here would let a genuine
+                // divergence charge the buyer). The hash result is discarded:
+                // with no stored hash there is nothing to compare it against.
+                try {
+                    $this->buildAttemptSnapshotHash($attempt_token, $attempt, $cart, false, true);
+                } catch (Exception $e) {
+                    $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
+                    PrestaShopLogger::addLog(
+                        'TwoPayment: Legacy (no stored hash) pre-order parity gate failed for attempt ' . $attempt_token . ' - ' . $e->getMessage(),
+                        3
+                    );
+                    $message = $this->module->l('Unable to validate cart consistency for this payment. Please try again.');
+                    $this->errors[] = $message;
+                    $this->redirectWithNotifications('index.php?controller=order');
+                    return;
+                }
             }
 
             $initial_status = $this->getInitialAwaitingStatus();

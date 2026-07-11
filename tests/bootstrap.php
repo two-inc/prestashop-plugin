@@ -75,6 +75,8 @@ namespace {
         public static array $orderDetails = [];
         /** @var string[] Every SQL string passed to Db::execute() */
         public static array $dbExecuted = [];
+        /** @var array<int,array> Orders by id (controller specs) */
+        public static array $orders = [];
         /** @var array<string,string> Existing DB triggers by name => CREATE sql */
         public static array $dbTriggers = [];
         /** @var int Shared auto-increment for ObjectModel-style stubs */
@@ -132,6 +134,7 @@ namespace {
             self::$orderDetails = [];
             self::$dbExecuted = [];
             self::$dbTriggers = [];
+            self::$orders = [];
             self::$nextId = 90000;
 
             $context = Context::getContext();
@@ -158,6 +161,36 @@ namespace {
 
     class PrestaShopException extends Exception
     {
+    }
+
+    /**
+     * Thrown by the front-controller stubs wherever real PrestaShop would
+     * redirect-and-exit, so controller specs observe the redirect instead of
+     * falling through code the real flow never reaches.
+     */
+    class StubRedirect extends Exception
+    {
+    }
+
+    class ModuleFrontController
+    {
+        public $module;
+        public $context;
+        public $errors = [];
+
+        public function __construct()
+        {
+            $this->context = Context::getContext();
+        }
+
+        public function postProcess()
+        {
+        }
+
+        public function redirectWithNotifications($url)
+        {
+            throw new StubRedirect((string) $url);
+        }
     }
 
     class Module
@@ -238,6 +271,8 @@ namespace {
         public $link;
         public $controller;
         public $cart;
+        public $customer;
+        public $currency;
         public $language;
         public $smarty;
 
@@ -406,6 +441,11 @@ namespace {
         public static function getToken($page = false): string
         {
             return 'token';
+        }
+
+        public static function redirect($url): void
+        {
+            throw new StubRedirect((string) $url);
         }
 
         public static function strtolower($value): string
@@ -1256,6 +1296,28 @@ namespace {
         public function update($table, $data, $where): bool
         {
             return true;
+        }
+    }
+
+    class Order
+    {
+        public $id = 0;
+        public $id_cart = 0;
+        public $id_customer = 0;
+        public $total_paid = 0.0;
+        public bool $loaded = false;
+
+        public function __construct($id = 0)
+        {
+            $id = (int) $id;
+            if ($id > 0 && isset(StubStore::$orders[$id])) {
+                $row = StubStore::$orders[$id];
+                $this->id = $id;
+                $this->loaded = true;
+                $this->id_cart = (int) ($row['id_cart'] ?? 0);
+                $this->id_customer = (int) ($row['id_customer'] ?? 0);
+                $this->total_paid = (float) ($row['total_paid'] ?? 0.0);
+            }
         }
     }
 
