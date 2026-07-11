@@ -40,6 +40,12 @@ namespace {
         public static array $taxRuleRates = [];
         public static array $dbExecuteSResponses = [];
         public static array $dbLastExecuteS = [];
+        public static array $orderCarriers = [];
+        public static array $carts = [];
+        /** @var array<string,int> Registered admin tab ids by class name */
+        public static array $tabIds = ['AdminTwopaymentInvoice' => 1];
+        /** @var string[] Class names passed to Tab::add() */
+        public static array $tabAddCalls = [];
 
         public static function reset(): void
         {
@@ -63,6 +69,10 @@ namespace {
             self::$cartTotals = [];
             self::$cartShipping = [];
             self::$cartRules = [];
+            self::$orderCarriers = [];
+            self::$carts = [];
+            self::$tabIds = ['AdminTwopaymentInvoice' => 1];
+            self::$tabAddCalls = [];
             self::$moduleCurrencies = [
                 'twopayment' => [
                     ['id_currency' => 578], // NOK
@@ -237,6 +247,12 @@ namespace {
             $query = http_build_query((array) $params);
             return 'https://shop.local/module/' . $module . '/' . $controller . ($query !== '' ? '?' . $query : '');
         }
+
+        public function getAdminLink($controller, $withToken = true, $sfRouteParams = [], $params = []): string
+        {
+            $query = http_build_query((array) $params);
+            return 'https://shop.local/admin/' . $controller . ($query !== '' ? '?' . $query : '');
+        }
     }
 
     class Validate
@@ -271,9 +287,18 @@ namespace {
 
     class PrestaShopLogger
     {
+        /** @var array<int,array{message:string,severity:int}> */
+        public static array $logs = [];
+
         public static function addLog($message, $severity = 1, $errorCode = null, $objectType = null, $objectId = null, $allowDuplicate = false): bool
         {
+            self::$logs[] = ['message' => (string) $message, 'severity' => (int) $severity];
             return true;
+        }
+
+        public static function reset(): void
+        {
+            self::$logs = [];
         }
     }
 
@@ -633,6 +658,11 @@ namespace {
             $id = (int) $id;
             if ($id > 0) {
                 $this->id = $id;
+                // Hydrate by id so code that constructs its own Cart from
+                // an order (getTwoUpdateOrderData) sees the fixture.
+                foreach (StubStore::$carts[$id] ?? [] as $property => $value) {
+                    $this->$property = $value;
+                }
             }
         }
 
@@ -778,15 +808,67 @@ namespace {
         }
     }
 
+    #[\AllowDynamicProperties]
     class Tab
     {
+        public $id = 0;
+        public $class_name = '';
+        public $module = '';
+        public $id_parent = 0;
+        public $active = 0;
+        public $name = [];
+
+        public function __construct($id = null)
+        {
+            $id = (int) $id;
+            if ($id > 0) {
+                $this->id = $id;
+                $className = array_search($id, StubStore::$tabIds, true);
+                if ($className !== false) {
+                    $this->class_name = (string) $className;
+                }
+            }
+        }
+
         public static function getIdFromClassName($className): int
         {
-            return 1;
+            return (int) (StubStore::$tabIds[(string) $className] ?? 0);
+        }
+
+        public function add(): bool
+        {
+            StubStore::$tabAddCalls[] = (string) $this->class_name;
+            $this->id = count(StubStore::$tabIds) + 1;
+            StubStore::$tabIds[(string) $this->class_name] = $this->id;
+            return true;
+        }
+
+        public function delete(): bool
+        {
+            if ($this->class_name !== '') {
+                unset(StubStore::$tabIds[$this->class_name]);
+            }
+            return true;
         }
     }
 
     require_once dirname(__DIR__) . '/twopayment.php';
+
+    class OrderCarrier
+    {
+        public bool $loaded = false;
+        public $tracking_number = '';
+
+        public function __construct($id = null)
+        {
+            $id = (int) $id;
+            if ($id > 0 && isset(StubStore::$orderCarriers[$id])) {
+                $data = StubStore::$orderCarriers[$id];
+                $this->loaded = true;
+                $this->tracking_number = $data['tracking_number'] ?? '';
+            }
+        }
+    }
 
     class TwopaymentTestHarness extends Twopayment
     {

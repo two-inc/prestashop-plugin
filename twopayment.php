@@ -11,19 +11,43 @@ if (!defined('_PS_VERSION_')) {
     exit;
 }
 
+require_once dirname(__FILE__) . '/classes/TwoSurchargeCalculator.php';
+
 class Twopayment extends PaymentModule
 {
     // Constants for order building logic
-    const GROSS_AMOUNT_TOLERANCE = 0.02; // 2 cents tolerance for rounding differences
     const ORDER_INTENT_EXPIRY_SECONDS = 1800; // 30 minutes
     
     // Constants for payment terms
     const DEFAULT_PAYMENT_TERM_DAYS = 30; // Default payment term in days
-    const PAYMENT_TERMS_OPTIONS = [7, 15, 20, 30, 45, 60, 90]; // Available payment term options
+    const PAYMENT_TERMS_OPTIONS = [7, 15, 20, 30, 45, 60, 90]; // Available payment term options (all > 0: getMerchantDueInDays() treats a cached 0 as "unset")
+    // EOM (End-of-Month) terms are only offerable for these durations.
+    const EOM_PAYMENT_TERMS_OPTIONS = [30, 45, 60];
+    // TTL (seconds) for the cached GET /v1/merchant record - shared by the
+    // available_terms list (TWO-24813) and the due_in_days default (TWO-24859),
+    // which are both sourced from a SINGLE fetch of the same endpoint.
+    const MERCHANT_AVAILABLE_TERMS_TTL = 900; // 15 minutes
+    // On a FAILED merchant-record fetch, retry after this short backoff instead
+    // of waiting the full TTL, so a transient blip does not lock in a stale
+    // term list / wrong default for 15 minutes (TWO-24859 review).
+    const MERCHANT_RECORD_RETRY_BACKOFF = 300; // 5 minutes
+    // Dedicated Configuration keys for the cached merchant record (kept OUT
+    // of the general-settings save path so a checkout-render refresh can never
+    // race a concurrent admin save into reverting other settings - TWO-24813).
+    // The value keys share one timestamp (fetched together, expire together).
+    const CONFIG_MERCHANT_AVAILABLE_TERMS = 'PS_TWO_MERCHANT_AVAILABLE_TERMS';
+    const CONFIG_MERCHANT_AVAILABLE_TERMS_TS = 'PS_TWO_MERCHANT_AVAILABLE_TERMS_TS';
+    // Cached GET /v1/merchant `due_in_days` (the merchant's default invoice
+    // term). Populated by the SAME fetch as CONFIG_MERCHANT_AVAILABLE_TERMS and
+    // gated by the shared CONFIG_MERCHANT_AVAILABLE_TERMS_TS (TWO-24859).
+    const CONFIG_MERCHANT_DUE_IN_DAYS = 'PS_TWO_MERCHANT_DUE_IN_DAYS';
     
     // Constants for API timeouts (seconds)
     const API_TIMEOUT_SHORT = 30; // Standard API timeout
     const API_TIMEOUT_LONG = 60; // Extended timeout for file uploads
+    const API_TIMEOUT_STATE_CHECK = 10; // Tight timeout for the invoice-download order state check
+    const API_TIMEOUT_PDF_FETCH = 10; // Tight timeout for synchronous invoice PDF fetches (buyer + admin download clicks)
+    const API_CONNECT_TIMEOUT = 5; // Connection-establishment timeout for all Two API calls
     
     // Constants for validation tolerances
     const TAX_FORMULA_TOLERANCE = 0.02; // Tolerance for tax formula validation
@@ -53,6 +77,15 @@ class Twopayment extends PaymentModule
     const COOKIE_EXPIRY_ONE_HOUR = 3600; // 1 hour
     const ATTEMPT_RETENTION_DAYS = 90; // Keep attempt telemetry for 90 days
     const ATTEMPT_CLEANUP_INTERVAL_SECONDS = 86400; // Run cleanup at most once per day
+    // Cross-request cache for the buyer fee-share quote (POST /v1/pricing/order/fee).
+    // fetchTwoTermFee() already request-scopes the quote via $this->twoFeeCache, but
+    // that array is rebuilt from scratch on every HTTP request (e.g. each order-intent
+    // poll from the Payment step), so repeat polls with an unchanged cart/address/term
+    // were re-quoting the fee every time. Session-cache the quote for a short TTL,
+    // keyed on the same signature (days|gross|country|currency) already used for the
+    // request-scoped cache, so it is invalidated the instant any of those change.
+    // TWO-25040 / order-intent poll perf.
+    const FEE_QUOTE_CACHE_TTL_SECONDS = 60;
 
     protected $output = '';
     protected $errors = array();
@@ -87,6 +120,7 @@ class Twopayment extends PaymentModule
         // Ensure custom Two states exist (for existing installations)
         $this->ensureCustomStatesExist();
         $this->ensureRequiredHooksRegistered();
+        $this->ensureTwoInvoiceAdminTabRegistered();
     }
     
     /**
@@ -131,7 +165,67 @@ class Twopayment extends PaymentModule
             }
         }
     }
-    
+
+    /**
+     * Register the invisible admin tab backing the invoice download controller
+     * on existing installations (mirrors ensureRequiredHooksRegistered).
+     * Protected (not private) so the test suite can exercise the self-heal path.
+     */
+    protected function ensureTwoInvoiceAdminTabRegistered()
+    {
+        if ((int)$this->id <= 0 || !Module::isInstalled($this->name)) {
+            return;
+        }
+
+        if ((int)Tab::getIdFromClassName('AdminTwopaymentInvoice') > 0) {
+            return;
+        }
+
+        $this->installTwoInvoiceAdminTab();
+    }
+
+    /**
+     * Install the invisible admin tab that exposes AdminTwopaymentInvoiceController.
+     * PrestaShop enforces employee authentication + token + profile permissions
+     * for controllers registered through a tab.
+     *
+     * @return bool
+     */
+    protected function installTwoInvoiceAdminTab()
+    {
+        if ((int)Tab::getIdFromClassName('AdminTwopaymentInvoice') > 0) {
+            return true;
+        }
+
+        $tab = new Tab();
+        $tab->class_name = 'AdminTwopaymentInvoice';
+        $tab->module = $this->name;
+        $tab->id_parent = -1; // Invisible: no menu entry, still permission-gated
+        $tab->active = 1;
+        $tab->name = array();
+        foreach (Language::getLanguages(true) as $language) {
+            $tab->name[(int)$language['id_lang']] = 'Invoice Download';
+        }
+
+        return (bool)$tab->add();
+    }
+
+    /**
+     * Remove the invoice download admin tab.
+     *
+     * @return bool
+     */
+    protected function uninstallTwoInvoiceAdminTab()
+    {
+        $id_tab = (int)Tab::getIdFromClassName('AdminTwopaymentInvoice');
+        if ($id_tab <= 0) {
+            return true;
+        }
+
+        $tab = new Tab($id_tab);
+        return (bool)$tab->delete();
+    }
+
 
     public function install()
     {
@@ -143,6 +237,7 @@ class Twopayment extends PaymentModule
             $this->registerHook('actionAdminControllerSetMedia') &&
             $this->registerHook('actionFrontControllerSetMedia') &&
             $this->registerHook('actionOrderStatusUpdate') &&
+            $this->registerHook('actionOrderSlipAdd') &&
             $this->registerHook('actionObjectOrderHistoryAddBefore') &&
             $this->registerHook('paymentOptions') &&
             $this->registerHook('displayPaymentReturn') &&
@@ -153,6 +248,7 @@ class Twopayment extends PaymentModule
             $this->registerHook('actionOrderEdited') &&
             $this->registerHook('actionAdminOrdersTrackingNumberUpdate') &&
             $this->registerHook('actionCustomerAddressSave') &&
+            $this->installTwoInvoiceAdminTab() &&
             $this->installTwoSettings() &&
             $this->createTwoOrderState() &&
             $this->createTwoTables();
@@ -363,6 +459,7 @@ class Twopayment extends PaymentModule
             $this->unregisterHook('actionAdminControllerSetMedia') &&
             $this->unregisterHook('actionFrontControllerSetMedia') &&
             $this->unregisterHook('actionOrderStatusUpdate') &&
+            $this->unregisterHook('actionOrderSlipAdd') &&
             $this->unregisterHook('actionObjectOrderHistoryAddBefore') &&
             $this->unregisterHook('paymentOptions') &&
             $this->unregisterHook('displayPaymentReturn') &&
@@ -373,6 +470,7 @@ class Twopayment extends PaymentModule
             $this->unregisterHook('actionOrderEdited') &&
             $this->unregisterHook('actionAdminOrdersTrackingNumberUpdate') &&
             $this->unregisterHook('actionCustomerAddressSave') &&
+            $this->uninstallTwoInvoiceAdminTab() &&
             $this->uninstallTwoSettings() &&
             $this->deleteTwoTables();
     }
@@ -423,6 +521,18 @@ class Twopayment extends PaymentModule
             }
         }
 
+        if (((bool) Tools::isSubmit('submitTwoPaymentSettingsForm')) == true) {
+            Configuration::updateValue('PS_TWO_TAB_VALUE', 5);
+            $this->validTwoPaymentSettingsFormValues();
+            if (!count($this->errors)) {
+                $this->saveTwoPaymentSettingsFormValues();
+            } else {
+                foreach ($this->errors as $err) {
+                    $this->output .= $this->displayError($err);
+                }
+            }
+        }
+
         if (((bool) Tools::isSubmit('submitTwoOtherForm')) == true) {
             Configuration::updateValue('PS_TWO_TAB_VALUE', 2);
             $this->validTwoOtherFormValues();
@@ -443,6 +553,7 @@ class Twopayment extends PaymentModule
         $this->context->smarty->assign(
             array(
                 'renderTwoGeneralForm' => $this->renderTwoGeneralForm(),
+                'renderTwoPaymentSettingsForm' => $this->renderTwoPaymentSettingsForm(),
                 'renderTwoOtherForm' => $this->renderTwoOtherForm(),
                 'renderTwoOrderStatusForm' => $this->renderTwoOrderStatusForm(),
                 'renderTwoPluginInfo' => $this->renderTwoPluginInfo(),
@@ -451,6 +562,14 @@ class Twopayment extends PaymentModule
                 'two_merchant_id' => Configuration::get('PS_TWO_MERCHANT_ID'),
                 'two_merchant_short_name' => Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'),
                 'two_env' => Configuration::get('PS_TWO_ENVIRONMENT'),
+                // Module admin AJAX endpoint for the inline merchant-fee
+                // display beside each payment-term checkbox. Dispatched by
+                // AdminController::postProcess() to
+                // ajaxProcessFetchMerchantFeeRates() on this module.
+                'two_fee_rates_url' => $this->context->link->getAdminLink('AdminModules', false)
+                    . '&configure=' . $this->name
+                    . '&token=' . Tools::getAdminTokenLite('AdminModules')
+                    . '&ajax=1&action=FetchMerchantFeeRates',
             )
         );
 
@@ -516,89 +635,39 @@ class Twopayment extends PaymentModule
                         'type' => 'select',
                         'label' => $this->l('Environment'),
                         'name' => 'PS_TWO_ENVIRONMENT',
-                        'desc' => $this->l('Select the Two API environment to use. Production for live transactions, Development for testing.'),
+                        'desc' => $this->l('Select the Two API environment to use. Production for live transactions, Staging/Development for testing.'),
                         'required' => true,
                         'options' => array(
                             'query' => array(
                                 array('id_option' => 'development', 'name' => $this->l('Development')),
+                                array('id_option' => 'staging', 'name' => $this->l('Staging')),
                                 array('id_option' => 'production', 'name' => $this->l('Production')),
                             ),
                             'id' => 'id_option',
                             'name' => 'name'
                         )
                     ),
+                    // Debug mode lives in General Settings for parity with
+                    // Magento's two_general > general group (which includes it).
                     array(
-                        'type' => 'radio',
-                        'label' => $this->l('Payment Term Type'),
-                        'name' => 'PS_TWO_PAYMENT_TERM_TYPE',
-                        'desc' => $this->l('Choose how payment terms are calculated:') . '<br><br><strong>' . $this->l('Standard Terms:') . '</strong> ' . $this->l('Payment due X days from fulfillment date. Example: If you fulfill an order on January 15th with 30-day terms, payment is due February 14th.') . '<br><br><strong>' . $this->l('End-of-Month (EOM) Terms:') . '</strong> ' . $this->l('Payment due at the end of the current month plus X days from fulfillment date. Example: If you fulfill an order on January 15th with EOM+30 terms, payment is due February 28th (end of January + 30 days). This is common for B2B invoicing.'),
-                        'is_bool' => false,
+                        'type' => 'switch',
+                        'label' => $this->l('Enable Debug Mode'),
+                        'name' => 'PS_TWO_DEBUG_MODE',
+                        'is_bool' => true,
+                        'desc' => $this->l('Enable detailed logging for troubleshooting. Logs tax calculations and other diagnostic data. Only enable when requested by Two support.'),
+                        'required' => false,
                         'values' => array(
                             array(
-                                'id' => 'term_type_standard',
-                                'value' => 'STANDARD',
-                                'label' => $this->l('Standard Terms (e.g., 30 days from fulfillment)')
+                                'id' => 'PS_TWO_DEBUG_MODE_ON',
+                                'value' => 1,
+                                'label' => $this->l('Yes')
                             ),
                             array(
-                                'id' => 'term_type_eom',
-                                'value' => 'EOM',
-                                'label' => $this->l('End-of-Month Terms (e.g., EOM + 30 days)')
+                                'id' => 'PS_TWO_DEBUG_MODE_OFF',
+                                'value' => 0,
+                                'label' => $this->l('No')
                             ),
                         ),
-                    ),
-                    array(
-                        'type' => 'checkbox',
-                        'label' => $this->l('Available Payment Terms'),
-                        'name' => 'PS_TWO_PAYMENT_TERMS',
-                        'desc' => '<span id="two-payment-terms-desc-standard" style="display: none;">' . $this->l('Select which payment terms you want to offer. Standard terms are calculated from the fulfillment date.') . '</span><span id="two-payment-terms-desc-eom" style="display: none;">' . $this->l('Select which payment terms you want to offer. EOM (End-of-Month) terms are calculated from the end of the month at fulfillment, plus the selected days. Only 30, 45, and 60 day terms are available for EOM.') . '</span>',
-                        'values' => array(
-                            'query' => array(
-                                array(
-                                    'id' => '7',
-                                    'name' => $this->l('7 days'),
-                                    'val' => '1',
-                                    'class' => 'two-term-option two-term-7 two-term-standard'
-                                ),
-                                array(
-                                    'id' => '15',
-                                    'name' => $this->l('15 days'),
-                                    'val' => '1',
-                                    'class' => 'two-term-option two-term-15 two-term-standard'
-                                ),
-                                array(
-                                    'id' => '20',
-                                    'name' => $this->l('20 days'),
-                                    'val' => '1',
-                                    'class' => 'two-term-option two-term-20 two-term-standard'
-                                ),
-                                array(
-                                    'id' => '30',
-                                    'name' => $this->l('30 days'),
-                                    'val' => '1',
-                                    'class' => 'two-term-option two-term-30 two-term-both'
-                                ),
-                                array(
-                                    'id' => '45',
-                                    'name' => $this->l('45 days'),
-                                    'val' => '1',
-                                    'class' => 'two-term-option two-term-45 two-term-both'
-                                ),
-                                array(
-                                    'id' => '60',
-                                    'name' => $this->l('60 days'),
-                                    'val' => '1',
-                                    'class' => 'two-term-option two-term-60 two-term-both'
-                                ),
-                                array(
-                                    'id' => '90',
-                                    'name' => $this->l('90 days'),
-                                    'val' => '1',
-                                    'class' => 'two-term-option two-term-90 two-term-standard'
-                                ),
-                            ),
-                            'id' => 'id',
-                            'name' => 'name'
-                        )
                     ),
                 ),
                 'submit' => array(
@@ -607,6 +676,50 @@ class Twopayment extends PaymentModule
             ),
         );
         return $fields_form;
+    }
+
+    /**
+     * Build the "Available Payment Terms" checkbox rows, restricted to the
+     * merchant's backend available_terms (TWO-24813) and falling back to the
+     * hardcoded option list on a cold cache. The class drives the client-side
+     * STANDARD/EOM show-hide toggle: 30/45/60 are valid under both, the rest are
+     * STANDARD-only. Refreshes the cache (admin config render is a sanctioned
+     * refresh point).
+     *
+     * Each label carries an empty `.two-term-fee` placeholder span. The
+     * figure that belongs on this screen is the FEE TWO CHARGES THE MERCHANT
+     * for offering that term (NOT the buyer surcharge - a prior change
+     * wrongly appended a buyer-surcharge rate preview here and was reverted).
+     * The span is populated live by admin AJAX against
+     * POST /pricing/v1/merchant/rates (fetchTwoMerchantFeeRates /
+     * ajaxProcessFetchMerchantFeeRates), mirroring magento-plugin's
+     * Controller/Adminhtml/Config/Fees.php + payment-terms-config.js: fees
+     * are never pre-fetched synchronously on page render, and on API failure
+     * the span silently stays empty so the admin page never breaks. The raw
+     * HTML is safe here: the core HelperForm checkbox template emits the
+     * label name unescaped ({$value[$input.values.name]}).
+     *
+     * @return array<int, array{id:string,name:string,val:string,class:string}>
+     */
+    protected function buildPaymentTermCheckboxQuery()
+    {
+        $source = $this->getOfferableTermSource(true);
+        sort($source);
+        $query = array();
+        foreach ($source as $term) {
+            $term = (int) $term;
+            $type_class = in_array($term, self::EOM_PAYMENT_TERMS_OPTIONS, true)
+                ? 'two-term-both'
+                : 'two-term-standard';
+            $query[] = array(
+                'id' => (string) $term,
+                'name' => sprintf($this->l('%d days'), $term)
+                    . ' <span class="two-term-fee text-muted" data-term="' . $term . '"></span>',
+                'val' => '1',
+                'class' => 'two-term-option two-term-' . $term . ' ' . $type_class,
+            );
+        }
+        return $query;
     }
 
     protected function getTwoGeneralFormValues()
@@ -619,15 +732,7 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_MERCHANT_SHORT_NAME'] = Tools::getValue('PS_TWO_MERCHANT_SHORT_NAME', Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'));
         $fields_values['PS_TWO_MERCHANT_API_KEY'] = Tools::getValue('PS_TWO_MERCHANT_API_KEY', Configuration::get('PS_TWO_MERCHANT_API_KEY'));
         $fields_values['PS_TWO_ENVIRONMENT'] = Tools::getValue('PS_TWO_ENVIRONMENT', Configuration::get('PS_TWO_ENVIRONMENT'));
-        
-        // Payment term type (STANDARD or EOM)
-        $fields_values['PS_TWO_PAYMENT_TERM_TYPE'] = Tools::getValue('PS_TWO_PAYMENT_TERM_TYPE', Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'));
-        
-        // Payment terms checkboxes
-        $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
-        foreach ($payment_terms as $term) {
-            $fields_values['PS_TWO_PAYMENT_TERMS_' . $term] = Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term, Configuration::get('PS_TWO_PAYMENT_TERMS_' . $term));
-        }
+        $fields_values['PS_TWO_DEBUG_MODE'] = Tools::getValue('PS_TWO_DEBUG_MODE', Configuration::get('PS_TWO_DEBUG_MODE'));
         return $fields_values;
     }
 
@@ -647,26 +752,14 @@ class Twopayment extends PaymentModule
         
         // Validate environment
         $environment = Tools::getValue('PS_TWO_ENVIRONMENT');
-        if (Tools::isEmpty($environment) || !in_array($environment, array('production', 'development'))) {
-            $this->errors[] = $this->l('Please select a valid environment (Production or Development).');
+        if (Tools::isEmpty($environment) || !in_array($environment, array('production', 'development', 'staging'))) {
+            $this->errors[] = $this->l('Please select a valid environment (Production, Development or Staging).');
         }
         
-        // Validate payment terms
-        $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
-        $selected_terms = array();
-        foreach ($payment_terms as $term) {
-            if (Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term)) {
-                $selected_terms[] = $term;
-            }
-        }
-        
-        if (empty($selected_terms)) {
-            $this->errors[] = $this->l('You must select at least one payment term.');
-        }
         // Verify API key with Two against selected environment and capture merchant id and short name
         $apiKey = trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY'));
         $env = Tools::getValue('PS_TWO_ENVIRONMENT');
-        if (!empty($apiKey) && in_array($env, array('production','development'))) {
+        if (!empty($apiKey) && in_array($env, array('production','development','staging'))) {
             $verify = $this->verifyTwoApiKey($apiKey, $env);
             if ($verify === false) {
                 $this->errors[] = $this->l('API key verification failed. Please check your API key.');
@@ -696,27 +789,214 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', $shortNameToSave);
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY')));
         Configuration::updateValue('PS_TWO_ENVIRONMENT', Tools::getValue('PS_TWO_ENVIRONMENT'));
+        Configuration::updateValue('PS_TWO_DEBUG_MODE', Tools::getValue('PS_TWO_DEBUG_MODE'));
         if ($this->verifiedMerchantId) {
+            if ((string) Configuration::get('PS_TWO_MERCHANT_ID') !== (string) $this->verifiedMerchantId) {
+                // Merchant identity changed: drop the cached term list so
+                // serve-stale never bridges the old merchant's terms (TWO-24813).
+                $this->invalidateMerchantAvailableTerms();
+            }
             Configuration::updateValue('PS_TWO_MERCHANT_ID', $this->verifiedMerchantId);
             Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 1);
         } else {
             // Ensure flag not stale when verification fails/non-run
             Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 0);
         }
-        
+
+        $this->output .= $this->displayConfirmation($this->l('General settings are updated.'));
+    }
+
+    protected function renderTwoPaymentSettingsForm()
+    {
+        $helper = new HelperForm();
+        $helper->show_toolbar = false;
+        $helper->table = $this->table;
+        $helper->default_form_language = (int) Configuration::get('PS_LANG_DEFAULT');
+        $helper->module = $this;
+        $helper->allow_employee_form_lang = Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG') ? Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG') : 0;
+        $helper->identifier = $this->identifier;
+        $helper->submit_action = 'submitTwoPaymentSettingsForm';
+        $helper->currentIndex = $this->context->link->getAdminLink('AdminModules', false) . '&configure=' . $this->name . '&tab_module=' . $this->tab . '&module_name=' . $this->name;
+        $helper->token = Tools::getAdminTokenLite('AdminModules');
+        $helper->tpl_vars = array(
+            'uri' => $this->getPathUri(),
+            'fields_value' => $this->getTwoPaymentSettingsFormValues(),
+            'languages' => $this->context->controller->getLanguages(),
+            'id_language' => $this->context->language->id,
+        );
+        return $helper->generateForm(array($this->getTwoPaymentSettingsForm()));
+    }
+
+    protected function getTwoPaymentSettingsForm()
+    {
+        $inputs = array(
+            array(
+                'type' => 'radio',
+                'label' => $this->l('Payment Term Type'),
+                'name' => 'PS_TWO_PAYMENT_TERM_TYPE',
+                'desc' => $this->l('Choose how payment terms are calculated:') . '<br><br><strong>' . $this->l('Standard Terms:') . '</strong> ' . $this->l('Payment due X days from fulfillment date. Example: If you fulfill an order on January 15th with 30-day terms, payment is due February 14th.') . '<br><br><strong>' . $this->l('End-of-Month (EOM) Terms:') . '</strong> ' . $this->l('Payment due at the end of the current month plus X days from fulfillment date. Example: If you fulfill an order on January 15th with EOM+30 terms, payment is due February 28th (end of January + 30 days). This is common for B2B invoicing.'),
+                'is_bool' => false,
+                'values' => array(
+                    array(
+                        'id' => 'term_type_standard',
+                        'value' => 'STANDARD',
+                        'label' => $this->l('Standard Terms (e.g., 30 days from fulfillment)')
+                    ),
+                    array(
+                        'id' => 'term_type_eom',
+                        'value' => 'EOM',
+                        'label' => $this->l('End-of-Month Terms (e.g., EOM + 30 days)')
+                    ),
+                ),
+            ),
+            array(
+                'type' => 'checkbox',
+                'label' => $this->l('Available Payment Terms'),
+                'name' => 'PS_TWO_PAYMENT_TERMS',
+                'desc' => '<span id="two-payment-terms-desc-standard" style="display: none;">' . $this->l('Select which payment terms you want to offer. Standard terms are calculated from the fulfillment date.') . '</span><span id="two-payment-terms-desc-eom" style="display: none;">' . $this->l('Select which payment terms you want to offer. EOM (End-of-Month) terms are calculated from the end of the month at fulfillment, plus the selected days. Only 30, 45, and 60 day terms are available for EOM.') . '</span>',
+                'values' => array(
+                    // Restrict the tickable set to the merchant's backend
+                    // available_terms (TWO-24813); admin render is one of
+                    // the two sanctioned refresh points.
+                    'query' => $this->buildPaymentTermCheckboxQuery(),
+                    'id' => 'id',
+                    'name' => 'name'
+                )
+            ),
+        );
+
+        // Checkout fields (Magento two_payment > checkout_fields parity):
+        // optional buyer inputs, placed after the term selection and before
+        // the surcharge configuration.
+        $inputs[] = array(
+            'type' => 'switch',
+            'label' => $this->l('Show Department field'),
+            'name' => 'PS_TWO_ENABLE_DEPARTMENT',
+            'is_bool' => true,
+            'desc' => $this->l('If you choose YES then customers will see department field in checkout.'),
+            'required' => true,
+            'values' => array(
+                array(
+                    'id' => 'PS_TWO_ENABLE_DEPARTMENT_ON',
+                    'value' => 1,
+                    'label' => $this->l('Yes')
+                ),
+                array(
+                    'id' => 'PS_TWO_ENABLE_DEPARTMENT_OFF',
+                    'value' => 0,
+                    'label' => $this->l('No')
+                ),
+            ),
+        );
+        $inputs[] = array(
+            'type' => 'switch',
+            'label' => $this->l('Show Project field'),
+            'name' => 'PS_TWO_ENABLE_PROJECT',
+            'is_bool' => true,
+            'desc' => $this->l('If you choose YES then customers will see project field in checkout.'),
+            'required' => true,
+            'values' => array(
+                array(
+                    'id' => 'PS_TWO_ENABLE_PROJECT_ON',
+                    'value' => 1,
+                    'label' => $this->l('Yes')
+                ),
+                array(
+                    'id' => 'PS_TWO_ENABLE_PROJECT_OFF',
+                    'value' => 0,
+                    'label' => $this->l('No')
+                ),
+            ),
+        );
+
+        // Offset pricing fee (buyer surcharge) fields — appended so the
+        // per-term grid reflects the merchant's currently-offered terms.
+        // TWO-24752 / TWO-24893.
+        $inputs = array_merge($inputs, $this->getTwoSurchargeFormInputs());
+
+        return array(
+            'form' => array(
+                'legend' => array(
+                    'title' => $this->l('Payment Settings'),
+                    'icon' => 'icon-money',
+                ),
+                'input' => $inputs,
+                'submit' => array(
+                    'title' => $this->l('Save'),
+                ),
+            ),
+        );
+    }
+
+    protected function getTwoPaymentSettingsFormValues()
+    {
+        $fields_values = array();
+
+        // Payment term type (STANDARD or EOM)
+        $fields_values['PS_TWO_PAYMENT_TERM_TYPE'] = Tools::getValue('PS_TWO_PAYMENT_TERM_TYPE', Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'));
+
+        // Checkout fields (moved from the former "Other Settings" tab).
+        $fields_values['PS_TWO_ENABLE_DEPARTMENT'] = Tools::getValue('PS_TWO_ENABLE_DEPARTMENT', Configuration::get('PS_TWO_ENABLE_DEPARTMENT'));
+        $fields_values['PS_TWO_ENABLE_PROJECT'] = Tools::getValue('PS_TWO_ENABLE_PROJECT', Configuration::get('PS_TWO_ENABLE_PROJECT'));
+
+        // Payment terms checkboxes
+        $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
+        foreach ($payment_terms as $term) {
+            $fields_values['PS_TWO_PAYMENT_TERMS_' . $term] = Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term, Configuration::get('PS_TWO_PAYMENT_TERMS_' . $term));
+        }
+
+        $fields_values = array_merge($fields_values, $this->getTwoSurchargeFormValues());
+
+        return $fields_values;
+    }
+
+    protected function validTwoPaymentSettingsFormValues()
+    {
+        // Validate payment terms
+        $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
+        $selected_terms = array();
+        foreach ($payment_terms as $term) {
+            if (Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term)) {
+                $selected_terms[] = $term;
+            }
+        }
+
+        if (empty($selected_terms)) {
+            $this->errors[] = $this->l('You must select at least one payment term.');
+        }
+
+        $this->validTwoSurchargeFormValues();
+    }
+
+    protected function saveTwoPaymentSettingsFormValues()
+    {
         // Save payment term type (STANDARD or EOM)
         $term_type = Tools::getValue('PS_TWO_PAYMENT_TERM_TYPE');
         if ($term_type === 'STANDARD' || $term_type === 'EOM') {
             Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', $term_type);
         }
-        
-        // Save payment terms checkboxes
-        $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
+
+        // Checkout fields (moved from the former "Other Settings" tab).
+        Configuration::updateValue('PS_TWO_ENABLE_DEPARTMENT', Tools::getValue('PS_TWO_ENABLE_DEPARTMENT'));
+        Configuration::updateValue('PS_TWO_ENABLE_PROJECT', Tools::getValue('PS_TWO_ENABLE_PROJECT'));
+
+        // Save payment terms checkboxes. Iterate ONLY the terms the admin form
+        // actually rendered (the backend-restricted offerable source), NOT the
+        // full hardcoded list. buildPaymentTermCheckboxQuery() renders a checkbox
+        // per offerable term, so a term the backend has withdrawn is hidden and
+        // never POSTed; iterating the hardcoded list here would read its absent
+        // POST value as unchecked and silently zero the merchant's stored
+        // preference on any unrelated save. Leaving hidden keys untouched
+        // preserves that preference for when the backend re-offers the term
+        // (TWO-24813).
+        $payment_terms = array_map('strval', $this->getOfferableTermSource(false));
         foreach ($payment_terms as $term) {
             Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . $term, Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term) ? 1 : 0);
         }
 
-        $this->output .= $this->displayConfirmation($this->l('General settings are updated.'));
+        $this->saveTwoSurchargeFormValues();
+
+        $this->output .= $this->displayConfirmation($this->l('Payment settings are updated.'));
     }
 
     protected function renderTwoOtherForm()
@@ -745,7 +1025,7 @@ class Twopayment extends PaymentModule
         $fields_form = array(
             'form' => array(
                 'legend' => array(
-                    'title' => $this->l('Other Settings'),
+                    'title' => $this->l('Advanced Settings'),
                     'icon' => 'icon-cogs',
                 ),
                 'input' => array(
@@ -804,46 +1084,6 @@ class Twopayment extends PaymentModule
                             ),
                             array(
                                 'id' => 'PS_TWO_ENABLE_COMPANY_ID_OFF',
-                                'value' => 0,
-                                'label' => $this->l('No')
-                            ),
-                        ),
-                    ),
-                    array(
-                        'type' => 'switch',
-                        'label' => $this->l('Show Department field'),
-                        'name' => 'PS_TWO_ENABLE_DEPARTMENT',
-                        'is_bool' => true,
-                        'desc' => $this->l('If you choose YES then customers will see department field in checkout.'),
-                        'required' => true,
-                        'values' => array(
-                            array(
-                                'id' => 'PS_TWO_ENABLE_DEPARTMENT_ON',
-                                'value' => 1,
-                                'label' => $this->l('Yes')
-                            ),
-                            array(
-                                'id' => 'PS_TWO_ENABLE_DEPARTMENT_OFF',
-                                'value' => 0,
-                                'label' => $this->l('No')
-                            ),
-                        ),
-                    ),
-                    array(
-                        'type' => 'switch',
-                        'label' => $this->l('Show Project field'),
-                        'name' => 'PS_TWO_ENABLE_PROJECT',
-                        'is_bool' => true,
-                        'desc' => $this->l('If you choose YES then customers will see project field in checkout.'),
-                        'required' => true,
-                        'values' => array(
-                            array(
-                                'id' => 'PS_TWO_ENABLE_PROJECT_ON',
-                                'value' => 1,
-                                'label' => $this->l('Yes')
-                            ),
-                            array(
-                                'id' => 'PS_TWO_ENABLE_PROJECT_OFF',
                                 'value' => 0,
                                 'label' => $this->l('No')
                             ),
@@ -947,32 +1187,13 @@ class Twopayment extends PaymentModule
                             ),
                         ),
                     ),
-                    array(
-                        'type' => 'switch',
-                        'label' => $this->l('Enable Debug Mode'),
-                        'name' => 'PS_TWO_DEBUG_MODE',
-                        'is_bool' => true,
-                        'desc' => $this->l('Enable detailed logging for troubleshooting. Logs tax calculations and other diagnostic data. Only enable when requested by Two support.'),
-                        'required' => false,
-                        'values' => array(
-                            array(
-                                'id' => 'PS_TWO_DEBUG_MODE_ON',
-                                'value' => 1,
-                                'label' => $this->l('Yes')
-                            ),
-                            array(
-                                'id' => 'PS_TWO_DEBUG_MODE_OFF',
-                                'value' => 0,
-                                'label' => $this->l('No')
-                            ),
-                        ),
-                    ),
                 ),
                 'submit' => array(
                     'title' => $this->l('Save'),
                 ),
             ),
         );
+
         return $fields_form;
     }
 
@@ -982,20 +1203,16 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_USE_ACCOUNT_TYPE'] = Tools::getValue('PS_TWO_USE_ACCOUNT_TYPE', Configuration::get('PS_TWO_USE_ACCOUNT_TYPE'));
         $fields_values['PS_TWO_ENABLE_COMPANY_NAME'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME', Configuration::get('PS_TWO_ENABLE_COMPANY_NAME'));
         $fields_values['PS_TWO_ENABLE_COMPANY_ID'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_ID', Configuration::get('PS_TWO_ENABLE_COMPANY_ID'));
-        $fields_values['PS_TWO_ENABLE_DEPARTMENT'] = Tools::getValue('PS_TWO_ENABLE_DEPARTMENT', Configuration::get('PS_TWO_ENABLE_DEPARTMENT'));
-        $fields_values['PS_TWO_ENABLE_PROJECT'] = Tools::getValue('PS_TWO_ENABLE_PROJECT', Configuration::get('PS_TWO_ENABLE_PROJECT'));
         $fields_values['PS_TWO_FINALIZE_PURCHASE'] = Tools::getValue('PS_TWO_FINALIZE_PURCHASE', Configuration::get('PS_TWO_FINALIZE_PURCHASE'));
         $fields_values['PS_TWO_USE_OWN_INVOICES'] = Tools::getValue('PS_TWO_USE_OWN_INVOICES', Configuration::get('PS_TWO_USE_OWN_INVOICES'));
         $fields_values['PS_TWO_ENABLE_B2B_B2C'] = Tools::getValue('PS_TWO_ENABLE_B2B_B2C', Configuration::get('PS_TWO_ENABLE_B2B_B2C'));
         $fields_values['PS_TWO_ENABLE_TAX_SUBTOTALS'] = Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
-        $fields_values['PS_TWO_DEBUG_MODE'] = Tools::getValue('PS_TWO_DEBUG_MODE', Configuration::get('PS_TWO_DEBUG_MODE'));
         return $fields_values;
     }
 
     protected function validTwoOtherFormValues()
     {
-        // No validation needed for current Other Settings
     }
 
     protected function saveTwoOtherFormValues()
@@ -1003,16 +1220,13 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', Tools::getValue('PS_TWO_USE_ACCOUNT_TYPE'));
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME'));
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_ID', Tools::getValue('PS_TWO_ENABLE_COMPANY_ID'));
-        Configuration::updateValue('PS_TWO_ENABLE_DEPARTMENT', Tools::getValue('PS_TWO_ENABLE_DEPARTMENT'));
-        Configuration::updateValue('PS_TWO_ENABLE_PROJECT', Tools::getValue('PS_TWO_ENABLE_PROJECT'));
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', Tools::getValue('PS_TWO_FINALIZE_PURCHASE'));
         Configuration::updateValue('PS_TWO_USE_OWN_INVOICES', Tools::getValue('PS_TWO_USE_OWN_INVOICES'));
         Configuration::updateValue('PS_TWO_ENABLE_B2B_B2C', Tools::getValue('PS_TWO_ENABLE_B2B_B2C'));
         Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', (int) Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
-        Configuration::updateValue('PS_TWO_DEBUG_MODE', Tools::getValue('PS_TWO_DEBUG_MODE'));
 
-        $this->output .= $this->displayConfirmation($this->l('Other settings are updated.'));
+        $this->output .= $this->displayConfirmation($this->l('Advanced settings are updated.'));
     }
 
     protected function renderTwoOrderStatusForm()
@@ -1044,6 +1258,16 @@ class Twopayment extends PaymentModule
      */
     protected function renderTwoPluginInfo()
     {
+        $commit_hash = $this->getTwoDeployedCommitHash();
+        $deployed_at = $this->getTwoDeployedAtLabel();
+        $version_line = $this->l('Plugin Version:') . ' ' . $this->version . ' | ' . $this->l('PrestaShop:') . ' ' . _PS_VERSION_;
+        if ($commit_hash !== null) {
+            $version_line .= ' | ' . $this->l('Commit:') . ' ' . htmlspecialchars($commit_hash, ENT_QUOTES, 'UTF-8');
+        }
+        if ($deployed_at !== null) {
+            $version_line .= ' | ' . $this->l('Deployed:') . ' ' . htmlspecialchars($deployed_at, ENT_QUOTES, 'UTF-8');
+        }
+
         $html = '
         <div class="panel">
             <div class="panel-heading">
@@ -1098,7 +1322,7 @@ class Twopayment extends PaymentModule
                     <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Buyer rejected?') . '</strong> ' . $this->l('The company may have reached their credit limit or failed Two\'s credit check') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Company not found?') . '</strong> ' . $this->l('Customer must enter their official registered company name') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Phone invalid?') . '</strong> ' . $this->l('Ensure the phone number includes country code and is in a valid format') . '</li>
-                    <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Amount mismatch errors?') . '</strong> ' . $this->l('Enable Debug Mode in Other Settings and contact Two support with the logs') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Amount mismatch errors?') . '</strong> ' . $this->l('Enable Debug Mode in General Settings and contact Two support with the logs') . '</li>
                 </ul>
             </div>
         </div>
@@ -1114,11 +1338,109 @@ class Twopayment extends PaymentModule
                     <li><strong>' . $this->l('Documentation:') . '</strong> <a href="https://docs.two.inc" target="_blank">docs.two.inc</a></li>
                     <li><strong>' . $this->l('Merchant Portal:') . '</strong> <a href="' . $this->getTwoPortalUrl() . '" target="_blank">' . $this->l('Open Two Portal') . '</a></li>
                 </ul>
-                <p style="margin-top:15px;"><small class="text-muted">' . $this->l('Plugin Version:') . ' ' . $this->version . ' | ' . $this->l('PrestaShop:') . ' ' . _PS_VERSION_ . '</small></p>
+                <p style="margin-top:15px;"><small class="text-muted">' . $version_line . '</small></p>
             </div>
         </div>';
         
         return $html;
+    }
+
+    /**
+     * Best-effort short commit hash of the deployed module code.
+     * Checks a flat sidecar file first (written at deploy time by the git-sync
+     * materialise loop, where .git is a worktree gitlink file this method can't
+     * read), then falls back to a co-located .git directory (local dev).
+     * Plain file reads only — no exec. Returns null (never throws/fatals) if unavailable.
+     *
+     * @param string|null $git_dir Overridable for tests; defaults to this module's .git
+     * @param string|null $sidecar_file Overridable for tests; defaults to this module's sidecar file
+     *
+     * @return string|null
+     */
+    private function getTwoDeployedCommitHash($git_dir = null, $sidecar_file = null)
+    {
+        if ($sidecar_file === null) {
+            $sidecar_file = __DIR__ . '/.two-deployed-commit';
+        }
+        if (is_file($sidecar_file) && is_readable($sidecar_file)) {
+            $sidecar_contents = trim((string) @file_get_contents($sidecar_file));
+            if ($sidecar_contents !== '' && preg_match('/^[0-9a-f]{7,40}$/i', $sidecar_contents)) {
+                return substr($sidecar_contents, 0, 7);
+            }
+        }
+
+        if ($git_dir === null) {
+            $git_dir = __DIR__ . '/.git';
+        }
+        if (!is_dir($git_dir) || !is_readable($git_dir)) {
+            return null;
+        }
+
+        $head_file = $git_dir . '/HEAD';
+        if (!is_file($head_file) || !is_readable($head_file)) {
+            return null;
+        }
+
+        $head_contents = trim((string) @file_get_contents($head_file));
+        if ($head_contents === '') {
+            return null;
+        }
+
+        $sha = null;
+        if (strpos($head_contents, 'ref:') === 0) {
+            $ref_path = trim(substr($head_contents, 4));
+            $ref_file = $git_dir . '/' . $ref_path;
+            if (is_file($ref_file) && is_readable($ref_file)) {
+                $sha = trim((string) @file_get_contents($ref_file));
+            } else {
+                // Fall back to packed-refs (loose ref file may not exist after a gc/pack).
+                $packed_refs_file = $git_dir . '/packed-refs';
+                if (is_file($packed_refs_file) && is_readable($packed_refs_file)) {
+                    $packed = @file($packed_refs_file, FILE_IGNORE_NEW_LINES);
+                    if (is_array($packed)) {
+                        foreach ($packed as $line) {
+                            // Skip comments/pragmas ("# pack-refs...") and peeled-tag lines ("^<sha>").
+                            if ($line === '' || $line[0] === '#' || $line[0] === '^') {
+                                continue;
+                            }
+                            $space_pos = strpos($line, ' ');
+                            if ($space_pos === false) {
+                                continue;
+                            }
+                            $line_ref = substr($line, $space_pos + 1);
+                            if ($line_ref === $ref_path) {
+                                $sha = substr($line, 0, $space_pos);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        } elseif (preg_match('/^[0-9a-f]{40}$/i', $head_contents)) {
+            // Detached HEAD: file contains the sha directly.
+            $sha = $head_contents;
+        }
+
+        if (!$sha || !preg_match('/^[0-9a-f]{7,40}$/i', $sha)) {
+            return null;
+        }
+
+        return substr($sha, 0, 7);
+    }
+
+    /**
+     * Best-effort deployment timestamp label based on this file's mtime.
+     * Returns null (never throws/fatals) if unavailable.
+     *
+     * @return string|null
+     */
+    private function getTwoDeployedAtLabel()
+    {
+        $mtime = @filemtime(__FILE__);
+        if (!$mtime) {
+            return null;
+        }
+        return date('Y-m-d H:i:s', $mtime);
     }
 
     /**
@@ -1131,20 +1453,14 @@ class Twopayment extends PaymentModule
         $environment = (string) Configuration::get('PS_TWO_ENVIRONMENT', 'development');
         $api_verified = (bool) Configuration::get('PS_TWO_API_KEY_VERIFIED');
         $ssl_disabled = (bool) Configuration::get('PS_TWO_DISABLE_SSL_VERIFY');
-        $order_intent_enabled = true;
-        $use_account_type = (bool) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE');
-        $term_type = (string) Configuration::get('PS_TWO_PAYMENT_TERM_TYPE', 'STANDARD');
-        $available_terms = $this->getAvailablePaymentTerms();
-
-        $term_labels = array();
-        foreach ($available_terms as $term) {
-            $term_labels[] = (int) $term;
-        }
+        $merchant_short_name = (string) Configuration::get('PS_TWO_MERCHANT_SHORT_NAME');
 
         $status_rows = array(
             array(
                 'label' => $this->l('API key'),
-                'value' => $api_verified ? $this->l('Verified') : $this->l('Not verified'),
+                'value' => $api_verified
+                    ? $this->l('Verified') . ($merchant_short_name !== '' ? ' (' . htmlspecialchars($merchant_short_name, ENT_QUOTES, 'UTF-8') . ')' : '')
+                    : $this->l('Not verified'),
                 'ok' => $api_verified,
             ),
             array(
@@ -1156,21 +1472,6 @@ class Twopayment extends PaymentModule
                 'label' => $this->l('SSL verification'),
                 'value' => $ssl_disabled ? $this->l('Disabled') : $this->l('Enabled'),
                 'ok' => !$ssl_disabled,
-            ),
-            array(
-                'label' => $this->l('Order intent pre-check'),
-                'value' => $order_intent_enabled ? $this->l('Enabled') : $this->l('Disabled'),
-                'ok' => true,
-            ),
-            array(
-                'label' => $this->l('Account type mode'),
-                'value' => $use_account_type ? $this->l('Enabled') : $this->l('Disabled'),
-                'ok' => true,
-            ),
-            array(
-                'label' => $this->l('Payment terms'),
-                'value' => $term_type . ' (' . implode(', ', $term_labels) . ')',
-                'ok' => !empty($term_labels),
             ),
         );
 
@@ -1547,6 +1848,94 @@ class Twopayment extends PaymentModule
         }
     }
 
+    /**
+     * Push the tracking number to Two when it is set in the admin shipping
+     * panel (TWO-24762). The hook has been registered on install all along;
+     * this is its first handler. Fired by
+     * UpdateOrderShippingDetailsHandler with ['order', 'customer',
+     * 'carrier'].
+     *
+     * Best-effort by design: the Two API only accepts order edits before
+     * fulfilment, so a tracking number added after the order was fulfilled
+     * is rejected server-side. Nothing here may break the admin action
+     * that saved the tracking number — failures are logged and surfaced
+     * as a back-office warning instead.
+     */
+    public function hookActionAdminOrdersTrackingNumberUpdate($params)
+    {
+        $order = isset($params['order']) ? $params['order'] : null;
+        if (!$order || !Validate::isLoadedObject($order) || $order->module != $this->name) {
+            return;
+        }
+
+        try {
+            $orderpaymentdata = $this->getTwoOrderPaymentData($order->id);
+            if (!$orderpaymentdata || empty($orderpaymentdata['two_order_id'])) {
+                return;
+            }
+
+            $paymentdata = $this->getTwoUpdateOrderData($order, $orderpaymentdata);
+            $response = $this->setTwoPaymentRequest('/v1/order/' . $orderpaymentdata['two_order_id'], $paymentdata, 'PUT');
+
+            $http_status = is_array($response) && isset($response['http_status']) ? (int)$response['http_status'] : 0;
+            if ($http_status < 200 || $http_status >= 300) {
+                // Most commonly the order was already fulfilled at Two
+                // (edits are rejected after fulfilment): the invoice will
+                // not carry the tracking number. Log with the pushed
+                // amount so any accepted-elsewhere drift stays
+                // reconstructible, and tell the admin who just typed it.
+                PrestaShopLogger::addLog(
+                    'TwoPayment: tracking number update was not accepted by Two'
+                    . ' (Order ID: ' . (int)$order->id
+                    . ', Two order ID: ' . $orderpaymentdata['two_order_id']
+                    . ', HTTP ' . $http_status
+                    . ', gross_amount: ' . (isset($paymentdata['gross_amount']) ? $paymentdata['gross_amount'] : '?')
+                    . ', response: ' . (string)$this->getTwoErrorMessage($response) . ')',
+                    2
+                );
+                $this->addTwoBackOfficeWarning(
+                    $this->l('The tracking number could not be forwarded to the invoice provider; the invoice will be sent without it.')
+                );
+            }
+        } catch (Throwable $e) {
+            // e.g. the order's cart no longer loads (purged carts, deleted
+            // catalog products on legacy orders) — tracking was still
+            // saved locally; the push is best-effort. Throwable, not
+            // Exception: an engine-level Error in payload building must
+            // not break the admin save either.
+            PrestaShopLogger::addLog(
+                'TwoPayment: tracking number update skipped - ' . $e->getMessage()
+                . ' (Order ID: ' . (int)$order->id . ')',
+                3
+            );
+        }
+    }
+
+    /**
+     * Tracking number from the order's carrier record (order_carrier is
+     * the canonical store; Order::$shipping_number is its legacy mirror).
+     * Empty string when none is set.
+     *
+     * @param Order $order
+     *
+     * @return string
+     */
+    public function getTwoOrderTrackingNumber($order)
+    {
+        $id_order_carrier = (int)$order->getIdOrderCarrier();
+        if ($id_order_carrier) {
+            $order_carrier = new OrderCarrier($id_order_carrier);
+            if (Validate::isLoadedObject($order_carrier)) {
+                // A loaded carrier row is canonical: return its value even
+                // when empty (or '0'), never fall through to the stale
+                // legacy mirror.
+                return trim((string)$order_carrier->tracking_number);
+            }
+        }
+
+        return trim((string)$order->shipping_number);
+    }
+
     public function hookActionOrderStatusUpdate($params)
     {
         $id_order = $params['id_order'];
@@ -1843,6 +2232,275 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Handle PrestaShop credit slip creation (partial refunds).
+     *
+     * PrestaShop credit slips are the mechanism for partial refunds. The
+     * full-refund path in hookActionOrderStatusUpdate only fires on a status
+     * change to "Refunded" and issues a body-less full refund; it does NOT
+     * cover credit slips, so partial refunds previously reached Two only when
+     * the merchant used the Two merchant portal.
+     *
+     * This hook builds an {amount, currency} partial-refund payload from the
+     * credit slip and calls POST /v1/order/{id}/refund. Two's refund endpoint
+     * accepts a simple {amount, currency} body for partial refunds (line_items
+     * optional) - confirmed against the checkout-api RefundRequestSchema
+     * (PartialRefundRequestSchema) - so we avoid mapping PrestaShop's
+     * credit-slip product list to Two line items.
+     *
+     * Idempotency + duplicate-refund protection:
+     *  - The idempotency key is derived from the credit slip ID
+     *    (partial_refund_{two_order_id}_slip_{id}), NOT order id + amount. Two
+     *    separate partial refunds of the same amount on one order have distinct
+     *    slip IDs and therefore distinct keys - they must NOT collide.
+     *  - A remaining-refundable-balance guard (gross_amount minus the sum of
+     *    existing Two refunds) is enforced BEFORE calling the API. This
+     *    generalises the full-refund path's "already fully refunded" guards:
+     *    it blocks over-refunding and blocks the double-refund race where a
+     *    full-amount slip fires alongside a status change to Refunded (both
+     *    hooks can fire for a full-amount slip, and the status hook's own
+     *    guards do NOT protect this hook). It deliberately does NOT
+     *    blanket-skip on Two state == REFUNDED, because Two reports REFUNDED
+     *    even after a partial refund; a blanket skip would break legitimate
+     *    sequential partial refunds.
+     *
+     * Best-effort: any failure is logged and swallowed so the admin's
+     * credit-slip action is never broken.
+     *
+     * @param array $params PrestaShop hook params; expects order_slip.
+     * @return void
+     */
+    public function hookActionOrderSlipAdd($params)
+    {
+        try {
+            if (!is_array($params) || !isset($params['order_slip']) || !is_object($params['order_slip'])) {
+                return;
+            }
+
+            $slip = $params['order_slip'];
+            $slip_id = isset($slip->id) ? (int)$slip->id : 0;
+            if ($slip_id <= 0) {
+                PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - credit slip has no usable ID.', 2);
+                return;
+            }
+
+            $order = isset($params['order']) && is_object($params['order']) ? $params['order'] : null;
+            if ($order === null) {
+                $id_order = isset($slip->id_order) ? (int)$slip->id_order : 0;
+                if ($id_order > 0) {
+                    $order = new Order($id_order);
+                }
+            }
+            if (!$order || !Validate::isLoadedObject($order) || $order->module != $this->name) {
+                return;
+            }
+            $id_order = (int)$order->id;
+
+            $orderpaymentdata = $this->getTwoOrderPaymentData($id_order);
+            if (!$orderpaymentdata || empty($orderpaymentdata['two_order_id'])) {
+                // Not a Two order (or no Two mapping): nothing to refund at Two.
+                return;
+            }
+            $two_order_id = $orderpaymentdata['two_order_id'];
+
+            $slip_amount = $this->getTwoCreditSlipGrossAmount($slip);
+            if ($slip_amount <= 0) {
+                PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - non-positive slip amount for Two order ID: ' . $two_order_id . ', Slip ID: ' . $slip_id, 2);
+                return;
+            }
+
+            PrestaShopLogger::addLog('TwoPayment: Initiating partial refund for Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id . ', Amount: ' . $slip_amount, 1);
+
+            // Fetch the current Two order to validate refundable state and remaining balance.
+            $current_two_order = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
+            if (!$current_two_order || !isset($current_two_order['id'])) {
+                PrestaShopLogger::addLog('TwoPayment: Cannot retrieve Two order for partial refund check. Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order, 3);
+                return;
+            }
+
+            // Two only allows refunds for FULFILLED orders. REFUNDED is allowed
+            // too: the state shows REFUNDED even after a partial refund, and
+            // further partial refunds within the remaining balance are valid.
+            $order_state = isset($current_two_order['state']) ? $current_two_order['state'] : null;
+            if ($order_state !== 'FULFILLED' && $order_state !== 'REFUNDED') {
+                PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - order not in refundable state. Current state: ' . $order_state . '. Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order, 2);
+                return;
+            }
+
+            // Remaining-balance guard: gross minus the sum of existing refunds.
+            $gross_amount = isset($current_two_order['gross_amount']) ? (float)$current_two_order['gross_amount'] : 0.0;
+            $already_refunded = $this->getTwoOrderRefundedTotal($current_two_order);
+            $remaining = $gross_amount - $already_refunded;
+
+            // Fail CLOSED when we can't establish the order gross. Unlike the
+            // full-refund path (which posts a body-less refund whose amount Two
+            // computes server-side), this path sends a client-specified amount,
+            // so a missing/zero gross_amount would otherwise disable the
+            // over-refund guard entirely and allow an unbounded, arbitrary-many
+            // refund. If we cannot validate the balance, do not refund.
+            if ($gross_amount <= 0) {
+                PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - cannot determine order gross amount to validate refundable balance. Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id, 3);
+                return;
+            }
+
+            // Reject if this slip would push total refunds past the order gross.
+            // The 0.01 tolerance absorbs 2dp rounding. This blocks over-refunding
+            // and the full-amount-slip + status-change double-refund race.
+            if ($slip_amount > ($remaining + 0.01)) {
+                PrestaShopLogger::addLog('TwoPayment: Partial refund rejected - amount ' . $slip_amount . ' exceeds remaining refundable balance ' . $remaining . ' (gross: ' . $gross_amount . ', already refunded: ' . $already_refunded . '). Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id, 2);
+                return;
+            }
+
+            // The refund currency must match the Two order currency.
+            $currency = isset($current_two_order['currency']) && $current_two_order['currency']
+                ? $current_two_order['currency']
+                : $this->getTwoOrderCurrencyIso($order);
+
+            // Fail CLOSED on an unresolved currency rather than POSTing a
+            // malformed {amount, currency:''} body: an empty/missing currency
+            // could be silently coerced server-side to a different currency,
+            // turning a correct amount into a wrong-magnitude refund.
+            if ($currency === '' || $currency === null) {
+                PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - could not resolve refund currency. Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id, 3);
+                return;
+            }
+
+            $payload = $this->buildTwoPartialRefundPayload($slip_amount, $currency);
+
+            // Idempotency key derived from the credit slip ID (NOT amount) so
+            // two same-amount partial refunds on one order don't collide.
+            // Scoped by the Two order ID as well so the key is unambiguous even
+            // if two PrestaShop installs sharing one Two merchant account
+            // happen to mint the same autoincrement slip ID.
+            $idempotency_key = 'partial_refund_' . $two_order_id . '_slip_' . $slip_id;
+
+            $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/refund', $payload, 'POST', ['X-Idempotency-Key: ' . $idempotency_key]);
+
+            $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
+            if ($http_status === self::HTTP_STATUS_CREATED && isset($response['id']) && $response['id']) {
+                PrestaShopLogger::addLog('TwoPayment: Partial refund successful (HTTP ' . self::HTTP_STATUS_CREATED . ') for Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id . ', Idempotency Key: ' . $idempotency_key, 1);
+
+                // Refresh stored payment data with the latest order snapshot.
+                $order_after = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
+                if (isset($order_after['id']) && $order_after['id']) {
+                    $resolved_terms = $this->resolveTwoPaymentTermsFromOrderResponse(
+                        $order_after,
+                        isset($orderpaymentdata['two_day_on_invoice']) ? (string)$orderpaymentdata['two_day_on_invoice'] : (string)$this->getSelectedPaymentTerm(),
+                        isset($orderpaymentdata['two_payment_term_type']) ? $orderpaymentdata['two_payment_term_type'] : Configuration::get('PS_TWO_PAYMENT_TERM_TYPE')
+                    );
+                    $payment_data = array(
+                        'two_order_id' => $two_order_id,
+                        'two_order_reference' => isset($order_after['merchant_reference']) ? $order_after['merchant_reference'] : (isset($orderpaymentdata['two_order_reference']) ? $orderpaymentdata['two_order_reference'] : ''),
+                        'two_order_state' => isset($order_after['state']) ? $order_after['state'] : (isset($orderpaymentdata['two_order_state']) ? $orderpaymentdata['two_order_state'] : ''),
+                        'two_order_status' => isset($order_after['status']) ? $order_after['status'] : (isset($orderpaymentdata['two_order_status']) ? $orderpaymentdata['two_order_status'] : ''),
+                        'two_day_on_invoice' => $resolved_terms['two_day_on_invoice'],
+                        'two_payment_term_type' => $resolved_terms['two_payment_term_type'],
+                        'two_invoice_url' => isset($order_after['invoice_url']) ? $order_after['invoice_url'] : (isset($orderpaymentdata['two_invoice_url']) ? $orderpaymentdata['two_invoice_url'] : ''),
+                        'two_invoice_id' => isset($order_after['invoice_details']['id']) ? $order_after['invoice_details']['id'] : (isset($orderpaymentdata['two_invoice_id']) ? $orderpaymentdata['two_invoice_id'] : null),
+                    );
+                    $this->setTwoOrderPaymentData($id_order, $payment_data);
+                }
+            } else {
+                $error_message = 'Unknown error';
+                if (isset($response['error'])) {
+                    $error_message = is_array($response['error']) ? json_encode($response['error']) : $response['error'];
+                } elseif (isset($response['message'])) {
+                    $error_message = $response['message'];
+                }
+                $log_message = 'TwoPayment: Partial refund FAILED for Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id;
+                $log_message .= ', HTTP Status: ' . ($http_status > 0 ? $http_status : 'Unknown');
+                $log_message .= ', Error: ' . $error_message;
+                $log_message .= ', Idempotency Key: ' . $idempotency_key;
+                $log_message .= ', Response Summary: ' . json_encode($this->buildTwoApiResponseLogSummary($response));
+                PrestaShopLogger::addLog($log_message, 3);
+            }
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Exception during partial refund. Exception: ' . $e->getMessage() . ', Trace: ' . $e->getTraceAsString(), 3);
+        }
+    }
+
+    /**
+     * Compute the gross (tax-inclusive) refund amount from a PrestaShop credit
+     * slip: refunded products (tax incl) plus refunded shipping (tax incl).
+     * Falls back to the legacy amount / shipping_cost_amount fields when the
+     * tax-incl totals are absent.
+     *
+     * @param object $slip OrderSlip
+     * @return float
+     */
+    public function getTwoCreditSlipGrossAmount($slip)
+    {
+        $products = 0.0;
+        if (isset($slip->total_products_tax_incl) && $slip->total_products_tax_incl !== null && $slip->total_products_tax_incl !== '') {
+            $products = (float)$slip->total_products_tax_incl;
+        } elseif (isset($slip->amount)) {
+            $products = (float)$slip->amount;
+        }
+
+        $shipping = 0.0;
+        if (isset($slip->total_shipping_tax_incl) && $slip->total_shipping_tax_incl !== null && $slip->total_shipping_tax_incl !== '') {
+            $shipping = (float)$slip->total_shipping_tax_incl;
+        } elseif (isset($slip->shipping_cost_amount)) {
+            $shipping = (float)$slip->shipping_cost_amount;
+        }
+
+        return round($products + $shipping, 2);
+    }
+
+    /**
+     * Sum the absolute value of every existing Two refund total on an order
+     * response. Two records refund total_amount as a negative number.
+     *
+     * @param array $two_order Two order API response
+     * @return float
+     */
+    public function getTwoOrderRefundedTotal($two_order)
+    {
+        $total = 0.0;
+        if (isset($two_order['refunds']) && is_array($two_order['refunds'])) {
+            foreach ($two_order['refunds'] as $refund) {
+                if (isset($refund['total_amount'])) {
+                    $total += abs((float)$refund['total_amount']);
+                }
+            }
+        }
+        return round($total, 2);
+    }
+
+    /**
+     * Build the {amount, currency} partial-refund payload for Two. Amount is a
+     * 2dp decimal string, matching Two's Money format.
+     *
+     * @param float $amount Gross refund amount
+     * @param string $currency ISO currency code
+     * @return array
+     */
+    public function buildTwoPartialRefundPayload($amount, $currency)
+    {
+        return array(
+            'amount' => number_format((float)$amount, 2, '.', ''),
+            'currency' => $currency,
+        );
+    }
+
+    /**
+     * Resolve the ISO currency code for a PrestaShop order (fallback when the
+     * Two order response carries no currency).
+     *
+     * @param object $order Order
+     * @return string
+     */
+    public function getTwoOrderCurrencyIso($order)
+    {
+        if (isset($order->id_currency) && (int)$order->id_currency > 0) {
+            $currency = new Currency((int)$order->id_currency);
+            if (Validate::isLoadedObject($currency)) {
+                return (string)$currency->iso_code;
+            }
+        }
+        return '';
+    }
+
+    /**
      * Intercept pending order-history inserts and force cancelled status when
      * a cancelled Two order is incorrectly moved to a blocked forward-processing state
      * (verified-ready or fulfillment-trigger states).
@@ -2022,7 +2680,13 @@ class Twopayment extends PaymentModule
             'days' => $this->l('days'),
             'from_end_of_month' => $this->l('from end of month'),
             'end_of_month_plus_days' => $this->l('End of Month + %s days'),
+            'company_search_searching' => $this->l('Searching...'),
         );
+
+        // Checkout media render is a sanctioned refresh point for the backend
+        // term list (TWO-24813); prime the cache before the cache-only reads
+        // in getAvailablePaymentTerms / getDefaultPaymentTerm below.
+        $this->getMerchantAvailableTerms(true);
 
         Media::addJsDef(array('twopayment' => array(
                 'search_empty_text' => $this->l('No result found'),
@@ -2249,7 +2913,7 @@ class Twopayment extends PaymentModule
      * @return array
      * @throws Exception
      */
-    private function buildTwoOrderPricingData($cart, $contextLabel = 'order payload', $strictReconciliation = false)
+    private function buildTwoOrderPricingData($cart, $contextLabel = 'order payload', $strictReconciliation = false, $paymentTermDays = null)
     {
         $line_items = $this->getTwoProductItems($cart);
         if (empty($line_items)) {
@@ -2299,6 +2963,20 @@ class Twopayment extends PaymentModule
                 3
             );
             throw new Exception('Tax subtotals do not reconcile with line items');
+        }
+
+        // Offset pricing fee (buyer surcharge) — appended AFTER product-line
+        // reconciliation so it never perturbs the cart-vs-lines gate. The fee
+        // is quoted from POST /v1/pricing/order/fee (fail-soft: a missing quote
+        // simply omits the line and never blocks checkout). Applying it in the
+        // shared pricing builder keeps the intent, create and update payloads
+        // consistent, so the order-intent approval reconciles against the same
+        // gross the create call sends. TWO-24752 / TWO-24893.
+        $surchargeLine = $this->buildTwoSurchargeLineItemForCart($cart, $subtotalsTotals['gross'], $paymentTermDays);
+        if ($surchargeLine !== null && $this->validateTwoLineItems(array($surchargeLine))) {
+            $line_items[] = $surchargeLine;
+            $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
+            $subtotalsTotals = $this->calculateOrderTotalsFromTaxSubtotals($tax_subtotals);
         }
 
         return [
@@ -2928,9 +3606,13 @@ class Twopayment extends PaymentModule
         $invoice_address = new Address($cart->id_address_invoice);
         $delivery_address = new Address($cart->id_address_delivery);
         $carrier_name = '';
-        $tracking_number = '';
         $expected_delivery_days = self::DEFAULT_DELIVERY_DAYS_OFFSET; // Default fallback
-        $carrier = new Carrier($cart->id_carrier, $cart->id_lang);
+        // Carrier from the ORDER, not the cart: the admin shipping panel
+        // updates the order's carrier alongside the tracking number, and
+        // sending the stale cart carrier with a fresh tracking number would
+        // mismatch. Cart carrier is the fallback for legacy orders.
+        $id_carrier = (int)$order->id_carrier ? (int)$order->id_carrier : (int)$cart->id_carrier;
+        $carrier = new Carrier($id_carrier, $cart->id_lang);
         if (Validate::isLoadedObject($carrier)) {
             $carrier_name = $carrier->name;
             // Use carrier's max_delivery_days if available, otherwise use default
@@ -2941,8 +3623,16 @@ class Twopayment extends PaymentModule
                 $expected_delivery_days = (int)$carrier->min_delivery_days;
             }
         }
+        $tracking_number = $this->getTwoOrderTrackingNumber($order);
 
-        $pricingData = $this->buildTwoOrderPricingData($cart, 'update order data (order_id=' . $order->id . ')');
+        // The update path runs in admin/webhook context with no buyer term
+        // cookie, so pass the persisted order term to the surcharge builder;
+        // otherwise the fee would be recomputed for the default term and the
+        // update gross would diverge from the created-order gross. TWO-24752.
+        $storedTerm = (isset($orderpaymentdata['two_day_on_invoice']) && $orderpaymentdata['two_day_on_invoice'] !== '')
+            ? (int) $orderpaymentdata['two_day_on_invoice']
+            : null;
+        $pricingData = $this->buildTwoOrderPricingData($cart, 'update order data (order_id=' . $order->id . ')', false, $storedTerm);
         $line_items = $pricingData['line_items'];
         $tax_subtotals = $pricingData['tax_subtotals'];
         $final_net = $pricingData['net_amount'];
@@ -3169,27 +3859,36 @@ class Twopayment extends PaymentModule
             $unit_price_net_prestashop = isset($line_item['price']) ? (float)$line_item['price'] : null;
             
             if ($unit_price_net_prestashop !== null) {
-                $unit_price_net = round($unit_price_net_prestashop, 2);
-                
-                // Calculate discount from PrestaShop's values
-                $expected_total = $quantity * $unit_price_net;
+                // Derive the discount at PrestaShop's native precision (6dp) and
+                // round once at the payload boundary. Rounding the unit price to
+                // 2dp before multiplying manufactures phantom +/-0.01 discounts
+                // whenever the third decimal of the unit price rounds opposite to
+                // the line total (e.g. 3 x 8.344: 3x8.34=25.02 vs total 25.03).
+                $expected_total = $quantity * $unit_price_net_prestashop;
                 $discount_amount = round($expected_total - $net_amount_prestashop, 2);
-                
-                // Ensure discount is not negative (protect against edge cases)
+
+                // A negative discount means quantity * unit_price < net total - a data
+                // inconsistency we must surface, not silently correct. The checkout-api
+                // validates order amounts and rejects bad payloads with a clear error.
                 if ($discount_amount < 0) {
-                    PrestaShopLogger::addLog('TwoPayment: Negative discount calculated for product ' . $line_item['id_product'] . ', clamping to 0', 2);
-                    $discount_amount = 0;
+                    PrestaShopLogger::addLog('TwoPayment: Negative discount calculated for product ' . $line_item['id_product'] . ' (quantity ' . $quantity . ' x unit price ' . $unit_price_net_prestashop . ' = ' . $expected_total . ' < net total ' . $net_amount_prestashop . ')', 3);
+                    throw new Exception('Negative discount calculated for product ' . $line_item['id_product']);
                 }
-                
+
+                $unit_price_net = round($unit_price_net_prestashop, 2);
                 $net_amount = $net_amount_prestashop;
             } else {
-                $discount_amount = isset($line_item['reduction']) ? (float)$line_item['reduction'] : 0;
-                
-                // Ensure discount is not negative
+                // Round to currency precision before the sign check; sub-cent float
+                // residue in PrestaShop's computed reduction is not a data error.
+                $discount_amount = isset($line_item['reduction']) ? round((float)$line_item['reduction'], 2) : 0;
+
+                // A negative reduction is a data inconsistency; surface it rather
+                // than silently zeroing it.
                 if ($discount_amount < 0) {
-                    $discount_amount = 0;
+                    PrestaShopLogger::addLog('TwoPayment: Negative reduction for product ' . $line_item['id_product'] . ' (reduction ' . $discount_amount . ')', 3);
+                    throw new Exception('Negative reduction for product ' . $line_item['id_product']);
                 }
-                
+
                 $unit_price_net = ($net_amount_prestashop + $discount_amount) / $quantity;
                 $unit_price_net = round($unit_price_net, 2);
                 
@@ -5162,6 +5861,38 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Explicit environment -> API host map, mirroring the Woo/Magento plugins'
+     * templated 'api.<mode>.two.inc' host builder. Any value not in this map
+     * (including the legacy 'development' option and empty/unset config)
+     * falls back to sandbox — the same default this plugin has always used
+     * for "not production".
+     */
+    private const ENVIRONMENT_HOSTS = array(
+        'production' => 'https://api.two.inc',
+        'staging' => 'https://api.staging.two.inc',
+    );
+
+    /**
+     * Explicit environment -> merchant portal host map, mirroring ENVIRONMENT_HOSTS.
+     * Any value not in this map (legacy 'development', empty/unset) falls back to
+     * the sandbox portal.
+     */
+    private const PORTAL_HOSTS = array(
+        'production' => 'https://portal.two.inc',
+        'staging' => 'https://portal.staging.two.inc',
+    );
+
+    /**
+     * Explicit environment -> buyer portal login URL map, mirroring ENVIRONMENT_HOSTS.
+     * Any value not in this map (legacy 'development', empty/unset) falls back to
+     * the sandbox buyer portal.
+     */
+    private const BUYER_PORTAL_HOSTS = array(
+        'production' => 'https://buyer.two.inc/login',
+        'staging' => 'https://buyer.staging.two.inc/login',
+    );
+
+    /**
      * Get base API host for a specific environment value (without relying on saved config)
      */
     private function getTwoCheckoutHostUrlForEnvironment($environment)
@@ -5170,7 +5901,7 @@ class Twopayment extends PaymentModule
         if ($override !== null) {
             return $override;
         }
-        return ($environment === 'production') ? 'https://api.two.inc' : 'https://api.sandbox.two.inc';
+        return self::ENVIRONMENT_HOSTS[strtolower((string) $environment)] ?? 'https://api.sandbox.two.inc';
     }
 
     /**
@@ -5255,11 +5986,8 @@ class Twopayment extends PaymentModule
         if ($override !== null) {
             return $override;
         }
-        $environment = Configuration::get('PS_TWO_ENVIRONMENT');
-        if ($environment === 'production') {
-            return 'https://portal.two.inc';
-        }
-        return 'https://portal.sandbox.two.inc';
+        $environment = strtolower((string) Configuration::get('PS_TWO_ENVIRONMENT'));
+        return self::PORTAL_HOSTS[$environment] ?? 'https://portal.sandbox.two.inc';
     }
 
     /**
@@ -5269,12 +5997,8 @@ class Twopayment extends PaymentModule
     public function getTwoBuyerPortalUrl()
     {
         $environment = strtolower((string) Configuration::get('PS_TWO_ENVIRONMENT'));
-        if ($environment === 'production') {
-            return 'https://buyer.two.inc/login';
-        }
-
-        // Development/non-production environments use the sandbox buyer portal.
-        return 'https://buyer.sandbox.two.inc/login';
+        // Development/non-production environments fall back to the sandbox buyer portal.
+        return self::BUYER_PORTAL_HOSTS[$environment] ?? 'https://buyer.sandbox.two.inc/login';
     }
 
     /**
@@ -5303,8 +6027,122 @@ class Twopayment extends PaymentModule
         if (!empty($params)) {
             $pdf_url .= '?' . http_build_query($params);
         }
-        
+
         return $pdf_url;
+    }
+
+    /**
+     * Fetch the invoice PDF bytes for a Two order.
+     *
+     * Unlike setTwoPaymentRequest this returns the raw response body (a PDF must
+     * not be run through json_decode) together with the response content type and,
+     * when the API returned a JSON error body, the decoded error code/payload.
+     *
+     * @param string $two_order_id The Two order ID
+     * @param array $params Optional query parameters (e.g. lang)
+     * @param int|null $timeout Optional per-call timeout override (seconds)
+     * @return array{http_status:int, body:string, content_type:string, error_code:string, data:array|null}
+     */
+    public function getTwoInvoicePdf($two_order_id, $params = [], $timeout = null)
+    {
+        $url = $this->getTwoCheckoutHostUrl() . '/v1/invoice/' . urlencode($two_order_id) . '/pdf';
+        $query = array_merge(
+            array('client' => 'PS', 'client_v' => $this->version),
+            is_array($params) ? $params : array()
+        );
+        $url .= '?' . http_build_query($query);
+
+        $headers = $this->getTwoRequestHeaders('/v1/invoice/' . $two_order_id . '/pdf');
+
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, $timeout !== null ? max(1, (int)$timeout) : self::API_TIMEOUT_SHORT);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, self::API_CONNECT_TIMEOUT);
+        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'GET');
+
+        // SSL VERIFICATION - Secure by default
+        $this->configureSslVerification($ch);
+
+        $response_body = curl_exec($ch);
+        $http_status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $content_type = (string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+        $curl_error = curl_error($ch);
+        curl_close($ch);
+
+        if ($response_body === false || !empty($curl_error)) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: cURL error on invoice PDF fetch - ' . $curl_error . ' (Two order: ' . $two_order_id . ')',
+                3
+            );
+
+            return array(
+                'http_status' => 0,
+                'body' => '',
+                'content_type' => '',
+                'error_code' => '',
+                'data' => array(
+                    'error' => 'Connection error',
+                    'error_message' => 'Unable to connect to Two API. Please check your server configuration.',
+                ),
+            );
+        }
+
+        $decoded = null;
+        $error_code = '';
+        $looks_like_pdf = strncmp((string)$response_body, '%PDF-', 5) === 0;
+        if (!$looks_like_pdf) {
+            $decoded = json_decode((string)$response_body, true);
+            if (is_array($decoded)) {
+                if (isset($decoded['error_code']) && is_scalar($decoded['error_code'])) {
+                    $error_code = strtoupper(trim((string)$decoded['error_code']));
+                } elseif (isset($decoded['data']['error_code']) && is_scalar($decoded['data']['error_code'])) {
+                    $error_code = strtoupper(trim((string)$decoded['data']['error_code']));
+                }
+            }
+        }
+
+        return array(
+            'http_status' => (int)$http_status,
+            'body' => (string)$response_body,
+            'content_type' => $content_type,
+            'error_code' => $error_code,
+            'data' => is_array($decoded) ? $decoded : null,
+        );
+    }
+
+    /**
+     * Resolve the Two order ID for invoice retrieval from the persisted order row,
+     * falling back to attempt telemetry (public wrapper around the admin resolver).
+     *
+     * @param int $id_order
+     * @param array $twopaymentdata
+     * @return string Empty string when no Two order reference exists
+     */
+    public function resolveTwoOrderIdForInvoice($id_order, $twopaymentdata)
+    {
+        return $this->resolveTwoOrderIdForAdmin((int)$id_order, is_array($twopaymentdata) ? $twopaymentdata : array());
+    }
+
+    /**
+     * Fetch the current Two order state via GET /v1/order/{id}.
+     *
+     * @param string $two_order_id
+     * @param int|null $timeout Optional per-call timeout override (seconds)
+     * @return array{http_status:int, state:string} Normalized (uppercase, trimmed) state; empty when unavailable
+     */
+    public function fetchTwoOrderStateFromApi($two_order_id, $timeout = null)
+    {
+        $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, array(), 'GET', array(), $timeout);
+        $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
+        $payload = $this->extractTwoOrderPayloadFromApiResponse($response);
+        $state = isset($payload['state']) ? strtoupper(trim((string)$payload['state'])) : '';
+
+        return array(
+            'http_status' => $http_status,
+            'state' => $state,
+        );
     }
 
     /**
@@ -5340,61 +6178,1149 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Get available payment terms configured by the merchant
-     * @return array Array of available payment terms in days
+     * The merchant's offerable payment terms (net days, ascending) sourced from
+     * `available_terms` on GET /v1/merchant/{id} - the backend resolves them from
+     * the merchant's pricing packages, so this is the authoritative set the admin
+     * narrows from (TWO-24813). An empty result means the set is not currently
+     * resolved (no verified API key / merchant id yet, or no successful fetch yet)
+     * OR the backend explicitly returned an empty list.
+     *
+     * Cache-only by default: this is read from checkout / cart / admin-render
+     * paths that must not stall on HTTP. A TTL-gated fetch (15 min, 10s request
+     * cap) runs only when $refresh === true, from the two sanctioned refresh
+     * points (the checkout media hook and the admin config render). The cached
+     * list is overwritten only by a successful response carrying an
+     * `available_terms` array; a fetch failure (or an older backend omitting the
+     * field) serves the last-known list for another TTL rather than blanking the
+     * term set on an API blip.
+     *
+     * The cache lives in two dedicated Configuration keys, NOT the general
+     * settings blob, so a checkout-render refresh can never race a concurrent
+     * admin settings save.
+     *
+     * @param bool $refresh Allow a TTL-gated backend fetch on this call.
+     * @return int[] Ascending, unique day counts; empty when unresolved.
      */
+    public function getMerchantAvailableTerms($refresh = false)
+    {
+        if ($refresh) {
+            $checked_on = (int) Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS);
+            if ($checked_on <= 0 || ($checked_on + self::MERCHANT_AVAILABLE_TERMS_TTL) <= time()) {
+                $merchant_id = Configuration::get('PS_TWO_MERCHANT_ID');
+                $api_key = Configuration::get('PS_TWO_MERCHANT_API_KEY');
+                if (!Tools::isEmpty($merchant_id) && !Tools::isEmpty($api_key)) {
+                    // Bump the shared clock BEFORE the wire call so a concurrent
+                    // render at expiry serves the stale cache instead of firing a
+                    // second, redundant fetch (anti-stampede - TWO-24859 review).
+                    Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time());
+                    // On a render path even when refreshing, so cap tight.
+                    $response = $this->setTwoPaymentRequest(
+                        '/v1/merchant/' . rawurlencode((string) $merchant_id),
+                        array(),
+                        'GET',
+                        array(),
+                        self::API_TIMEOUT_STATE_CHECK
+                    );
+                    $http_status = isset($response['http_status']) ? (int) $response['http_status'] : 0;
+                    if ($http_status === self::HTTP_STATUS_OK && is_array($response)) {
+                        // ONE fetch feeds BOTH merchant-record caches: the
+                        // offerable term list (TWO-24813) and the default-term
+                        // seed (due_in_days, TWO-24859). A field absent from an
+                        // otherwise-valid response is a legitimate answer (leave
+                        // the term list untouched; treat an absent default as
+                        // "unset" = 0), NOT a fetch failure to retry.
+                        if (isset($response['available_terms']) && is_array($response['available_terms'])) {
+                            $normalised = $this->normaliseMerchantTerms($response['available_terms']);
+                            Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS, json_encode($normalised));
+                        }
+                        $due = isset($response['due_in_days']) ? $response['due_in_days'] : null;
+                        $due_days = (is_numeric($due) && (int) $due > 0) ? (int) $due : 0;
+                        Configuration::updateValue(self::CONFIG_MERCHANT_DUE_IN_DAYS, $due_days);
+                        // Success: keep the full-TTL clock set above.
+                    } else {
+                        // Failed fetch (network blip / 5xx / bad body). Roll the
+                        // pre-bumped clock back so retry happens after the short
+                        // backoff, not a whole TTL, while a concurrent burst is
+                        // still absorbed until then. Last-known-good values keep
+                        // being served meanwhile (serve-stale - TWO-24859 review).
+                        Configuration::updateValue(
+                            self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS,
+                            time() - self::MERCHANT_AVAILABLE_TERMS_TTL + self::MERCHANT_RECORD_RETRY_BACKOFF
+                        );
+                    }
+                }
+            }
+        }
+
+        $cached = Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS);
+        if (Tools::isEmpty($cached)) {
+            return array();
+        }
+        $decoded = json_decode($cached, true);
+        if (!is_array($decoded)) {
+            return array();
+        }
+        return $this->normaliseMerchantTerms($decoded);
+    }
+
     /**
-     * Get available payment terms filtered by term type (STANDARD or EOM)
-     * @return array Array of available payment term durations (e.g., [30, 45, 60])
+     * Normalise a raw term list into ascending, unique, positive int day counts.
+     * The is_numeric guard drops malformed elements (nested arrays, bools, null)
+     * rather than intval'ing them into a phantom "1 day" term.
+     *
+     * @param mixed $terms
+     * @return int[]
      */
+    private function normaliseMerchantTerms($terms)
+    {
+        $days = array();
+        foreach ((array) $terms as $t) {
+            if (!is_numeric($t)) {
+                continue;
+            }
+            $d = (int) $t;
+            if ($d > 0) {
+                $days[$d] = $d;
+            }
+        }
+        $days = array_values($days);
+        sort($days);
+        return $days;
+    }
+
+    /**
+     * Drop the cached merchant term list. Called when the merchant identity
+     * changes (new API key / merchant id) - serve-stale caching must never
+     * serve the old merchant's terms under a new identity (TWO-24813).
+     */
+    public function invalidateMerchantAvailableTerms()
+    {
+        Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS, '');
+        // Clear the sibling default-term cache too: both are sourced from the
+        // same merchant record, so an identity change must drop both together
+        // or the new merchant would inherit the old merchant's default term
+        // (TWO-24859). Shared timestamp reset last, forcing a re-fetch.
+        Configuration::updateValue(self::CONFIG_MERCHANT_DUE_IN_DAYS, 0);
+        Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, 0);
+    }
+
+    /**
+     * Fetch the merchant fee (what Two charges the merchant, NOT the buyer
+     * surcharge) per net-term via POST /pricing/v1/merchant/rates, for the
+     * inline fee display beside each "Available Payment Terms" checkbox on
+     * the admin config page. Mirrors magento-plugin's
+     * Controller/Adminhtml/Config/Fees.php.
+     *
+     * Fail-soft contract (identical to Magento's): ANY failure - missing API
+     * key, empty term list, connection error, non-200, malformed body -
+     * returns array('success' => false) and the admin page renders without
+     * fees. This method must never throw and never block long (tight
+     * timeout): it sits behind an AJAX call on a config-page render path.
+     *
+     * The buyer_country_code is a best-effort stand-in (store default
+     * country): there is no cart/buyer context on a config page. Magento
+     * uses its store's default country the same way.
+     *
+     * @param array $days Requested term day-counts (raw, will be normalised).
+     * @return array{success:bool,currency?:string,fees?:array<string,array{percentage:float,fixed:float}>}
+     */
+    public function fetchTwoMerchantFeeRates($days)
+    {
+        $net_terms = $this->normaliseMerchantTerms($days);
+        if (empty($net_terms)) {
+            return array('success' => false);
+        }
+        $api_key = Configuration::get('PS_TWO_MERCHANT_API_KEY');
+        if (Tools::isEmpty($api_key)) {
+            return array('success' => false);
+        }
+
+        $response = $this->setTwoPaymentRequest(
+            '/pricing/v1/merchant/rates',
+            array(
+                'buyer_country_code' => $this->getTwoAdminBuyerCountryCode(),
+                // No admin recourse-pricing config exists (Magento parity:
+                // its Fees controller hardcodes false too).
+                'recourse_pricing' => false,
+                'net_terms' => $net_terms,
+            ),
+            'POST',
+            array(),
+            // Render-path call: cap tight rather than block the admin page.
+            self::API_TIMEOUT_STATE_CHECK
+        );
+
+        $http_status = (is_array($response) && isset($response['http_status'])) ? (int) $response['http_status'] : 0;
+        if ($http_status !== self::HTTP_STATUS_OK || !isset($response['rates']) || !is_array($response['rates'])) {
+            return array('success' => false);
+        }
+
+        $fees = array();
+        foreach ($response['rates'] as $rate) {
+            if (!is_array($rate) || !isset($rate['net_terms']) || !is_numeric($rate['net_terms'])) {
+                continue;
+            }
+            $fee_days = (int) $rate['net_terms'];
+            if ($fee_days <= 0) {
+                continue;
+            }
+            $fees[(string) $fee_days] = array(
+                // API sends numbers as strings - cast for JSON numeric output.
+                'percentage' => isset($rate['percentage_fee']) && is_numeric($rate['percentage_fee']) ? (float) $rate['percentage_fee'] : 0.0,
+                'fixed' => isset($rate['fixed_fee']) && is_numeric($rate['fixed_fee']) ? (float) $rate['fixed_fee'] : 0.0,
+            );
+        }
+
+        return array(
+            'success' => true,
+            // Currency MUST come from the response - the fee amounts do too.
+            // The JS appends it as a code suffix; an empty value makes the JS
+            // drop the fixed component rather than guess its currency.
+            'currency' => isset($response['currency']) ? (string) $response['currency'] : '',
+            'fees' => $fees,
+        );
+    }
+
+    /**
+     * Buyer country stand-in for admin-side rate previews: the shop's default
+     * country (PS_COUNTRY_DEFAULT resolved to ISO), since a config page has
+     * no cart/buyer context. Falls back to 'NL' - the same stand-in
+     * magento-plugin's Fees controller uses when no country is configured.
+     *
+     * @return string Two-letter uppercase ISO country code.
+     */
+    private function getTwoAdminBuyerCountryCode()
+    {
+        $id_country = (int) Configuration::get('PS_COUNTRY_DEFAULT');
+        if ($id_country > 0) {
+            $iso = Country::getIsoById($id_country);
+            if (is_string($iso) && trim($iso) !== '') {
+                return strtoupper(trim($iso));
+            }
+        }
+        return 'NL';
+    }
+
+    /**
+     * Admin AJAX entry point for the inline term-fee display. PrestaShop's
+     * AdminController::postProcess() dispatches
+     * index.php?controller=AdminModules&configure=twopayment&ajax=1&action=FetchMerchantFeeRates
+     * to this module method (core dispatches ajax actions to the configured
+     * module on the AdminModules controller; present in 1.7.x and 8.x). The
+     * admin token is validated by the controller before postProcess runs.
+     *
+     * Reads a JSON-encoded `terms` array from the request and echoes the
+     * normalised fee payload. Always responds 200 with {"success":false} on
+     * failure - the JS blanks the fee spans silently (Magento parity).
+     */
+    public function ajaxProcessFetchMerchantFeeRates()
+    {
+        $raw = Tools::getValue('terms', '');
+        $decoded = is_string($raw) ? json_decode($raw, true) : $raw;
+        $result = $this->fetchTwoMerchantFeeRates(is_array($decoded) ? $decoded : array());
+        header('Content-Type: application/json');
+        die(json_encode($result));
+    }
+
+    /**
+     * The offerable term source set (before the admin narrows it): the backend's
+     * `available_terms` when resolved, else the historical hardcoded option list.
+     * The fallback preserves pre-feature behaviour on a cold cache (fresh install
+     * / API blip) rather than blanking the term UI and checkout - the serve-stale
+     * degrade posture (TWO-24813).
+     *
+     * @param bool $refresh Allow a TTL-gated backend fetch.
+     * @return int[]
+     */
+    private function getOfferableTermSource($refresh = false)
+    {
+        $backend = $this->getMerchantAvailableTerms($refresh);
+        if (!empty($backend)) {
+            return $backend;
+        }
+        return array_map('intval', self::PAYMENT_TERMS_OPTIONS);
+    }
+
+    /**
+     * Available payment terms offered at checkout (ascending). THE runtime seam:
+     * the backend's offerable set (GET /v1/merchant `available_terms`), narrowed
+     * by the merchant's admin checkbox subset, then constrained by the term type
+     * (EOM only supports 30/45/60). A term the backend has withdrawn drops out
+     * even while the admin box is still ticked (TWO-24813). Cache-only - never
+     * blocks on HTTP; the sanctioned refresh points prime the cache.
+     *
+     * @return int[] Array of available payment term durations (e.g., [30, 45, 60])
+     */
+    /* ===================================================================
+     * Offset pricing fee (buyer surcharge) — TWO-24752 / TWO-24893.
+     *
+     * All fee decisioning lives here in PHP; templates/JS only render the
+     * results (ps_checkout compatibility, TWO-24770). Arithmetic is done
+     * server-side by POST /v1/pricing/order/fee — the plugin relays a
+     * buyer_fee_share block via TwoSurchargeCalculator, mirroring Magento's
+     * Service/Order/SurchargeCalculator and the WooCommerce plugin's
+     * WC_Twoinc_Payment_Terms::build_buyer_fee_share.
+     * =================================================================== */
+
+    /** @var array request-scoped fee-quote cache keyed by term|gross|country|currency */
+    protected $twoFeeCache = array();
+
+    /**
+     * Read a brand-config value (brands/two.php), cached per request. Returns
+     * null for unknown keys. A minimal seam pending the full brand-config
+     * foundation (TWO-24746); mirrors the WooCommerce plugin's WC_Twoinc_Brand.
+     *
+     * @param string $key
+     * @return mixed
+     */
+    public function getTwoBrandConfig($key)
+    {
+        static $brand = null;
+        if ($brand === null) {
+            $file = dirname(__FILE__) . '/brands/two.php';
+            $brand = is_file($file) ? (array) (require $file) : array();
+        }
+
+        return array_key_exists($key, $brand) ? $brand[$key] : null;
+    }
+
+    /**
+     * Resolve the surcharge settings from module Configuration into the shape
+     * TwoSurchargeCalculator expects. Mirrors the WooCommerce plugin's
+     * get_surcharge_settings.
+     *
+     * @return array
+     */
+    public function getTwoSurchargeSettings()
+    {
+        $type = TwoSurchargeCalculator::normalizeType(Configuration::get('PS_TWO_SURCHARGE_TYPE'));
+
+        $grid = array();
+        foreach ($this->getAvailablePaymentTerms() as $days) {
+            $days = (int) $days;
+            $grid[$days] = array(
+                'percentage' => (float) Configuration::get('PS_TWO_SURCHARGE_PCT_' . $days),
+                'fixed' => (float) Configuration::get('PS_TWO_SURCHARGE_FIXED_' . $days),
+                'limit' => (float) Configuration::get('PS_TWO_SURCHARGE_CAP_' . $days),
+            );
+        }
+
+        $step = (float) Configuration::get('PS_TWO_SURCHARGE_ROUNDING_STEP');
+
+        return array(
+            'type' => $type,
+            'enabled' => $type !== 'none',
+            'differential' => (bool) Configuration::get('PS_TWO_SURCHARGE_DIFFERENTIAL'),
+            'grid' => $grid,
+            'rounding_basis' => (string) Configuration::get('PS_TWO_SURCHARGE_ROUNDING_BASIS'),
+            'rounding_step' => $step > 0 ? $step : null,
+        );
+    }
+
+    /**
+     * Build the buyer_fee_share block for one term (or null when no surcharge
+     * is configured), from module Configuration.
+     *
+     * @param int $days
+     * @return array|null
+     */
+    public function buildTwoBuyerFeeShare($days)
+    {
+        $settings = $this->getTwoSurchargeSettings();
+        $isEom = Configuration::get('PS_TWO_PAYMENT_TERM_TYPE') === 'EOM';
+        $default = $this->getDefaultPaymentTerm();
+
+        return TwoSurchargeCalculator::buildBuyerFeeShare($settings, (int) $days, $default, $isEom);
+    }
+
+    /**
+     * Quote the buyer's fee share for one term via POST /v1/pricing/order/fee.
+     * Fail-soft: returns null on any error (the fee line is simply omitted and
+     * checkout is never blocked on a quote, TWO-24752). Request-scoped cache.
+     *
+     * @param int    $days
+     * @param float  $gross_amount fee basis (product + shipping gross)
+     * @param string $buyer_country ISO-2 code
+     * @param string $currency_iso  store currency
+     * @return array|null {buyer_fee_share, total_fee_tax_rate, currency}
+     */
+    public function fetchTwoTermFee($days, $gross_amount, $buyer_country, $currency_iso)
+    {
+        $days = (int) $days;
+        $gross_amount = (float) $gross_amount;
+        $cacheKey = $days . '|' . $this->getTwoRoundAmount($gross_amount) . '|' . $buyer_country . '|' . $currency_iso;
+        if (array_key_exists($cacheKey, $this->twoFeeCache)) {
+            return $this->twoFeeCache[$cacheKey];
+        }
+
+        $sessionCached = $this->getTwoFeeQuoteFromSession($cacheKey);
+        if ($sessionCached !== null) {
+            return $this->twoFeeCache[$cacheKey] = $sessionCached;
+        }
+
+        $share = $this->buildTwoBuyerFeeShare($days);
+        if ($share === null || $gross_amount <= 0) {
+            return $this->twoFeeCache[$cacheKey] = null;
+        }
+
+        $isEom = Configuration::get('PS_TWO_PAYMENT_TERM_TYPE') === 'EOM';
+        $payload = array(
+            'currency' => (string) $currency_iso,
+            'gross_amount' => $this->getTwoRoundAmount($gross_amount),
+            'buyer_country_code' => (string) $buyer_country,
+            // Hardcoded false for parity with Magento/WooCommerce — no admin
+            // recourse-pricing config on any plugin yet.
+            'approved_on_recourse' => false,
+            'order_terms' => TwoSurchargeCalculator::buildTermsBlock($days, $isEom),
+            'buyer_fee_share' => $share,
+        );
+
+        // Tight timeout: this sits on the checkout/order-build path and must
+        // never stall checkout on a slow pricing call.
+        $response = $this->setTwoPaymentRequest('/v1/pricing/order/fee', $payload, 'POST', array(), self::API_TIMEOUT_STATE_CHECK);
+        if (!is_array($response)) {
+            return $this->twoFeeCache[$cacheKey] = null;
+        }
+        $status = isset($response['http_status']) ? (int) $response['http_status'] : 0;
+        if ($status < 200 || $status >= 300) {
+            return $this->twoFeeCache[$cacheKey] = null;
+        }
+        if (!isset($response['buyer_fee_share'])) {
+            return $this->twoFeeCache[$cacheKey] = null;
+        }
+
+        // Guard against a reinterpreted currency — applying a figure quoted in
+        // a different currency would need FX the plugin does not do.
+        $respCurrency = isset($response['currency']) ? (string) $response['currency'] : (string) $currency_iso;
+        if ($currency_iso !== '' && $respCurrency !== (string) $currency_iso) {
+            return $this->twoFeeCache[$cacheKey] = null;
+        }
+
+        $quote = array(
+            'buyer_fee_share' => (string) $response['buyer_fee_share'],
+            'total_fee_tax_rate' => isset($response['total_fee_tax_rate']) ? (string) $response['total_fee_tax_rate'] : null,
+            'currency' => $respCurrency,
+        );
+        $this->storeTwoFeeQuoteInSession($cacheKey, $quote);
+
+        return $this->twoFeeCache[$cacheKey] = $quote;
+    }
+
+    /**
+     * Read a cross-request-cached fee quote from the session cookie, honouring
+     * FEE_QUOTE_CACHE_TTL_SECONDS and requiring an exact signature match
+     * (days|gross|country|currency) — any change in cart total, term, buyer
+     * country or currency invalidates the cache immediately regardless of TTL.
+     * Fail-soft: any malformed/missing cache data is treated as a miss.
+     *
+     * @param string $cacheKey
+     * @return array|null
+     */
+    private function getTwoFeeQuoteFromSession($cacheKey)
+    {
+        if (!isset($this->context->cookie)) {
+            return null;
+        }
+        $cachedKey = isset($this->context->cookie->two_fee_quote_key) ? (string) $this->context->cookie->two_fee_quote_key : '';
+        if ($cachedKey === '' || $cachedKey !== $cacheKey) {
+            return null;
+        }
+        $cachedTs = isset($this->context->cookie->two_fee_quote_ts) ? (int) $this->context->cookie->two_fee_quote_ts : 0;
+        if ($cachedTs <= 0 || (time() - $cachedTs) > self::FEE_QUOTE_CACHE_TTL_SECONDS) {
+            return null;
+        }
+        $cachedData = isset($this->context->cookie->two_fee_quote_data) ? (string) $this->context->cookie->two_fee_quote_data : '';
+        if ($cachedData === '') {
+            return null;
+        }
+        $decoded = json_decode($cachedData, true);
+        if (!is_array($decoded) || !isset($decoded['buyer_fee_share'])) {
+            return null;
+        }
+
+        return array(
+            'buyer_fee_share' => (string) $decoded['buyer_fee_share'],
+            'total_fee_tax_rate' => isset($decoded['total_fee_tax_rate']) ? $decoded['total_fee_tax_rate'] : null,
+            'currency' => isset($decoded['currency']) ? (string) $decoded['currency'] : '',
+        );
+    }
+
+    /**
+     * Persist a freshly-fetched fee quote to the session cookie for reuse by
+     * subsequent requests within FEE_QUOTE_CACHE_TTL_SECONDS (e.g. repeat
+     * order-intent polls on the Payment step). Best-effort: failures to write
+     * the cookie never block the quote itself being returned to the caller.
+     *
+     * @param string $cacheKey
+     * @param array  $quote
+     * @return void
+     */
+    private function storeTwoFeeQuoteInSession($cacheKey, array $quote)
+    {
+        if (!isset($this->context->cookie)) {
+            return;
+        }
+        try {
+            // Deliberately do NOT call $this->context->cookie->setExpire() here:
+            // PrestaShop's cookie has a single expiry for the whole cookie (not
+            // per-key), and other code paths rely on it being COOKIE_EXPIRY_ONE_HOUR
+            // (company verification cache, rate limiting, order-intent-approved
+            // flag). Shortening it to this cache's TTL would silently truncate
+            // those. Staleness here is bounded instead by the two_fee_quote_ts
+            // field checked in getTwoFeeQuoteFromSession().
+            $this->context->cookie->two_fee_quote_key = $cacheKey;
+            $this->context->cookie->two_fee_quote_data = json_encode($quote);
+            $this->context->cookie->two_fee_quote_ts = (string) time();
+
+            // AJAX controllers (e.g. order-intent polling in orderintent.php's
+            // ajaxProcessCheckOrderIntent()) end the request via ajaxDie()/exit
+            // rather than returning normally, which is not guaranteed to run
+            // PrestaShop's Cookie::__destruct() in every PHP/webserver
+            // configuration. Force an immediate write so the quote is durably
+            // cached rather than relying on destructor timing (precedent:
+            // getTwoValidatedSessionCompanyData() above does the same).
+            if (method_exists($this->context->cookie, 'write')) {
+                $this->context->cookie->write();
+            }
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Failed to cache fee quote in session - ' . $e->getMessage(), 2);
+        }
+    }
+
+    /**
+     * Normalise the API's fee tax rate to the plugin's decimal-fraction
+     * convention (e.g. 0.25 for 25%). Guards against a percentage form (25) by
+     * scaling anything > 1. Never hard-codes zero — the API rate passes
+     * through (TWO-24752).
+     *
+     * @param mixed $rate
+     * @return float
+     */
+    private function normalizeTwoFeeTaxRate($rate)
+    {
+        if ($rate === null || $rate === '') {
+            return 0.0;
+        }
+        $rate = (float) $rate;
+        if ($rate <= 0) {
+            return 0.0;
+        }
+        if ($rate > 1.0) {
+            $rate = $rate / 100.0;
+        }
+
+        return $rate;
+    }
+
+    /**
+     * Admin-configured Surcharge Tax Rate for the Two order-creation fee line
+     * (Magento parity: Config\Repository::getSurchargeTaxRate /
+     * XML_PATH_SURCHARGE_TAX_RATE), as a decimal FRACTION (stored "25" →
+     * 0.25) via the same normalizeTwoFeeTaxRate scaling convention the rest
+     * of the file uses. Returns 0.0 when the field is blank/unset/
+     * non-numeric/negative — deliberate deviation from Magento, whose blank
+     * fallback is the store's default product tax class rate: PrestaShop has
+     * no equivalent store-wide default tax rate concept.
+     *
+     * @return float
+     */
+    public function getTwoSurchargeTaxRate()
+    {
+        $raw = trim((string) Configuration::get('PS_TWO_SURCHARGE_TAX_RATE'));
+        if ($raw === '' || !is_numeric($raw)) {
+            return 0.0;
+        }
+
+        return $this->normalizeTwoFeeTaxRate($raw);
+    }
+
+    /**
+     * Resolve the buyer's country ISO from the cart's invoice address.
+     *
+     * @param Cart $cart
+     * @return string
+     */
+    private function resolveTwoBuyerCountryIso($cart)
+    {
+        if (!Validate::isLoadedObject($cart)) {
+            return '';
+        }
+        $address = new Address((int) $cart->id_address_invoice);
+        if (Validate::isLoadedObject($address) && (int) $address->id_country > 0) {
+            $iso = Country::getIsoById((int) $address->id_country);
+            if (!empty($iso)) {
+                return (string) $iso;
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * Build the buyer-surcharge line item for the Two order payload, or null
+     * when no surcharge is configured / the quote fails / the fee is zero.
+     * The line's tax_rate carries the admin-configured Surcharge Tax Rate
+     * (PS_TWO_SURCHARGE_TAX_RATE via getTwoSurchargeTaxRate, Magento parity:
+     * XML_PATH_SURCHARGE_TAX_RATE) — NOT the pricing-preview response's
+     * total_fee_tax_rate, which the plugin never populates in its own
+     * /v1/pricing/order/fee request and is therefore always empty; net/tax/
+     * gross satisfy the Two line-item formulas so validateTwoLineItems
+     * accepts it.
+     *
+     * @param Cart     $cart
+     * @param float    $gross_basis product + shipping gross (fee basis)
+     * @param int|null $paymentTermDays explicit term (update/admin context has no
+     *                 buyer cookie); null falls back to the selected term.
+     * @return array|null
+     */
+    public function buildTwoSurchargeLineItemForCart($cart, $gross_basis, $paymentTermDays = null)
+    {
+        $settings = $this->getTwoSurchargeSettings();
+        if (empty($settings['enabled'])) {
+            return null;
+        }
+
+        // In the create/intent (buyer) path the term comes from the buyer's
+        // cookie; in the update path (admin edit / tracking webhook) there is no
+        // cookie, so the caller passes the persisted order term instead —
+        // otherwise the fee would be recomputed for the default term and the
+        // update gross would diverge from the created-order gross. TWO-24752.
+        $days = $paymentTermDays !== null ? (int) $paymentTermDays : $this->getSelectedPaymentTerm();
+        $currencyIso = '';
+        $currency = new Currency((int) $cart->id_currency);
+        if (Validate::isLoadedObject($currency)) {
+            $currencyIso = (string) $currency->iso_code;
+        }
+        $buyerCountry = $this->resolveTwoBuyerCountryIso($cart);
+
+        $fee = $this->fetchTwoTermFee($days, (float) $gross_basis, $buyerCountry, $currencyIso);
+        if ($fee === null) {
+            return null;
+        }
+
+        $net = round((float) $fee['buyer_fee_share'], 2);
+        if ($net <= 0) {
+            return null;
+        }
+        // The rate comes from the admin-configured Surcharge Tax Rate — the
+        // pricing-preview response's total_fee_tax_rate is never populated
+        // (the plugin sends no tax-rate field in its own fee request), so it
+        // is NOT a usable source. Compute tax from the SAME rate string that
+        // is sent (formatTwoTaxRate snaps to TAX_RATE_PRECISION dp). Using
+        // the full-precision rate to compute tax while sending a rounded rate
+        // makes the line fail validateTwoLineItems (tax_amount vs
+        // net*sent_rate) for any rate that needs more than TAX_RATE_PRECISION
+        // decimals, silently dropping the whole surcharge line. Snapping
+        // first mirrors the product-line convention (snapped_product_rate).
+        // TWO-24752.
+        $taxRate = $this->getTwoSurchargeTaxRate();
+        $taxRateString = $this->formatTwoTaxRate($taxRate);
+        $sentRate = (float) $taxRateString;
+        $tax = round($net * $sentRate, 2);
+        $gross = round($net + $tax, 2);
+        $label = $this->getTwoSurchargeLineLabel($days);
+
+        return array(
+            'name' => $label,
+            'description' => Tools::substr(strip_tags($label), 0, 255),
+            'gross_amount' => (string) $this->getTwoRoundAmount($gross),
+            'net_amount' => (string) $this->getTwoRoundAmount($net),
+            'discount_amount' => '0.00',
+            'tax_amount' => (string) $this->getTwoRoundAmount($tax),
+            'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount(round($sentRate * 100, 2)) . '%',
+            'tax_rate' => $taxRateString,
+            'unit_price' => (string) $this->getTwoRoundAmount($net),
+            'quantity' => 1,
+            'quantity_unit' => 'item',
+            'type' => 'SERVICE',
+        );
+    }
+
+    /**
+     * Live per-term buyer surcharge amounts for the checkout term chips: the
+     * REAL quoted fee (buyer_fee_share net, via POST /v1/pricing/order/fee per
+     * offered term through fetchTwoTermFee) for the CURRENT cart, replacing
+     * each chip's loading indicator when it resolves (the buyer is never
+     * shown the configured rate). Mirrors magento-plugin's
+     * Model/Webapi/Surcharges.php: basis
+     * from the live cart, loop over every offered term, per-term failure
+     * degrades that term to 0.0 while the others keep their quotes.
+     *
+     * Fail-soft contract (same discipline as fetchTwoMerchantFeeRates): this
+     * sits behind a checkout-render AJAX call and must never throw and never
+     * break checkout. {success:false} — surcharge disabled, no loaded cart,
+     * no offered terms, or a zero/empty cart basis — tells the JS to clear
+     * the chips' loading indicators (no fee text is shown; the buyer is never
+     * shown a configured rate). A nonzero basis where every term's quote fails
+     * still returns {success:true} with all-zero amounts (per-term degrade,
+     * Magento parity), NOT {success:false}.
+     *
+     * @return array{success:bool,currency?:string,amounts?:array<int,float>}
+     */
+    public function getTwoOfferedTermSurchargeAmounts()
+    {
+        try {
+            $settings = $this->getTwoSurchargeSettings();
+            if (empty($settings['enabled'])) {
+                return array('success' => false);
+            }
+
+            $cart = isset($this->context->cart) ? $this->context->cart : null;
+            if (!Validate::isLoadedObject($cart)) {
+                return array('success' => false);
+            }
+
+            $terms = $this->getAvailablePaymentTerms();
+            if (empty($terms)) {
+                return array('success' => false);
+            }
+
+            // Lightweight cart-gross read (products + shipping, tax incl.) —
+            // the same idiom the order builder uses for its reconciliation
+            // gross (getTwoNewOrderData) — NOT the full line-item pipeline,
+            // which is far too heavy for a render-time preview call.
+            $gross_basis = round((float) $cart->getOrderTotal(true, Cart::BOTH), 2);
+            if ($gross_basis <= 0) {
+                // Empty cart / anonymous probe: nothing to quote against —
+                // the JS clears the chips' loading indicators to blank.
+                return array('success' => false);
+            }
+
+            $currencyIso = '';
+            $currency = new Currency((int) $cart->id_currency);
+            if (Validate::isLoadedObject($currency)) {
+                $currencyIso = (string) $currency->iso_code;
+            }
+            $buyerCountry = $this->resolveTwoBuyerCountryIso($cart);
+
+            $amounts = array();
+            foreach ($terms as $days) {
+                $days = (int) $days;
+                $fee = $this->fetchTwoTermFee($days, $gross_basis, $buyerCountry, $currencyIso);
+                // Per-term degrade: a failed quote zeroes THAT chip's fee
+                // (the JS hides a zero fee) without failing the whole map.
+                $amounts[$days] = ($fee !== null && isset($fee['buyer_fee_share']))
+                    ? round((float) $fee['buyer_fee_share'], 2)
+                    : 0.0;
+            }
+
+            return array(
+                'success' => true,
+                'currency' => $currencyIso,
+                'amounts' => $amounts,
+            );
+        } catch (\Throwable $e) {
+            // Checkout render must never break on a preview quote.
+            return array('success' => false);
+        }
+    }
+
+    /**
+     * Buyer-facing label for the surcharge line. A merchant-set description
+     * wins (with %s replaced by the term days, Magento/WooCommerce parity);
+     * else the brand label; else a translated default that names the term.
+     *
+     * The default is "Payment terms fee - <n> days" (with the selected term's
+     * day count); a merchant who has typed their own Surcharge Line Description
+     * keeps it — this default only applies when that field is left blank.
+     *
+     * @param int $days
+     * @return string
+     */
+    public function getTwoSurchargeLineLabel($days)
+    {
+        $template = trim((string) Configuration::get('PS_TWO_SURCHARGE_LINE_DESC'));
+        if ($template !== '') {
+            return str_replace('%s', (string) (int) $days, $template);
+        }
+        $brandLabel = $this->getTwoBrandConfig('fee_line_label');
+        if (!empty($brandLabel)) {
+            return $this->l((string) $brandLabel);
+        }
+
+        return sprintf($this->l('Payment terms fee - %d days'), (int) $days);
+    }
+
+    /**
+     * Brand-driven rounding-step options for the admin select, formatted to a
+     * canonical two-decimal string so the stored value round-trips. Mirrors the
+     * WooCommerce plugin's get_rounding_step_options and Magento's RoundingStep.
+     *
+     * @return array<string, string>
+     */
+    public function getTwoRoundingStepOptions()
+    {
+        $options = array();
+        $steps = $this->getTwoBrandConfig('rounding_steps');
+        foreach (is_array($steps) ? $steps : array() as $step) {
+            if (!is_numeric($step) || (float) $step <= 0) {
+                continue;
+            }
+            $value = number_format((float) $step, 2, '.', '');
+            $options[$value] = $value;
+        }
+        ksort($options, SORT_NUMERIC);
+
+        return $options;
+    }
+
+    /**
+     * Reset the request-scoped fee cache (tests).
+     */
+    public function resetTwoFeeCache()
+    {
+        $this->twoFeeCache = array();
+    }
+
+    /**
+     * HelperForm input entries for the surcharge settings (appended to the
+     * Payment Settings form). Presentation only — all decisioning is in the
+     * methods above.
+     *
+     * @return array
+     */
+    protected function getTwoSurchargeFormInputs()
+    {
+        $inputs = array();
+        $inputs[] = array(
+            'type' => 'select',
+            'label' => $this->l('Buyer Surcharge Method'),
+            'name' => 'PS_TWO_SURCHARGE_TYPE',
+            'desc' => $this->l('Add an offset pricing fee to the buyer for the selected payment term. The fee amount is computed by Two; the plugin only sends the configuration.'),
+            'options' => array(
+                'query' => array(
+                    array('id' => 'none', 'name' => $this->l('No surcharge applied')),
+                    array('id' => 'percentage', 'name' => $this->l('Percentage')),
+                    array('id' => 'fixed', 'name' => $this->l('Fixed fee')),
+                    array('id' => 'fixed_and_percentage', 'name' => $this->l('Fixed fee and percentage')),
+                ),
+                'id' => 'id',
+                'name' => 'name',
+            ),
+        );
+        $inputs[] = array(
+            'type' => 'select',
+            'label' => $this->l('Surcharge Calculation Basis'),
+            'name' => 'PS_TWO_SURCHARGE_DIFFERENTIAL',
+            'desc' => $this->l('Total fee charges the configured surcharge for the chosen term. Fee difference charges only the difference versus the default payment term.'),
+            // Presented as a dropdown to match Magento's Surcharge Calculation
+            // Basis field (Two\Gateway\Model\Config\Source\SurchargeCalculationBasis).
+            // Values keep the original 0/1 boolean semantics: 0 = total fee,
+            // 1 = differential — so the stored config and downstream behaviour
+            // (getTwoSurchargeSettings 'differential') are unchanged.
+            'options' => array(
+                'query' => array(
+                    array('id' => 0, 'name' => $this->l('Total fee for selected term')),
+                    array('id' => 1, 'name' => $this->l('Fee difference vs default payment term')),
+                ),
+                'id' => 'id',
+                'name' => 'name',
+            ),
+        );
+        $inputs[] = array(
+            'type' => 'text',
+            'label' => $this->l('Surcharge Line Description'),
+            'name' => 'PS_TWO_SURCHARGE_LINE_DESC',
+            'desc' => $this->l('Buyer-facing label for the surcharge line. Use %s for the term length in days. Leave blank to use the brand default.'),
+        );
+        $inputs[] = array(
+            'type' => 'select',
+            'label' => $this->l('Surcharge Rounding'),
+            'name' => 'PS_TWO_SURCHARGE_ROUNDING_BASIS',
+            'desc' => $this->l('Snap the buyer surcharge line to a clean increment. Select None for standard two-decimal amounts.'),
+            'options' => array(
+                'query' => array(
+                    array('id' => 'none', 'name' => $this->l('None')),
+                    array('id' => 'up', 'name' => $this->l('Up')),
+                    array('id' => 'down', 'name' => $this->l('Down')),
+                    array('id' => 'standard', 'name' => $this->l('Standard')),
+                ),
+                'id' => 'id',
+                'name' => 'name',
+            ),
+        );
+        $stepQuery = array(array('id' => '', 'name' => $this->l('No rounding')));
+        foreach ($this->getTwoRoundingStepOptions() as $value => $label) {
+            $stepQuery[] = array('id' => $value, 'name' => $label);
+        }
+        $inputs[] = array(
+            'type' => 'select',
+            'label' => $this->l('Rounding Step'),
+            'name' => 'PS_TWO_SURCHARGE_ROUNDING_STEP',
+            'desc' => $this->l('Increment the surcharge is rounded to (e.g. 1 = whole units, 0.50 = nearest half). Applies only when a rounding direction is selected.'),
+            'options' => array('query' => $stepQuery, 'id' => 'id', 'name' => 'name'),
+        );
+        $inputs[] = array(
+            'type' => 'text',
+            'label' => $this->l('Surcharge Tax Rate (%)'),
+            'name' => 'PS_TWO_SURCHARGE_TAX_RATE',
+            'suffix' => '%',
+            'desc' => $this->l('Tax rate applied to the surcharge line sent to Two (e.g. 25 for 25%). Leave blank for no tax on the surcharge line.'),
+        );
+        $inputs[] = array(
+            'type' => 'html',
+            'label' => $this->l('Per-term surcharge'),
+            'name' => 'PS_TWO_SURCHARGE_GRID',
+            'html_content' => $this->getTwoSurchargeGridHtml(),
+        );
+
+        return $inputs;
+    }
+
+    /**
+     * Build the per-term surcharge grid as an HTML table. HelperForm does NOT
+     * auto-populate values for type=>'html' fields, so each input's current
+     * value is read here (POSTed value, falling back to the stored config) and
+     * written into the value="" attribute, htmlspecialchars-escaped. Field
+     * names are IDENTICAL to the previous per-term text inputs so the existing
+     * save/validation path (saveTwoSurchargeFormValues / validTwoSurchargeFormValues)
+     * is unchanged.
+     *
+     * A row is rendered for EVERY offerable term (getOfferableTermSource — the
+     * same set the "Available Payment Terms" checkboxes render for), NOT just
+     * the saved/available subset, so the admin JS (configuration.tpl,
+     * updateSurchargeGridRows) can show/hide rows live as term checkboxes are
+     * toggled without a save+reload. Initial visibility is computed
+     * server-side with the same gates getAvailablePaymentTerms() applies: the
+     * term's checkbox config is truthy AND the term is valid for the current
+     * term type (EOM only allows EOM_PAYMENT_TERMS_OPTIONS). Row classes
+     * mirror the checkbox type split (two-term-both / two-term-standard).
+     *
+     * @return string
+     */
+    protected function getTwoSurchargeGridHtml()
+    {
+        $cell_style = 'width:110px;';
+        // id + per-column classes let the admin JS (configuration.tpl) show/hide
+        // the whole grid and individual columns by the selected surcharge type,
+        // without fragile positional selectors.
+        $html = '<table id="two-surcharge-grid" class="table" style="width:auto;margin-bottom:0;">';
+        $html .= '<thead><tr>'
+            . '<th>' . $this->l('Term') . '</th>'
+            . '<th class="two-col-percentage">' . $this->l('Percentage') . '</th>'
+            . '<th class="two-col-fixed">' . $this->l('Fixed fee') . '</th>'
+            . '<th class="two-col-cap">' . $this->l('Cap on percentage') . '</th>'
+            . '</tr></thead><tbody>';
+
+        $term_type = Configuration::get('PS_TWO_PAYMENT_TERM_TYPE');
+        $source = $this->getOfferableTermSource(false);
+        sort($source);
+        foreach ($source as $days) {
+            $days = (int) $days;
+            $pct_name = 'PS_TWO_SURCHARGE_PCT_' . $days;
+            $fixed_name = 'PS_TWO_SURCHARGE_FIXED_' . $days;
+            $cap_name = 'PS_TWO_SURCHARGE_CAP_' . $days;
+
+            $pct = htmlspecialchars((string) Tools::getValue($pct_name, Configuration::get($pct_name)), ENT_QUOTES, 'UTF-8');
+            $fixed = htmlspecialchars((string) Tools::getValue($fixed_name, Configuration::get($fixed_name)), ENT_QUOTES, 'UTF-8');
+            $cap = htmlspecialchars((string) Tools::getValue($cap_name, Configuration::get($cap_name)), ENT_QUOTES, 'UTF-8');
+
+            $is_eom_capable = in_array($days, self::EOM_PAYMENT_TERMS_OPTIONS, true);
+            $type_class = $is_eom_capable ? 'two-term-both' : 'two-term-standard';
+            $checked = (bool) Configuration::get('PS_TWO_PAYMENT_TERMS_' . $days);
+            $valid_for_type = $term_type !== 'EOM' || $is_eom_capable;
+            $row_style = ($checked && $valid_for_type) ? '' : ' style="display:none"';
+
+            $html .= '<tr class="two-surcharge-row two-surcharge-row-' . $days . ' ' . $type_class . '"'
+                . ' data-term="' . $days . '"' . $row_style . '>'
+                . '<td style="vertical-align:middle;">' . sprintf($this->l('%d days'), $days) . '</td>'
+                . '<td class="two-col-percentage"><div class="input-group" style="' . $cell_style . '">'
+                . '<input type="text" class="form-control" name="' . $pct_name . '" value="' . $pct . '">'
+                . '<span class="input-group-addon">%</span></div></td>'
+                . '<td class="two-col-fixed"><input type="text" class="form-control" style="' . $cell_style . '" name="' . $fixed_name . '" value="' . $fixed . '"></td>'
+                . '<td class="two-col-cap"><input type="text" class="form-control" style="' . $cell_style . '" name="' . $cap_name . '" value="' . $cap . '"></td>'
+                . '</tr>';
+        }
+
+        $html .= '</tbody></table>';
+
+        return $html;
+    }
+
+    /**
+     * Current values for the surcharge form fields.
+     *
+     * @return array
+     */
+    protected function getTwoSurchargeFormValues()
+    {
+        $values = array(
+            'PS_TWO_SURCHARGE_TYPE' => Tools::getValue('PS_TWO_SURCHARGE_TYPE', Configuration::get('PS_TWO_SURCHARGE_TYPE')),
+            'PS_TWO_SURCHARGE_DIFFERENTIAL' => Tools::getValue('PS_TWO_SURCHARGE_DIFFERENTIAL', Configuration::get('PS_TWO_SURCHARGE_DIFFERENTIAL')),
+            'PS_TWO_SURCHARGE_LINE_DESC' => Tools::getValue('PS_TWO_SURCHARGE_LINE_DESC', Configuration::get('PS_TWO_SURCHARGE_LINE_DESC')),
+            'PS_TWO_SURCHARGE_ROUNDING_BASIS' => Tools::getValue('PS_TWO_SURCHARGE_ROUNDING_BASIS', Configuration::get('PS_TWO_SURCHARGE_ROUNDING_BASIS')),
+            'PS_TWO_SURCHARGE_ROUNDING_STEP' => Tools::getValue('PS_TWO_SURCHARGE_ROUNDING_STEP', Configuration::get('PS_TWO_SURCHARGE_ROUNDING_STEP')),
+            'PS_TWO_SURCHARGE_TAX_RATE' => Tools::getValue('PS_TWO_SURCHARGE_TAX_RATE', Configuration::get('PS_TWO_SURCHARGE_TAX_RATE')),
+        );
+        foreach ($this->getAvailablePaymentTerms() as $days) {
+            $days = (int) $days;
+            foreach (array('PCT', 'FIXED', 'CAP') as $suffix) {
+                $name = 'PS_TWO_SURCHARGE_' . $suffix . '_' . $days;
+                $values[$name] = Tools::getValue($name, Configuration::get($name));
+            }
+        }
+
+        return $values;
+    }
+
+    /**
+     * Validate the surcharge form: enforce rounding-step membership and
+     * non-negative numeric grid values. Appends to $this->errors.
+     */
+    protected function validTwoSurchargeFormValues()
+    {
+        $type = TwoSurchargeCalculator::normalizeType(Tools::getValue('PS_TWO_SURCHARGE_TYPE'));
+        if ($type === 'none') {
+            return;
+        }
+        $step = trim((string) Tools::getValue('PS_TWO_SURCHARGE_ROUNDING_STEP'));
+        if ($step !== '' && !array_key_exists($step, $this->getTwoRoundingStepOptions())) {
+            $this->errors[] = $this->l('Rounding step must be one of the offered values.');
+        }
+        $taxRate = Tools::getValue('PS_TWO_SURCHARGE_TAX_RATE');
+        if ($taxRate !== false && $taxRate !== '' && (!is_numeric($taxRate) || (float) $taxRate < 0)) {
+            $this->errors[] = $this->l('Surcharge tax rate must be a non-negative number.');
+        }
+        foreach ($this->getAvailablePaymentTerms() as $days) {
+            $days = (int) $days;
+            foreach (array('PCT', 'FIXED', 'CAP') as $suffix) {
+                $raw = Tools::getValue('PS_TWO_SURCHARGE_' . $suffix . '_' . $days);
+                if ($raw !== false && $raw !== '' && (!is_numeric($raw) || (float) $raw < 0)) {
+                    $this->errors[] = $this->l('Surcharge values must be non-negative numbers.');
+
+                    return;
+                }
+            }
+        }
+    }
+
+    /**
+     * Persist the surcharge form values, coercing to safe stored forms.
+     */
+    protected function saveTwoSurchargeFormValues()
+    {
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', TwoSurchargeCalculator::normalizeType(Tools::getValue('PS_TWO_SURCHARGE_TYPE')));
+        Configuration::updateValue('PS_TWO_SURCHARGE_DIFFERENTIAL', (int) Tools::getValue('PS_TWO_SURCHARGE_DIFFERENTIAL', 0));
+        Configuration::updateValue('PS_TWO_SURCHARGE_LINE_DESC', (string) Tools::getValue('PS_TWO_SURCHARGE_LINE_DESC', ''));
+
+        $basis = (string) Tools::getValue('PS_TWO_SURCHARGE_ROUNDING_BASIS', 'none');
+        if ($basis !== 'none' && !array_key_exists($basis, TwoSurchargeCalculator::ROUNDING_BASIS_TO_API)) {
+            $basis = 'none';
+        }
+        Configuration::updateValue('PS_TWO_SURCHARGE_ROUNDING_BASIS', $basis);
+
+        $step = trim((string) Tools::getValue('PS_TWO_SURCHARGE_ROUNDING_STEP', ''));
+        if ($step !== '' && !array_key_exists($step, $this->getTwoRoundingStepOptions())) {
+            $step = '';
+        }
+        Configuration::updateValue('PS_TWO_SURCHARGE_ROUNDING_STEP', $step);
+
+        // Same coercion discipline as the grid: invalid input is stored as
+        // blank (→ getTwoSurchargeTaxRate() falls back to 0.0), never fatal.
+        $taxRateRaw = trim((string) Tools::getValue('PS_TWO_SURCHARGE_TAX_RATE', ''));
+        Configuration::updateValue(
+            'PS_TWO_SURCHARGE_TAX_RATE',
+            (is_numeric($taxRateRaw) && (float) $taxRateRaw >= 0) ? (string) (float) $taxRateRaw : ''
+        );
+
+        foreach ($this->getAvailablePaymentTerms() as $days) {
+            $days = (int) $days;
+            foreach (array('PCT', 'FIXED', 'CAP') as $suffix) {
+                $name = 'PS_TWO_SURCHARGE_' . $suffix . '_' . $days;
+                $raw = Tools::getValue($name, '');
+                Configuration::updateValue($name, is_numeric($raw) ? (string) (float) $raw : '');
+            }
+        }
+    }
+
     public function getAvailablePaymentTerms()
     {
         $term_type = Configuration::get('PS_TWO_PAYMENT_TERM_TYPE');
-        
-        // Determine which terms to check based on type
+
+        // Source set the admin narrows FROM (backend list, else hardcoded).
+        $source = $this->getOfferableTermSource(false);
+
+        // EOM is only offerable for a fixed subset; intersect the source with it.
         if ($term_type === 'EOM') {
-            // EOM only supports 30, 45, 60 day terms
-            $terms_to_check = array('30', '45', '60');
-        } else {
-            // STANDARD supports all terms
-            $terms_to_check = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
+            $source = array_values(array_intersect($source, self::EOM_PAYMENT_TERMS_OPTIONS));
         }
-        
+
         $available_terms = array();
-        
-        foreach ($terms_to_check as $term) {
-            if (Configuration::get('PS_TWO_PAYMENT_TERMS_' . $term)) {
-                $available_terms[] = (int)$term;
+        foreach ($source as $term) {
+            if (Configuration::get('PS_TWO_PAYMENT_TERMS_' . (int) $term)) {
+                $available_terms[] = (int) $term;
             }
         }
-        
-        // If no terms are configured, default to DEFAULT_PAYMENT_TERM_DAYS
+
+        // If nothing is configured/offerable, default to DEFAULT_PAYMENT_TERM_DAYS
         if (empty($available_terms)) {
             $available_terms = array(self::DEFAULT_PAYMENT_TERM_DAYS);
         }
-        
+
         sort($available_terms); // Ensure they're in ascending order
         return $available_terms;
     }
 
     /**
-     * Get the default payment term (first available term or 30 days)
+     * The merchant's default invoice payment term (the API `due_in_days` field
+     * on GET /v1/merchant), in net days, or null when it is unset or unresolved.
+     *
+     * CACHE-ONLY - never blocks on HTTP. The value is primed by the SAME fetch
+     * as the available_terms list (see getMerchantAvailableTerms): the sanctioned
+     * refresh points (checkout media render, admin config render) call
+     * getMerchantAvailableTerms(true), which populates both caches from one wire
+     * call. On a cold cache this returns null and getDefaultPaymentTerm() falls
+     * back to the historical 30-day default - the same serve-stale degrade
+     * posture the available_terms seam uses (TWO-24813 / TWO-24859).
+     *
+     * `due_in_days` is NOT guaranteed to be a member of the offered term set -
+     * callers must honour it only when it is an available term (see
+     * getDefaultPaymentTerm). A cached 0 means "unset" (all real terms are > 0).
+     *
+     * @return int|null
+     */
+    public function getMerchantDueInDays()
+    {
+        $cached = (int) Configuration::get(self::CONFIG_MERCHANT_DUE_IN_DAYS);
+        return $cached > 0 ? $cached : null;
+    }
+
+    /**
+     * Get the default payment term.
+     *
+     * Preference order when more than one term is offered:
+     *   1. the merchant's API default term (due_in_days) when it is offered;
+     *   2. the historical DEFAULT_PAYMENT_TERM_DAYS (30) when it is offered;
+     *   3. the lowest offered term.
+     * A single offered term always wins outright.
+     *
      * @return int Default payment term in days
      */
     public function getDefaultPaymentTerm()
     {
         $available_terms = $this->getAvailablePaymentTerms();
-        
+
         // If only one term is available, use it as default
         if (count($available_terms) === 1) {
             return $available_terms[0];
         }
-        
+
+        // Prefer the merchant's API default term (due_in_days) when it is one
+        // of the offered terms, so a freshly-installed or never-tuned plugin
+        // lands on the merchant's real default out of the box - matching
+        // magento-plugin and woocommerce-plugin (TWO-24859). Read-only and
+        // non-destructive: it never overwrites the merchant's own term config,
+        // it only chooses among terms that are already offered.
+        $api_default = $this->getMerchantDueInDays();
+        if ($api_default !== null && in_array($api_default, $available_terms, true)) {
+            return $api_default;
+        }
+
         // If DEFAULT_PAYMENT_TERM_DAYS is available, use it as default
         if (in_array(self::DEFAULT_PAYMENT_TERM_DAYS, $available_terms)) {
             return self::DEFAULT_PAYMENT_TERM_DAYS;
         }
-        
+
         // Otherwise, use the first available term
         return !empty($available_terms) ? $available_terms[0] : self::DEFAULT_PAYMENT_TERM_DAYS;
     }
@@ -5673,8 +7599,9 @@ class Twopayment extends PaymentModule
         );
     }
 
-    public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+    public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
     {
+        $request_timeout = $timeout !== null ? max(1, (int)$timeout) : self::API_TIMEOUT_LONG;
         if ($method == "POST" || $method == "PUT") {
             $url = sprintf('%s%s', $this->getTwoCheckoutHostUrl(), $endpoint);
             $url = $url . '?client=PS&client_v=' . $this->version;
@@ -5685,7 +7612,8 @@ class Twopayment extends PaymentModule
             curl_setopt($ch, CURLOPT_URL, $url);
             curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, self::API_TIMEOUT_LONG);
+            curl_setopt($ch, CURLOPT_TIMEOUT, $request_timeout);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, self::API_CONNECT_TIMEOUT);
             
             // SSL VERIFICATION - Secure by default
             $this->configureSslVerification($ch);
@@ -5735,7 +7663,8 @@ class Twopayment extends PaymentModule
             curl_setopt($ch, CURLOPT_URL, $url);
             curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, self::API_TIMEOUT_LONG);
+            curl_setopt($ch, CURLOPT_TIMEOUT, $request_timeout);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, self::API_CONNECT_TIMEOUT);
             
             // SSL VERIFICATION - Secure by default
             $this->configureSslVerification($ch);
@@ -6185,6 +8114,137 @@ class Twopayment extends PaymentModule
         }
 
         return false;
+    }
+
+    /**
+     * Shared customer-ownership guard for order-scoped front controller access
+     * (invoice download, legacy cancel/confirmation callbacks).
+     *
+     * Grants access when either:
+     * - a `key` query parameter matching the order customer's secure key is provided
+     *   (timing-safe compare; this path also covers guest checkout), or
+     * - the logged-in context customer owns the order and their secure key matches.
+     *
+     * @param Order $order
+     * @param Customer $customer Customer that owns the order
+     * @param string $provided_key Optional key from the query string
+     * @param int $context_customer_id Current context customer ID
+     * @param string $context_customer_secure_key Current context customer secure key
+     * @return bool
+     */
+    public function isTwoOrderCustomerAccessAuthorized($order, $customer, $provided_key = '', $context_customer_id = 0, $context_customer_secure_key = '')
+    {
+        if (!Validate::isLoadedObject($order) || !Validate::isLoadedObject($customer)) {
+            return false;
+        }
+
+        $expected_secure_key = trim((string)$customer->secure_key);
+        if (Tools::isEmpty($expected_secure_key)) {
+            return false;
+        }
+
+        $provided_key = trim((string)$provided_key);
+        if (!Tools::isEmpty($provided_key)) {
+            return hash_equals($expected_secure_key, $provided_key);
+        }
+
+        $context_customer_id = (int)$context_customer_id;
+        $context_customer_secure_key = trim((string)$context_customer_secure_key);
+
+        return $context_customer_id === (int)$order->id_customer &&
+            !Tools::isEmpty($context_customer_secure_key) &&
+            hash_equals($expected_secure_key, $context_customer_secure_key);
+    }
+
+    /**
+     * Translated, brand-safe user-facing message for an invoice download notice code.
+     *
+     * @param string $code One of TwoInvoiceRetrievalService::NOTICE_* codes
+     * @param string $state Two order state (only used by the unavailable-state message)
+     * @return string
+     */
+    public function getTwoInvoiceNoticeMessage($code, $state = '')
+    {
+        switch ($code) {
+            case 'not_ready':
+                return $this->l('The invoice is not ready yet because the order is still being fulfilled. Please try again later.');
+            case 'unavailable_state':
+                return sprintf(
+                    $this->l('No invoice is available because the order is in state: %s.'),
+                    $state !== '' ? $state : $this->l('UNKNOWN')
+                );
+            case 'no_reference':
+                return $this->l('No payment provider order reference is set for this order.');
+            case 'error':
+            default:
+                return $this->l('The invoice could not be retrieved. Please try again later or contact the store owner.');
+        }
+    }
+
+    /**
+     * Read an invoice download notice from the current request query string
+     * (set by the admin invoice controller redirect). Only whitelisted notice
+     * codes are honored and the state token is sanitized, so a crafted URL can
+     * only ever surface one of the module's own messages.
+     *
+     * @return array{level:string, code:string, message:string}|null
+     */
+    public function getTwoInvoiceNoticeFromRequest()
+    {
+        $allowed = array(
+            'not_ready' => 'info',
+            'unavailable_state' => 'info',
+            'no_reference' => 'error',
+            'error' => 'error',
+        );
+
+        $code = trim((string)Tools::getValue('two_invoice_notice'));
+        if (!isset($allowed[$code])) {
+            return null;
+        }
+
+        $state = strtoupper((string)preg_replace('/[^A-Za-z0-9_]/', '', (string)Tools::getValue('two_invoice_state')));
+        $state = Tools::substr($state, 0, 32);
+
+        return array(
+            'level' => $allowed[$code],
+            'code' => $code,
+            'message' => $this->getTwoInvoiceNoticeMessage($code, $state),
+        );
+    }
+
+    /**
+     * Stream a resolved invoice PDF to the browser and terminate the request.
+     *
+     * @param array $result Stream result from TwoInvoiceRetrievalService (action=stream)
+     * @param string $order_reference Local order reference used to build the filename
+     * @return void
+     */
+    public function streamTwoInvoicePdf($result, $order_reference)
+    {
+        $reference = preg_replace('/[^A-Za-z0-9_-]/', '', (string)$order_reference);
+        $filename = 'invoice-' . ($reference !== '' ? $reference : 'order') . '.pdf';
+        $body = isset($result['body']) ? (string)$result['body'] : '';
+
+        // Discard any open output buffers (stray notices, BOMs, template output)
+        // and disable on-the-fly compression: gzip re-encoding would make the
+        // response body diverge from the exact Content-Length declared below.
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+        @ini_set('zlib.output_compression', '0');
+        if (function_exists('apache_setenv')) {
+            @apache_setenv('no-gzip', '1');
+        }
+
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Content-Length: ' . strlen($body));
+        header('Cache-Control: no-store, no-cache, must-revalidate');
+        header('Pragma: no-cache');
+
+        echo $body;
+        exit;
     }
 
     /**
@@ -6711,6 +8771,25 @@ class Twopayment extends PaymentModule
 
         $state = isset($response['state']) ? strtoupper(trim((string)$response['state'])) : '';
         return $state === 'CANCELLED';
+    }
+
+    /**
+     * Verify that stored payment data contains a usable Two order mapping.
+     *
+     * @param mixed $orderpaymentdata
+     * @return bool
+     */
+    public function hasTwoProviderOrderMapping($orderpaymentdata)
+    {
+        if (!is_array($orderpaymentdata)) {
+            return false;
+        }
+
+        if (!isset($orderpaymentdata['two_order_id'])) {
+            return false;
+        }
+
+        return !Tools::isEmpty(trim((string)$orderpaymentdata['two_order_id']));
     }
 
     /**
@@ -7272,12 +9351,21 @@ class Twopayment extends PaymentModule
         $id_order = $params['order']->id;
         $twopaymentdata = $this->getTwoOrderPaymentData($id_order);
         if ($twopaymentdata) {
-            // Generate PDF URL if Two order ID is available
+            // Route the invoice download through the module front controller so the
+            // plugin can check the Two order state instead of exposing a raw API URL
+            // (which returns a bare 400 ORDER_NOT_FULFILLED before fulfillment).
             $pdf_url = null;
             if (!empty($twopaymentdata['two_order_id'])) {
-                $pdf_url = $this->getTwoPdfUrl($twopaymentdata['two_order_id']);
+                $link_params = array('id_order' => (int)$id_order);
+                $order_customer = new Customer((int)$params['order']->id_customer);
+                if (Validate::isLoadedObject($order_customer) && !Tools::isEmpty((string)$order_customer->secure_key)) {
+                    // Same secure-key fallback the cancel/confirmation callbacks use;
+                    // this keeps guest-checkout invoice access working.
+                    $link_params['key'] = (string)$order_customer->secure_key;
+                }
+                $pdf_url = $this->context->link->getModuleLink($this->name, 'invoice', $link_params, true);
             }
-            
+
             $this->context->smarty->assign(array(
                 'twopaymentdata' => $twopaymentdata,
                 'two_portal_url' => $this->getTwoPortalUrl(),
@@ -7296,10 +9384,17 @@ class Twopayment extends PaymentModule
             $twopaymentdata = $this->enrichTwoAdminOrderPaymentData((int)$id_order, $twopaymentdata);
             $invoice_actions_available = $this->shouldExposeTwoInvoiceActions($twopaymentdata);
 
-            // Generate PDF URL if Two order ID is available
+            // Route the invoice download through the module admin controller so the
+            // plugin can check the Two order state (covers the race where the order
+            // just flipped to FULFILLED but the PDF is not generated yet).
             $pdf_url = null;
             if ($invoice_actions_available && !empty($twopaymentdata['two_order_id'])) {
-                $pdf_url = $this->getTwoPdfUrl($twopaymentdata['two_order_id']);
+                $pdf_url = $this->context->link->getAdminLink(
+                    'AdminTwopaymentInvoice',
+                    true,
+                    array(),
+                    array('id_order' => (int)$id_order)
+                );
             }
             
             $this->context->smarty->assign(array(
@@ -7307,6 +9402,7 @@ class Twopayment extends PaymentModule
                 'two_portal_url' => $this->getTwoPortalUrl(), // Dynamic portal URL based on environment
                 'two_pdf_url' => $pdf_url, // PDF invoice URL if available
                 'two_invoice_actions_available' => $invoice_actions_available,
+                'two_invoice_notice' => $this->getTwoInvoiceNoticeFromRequest(),
             ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayAdminOrderLeft.tpl');
         }
@@ -7331,10 +9427,17 @@ class Twopayment extends PaymentModule
             $twopaymentdata = $this->enrichTwoAdminOrderPaymentData((int)$id_order, $twopaymentdata);
             $invoice_actions_available = $this->shouldExposeTwoInvoiceActions($twopaymentdata);
 
-            // Generate PDF URL if Two order ID is available
+            // Route the invoice download through the module admin controller so the
+            // plugin can check the Two order state (covers the race where the order
+            // just flipped to FULFILLED but the PDF is not generated yet).
             $pdf_url = null;
             if ($invoice_actions_available && !empty($twopaymentdata['two_order_id'])) {
-                $pdf_url = $this->getTwoPdfUrl($twopaymentdata['two_order_id']);
+                $pdf_url = $this->context->link->getAdminLink(
+                    'AdminTwopaymentInvoice',
+                    true,
+                    array(),
+                    array('id_order' => (int)$id_order)
+                );
             }
             
             $this->context->smarty->assign(array(
@@ -7343,6 +9446,7 @@ class Twopayment extends PaymentModule
                 'two_pdf_url' => $pdf_url, // PDF invoice URL if available
                 'use_own_invoices' => (bool)Configuration::get('PS_TWO_USE_OWN_INVOICES'),
                 'two_invoice_actions_available' => $invoice_actions_available,
+                'two_invoice_notice' => $this->getTwoInvoiceNoticeFromRequest(),
             ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayAdminOrderTabContent.tpl');
         }

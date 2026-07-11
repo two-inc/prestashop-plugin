@@ -87,8 +87,7 @@ Reliable B2B invoice checkout via Two, with:
 - `views/templates/hook/displayAdminOrderTabContent.tpl`
 
 ### Tests
-- `tests/OrderBuilderTest.php`
-- `tests/run.php`
+- `tests/run.php` (self-contained runner; specs: OrderBuilderSpec inline, `tests/TrackingNumberSpec.php`, `tests/CustomerAddressFormatterOverrideSpec.php`)
 
 ### Upgrades
 - `upgrade/upgrade-*.php`

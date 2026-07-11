@@ -29,7 +29,7 @@ TWO_ENVIRONMENT      ?= sandbox
 TWO_STORE_COUNTRY    ?= NO
 export TWO_STORE_COUNTRY
 
-.PHONY: help install configure run debug stop clean flush logs proxy archive
+.PHONY: help install configure run debug stop clean flush logs proxy archive test
 
 .DEFAULT_GOAL := help
 
@@ -46,7 +46,7 @@ install: clean
 	@echo "Fixing var/ permissions (admin 500 fix)..."
 	docker exec $(CONTAINER) bash -c "chown -R www-data:www-data /var/www/html/var && chmod -R 775 /var/www/html/var"
 	@echo "Installing module $(MODULE_NAME)..."
-	docker exec $(CONTAINER) bash -c "cd /var/www/html && php -d memory_limit=512M bin/console prestashop:module install $(MODULE_NAME)"
+	docker exec -u www-data $(CONTAINER) bash -c "cd /var/www/html && php -d memory_limit=512M bin/console prestashop:module install $(MODULE_NAME)"
 	@echo "Enabling Two-supported countries and extending carrier coverage..."
 	docker exec $(DB_CONTAINER) mysql -uroot -padmin prestashop -e "\
 		UPDATE ps_country SET active=1 WHERE iso_code IN ('NO','GB','SE','DK','FI','NL','DE'); \
@@ -81,6 +81,7 @@ install: clean
 ## plugin actually appears at checkout): make configure TWO_API_KEY=xxx
 configure:
 	docker exec \
+		-u www-data \
 		-e TWO_API_KEY=$(TWO_API_KEY) \
 		-e TWO_ENVIRONMENT=$(TWO_ENVIRONMENT) \
 		-e TWO_API_BASE_URL=$(TWO_API_BASE_URL) \
@@ -133,6 +134,10 @@ proxy:
 ## Tail PrestaShop + module logs
 logs:
 	docker exec $(CONTAINER) bash -c "tail -f /var/www/html/var/logs/*.log /var/log/apache2/error.log 2>/dev/null"
+
+## Run the unit test harness (same suite CI runs)
+test:
+	docker run --rm -v "$(CURDIR)":/app -w /app php:8.2-cli php tests/run.php
 
 ## Create a versioned zip archive
 archive:

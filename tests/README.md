@@ -15,6 +15,8 @@ This folder contains deterministic tests for order-building and payload safety l
 - Currency compatibility gating for payment option visibility
 - Large rounded discount split handling keeps tax-formula validation stable
 - Cart-rule monetary (`value_real`/`value_tax_exc`) discount line attribution
+- Tracking number sourcing (order_carrier vs legacy shipping_number) and the admin tracking-update hook (TWO-24762)
+- Partial refunds via credit slips: amount+currency payload, slip-ID idempotency key, remaining-balance guard, and duplicate-refund suppression (TWO-24759)
 
 ## Why this matters
 
@@ -43,18 +45,6 @@ If you touched additional PHP files, lint them too:
 ```bash
 php -l path/to/file.php
 ```
-
-## Optional PHPUnit setup (if network access is available)
-
-```bash
-composer install
-composer test
-```
-
-PHPUnit config and equivalent test file are included:
-
-- `phpunit.xml.dist`
-- `tests/OrderBuilderTest.php`
 
 ## Real-engine integration matrix
 

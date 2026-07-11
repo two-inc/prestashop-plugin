@@ -8,7 +8,8 @@
     <div id="two-tabs" class="col-lg-2 col-md-3">
         <div class="list-group">
             <a class="list-group-item {if $twotabvalue == 1}active{/if}" href="#general-settings" aria-controls="general-settings" role="tab" data-toggle="tab">{l s='General Settings' mod='twopayment'}</a>
-            <a class="list-group-item {if $twotabvalue == 2}active{/if}" href="#other-settings" aria-controls="other-settings" role="tab" data-toggle="tab">{l s='Other Settings' mod='twopayment'}</a>
+            <a class="list-group-item {if $twotabvalue == 5}active{/if}" href="#payment-settings" aria-controls="payment-settings" role="tab" data-toggle="tab">{l s='Payment Settings' mod='twopayment'}</a>
+            <a class="list-group-item {if $twotabvalue == 2}active{/if}" href="#other-settings" aria-controls="other-settings" role="tab" data-toggle="tab">{l s='Advanced Settings' mod='twopayment'}</a>
             <a class="list-group-item {if $twotabvalue == 3}active{/if}" href="#order-status-settings" aria-controls="order-status-settings" role="tab" data-toggle="tab">{l s='Order Status Settings' mod='twopayment'}</a>
             <a class="list-group-item {if $twotabvalue == 4}active{/if}" href="#plugin-info" aria-controls="plugin-info" role="tab" data-toggle="tab">{l s='Plugin Information' mod='twopayment'}</a>
         </div>
@@ -42,6 +43,9 @@
                 {/if}
                 {$renderTwoGeneralForm nofilter}
             </div>
+            <div id="payment-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 5}active{/if}">
+                {$renderTwoPaymentSettingsForm nofilter}
+            </div>
             <div id="other-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 2}active{/if}">
                 {$renderTwoOtherForm nofilter}
             </div>
@@ -55,6 +59,11 @@
     </div>
     <div class="clearfix"></div>
 </div>
+<script type="text/javascript">
+    // Module admin AJAX endpoint for the inline merchant-fee display
+    // (assigned outside the literal block so Smarty expands the URL).
+    var twoMerchantFeeRatesUrl = '{$two_fee_rates_url|escape:'javascript':'UTF-8'}';
+</script>
 {literal}
     <script type="text/javascript">
         $(document).ready(function () {
@@ -90,6 +99,162 @@
             $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]').on('change', function() {
                 updatePaymentTermsVisibility();
             });
+
+            // Surcharge Rounding Step - hide the step selector when the rounding
+            // basis is None (no rounding direction means the step is irrelevant).
+            function updateRoundingStepVisibility() {
+                var basis = $('select[name="PS_TWO_SURCHARGE_ROUNDING_BASIS"]').val();
+                var stepGroup = $('select[name="PS_TWO_SURCHARGE_ROUNDING_STEP"]').closest('.form-group');
+                if (!basis || basis === 'none') {
+                    stepGroup.hide();
+                } else {
+                    stepGroup.show();
+                }
+            }
+            updateRoundingStepVisibility();
+            $('select[name="PS_TWO_SURCHARGE_ROUNDING_BASIS"]').on('change', updateRoundingStepVisibility);
+
+            // Surcharge grid - hide the whole grid when no surcharge is applied,
+            // and hide the columns that don't apply to the selected method:
+            //   none                 -> hide entire grid
+            //   percentage           -> Percentage + Cap (hide Fixed fee)
+            //   fixed                -> Fixed fee only (hide Percentage + Cap)
+            //   fixed_and_percentage -> all columns
+            function updateSurchargeGridVisibility() {
+                var type = $('select[name="PS_TWO_SURCHARGE_TYPE"]').val();
+                var grid = $('#two-surcharge-grid');
+                var gridGroup = grid.closest('.form-group');
+                if (!type || type === 'none') {
+                    gridGroup.hide();
+                    return;
+                }
+                gridGroup.show();
+                var showPercentage = (type === 'percentage' || type === 'fixed_and_percentage');
+                var showFixed = (type === 'fixed' || type === 'fixed_and_percentage');
+                var showCap = (type === 'percentage' || type === 'fixed_and_percentage');
+                grid.find('.two-col-percentage').toggle(showPercentage);
+                grid.find('.two-col-fixed').toggle(showFixed);
+                grid.find('.two-col-cap').toggle(showCap);
+            }
+            updateSurchargeGridVisibility();
+            $('select[name="PS_TWO_SURCHARGE_TYPE"]').on('change', updateSurchargeGridVisibility);
+
+            // Surcharge grid ROWS - one row is server-rendered per offerable
+            // term; show a row only while its "Available Payment Terms"
+            // checkbox is ticked AND the term is valid for the selected term
+            // type (EOM only allows the .two-term-both terms - same split the
+            // checkboxes use). Orthogonal to updateSurchargeGridVisibility(),
+            // which toggles COLUMNS by surcharge type: a cell is visible only
+            // when both its row and its column are (display:none on either
+            // axis wins), so the two functions compose without coordination.
+            function updateSurchargeGridRows() {
+                var termType = $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]:checked').val();
+                $('#two-surcharge-grid .two-surcharge-row').each(function () {
+                    var $row = $(this);
+                    var term = parseInt($row.data('term'), 10);
+                    var checked = $('input[name="PS_TWO_PAYMENT_TERMS_' + term + '"]').is(':checked');
+                    var validForType = termType !== 'EOM' || $row.hasClass('two-term-both');
+                    $row.toggle(checked && validForType);
+                });
+            }
+            $('input[name^="PS_TWO_PAYMENT_TERMS_"]').on('change', updateSurchargeGridRows);
+            $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]').on('change', updateSurchargeGridRows);
+            // Run once on load (after the checkbox-group and column-visibility
+            // passes above) so row state always derives from the live checkbox
+            // DOM, even if it disagrees with the server-rendered initial state
+            // (e.g. a failed-validation re-render with POSTed values).
+            updateSurchargeGridRows();
+
+            // Inline merchant fee beside each "Available Payment Terms"
+            // checkbox - the fee Two charges the merchant per term, fetched
+            // live from the module's admin AJAX endpoint (which proxies
+            // POST /pricing/v1/merchant/rates). Mirrors magento-plugin's
+            // payment-terms-config.js loadFees(): fetch on page load and on
+            // any term-checkbox change, dedupe identical term-set requests,
+            // and on failure blank the fee spans silently - the config page
+            // must never break on an API outage.
+            var lastFeesKey = null;
+
+            function formatTwoFeeAmount(n) {
+                return Number(n).toFixed(2);
+            }
+
+            function loadTwoMerchantFees() {
+                if (typeof twoMerchantFeeRatesUrl === 'undefined' || !twoMerchantFeeRatesUrl) {
+                    return;
+                }
+                // Fees render beside EVERY rendered term option regardless of
+                // checked state (Magento parity), so collect all term inputs.
+                var terms = [];
+                $('input[name^="PS_TWO_PAYMENT_TERMS_"]').each(function () {
+                    var match = String($(this).attr('name') || '').match(/_(\d+)$/);
+                    var days = match ? parseInt(match[1], 10) : 0;
+                    if (days > 0 && terms.indexOf(days) === -1) {
+                        terms.push(days);
+                    }
+                });
+                terms.sort(function (a, b) { return a - b; });
+                if (!terms.length) {
+                    return;
+                }
+                var key = terms.join(',');
+                if (key === lastFeesKey) {
+                    return; // identical term set already requested
+                }
+                lastFeesKey = key;
+                $.ajax({
+                    url: twoMerchantFeeRatesUrl,
+                    type: 'POST',
+                    dataType: 'json',
+                    data: { terms: JSON.stringify(terms) }
+                }).done(function (response) {
+                    if (!response || !response.success || !response.fees) {
+                        $('.two-term-fee').text('');
+                        return;
+                    }
+                    // Currency must come from the API response - the fee
+                    // amounts do too. Without it, any fixed amount would be
+                    // ambiguous, so only the percentage is shown then.
+                    var currency = String(response.currency || '').toUpperCase().replace(/^\s+|\s+$/g, '');
+                    var suffix = currency !== '' ? ' ' + currency : '';
+                    $('.two-term-fee').each(function () {
+                        var $span = $(this);
+                        var fee = response.fees[String($span.data('term'))];
+                        if (!fee) {
+                            $span.text('');
+                            return;
+                        }
+                        var pctStr = formatTwoFeeAmount(fee.percentage || 0);
+                        var fixedStr = formatTwoFeeAmount(fee.fixed || 0);
+                        var zero = formatTwoFeeAmount(0);
+                        var pctZero = pctStr === zero;
+                        var fixedZero = fixedStr === zero;
+                        if (currency === '') {
+                            $span.text(pctZero ? '' : '(' + pctStr + '%)');
+                            return;
+                        }
+                        var inner;
+                        if (pctZero && fixedZero) {
+                            inner = zero + suffix;
+                        } else if (pctZero) {
+                            inner = fixedStr + suffix;
+                        } else if (fixedZero) {
+                            inner = pctStr + '%';
+                        } else {
+                            inner = pctStr + '% + ' + fixedStr + suffix;
+                        }
+                        $span.text('(' + inner + ')');
+                    });
+                }).fail(function () {
+                    // Allow a retry on the same term set after a transient
+                    // error, and clear any half-populated spans.
+                    lastFeesKey = null;
+                    $('.two-term-fee').text('');
+                });
+            }
+
+            $('input[name^="PS_TWO_PAYMENT_TERMS_"]').on('change', loadTwoMerchantFees);
+            loadTwoMerchantFees();
         });
     </script>
 {/literal}

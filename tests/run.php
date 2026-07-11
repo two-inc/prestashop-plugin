@@ -111,6 +111,7 @@ final class OrderBuilderSpec
         self::testShouldBlockTwoAttemptConfirmationByStatusOnlyForCancelled();
         self::testIsTwoAttemptStatusTerminalMatchesCancelledGuard();
         self::testGetTwoCancelledOrderStatusIdUsesConfiguredFallbackChain();
+        self::testHasTwoProviderOrderMappingRequiresNonEmptyTwoOrderId();
         self::testSyncLocalOrderStatusFromTwoStateCancelsOnlyWhenProviderCancelled();
         self::testIsTwoOrderCancelledResponseRequires2xxAndCancelledState();
         self::testShouldBlockTwoFulfillmentByTwoStateOnlyForCancelled();
@@ -150,13 +151,31 @@ final class OrderBuilderSpec
         self::testGetTwoErrorMessageReadsNestedDataMessage();
         self::testGetTwoErrorMessageIgnoresSuccessMessagePayload();
         self::testGetTwoProductItemsSkipsEmptyBarcodeEntries();
+        self::testGetTwoProductItemsThrowsOnNegativeDiscount();
+        self::testGetTwoProductItemsThrowsOnNegativeReduction();
+        self::testGetTwoProductItemsAllowsPositiveDiscount();
+        self::testGetTwoProductItemsToleratesUnitPriceRoundingDrift();
         self::testExtractOrgNumberFromAddressKeepsNonCountryPrefixVatNumber();
         self::testExtractOrgNumberFromAddressStripsMatchingCountryPrefixVatNumber();
+        self::testGetTwoRequestHeadersSkipAuthForOrderIntent();
+        self::testGetAvailablePaymentTermsIntersectsBackendWithAdminSubset();
+        self::testGetAvailablePaymentTermsWithdrawnBackendTermDrops();
+        self::testGetAvailablePaymentTermsFallsBackToHardcodedWhenBackendUnresolved();
+        self::testGetAvailablePaymentTermsEomConstrainsToEomSubset();
+        self::testGetAvailablePaymentTermsEmptyOfferFallsBackToDefault();
+        self::testGetMerchantAvailableTermsCacheOnlyNeverFetches();
+        self::testGetMerchantAvailableTermsRefreshNormalisesCachesAndServesStale();
+        self::testGetMerchantAvailableTermsRespectsExplicitEmptyList();
+        self::testGetMerchantAvailableTermsSkipsFetchWithoutIdentity();
+        self::testInvalidateMerchantAvailableTermsClearsCache();
+        self::testSaveGeneralFormPreservesHiddenBackendWithdrawnTermPreference();
+        self::testStoreTwoFeeQuoteInSessionForcesImmediateCookieWrite();
     }
 
     private static function reset(): void
     {
         StubStore::reset();
+        PrestaShopLogger::reset();
     }
 
     private static function testValidateTwoLineItemsRejectsBrokenTaxFormula(): void
@@ -276,6 +295,169 @@ final class OrderBuilderSpec
         TinyAssert::same('10.55', (string)$items[1]['gross_amount']);
         TinyAssert::same('0.55', (string)$items[1]['tax_amount']);
         TinyAssert::same('0.055', (string)$items[1]['tax_rate']);
+    }
+
+    private static function testGetTwoProductItemsThrowsOnNegativeDiscount(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $cart = new Cart(12);
+        $cart->id_lang = 1;
+        $cart->id_carrier = 999;
+
+        // quantity * unit_price (100.00) < net total (105.00) -> negative discount,
+        // previously clamped to 0, now surfaced as an error
+        StubStore::$cartProducts[12] = [[
+            'id_product' => 888,
+            'link_rewrite' => 'mispriced-product',
+            'name' => 'Mispriced Product',
+            'description_short' => 'Inconsistent pricing data',
+            'manufacturer_name' => 'Acme',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 105.00,
+            'total_wt' => 127.05,
+            'cart_quantity' => 1,
+            'rate' => 21.0,
+            'price' => 100.00,
+            'reduction' => 0,
+        ]];
+
+        StubStore::$productCategories[888] = [['name' => 'Misc']];
+        StubStore::$images[888] = ['id_image' => 9012];
+
+        TinyAssert::throws(
+            static function () use ($module, $cart): void {
+                $module->getTwoProductItems($cart);
+            },
+            'Negative discount calculated for product 888'
+        );
+
+        TinyAssert::count(1, PrestaShopLogger::$logs);
+        TinyAssert::same(3, PrestaShopLogger::$logs[0]['severity']);
+        TinyAssert::true(
+            strpos(PrestaShopLogger::$logs[0]['message'], '100 = 100 < net total 105') !== false,
+            'Log line must include the computed amounts: ' . PrestaShopLogger::$logs[0]['message']
+        );
+    }
+
+    private static function testGetTwoProductItemsThrowsOnNegativeReduction(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $cart = new Cart(13);
+        $cart->id_lang = 1;
+        $cart->id_carrier = 999;
+
+        // No unit price -> reduction branch; a negative reduction is a data
+        // inconsistency, previously zeroed silently, now surfaced as an error
+        StubStore::$cartProducts[13] = [[
+            'id_product' => 889,
+            'link_rewrite' => 'negative-reduction-product',
+            'name' => 'Negative Reduction Product',
+            'description_short' => 'Inconsistent reduction data',
+            'manufacturer_name' => 'Acme',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 100.00,
+            'total_wt' => 121.00,
+            'cart_quantity' => 1,
+            'rate' => 21.0,
+            'reduction' => -2.00,
+        ]];
+
+        StubStore::$productCategories[889] = [['name' => 'Misc']];
+        StubStore::$images[889] = ['id_image' => 9013];
+
+        TinyAssert::throws(
+            static function () use ($module, $cart): void {
+                $module->getTwoProductItems($cart);
+            },
+            'Negative reduction for product 889'
+        );
+
+        TinyAssert::count(1, PrestaShopLogger::$logs);
+        TinyAssert::same(3, PrestaShopLogger::$logs[0]['severity']);
+    }
+
+    private static function testGetTwoProductItemsAllowsPositiveDiscount(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $cart = new Cart(14);
+        $cart->id_lang = 1;
+        $cart->id_carrier = 999;
+
+        // quantity * unit_price (100.00) > net total (95.00) -> 5.00 discount,
+        // the healthy discounted-cart path must keep working
+        StubStore::$cartProducts[14] = [[
+            'id_product' => 890,
+            'link_rewrite' => 'discounted-product',
+            'name' => 'Discounted Product',
+            'description_short' => 'Cart-rule discounted',
+            'manufacturer_name' => 'Acme',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 95.00,
+            'total_wt' => 114.95,
+            'cart_quantity' => 1,
+            'rate' => 21.0,
+            'price' => 100.00,
+            'reduction' => 0,
+        ]];
+
+        StubStore::$productCategories[890] = [['name' => 'Misc']];
+        StubStore::$images[890] = ['id_image' => 9014];
+
+        $items = $module->getTwoProductItems($cart);
+
+        TinyAssert::count(1, $items);
+        TinyAssert::same('5.00', (string)$items[0]['discount_amount']);
+        TinyAssert::same('95.00', (string)$items[0]['net_amount']);
+        TinyAssert::count(0, PrestaShopLogger::$logs);
+    }
+
+    private static function testGetTwoProductItemsToleratesUnitPriceRoundingDrift(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $cart = new Cart(15);
+        $cart->id_lang = 1;
+        $cart->id_carrier = 999;
+
+        // PrestaShop stores unit prices at 6dp: 3 x 8.344 = 25.032, line total
+        // rounded to 25.03. Deriving the discount from the ROUNDED unit price
+        // (3 x 8.34 = 25.02) would manufacture a phantom -0.01 discount and
+        // fail the cart; deriving at full precision yields 0.00.
+        StubStore::$cartProducts[15] = [[
+            'id_product' => 891,
+            'link_rewrite' => 'six-decimal-product',
+            'name' => 'Six Decimal Product',
+            'description_short' => 'Unit price with 3rd-decimal precision',
+            'manufacturer_name' => 'Acme',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 25.03,
+            'total_wt' => 30.29,
+            'cart_quantity' => 3,
+            'rate' => 21.0,
+            'price' => 8.344,
+            'reduction' => 0,
+        ]];
+
+        StubStore::$productCategories[891] = [['name' => 'Misc']];
+        StubStore::$images[891] = ['id_image' => 9015];
+
+        $items = $module->getTwoProductItems($cart);
+
+        TinyAssert::count(1, $items);
+        TinyAssert::same('0.00', (string)$items[0]['discount_amount']);
+        TinyAssert::same('25.03', (string)$items[0]['net_amount']);
+        TinyAssert::count(0, PrestaShopLogger::$logs);
     }
 
     private static function testGetTwoNewOrderDataSupportsFivePointFivePercentVat(): void
@@ -2982,7 +3164,7 @@ final class OrderBuilderSpec
                 return false;
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 return [
                     'http_status' => 200,
@@ -3015,7 +3197,7 @@ final class OrderBuilderSpec
                 return false;
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 return [
                     'http_status' => 200,
@@ -3046,7 +3228,7 @@ final class OrderBuilderSpec
                 return false;
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 return [
                     'http_status' => 0,
@@ -3099,7 +3281,7 @@ final class OrderBuilderSpec
                 return $this->forcedLineItems;
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 $this->providerCalled = true;
                 return [
@@ -3265,7 +3447,7 @@ final class OrderBuilderSpec
         self::reset();
 
         $successModule = new class extends TwopaymentTestHarness {
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 return ['http_status' => 200];
             }
@@ -3273,7 +3455,7 @@ final class OrderBuilderSpec
         TinyAssert::true($successModule->cancelTwoOrderBestEffort('two-success', 'test'));
 
         $failureModule = new class extends TwopaymentTestHarness {
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 return ['http_status' => 500];
             }
@@ -3423,7 +3605,7 @@ final class OrderBuilderSpec
         TinyAssert::same('https://buyer.sandbox.two.inc/login', $module->getTwoBuyerPortalUrl());
 
         Configuration::updateValue('PS_TWO_ENVIRONMENT', 'staging');
-        TinyAssert::same('https://buyer.sandbox.two.inc/login', $module->getTwoBuyerPortalUrl());
+        TinyAssert::same('https://buyer.staging.two.inc/login', $module->getTwoBuyerPortalUrl());
     }
 
     private static function testResolveTwoAttemptOrderIdForCancellationPrefersAttemptOrderId(): void
@@ -3497,6 +3679,24 @@ final class OrderBuilderSpec
 
         Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', 0);
         TinyAssert::same(903, $module->getTwoCancelledOrderStatusId());
+    }
+
+    private static function testHasTwoProviderOrderMappingRequiresNonEmptyTwoOrderId(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        TinyAssert::false($module->hasTwoProviderOrderMapping(false));
+        TinyAssert::false($module->hasTwoProviderOrderMapping([]));
+        TinyAssert::false($module->hasTwoProviderOrderMapping([
+            'two_order_id' => '',
+        ]));
+        TinyAssert::false($module->hasTwoProviderOrderMapping([
+            'two_order_id' => '   ',
+        ]));
+        TinyAssert::true($module->hasTwoProviderOrderMapping([
+            'two_order_id' => 'two-order-123',
+        ]));
     }
 
     private static function testSyncLocalOrderStatusFromTwoStateCancelsOnlyWhenProviderCancelled(): void
@@ -4124,6 +4324,261 @@ final class OrderBuilderSpec
         TinyAssert::same('STANDARD', (string)$resolved['two_payment_term_type']);
     }
 
+    /**
+     * Gateway harness whose backend available_terms set is injectable, so the
+     * runtime intersection seam can be tested without HTTP (TWO-24813).
+     */
+    private static function termsHarness(array $backend): TwopaymentTestHarness
+    {
+        return new class ($backend) extends TwopaymentTestHarness {
+            public $backend;
+            public function __construct($backend = [])
+            {
+                parent::__construct();
+                $this->backend = $backend;
+            }
+            public function getMerchantAvailableTerms($refresh = false)
+            {
+                return $this->backend;
+            }
+        };
+    }
+
+    private static function testGetAvailablePaymentTermsIntersectsBackendWithAdminSubset(): void
+    {
+        self::reset();
+        // Backend owns the offerable set; the admin narrows FROM it. A tick for
+        // a term the backend does not carry (7) is irrelevant.
+        $module = self::termsHarness([14, 30, 60, 90]);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_60', 1);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_7', 1);
+        TinyAssert::same([30, 60], $module->getAvailablePaymentTerms());
+    }
+
+    private static function testGetAvailablePaymentTermsWithdrawnBackendTermDrops(): void
+    {
+        self::reset();
+        // The admin still ticks 60, but the backend has withdrawn it -> it drops.
+        $module = self::termsHarness([30]);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_60', 1);
+        TinyAssert::same([30], $module->getAvailablePaymentTerms());
+    }
+
+    private static function testGetAvailablePaymentTermsFallsBackToHardcodedWhenBackendUnresolved(): void
+    {
+        self::reset();
+        // Cold cache (unresolved backend): degrade to the historical hardcoded
+        // option list rather than blanking the term set.
+        $module = self::termsHarness([]);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_7', 1);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_90', 1);
+        TinyAssert::same([7, 90], $module->getAvailablePaymentTerms());
+    }
+
+    private static function testGetAvailablePaymentTermsEomConstrainsToEomSubset(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', 'EOM');
+        // 90 is offered by the backend and ticked, but EOM only allows 30/45/60.
+        $module = self::termsHarness([30, 45, 60, 90]);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_90', 1);
+        TinyAssert::same([30], $module->getAvailablePaymentTerms());
+    }
+
+    private static function testGetAvailablePaymentTermsEmptyOfferFallsBackToDefault(): void
+    {
+        self::reset();
+        // Backend resolves a set but the admin ticks nothing offerable -> the
+        // account default term (pre-feature degrade posture).
+        $module = self::termsHarness([60]);
+        TinyAssert::same([Twopayment::DEFAULT_PAYMENT_TERM_DAYS], $module->getAvailablePaymentTerms());
+    }
+
+    /**
+     * Fetch/cache harness: canned setTwoPaymentRequest responses, call counter.
+     */
+    private static function fetchHarness(): TwopaymentTestHarness
+    {
+        return new class extends TwopaymentTestHarness {
+            public $responses = [];
+            public $calls = 0;
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+            {
+                $this->calls++;
+                $r = array_shift($this->responses);
+                return $r === null ? ['http_status' => 0] : $r;
+            }
+        };
+    }
+
+    private static function testGetMerchantAvailableTermsCacheOnlyNeverFetches(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
+        $module = self::fetchHarness();
+        // Cache-only read never fetches, even with a cold cache: the seam is
+        // reached from render paths that must not block on HTTP.
+        TinyAssert::same([], $module->getMerchantAvailableTerms());
+        TinyAssert::same(0, $module->calls);
+    }
+
+    private static function testGetMerchantAvailableTermsRefreshNormalisesCachesAndServesStale(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
+        $module = self::fetchHarness();
+        $expire = static function () {
+            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time() - 901);
+        };
+
+        // First refresh: normalised (ints, dedup, non-positive dropped, non-numeric
+        // dropped rather than intval'd to a phantom 1, sorted).
+        $module->responses[] = ['http_status' => 200, 'available_terms' => [60, 30, 30, 0, -5, 90, [7], true, null]];
+        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms(true));
+        TinyAssert::same(1, $module->calls);
+
+        // Within the TTL: served from cache, no request; cache-only reads agree.
+        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms(true));
+        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms());
+        TinyAssert::same(1, $module->calls);
+
+        // Fetch failure after expiry: last-known list served, not blanked.
+        $expire();
+        $module->responses[] = ['http_status' => 0];
+        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms(true));
+        TinyAssert::same(2, $module->calls);
+
+        // ...and the failure still bumped the clock: an immediate re-refresh does
+        // NOT hammer the API (one stall per TTL, not per view).
+        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms(true));
+        TinyAssert::same(2, $module->calls);
+
+        // Successful response WITHOUT the field (older backend): stale kept.
+        $expire();
+        $module->responses[] = ['http_status' => 200, 'due_in_days' => 14];
+        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms(true));
+    }
+
+    private static function testGetMerchantAvailableTermsRespectsExplicitEmptyList(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
+        $module = self::fetchHarness();
+        // Seed a stale list, then an explicit [] must overwrite it (the backend
+        // says nothing is offerable) - distinct from a failure serving stale.
+        $module->responses[] = ['http_status' => 200, 'available_terms' => [30, 60]];
+        TinyAssert::same([30, 60], $module->getMerchantAvailableTerms(true));
+        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time() - 901);
+        $module->responses[] = ['http_status' => 200, 'available_terms' => []];
+        TinyAssert::same([], $module->getMerchantAvailableTerms(true));
+    }
+
+    private static function testGetMerchantAvailableTermsSkipsFetchWithoutIdentity(): void
+    {
+        self::reset();
+        // No merchant id / API key: no fetch even on refresh with an expired TTL
+        // and a queued response.
+        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time() - 901);
+        $module = self::fetchHarness();
+        $module->responses[] = ['http_status' => 200, 'available_terms' => [7]];
+        $module->getMerchantAvailableTerms(true);
+        TinyAssert::same(0, $module->calls);
+    }
+
+    private static function testInvalidateMerchantAvailableTermsClearsCache(): void
+    {
+        self::reset();
+        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS, '[30,60]');
+        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, 999);
+        $module = new TwopaymentTestHarness();
+        TinyAssert::same([30, 60], $module->getMerchantAvailableTerms());
+        $module->invalidateMerchantAvailableTerms();
+        TinyAssert::same([], $module->getMerchantAvailableTerms());
+    }
+
+    /**
+     * Regression (TWO-24813): the admin checkbox form only renders terms in the
+     * backend-restricted offerable source, so a term the backend has withdrawn
+     * is hidden and never POSTed. Saving the general form (e.g. after changing an
+     * unrelated field) must NOT read that absent POST value as "unchecked" and
+     * zero the merchant's stored preference - the save loop iterates the same
+     * rendered source, leaving hidden keys untouched.
+     */
+    private static function testSaveGeneralFormPreservesHiddenBackendWithdrawnTermPreference(): void
+    {
+        self::reset();
+        Tools::resetTestValues();
+        // Merchant previously ticked both 30 and 60.
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_60', 1);
+
+        // Backend has since narrowed the offerable set to [30]; 60 is hidden.
+        $module = new class extends TwopaymentTestHarness {
+            public function getMerchantAvailableTerms($refresh = false)
+            {
+                return [30];
+            }
+            public function saveGeneralForTest(): void
+            {
+                $this->saveTwoGeneralFormValues();
+            }
+        };
+
+        // The form rendered only the 30 checkbox, so only 30 is POSTed.
+        Tools::setTestValue('PS_TWO_ENVIRONMENT', 'development');
+        Tools::setTestValue('PS_TWO_TITLE_1', 'Two title');
+        Tools::setTestValue('PS_TWO_SUB_TITLE_1', 'Two subtitle');
+        Tools::setTestValue('PS_TWO_MERCHANT_SHORT_NAME', 'merchant');
+        Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', 'api-key');
+        Tools::setTestValue('PS_TWO_PAYMENT_TERMS_30', 1);
+
+        $module->saveGeneralForTest();
+
+        // 30 stays on; 60's preference is PRESERVED, not silently zeroed.
+        TinyAssert::same(1, (int) Configuration::get('PS_TWO_PAYMENT_TERMS_30'));
+        TinyAssert::same(1, (int) Configuration::get('PS_TWO_PAYMENT_TERMS_60'));
+    }
+
+    /**
+     * Regression: storeTwoFeeQuoteInSession() must not rely solely on Cookie's
+     * destructor to persist the cache - AJAX controllers (order-intent polling)
+     * end the request via ajaxDie()/exit, which is not guaranteed to run
+     * __destruct() in every PHP/webserver configuration. write() must be
+     * called explicitly so the cache is durable.
+     */
+    private static function testStoreTwoFeeQuoteInSessionForcesImmediateCookieWrite(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $spyCookie = new class extends Cookie {
+            public $writeCalls = 0;
+            public function write(): void
+            {
+                $this->writeCalls++;
+            }
+        };
+        $module->context->cookie = $spyCookie;
+
+        // storeTwoFeeQuoteInSession() is private; invoke via reflection rather
+        // than widening its visibility just for the test.
+        $method = new ReflectionMethod(Twopayment::class, 'storeTwoFeeQuoteInSession');
+        $method->invoke($module, '7|100.00|GB|GBP', [
+            'buyer_fee_share' => '1.23',
+            'total_fee_tax_rate' => '0.20',
+            'currency' => 'GBP',
+        ]);
+
+        TinyAssert::same(1, $spyCookie->writeCalls);
+        TinyAssert::same('7|100.00|GB|GBP', (string) $spyCookie->two_fee_quote_key);
+    }
+
     private static function testSyncTwoAdminOrderPaymentDataFromProviderPullsLatestTermsFromTwo(): void
     {
         self::reset();
@@ -4131,7 +4586,7 @@ final class OrderBuilderSpec
             public $lastSavedOrderId = null;
             public $lastSavedPaymentData = null;
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 if ($method === 'GET' && $endpoint === '/v1/order/two-123') {
                     return [
@@ -4194,7 +4649,7 @@ final class OrderBuilderSpec
             public $lastSavedOrderId = null;
             public $lastSavedPaymentData = null;
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 if ($method === 'GET' && $endpoint === '/v1/order/two-456') {
                     return [
@@ -4264,7 +4719,7 @@ final class OrderBuilderSpec
                 );
             }
 
-            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [])
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 if ($method === 'GET' && $endpoint === '/v1/order/two-789') {
                     return [
@@ -4521,13 +4976,56 @@ final class OrderBuilderSpec
 
         TinyAssert::same('123456789', $orgNumber);
     }
+
+    private static function testGetTwoRequestHeadersSkipAuthForOrderIntent(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $orderIntentHeaders = $module->getTwoRequestHeaders(
+            '/v1/order_intent',
+            ['Authorization: Bearer should-not-leak', 'X-API-Key: should-not-leak']
+        );
+        $createOrderHeaders = $module->getTwoRequestHeaders('/v1/order');
+
+        foreach ($orderIntentHeaders as $header) {
+            TinyAssert::false(strpos($header, 'X-API-Key:') === 0);
+            TinyAssert::false(strpos($header, 'Authorization:') === 0);
+            TinyAssert::false(strpos($header, 'Proxy-Authorization:') === 0);
+        }
+
+        $createOrderHasApiKey = false;
+        foreach ($createOrderHeaders as $header) {
+            if (strpos($header, 'X-API-Key:') === 0) {
+                $createOrderHasApiKey = true;
+                break;
+            }
+        }
+        TinyAssert::true($createOrderHasApiKey);
+    }
 }
 
 require __DIR__ . '/CustomerAddressFormatterOverrideSpec.php';
+require __DIR__ . '/TwoInvoiceRetrievalSpec.php';
+require __DIR__ . '/TrackingNumberSpec.php';
+require __DIR__ . '/RefundSpec.php';
+require __DIR__ . '/SurchargeSpec.php';
+require __DIR__ . '/DefaultPaymentTermSpec.php';
+require __DIR__ . '/DeployVersionInfoSpec.php';
+require __DIR__ . '/MerchantFeeRatesSpec.php';
+require __DIR__ . '/TermSurchargeAmountsSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
     'CustomerAddressFormatterOverrideSpec::runAll' => [CustomerAddressFormatterOverrideSpec::class, 'runAll'],
+    'TwoInvoiceRetrievalSpec::runAll' => [TwoInvoiceRetrievalSpec::class, 'runAll'],
+    'TrackingNumberSpec::runAll' => [TrackingNumberSpec::class, 'runAll'],
+    'RefundSpec::runAll' => [RefundSpec::class, 'runAll'],
+    'SurchargeSpec::runAll' => [SurchargeSpec::class, 'runAll'],
+    'DefaultPaymentTermSpec::runAll' => [DefaultPaymentTermSpec::class, 'runAll'],
+    'DeployVersionInfoSpec::runAll' => [DeployVersionInfoSpec::class, 'runAll'],
+    'MerchantFeeRatesSpec::runAll' => [MerchantFeeRatesSpec::class, 'runAll'],
+    'TermSurchargeAmountsSpec::runAll' => [TermSurchargeAmountsSpec::class, 'runAll'],
 ];
 
 $failed = 0;

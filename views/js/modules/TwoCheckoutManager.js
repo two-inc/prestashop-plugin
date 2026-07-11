@@ -1142,9 +1142,9 @@ class TwoCheckoutManager {
                     <h4 class="two-terms-title">${this.t('choose_payment_terms', 'Choose the Buy Now, Pay Later option that works best for you')}</h4>
                     <p class="two-terms-description">${this.t('payment_period_starts', 'Your payment period starts when your order is fulfilled')}</p>
                 </div>
-                <div class="two-terms-slider-container">
-                    <div class="two-terms-slider" id="two-terms-slider">
-                        <!-- Terms will be populated by JavaScript -->
+                <div class="two-term-chips">
+                    <div class="two-term-chips__container" id="two-terms-chips">
+                        <!-- Chips will be populated by JavaScript -->
                     </div>
                     <div class="two-terms-selected">
                         <span class="two-terms-selected-days" id="two-selected-days"></span>
@@ -1164,10 +1164,10 @@ class TwoCheckoutManager {
      * ENHANCED: Initialize payment terms selector with robust error handling
      */
     initializePaymentTerms() {
-        // Try multiple selectors for terms slider
-        let termsSlider = document.querySelector('#two-terms-slider');
-        if (!termsSlider) {
-            termsSlider = document.querySelector('.two-terms-slider');
+        // Try multiple selectors for the chip container
+        let termsContainer = document.querySelector('#two-terms-chips');
+        if (!termsContainer) {
+            termsContainer = document.querySelector('.two-term-chips__container');
         }
         
         let selectedDays = document.querySelector('#two-selected-days');
@@ -1175,30 +1175,37 @@ class TwoCheckoutManager {
             selectedDays = document.querySelector('.two-terms-selected-days');
         }
         
-        if (!termsSlider) {
-            console.error('Two Payment: Terms slider element not found');
+        if (!termsContainer) {
+            console.error('Two Payment: Terms chip container not found');
             return;
         }
         
-        // Check if already initialized with our terms
-        if (termsSlider.hasChildNodes() && termsSlider.querySelector('.two-term-option')) {
+        // Check if already initialized with our chips
+        if (termsContainer.hasChildNodes() && termsContainer.querySelector('.two-term-chip')) {
             return;
         }
         
-        if (termsSlider.hasChildNodes()) {
+        if (termsContainer.hasChildNodes()) {
             // Clear existing content to reinitialize
-            termsSlider.innerHTML = '';
+            termsContainer.innerHTML = '';
         }
         
         // Get payment terms from admin configuration (passed via template)
         const availableTerms = this.config.available_payment_terms;
-        const defaultTerm = this.config.default_payment_term;
+        const configuredDefaultTerm = this.config.default_payment_term;
         const termType = this.config.payment_term_type || 'STANDARD';
-        
+
         // If no terms configured, don't show payment terms
         if (!availableTerms || !Array.isArray(availableTerms) || availableTerms.length === 0) {
             return;
         }
+
+        // Guard against a configured default that isn't actually offered — falls back
+        // to the first offered term so the chip UI and "Pay in X days" text never
+        // point at a term with no selectable chip.
+        const defaultTerm = availableTerms.includes(configuredDefaultTerm) ? configuredDefaultTerm : null;
+
+        termsContainer.setAttribute('role', 'radiogroup');
         
         // Update description based on term type
         var termsDescription = document.querySelector('#two-terms-description');
@@ -1216,103 +1223,231 @@ class TwoCheckoutManager {
             }
         }
         
-        // Create term options
+        // A single offered term is applied silently (no selectable chips).
+        const singleTerm = availableTerms.length === 1;
+
+        // Tracks the in-flight persist request so a rapid second click aborts the
+        // first — otherwise two POSTs can race and the server can persist whichever
+        // lands last rather than whichever the buyer clicked last.
+        let pendingTermRequest = null;
+
+        const formatChipLabel = (days) => termType === 'EOM'
+            ? this.t('end_of_month_plus_days', 'End of Month + %s days').replace('%s', days)
+            : days + ' ' + this.t('days', 'days');
+
+        const formatPayInLabel = (days) => {
+            const payInText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.pay_in
+                ? window.twopayment.i18n.pay_in
+                : 'Pay in';
+            const daysText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.days
+                ? window.twopayment.i18n.days
+                : 'days';
+            const fromEndOfMonthText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.from_end_of_month
+                ? window.twopayment.i18n.from_end_of_month
+                : 'from end of month';
+
+            return termType === 'EOM'
+                ? payInText + ' ' + days + ' ' + daysText + ' ' + fromEndOfMonthText
+                : payInText + ' ' + days + ' ' + daysText;
+        };
+
+        // Create term chips (parity with Magento/WooCommerce chip selector)
         availableTerms.forEach((days, index) => {
-            const termOption = document.createElement('div');
-            termOption.className = 'two-term-option';
-            
+            const termChip = document.createElement('button');
+            termChip.type = 'button';
+            termChip.className = 'two-term-chip' + (singleTerm ? ' two-term-chip--single' : '');
+            termChip.setAttribute('role', 'radio');
+            termChip.setAttribute('aria-label', formatPayInLabel(days));
+
+            const daysLabel = document.createElement('span');
+            daysLabel.className = 'two-term-chip__days';
+
             // Format display based on term type (EOM+X for End-of-Month, X for Standard)
             if (termType === 'EOM') {
-                termOption.textContent = 'EOM+' + days;
-                termOption.title = this.t('end_of_month_plus_days', 'End of Month + %s days').replace('%s', days);
+                daysLabel.textContent = 'EOM+' + days;
             } else {
-                termOption.textContent = days;
-                termOption.title = days + ' ' + this.t('days', 'days');
+                daysLabel.textContent = days;
             }
-            
-            termOption.dataset.days = days;
-            
-            // Set default term: use configured default, or if only one term, make it active, or first term
-            const isDefaultTerm = defaultTerm ? (days === defaultTerm) : 
-                                 (availableTerms.length === 1 ? true : index === 0);
-            
+            termChip.title = formatChipLabel(days);
+            termChip.appendChild(daysLabel);
+
+            // Per-term surcharge slot: starts as a loading indicator (three
+            // animated dots, Magento gateway_method.html parity) on EVERY
+            // chip, unconditionally. The buyer must never see the configured
+            // surcharge RATE — only the real quoted amount for this cart once
+            // refreshTermSurchargeAmounts() resolves, or nothing on failure.
+            const surchargeLabel = document.createElement('span');
+            surchargeLabel.className = 'two-term-chip__surcharge';
+            const loadingDots = document.createElement('span');
+            loadingDots.className = 'two-term-chip__loading';
+            loadingDots.setAttribute('aria-hidden', 'true');
+            for (let i = 0; i < 3; i++) {
+                const dot = document.createElement('span');
+                dot.textContent = '.';
+                loadingDots.appendChild(dot);
+            }
+            surchargeLabel.appendChild(loadingDots);
+            termChip.appendChild(surchargeLabel);
+
+            termChip.dataset.days = days;
+
+            // Set default term: use configured default, or if only one term, make it selected, or first term
+            const isDefaultTerm = defaultTerm ? (days === defaultTerm) :
+                                 (singleTerm ? true : index === 0);
+
             if (isDefaultTerm) {
-                termOption.classList.add('active');
+                termChip.classList.add('two-term-chip--selected');
             }
-            
-            termOption.addEventListener('click', () => {
-                // Remove active class from all options
-                termsSlider.querySelectorAll('.two-term-option').forEach(opt => {
-                    opt.classList.remove('active');
+            termChip.setAttribute('aria-checked', isDefaultTerm ? 'true' : 'false');
+
+            // A single term is non-selectable; skip the click handler and remove it
+            // from the tab order so it doesn't present as a dead interactive control.
+            if (singleTerm) {
+                termChip.disabled = true;
+                termChip.setAttribute('aria-disabled', 'true');
+                termsContainer.appendChild(termChip);
+                return;
+            }
+
+            termChip.addEventListener('click', () => {
+                // Remove selected state from all chips
+                termsContainer.querySelectorAll('.two-term-chip').forEach(chip => {
+                    chip.classList.remove('two-term-chip--selected');
+                    chip.setAttribute('aria-checked', 'false');
                 });
-                
-                // Add active class to selected option
-                termOption.classList.add('active');
-                
+
+                // Mark clicked chip as selected
+                termChip.classList.add('two-term-chip--selected');
+                termChip.setAttribute('aria-checked', 'true');
+
                 // Update selected term display
                 if (selectedDays) {
-                    const payInText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.pay_in 
-                        ? window.twopayment.i18n.pay_in 
-                        : 'Pay in';
-                    const daysText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.days 
-                        ? window.twopayment.i18n.days 
-                        : 'days';
-                    const fromEndOfMonthText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.from_end_of_month 
-                        ? window.twopayment.i18n.from_end_of_month 
-                        : 'from end of month';
-
-                    if (termType === 'EOM') {
-                        // For EOM: Show "Pay in X days from end of month" format
-                        selectedDays.textContent = payInText + ' ' + days + ' ' + daysText + ' ' + fromEndOfMonthText;
-                    } else {
-                        // For Standard: Show "Pay in 30 days" format
-                        selectedDays.textContent = payInText + ' ' + days + ' ' + daysText;
-                    }
+                    selectedDays.textContent = formatPayInLabel(days);
                 }
 
-                // Persist selection in cookie via backend (10s timeout)
+                // Persist selection in cookie via backend (10s timeout). Abort any
+                // still-in-flight persist so an out-of-order response can't leave
+                // the cookie holding a term the buyer already clicked away from.
                 try {
                     if (window.twopayment && window.twopayment.order_intent_url && window.twopayment.ajax_token) {
-                        $.ajax({
+                        if (pendingTermRequest && pendingTermRequest.abort) {
+                            pendingTermRequest.abort();
+                        }
+                        pendingTermRequest = $.ajax({
                             url: window.twopayment.order_intent_url,
                             type: 'POST',
                             dataType: 'json',
                             data: { ajax: 1, action: 'savePaymentTerm', token: window.twopayment.ajax_token, days: days },
                             timeout: 10000
+                        }).fail((xhr, statusText) => {
+                            if (statusText !== 'abort') {
+                                console.error('Two Payment: Error saving term:', statusText);
+                            }
                         });
                     }
                 } catch (e) {
                     console.error('Two Payment: Error saving term:', e);
                 }
             });
-            
-            termsSlider.appendChild(termOption);
+
+            termsContainer.appendChild(termChip);
         });
         
-        // Set initial selected term display
-        const activeTerm = defaultTerm || (availableTerms.length === 1 ? availableTerms[0] : availableTerms[0]);
-        
-        if (selectedDays && activeTerm) {
-            const payInText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.pay_in 
-                ? window.twopayment.i18n.pay_in 
-                : 'Pay in';
-            const daysText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.days 
-                ? window.twopayment.i18n.days 
-                : 'days';
-            const fromEndOfMonthText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.from_end_of_month 
-                ? window.twopayment.i18n.from_end_of_month 
-                : 'from end of month';
+        // Set initial selected term display — falls back to the first offered term
+        // when no valid default was configured (defaultTerm is null in that case).
+        const activeTerm = defaultTerm || availableTerms[0];
 
-            if (termType === 'EOM') {
-                // For EOM: Show "Pay in X days from end of month" format
-                selectedDays.textContent = payInText + ' ' + activeTerm + ' ' + daysText + ' ' + fromEndOfMonthText;
-            } else {
-                // For Standard: Show "Pay in 30 days" format
-                selectedDays.textContent = payInText + ' ' + activeTerm + ' ' + daysText;
+        if (selectedDays && activeTerm) {
+            selectedDays.textContent = formatPayInLabel(activeTerm);
+        }
+
+        // Resolve each chip's loading indicator to the REAL quoted amount for
+        // this cart, asynchronously — or to blank if the quote fails.
+        this.refreshTermSurchargeAmounts(termsContainer);
+    }
+
+    /**
+     * Clear every chip's surcharge slot (removes the loading dots) so a
+     * failed/absent quote reads as a deliberate empty state, never as a
+     * permanently-animating loader.
+     */
+    clearTermSurchargeLoading(termsContainer) {
+        if (!termsContainer) {
+            return;
+        }
+        termsContainer.querySelectorAll('.two-term-chip .two-term-chip__surcharge').forEach((label) => {
+            label.textContent = '';
+        });
+    }
+
+    /**
+     * Replace each term chip's loading indicator with the live quoted fee
+     * amount for the current cart (server proxies
+     * POST /v1/pricing/order/fee per offered term — see
+     * getTwoOfferedTermSurchargeAmounts() in twopayment.php). Magento parity:
+     * gateway_method.js renders '+' + formatted amount per chip.
+     *
+     * Fail-soft by design: any failure (network error, non-200, success:false,
+     * missing config) clears every chip's surcharge slot to blank — the buyer
+     * must never see the configured rate, and a loader that never resolves
+     * reads as broken. A zero amount for a term hides that chip's fee text
+     * ("no fee" semantics), it is NOT a failure signal. Only the
+     * .two-term-chip__surcharge nodes are touched — never the chip's
+     * selected/aria state, so a buyer clicking before the fetch resolves is
+     * never clobbered.
+     */
+    refreshTermSurchargeAmounts(termsContainer) {
+        try {
+            if (!termsContainer) {
+                return;
             }
+            if (!window.twopayment || !window.twopayment.order_intent_url || !window.twopayment.ajax_token) {
+                // Can't quote at all — don't leave the dots animating forever.
+                this.clearTermSurchargeLoading(termsContainer);
+                return;
+            }
+            $.ajax({
+                url: window.twopayment.order_intent_url,
+                type: 'POST',
+                dataType: 'json',
+                data: { ajax: 1, action: 'fetchTermSurcharges', token: window.twopayment.ajax_token },
+                timeout: 10000
+            }).done((response) => {
+                if (!response || !response.success || !response.amounts) {
+                    this.clearTermSurchargeLoading(termsContainer);
+                    return;
+                }
+                // Same amount + space + currency-code composition as the admin
+                // merchant-fee display (configuration.tpl) — deliberately plain
+                // number formatting, no client-side price-locale guessing.
+                const currency = String(response.currency || '').toUpperCase().replace(/^\s+|\s+$/g, '');
+                const suffix = currency !== '' ? ' ' + currency : '';
+                termsContainer.querySelectorAll('.two-term-chip').forEach((chip) => {
+                    const surchargeLabel = chip.querySelector('.two-term-chip__surcharge');
+                    if (!surchargeLabel) {
+                        return;
+                    }
+                    const days = chip.dataset.days;
+                    const amount = (days && (days in response.amounts)) ? Number(response.amounts[days]) : 0;
+                    if (!isFinite(amount) || amount <= 0) {
+                        // Zero/invalid/absent quote for THIS term: show no fee
+                        // rather than "+0.00" (Magento zero-hide semantics) —
+                        // and never leave the loading dots behind.
+                        surchargeLabel.textContent = '';
+                        return;
+                    }
+                    surchargeLabel.textContent = '+' + amount.toFixed(2) + suffix;
+                });
+            }).fail(() => {
+                this.clearTermSurchargeLoading(termsContainer);
+            });
+        } catch (e) {
+            // Never let a fee-quote failure break the checkout render — but
+            // still clear the loaders so chips don't animate forever.
+            this.clearTermSurchargeLoading(termsContainer);
         }
     }
-    
+
     /**
      * Update payment terms description based on term type
      * Separated for reusability and early initialization
