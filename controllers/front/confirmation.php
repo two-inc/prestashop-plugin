@@ -120,9 +120,18 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
         }
 
         $stored_snapshot_hash = isset($attempt['cart_snapshot_hash']) ? trim((string)$attempt['cart_snapshot_hash']) : '';
+        // Records which URL variant (with/without secure key) the stored hash
+        // matched, so the final pre-validateOrder re-check compares like with
+        // like. Null until a variant matches.
+        $snapshot_includes_secure_key = null;
         if (!Tools::isEmpty($stored_snapshot_hash)) {
             try {
-                $current_snapshot_hash = $this->buildAttemptSnapshotHash($attempt_token, $attempt, $cart, true);
+                // EXPLICIT CHOICE: this initial check self-heals the cart's
+                // surcharge line (sync=true) before hashing, so a missed
+                // frontend sync (broken theme JS) reconverges to the state
+                // the stored snapshot was built from instead of failing the
+                // whole checkout on a healable divergence.
+                $current_snapshot_hash = $this->buildAttemptSnapshotHash($attempt_token, $attempt, $cart, true, true);
             } catch (Exception $e) {
                 $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
                 PrestaShopLogger::addLog(
@@ -134,16 +143,21 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
                 $this->redirectWithNotifications('index.php?controller=order');
             }
 
-            if (!hash_equals($stored_snapshot_hash, $current_snapshot_hash)) {
+            if (hash_equals($stored_snapshot_hash, $current_snapshot_hash)) {
+                $snapshot_includes_secure_key = true;
+            } else {
                 // Compatibility fallback: allow old attempts created before callback key was added.
+                // Comparison-only rebuild: the sync above already ran, do not
+                // mutate the cart again just to compute a hash.
                 try {
-                    $legacy_snapshot_hash = $this->buildAttemptSnapshotHash($attempt_token, $attempt, $cart, false);
+                    $legacy_snapshot_hash = $this->buildAttemptSnapshotHash($attempt_token, $attempt, $cart, false, false);
                 } catch (Exception $e) {
                     $legacy_snapshot_hash = '';
                 }
 
                 if (!Tools::isEmpty($legacy_snapshot_hash) && hash_equals($stored_snapshot_hash, $legacy_snapshot_hash)) {
                     $current_snapshot_hash = $legacy_snapshot_hash;
+                    $snapshot_includes_secure_key = false;
                 } else {
                     // Cart changed between provider order creation and callback finalization.
                     $this->module->setTwoPaymentRequest('/v1/order/' . $attempt['two_order_id'] . '/cancel', [], 'POST');
@@ -266,6 +280,55 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
                 if ($this->abortConfirmationIfAttemptCancelled($attempt_token, $attempt)) {
                     return;
                 }
+            }
+
+            // FINAL PARITY RE-CHECK, adjacent to the charge: the earlier
+            // snapshot check is separated from validateOrder by two provider
+            // round-trips (GET /v1/order, POST /confirm) during which the
+            // cart could theoretically drift (another tab, a stale-guard
+            // hook). Re-run the self-healing snapshot build (sync=true also
+            // enforces cart-vs-payload fee parity, failing closed) and
+            // require the stored hash to still match, so the gate's last
+            // word is issued immediately before the money moves.
+            if (!Tools::isEmpty($stored_snapshot_hash) && $snapshot_includes_secure_key !== null) {
+                try {
+                    $final_snapshot_hash = $this->buildAttemptSnapshotHash(
+                        $attempt_token,
+                        $attempt,
+                        $cart,
+                        $snapshot_includes_secure_key,
+                        true
+                    );
+                } catch (Exception $e) {
+                    $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
+                    PrestaShopLogger::addLog(
+                        'TwoPayment: Final pre-order snapshot rebuild failed for attempt ' . $attempt_token . ' - ' . $e->getMessage(),
+                        3
+                    );
+                    $message = $this->module->l('Unable to validate cart consistency for this payment. Please try again.');
+                    $this->errors[] = $message;
+                    $this->redirectWithNotifications('index.php?controller=order');
+                    return;
+                }
+
+                if (!hash_equals($stored_snapshot_hash, $final_snapshot_hash)) {
+                    $this->module->setTwoPaymentRequest('/v1/order/' . $attempt['two_order_id'] . '/cancel', [], 'POST');
+                    $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
+                    PrestaShopLogger::addLog(
+                        'TwoPayment: Cart snapshot drifted between verification and order creation for attempt ' . $attempt_token .
+                        '. Stored=' . $stored_snapshot_hash . ', Final=' . $final_snapshot_hash,
+                        3
+                    );
+                    $message = $this->module->l('Your cart changed during payment verification. Please review your cart and try again.');
+                    $this->errors[] = $message;
+                    $this->redirectWithNotifications('index.php?controller=order');
+                    return;
+                }
+            } else {
+                // Legacy attempt without a stored snapshot hash: still force
+                // the authoritative surcharge self-heal adjacent to the
+                // charge (the validateOrder amount check remains the gate).
+                $this->module->syncTwoSurchargeCartLine($cart, true);
             }
 
             $initial_status = $this->getInitialAwaitingStatus();
@@ -443,8 +506,19 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
 
     /**
      * Rebuild snapshot hash using current cart and expected callback URL format.
+     *
+     * @param string $attempt_token
+     * @param array $attempt
+     * @param Cart $cart
+     * @param bool $include_secure_key
+     * @param bool $sync_surcharge_cart_line default FALSE: computing a
+     *        comparison hash must not mutate the cart as a side effect. The
+     *        two self-healing call sites (initial check, final pre-order
+     *        re-check) opt in explicitly - with sync enabled the underlying
+     *        payload build also ENFORCES cart-vs-payload fee parity and
+     *        throws on divergence.
      */
-    private function buildAttemptSnapshotHash($attempt_token, $attempt, $cart, $include_secure_key)
+    private function buildAttemptSnapshotHash($attempt_token, $attempt, $cart, $include_secure_key, $sync_surcharge_cart_line = false)
     {
         $confirm_params = array('attempt_token' => $attempt_token);
         $cancel_params = array('attempt_token' => $attempt_token);
@@ -461,7 +535,12 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             'merchant_invoice_url' => '',
             'merchant_shipping_document_url' => '',
         );
-        $comparison_payload = $this->module->getTwoNewOrderData($attempt['merchant_order_id'], $cart, $comparison_urls);
+        $comparison_payload = $this->module->getTwoNewOrderData(
+            $attempt['merchant_order_id'],
+            $cart,
+            $comparison_urls,
+            (bool) $sync_surcharge_cart_line
+        );
 
         return $this->module->calculateTwoCheckoutSnapshotHash($cart, $comparison_payload);
     }

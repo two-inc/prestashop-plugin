@@ -3595,7 +3595,18 @@ class Twopayment extends PaymentModule
         return round($gross_amount, 2);
     }
 
-    public function getTwoNewOrderData($merchant_order_id, $cart, $merchant_urls = null)
+    /**
+     * @param string $merchant_order_id
+     * @param Cart $cart
+     * @param array|null $merchant_urls
+     * @param bool $syncSurchargeCartLine when true (default, order-create
+     *        paths) the cart's surcharge line is self-healed and fee parity
+     *        is ENFORCED before totals are read; pass false for pure
+     *        comparison/snapshot builds that must not mutate the cart.
+     * @return array
+     * @throws Exception
+     */
+    public function getTwoNewOrderData($merchant_order_id, $cart, $merchant_urls = null, $syncSurchargeCartLine = true)
     {
         // Validate cart has products before building order data
         if (!Validate::isLoadedObject($cart) || $cart->nbProducts() <= 0) {
@@ -3623,7 +3634,7 @@ class Twopayment extends PaymentModule
             }
         }
 
-        $pricingData = $this->buildTwoOrderPricingData($cart, 'order data (merchant_order_id=' . $merchant_order_id . ')', false, null, true);
+        $pricingData = $this->buildTwoOrderPricingData($cart, 'order data (merchant_order_id=' . $merchant_order_id . ')', false, null, (bool) $syncSurchargeCartLine);
         $line_items = $pricingData['line_items'];
         $tax_subtotals = $pricingData['tax_subtotals'];
         $final_net = $pricingData['net_amount'];
