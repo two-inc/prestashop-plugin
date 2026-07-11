@@ -46,6 +46,20 @@ namespace {
         public static array $tabIds = ['AdminTwopaymentInvoice' => 1];
         /** @var string[] Class names passed to Tab::add() */
         public static array $tabAddCalls = [];
+        /** @var array<int,array> Catalog products by id (surcharge cart-line feature) */
+        public static array $products = [];
+        /** @var array<int,array> Specific prices by id */
+        public static array $specificPrices = [];
+        /** @var array<int,array> StockAvailable writes by product id */
+        public static array $stock = [];
+        /** @var array<int,array> Taxes by id */
+        public static array $taxes = [];
+        /** @var array<int,array> Tax rules groups by id */
+        public static array $taxRulesGroups = [];
+        /** @var array<int,array> Tax rules by id */
+        public static array $taxRules = [];
+        /** @var int Shared auto-increment for ObjectModel-style stubs */
+        public static int $nextId = 90000;
 
         public static function reset(): void
         {
@@ -88,6 +102,13 @@ namespace {
             self::$taxRuleRates = [];
             self::$dbExecuteSResponses = [];
             self::$dbLastExecuteS = [];
+            self::$products = [];
+            self::$specificPrices = [];
+            self::$stock = [];
+            self::$taxes = [];
+            self::$taxRulesGroups = [];
+            self::$taxRules = [];
+            self::$nextId = 90000;
 
             $context = Context::getContext();
             $context->cookie = new Cookie();
@@ -383,9 +404,292 @@ namespace {
 
     class Product
     {
+        public bool $loaded = false;
+        public int $id = 0;
+        public $name = [];
+        public $link_rewrite = [];
+        public $reference = '';
+        public $price = 0;
+        public $id_tax_rules_group = 0;
+        public $active = 0;
+        public $available_for_order = 0;
+        public $visibility = 'both';
+        public $indexed = 1;
+        public $is_virtual = 0;
+        public $out_of_stock = 0;
+        public $minimal_quantity = 1;
+        public $id_category_default = 0;
+
+        public function __construct($id = null, $full = false, $idLang = null, $idShop = null)
+        {
+            $id = (int) $id;
+            if ($id > 0 && isset(StubStore::$products[$id])) {
+                foreach (StubStore::$products[$id] as $property => $value) {
+                    if (property_exists($this, $property)) {
+                        $this->$property = $value;
+                    }
+                }
+                $this->id = $id;
+                $this->loaded = true;
+            }
+        }
+
+        public function add(): bool
+        {
+            $this->id = StubStore::$nextId++;
+            $this->loaded = true;
+            $this->persist();
+            return true;
+        }
+
+        public function update($nullValues = false): bool
+        {
+            $this->persist();
+            return true;
+        }
+
+        public function delete(): bool
+        {
+            unset(StubStore::$products[$this->id]);
+            return true;
+        }
+
+        private function persist(): void
+        {
+            $data = get_object_vars($this);
+            unset($data['loaded']);
+            StubStore::$products[$this->id] = $data;
+        }
+
         public static function getProductCategoriesFull($idProduct, $idLang)
         {
             return StubStore::$productCategories[(int) $idProduct] ?? [];
+        }
+    }
+
+    class SpecificPrice
+    {
+        public bool $loaded = false;
+        public int $id = 0;
+        public $id_product = 0;
+        public $id_product_attribute = 0;
+        public $id_shop = 0;
+        public $id_currency = 0;
+        public $id_country = 0;
+        public $id_group = 0;
+        public $id_customer = 0;
+        public $id_cart = 0;
+        public $price = 0;
+        public $from_quantity = 1;
+        public $reduction = 0;
+        public $reduction_type = 'amount';
+        public $reduction_tax = 1;
+        public $from = '0000-00-00 00:00:00';
+        public $to = '0000-00-00 00:00:00';
+
+        public function __construct($id = null)
+        {
+            $id = (int) $id;
+            if ($id > 0 && isset(StubStore::$specificPrices[$id])) {
+                foreach (StubStore::$specificPrices[$id] as $property => $value) {
+                    if (property_exists($this, $property)) {
+                        $this->$property = $value;
+                    }
+                }
+                $this->id = $id;
+                $this->loaded = true;
+            }
+        }
+
+        public function add(): bool
+        {
+            $this->id = StubStore::$nextId++;
+            $this->loaded = true;
+            $this->persist();
+            return true;
+        }
+
+        public function update($nullValues = false): bool
+        {
+            $this->persist();
+            return true;
+        }
+
+        private function persist(): void
+        {
+            $data = get_object_vars($this);
+            unset($data['loaded']);
+            StubStore::$specificPrices[$this->id] = $data;
+        }
+
+        /** Core-shape result: rows of ['id_specific_price' => n]. */
+        public static function getIdsByProductId($idProduct, $idProductAttribute = false, $idCart = 0): array
+        {
+            $ids = [];
+            foreach (StubStore::$specificPrices as $id => $row) {
+                if ((int) $row['id_product'] === (int) $idProduct && (int) $row['id_cart'] === (int) $idCart) {
+                    $ids[] = ['id_specific_price' => $id];
+                }
+            }
+            return $ids;
+        }
+
+        public static function deleteByIdCart($idCart, $idProduct = false, $idProductAttribute = false): bool
+        {
+            foreach (StubStore::$specificPrices as $id => $row) {
+                if ((int) $row['id_cart'] !== (int) $idCart) {
+                    continue;
+                }
+                if ($idProduct !== false && (int) $row['id_product'] !== (int) $idProduct) {
+                    continue;
+                }
+                unset(StubStore::$specificPrices[$id]);
+            }
+            return true;
+        }
+
+        /** Net unit price for a cart-scoped row, or null. */
+        public static function getCartUnitPrice(int $idCart, int $idProduct): ?float
+        {
+            foreach (StubStore::$specificPrices as $row) {
+                if ((int) $row['id_cart'] === $idCart && (int) $row['id_product'] === $idProduct) {
+                    return (float) $row['price'];
+                }
+            }
+            return null;
+        }
+    }
+
+    class StockAvailable
+    {
+        public static function setQuantity($idProduct, $idProductAttribute, $quantity, $idShop = null): void
+        {
+            StubStore::$stock[(int) $idProduct]['quantity'] = (int) $quantity;
+        }
+
+        public static function setProductOutOfStock($idProduct, $outOfStock = false, $idShop = null, $idProductAttribute = 0): void
+        {
+            StubStore::$stock[(int) $idProduct]['out_of_stock'] = (int) $outOfStock;
+        }
+    }
+
+    class Tax
+    {
+        public bool $loaded = false;
+        public int $id = 0;
+        public $name = [];
+        public $rate = 0;
+        public $active = 0;
+
+        public function __construct($id = null)
+        {
+            $id = (int) $id;
+            if ($id > 0 && isset(StubStore::$taxes[$id])) {
+                foreach (StubStore::$taxes[$id] as $property => $value) {
+                    if (property_exists($this, $property)) {
+                        $this->$property = $value;
+                    }
+                }
+                $this->id = $id;
+                $this->loaded = true;
+            }
+        }
+
+        public function add(): bool
+        {
+            $this->id = StubStore::$nextId++;
+            $this->loaded = true;
+            StubStore::$taxes[$this->id] = ['name' => $this->name, 'rate' => $this->rate, 'active' => $this->active];
+            return true;
+        }
+
+        public function update($nullValues = false): bool
+        {
+            StubStore::$taxes[$this->id] = ['name' => $this->name, 'rate' => $this->rate, 'active' => $this->active];
+            return true;
+        }
+    }
+
+    class TaxRulesGroup
+    {
+        public bool $loaded = false;
+        public int $id = 0;
+        public $name = '';
+        public $active = 0;
+
+        public function __construct($id = null)
+        {
+            $id = (int) $id;
+            if ($id > 0 && isset(StubStore::$taxRulesGroups[$id])) {
+                foreach (StubStore::$taxRulesGroups[$id] as $property => $value) {
+                    if (property_exists($this, $property)) {
+                        $this->$property = $value;
+                    }
+                }
+                $this->id = $id;
+                $this->loaded = true;
+            }
+        }
+
+        public function add(): bool
+        {
+            $this->id = StubStore::$nextId++;
+            $this->loaded = true;
+            StubStore::$taxRulesGroups[$this->id] = ['name' => $this->name, 'active' => $this->active];
+            return true;
+        }
+    }
+
+    class TaxRule
+    {
+        public bool $loaded = false;
+        public int $id = 0;
+        public $id_tax_rules_group = 0;
+        public $id_country = 0;
+        public $id_state = 0;
+        public $zipcode_from = 0;
+        public $zipcode_to = 0;
+        public $id_tax = 0;
+        public $behavior = 0;
+        public $description = '';
+
+        public function __construct($id = null)
+        {
+            $id = (int) $id;
+            if ($id > 0 && isset(StubStore::$taxRules[$id])) {
+                foreach (StubStore::$taxRules[$id] as $property => $value) {
+                    if (property_exists($this, $property)) {
+                        $this->$property = $value;
+                    }
+                }
+                $this->id = $id;
+                $this->loaded = true;
+            }
+        }
+
+        public function add(): bool
+        {
+            $this->id = StubStore::$nextId++;
+            $this->loaded = true;
+            $this->persist();
+            return true;
+        }
+
+        public function update($nullValues = false): bool
+        {
+            $this->persist();
+            return true;
+        }
+
+        private function persist(): void
+        {
+            $data = get_object_vars($this);
+            unset($data['loaded']);
+            StubStore::$taxRules[$this->id] = $data;
+            // Mirror core behavior for the TaxManager stub: the group now
+            // applies the referenced tax's rate.
+            $tax = new Tax((int) $this->id_tax);
+            StubStore::$taxRuleRates[(int) $this->id_tax_rules_group] = (float) $tax->rate;
         }
     }
 
@@ -674,6 +978,120 @@ namespace {
         public function getProducts($refresh = false): array
         {
             return StubStore::$cartProducts[$this->id] ?? [];
+        }
+
+        public function containsProduct($idProduct, $idProductAttribute = 0, $idCustomization = false, $idAddressDelivery = 0)
+        {
+            foreach (StubStore::$cartProducts[$this->id] ?? [] as $row) {
+                if ((int) $row['id_product'] === (int) $idProduct) {
+                    return ['quantity' => (int) $row['cart_quantity']];
+                }
+            }
+            return false;
+        }
+
+        /**
+         * Minimal core-faithful updateQty: prices a NEW line from the
+         * cart-scoped SpecificPrice (net) and the product's tax rules group
+         * rate (gross), mirroring what PS core computes for the hidden
+         * surcharge product. Repeat 'up' calls INCREMENT quantity - exactly
+         * like core - so idempotency must come from the module, not the stub.
+         */
+        public function updateQty($quantity, $idProduct, $idProductAttribute = null, $idCustomization = false, $operator = 'up')
+        {
+            $idProduct = (int) $idProduct;
+            $quantity = (int) $quantity;
+            $rows = StubStore::$cartProducts[$this->id] ?? [];
+
+            $net = SpecificPrice::getCartUnitPrice((int) $this->id, $idProduct);
+            $product = new Product($idProduct);
+            if ($net === null) {
+                $net = $product->loaded ? (float) $product->price : 0.0;
+            }
+            $rate = (float) (StubStore::$taxRuleRates[(int) $product->id_tax_rules_group] ?? 0.0);
+
+            $found = false;
+            foreach ($rows as $i => $row) {
+                if ((int) $row['id_product'] === $idProduct) {
+                    $newQty = (int) $row['cart_quantity'] + ($operator === 'up' ? $quantity : -$quantity);
+                    $this->applyCartTotalsDelta(-(float) $row['total'], -(float) $row['total_wt']);
+                    if ($newQty <= 0) {
+                        unset($rows[$i]);
+                    } else {
+                        $rows[$i]['cart_quantity'] = $newQty;
+                        $rows[$i]['total'] = round($net * $newQty, 2);
+                        $rows[$i]['total_wt'] = round($net * $newQty * (1 + $rate / 100), 2);
+                        $this->applyCartTotalsDelta((float) $rows[$i]['total'], (float) $rows[$i]['total_wt']);
+                    }
+                    $found = true;
+                    break;
+                }
+            }
+
+            if (!$found) {
+                if ($operator !== 'up') {
+                    return false;
+                }
+                $langId = 1;
+                $name = 'Product ' . $idProduct;
+                if ($product->loaded && is_array($product->name)) {
+                    $name = (string) (reset($product->name) ?: $name);
+                }
+                $rewrite = 'product-' . $idProduct;
+                if ($product->loaded && is_array($product->link_rewrite)) {
+                    $rewrite = (string) (reset($product->link_rewrite) ?: $rewrite);
+                }
+                $row = [
+                    'id_product' => $idProduct,
+                    'link_rewrite' => $rewrite,
+                    'name' => $name,
+                    'description_short' => '',
+                    'manufacturer_name' => '',
+                    'ean13' => '',
+                    'upc' => '',
+                    'cart_quantity' => $quantity,
+                    'price' => $net,
+                    'total' => round($net * $quantity, 2),
+                    'total_wt' => round($net * $quantity * (1 + $rate / 100), 2),
+                    'rate' => $rate,
+                    'reduction' => 0,
+                    'is_virtual' => $product->loaded ? (int) $product->is_virtual : 0,
+                ];
+                $rows[] = $row;
+                $this->applyCartTotalsDelta((float) $row['total'], (float) $row['total_wt']);
+            }
+
+            StubStore::$cartProducts[$this->id] = array_values($rows);
+            return true;
+        }
+
+        public function deleteProduct($idProduct, $idProductAttribute = 0, $idCustomization = 0, $idAddressDelivery = 0)
+        {
+            $rows = StubStore::$cartProducts[$this->id] ?? [];
+            foreach ($rows as $i => $row) {
+                if ((int) $row['id_product'] === (int) $idProduct) {
+                    $this->applyCartTotalsDelta(-(float) $row['total'], -(float) $row['total_wt']);
+                    unset($rows[$i]);
+                }
+            }
+            StubStore::$cartProducts[$this->id] = array_values($rows);
+            return true;
+        }
+
+        private function applyCartTotalsDelta(float $netDelta, float $grossDelta): void
+        {
+            if (isset(StubStore::$cartTotals[$this->id][false][self::BOTH])) {
+                StubStore::$cartTotals[$this->id][false][self::BOTH] = round(
+                    (float) StubStore::$cartTotals[$this->id][false][self::BOTH] + $netDelta,
+                    2
+                );
+            }
+            if (isset(StubStore::$cartTotals[$this->id][true][self::BOTH])) {
+                StubStore::$cartTotals[$this->id][true][self::BOTH] = round(
+                    (float) StubStore::$cartTotals[$this->id][true][self::BOTH] + $grossDelta,
+                    2
+                );
+            }
         }
 
         public function getOrderTotal($withTaxes, $type)
