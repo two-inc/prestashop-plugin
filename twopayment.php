@@ -1662,11 +1662,13 @@ class Twopayment extends PaymentModule
                 // Backward compatibility: if it's a single ID, convert to array
                 $fulfilled_ids = array($fulfilled_map);
             }
-            $fields_values['PS_TWO_OS_FULFILLED_MAP'] = $fulfilled_ids;
+            $fulfilled_ids_value = $fulfilled_ids;
         } else {
             // Default to Shipped status
-            $fields_values['PS_TWO_OS_FULFILLED_MAP'] = array(Configuration::get('PS_OS_SHIPPING'));
+            $fulfilled_ids_value = array(Configuration::get('PS_OS_SHIPPING'));
         }
+        $fields_values['PS_TWO_OS_FULFILLED_MAP'] = $fulfilled_ids_value;
+        $fields_values['PS_TWO_OS_FULFILLED_MAP[]'] = $fulfilled_ids_value;
         
         $fields_values['PS_TWO_OS_PAYMENT_ERROR_MAP'] = Tools::getValue('PS_TWO_OS_PAYMENT_ERROR_MAP', Configuration::get('PS_TWO_OS_PAYMENT_ERROR_MAP'));
         $fields_values['PS_TWO_OS_CANCELLED_MAP'] = Tools::getValue('PS_TWO_OS_CANCELLED_MAP', Configuration::get('PS_TWO_OS_CANCELLED_MAP'));
