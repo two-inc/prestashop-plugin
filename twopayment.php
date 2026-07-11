@@ -6715,6 +6715,28 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Admin-configured Surcharge Tax Rate for the Two order-creation fee line
+     * (Magento parity: Config\Repository::getSurchargeTaxRate /
+     * XML_PATH_SURCHARGE_TAX_RATE), as a decimal FRACTION (stored "25" →
+     * 0.25) via the same normalizeTwoFeeTaxRate scaling convention the rest
+     * of the file uses. Returns 0.0 when the field is blank/unset/
+     * non-numeric/negative — deliberate deviation from Magento, whose blank
+     * fallback is the store's default product tax class rate: PrestaShop has
+     * no equivalent store-wide default tax rate concept.
+     *
+     * @return float
+     */
+    public function getTwoSurchargeTaxRate()
+    {
+        $raw = trim((string) Configuration::get('PS_TWO_SURCHARGE_TAX_RATE'));
+        if ($raw === '' || !is_numeric($raw)) {
+            return 0.0;
+        }
+
+        return $this->normalizeTwoFeeTaxRate($raw);
+    }
+
+    /**
      * Resolve the buyer's country ISO from the cart's invoice address.
      *
      * @param Cart $cart
@@ -6739,9 +6761,13 @@ class Twopayment extends PaymentModule
     /**
      * Build the buyer-surcharge line item for the Two order payload, or null
      * when no surcharge is configured / the quote fails / the fee is zero.
-     * The line's tax_rate carries the API's total_fee_tax_rate (never a
-     * hard-coded zero, TWO-24752); net/tax/gross satisfy the Two line-item
-     * formulas so validateTwoLineItems accepts it.
+     * The line's tax_rate carries the admin-configured Surcharge Tax Rate
+     * (PS_TWO_SURCHARGE_TAX_RATE via getTwoSurchargeTaxRate, Magento parity:
+     * XML_PATH_SURCHARGE_TAX_RATE) — NOT the pricing-preview response's
+     * total_fee_tax_rate, which the plugin never populates in its own
+     * /v1/pricing/order/fee request and is therefore always empty; net/tax/
+     * gross satisfy the Two line-item formulas so validateTwoLineItems
+     * accepts it.
      *
      * @param Cart     $cart
      * @param float    $gross_basis product + shipping gross (fee basis)
@@ -6778,14 +6804,18 @@ class Twopayment extends PaymentModule
         if ($net <= 0) {
             return null;
         }
-        // Compute tax from the SAME rate string that is sent (formatTwoTaxRate
-        // snaps to TAX_RATE_PRECISION dp). Using the full-precision rate to
-        // compute tax while sending a rounded rate makes the line fail
-        // validateTwoLineItems (tax_amount vs net*sent_rate) for any rate that
-        // needs more than TAX_RATE_PRECISION decimals, silently dropping the
-        // whole surcharge line. Snapping first mirrors the product-line
-        // convention (snapped_product_rate). TWO-24752.
-        $taxRate = $this->normalizeTwoFeeTaxRate($fee['total_fee_tax_rate']);
+        // The rate comes from the admin-configured Surcharge Tax Rate — the
+        // pricing-preview response's total_fee_tax_rate is never populated
+        // (the plugin sends no tax-rate field in its own fee request), so it
+        // is NOT a usable source. Compute tax from the SAME rate string that
+        // is sent (formatTwoTaxRate snaps to TAX_RATE_PRECISION dp). Using
+        // the full-precision rate to compute tax while sending a rounded rate
+        // makes the line fail validateTwoLineItems (tax_amount vs
+        // net*sent_rate) for any rate that needs more than TAX_RATE_PRECISION
+        // decimals, silently dropping the whole surcharge line. Snapping
+        // first mirrors the product-line convention (snapped_product_rate).
+        // TWO-24752.
+        $taxRate = $this->getTwoSurchargeTaxRate();
         $taxRateString = $this->formatTwoTaxRate($taxRate);
         $sentRate = (float) $taxRateString;
         $tax = round($net * $sentRate, 2);
@@ -7023,6 +7053,13 @@ class Twopayment extends PaymentModule
             'options' => array('query' => $stepQuery, 'id' => 'id', 'name' => 'name'),
         );
         $inputs[] = array(
+            'type' => 'text',
+            'label' => $this->l('Surcharge Tax Rate (%)'),
+            'name' => 'PS_TWO_SURCHARGE_TAX_RATE',
+            'suffix' => '%',
+            'desc' => $this->l('Tax rate applied to the surcharge line sent to Two (e.g. 25 for 25%). Leave blank for no tax on the surcharge line.'),
+        );
+        $inputs[] = array(
             'type' => 'html',
             'label' => $this->l('Per-term surcharge'),
             'name' => 'PS_TWO_SURCHARGE_GRID',
@@ -7115,6 +7152,7 @@ class Twopayment extends PaymentModule
             'PS_TWO_SURCHARGE_LINE_DESC' => Tools::getValue('PS_TWO_SURCHARGE_LINE_DESC', Configuration::get('PS_TWO_SURCHARGE_LINE_DESC')),
             'PS_TWO_SURCHARGE_ROUNDING_BASIS' => Tools::getValue('PS_TWO_SURCHARGE_ROUNDING_BASIS', Configuration::get('PS_TWO_SURCHARGE_ROUNDING_BASIS')),
             'PS_TWO_SURCHARGE_ROUNDING_STEP' => Tools::getValue('PS_TWO_SURCHARGE_ROUNDING_STEP', Configuration::get('PS_TWO_SURCHARGE_ROUNDING_STEP')),
+            'PS_TWO_SURCHARGE_TAX_RATE' => Tools::getValue('PS_TWO_SURCHARGE_TAX_RATE', Configuration::get('PS_TWO_SURCHARGE_TAX_RATE')),
         );
         foreach ($this->getAvailablePaymentTerms() as $days) {
             $days = (int) $days;
@@ -7140,6 +7178,10 @@ class Twopayment extends PaymentModule
         $step = trim((string) Tools::getValue('PS_TWO_SURCHARGE_ROUNDING_STEP'));
         if ($step !== '' && !array_key_exists($step, $this->getTwoRoundingStepOptions())) {
             $this->errors[] = $this->l('Rounding step must be one of the offered values.');
+        }
+        $taxRate = Tools::getValue('PS_TWO_SURCHARGE_TAX_RATE');
+        if ($taxRate !== false && $taxRate !== '' && (!is_numeric($taxRate) || (float) $taxRate < 0)) {
+            $this->errors[] = $this->l('Surcharge tax rate must be a non-negative number.');
         }
         foreach ($this->getAvailablePaymentTerms() as $days) {
             $days = (int) $days;
@@ -7174,6 +7216,14 @@ class Twopayment extends PaymentModule
             $step = '';
         }
         Configuration::updateValue('PS_TWO_SURCHARGE_ROUNDING_STEP', $step);
+
+        // Same coercion discipline as the grid: invalid input is stored as
+        // blank (→ getTwoSurchargeTaxRate() falls back to 0.0), never fatal.
+        $taxRateRaw = trim((string) Tools::getValue('PS_TWO_SURCHARGE_TAX_RATE', ''));
+        Configuration::updateValue(
+            'PS_TWO_SURCHARGE_TAX_RATE',
+            (is_numeric($taxRateRaw) && (float) $taxRateRaw >= 0) ? (string) (float) $taxRateRaw : ''
+        );
 
         foreach ($this->getAvailablePaymentTerms() as $days) {
             $days = (int) $days;
