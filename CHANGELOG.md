@@ -10,13 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Buyer surcharge shown as a real PrestaShop cart line** (TWO-24739 parity)
   - Selecting Two at checkout now adds the payment-terms fee as a hidden virtual product line, so the fee appears in PrestaShop's own order summary, cart, order and invoice totals - previously it existed only on the Two-side invoice
-  - The line's net amount comes from the same live fee quote as the Two order payload (single computation path); its tax applies the admin-configured Surcharge Tax Rate through a module-managed tax rules group
+  - The line's net amount comes from the same live fee quote as the Two order payload (single computation path); its tax applies the merchant-selected tax rules group (see TWO-25071 below)
   - Selecting any other payment method removes the line; add/remove is idempotent against re-clicks, reloads and resumed carts (front-controller stale-line guard)
   - Order creation self-heals the line server-side and fails closed if the cart's fee and the Two payload's fee ever diverge beyond rounding tolerance
 - **Graceful invoice retrieval when order is not yet fulfilled** (TWO-25042, part of TWO-25040)
   - Invoice PDF downloads (customer order page and admin order view) are now routed through module controllers instead of linking the browser directly to the payment API
   - On `400 ORDER_NOT_FULFILLED` the module checks the order state: `FULFILLING` shows an informational "not ready yet" notice, `FULFILLED` retries the fetch once, and any other state is reported with the state named
   - Customer downloads are protected by the same secure-key ownership guard as the cancel/confirmation callbacks (guest checkout included); admin downloads go through a permission-gated admin controller
+
+### Changed
+- **Surcharge tax now uses the merchant's own tax rules group** (TWO-25071)
+  - The flat "Surcharge Tax Rate (%)" field is replaced by a "Surcharge Tax Rules Group" dropdown - the same tax rules groups assigned to products, pre-selecting the group most of the catalog uses
+  - The hidden fee product carries the selected group on its `id_tax_rules_group` like any real product, so PrestaShop's native tax engine applies per-country/state rules, combined multi-rate stacking, and destination-based zero-rating (no rule for the destination = untaxed) to the fee line
+  - The tax rate reported to Two's order API is resolved through the same core machinery (`TaxManagerFactory`) for the cart's tax address, with the same shop-wide gates (taxes disabled, VAT-number B2B exemption), so the PrestaShop line and the Two payload cannot drift and the order-create parity gate holds on cross-border orders
+  - Selecting "No tax" (PrestaShop's built-in id-0 group) keeps the fee untaxed for every destination; an unset/invalid selection fails safe to "No tax"
+  - Removed: the module-managed synthetic Tax/TaxRulesGroup/TaxRule graph, its `PS_TWO_SURCHARGE_TAX_SETUP` tracking blob, self-heal/advisory-lock machinery and uninstall cleanup (never released; uninstall still deletes the legacy configuration rows). Uninstall never deletes the merchant's own tax rules group
 
 ## Latest Release: v2.4.0
 

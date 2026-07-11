@@ -70,10 +70,14 @@ class Twopayment extends PaymentModule
     // on first use; identified by Configuration id + reference cross-check.
     const TWO_SURCHARGE_PRODUCT_REFERENCE = 'TWO-SURCHARGE-FEE';
     const CONFIG_SURCHARGE_PRODUCT_ID = 'PS_TWO_SURCHARGE_PRODUCT_ID';
-    // JSON snapshot of the Tax/TaxRulesGroup/TaxRule objects backing the
-    // surcharge product's tax, keyed by configured rate + covered countries,
-    // so tax setup is validated/id-driven instead of fuzzy DB lookups.
-    const CONFIG_SURCHARGE_TAX_SETUP = 'PS_TWO_SURCHARGE_TAX_SETUP';
+    // Merchant-selected TaxRulesGroup applied to the hidden surcharge
+    // product - the SAME id_tax_rules_group field every real Product uses,
+    // so the fee line gets PrestaShop's full native tax capability
+    // (per-country/state rules, additive stacking, destination-based
+    // zero-rating when no rule matches). 0 is core's first-class "No tax"
+    // sentinel. TWO-25071 (replaces the module-managed synthetic
+    // Tax/TaxRulesGroup/TaxRule graph + flat PS_TWO_SURCHARGE_TAX_RATE).
+    const CONFIG_SURCHARGE_TAX_RULES_GROUP = 'PS_TWO_SURCHARGE_TAX_RULES_GROUP';
 
     // Constants for delivery dates
     const DEFAULT_DELIVERY_DAYS_OFFSET = 7; // Default expected delivery date offset
@@ -526,63 +530,17 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_USE_ACCOUNT_TYPE');
         Configuration::deleteByName('PS_TWO_DEBUG_MODE');
         $this->deleteTwoSurchargeCartProduct();
-        $this->deleteTwoSurchargeTaxSetup();
         Configuration::deleteByName(self::CONFIG_SURCHARGE_PRODUCT_ID);
-        Configuration::deleteByName(self::CONFIG_SURCHARGE_TAX_SETUP);
+        // The merchant's own TaxRulesGroup referenced by this config is NOT
+        // module-owned: delete only the reference, never the group.
+        Configuration::deleteByName(self::CONFIG_SURCHARGE_TAX_RULES_GROUP);
+        // Legacy config rows from the retired synthetic-tax implementation
+        // (pre-release builds only; the surcharge feature never shipped with
+        // them). The synthetic Tax/TaxRulesGroup/TaxRule objects themselves
+        // are no longer created and no longer cleaned up here.
+        Configuration::deleteByName('PS_TWO_SURCHARGE_TAX_RATE');
+        Configuration::deleteByName('PS_TWO_SURCHARGE_TAX_SETUP');
         return true;
-    }
-
-    /**
-     * Best-effort removal of the module-managed Tax/TaxRulesGroup/TaxRule
-     * graph tracked in CONFIG_SURCHARGE_TAX_SETUP at uninstall. Historical
-     * orders keep their own copied tax rates on order_detail rows, so
-     * deleting the objects does not damage them. Never blocks uninstall.
-     */
-    protected function deleteTwoSurchargeTaxSetup()
-    {
-        try {
-            $setup = json_decode((string) Configuration::get(self::CONFIG_SURCHARGE_TAX_SETUP), true);
-            if (!is_array($setup)) {
-                return;
-            }
-
-            foreach ((array) (isset($setup['rules']) ? $setup['rules'] : array()) as $ruleId) {
-                try {
-                    if ((int) $ruleId > 0 && class_exists('TaxRule')) {
-                        $rule = new TaxRule((int) $ruleId);
-                        if (Validate::isLoadedObject($rule) && method_exists($rule, 'delete')) {
-                            $rule->delete();
-                        }
-                    }
-                } catch (Exception $e) {
-                    PrestaShopLogger::addLog('TwoPayment: Failed deleting surcharge TaxRule ' . (int) $ruleId . ' at uninstall - ' . $e->getMessage(), 2);
-                }
-            }
-
-            try {
-                if (!empty($setup['id_group']) && class_exists('TaxRulesGroup')) {
-                    $group = new TaxRulesGroup((int) $setup['id_group']);
-                    if (Validate::isLoadedObject($group) && method_exists($group, 'delete')) {
-                        $group->delete();
-                    }
-                }
-            } catch (Exception $e) {
-                PrestaShopLogger::addLog('TwoPayment: Failed deleting surcharge TaxRulesGroup at uninstall - ' . $e->getMessage(), 2);
-            }
-
-            try {
-                if (!empty($setup['id_tax']) && class_exists('Tax')) {
-                    $tax = new Tax((int) $setup['id_tax']);
-                    if (Validate::isLoadedObject($tax) && method_exists($tax, 'delete')) {
-                        $tax->delete();
-                    }
-                }
-            } catch (Exception $e) {
-                PrestaShopLogger::addLog('TwoPayment: Failed deleting surcharge Tax at uninstall - ' . $e->getMessage(), 2);
-            }
-        } catch (Exception $e) {
-            PrestaShopLogger::addLog('TwoPayment: Failed deleting surcharge tax setup at uninstall - ' . $e->getMessage(), 2);
-        }
     }
 
     /**
@@ -6887,42 +6845,83 @@ class Twopayment extends PaymentModule
      * @param mixed $rate
      * @return float
      */
-    private function normalizeTwoFeeTaxRate($rate)
+    /**
+     * Merchant-selected TaxRulesGroup id for the hidden surcharge product
+     * (CONFIG_SURCHARGE_TAX_RULES_GROUP). 0 - also the unset/blank/garbage
+     * fallback - is PrestaShop's first-class "No tax" sentinel: fail-safe is
+     * an untaxed fee, never an invented rate. TWO-25071.
+     *
+     * @return int
+     */
+    public function getTwoSurchargeTaxRulesGroupId()
     {
-        if ($rate === null || $rate === '') {
-            return 0.0;
-        }
-        $rate = (float) $rate;
-        if ($rate <= 0) {
-            return 0.0;
-        }
-        if ($rate > 1.0) {
-            $rate = $rate / 100.0;
+        $raw = Configuration::get(self::CONFIG_SURCHARGE_TAX_RULES_GROUP);
+        if ($raw === false || $raw === null || !is_numeric($raw)) {
+            return 0;
         }
 
-        return $rate;
+        return max(0, (int) $raw);
     }
 
     /**
-     * Admin-configured Surcharge Tax Rate for the Two order-creation fee line
-     * (Magento parity: Config\Repository::getSurchargeTaxRate /
-     * XML_PATH_SURCHARGE_TAX_RATE), as a decimal FRACTION (stored "25" →
-     * 0.25) via the same normalizeTwoFeeTaxRate scaling convention the rest
-     * of the file uses. Returns 0.0 when the field is blank/unset/
-     * non-numeric/negative — deliberate deviation from Magento, whose blank
-     * fallback is the store's default product tax class rate: PrestaShop has
-     * no equivalent store-wide default tax rate concept.
+     * Effective tax rate (decimal FRACTION, e.g. 0.25) the selected
+     * TaxRulesGroup applies to the surcharge for THIS cart's tax destination
+     * - resolved through the SAME core machinery PrestaShop's own cart
+     * pricing uses for the hidden fee product (Product::priceCalculation):
+     * TaxManagerFactory over the cart's PS_TAX_ADDRESS_TYPE address, with
+     * the same shop-wide gates (PS_TAX off, vatnumber-module B2B exemption).
+     * Using one resolution for both the PS cart line and the Two payload is
+     * what makes the PR #64 parity gate unable to trip on destination-based
+     * rates. Empirically verified on PS 8.2.6 core: no matching rule for the
+     * destination -> 0 (zero-rating for free), combined multi-rate rules sum
+     * (6%+2% -> 8), group id 0 -> 0 everywhere.
      *
+     * @param Cart $cart
      * @return float
      */
-    public function getTwoSurchargeTaxRate()
+    public function getTwoSurchargeTaxRateForCart($cart)
     {
-        $raw = trim((string) Configuration::get('PS_TWO_SURCHARGE_TAX_RATE'));
-        if ($raw === '' || !is_numeric($raw)) {
+        $groupId = $this->getTwoSurchargeTaxRulesGroupId();
+        if ($groupId <= 0 || !Validate::isLoadedObject($cart)) {
             return 0.0;
         }
 
-        return $this->normalizeTwoFeeTaxRate($raw);
+        // Shop-wide "disable taxes" switch (core: Tax::excludeTaxeOption
+        // inside Product::priceCalculation zeroes every product's tax).
+        if (class_exists('Tax') && method_exists('Tax', 'excludeTaxeOption')) {
+            if (Tax::excludeTaxeOption()) {
+                return 0.0;
+            }
+        } elseif (!Configuration::get('PS_TAX')) {
+            return 0.0;
+        }
+
+        $taxAddressField = (string) Configuration::get('PS_TAX_ADDRESS_TYPE');
+        if ($taxAddressField !== 'id_address_delivery') {
+            $taxAddressField = 'id_address_invoice';
+        }
+        $address = new Address((int) $cart->{$taxAddressField});
+        if (!Validate::isLoadedObject($address)) {
+            // No usable tax destination. Cannot legitimately happen at the
+            // payment step (PS requires addresses first); if it ever does,
+            // the payload carries no tax and the fail-closed parity gate /
+            // post-write sync verification blocks any divergence.
+            return 0.0;
+        }
+
+        // vatnumber-module B2B exemption - the exact condition core's
+        // Product::priceCalculation flips usetax off with.
+        if (
+            !empty($address->vat_number)
+            && (int) $address->id_country !== (int) Configuration::get('VATNUMBER_COUNTRY')
+            && Configuration::get('VATNUMBER_MANAGEMENT')
+        ) {
+            return 0.0;
+        }
+
+        $calculator = TaxManagerFactory::getManager($address, $groupId)->getTaxCalculator();
+
+        return max(0.0, (float) $calculator->getTotalRate()) / 100.0;
     }
 
     /**
@@ -6950,12 +6949,13 @@ class Twopayment extends PaymentModule
     /**
      * Build the buyer-surcharge line item for the Two order payload, or null
      * when no surcharge is configured / the quote fails / the fee is zero.
-     * The line's tax_rate carries the admin-configured Surcharge Tax Rate
-     * (PS_TWO_SURCHARGE_TAX_RATE via getTwoSurchargeTaxRate, Magento parity:
-     * XML_PATH_SURCHARGE_TAX_RATE) — NOT the pricing-preview response's
-     * total_fee_tax_rate, which the plugin never populates in its own
-     * /v1/pricing/order/fee request and is therefore always empty; net/tax/
-     * gross satisfy the Two line-item formulas so validateTwoLineItems
+     * The line's tax_rate is the merchant-selected TaxRulesGroup's effective
+     * rate for THIS cart's tax destination (getTwoSurchargeTaxRateForCart -
+     * the same core resolution PrestaShop applies to the hidden fee cart
+     * line, so the two sides cannot drift) — NOT the pricing-preview
+     * response's total_fee_tax_rate, which the plugin never populates in its
+     * own /v1/pricing/order/fee request and is therefore always empty; net/
+     * tax/gross satisfy the Two line-item formulas so validateTwoLineItems
      * accepts it.
      *
      * @param Cart     $cart
@@ -6993,10 +6993,11 @@ class Twopayment extends PaymentModule
         if ($net <= 0) {
             return null;
         }
-        // The rate comes from the admin-configured Surcharge Tax Rate — the
-        // pricing-preview response's total_fee_tax_rate is never populated
-        // (the plugin sends no tax-rate field in its own fee request), so it
-        // is NOT a usable source. Compute tax from the SAME rate string that
+        // The rate is the selected TaxRulesGroup's destination-resolved rate
+        // (getTwoSurchargeTaxRateForCart) — the pricing-preview response's
+        // total_fee_tax_rate is never populated (the plugin sends no
+        // tax-rate field in its own fee request), so it is NOT a usable
+        // source. Compute tax from the SAME rate string that
         // is sent (formatTwoTaxRate snaps to TAX_RATE_PRECISION dp). Using
         // the full-precision rate to compute tax while sending a rounded rate
         // makes the line fail validateTwoLineItems (tax_amount vs
@@ -7004,7 +7005,7 @@ class Twopayment extends PaymentModule
         // decimals, silently dropping the whole surcharge line. Snapping
         // first mirrors the product-line convention (snapped_product_rate).
         // TWO-24752.
-        $taxRate = $this->getTwoSurchargeTaxRate();
+        $taxRate = $this->getTwoSurchargeTaxRateForCart($cart);
         $taxRateString = $this->formatTwoTaxRate($taxRate);
         $sentRate = (float) $taxRateString;
         $tax = round($net * $sentRate, 2);
@@ -7248,7 +7249,7 @@ class Twopayment extends PaymentModule
         }
         $product->reference = self::TWO_SURCHARGE_PRODUCT_REFERENCE;
         $product->price = 0;
-        $product->id_tax_rules_group = 0;
+        $product->id_tax_rules_group = $this->getTwoSurchargeTaxRulesGroupId();
         $product->active = 1;
         $product->available_for_order = 1;
         $product->visibility = 'none';
@@ -7275,169 +7276,33 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Ensure the surcharge product carries a TaxRulesGroup whose rule for the
-     * cart's tax country applies exactly the admin-configured Surcharge Tax
-     * Rate (getTwoSurchargeTaxRate). Object graph (Tax + group + per-country
-     * rules) is tracked by id in CONFIG_SURCHARGE_TAX_SETUP and validated on
-     * every call, so a merchant deleting objects in the BO self-heals here.
-     * A configured-rate change creates a NEW Tax and re-points the rules
-     * (historical orders keep their order_detail rate copies).
+     * Ensure the hidden surcharge product carries the merchant-selected
+     * TaxRulesGroup (CONFIG_SURCHARGE_TAX_RULES_GROUP) - the exact same
+     * id_tax_rules_group assignment PrestaShop's own product-edit page
+     * makes, so core resolves the fee line's tax natively (per-destination
+     * rules, stacking, "No tax" id 0). Idempotent single-row self-heal: a
+     * merchant re-pointing or clearing the selection is picked up on the
+     * next cart sync. No synthetic Tax/TaxRulesGroup/TaxRule objects are
+     * created any more (TWO-25071); if the merchant deletes the selected
+     * group in the BO, core resolves 0 for every destination on BOTH the
+     * cart line and the Two payload (same resolution path), so parity holds.
      *
-     * @param Cart $cart
      * @param int $productId
-     * @return bool false when the tax setup could not be ensured
+     * @return bool false when the product could not be loaded/updated
      */
-    public function ensureTwoSurchargeTaxSetupForCart($cart, $productId)
+    public function ensureTwoSurchargeProductTaxRulesGroup($productId)
     {
-        $ratePercent = round($this->getTwoSurchargeTaxRate() * 100, 3);
-
         $product = new Product((int) $productId);
         if (!Validate::isLoadedObject($product)) {
             return false;
         }
 
-        if ($ratePercent <= 0) {
-            if ((int) $product->id_tax_rules_group !== 0) {
-                $product->id_tax_rules_group = 0;
-                $product->update();
-                $this->flushTwoProductTaxRulesGroupCache((int) $product->id);
-            }
-            return true;
-        }
-
-        $taxAddressField = (string) Configuration::get('PS_TAX_ADDRESS_TYPE');
-        if ($taxAddressField !== 'id_address_delivery') {
-            $taxAddressField = 'id_address_invoice';
-        }
-        $address = new Address((int) $cart->{$taxAddressField});
-        $countryId = Validate::isLoadedObject($address) ? (int) $address->id_country : 0;
-        if ($countryId <= 0) {
-            return false;
-        }
-
-        // Advisory lock around the whole read-validate-create sequence: two
-        // concurrent first-time carts would otherwise both see an empty
-        // setup and create duplicate Tax/TaxRulesGroup/TaxRule graphs, with
-        // only one surviving in Configuration and the rest orphaned.
-        if (!$this->acquireTwoDbLock('two_surcharge_tax_setup')) {
-            PrestaShopLogger::addLog('TwoPayment: Surcharge tax setup lock not acquired', 2);
-            return false;
-        }
-        try {
-            return $this->ensureTwoSurchargeTaxSetupForCartLocked($product, $ratePercent, $countryId);
-        } finally {
-            $this->releaseTwoDbLock('two_surcharge_tax_setup');
-        }
-    }
-
-    /**
-     * Body of ensureTwoSurchargeTaxSetupForCart, executed while holding the
-     * two_surcharge_tax_setup advisory lock.
-     *
-     * @param Product $product
-     * @param float $ratePercent
-     * @param int $countryId
-     * @return bool
-     */
-    protected function ensureTwoSurchargeTaxSetupForCartLocked($product, $ratePercent, $countryId)
-    {
-        // Read the tracked setup UNDER the lock, straight from the DB: a
-        // concurrent winner's Configuration write is invisible to this
-        // request's per-request Configuration cache.
-        $setupJson = Db::getInstance()->getValue(
-            'SELECT `value` FROM `' . _DB_PREFIX_ . "configuration` WHERE `name` = '" . pSQL(self::CONFIG_SURCHARGE_TAX_SETUP) . "'"
-        );
-        if ($setupJson === false || $setupJson === null || $setupJson === '') {
-            $setupJson = (string) Configuration::get(self::CONFIG_SURCHARGE_TAX_SETUP);
-        }
-        $setup = json_decode((string) $setupJson, true);
-        if (!is_array($setup)) {
-            $setup = array();
-        }
-        $setup += array('rate_percent' => null, 'id_tax' => 0, 'id_group' => 0, 'rules' => array());
-
-        // Group: validate stored id, else create.
-        $group = $setup['id_group'] > 0 ? new TaxRulesGroup((int) $setup['id_group']) : null;
-        if ($group === null || !Validate::isLoadedObject($group)) {
-            $group = new TaxRulesGroup();
-            $group->name = 'Two payment terms fee tax';
-            $group->active = 1;
-            if (!$group->add()) {
+        $groupId = $this->getTwoSurchargeTaxRulesGroupId();
+        if ((int) $product->id_tax_rules_group !== $groupId) {
+            $product->id_tax_rules_group = $groupId;
+            if (!$product->update()) {
                 return false;
             }
-            $setup['id_group'] = (int) $group->id;
-            $setup['rules'] = array(); // stale rules belonged to the lost group
-        }
-
-        // Tax at the configured rate: validate stored id + rate, else create.
-        $tax = $setup['id_tax'] > 0 ? new Tax((int) $setup['id_tax']) : null;
-        $taxValid = $tax !== null && Validate::isLoadedObject($tax)
-            && abs(round((float) $tax->rate, 3) - $ratePercent) < 0.0005;
-        if (!$taxValid) {
-            $tax = new Tax();
-            $tax->name = array();
-            $languageIds = array();
-            foreach ((array) Language::getLanguages(false) as $lang) {
-                if (isset($lang['id_lang'])) {
-                    $languageIds[] = (int) $lang['id_lang'];
-                }
-            }
-            if (empty($languageIds)) {
-                $languageIds[] = isset($this->context->language->id) ? (int) $this->context->language->id : 1;
-            }
-            foreach ($languageIds as $idLang) {
-                $tax->name[$idLang] = 'Two surcharge VAT ' . $this->getTwoRoundAmount($ratePercent) . '%';
-            }
-            $tax->rate = $ratePercent;
-            $tax->active = 1;
-            if (!$tax->add()) {
-                return false;
-            }
-            $setup['id_tax'] = (int) $tax->id;
-
-            // Rate changed: re-point every existing per-country rule at the
-            // new Tax so previously-served countries keep working.
-            foreach ((array) $setup['rules'] as $ruleCountryId => $ruleId) {
-                $rule = new TaxRule((int) $ruleId);
-                if (Validate::isLoadedObject($rule)) {
-                    $rule->id_tax = (int) $tax->id;
-                    $rule->update();
-                } else {
-                    unset($setup['rules'][$ruleCountryId]);
-                }
-            }
-        }
-
-        // Rule for the cart's tax country: validate stored id, else create.
-        $ruleId = isset($setup['rules'][$countryId]) ? (int) $setup['rules'][$countryId] : 0;
-        $rule = $ruleId > 0 ? new TaxRule($ruleId) : null;
-        if ($rule === null || !Validate::isLoadedObject($rule) || (int) $rule->id_tax !== (int) $setup['id_tax']) {
-            if ($rule !== null && Validate::isLoadedObject($rule)) {
-                $rule->id_tax = (int) $setup['id_tax'];
-                $rule->update();
-            } else {
-                $rule = new TaxRule();
-                $rule->id_tax_rules_group = (int) $setup['id_group'];
-                $rule->id_country = $countryId;
-                $rule->id_state = 0;
-                $rule->zipcode_from = 0;
-                $rule->zipcode_to = 0;
-                $rule->id_tax = (int) $setup['id_tax'];
-                $rule->behavior = 0;
-                $rule->description = '';
-                if (!$rule->add()) {
-                    return false;
-                }
-                $setup['rules'][$countryId] = (int) $rule->id;
-            }
-        }
-
-        $setup['rate_percent'] = $ratePercent;
-        Configuration::updateValue(self::CONFIG_SURCHARGE_TAX_SETUP, json_encode($setup));
-
-        if ((int) $product->id_tax_rules_group !== (int) $setup['id_group']) {
-            $product->id_tax_rules_group = (int) $setup['id_group'];
-            $product->update();
             $this->flushTwoProductTaxRulesGroupCache((int) $product->id);
         }
 
@@ -7451,9 +7316,9 @@ class Twopayment extends PaymentModule
      * the product's group via Product::getIdTaxRulesGroupByIdProduct, which
      * memoises 'product_id_tax_rules_group_{id}_{shop}' in Cache. The value
      * gets primed with 0 during product creation, and Product::update does
-     * NOT clean it - so the very first request that creates the tax setup
-     * would price the fee line WITHOUT tax (gross == net) while the Two
-     * payload carries tax, and the stale line would then never self-correct
+     * NOT clean it - so the very first request that re-points the product's
+     * tax rules group would price the fee line WITHOUT tax (gross == net)
+     * while the Two payload carries tax, and the stale line would then never self-correct
      * (the sync no-op check compares net, which matches). Cleaning the exact
      * key here makes the first request price correctly.
      *
@@ -7899,8 +7764,8 @@ class Twopayment extends PaymentModule
                 return $result;
             }
 
-            if (!$this->ensureTwoSurchargeTaxSetupForCart($cart, $productId)) {
-                PrestaShopLogger::addLog('TwoPayment: Surcharge cart line skipped - tax setup could not be ensured for cart ' . (int) $cart->id, 3);
+            if (!$this->ensureTwoSurchargeProductTaxRulesGroup($productId)) {
+                PrestaShopLogger::addLog('TwoPayment: Surcharge cart line skipped - tax rules group could not be applied to product ' . (int) $productId . ' for cart ' . (int) $cart->id, 3);
                 return $result;
             }
 
@@ -7935,7 +7800,7 @@ class Twopayment extends PaymentModule
                     ' - expected (net/gross)=(' . $this->getTwoRoundAmount($expectedNet) . '/' . $this->getTwoRoundAmount($expectedGross) .
                     '), cart applied ' . ($written === null ? 'no line' :
                         '(net/gross)=(' . $this->getTwoRoundAmount($written['net']) . '/' . $this->getTwoRoundAmount($written['gross']) . ')') .
-                    '. Line removed; check the shop tax configuration for the surcharge tax rate.',
+                    '. Line removed; check the selected surcharge tax rules group configuration.',
                     3
                 );
                 $this->removeTwoSurchargeCartLineInternal($cart, $productId);
@@ -8327,11 +8192,15 @@ class Twopayment extends PaymentModule
             'options' => array('query' => $stepQuery, 'id' => 'id', 'name' => 'name'),
         );
         $inputs[] = array(
-            'type' => 'text',
-            'label' => $this->l('Surcharge Tax Rate (%)'),
-            'name' => 'PS_TWO_SURCHARGE_TAX_RATE',
-            'suffix' => '%',
-            'desc' => $this->l('Tax rate applied to the surcharge line sent to Two (e.g. 25 for 25%). Leave blank for no tax on the surcharge line.'),
+            'type' => 'select',
+            'label' => $this->l('Surcharge Tax Rules Group'),
+            'name' => self::CONFIG_SURCHARGE_TAX_RULES_GROUP,
+            'desc' => $this->l('Tax rules group applied to the payment terms fee - the same tax rules groups you assign to products. Country and state rules, combined rates and zero-rating apply exactly as they do for any product. Select "No tax" to never tax the fee.'),
+            'options' => array(
+                'query' => $this->getTwoSurchargeTaxRulesGroupOptions(),
+                'id' => 'id',
+                'name' => 'name',
+            ),
         );
         $inputs[] = array(
             'type' => 'html',
@@ -8414,6 +8283,59 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Dropdown options for the surcharge tax rules group: PrestaShop's
+     * "No tax" sentinel (id 0) followed by the merchant's active tax rules
+     * groups - the same list core's own product-edit page offers (its
+     * TaxRulesGroup::getTaxRulesGroupsForOptions duplicates a group per
+     * rate, so the deduplicated getTaxRulesGroups source is used with the
+     * same manual "No tax" prepend).
+     *
+     * @return array<int,array{id:int,name:string}>
+     */
+    protected function getTwoSurchargeTaxRulesGroupOptions()
+    {
+        $options = array(
+            array('id' => 0, 'name' => $this->l('No tax')),
+        );
+        $groups = TaxRulesGroup::getTaxRulesGroups(true);
+        foreach ((array) $groups as $group) {
+            if (!isset($group['id_tax_rules_group'])) {
+                continue;
+            }
+            $options[] = array(
+                'id' => (int) $group['id_tax_rules_group'],
+                'name' => (string) $group['name'],
+            );
+        }
+
+        return $options;
+    }
+
+    /**
+     * Pre-selection for the surcharge tax rules group dropdown: the stored
+     * selection, else the merchant's "standard" group - the one most of
+     * their catalog uses (Product::getIdTaxRulesGroupMostUsed, the same
+     * default heuristic core's product page uses for new products). Display
+     * default only: runtime behaviour for an UNSAVED config stays "No tax"
+     * (getTwoSurchargeTaxRulesGroupId) - the module never taxes the fee on
+     * a rate the merchant did not confirm by saving.
+     *
+     * @return int
+     */
+    protected function getTwoSurchargeTaxRulesGroupFormDefault()
+    {
+        $stored = Configuration::get(self::CONFIG_SURCHARGE_TAX_RULES_GROUP);
+        if ($stored !== false && $stored !== null && $stored !== '' && is_numeric($stored)) {
+            return max(0, (int) $stored);
+        }
+        if (method_exists('Product', 'getIdTaxRulesGroupMostUsed')) {
+            return max(0, (int) Product::getIdTaxRulesGroupMostUsed());
+        }
+
+        return 0;
+    }
+
+    /**
      * Current values for the surcharge form fields.
      *
      * @return array
@@ -8426,7 +8348,10 @@ class Twopayment extends PaymentModule
             'PS_TWO_SURCHARGE_LINE_DESC' => Tools::getValue('PS_TWO_SURCHARGE_LINE_DESC', Configuration::get('PS_TWO_SURCHARGE_LINE_DESC')),
             'PS_TWO_SURCHARGE_ROUNDING_BASIS' => Tools::getValue('PS_TWO_SURCHARGE_ROUNDING_BASIS', Configuration::get('PS_TWO_SURCHARGE_ROUNDING_BASIS')),
             'PS_TWO_SURCHARGE_ROUNDING_STEP' => Tools::getValue('PS_TWO_SURCHARGE_ROUNDING_STEP', Configuration::get('PS_TWO_SURCHARGE_ROUNDING_STEP')),
-            'PS_TWO_SURCHARGE_TAX_RATE' => Tools::getValue('PS_TWO_SURCHARGE_TAX_RATE', Configuration::get('PS_TWO_SURCHARGE_TAX_RATE')),
+            self::CONFIG_SURCHARGE_TAX_RULES_GROUP => (int) Tools::getValue(
+                self::CONFIG_SURCHARGE_TAX_RULES_GROUP,
+                $this->getTwoSurchargeTaxRulesGroupFormDefault()
+            ),
         );
         foreach ($this->getAvailablePaymentTerms() as $days) {
             $days = (int) $days;
@@ -8453,9 +8378,12 @@ class Twopayment extends PaymentModule
         if ($step !== '' && !array_key_exists($step, $this->getTwoRoundingStepOptions())) {
             $this->errors[] = $this->l('Rounding step must be one of the offered values.');
         }
-        $taxRate = Tools::getValue('PS_TWO_SURCHARGE_TAX_RATE');
-        if ($taxRate !== false && $taxRate !== '' && (!is_numeric($taxRate) || (float) $taxRate < 0)) {
-            $this->errors[] = $this->l('Surcharge tax rate must be a non-negative number.');
+        $groupRaw = Tools::getValue(self::CONFIG_SURCHARGE_TAX_RULES_GROUP);
+        if ($groupRaw !== false && $groupRaw !== '') {
+            $groupId = is_numeric($groupRaw) ? (int) $groupRaw : -1;
+            if ($groupId < 0 || ($groupId > 0 && !Validate::isLoadedObject(new TaxRulesGroup($groupId)))) {
+                $this->errors[] = $this->l('Surcharge tax rules group must be "No tax" or one of the shop\'s existing tax rules groups.');
+            }
         }
         foreach ($this->getAvailablePaymentTerms() as $days) {
             $days = (int) $days;
@@ -8491,13 +8419,23 @@ class Twopayment extends PaymentModule
         }
         Configuration::updateValue('PS_TWO_SURCHARGE_ROUNDING_STEP', $step);
 
-        // Same coercion discipline as the grid: invalid input is stored as
-        // blank (→ getTwoSurchargeTaxRate() falls back to 0.0), never fatal.
-        $taxRateRaw = trim((string) Tools::getValue('PS_TWO_SURCHARGE_TAX_RATE', ''));
-        Configuration::updateValue(
-            'PS_TWO_SURCHARGE_TAX_RATE',
-            (is_numeric($taxRateRaw) && (float) $taxRateRaw >= 0) ? (string) (float) $taxRateRaw : ''
-        );
+        // Same coercion discipline as the grid: invalid/unknown input is
+        // stored as 0 ("No tax" - getTwoSurchargeTaxRulesGroupId's fail-safe),
+        // never fatal. A group id is only stored when the group exists.
+        $groupRaw = trim((string) Tools::getValue(self::CONFIG_SURCHARGE_TAX_RULES_GROUP, ''));
+        $groupId = (is_numeric($groupRaw) && (int) $groupRaw > 0) ? (int) $groupRaw : 0;
+        if ($groupId > 0 && !Validate::isLoadedObject(new TaxRulesGroup($groupId))) {
+            $groupId = 0;
+        }
+        Configuration::updateValue(self::CONFIG_SURCHARGE_TAX_RULES_GROUP, (string) $groupId);
+
+        // Apply the selection to the hidden fee product immediately (the
+        // same id_tax_rules_group field every real Product uses); if the
+        // product does not exist yet, lazy creation picks the config up.
+        $productId = (int) Configuration::get(self::CONFIG_SURCHARGE_PRODUCT_ID);
+        if ($productId > 0) {
+            $this->ensureTwoSurchargeProductTaxRulesGroup($productId);
+        }
 
         foreach ($this->getAvailablePaymentTerms() as $days) {
             $days = (int) $days;
