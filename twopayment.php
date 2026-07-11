@@ -7083,17 +7083,46 @@ class Twopayment extends PaymentModule
             return 0;
         }
 
-        try {
-            $productId = $this->createTwoSurchargeCartProduct();
-        } catch (Exception $e) {
-            PrestaShopLogger::addLog('TwoPayment: Failed creating surcharge cart product - ' . $e->getMessage(), 3);
+        // Advisory lock: two concurrent FIRST-EVER requests (fresh install,
+        // two buyers selecting Two near-simultaneously) would otherwise each
+        // pass the read-check above and create a duplicate hidden product,
+        // orphaning the loser's copy forever.
+        if (!$this->acquireTwoDbLock('two_surcharge_product_create')) {
+            PrestaShopLogger::addLog('TwoPayment: Surcharge product creation lock not acquired', 2);
             return 0;
         }
-        if ($productId > 0) {
-            Configuration::updateValue(self::CONFIG_SURCHARGE_PRODUCT_ID, $productId);
-        }
+        try {
+            // Double-check UNDER the lock, straight from the DB: the winner
+            // of the race wrote Configuration in ITS request, which this
+            // request's per-request Configuration cache cannot see.
+            $storedId = (int) Db::getInstance()->getValue(
+                'SELECT `value` FROM `' . _DB_PREFIX_ . "configuration` WHERE `name` = '" . pSQL(self::CONFIG_SURCHARGE_PRODUCT_ID) . "'"
+            );
+            if ($storedId > 0) {
+                $product = new Product($storedId);
+                if (
+                    Validate::isLoadedObject($product)
+                    && isset($product->reference)
+                    && (string) $product->reference === self::TWO_SURCHARGE_PRODUCT_REFERENCE
+                ) {
+                    return $storedId;
+                }
+            }
 
-        return $productId;
+            try {
+                $productId = $this->createTwoSurchargeCartProduct();
+            } catch (Exception $e) {
+                PrestaShopLogger::addLog('TwoPayment: Failed creating surcharge cart product - ' . $e->getMessage(), 3);
+                return 0;
+            }
+            if ($productId > 0) {
+                Configuration::updateValue(self::CONFIG_SURCHARGE_PRODUCT_ID, $productId);
+            }
+
+            return $productId;
+        } finally {
+            $this->releaseTwoDbLock('two_surcharge_product_create');
+        }
     }
 
     /**
@@ -7203,7 +7232,42 @@ class Twopayment extends PaymentModule
             return false;
         }
 
-        $setup = json_decode((string) Configuration::get(self::CONFIG_SURCHARGE_TAX_SETUP), true);
+        // Advisory lock around the whole read-validate-create sequence: two
+        // concurrent first-time carts would otherwise both see an empty
+        // setup and create duplicate Tax/TaxRulesGroup/TaxRule graphs, with
+        // only one surviving in Configuration and the rest orphaned.
+        if (!$this->acquireTwoDbLock('two_surcharge_tax_setup')) {
+            PrestaShopLogger::addLog('TwoPayment: Surcharge tax setup lock not acquired', 2);
+            return false;
+        }
+        try {
+            return $this->ensureTwoSurchargeTaxSetupForCartLocked($product, $ratePercent, $countryId);
+        } finally {
+            $this->releaseTwoDbLock('two_surcharge_tax_setup');
+        }
+    }
+
+    /**
+     * Body of ensureTwoSurchargeTaxSetupForCart, executed while holding the
+     * two_surcharge_tax_setup advisory lock.
+     *
+     * @param Product $product
+     * @param float $ratePercent
+     * @param int $countryId
+     * @return bool
+     */
+    protected function ensureTwoSurchargeTaxSetupForCartLocked($product, $ratePercent, $countryId)
+    {
+        // Read the tracked setup UNDER the lock, straight from the DB: a
+        // concurrent winner's Configuration write is invisible to this
+        // request's per-request Configuration cache.
+        $setupJson = Db::getInstance()->getValue(
+            'SELECT `value` FROM `' . _DB_PREFIX_ . "configuration` WHERE `name` = '" . pSQL(self::CONFIG_SURCHARGE_TAX_SETUP) . "'"
+        );
+        if ($setupJson === false || $setupJson === null || $setupJson === '') {
+            $setupJson = (string) Configuration::get(self::CONFIG_SURCHARGE_TAX_SETUP);
+        }
+        $setup = json_decode((string) $setupJson, true);
         if (!is_array($setup)) {
             $setup = array();
         }

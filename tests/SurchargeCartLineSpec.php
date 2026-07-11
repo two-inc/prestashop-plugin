@@ -43,6 +43,8 @@ final class SurchargeCartLineSpec
         self::testStaleSequencedSyncRequestIsIgnoredServerSide();
         self::testAuthoritativeSyncBypassesSequenceGuard();
         self::testSequencedSyncFailsSoftWhenLockHeldByConcurrentRequest();
+        self::testConcurrentFirstUseCreatesNoDuplicateHiddenProduct();
+        self::testConcurrentFirstUseCreatesNoDuplicateTaxSetup();
     }
 
     /* ---- fixtures ---- */
@@ -484,6 +486,63 @@ final class SurchargeCartLineSpec
         TinyAssert::false($result['changed']);
         TinyAssert::count(0, self::feeLines());
         unset(StubStore::$dbLocks['two_surcharge_sync_' . self::CART_ID]);
+    }
+
+    /* ---- concurrent first-use creation guards (advisory locks) ---- */
+
+    private static function testConcurrentFirstUseCreatesNoDuplicateHiddenProduct(): void
+    {
+        $module = self::makeModule();
+        self::makeCart();
+
+        // Scenario 1: another request holds the creation lock RIGHT NOW.
+        // This request must not create a second product; it backs off (0)
+        // and the next sync retries.
+        StubStore::$dbLocks['two_surcharge_product_create'] = true;
+        $productsBefore = count(StubStore::$products);
+        TinyAssert::same(0, $module->getTwoSurchargeCartProductId(true));
+        TinyAssert::same($productsBefore, count(StubStore::$products), 'lock loser must not create a product');
+        unset(StubStore::$dbLocks['two_surcharge_product_create']);
+
+        // Scenario 2: the concurrent winner finished and wrote the id to the
+        // configuration TABLE (this request's Configuration cache is stale -
+        // the stub's shared store stands in for the DB read under the lock).
+        // The double-check under the lock must adopt the winner's product
+        // instead of creating a duplicate.
+        $winnerId = $module->getTwoSurchargeCartProductId(true);
+        TinyAssert::true($winnerId > 0);
+        $productsAfterWinner = count(StubStore::$products);
+        TinyAssert::same($winnerId, $module->getTwoSurchargeCartProductId(true));
+        TinyAssert::same($productsAfterWinner, count(StubStore::$products), 'no duplicate hidden product after the race');
+    }
+
+    private static function testConcurrentFirstUseCreatesNoDuplicateTaxSetup(): void
+    {
+        $module = self::makeModule();
+        $cart = self::makeCart();
+
+        // Another request holds the tax-setup lock: ensure fails soft (sync
+        // reports failure, frontend retries) and creates NO tax objects.
+        StubStore::$dbLocks['two_surcharge_tax_setup'] = true;
+        $result = $module->syncTwoSurchargeCartLine($cart, true);
+        TinyAssert::false($result['success']);
+        TinyAssert::count(0, StubStore::$taxes, 'lock loser must not create a Tax');
+        TinyAssert::count(0, StubStore::$taxRulesGroups, 'lock loser must not create a TaxRulesGroup');
+        TinyAssert::count(0, StubStore::$taxRules, 'lock loser must not create a TaxRule');
+        TinyAssert::count(0, self::feeLines());
+        unset(StubStore::$dbLocks['two_surcharge_tax_setup']);
+
+        // Lock released (winner finished): setup proceeds and repeated syncs
+        // reuse the SAME single object graph.
+        $module->syncTwoSurchargeCartLine($cart, true);
+        TinyAssert::count(1, StubStore::$taxes);
+        TinyAssert::count(1, StubStore::$taxRulesGroups);
+        TinyAssert::count(1, StubStore::$taxRules);
+        Context::getContext()->cookie->two_payment_term = 60;
+        $module->syncTwoSurchargeCartLine($cart, true); // amount change forces a re-ensure
+        TinyAssert::count(1, StubStore::$taxes, 'tax graph must be reused, not duplicated');
+        TinyAssert::count(1, StubStore::$taxRulesGroups);
+        TinyAssert::count(1, StubStore::$taxRules);
     }
 
     /* ---- requirement 1: hidden product shape ---- */
