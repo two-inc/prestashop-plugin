@@ -169,6 +169,7 @@ class Twopayment extends PaymentModule
         $required_hooks = array(
             'actionObjectOrderHistoryAddBefore',
             'actionFrontControllerInitAfter',
+            'actionObjectOrderDetailAddBefore',
         );
 
         foreach ($required_hooks as $hook_name) {
@@ -261,6 +262,7 @@ class Twopayment extends PaymentModule
             $this->registerHook('actionAdminOrdersTrackingNumberUpdate') &&
             $this->registerHook('actionCustomerAddressSave') &&
             $this->registerHook('actionFrontControllerInitAfter') &&
+            $this->registerHook('actionObjectOrderDetailAddBefore') &&
             $this->installTwoInvoiceAdminTab() &&
             $this->installTwoSettings() &&
             $this->createTwoOrderState() &&
@@ -494,6 +496,7 @@ class Twopayment extends PaymentModule
             $this->unregisterHook('actionAdminOrdersTrackingNumberUpdate') &&
             $this->unregisterHook('actionCustomerAddressSave') &&
             $this->unregisterHook('actionFrontControllerInitAfter') &&
+            $this->unregisterHook('actionObjectOrderDetailAddBefore') &&
             $this->uninstallTwoInvoiceAdminTab() &&
             $this->uninstallTwoSettings() &&
             $this->deleteTwoTables();
@@ -7881,6 +7884,81 @@ class Twopayment extends PaymentModule
         } catch (Exception $e) {
             PrestaShopLogger::addLog('TwoPayment: Surcharge stale-guard failed - ' . $e->getMessage(), 2);
         }
+    }
+
+    /**
+     * Guard the ORDER (post-creation) against ever gaining an illegitimate
+     * surcharge fee row. All the idempotency logic in this feature protects
+     * the CART before order creation; nothing in core stops a back-office
+     * employee from using the AdminOrders "Add product" search to add the
+     * hidden "Payment terms fee" product to an already-placed, already-
+     * invoiced Two order - a real duplicate financial line. OrderDetail rows
+     * are only ever legitimately created for this product by PrestaShop's
+     * own order-creation pipeline (validateOrder over a cart this module
+     * synced), which runs in a FRONT context and always as the product's
+     * FIRST row on the order.
+     *
+     * Fires on ObjectModel::add for every OrderDetail (verified against PS8
+     * core: OrderDetail::create() -> save() -> add() -> this hook, both at
+     * order creation and in the BO AddProductToOrderHandler). Throwing here
+     * aborts the insert; the BO controller catches the exception and shows
+     * it as an admin-visible error.
+     *
+     * @param array $params ['object' => OrderDetail]
+     * @throws PrestaShopException when the add must be blocked
+     */
+    public function hookActionObjectOrderDetailAddBefore($params)
+    {
+        $orderDetail = isset($params['object']) ? $params['object'] : null;
+        if (!is_object($orderDetail) || !isset($orderDetail->product_id)) {
+            return;
+        }
+
+        $surchargeProductId = $this->getTwoSurchargeCartProductId(false);
+        if ($surchargeProductId <= 0 || (int) $orderDetail->product_id !== $surchargeProductId) {
+            return;
+        }
+
+        // Manual back-office adds are NEVER legitimate for this product:
+        // only the module's own automated cart-sync + order creation may
+        // materialise it.
+        if ($this->isTwoAdminContext()) {
+            throw new PrestaShopException(
+                'The payment terms fee product is managed automatically by the Two payment module and cannot be added to an order manually.'
+            );
+        }
+
+        // Belt-and-braces for any other path: a SECOND fee row on the same
+        // order is always a duplicate charge - fail loudly, never silently.
+        $idOrder = isset($orderDetail->id_order) ? (int) $orderDetail->id_order : 0;
+        if ($idOrder > 0) {
+            $existingRows = (int) Db::getInstance()->getValue(
+                'SELECT COUNT(*) FROM `' . _DB_PREFIX_ . 'order_detail` WHERE `id_order` = ' . $idOrder .
+                ' AND `product_id` = ' . $surchargeProductId
+            );
+            if ($existingRows >= 1) {
+                throw new PrestaShopException(
+                    'Order ' . $idOrder . ' already carries the payment terms fee line; refusing to add a duplicate fee row.'
+                );
+            }
+        }
+    }
+
+    /**
+     * Whether the current request executes in a back-office context.
+     * Primary signal is the controller_type PrestaShop stamps on every
+     * controller; _PS_ADMIN_DIR_ is the fallback for early/legacy paths.
+     *
+     * @return bool
+     */
+    protected function isTwoAdminContext()
+    {
+        $controller = isset($this->context->controller) ? $this->context->controller : null;
+        if (is_object($controller) && isset($controller->controller_type)) {
+            return in_array((string) $controller->controller_type, array('admin', 'moduleadmin'), true);
+        }
+
+        return defined('_PS_ADMIN_DIR_');
     }
 
     /**

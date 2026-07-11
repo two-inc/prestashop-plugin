@@ -150,6 +150,10 @@ namespace {
         }
     }
 
+    class PrestaShopException extends Exception
+    {
+    }
+
     class Module
     {
         public int $id = 1;

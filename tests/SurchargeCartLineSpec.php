@@ -45,6 +45,9 @@ final class SurchargeCartLineSpec
         self::testSequencedSyncFailsSoftWhenLockHeldByConcurrentRequest();
         self::testConcurrentFirstUseCreatesNoDuplicateHiddenProduct();
         self::testConcurrentFirstUseCreatesNoDuplicateTaxSetup();
+        self::testAdminManualAddOfFeeProductToOrderIsBlocked();
+        self::testDuplicateFeeOrderDetailRowIsRejectedInAnyContext();
+        self::testFirstFeeOrderDetailRowFromOrderCreationIsAllowed();
     }
 
     /* ---- fixtures ---- */
@@ -543,6 +546,91 @@ final class SurchargeCartLineSpec
         TinyAssert::count(1, StubStore::$taxes, 'tax graph must be reused, not duplicated');
         TinyAssert::count(1, StubStore::$taxRulesGroups);
         TinyAssert::count(1, StubStore::$taxRules);
+    }
+
+    /* ---- order-level guard: no manual/duplicate fee rows (BO order edit) ---- */
+
+    /** Minimal stand-in for the OrderDetail the hook receives. */
+    private static function makeOrderDetailStub(int $productId, int $idOrder): \stdClass
+    {
+        $orderDetail = new \stdClass();
+        $orderDetail->product_id = $productId;
+        $orderDetail->id_order = $idOrder;
+        return $orderDetail;
+    }
+
+    private static function testAdminManualAddOfFeeProductToOrderIsBlocked(): void
+    {
+        $module = self::makeModule();
+        self::makeCart();
+        $feeProductId = $module->getTwoSurchargeCartProductId(true);
+
+        // Back-office order edit: employee finds the hidden product through
+        // the AdminOrders "Add product" search. Must throw - even as the
+        // FIRST row (this product is module-managed only).
+        $adminController = new \stdClass();
+        $adminController->controller_type = 'admin';
+        Context::getContext()->controller = $adminController;
+
+        TinyAssert::throws(static function () use ($module, $feeProductId) {
+            $module->hookActionObjectOrderDetailAddBefore([
+                'object' => self::makeOrderDetailStub($feeProductId, 7001),
+            ]);
+        }, 'cannot be added to an order manually');
+
+        // Ordinary catalog products are untouched by the guard.
+        $module->hookActionObjectOrderDetailAddBefore([
+            'object' => self::makeOrderDetailStub(9401, 7001),
+        ]);
+    }
+
+    private static function testDuplicateFeeOrderDetailRowIsRejectedInAnyContext(): void
+    {
+        $module = self::makeModule();
+        self::makeCart();
+        $feeProductId = $module->getTwoSurchargeCartProductId(true);
+
+        // Front context (order-creation pipeline), but the order ALREADY
+        // carries the fee row: a second one is always a duplicate charge.
+        $frontController = new \stdClass();
+        $frontController->controller_type = 'front';
+        Context::getContext()->controller = $frontController;
+        StubStore::$orderDetails[] = ['id_order' => 7002, 'product_id' => $feeProductId];
+
+        TinyAssert::throws(static function () use ($module, $feeProductId) {
+            $module->hookActionObjectOrderDetailAddBefore([
+                'object' => self::makeOrderDetailStub($feeProductId, 7002),
+            ]);
+        }, 'refusing to add a duplicate fee row');
+
+        // A DIFFERENT order without a fee row is unaffected.
+        $module->hookActionObjectOrderDetailAddBefore([
+            'object' => self::makeOrderDetailStub($feeProductId, 7003),
+        ]);
+    }
+
+    private static function testFirstFeeOrderDetailRowFromOrderCreationIsAllowed(): void
+    {
+        $module = self::makeModule();
+        self::makeCart();
+        $feeProductId = $module->getTwoSurchargeCartProductId(true);
+
+        // Legitimate path: validateOrder creating the order's FIRST fee row
+        // in a front context - the hook must not interfere.
+        $frontController = new \stdClass();
+        $frontController->controller_type = 'front';
+        Context::getContext()->controller = $frontController;
+
+        $module->hookActionObjectOrderDetailAddBefore([
+            'object' => self::makeOrderDetailStub($feeProductId, 7004),
+        ]);
+
+        // And when the hidden product was never created (module never used),
+        // the guard is inert for every product.
+        StubStore::reset();
+        $module->hookActionObjectOrderDetailAddBefore([
+            'object' => self::makeOrderDetailStub(12345, 7005),
+        ]);
     }
 
     /* ---- requirement 1: hidden product shape ---- */
