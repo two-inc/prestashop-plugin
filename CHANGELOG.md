@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Buyer surcharge shown as a real PrestaShop cart line** (TWO-24739 parity)
+  - Selecting Two at checkout now adds the payment-terms fee as a hidden virtual product line, so the fee appears in PrestaShop's own order summary, cart, order and invoice totals - previously it existed only on the Two-side invoice
+  - The line's net amount comes from the same live fee quote as the Two order payload (single computation path); its tax applies the admin-configured Surcharge Tax Rate through a module-managed tax rules group
+  - Selecting any other payment method removes the line; add/remove is idempotent against re-clicks, reloads and resumed carts (front-controller stale-line guard)
+  - Order creation self-heals the line server-side and fails closed if the cart's fee and the Two payload's fee ever diverge beyond rounding tolerance
 - **Graceful invoice retrieval when order is not yet fulfilled** (TWO-25042, part of TWO-25040)
   - Invoice PDF downloads (customer order page and admin order view) are now routed through module controllers instead of linking the browser directly to the payment API
   - On `400 ORDER_NOT_FULFILLED` the module checks the order state: `FULFILLING` shows an informational "not ready yet" notice, `FULFILLED` retries the fetch once, and any other state is reported with the state named

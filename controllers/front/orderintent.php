@@ -61,6 +61,9 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             case 'fetchTermSurcharges':
                 $this->ajaxProcessFetchTermSurcharges();
                 break;
+            case 'syncSurchargeLine':
+                $this->ajaxProcessSyncSurchargeLine();
+                break;
             case 'checkOrderIntent':
                 $this->ajaxProcessCheckOrderIntent();
                 break;
@@ -116,6 +119,31 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             return;
         }
         $this->sendJsonResponse(json_encode($this->module->getTwoOfferedTermSurchargeAmounts()));
+    }
+
+    /**
+     * Reconcile the cart's hidden surcharge line with the buyer's payment
+     * selection (selected=1 -> exactly one line at the current quoted fee,
+     * selected=0 -> no line). Idempotent by contract of
+     * Twopayment::syncTwoSurchargeCartLine: repeat calls with the same
+     * selection are no-ops ({changed:false}), so re-clicks, reloads and
+     * re-fired change events can never stack duplicate lines. Fail-soft:
+     * always answers 200 JSON; a {success:false} tells the JS nothing was
+     * reconciled (the create-time parity gate remains the hard guarantee).
+     */
+    public function ajaxProcessSyncSurchargeLine()
+    {
+        if (!$this->validateAjaxToken()) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Invalid token')]));
+            return;
+        }
+        if (!$this->isPost()) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Only POST requests allowed')]));
+            return;
+        }
+        $selected = (int) Tools::getValue('selected') === 1;
+        $result = $this->module->syncTwoSurchargeCartLine($this->context->cart, $selected);
+        $this->sendJsonResponse(json_encode($result));
     }
 
     /**

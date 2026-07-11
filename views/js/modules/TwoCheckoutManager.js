@@ -26,7 +26,12 @@ class TwoCheckoutManager {
         this._intentCooldownMs = 800;
         this._lastIntentRunAt = 0;
         this._initialIntentTriggered = false;
-        
+        // Monotonic sequence for surcharge cart-line syncs: only the LATEST
+        // selection's response may drive the UI (last-wins against re-ordered
+        // AJAX responses when the buyer clicks between options quickly).
+        this._surchargeSyncSeq = 0;
+        this._surchargeRestoreKey = 'two_restore_payment_selection';
+
         this.init();
     }
 
@@ -59,7 +64,12 @@ class TwoCheckoutManager {
         
         // Setup PrestaShop-native event listeners
         this.setupPrestaShopEventListeners();
-        
+
+        // If the native cart refresh (full payment-step reload) was triggered
+        // by a surcharge line sync, restore the payment option the buyer had
+        // clicked - the reload wipes radio state.
+        this.restorePaymentSelectionAfterCartRefresh();
+
         this.isInitialized = true;
     }
     
@@ -352,7 +362,12 @@ class TwoCheckoutManager {
     handlePaymentOptionChange(radioButton) {
         // Check if Two payment is selected using various patterns
         const isTwoSelected = this.isTwoPaymentSelected(radioButton);
-        
+
+        // Mirror the buyer surcharge as a real PrestaShop cart line (add on
+        // Two selection, remove on any other selection). Server-side endpoint
+        // is idempotent, so repeated change events are harmless.
+        this.syncSurchargeCartLine(isTwoSelected);
+
         if (isTwoSelected && this.config.orderIntentEnabled) {
             // Ensure orderIntent is initialized even after dynamic DOM changes
             if (!this.orderIntent && window.TwoOrderIntent) {
@@ -374,6 +389,122 @@ class TwoCheckoutManager {
         }
     }
     
+    /**
+     * Reconcile the cart's hidden surcharge line with the current payment
+     * selection via the syncSurchargeLine AJAX action, then - only when the
+     * server reports an actual cart change - trigger PrestaShop's NATIVE
+     * cart-refresh plumbing so the order summary re-renders itself.
+     *
+     * FAILURE HANDLING (documented decision): the call is fail-soft in the
+     * UI - one silent retry, then a console warning; checkout is never
+     * blocked and the Place-order button is never touched from here. The
+     * HARD guarantee that a buyer can never complete a Two order whose
+     * PrestaShop total diverges from the Two invoice lives server-side: the
+     * order-create path self-heals the cart line and fails closed on any
+     * residual mismatch (Twopayment::buildTwoOrderPricingData parity gate).
+     * A lost remove-sync for OTHER payment methods is likewise covered
+     * server-side (actionFrontControllerInitAfter stale-guard strips the
+     * line before any other payment module computes totals).
+     *
+     * @param {boolean} selected Two is the buyer's selected payment option
+     * @returns {Promise<object>} the endpoint's {success, changed, present}
+     */
+    syncSurchargeCartLine(selected) {
+        if (!window.twopayment || !window.twopayment.surcharge_cart_line ||
+            !window.twopayment.order_intent_url || !window.twopayment.ajax_token ||
+            typeof jQuery === 'undefined') {
+            return Promise.resolve({ success: true, changed: false, present: false });
+        }
+
+        const seq = ++this._surchargeSyncSeq;
+        const requestOnce = () => new Promise((resolve, reject) => {
+            jQuery.ajax({
+                url: window.twopayment.order_intent_url,
+                type: 'POST',
+                dataType: 'json',
+                timeout: 10000,
+                data: {
+                    ajax: 1,
+                    action: 'syncSurchargeLine',
+                    token: window.twopayment.ajax_token,
+                    selected: selected ? 1 : 0
+                }
+            }).done(resolve).fail(reject);
+        });
+
+        return requestOnce()
+            .catch(() => requestOnce()) // one silent retry on transport failure
+            .catch(() => ({ success: false, changed: false, present: false }))
+            .then((response) => {
+                if (seq !== this._surchargeSyncSeq) {
+                    // A newer selection superseded this sync; let it drive the UI.
+                    return response;
+                }
+                if (response && response.success && response.changed) {
+                    this.triggerNativeCartRefresh();
+                } else if (!response || !response.success) {
+                    console.warn('Two Payment: surcharge cart line sync failed; server-side order-create gate remains authoritative.');
+                }
+                return response;
+            });
+    }
+
+    /**
+     * Trigger PrestaShop core's own cart-refresh pipeline (no hand-rolled
+     * summary re-render). Empirically verified against PS8 themes/core.js:
+     * core listens on the 'updateCart' event, POSTs the .js-cart
+     * data-refresh-url, replaces the summary partials, and - because the
+     * payment step carries the .js-cart-payment-step-refresh marker - fully
+     * reloads the checkout page (then emits 'updatedCart' post-render). The
+     * handler dereferences event.resp.cart unconditionally, so a cart object
+     * (prestashop.cart or {}) must always be passed.
+     */
+    triggerNativeCartRefresh() {
+        try {
+            const checkedRadio = document.querySelector('input[name="payment-option"]:checked, .payment-options input[type="radio"]:checked');
+            if (checkedRadio && checkedRadio.id) {
+                sessionStorage.setItem(this._surchargeRestoreKey, checkedRadio.id);
+            }
+        } catch (e) {
+            // sessionStorage unavailable: reload still happens, buyer re-picks manually.
+        }
+
+        if (window.prestashop && typeof window.prestashop.emit === 'function') {
+            window.prestashop.emit('updateCart', {
+                reason: { linkAction: 'twoSurchargeSync' },
+                resp: { cart: (window.prestashop && window.prestashop.cart) || {} }
+            });
+        }
+    }
+
+    /**
+     * After the native payment-step reload, re-check the payment option the
+     * buyer had clicked and re-fire its change event so all listeners
+     * (PrestaShop core's option toggling, our own handler) rebuild their
+     * state. The server-side sync endpoint is idempotent, so the re-fired
+     * change cannot loop: it reports changed=false and no refresh is
+     * triggered again.
+     */
+    restorePaymentSelectionAfterCartRefresh() {
+        let radioId = null;
+        try {
+            radioId = sessionStorage.getItem(this._surchargeRestoreKey);
+            if (radioId !== null) {
+                sessionStorage.removeItem(this._surchargeRestoreKey);
+            }
+        } catch (e) {
+            return;
+        }
+        if (!radioId) {
+            return;
+        }
+        const radio = document.getElementById(radioId);
+        if (radio && !radio.checked) {
+            radio.checked = true;
+            radio.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+    }
+
     /**
      * ENHANCED: Check if Two payment is selected (theme-independent with better detection)
      */
@@ -1339,6 +1470,14 @@ class TwoCheckoutManager {
                             dataType: 'json',
                             data: { ajax: 1, action: 'savePaymentTerm', token: window.twopayment.ajax_token, days: days },
                             timeout: 10000
+                        }).done(() => {
+                            // The surcharge amount is term-dependent: with Two
+                            // selected, re-quote and update the cart line for
+                            // the newly persisted term (idempotent server-side;
+                            // no-op when the amount is unchanged).
+                            if (this.isTwoPaymentSelected()) {
+                                this.syncSurchargeCartLine(true);
+                            }
                         }).fail((xhr, statusText) => {
                             if (statusText !== 'abort') {
                                 console.error('Two Payment: Error saving term:', statusText);
