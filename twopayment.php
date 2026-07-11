@@ -521,9 +521,63 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_USE_ACCOUNT_TYPE');
         Configuration::deleteByName('PS_TWO_DEBUG_MODE');
         $this->deleteTwoSurchargeCartProduct();
+        $this->deleteTwoSurchargeTaxSetup();
         Configuration::deleteByName(self::CONFIG_SURCHARGE_PRODUCT_ID);
         Configuration::deleteByName(self::CONFIG_SURCHARGE_TAX_SETUP);
         return true;
+    }
+
+    /**
+     * Best-effort removal of the module-managed Tax/TaxRulesGroup/TaxRule
+     * graph tracked in CONFIG_SURCHARGE_TAX_SETUP at uninstall. Historical
+     * orders keep their own copied tax rates on order_detail rows, so
+     * deleting the objects does not damage them. Never blocks uninstall.
+     */
+    protected function deleteTwoSurchargeTaxSetup()
+    {
+        try {
+            $setup = json_decode((string) Configuration::get(self::CONFIG_SURCHARGE_TAX_SETUP), true);
+            if (!is_array($setup)) {
+                return;
+            }
+
+            foreach ((array) (isset($setup['rules']) ? $setup['rules'] : array()) as $ruleId) {
+                try {
+                    if ((int) $ruleId > 0 && class_exists('TaxRule')) {
+                        $rule = new TaxRule((int) $ruleId);
+                        if (Validate::isLoadedObject($rule) && method_exists($rule, 'delete')) {
+                            $rule->delete();
+                        }
+                    }
+                } catch (Exception $e) {
+                    PrestaShopLogger::addLog('TwoPayment: Failed deleting surcharge TaxRule ' . (int) $ruleId . ' at uninstall - ' . $e->getMessage(), 2);
+                }
+            }
+
+            try {
+                if (!empty($setup['id_group']) && class_exists('TaxRulesGroup')) {
+                    $group = new TaxRulesGroup((int) $setup['id_group']);
+                    if (Validate::isLoadedObject($group) && method_exists($group, 'delete')) {
+                        $group->delete();
+                    }
+                }
+            } catch (Exception $e) {
+                PrestaShopLogger::addLog('TwoPayment: Failed deleting surcharge TaxRulesGroup at uninstall - ' . $e->getMessage(), 2);
+            }
+
+            try {
+                if (!empty($setup['id_tax']) && class_exists('Tax')) {
+                    $tax = new Tax((int) $setup['id_tax']);
+                    if (Validate::isLoadedObject($tax) && method_exists($tax, 'delete')) {
+                        $tax->delete();
+                    }
+                }
+            } catch (Exception $e) {
+                PrestaShopLogger::addLog('TwoPayment: Failed deleting surcharge Tax at uninstall - ' . $e->getMessage(), 2);
+            }
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Failed deleting surcharge tax setup at uninstall - ' . $e->getMessage(), 2);
+        }
     }
 
     /**
@@ -7078,6 +7132,26 @@ class Twopayment extends PaymentModule
                 && (string) $product->reference === self::TWO_SURCHARGE_PRODUCT_REFERENCE
             ) {
                 return $productId;
+            }
+            // Stored id no longer points at OUR product. If the object still
+            // exists AND carries our hidden-fee shape (virtual + invisible -
+            // e.g. its reference was edited in the BO), delete it best-effort
+            // so it is not orphaned forever behind its replacement. A
+            // recycled id pointing at a real catalog product will not match
+            // the shape and is never touched.
+            if (
+                Validate::isLoadedObject($product)
+                && (int) $product->is_virtual === 1
+                && (string) $product->visibility === 'none'
+            ) {
+                try {
+                    if (method_exists($product, 'delete')) {
+                        $product->delete();
+                        PrestaShopLogger::addLog('TwoPayment: Deleted stale surcharge product ' . $productId . ' (reference mismatch)', 2);
+                    }
+                } catch (Exception $e) {
+                    PrestaShopLogger::addLog('TwoPayment: Failed deleting stale surcharge product ' . $productId . ' - ' . $e->getMessage(), 2);
+                }
             }
             $productId = 0;
         }
