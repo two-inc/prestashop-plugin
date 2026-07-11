@@ -8,8 +8,10 @@ declare(strict_types=1);
  *
  * Covers: buyer_fee_share payload construction per term, the rounding relay
  * and its edge cases, the fee-quote fetch (fail-soft), fee-line construction
- * with API tax-rate passthrough, and end-to-end injection into the order
- * payload including a rounding-boundary amount.
+ * with the admin-configured Surcharge Tax Rate (PS_TWO_SURCHARGE_TAX_RATE —
+ * the pricing-preview response's total_fee_tax_rate is never a source), and
+ * end-to-end injection into the order payload including a rounding-boundary
+ * amount.
  */
 final class SurchargeSpec
 {
@@ -36,7 +38,9 @@ final class SurchargeSpec
         self::testFetchTermFeeFailsSoftOnHttpError();
         self::testFetchTermFeeFailsSoftOnCurrencyMismatch();
         self::testFetchTermFeeParsesSuccess();
-        self::testSurchargeLineItemPassesThroughApiTaxRate();
+        self::testSurchargeTaxRateReadsAdminConfig();
+        self::testSurchargeLineItemUsesAdminConfiguredTaxRate();
+        self::testSurchargeLineItemIgnoresApiTaxRateEntirely();
         self::testSurchargeLineItemDisabledReturnsNull();
         self::testSurchargeLineItemRoundsTaxOnBoundary();
         self::testSurchargeLineItemTaxRateSelfConsistentAtHighPrecision();
@@ -400,7 +404,68 @@ final class SurchargeSpec
         TinyAssert::same('NOK', $fee['currency']);
     }
 
-    private static function testSurchargeLineItemPassesThroughApiTaxRate(): void
+    private static function testSurchargeTaxRateReadsAdminConfig(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        // Blank/unset → 0.0 (deliberate deviation from Magento's default-tax-
+        // class fallback: PrestaShop has no store-wide default tax rate).
+        TinyAssert::same(0.0, $module->getTwoSurchargeTaxRate(), 'unset config must yield 0.0');
+        Configuration::updateValue('PS_TWO_SURCHARGE_TAX_RATE', '');
+        TinyAssert::same(0.0, $module->getTwoSurchargeTaxRate(), 'blank config must yield 0.0');
+
+        // Percentage form scales down (normalizeTwoFeeTaxRate convention).
+        Configuration::updateValue('PS_TWO_SURCHARGE_TAX_RATE', '25');
+        TinyAssert::same(0.25, $module->getTwoSurchargeTaxRate(), 'stored "25" means 25% → 0.25');
+
+        // Already-fractional input passes through unscaled — the exact
+        // normalizeTwoFeeTaxRate edge behaviour (<= 1.0 is left as-is).
+        Configuration::updateValue('PS_TWO_SURCHARGE_TAX_RATE', '0.25');
+        TinyAssert::same(0.25, $module->getTwoSurchargeTaxRate(), 'fractional "0.25" stays 0.25');
+
+        // Garbage and negatives degrade to 0.0, never fatal.
+        Configuration::updateValue('PS_TWO_SURCHARGE_TAX_RATE', 'abc');
+        TinyAssert::same(0.0, $module->getTwoSurchargeTaxRate(), 'non-numeric config must yield 0.0');
+        Configuration::updateValue('PS_TWO_SURCHARGE_TAX_RATE', '-5');
+        TinyAssert::same(0.0, $module->getTwoSurchargeTaxRate(), 'negative config must yield 0.0');
+    }
+
+    private static function testSurchargeLineItemUsesAdminConfiguredTaxRate(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '2');
+        Configuration::updateValue('PS_TWO_SURCHARGE_TAX_RATE', '25');
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$addresses[900] = ['id_country' => 34, 'loaded' => true];
+        $module = new class extends TwopaymentTestHarness {
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+            {
+                // The response carries a WILDLY different total_fee_tax_rate —
+                // it must have zero influence on the line's tax: the admin
+                // config is the only source.
+                return [
+                    'http_status' => 200,
+                    'buyer_fee_share' => '5.00',
+                    'total_fee_tax_rate' => '99',
+                    'currency' => 'EUR',
+                ];
+            }
+        };
+        $cart = new Cart(1);
+        $cart->id_currency = 978;
+        $cart->id_address_invoice = 900;
+        $line = $module->buildTwoSurchargeLineItemForCart($cart, 100.0);
+        TinyAssert::same('SERVICE', $line['type']);
+        TinyAssert::same('Payment terms fee - 30 days', $line['name']);
+        TinyAssert::same('5.00', $line['net_amount']);
+        TinyAssert::same('0.25', $line['tax_rate'], 'tax rate comes from admin config, never the pricing response');
+        TinyAssert::same('1.25', $line['tax_amount']);
+        TinyAssert::same('6.25', $line['gross_amount']);
+    }
+
+    private static function testSurchargeLineItemIgnoresApiTaxRateEntirely(): void
     {
         self::reset();
         Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
@@ -410,8 +475,8 @@ final class SurchargeSpec
         $module = new class extends TwopaymentTestHarness {
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
-                // API returns the tax rate as a percentage form (25) — the fee
-                // line must normalise to the decimal convention, never zero.
+                // Response has a rate but the admin field is blank: the line
+                // must be untaxed (0), proving the response rate is dead.
                 return [
                     'http_status' => 200,
                     'buyer_fee_share' => '5.00',
@@ -424,12 +489,10 @@ final class SurchargeSpec
         $cart->id_currency = 978;
         $cart->id_address_invoice = 900;
         $line = $module->buildTwoSurchargeLineItemForCart($cart, 100.0);
-        TinyAssert::same('SERVICE', $line['type']);
-        TinyAssert::same('Payment terms fee - 30 days', $line['name']);
         TinyAssert::same('5.00', $line['net_amount']);
-        TinyAssert::same('0.25', $line['tax_rate'], 'API tax rate passes through (percentage normalised), never hard-coded zero');
-        TinyAssert::same('1.25', $line['tax_amount']);
-        TinyAssert::same('6.25', $line['gross_amount']);
+        TinyAssert::same('0', $line['tax_rate'], 'blank admin config means untaxed line even when the response carries a rate');
+        TinyAssert::same('0.00', $line['tax_amount']);
+        TinyAssert::same('5.00', $line['gross_amount']);
     }
 
     private static function testSurchargeLineItemDisabledReturnsNull(): void
@@ -451,6 +514,7 @@ final class SurchargeSpec
         self::reset();
         Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
         Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '2');
+        Configuration::updateValue('PS_TWO_SURCHARGE_TAX_RATE', '25');
         StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
         $module = new class extends TwopaymentTestHarness {
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
@@ -460,7 +524,6 @@ final class SurchargeSpec
                 return [
                     'http_status' => 200,
                     'buyer_fee_share' => '10.10',
-                    'total_fee_tax_rate' => '0.25',
                     'currency' => 'EUR',
                 ];
             }
@@ -480,17 +543,18 @@ final class SurchargeSpec
         self::reset();
         Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
         Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '2');
+        // Configured rate needing more than TAX_RATE_PRECISION (3dp) decimals
+        // as a fraction (21.0098% → 0.210098). Tax must be computed from the
+        // SNAPPED rate that is actually sent, else the line fails
+        // validateTwoLineItems and is dropped.
+        Configuration::updateValue('PS_TWO_SURCHARGE_TAX_RATE', '21.0098');
         StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
         $module = new class extends TwopaymentTestHarness {
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
-                // Tax rate needing more than TAX_RATE_PRECISION (3dp) decimals.
-                // Tax must be computed from the SNAPPED rate that is actually
-                // sent, else the line fails validateTwoLineItems and is dropped.
                 return [
                     'http_status' => 200,
                     'buyer_fee_share' => '1000.00',
-                    'total_fee_tax_rate' => '0.210098',
                     'currency' => 'EUR',
                 ];
             }
@@ -537,6 +601,7 @@ final class SurchargeSpec
         self::reset();
         Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
         Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '5');
+        Configuration::updateValue('PS_TWO_SURCHARGE_TAX_RATE', '25');
 
         StubStore::$customers[7001] = [
             'email' => 'buyer@example.com',
@@ -599,10 +664,11 @@ final class SurchargeSpec
         $module = new class extends TwopaymentTestHarness {
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
+                // No total_fee_tax_rate in the response: the fee line's tax
+                // must come from the admin config alone.
                 return [
                     'http_status' => 200,
                     'buyer_fee_share' => '5.00',
-                    'total_fee_tax_rate' => '0.25',
                     'currency' => 'EUR',
                 ];
             }
