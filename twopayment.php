@@ -475,6 +475,11 @@ class Twopayment extends PaymentModule
                 return false;
             }
         }
+
+        // DB-level guard against manual/duplicate fee-product order rows.
+        // Best-effort (logs loudly on failure) - must not break install.
+        $this->installTwoOrderDetailFeeGuardTrigger();
+
         return true;
     }
 
@@ -602,6 +607,7 @@ class Twopayment extends PaymentModule
 
     protected function deleteTwoTables()
     {
+        $this->dropTwoOrderDetailFeeGuardTrigger();
         $sql = array();
         $sql[] = 'DROP TABLE IF EXISTS `' . _DB_PREFIX_ . 'twopayment_surcharge_sync`';
         foreach ($sql as $query) {
@@ -7529,6 +7535,143 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Name of the order_detail fee-guard trigger (prefixed like the module's
+     * tables so several shops sharing one database never collide).
+     *
+     * @return string
+     */
+    protected function getTwoFeeGuardTriggerName()
+    {
+        return _DB_PREFIX_ . 'twopayment_fee_guard';
+    }
+
+    /**
+     * DDL for the DB-level fee-row guard. This trigger - not the
+     * actionObjectOrderDetailAddBefore hook - is the actual enforcement
+     * layer: Hook::callHookOn() swallows module exceptions unless the shop
+     * runs in debug mode (verified against PS8 core), so a thrown
+     * PrestaShopException protects nothing in a production shop. A BEFORE
+     * INSERT trigger holds on EVERY insertion path (front order creation,
+     * back-office AddProductToOrderHandler, webservice order_details
+     * resource, direct SQL).
+     *
+     * Rules enforced for the hidden fee product (looked up LIVE from the
+     * configuration table, so recreating the product never requires
+     * recreating the trigger):
+     *  1. at most ONE fee row per order, ever - the single legitimate row
+     *     is written by PaymentModule::validateOrder at order creation
+     *     (Order::add() precedes OrderDetail::createList(), verified against
+     *     PS8 core), and a fee line is never edited or re-added afterwards;
+     *  2. a fee row is only accepted for an order whose originating CART
+     *     actually carries the fee line - which is true for every genuine
+     *     Two order at creation time and false for a webservice/back-office
+     *     caller grafting the fee onto an arbitrary existing order.
+     *
+     * Empirically verified on the live PS8 container (MariaDB 10.11):
+     * legitimate first insert passes, duplicate insert and fee-less-cart
+     * insert are rejected with SIGNAL 45000, ordinary products unaffected.
+     * SIGNAL requires MySQL >= 5.5 / MariaDB >= 5.5 - far below any PS8
+     * platform floor.
+     *
+     * @return string
+     */
+    protected function buildTwoFeeGuardTriggerSql()
+    {
+        return 'CREATE TRIGGER `' . $this->getTwoFeeGuardTriggerName() . '`
+            BEFORE INSERT ON `' . _DB_PREFIX_ . 'order_detail`
+            FOR EACH ROW
+            BEGIN
+                IF NEW.product_id > 0
+                    AND EXISTS (
+                        SELECT 1 FROM `' . _DB_PREFIX_ . 'configuration`
+                        WHERE `name` = \'' . pSQL(self::CONFIG_SURCHARGE_PRODUCT_ID) . '\'
+                          AND CAST(`value` AS UNSIGNED) = NEW.product_id
+                    )
+                THEN
+                    IF EXISTS (
+                        SELECT 1 FROM `' . _DB_PREFIX_ . 'order_detail`
+                        WHERE `id_order` = NEW.id_order
+                          AND `product_id` = NEW.product_id
+                    ) THEN
+                        SIGNAL SQLSTATE \'45000\'
+                            SET MESSAGE_TEXT = \'TwoPayment: rejected duplicate payment terms fee row (fee is added once, at order creation only)\';
+                    END IF;
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM `' . _DB_PREFIX_ . 'orders` o
+                        INNER JOIN `' . _DB_PREFIX_ . 'cart_product` cp
+                            ON cp.`id_cart` = o.`id_cart`
+                           AND cp.`id_product` = NEW.product_id
+                        WHERE o.`id_order` = NEW.id_order
+                    ) THEN
+                        SIGNAL SQLSTATE \'45000\'
+                            SET MESSAGE_TEXT = \'TwoPayment: rejected payment terms fee row for an order whose cart does not carry the fee line\';
+                    END IF;
+                END IF;
+            END';
+    }
+
+    /**
+     * Create the fee-guard trigger if absent. Best-effort by design: a DB
+     * user without the TRIGGER privilege (or a pathologically old server)
+     * must not break install or checkout - the failure is logged loudly and
+     * the hook-based guard remains as the (debug-mode-only) fallback.
+     *
+     * @return bool trigger present after the call
+     */
+    public function installTwoOrderDetailFeeGuardTrigger()
+    {
+        try {
+            $exists = (int) Db::getInstance()->getValue(
+                'SELECT COUNT(*) FROM information_schema.TRIGGERS' .
+                " WHERE TRIGGER_SCHEMA = DATABASE() AND TRIGGER_NAME = '" . pSQL($this->getTwoFeeGuardTriggerName()) . "'"
+            );
+            if ($exists > 0) {
+                return true;
+            }
+            if (Db::getInstance()->execute($this->buildTwoFeeGuardTriggerSql())) {
+                PrestaShopLogger::addLog('TwoPayment: Installed order_detail fee-guard trigger ' . $this->getTwoFeeGuardTriggerName(), 1);
+                return true;
+            }
+            PrestaShopLogger::addLog('TwoPayment: Could not create fee-guard trigger ' . $this->getTwoFeeGuardTriggerName() . ' - duplicate fee rows are NOT DB-enforced (TRIGGER privilege missing?)', 3);
+            return false;
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Fee-guard trigger creation failed - duplicate fee rows are NOT DB-enforced. ' . $e->getMessage(), 3);
+            return false;
+        }
+    }
+
+    /**
+     * Lazily (re)install the fee-guard trigger once per request. Covers
+     * module upgrades from versions without it (install() does not re-run on
+     * upgrade), DB restores that dropped triggers, and manual drops -
+     * self-healing on the next checkout instead of trusting a stale flag.
+     */
+    protected function ensureTwoOrderDetailFeeGuardTrigger()
+    {
+        if ($this->twoFeeGuardTriggerEnsured) {
+            return;
+        }
+        $this->twoFeeGuardTriggerEnsured = true;
+        $this->installTwoOrderDetailFeeGuardTrigger();
+    }
+
+    /** @var bool once-per-request memo for ensureTwoOrderDetailFeeGuardTrigger */
+    protected $twoFeeGuardTriggerEnsured = false;
+
+    /**
+     * Best-effort trigger drop at uninstall - never blocks uninstall.
+     */
+    protected function dropTwoOrderDetailFeeGuardTrigger()
+    {
+        try {
+            Db::getInstance()->execute('DROP TRIGGER IF EXISTS `' . $this->getTwoFeeGuardTriggerName() . '`');
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Failed dropping fee-guard trigger at uninstall - ' . $e->getMessage(), 2);
+        }
+    }
+
+    /**
      * Last-applied buyer-driven sync sequence for a cart, or null when the
      * cart has never synced with a sequence number.
      *
@@ -7635,6 +7778,10 @@ class Twopayment extends PaymentModule
      */
     public function syncTwoSurchargeCartLine($cart, $selected, $syncSeq = null)
     {
+        // Upgrades from versions without the fee-guard trigger (and DB
+        // restores that dropped it) get it back on the next checkout.
+        $this->ensureTwoOrderDetailFeeGuardTrigger();
+
         $result = array('success' => false, 'changed' => false, 'present' => false);
         if ($syncSeq === null) {
             return $this->applyTwoSurchargeCartLineSync($cart, $selected);
@@ -7974,9 +8121,18 @@ class Twopayment extends PaymentModule
      *
      * Fires on ObjectModel::add for every OrderDetail (verified against PS8
      * core: OrderDetail::create() -> save() -> add() -> this hook, both at
-     * order creation and in the BO AddProductToOrderHandler). Throwing here
-     * aborts the insert; the BO controller catches the exception and shows
-     * it as an admin-visible error.
+     * order creation and in the BO AddProductToOrderHandler).
+     *
+     * IMPORTANT - this hook is dev-environment UX ONLY, not the enforcement
+     * layer. Hook::callHookOn() (PS8 core, verified) catches every module
+     * exception and only re-throws when Environment::isDebug() is true
+     * (_PS_MODE_DEV_, false in production) - in a production shop a throw
+     * here is silently swallowed and the insert proceeds. The ACTUAL
+     * enforcement is the database BEFORE INSERT trigger installed by
+     * installTwoOrderDetailFeeGuardTrigger(), which rejects illegitimate fee
+     * rows on every insertion path regardless of PHP context. This hook is
+     * kept because in debug/dev shops it produces a friendlier,
+     * properly-surfaced admin error before the SQL layer is ever reached.
      *
      * @param array $params ['object' => OrderDetail]
      * @throws PrestaShopException when the add must be blocked

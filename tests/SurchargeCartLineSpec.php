@@ -48,6 +48,8 @@ final class SurchargeCartLineSpec
         self::testAdminManualAddOfFeeProductToOrderIsBlocked();
         self::testDuplicateFeeOrderDetailRowIsRejectedInAnyContext();
         self::testFirstFeeOrderDetailRowFromOrderCreationIsAllowed();
+        self::testFeeGuardTriggerDdlInstalledIdempotentlyAndDropped();
+        self::testFeeGuardTriggerEnsuredLazilyOnCartSync();
     }
 
     /* ---- fixtures ---- */
@@ -631,6 +633,66 @@ final class SurchargeCartLineSpec
         $module->hookActionObjectOrderDetailAddBefore([
             'object' => self::makeOrderDetailStub(12345, 7005),
         ]);
+    }
+
+    /* ---- DB-level fee-guard trigger (the ACTUAL enforcement layer) ---- */
+
+    /**
+     * TESTING-LAYER NOTE: the stub Db has no SQL engine, so these tests can
+     * only assert the DDL the module issues (shape, idempotence, drop). The
+     * trigger's REJECTION semantics - duplicate fee row rejected, fee row on
+     * a fee-less-cart order rejected, legitimate first row and ordinary
+     * products unaffected - CANNOT be exercised by stubs and are verified
+     * against a live PS8 + MariaDB container (real CREATE TRIGGER, real
+     * INSERTs); see the commit message for the verified scenarios.
+     */
+    private static function testFeeGuardTriggerDdlInstalledIdempotentlyAndDropped(): void
+    {
+        $module = self::makeModule();
+        $triggerName = _DB_PREFIX_ . 'twopayment_fee_guard';
+
+        TinyAssert::true($module->installTwoOrderDetailFeeGuardTrigger());
+        TinyAssert::true(isset(StubStore::$dbTriggers[$triggerName]), 'trigger DDL issued');
+        $ddl = StubStore::$dbTriggers[$triggerName];
+        TinyAssert::true(strpos($ddl, 'BEFORE INSERT ON `' . _DB_PREFIX_ . 'order_detail`') !== false, 'guards order_detail inserts');
+        TinyAssert::same(2, substr_count($ddl, "SIGNAL SQLSTATE '45000'"), 'both rules reject via SIGNAL: duplicate row + fee-less-cart order');
+        TinyAssert::true(strpos($ddl, Twopayment::CONFIG_SURCHARGE_PRODUCT_ID) !== false, 'fee product id resolved live from configuration (survives product recreation)');
+        TinyAssert::true(strpos($ddl, '`' . _DB_PREFIX_ . 'cart_product`') !== false, 'fee row only accepted for an order whose cart carries the fee line');
+
+        // Idempotent: a second install sees the existing trigger and issues
+        // no DDL at all.
+        $executedBefore = count(StubStore::$dbExecuted);
+        TinyAssert::true($module->installTwoOrderDetailFeeGuardTrigger());
+        TinyAssert::same($executedBefore, count(StubStore::$dbExecuted), 'no duplicate CREATE TRIGGER');
+
+        // Uninstall drops it (via deleteTwoTables -> dropTwoOrderDetailFeeGuardTrigger).
+        $drop = new ReflectionMethod($module, 'dropTwoOrderDetailFeeGuardTrigger');
+        $drop->setAccessible(true);
+        $drop->invoke($module);
+        TinyAssert::false(isset(StubStore::$dbTriggers[$triggerName]), 'trigger dropped at uninstall');
+    }
+
+    private static function testFeeGuardTriggerEnsuredLazilyOnCartSync(): void
+    {
+        // Upgrade path: install() never re-ran, so the trigger is absent -
+        // the first checkout cart sync must (re)install it.
+        $module = self::makeModule();
+        $cart = self::makeCart();
+        $triggerName = _DB_PREFIX_ . 'twopayment_fee_guard';
+        TinyAssert::false(isset(StubStore::$dbTriggers[$triggerName]));
+
+        $module->syncTwoSurchargeCartLine($cart, true);
+        TinyAssert::true(isset(StubStore::$dbTriggers[$triggerName]), 'lazy ensure installs the trigger on first sync');
+
+        // Once per request only: a second sync issues no further trigger DDL.
+        $createCount = static function (): int {
+            return count(array_filter(StubStore::$dbExecuted, static function ($sql) {
+                return strpos($sql, 'CREATE TRIGGER') !== false;
+            }));
+        };
+        $before = $createCount();
+        $module->syncTwoSurchargeCartLine($cart, true);
+        TinyAssert::same($before, $createCount(), 'ensure is memoised per request');
     }
 
     /* ---- requirement 1: hidden product shape ---- */

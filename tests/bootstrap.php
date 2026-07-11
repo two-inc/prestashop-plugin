@@ -73,6 +73,10 @@ namespace {
         public static array $surchargeSyncSeqs = [];
         /** @var array<int,array{id_order:int,product_id:int}> order_detail rows */
         public static array $orderDetails = [];
+        /** @var string[] Every SQL string passed to Db::execute() */
+        public static array $dbExecuted = [];
+        /** @var array<string,string> Existing DB triggers by name => CREATE sql */
+        public static array $dbTriggers = [];
         /** @var int Shared auto-increment for ObjectModel-style stubs */
         public static int $nextId = 90000;
 
@@ -126,6 +130,8 @@ namespace {
             self::$dbLocks = [];
             self::$surchargeSyncSeqs = [];
             self::$orderDetails = [];
+            self::$dbExecuted = [];
+            self::$dbTriggers = [];
             self::$nextId = 90000;
 
             $context = Context::getContext();
@@ -1177,8 +1183,18 @@ namespace {
         public function execute($sql): bool
         {
             $sql = (string) $sql;
+            StubStore::$dbExecuted[] = $sql;
             if (preg_match('/REPLACE INTO `ps_twopayment_surcharge_sync` \(`id_cart`, `seq`, `updated_at`\) VALUES \((\d+), (\d+)/', $sql, $m)) {
                 StubStore::$surchargeSyncSeqs[(int) $m[1]] = (int) $m[2];
+            }
+            // Trigger bookkeeping so specs can assert the DB-enforcement DDL
+            // is issued. The stub CANNOT evaluate trigger semantics (no SQL
+            // engine); rejection behaviour is live-container verified only.
+            if (preg_match('/^\s*CREATE TRIGGER `([^`]+)`/', $sql, $m)) {
+                StubStore::$dbTriggers[$m[1]] = $sql;
+            }
+            if (preg_match('/^\s*DROP TRIGGER IF EXISTS `([^`]+)`/', $sql, $m)) {
+                unset(StubStore::$dbTriggers[$m[1]]);
             }
             return true;
         }
@@ -1215,6 +1231,9 @@ namespace {
             }
             if (preg_match("/SELECT `value` FROM `ps_configuration` WHERE `name` = '([A-Za-z0-9_]+)'/", $sql, $m)) {
                 return StubStore::$configuration[$m[1]] ?? false;
+            }
+            if (preg_match("/FROM information_schema\.TRIGGERS.*TRIGGER_NAME = '([^']+)'/s", $sql, $m)) {
+                return isset(StubStore::$dbTriggers[$m[1]]) ? '1' : '0';
             }
             return false;
         }
