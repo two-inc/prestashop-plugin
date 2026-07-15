@@ -84,9 +84,11 @@ class TwoSurchargeCalculator
             'surcharge_basis' => 'buyer_pays',
         );
 
-        // Fixed amounts and caps are sent in the store currency as configured.
-        // The plugin does no FX conversion (single-currency stores only for
-        // fixed surcharge); percentage surcharge is currency-agnostic.
+        // Fixed amounts and caps are emitted here in the store currency they
+        // are configured in; the module re-denominates them into the quote
+        // currency via Two's FX rates before the wire call
+        // (Twopayment::convertTwoBuyerFeeShareCurrency, TWO-25105).
+        // Percentage surcharge is currency-agnostic.
         if ($hasFixed && isset($row['fixed']) && (float) $row['fixed'] > 0) {
             $buyer_fee_share['surcharge'] = (float) $row['fixed'];
         }
