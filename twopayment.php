@@ -65,6 +65,23 @@ class Twopayment extends PaymentModule
     const CONFIG_MERCHANT_MIN_ORDER = 'PS_TWO_MERCHANT_MIN_ORDER';
     const CONFIG_MERCHANT_MIN_ORDER_BASIS = 'PS_TWO_MERCHANT_MIN_ORDER_BASIS';
 
+    // Cached FX spot-rate table from GET /refdata/v1/fx-rates (TWO-25105):
+    // JSON {base:'EUR', as_of:'YYYY-MM-DD', rates:{ISO: value of 1 ISO in
+    // EUR}}. Replaces PrestaShop core's own conversion rates for every
+    // Two-side conversion (minimum-order gate, decline hint, admin floor,
+    // fixed-surcharge/cap re-denomination) so the plugin converts with the
+    // SAME rates checkout-api enforces server-side. Refreshed TTL-gated (6h)
+    // from the checkout media hook and on-demand on a cache miss; a fetch
+    // failure serves the last-known-good table (gate conversions fail closed
+    // ONLY when no table was ever fetched - ticket fail semantics).
+    const CONFIG_FX_RATES = 'PS_TWO_FX_RATES';
+    const CONFIG_FX_RATES_TS = 'PS_TWO_FX_RATES_TS';
+    const FX_RATES_TTL = 21600; // 6 hours
+    // On a FAILED fx-rates fetch, retry after this short backoff instead of
+    // waiting the full TTL (same serve-stale + backoff discipline as the
+    // merchant-record cache).
+    const FX_RATES_RETRY_BACKOFF = 300; // 5 minutes
+
     // Constants for API timeouts (seconds)
     const API_TIMEOUT_SHORT = 30; // Standard API timeout
     const API_TIMEOUT_LONG = 60; // Extended timeout for file uploads
@@ -1141,7 +1158,8 @@ class Twopayment extends PaymentModule
      * default currency when a conversion rate is available (with the native
      * figure alongside when the currencies differ). Mirrors
      * woocommerce-plugin's get_merchant_minimum_order_description() with
-     * PrestaShop's own FX rates filling the gap WooCommerce has (TWO-24776).
+     * Two's own FX rates (/refdata/v1/fx-rates, TWO-25105) filling the gap
+     * WooCommerce has (TWO-24776).
      *
      * @return string
      */
@@ -2934,6 +2952,10 @@ class Twopayment extends PaymentModule
         // term list (TWO-24813); prime the cache before the cache-only reads
         // in getAvailablePaymentTerms / getDefaultPaymentTerm below.
         $this->getMerchantAvailableTerms(true);
+        // Same sanctioned refresh point keeps the FX table warm (TTL-gated
+        // 6h, TWO-25105) so cross-currency conversions on the checkout hot
+        // path hit the cache instead of fetching inline.
+        $this->refreshTwoFxRates();
 
         Media::addJsDef(array('twopayment' => array(
                 'search_empty_text' => $this->l('No result found'),
@@ -6809,13 +6831,18 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Convert an amount between two installed currencies via PrestaShop's own
-     * conversion rates (each Currency's conversion_rate is expressed against
-     * the shop default currency). Returns null when either currency is not
-     * installed or carries no usable rate - the CALLER decides the failure
-     * posture (the checkout gate fails closed on the platform minimum, the
-     * decline hint fails soft). Mirrors magento-plugin's
-     * CurrencyRatesProviderInterface contract (TWO-24775).
+     * Convert an amount between two currencies via Two's own FX spot rates
+     * (GET /refdata/v1/fx-rates, TWO-25105) - NOT PrestaShop core's
+     * conversion rates, so the plugin reasons with the same rates
+     * checkout-api enforces server-side. Returns null when no rate table has
+     * ever been fetched or either currency is absent from it - the CALLER
+     * decides the failure posture (the checkout gate fails closed on the
+     * platform minimum, the decline hint and admin descriptions fail soft).
+     *
+     * A stale table is still served (last-known-good, ticket fail
+     * semantics); a cache miss triggers ONE TTL/backoff-gated on-demand
+     * fetch so a checkout in a not-yet-cached currency resolves within the
+     * same request and lands in the shared cache for the next render.
      *
      * @param float $amount
      * @param string $from_iso
@@ -6832,25 +6859,145 @@ class Twopayment extends PaymentModule
         if ($from_iso === $to_iso) {
             return round((float) $amount, 2);
         }
-        $from_id = (int) Currency::getIdByIsoCode($from_iso);
-        $to_id = (int) Currency::getIdByIsoCode($to_iso);
-        if ($from_id <= 0 || $to_id <= 0) {
+
+        $rates = $this->getTwoFxRatesForPair($from_iso, $to_iso);
+        if ($rates === null) {
             return null;
         }
-        $from = new Currency($from_id);
-        $to = new Currency($to_id);
-        if (!Validate::isLoadedObject($from) || !Validate::isLoadedObject($to)) {
-            return null;
+        // rates[CCY] = value of 1 CCY in EUR (the endpoint's EUR pivot):
+        // FROM -> EUR -> TO. Full-precision arithmetic, rounded once at the
+        // boundary.
+        return round((float) $amount * $rates[$from_iso] / $rates[$to_iso], 2);
+    }
+
+    /**
+     * Usable EUR-pivot rates for a currency pair, or null. Serves the cached
+     * table (stale included - serve-stale is the gate's last-known-good
+     * contract); when the table is missing or lacks either currency, allows
+     * one TTL/backoff-gated refresh before giving up, so a first-ever
+     * checkout in an uncached currency is fetched on demand and cached.
+     *
+     * @param string $from_iso normalised ISO code
+     * @param string $to_iso normalised ISO code
+     * @return array<string,float>|null
+     */
+    private function getTwoFxRatesForPair($from_iso, $to_iso)
+    {
+        foreach (array(false, true) as $refreshed) {
+            if ($refreshed) {
+                if (!$this->refreshTwoFxRates()) {
+                    return null;
+                }
+            }
+            $table = $this->getTwoFxRatesTable();
+            if ($table !== null) {
+                $from_rate = isset($table['rates'][$from_iso]) ? (float) $table['rates'][$from_iso] : 0.0;
+                $to_rate = isset($table['rates'][$to_iso]) ? (float) $table['rates'][$to_iso] : 0.0;
+                if ($from_rate > 0 && $to_rate > 0) {
+                    return array($from_iso => $from_rate, $to_iso => $to_rate);
+                }
+            }
         }
-        $from_rate = isset($from->conversion_rate) ? (float) $from->conversion_rate : 0.0;
-        $to_rate = isset($to->conversion_rate) ? (float) $to->conversion_rate : 0.0;
-        if ($from_rate <= 0 || $to_rate <= 0) {
-            return null;
+        return null;
+    }
+
+    /**
+     * The cached FX spot-rate table (TWO-25105), or null when none was ever
+     * stored. CACHE-ONLY - never blocks on HTTP; staleness is deliberately
+     * NOT checked here (a stale table is the last-known-good the gate must
+     * keep using; only refreshTwoFxRates consults the clock). Re-validated
+     * on read: Configuration is shared mutable state.
+     *
+     * @return array{base:string,as_of:string,rates:array<string,float>}|null
+     */
+    public function getTwoFxRatesTable()
+    {
+        if ($this->twoFxRatesMemo !== false) {
+            return $this->twoFxRatesMemo;
         }
-        // conversion_rate = units of the currency per 1 unit of the shop
-        // default currency; route through the default to cross-convert.
-        // Full-precision arithmetic, rounded once at the boundary.
-        return round((float) $amount / $from_rate * $to_rate, 2);
+        $this->twoFxRatesMemo = null;
+        $cached = Configuration::get(self::CONFIG_FX_RATES);
+        if (!Tools::isEmpty($cached)) {
+            $decoded = json_decode((string) $cached, true);
+            if (is_array($decoded) && isset($decoded['rates']) && is_array($decoded['rates'])) {
+                $rates = array();
+                foreach ($decoded['rates'] as $iso => $rate) {
+                    if (is_string($iso) && $iso !== '' && is_numeric($rate) && (float) $rate > 0) {
+                        $rates[Tools::strtoupper($iso)] = (float) $rate;
+                    }
+                }
+                if (!empty($rates)) {
+                    $this->twoFxRatesMemo = array(
+                        'base' => isset($decoded['base']) ? (string) $decoded['base'] : 'EUR',
+                        'as_of' => isset($decoded['as_of']) ? (string) $decoded['as_of'] : '',
+                        'rates' => $rates,
+                    );
+                }
+            }
+        }
+        return $this->twoFxRatesMemo;
+    }
+
+    /**
+     * TTL-gated fetch of GET /refdata/v1/fx-rates (TWO-25105). Called from
+     * the checkout media hook (the same sanctioned refresh point as the
+     * merchant record - the "6h background refresh") and on-demand from a
+     * conversion cache miss. Same discipline as getMerchantAvailableTerms:
+     * the clock is bumped BEFORE the wire call (anti-stampede), a failure
+     * rolls it back to the short retry backoff and keeps serving the
+     * last-known-good table, and the whole thing is skipped without an API
+     * key (the endpoint is merchant-API-key authenticated; also keeps unit
+     * specs off the wire). The stored `as_of` is the endpoint's staleness
+     * floor for the rates and rides along for logging/QA; freshness gating
+     * uses the local fetch clock, so an unchanged `as_of` on refetch simply
+     * renews the TTL rather than forcing extra fetches.
+     *
+     * @return bool Whether a wire fetch was attempted AND succeeded.
+     */
+    public function refreshTwoFxRates()
+    {
+        $checked_on = (int) Configuration::get(self::CONFIG_FX_RATES_TS);
+        if ($checked_on > 0 && ($checked_on + self::FX_RATES_TTL) > time()) {
+            return false;
+        }
+        $api_key = Configuration::get('PS_TWO_MERCHANT_API_KEY');
+        if (Tools::isEmpty($api_key)) {
+            return false;
+        }
+        Configuration::updateValue(self::CONFIG_FX_RATES_TS, time());
+        // Refreshes run on render/checkout paths - cap tight, never stall.
+        $response = $this->setTwoPaymentRequest(
+            '/refdata/v1/fx-rates',
+            array(),
+            'GET',
+            array(),
+            self::API_TIMEOUT_STATE_CHECK
+        );
+        $http_status = isset($response['http_status']) ? (int) $response['http_status'] : 0;
+        $rates = (is_array($response) && isset($response['rates']) && is_array($response['rates']))
+            ? $response['rates']
+            : null;
+        if ($http_status !== self::HTTP_STATUS_OK || empty($rates)) {
+            // Failed fetch: roll the pre-bumped clock back so retry happens
+            // after the short backoff, not a whole TTL; the last-known-good
+            // table keeps being served meanwhile (serve-stale).
+            Configuration::updateValue(
+                self::CONFIG_FX_RATES_TS,
+                time() - self::FX_RATES_TTL + self::FX_RATES_RETRY_BACKOFF
+            );
+            PrestaShopLogger::addLog(
+                'TwoPayment: FX rates fetch failed (HTTP ' . $http_status . ') - serving last-known-good rates',
+                2
+            );
+            return false;
+        }
+        Configuration::updateValue(self::CONFIG_FX_RATES, json_encode(array(
+            'base' => isset($response['base']) ? (string) $response['base'] : 'EUR',
+            'as_of' => isset($response['as_of']) ? (string) $response['as_of'] : '',
+            'rates' => $rates,
+        )));
+        $this->twoFxRatesMemo = false; // drop the request-scoped memo
+        return true;
     }
 
     /**
@@ -7197,6 +7344,15 @@ class Twopayment extends PaymentModule
     protected $twoFeeCache = array();
 
     /**
+     * Request-scoped memo of the FX table read (false = not yet resolved this
+     * request; null = unresolvable; array = the table). Configuration is
+     * cheap but the JSON decode + validation is not free on hot render paths.
+     *
+     * @var false|null|array{base:string,as_of:string,rates:array<string,float>}
+     */
+    protected $twoFxRatesMemo = false;
+
+    /**
      * Read a brand-config value (brands/two.php), cached per request. Returns
      * null for unknown keys. A minimal seam pending the full brand-config
      * foundation (TWO-24746); mirrors the WooCommerce plugin's WC_Twoinc_Brand.
@@ -7265,6 +7421,45 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Re-denominate the currency-carrying members of a buyer_fee_share block
+     * (fixed `surcharge`, `cap`) from the shop default currency they are
+     * configured in into the quote currency, via Two's FX rates (TWO-25105).
+     * Percentage members are currency-agnostic and pass through untouched.
+     *
+     * Returns null when a conversion is needed but no rate is available -
+     * the caller omits the quote entirely (fee line skipped, checkout never
+     * blocked) instead of quoting a fixed fee denominated in the wrong
+     * currency, which is what the old currency pinning silently did on
+     * multi-currency stores.
+     *
+     * @param array $share buyer_fee_share block from TwoSurchargeCalculator
+     * @param string $quote_currency_iso the currency the fee is quoted in
+     * @return array|null
+     */
+    public function convertTwoBuyerFeeShareCurrency(array $share, $quote_currency_iso)
+    {
+        if (!isset($share['surcharge']) && !isset($share['cap'])) {
+            return $share;
+        }
+        $quote_iso = Tools::strtoupper(trim((string) $quote_currency_iso));
+        $shop_iso = $this->getTwoShopDefaultCurrencyIso();
+        if ($quote_iso === '' || $shop_iso === '' || $quote_iso === $shop_iso) {
+            return $share;
+        }
+        foreach (array('surcharge', 'cap') as $member) {
+            if (!isset($share[$member])) {
+                continue;
+            }
+            $converted = $this->convertTwoAmountBetweenCurrencies((float) $share[$member], $shop_iso, $quote_iso);
+            if ($converted === null) {
+                return null;
+            }
+            $share[$member] = $converted;
+        }
+        return $share;
+    }
+
+    /**
      * Quote the buyer's fee share for one term via POST /v1/pricing/order/fee.
      * Fail-soft: returns null on any error (the fee line is simply omitted and
      * checkout is never blocked on a quote, TWO-24752). Request-scoped cache.
@@ -7291,6 +7486,16 @@ class Twopayment extends PaymentModule
 
         $share = $this->buildTwoBuyerFeeShare($days);
         if ($share === null || $gross_amount <= 0) {
+            return $this->twoFeeCache[$cacheKey] = null;
+        }
+        // Fixed amounts and caps are configured in the shop default currency;
+        // re-denominate them into the quote currency via Two's FX rates
+        // (TWO-25105 - replaces the previous single-currency-stores-only
+        // pinning). An unconvertible amount omits the quote (fail-soft, the
+        // TWO-24752 contract) rather than sending a figure in the wrong
+        // currency.
+        $share = $this->convertTwoBuyerFeeShareCurrency($share, (string) $currency_iso);
+        if ($share === null) {
             return $this->twoFeeCache[$cacheKey] = null;
         }
 
@@ -7320,8 +7525,11 @@ class Twopayment extends PaymentModule
             return $this->twoFeeCache[$cacheKey] = null;
         }
 
-        // Guard against a reinterpreted currency — applying a figure quoted in
-        // a different currency would need FX the plugin does not do.
+        // Guard against a reinterpreted currency — the quote must be
+        // denominated in the currency it was requested in; a mismatch is an
+        // API contract violation, not something to paper over with a second
+        // conversion (the request's fixed figures were already FX-converted
+        // into the quote currency, TWO-25105).
         $respCurrency = isset($response['currency']) ? (string) $response['currency'] : (string) $currency_iso;
         if ($currency_iso !== '' && $respCurrency !== (string) $currency_iso) {
             return $this->twoFeeCache[$cacheKey] = null;
@@ -8426,11 +8634,14 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Cart-scoped, currency-pinned SpecificPrice carrying the quoted net fee.
-     * id_cart scopes the price to THIS cart only (concurrent buyers hold
-     * their own rows); id_currency pins the amount so core never applies FX
-     * conversion (empirically verified: Product::priceCalculation skips
-     * Tools::convertPrice when the specific price's currency matches).
+     * Cart-scoped, currency-denominated SpecificPrice carrying the quoted
+     * net fee. id_cart scopes the price to THIS cart only (concurrent buyers
+     * hold their own rows); id_currency makes core take the amount as
+     * already denominated in the cart currency, so a Two-side converted
+     * figure enters the basket at the conversion output with no PS
+     * re-conversion on top (TWO-25105 requirement; empirically verified:
+     * Product::priceCalculation skips Tools::convertPrice when the specific
+     * price's currency matches).
      *
      * @param Cart $cart
      * @param int $productId
