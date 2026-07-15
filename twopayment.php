@@ -2972,7 +2972,6 @@ class Twopayment extends PaymentModule
         // Ensures they load AFTER jQuery
         $this->context->controller->registerJavascript('two-company-search', 'modules/twopayment/views/js/modules/TwoCompanySearch.js', array('priority' => 201, 'async' => false));
         $this->context->controller->registerJavascript('two-order-intent', 'modules/twopayment/views/js/modules/TwoOrderIntent.js', array('priority' => 202, 'async' => false));
-        $this->context->controller->registerJavascript('two-field-validation', 'modules/twopayment/views/js/modules/TwoFieldValidation.js', array('priority' => 203, 'async' => false));
         $this->context->controller->registerJavascript('two-sole-trader', 'modules/twopayment/views/js/modules/TwoSoleTrader.js', array('priority' => 204, 'async' => false));
         // Phone validation removed - Two API handles phone number validation
         $this->context->controller->registerJavascript('two-checkout-manager', 'modules/twopayment/views/js/modules/TwoCheckoutManager.js', array('priority' => 205, 'async' => false));
@@ -3029,7 +3028,6 @@ class Twopayment extends PaymentModule
             return;
         }
 
-        // BUSINESS ACCOUNT RESTRICTION: Only show Two for business accounts (when account type is enabled)
         $cart = $this->context->cart;
         if (!Validate::isLoadedObject($cart) || $cart->id_address_invoice == 0) {
             PrestaShopLogger::addLog('TwoPayment: No valid cart or billing address found for payment options', 2);
@@ -9621,7 +9619,7 @@ class Twopayment extends PaymentModule
      * @param resource|CurlHandle $ch cURL handle
      * @return void
      */
-    private function configureSslVerification($ch)
+    public function configureSslVerification($ch)
     {
         // Check if SSL verification is disabled via configuration (for corporate networks)
         $disable_ssl_verify = (bool)Configuration::get('PS_TWO_DISABLE_SSL_VERIFY', false);

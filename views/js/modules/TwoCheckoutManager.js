@@ -130,27 +130,13 @@ class TwoCheckoutManager {
     }
     
     /**
-     * ENHANCED: Account type detection with extensive fallback chain for compatibility
+     * There is no account-type selector (TWO-24755 rework: B2B checkout
+     * always allows company search and the Two flow; order intent gates
+     * later by actual company presence, not a selector value).
      */
     detectAccountType() {
-        // ENHANCED: Try multiple methods to find Two payment option for better compatibility
         this.twoPaymentOption = this.detectTwoPaymentOption();
-
-        // When account type is disabled, treat Two as available regardless of business/personal at address step
-        const useAccountType = !!(window.twopayment && String(window.twopayment.use_account_type) === '1');
-        if (!useAccountType) {
-            this.isBusinessAccount = true; // allow company search & Two flow; we will gate order intent later by company presence
-        } else {
-            this.isBusinessAccount = !!this.twoPaymentOption;
-        }
-
-        // Fallback for address step: use account_type select value
-        if (!this.isBusinessAccount) {
-            const accountTypeField = document.querySelector("select[name='account_type']");
-            if (accountTypeField) {
-                this.isBusinessAccount = accountTypeField.value === 'business';
-            }
-        }
+        this.isBusinessAccount = true;
         
         // Also store reference to payment radio for easy access
         if (this.twoPaymentOption) {
@@ -712,8 +698,7 @@ class TwoCheckoutManager {
             const status = result.status || '';
             const err = (result && result.error) ? String(result.error) : '';
             const errLower = err.toLowerCase();
-            const useAccountType = !!(window.twopayment && String(window.twopayment.use_account_type) === '1');
-            
+
             // Handle specific status codes for clear user guidance
             // 'no_company' = no company name entered at all
             // 'incomplete_company' = company name exists but backend couldn't auto-resolve org number
@@ -730,12 +715,12 @@ class TwoCheckoutManager {
             }
             
             // Legacy: If order intent was skipped (frontend-side skip), show appropriate prompt
-            if (errLower.includes('skipped_no_company') && !useAccountType) {
+            if (errLower.includes('skipped_no_company')) {
                 this.showCompanyRequiredMessage(err, 'no_company');
                 return;
             }
             
-            if (errLower.includes('skipped') && !useAccountType) {
+            if (errLower.includes('skipped')) {
                 // Generic skip - show company selection prompt
                 const messageContainer = this.getOrCreateMessageContainer();
                 const requiredMsg = this.t(
@@ -1953,12 +1938,16 @@ class TwoCheckoutManager {
      */
     initializeOrderIntent() {
         if (!this.orderIntent && window.TwoOrderIntent) {
-            const useAccountType = !!(window.twopayment && String(window.twopayment.use_account_type) === '1');
+            // Block submitting the order while Two is selected and the
+            // last order-intent came back declined - this used to be
+            // conditional on the (now-removed) account-type toggle; there
+            // is no longer a reason to ever skip it, so it is unconditional
+            // (TwoOrderIntent's own default is also true).
             this.orderIntent = new TwoOrderIntent({
                 enabled: true,
                 orderIntentUrl: this.config.orderIntentUrl,
                 ajaxToken: this.config.ajaxToken,
-                enablePaymentPreventionOnDecline: useAccountType // do not globally block when account type is disabled
+                enablePaymentPreventionOnDecline: true
             });
         }
     }
