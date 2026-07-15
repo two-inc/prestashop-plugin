@@ -8236,7 +8236,7 @@ class Twopayment extends PaymentModule
             'type' => 'select',
             'label' => $this->l('Surcharge Tax Rules Group'),
             'name' => self::CONFIG_SURCHARGE_TAX_RULES_GROUP,
-            'desc' => $this->l('Tax rules group applied to the payment terms fee - the same tax rules groups you assign to products. Country and state rules, combined rates and zero-rating apply exactly as they do for any product. Select "No tax" to never tax the fee.'),
+            'desc' => $this->l('Tax rules group applied to the payment terms fee - the same tax rules groups you assign to products. Country and state rules, combined rates and zero-rating apply exactly as they do for any product. Select "No tax" to never tax the fee. A selection is required while surcharges are enabled.'),
             'options' => array(
                 'query' => $this->getTwoSurchargeTaxRulesGroupOptions(),
                 'id' => 'id',
@@ -8324,23 +8324,28 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Dropdown options for the surcharge tax rules group: PrestaShop's
-     * "No tax" sentinel (id 0) followed by the merchant's active tax rules
-     * groups - the same list core's own product-edit page offers (its
+     * Dropdown options for the surcharge tax rules group: an unselected
+     * placeholder (id '' - never a valid selection, save-blocked while
+     * surcharges are enabled, see validTwoSurchargeFormValues), then
+     * PrestaShop's "No tax" sentinel (id 0), then the merchant's active tax
+     * rules groups - the same list core's own product-edit page offers (its
      * TaxRulesGroup::getTaxRulesGroupsForOptions duplicates a group per
      * rate, so the deduplicated getTaxRulesGroups source is used with the
-     * same manual "No tax" prepend). The currently-configured group is
-     * ALWAYS present even when deactivated (suffixed "(inactive)"): if a
-     * stale selection dropped out of the list, the browser would submit the
-     * first option ("No tax", id 0) on the next unrelated settings save and
-     * silently detax the surcharge.
+     * same manual "No tax" prepend). Ids are emitted as STRINGS so the
+     * form template's loose == never conflates the placeholder ('') with
+     * "No tax" ('0') on PHP 7 shops ('' == 0 is true there). The
+     * currently-configured group is ALWAYS present even when deactivated
+     * (suffixed "(inactive)"): if a stale selection dropped out of the
+     * list, the browser would submit the first option (the placeholder) on
+     * the next unrelated settings save and silently unset the treatment.
      *
-     * @return array<int,array{id:int,name:string}>
+     * @return array<int,array{id:string,name:string}>
      */
     protected function getTwoSurchargeTaxRulesGroupOptions()
     {
         $options = array(
-            array('id' => 0, 'name' => $this->l('No tax')),
+            array('id' => '', 'name' => $this->l('-- Select surcharge tax treatment --')),
+            array('id' => '0', 'name' => $this->l('No tax')),
         );
         $groups = TaxRulesGroup::getTaxRulesGroups(true);
         $seen = array(0 => true);
@@ -8350,7 +8355,7 @@ class Twopayment extends PaymentModule
             }
             $id = (int) $group['id_tax_rules_group'];
             $options[] = array(
-                'id' => $id,
+                'id' => (string) $id,
                 'name' => (string) $group['name'],
             );
             $seen[$id] = true;
@@ -8361,7 +8366,7 @@ class Twopayment extends PaymentModule
             $configured = new TaxRulesGroup($configuredId);
             if (Validate::isLoadedObject($configured)) {
                 $options[] = array(
-                    'id' => $configuredId,
+                    'id' => (string) $configuredId,
                     'name' => (string) $configured->name . ' (' . $this->l('inactive') . ')',
                 );
             }
@@ -8372,23 +8377,25 @@ class Twopayment extends PaymentModule
 
     /**
      * Pre-selection for the surcharge tax rules group dropdown: the stored
-     * selection, else "No tax" (0) - the merchant must make an explicit
-     * choice. Deliberately NOT Product::getIdTaxRulesGroupMostUsed(): that
-     * is a full-catalog COUNT/GROUP BY re-run on every unsaved config page
-     * render, and pre-selecting a taxing group the merchant never chose
-     * invites an accidental save. Matches runtime behaviour for an UNSAVED
-     * config (getTwoSurchargeTaxRulesGroupId falls back to "No tax").
+     * selection, else '' - the unselected placeholder. NEVER auto-defaults:
+     * not Product::getIdTaxRulesGroupMostUsed() (a full-catalog COUNT/GROUP
+     * BY re-run on every unsaved config page render, pre-selecting a taxing
+     * group the merchant never chose), and not "No tax" either - untaxed is
+     * a tax treatment, not an absence of one, and pre-selecting it invites
+     * an accidental save. The merchant must pick explicitly; while
+     * surcharges are enabled the save is blocked until they do
+     * (validTwoSurchargeFormValues).
      *
-     * @return int
+     * @return string '' (unselected) or the stored group id ('0' = No tax)
      */
     protected function getTwoSurchargeTaxRulesGroupFormDefault()
     {
         $stored = Configuration::get(self::CONFIG_SURCHARGE_TAX_RULES_GROUP);
         if ($stored !== false && $stored !== null && $stored !== '' && is_numeric($stored)) {
-            return max(0, (int) $stored);
+            return (string) max(0, (int) $stored);
         }
 
-        return 0;
+        return '';
     }
 
     /**
@@ -8404,7 +8411,10 @@ class Twopayment extends PaymentModule
             'PS_TWO_SURCHARGE_LINE_DESC' => Tools::getValue('PS_TWO_SURCHARGE_LINE_DESC', Configuration::get('PS_TWO_SURCHARGE_LINE_DESC')),
             'PS_TWO_SURCHARGE_ROUNDING_BASIS' => Tools::getValue('PS_TWO_SURCHARGE_ROUNDING_BASIS', Configuration::get('PS_TWO_SURCHARGE_ROUNDING_BASIS')),
             'PS_TWO_SURCHARGE_ROUNDING_STEP' => Tools::getValue('PS_TWO_SURCHARGE_ROUNDING_STEP', Configuration::get('PS_TWO_SURCHARGE_ROUNDING_STEP')),
-            self::CONFIG_SURCHARGE_TAX_RULES_GROUP => (int) Tools::getValue(
+            // Kept a STRING ('' = unselected placeholder): an (int) cast
+            // would turn the unselected state into 0 and silently
+            // pre-select "No tax".
+            self::CONFIG_SURCHARGE_TAX_RULES_GROUP => (string) Tools::getValue(
                 self::CONFIG_SURCHARGE_TAX_RULES_GROUP,
                 $this->getTwoSurchargeTaxRulesGroupFormDefault()
             ),
@@ -8434,9 +8444,19 @@ class Twopayment extends PaymentModule
         if ($step !== '' && !array_key_exists($step, $this->getTwoRoundingStepOptions())) {
             $this->errors[] = $this->l('Rounding step must be one of the offered values.');
         }
+        // Surcharges are enabled (type !== 'none' - the early return above):
+        // an explicit tax treatment is REQUIRED. The unselected placeholder
+        // ('' / absent) blocks the save server-side - never silently falls
+        // back to "No tax".
         $groupRaw = Tools::getValue(self::CONFIG_SURCHARGE_TAX_RULES_GROUP);
-        if ($groupRaw !== false && $groupRaw !== '') {
-            $groupId = is_numeric($groupRaw) ? (int) $groupRaw : -1;
+        $groupTrimmed = is_string($groupRaw) ? trim($groupRaw) : '';
+        if ($groupTrimmed === '') {
+            $this->errors[] = $this->l('Select a surcharge tax treatment: surcharges are enabled, so you must explicitly choose a tax rules group (or "No tax") before saving.');
+        } else {
+            // ctype_digit: a whole non-negative integer only - '0.5', '-5'
+            // and friends are rejected, never truncated into a selection
+            // the merchant did not make.
+            $groupId = ctype_digit($groupTrimmed) ? (int) $groupTrimmed : -1;
             if ($groupId < 0 || ($groupId > 0 && !Validate::isLoadedObject(new TaxRulesGroup($groupId)))) {
                 $this->errors[] = $this->l('Surcharge tax rules group must be "No tax" or one of the shop\'s existing tax rules groups.');
             }
@@ -8475,18 +8495,30 @@ class Twopayment extends PaymentModule
         }
         Configuration::updateValue('PS_TWO_SURCHARGE_ROUNDING_STEP', $step);
 
-        // Same coercion discipline as the grid: invalid/unknown input is
-        // stored as 0 ("No tax" - getTwoSurchargeTaxRulesGroupId's fail-safe),
-        // never fatal. A group id is only stored when the group exists.
-        $groupRaw = trim((string) Tools::getValue(self::CONFIG_SURCHARGE_TAX_RULES_GROUP, ''));
-        $groupId = (is_numeric($groupRaw) && (int) $groupRaw > 0) ? (int) $groupRaw : 0;
-        if ($groupId > 0 && !Validate::isLoadedObject(new TaxRulesGroup($groupId))) {
-            $groupId = 0;
+        // NEVER silently coerce to "No tax": absent/blank/invalid input is
+        // stored as '' (unselected - the dropdown re-renders on its
+        // placeholder). While surcharges are enabled this path is
+        // unreachable with '' (validTwoSurchargeFormValues blocks the save
+        // first); while disabled, staying unselected is the point - the
+        // merchant must pick explicitly before enabling. '0' ("No tax") is
+        // only ever stored when the merchant submitted it.
+        $groupRaw = Tools::getValue(self::CONFIG_SURCHARGE_TAX_RULES_GROUP, '');
+        $groupTrimmed = is_string($groupRaw) ? trim($groupRaw) : '';
+        $groupValue = '';
+        if ($groupTrimmed !== '' && ctype_digit($groupTrimmed)) {
+            $groupId = (int) $groupTrimmed;
+            if ($groupId === 0 || Validate::isLoadedObject(new TaxRulesGroup($groupId))) {
+                $groupValue = (string) $groupId;
+            }
         }
-        Configuration::updateValue(self::CONFIG_SURCHARGE_TAX_RULES_GROUP, (string) $groupId);
-        // Explicit merchant save (any value, "No tax" included) retires the
-        // post-upgrade "needs re-selection" nag from upgrade-2.5.0.php.
-        Configuration::updateValue(self::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE, '');
+        Configuration::updateValue(self::CONFIG_SURCHARGE_TAX_RULES_GROUP, $groupValue);
+        // An explicit merchant selection ("No tax" included) retires the
+        // post-upgrade "needs re-selection" nag from upgrade-2.5.0.php. A
+        // save that stored '' (still unselected) does NOT - the nag is
+        // accurate until a real choice is made.
+        if ($groupValue !== '') {
+            Configuration::updateValue(self::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE, '');
+        }
 
         // Apply the selection to the hidden fee product immediately (the
         // same id_tax_rules_group field every real Product uses); if the
