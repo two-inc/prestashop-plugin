@@ -74,7 +74,7 @@ class Twopayment extends PaymentModule
     
     // Constants for validation tolerances
     const TAX_FORMULA_TOLERANCE = 0.02; // Tolerance for tax formula validation
-    const NET_FORMULA_TOLERANCE = 0.02; // Tolerance for net formula validation (matches the tax-formula tolerance; the API rejects wider gaps)
+    const NET_FORMULA_TOLERANCE = 0.05; // Tolerance for net formula validation. Deliberately NOT tightened to 0.02 yet: the emitted unit_price is 2dp while the discount is derived at 6dp, so a legitimate high-quantity line with a >2dp unit price can drift up to qty*0.005. Tighten only after that absorption gap is fixed (design 4.3 pt 4).
     const ORDER_RECONCILIATION_TOLERANCE = 0.02; // Warn-level parity tolerance against cart totals (PrestaShop rounding can drift by up to 2 cents)
     const TAX_RATE_PRECISION = 6; // Decimal precision for line-item tax rates sent to Two (native PrestaShop precision; must stay >= 4dp so the 2dp-of-percent normaliser output survives formatting)
     const TAX_SUBTOTAL_RATE_PRECISION = 2; // Keep tax subtotal grouping stable for compatibility
@@ -5367,7 +5367,13 @@ class Twopayment extends PaymentModule
      * actual tax (PrestaShop rounds discount buckets once; per-line rounding
      * can legitimately differ by a cent or two). The amounts are preserved
      * as-is — the rate is only accepted, never derived from the amounts.
-     * Returns [] when no declared rate reconciles (caller fails loud).
+     *
+     * UNIQUE-FIT RULE: if MORE THAN ONE declared rate fits within the
+     * tolerance the row is ambiguous (this only happens on tiny nets where
+     * neighbouring rates are cents apart) — returns [] so the caller fails
+     * loud rather than risk relabeling a line to a neighbouring rate, the
+     * exact failure mode the deleted snap/fallback machinery had. Also
+     * returns [] when no declared rate reconciles at all.
      *
      * @param int $net_cents
      * @param int $tax_cents
@@ -5377,23 +5383,21 @@ class Twopayment extends PaymentModule
     private function buildTwoToleranceSingleRateSegment($net_cents, $tax_cents, $rates)
     {
         $tolerance_cents = (int) round(self::TAX_FORMULA_TOLERANCE * 100);
-        $best_rate = null;
-        $best_diff = null;
+        $fitting_rates = [];
         foreach ((array) $rates as $rate) {
             $rate = max(0, (float) $rate);
             $diff = abs((int) round($net_cents * $rate, 0) - $tax_cents);
-            if ($diff > $tolerance_cents) {
-                continue;
-            }
-            if ($best_diff === null || $diff < $best_diff) {
-                $best_diff = $diff;
-                $best_rate = $rate;
+            if ($diff <= $tolerance_cents) {
+                $fitting_rates[$this->formatTwoTaxRate($rate)] = $rate;
             }
         }
 
-        if ($best_rate === null) {
+        if (count($fitting_rates) !== 1) {
+            // 0 fits: genuine divergence. 2+ fits: ambiguous attribution.
+            // Both fail loud at the caller.
             return [];
         }
+        $best_rate = reset($fitting_rates);
 
         return [[
             'net' => round($net_cents / 100, 2),

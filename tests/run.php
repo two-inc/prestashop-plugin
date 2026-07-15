@@ -71,6 +71,7 @@ final class OrderBuilderSpec
         self::testGetTwoProductItemsRelaysNonCanonicalDeclaredRateInsteadOfSpanishFallback();
         self::testGetTwoProductItemsMultiJurisdictionCartRelaysPerLineDeclaredRates();
         self::testGetTwoProductItemsIgnoresCountryOnlyRateFieldAndRelaysAddressCorrectRate();
+        self::testToleranceSingleRateSegmentRejectsAmbiguousMultiRateFit();
         self::testGetTwoNewOrderDataSplitsAtcpShippingAcrossProductRateClasses();
         self::testGetTwoNewOrderDataFreeShippingDiscountRederivesGrossWhenNetCapBites();
         self::testGetTwoProductItemsHighQuantityLineStaysWithinNetTolerance();
@@ -973,6 +974,34 @@ final class OrderBuilderSpec
         TinyAssert::same('0.00', (string)$items[2]['tax_amount']);
     }
 
+    private static function testToleranceSingleRateSegmentRejectsAmbiguousMultiRateFit(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        // UNIQUE-FIT RULE: when a tiny row's tax is within tolerance of TWO
+        // declared rates, attribution is ambiguous and must return [] (the
+        // caller fails loud) — accepting the nearest fit would be the exact
+        // relabel-to-neighbouring-rate failure mode the deleted Spanish
+        // fallback had. net=0.20, tax=0.03: 10% implies 0.02 (diff 1c, fits),
+        // 21% implies 0.04 (diff 1c, fits) -> ambiguous.
+        $method = new ReflectionMethod(Twopayment::class, 'buildTwoToleranceSingleRateSegment');
+        $method->setAccessible(true);
+        $ambiguous = $method->invoke($module, 20, 3, [0.10, 0.21]);
+        TinyAssert::same([], $ambiguous, 'Ambiguous multi-rate fit must be rejected, not nearest-matched');
+
+        // Exactly one fitting declared rate is accepted with amounts preserved.
+        $unique = $method->invoke($module, 20, 1, [0.10, 0.21]);
+        TinyAssert::count(1, $unique);
+        TinyAssert::same(0.10, $unique[0]['rate']);
+        TinyAssert::same(0.20, $unique[0]['net']);
+        TinyAssert::same(0.01, $unique[0]['tax']);
+
+        // No fitting rate at all: genuine divergence, also rejected.
+        $none = $method->invoke($module, 10000, 1500, [0.10, 0.21]);
+        TinyAssert::same([], $none, 'Non-reconciling tax must be rejected');
+    }
+
     private static function testGetTwoProductItemsIgnoresCountryOnlyRateFieldAndRelaysAddressCorrectRate(): void
     {
         self::reset();
@@ -983,12 +1012,16 @@ final class OrderBuilderSpec
         $cart->id_carrier = 0;
         self::ensureCartTaxAddress($cart); // seeds ES (country 34) invoice address
 
-        // Sub-national plumbing proof (Canary IGIC class of bug): the
-        // getProducts() row still carries the country-only 'rate' field
-        // (21.0), but the product's declared group resolves 7% for THIS
-        // cart's tax address and PrestaShop applied 7% to the amounts. The
-        // relay must emit the address-correct 7%, proving the country-only
-        // 'rate' field is dead.
+        // Plumbing proof for the Canary-IGIC class of bug: the getProducts()
+        // row still carries the country-only 'rate' field (21.0), but the
+        // product's declared group resolves 7% for THIS cart's tax address
+        // and PrestaShop applied 7% to the amounts. The relay must emit the
+        // address-correct 7%, proving the country-only 'rate' field is dead.
+        // NOTE: the stub resolves rates by COUNTRY id, so this pins the
+        // "row field ignored, TaxManagerFactory wins" plumbing only — real
+        // sub-national (state/zip) zone resolution can only be proven
+        // against a live PrestaShop tax engine (design doc section 7.1b:
+        // staging Canary/Ceuta order, post-merge validation).
         StubStore::$cartProducts[17] = [[
             'id_product' => 502,
             'link_rewrite' => 'igic-product',
