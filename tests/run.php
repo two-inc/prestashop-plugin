@@ -131,8 +131,6 @@ final class OrderBuilderSpec
         self::testOtherSettingsFormDoesNotExposeOrderIntentToggle();
         self::testHookActionAdminControllerSetMediaRegistersCssOnModuleConfigPage();
         self::testHookActionAdminControllerSetMediaSkipsUnrelatedAdminPage();
-        self::testHookPaymentOptionsBlocksWhenAccountTypeMissingInStrictMode();
-        self::testHookPaymentOptionsBlocksNonBusinessWhenAccountTypePresent();
         self::testHookPaymentOptionsAllowsTwoCoveredCurrencies();
         self::testHookPaymentOptionsBlocksUnsupportedCurrency();
         self::testMergeTwoPaymentTermFallbackUsesFallbackWhenMissing();
@@ -4095,71 +4093,6 @@ final class OrderBuilderSpec
         TinyAssert::same(0, count($controller->styles));
     }
 
-    private static function testHookPaymentOptionsBlocksWhenAccountTypeMissingInStrictMode(): void
-    {
-        self::reset();
-        $module = new class extends TwopaymentTestHarness {
-            protected function getTwoPaymentOption()
-            {
-                return (object) ['method' => 'two'];
-            }
-        };
-
-        $module->active = true;
-        Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', 1);
-        StubStore::$countries[826] = 'GB';
-        StubStore::$addresses[901] = [
-            'id_country' => 826,
-            'company' => 'Acme UK Ltd',
-            'vat_number' => 'GB123456789',
-            'loaded' => true,
-        ];
-
-        $cart = new Cart(501);
-        $cart->id_address_invoice = 901;
-        $cart->id_currency = 978;
-        $module->context->cart = $cart;
-        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
-        StubStore::$moduleCurrencies['twopayment'] = [['id_currency' => 978]];
-
-        $options = $module->hookPaymentOptions([]);
-
-        TinyAssert::same(0, count($options));
-    }
-
-    private static function testHookPaymentOptionsBlocksNonBusinessWhenAccountTypePresent(): void
-    {
-        self::reset();
-        $module = new class extends TwopaymentTestHarness {
-            protected function getTwoPaymentOption()
-            {
-                return (object) ['method' => 'two'];
-            }
-        };
-
-        $module->active = true;
-        Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', 1);
-        StubStore::$countries[34] = 'ES';
-        StubStore::$addresses[902] = [
-            'id_country' => 34,
-            'company' => 'Acme ES S.L.',
-            'dni' => 'B12345678',
-            'account_type' => 'private',
-            'loaded' => true,
-        ];
-
-        $cart = new Cart(502);
-        $cart->id_address_invoice = 902;
-        $cart->id_currency = 978;
-        $module->context->cart = $cart;
-        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
-        StubStore::$moduleCurrencies['twopayment'] = [['id_currency' => 978]];
-
-        $options = $module->hookPaymentOptions([]);
-
-        TinyAssert::same(0, count($options));
-    }
-
     private static function testHookPaymentOptionsAllowsTwoCoveredCurrencies(): void
     {
         self::reset();
@@ -4171,7 +4104,6 @@ final class OrderBuilderSpec
         };
 
         $module->active = true;
-        Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', 0);
         StubStore::$countries[826] = 'GB';
         StubStore::$addresses[904] = [
             'id_country' => 826,
@@ -4214,7 +4146,6 @@ final class OrderBuilderSpec
         };
 
         $module->active = true;
-        Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', 0);
         StubStore::$countries[826] = 'GB';
         StubStore::$addresses[903] = [
             'id_country' => 826,
@@ -5017,6 +4948,7 @@ require __DIR__ . '/TermSurchargeAmountsSpec.php';
 require __DIR__ . '/SurchargeCartLineSpec.php';
 require __DIR__ . '/ConfirmationLegacyParitySpec.php';
 require __DIR__ . '/MinimumOrderGateSpec.php';
+require __DIR__ . '/TwoSoleTraderSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
@@ -5032,6 +4964,7 @@ $tests = [
     'SurchargeCartLineSpec::runAll' => [SurchargeCartLineSpec::class, 'runAll'],
     'ConfirmationLegacyParitySpec::runAll' => [ConfirmationLegacyParitySpec::class, 'runAll'],
     'MinimumOrderGateSpec::runAll' => [MinimumOrderGateSpec::class, 'runAll'],
+    'TwoSoleTraderSpec::runAll' => [TwoSoleTraderSpec::class, 'runAll'],
 ];
 
 $failed = 0;

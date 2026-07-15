@@ -38,27 +38,15 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
 
         $format = $this->moveFieldBefore($format, 'id_country', 'company');
 
-        $useAccountType = (int) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE') === 1;
-
-        if ($useAccountType && !isset($format['account_type'])) {
-            $accountTypeField = (new FormField())
-                ->setName('account_type')
-                ->setType('select')
-                ->setRequired(true)
-                ->addAvailableValue('personal', $this->getFieldLabel('personal_type'))
-                ->addAvailableValue('business', $this->getFieldLabel('business_type'))
-                ->setLabel($this->getFieldLabel('account_type'));
-            $this->applyFieldDefinitionMetadata($accountTypeField, 'account_type');
-            $format = $this->insertFieldAfter($format, 'token', 'account_type', $accountTypeField);
-        }
-
+        // B2B checkout: the company field is always present (the buyer
+        // types or searches their company). There is no account-type
+        // selector here - sole traders enrol through the payment-step
+        // Business / Sole trader toggle (TWO-24755), which autofills this
+        // field from their Two registration once enrolled; matches the
+        // Magento and WooCommerce plugins (the third-account_type-option
+        // approach previously here has been dropped, see TWO-24755).
         if (isset($format['company']) && $format['company'] instanceof FormField) {
             $format['company']->addAvailableValue('placeholder', $this->translator->trans('Search your company name', [], 'Shop.Forms.Labels'));
-            if ($useAccountType) {
-                $format['company']->addAvailableValue('data-conditional-field', 'business');
-                $format['company']->addAvailableValue('data-conditional-required', 'business');
-                $format['company']->addAvailableValue('data-initial-state', 'hidden');
-            }
         }
 
         if (isset($format['phone']) && $format['phone'] instanceof FormField) {
@@ -208,12 +196,6 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
                 return $this->translator->trans('Identification number', [], 'Shop.Forms.Labels');
             case 'other':
                 return $this->translator->trans('Other', [], 'Shop.Forms.Labels');
-            case 'account_type':
-                return $this->translator->trans('Account Type', [], 'Shop.Forms.Labels');
-            case 'personal_type':
-                return $this->translator->trans('Personal', [], 'Shop.Forms.Labels');
-            case 'business_type':
-                return $this->translator->trans('Business', [], 'Shop.Forms.Labels');
             case 'companyid':
                 return $this->translator->trans('Company ID', [], 'Shop.Forms.Labels');
             case 'department':
