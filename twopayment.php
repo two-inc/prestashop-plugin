@@ -41,7 +41,22 @@ class Twopayment extends PaymentModule
     // term). Populated by the SAME fetch as CONFIG_MERCHANT_AVAILABLE_TERMS and
     // gated by the shared CONFIG_MERCHANT_AVAILABLE_TERMS_TS (TWO-24859).
     const CONFIG_MERCHANT_DUE_IN_DAYS = 'PS_TWO_MERCHANT_DUE_IN_DAYS';
-    
+    // Cached GET /v1/merchant minimum-order tuple (min_order_amount /
+    // min_order_currency / min_order_basis - the funding-partner default with
+    // any merchant override, resolved server-side, the same value checkout-api
+    // enforces at order create/intent; TWO-24775). Populated by the SAME fetch
+    // as CONFIG_MERCHANT_AVAILABLE_TERMS and gated by the shared
+    // CONFIG_MERCHANT_AVAILABLE_TERMS_TS. JSON {amount,currency,basis}, or ''
+    // when the API declares no minimum - the no-minimum outcome is cached too,
+    // so the common case costs no refetch per checkout render.
+    const CONFIG_PLATFORM_MIN_ORDER = 'PS_TWO_PLATFORM_MIN_ORDER';
+    // The merchant's own optional minimum order value (admin config field,
+    // interpreted in the shop default currency). Stacks ON TOP of the platform
+    // minimum: it may only raise the effective bar, never lower it below the
+    // platform floor (validated on save - TWO-24775).
+    const CONFIG_MERCHANT_MIN_ORDER = 'PS_TWO_MERCHANT_MIN_ORDER';
+    const CONFIG_MERCHANT_MIN_ORDER_BASIS = 'PS_TWO_MERCHANT_MIN_ORDER_BASIS';
+
     // Constants for API timeouts (seconds)
     const API_TIMEOUT_SHORT = 30; // Standard API timeout
     const API_TIMEOUT_LONG = 60; // Extended timeout for file uploads
@@ -525,6 +540,9 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_MERCHANT_SHORT_NAME');
         Configuration::deleteByName('PS_TWO_MERCHANT_API_KEY');
         Configuration::deleteByName('PS_TWO_MERCHANT_ID');
+        Configuration::deleteByName(self::CONFIG_PLATFORM_MIN_ORDER);
+        Configuration::deleteByName(self::CONFIG_MERCHANT_MIN_ORDER);
+        Configuration::deleteByName(self::CONFIG_MERCHANT_MIN_ORDER_BASIS);
         Configuration::deleteByName('PS_TWO_API_KEY_VERIFIED');
         Configuration::deleteByName('PS_TWO_DISABLE_SSL_VERIFY');
         Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_NAME');
@@ -999,6 +1017,35 @@ class Twopayment extends PaymentModule
         // TWO-24752 / TWO-24893.
         $inputs = array_merge($inputs, $this->getTwoSurchargeFormInputs());
 
+        // Minimum order value (TWO-24775): the merchant's own optional bar,
+        // stacked on top of the API-resolved platform minimum. Field UX
+        // mirrors woocommerce-plugin / magento-plugin: currency in the label
+        // ("Minimum Order Value, EUR"), platform floor in the description,
+        // net/gross basis selector.
+        $default_currency_iso = $this->getTwoShopDefaultCurrencyIso();
+        $inputs[] = array(
+            'type' => 'text',
+            'label' => $default_currency_iso !== ''
+                ? sprintf($this->l('Minimum Order Value, %s'), $default_currency_iso)
+                : $this->l('Minimum Order Value'),
+            'name' => 'PS_TWO_MERCHANT_MIN_ORDER',
+            'desc' => $this->getTwoMerchantMinimumOrderDescription(),
+        );
+        $inputs[] = array(
+            'type' => 'select',
+            'label' => $this->l('Minimum Order Value Tax Basis'),
+            'name' => 'PS_TWO_MERCHANT_MIN_ORDER_BASIS',
+            'desc' => $this->l('Whether the basket is compared against the minimum including or excluding tax.'),
+            'options' => array(
+                'query' => array(
+                    array('id_option' => 'gross', 'name' => $this->l('Including tax (gross)')),
+                    array('id_option' => 'net', 'name' => $this->l('Excluding tax (net)')),
+                ),
+                'id' => 'id_option',
+                'name' => 'name',
+            ),
+        );
+
         return array(
             'form' => array(
                 'legend' => array(
@@ -1030,9 +1077,62 @@ class Twopayment extends PaymentModule
             $fields_values['PS_TWO_PAYMENT_TERMS_' . $term] = Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term, Configuration::get('PS_TWO_PAYMENT_TERMS_' . $term));
         }
 
+        $fields_values['PS_TWO_MERCHANT_MIN_ORDER'] = Tools::getValue(
+            'PS_TWO_MERCHANT_MIN_ORDER',
+            Configuration::get(self::CONFIG_MERCHANT_MIN_ORDER)
+        );
+        $saved_basis = Configuration::get(self::CONFIG_MERCHANT_MIN_ORDER_BASIS);
+        $fields_values['PS_TWO_MERCHANT_MIN_ORDER_BASIS'] = Tools::getValue(
+            'PS_TWO_MERCHANT_MIN_ORDER_BASIS',
+            in_array($saved_basis, array('net', 'gross'), true) ? $saved_basis : 'gross'
+        );
+
         $fields_values = array_merge($fields_values, $this->getTwoSurchargeFormValues());
 
         return $fields_values;
+    }
+
+    /**
+     * Dynamic description for the Minimum Order Value field: shows the
+     * platform minimum the merchant's value must meet or exceed, in the shop
+     * default currency when a conversion rate is available (with the native
+     * figure alongside when the currencies differ). Mirrors
+     * woocommerce-plugin's get_merchant_minimum_order_description() with
+     * PrestaShop's own FX rates filling the gap WooCommerce has (TWO-24776).
+     *
+     * @return string
+     */
+    protected function getTwoMerchantMinimumOrderDescription()
+    {
+        $platform_minimum = $this->getPlatformMinimumOrder();
+        if (!$platform_minimum) {
+            return $this->l('Hide the payment method below this order value (shop default currency, on the tax basis selected below). Leave empty for no minimum.');
+        }
+        $basis_label = $platform_minimum['basis'] === 'gross'
+            ? $this->l('including')
+            : $this->l('excluding');
+        $native_display = $platform_minimum['amount'] . ' ' . $platform_minimum['currency'];
+        $shop_iso = $this->getTwoShopDefaultCurrencyIso();
+        $floor = $this->convertTwoAmountBetweenCurrencies(
+            $platform_minimum['amount'],
+            $platform_minimum['currency'],
+            $shop_iso
+        );
+        if ($floor === null) {
+            return sprintf(
+                $this->l('Platform minimum %1$s, %2$s tax. A value here is interpreted in the shop default currency on the tax basis selected below; it cannot be checked against the platform minimum (no conversion rate) - both minimums are enforced independently.'),
+                $native_display,
+                $basis_label
+            );
+        }
+        $floor_display = $shop_iso === $platform_minimum['currency']
+            ? $native_display
+            : $floor . ' ' . $shop_iso . ' (' . $native_display . ')';
+        return sprintf(
+            $this->l('Platform minimum %1$s, %2$s tax. A value here is interpreted in the shop default currency on the tax basis selected below and must be at least the platform minimum.'),
+            $floor_display,
+            $basis_label
+        );
     }
 
     protected function validTwoPaymentSettingsFormValues()
@@ -1048,6 +1148,42 @@ class Twopayment extends PaymentModule
 
         if (empty($selected_terms)) {
             $this->errors[] = $this->l('You must select at least one payment term.');
+        }
+
+        // Minimum order value (TWO-24775): numeric and non-negative always;
+        // at least the platform floor when one is resolved AND expressible in
+        // the shop default currency. A floor that cannot be converted (no
+        // rate) skips the numeric check - the checkout gate enforces both
+        // minima independently (magento-plugin beforeSave parity).
+        $raw_minimum = trim((string) Tools::getValue('PS_TWO_MERCHANT_MIN_ORDER'));
+        if ($raw_minimum !== '') {
+            $normalised = str_replace(',', '.', $raw_minimum);
+            if (!is_numeric($normalised) || (float) $normalised < 0) {
+                $this->errors[] = $this->l('Minimum Order Value must be a non-negative number.');
+            } elseif ((float) $normalised > 0) {
+                $platform_minimum = $this->getPlatformMinimumOrder();
+                if ($platform_minimum) {
+                    $floor = $this->convertTwoAmountBetweenCurrencies(
+                        $platform_minimum['amount'],
+                        $platform_minimum['currency'],
+                        $this->getTwoShopDefaultCurrencyIso()
+                    );
+                    if ($floor !== null && (float) $normalised < $floor) {
+                        $this->errors[] = sprintf(
+                            $this->l('Minimum Order Value must be at least the platform minimum of %1$s, %2$s tax.'),
+                            $floor . ' ' . $this->getTwoShopDefaultCurrencyIso()
+                                . ($this->getTwoShopDefaultCurrencyIso() !== $platform_minimum['currency']
+                                    ? ' (' . $platform_minimum['amount'] . ' ' . $platform_minimum['currency'] . ')'
+                                    : ''),
+                            $platform_minimum['basis'] === 'gross' ? $this->l('including') : $this->l('excluding')
+                        );
+                    }
+                }
+            }
+        }
+        $basis = (string) Tools::getValue('PS_TWO_MERCHANT_MIN_ORDER_BASIS');
+        if ($basis !== '' && !in_array($basis, array('net', 'gross'), true)) {
+            $this->errors[] = $this->l('Minimum Order Value Tax Basis must be either including or excluding tax.');
         }
 
         $this->validTwoSurchargeFormValues();
@@ -1077,6 +1213,19 @@ class Twopayment extends PaymentModule
         $payment_terms = array_map('strval', $this->getOfferableTermSource(false));
         foreach ($payment_terms as $term) {
             Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . $term, Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term) ? 1 : 0);
+        }
+
+        // Minimum order value (TWO-24775). Normalise the decimal comma; store
+        // '' when empty (no merchant minimum). Values reaching here passed
+        // validTwoPaymentSettingsFormValues (the caller aborts on errors).
+        $raw_minimum = trim((string) Tools::getValue('PS_TWO_MERCHANT_MIN_ORDER'));
+        Configuration::updateValue(
+            self::CONFIG_MERCHANT_MIN_ORDER,
+            $raw_minimum === '' ? '' : str_replace(',', '.', $raw_minimum)
+        );
+        $basis = (string) Tools::getValue('PS_TWO_MERCHANT_MIN_ORDER_BASIS');
+        if (in_array($basis, array('net', 'gross'), true)) {
+            Configuration::updateValue(self::CONFIG_MERCHANT_MIN_ORDER_BASIS, $basis);
         }
 
         $this->saveTwoSurchargeFormValues();
@@ -2890,6 +3039,15 @@ class Twopayment extends PaymentModule
             return [];
         }
 
+        // Minimum-order gate (TWO-24775): hide the payment option when the
+        // cart is below the platform minimum (API-resolved, cache-only read
+        // primed by the checkout media hook) or the merchant's own configured
+        // minimum. Display/UX gate only - the API still enforces the platform
+        // minimum server-side at order creation.
+        if (!$this->isTwoMinimumOrderSatisfied($cart)) {
+            return [];
+        }
+
         // If merchant uses account type selection, gate payment option to business accounts
         if ((int) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE')) {
             $account_type = property_exists($billing_address, 'account_type') ? trim((string) $billing_address->account_type) : '';
@@ -3455,6 +3613,14 @@ class Twopayment extends PaymentModule
 
                     if (!Tools::isEmpty($provider_message)) {
                         $result['message'] = $provider_message;
+                    }
+
+                    // Surface the platform minimum when the decline is
+                    // attributable to it (TWO-24775) - decline_reason first,
+                    // strictly-below fallback; fail-soft (no hint) otherwise.
+                    $minimum_hint = $this->getTwoMinimumOrderDeclineHint($response, $cart);
+                    if (!Tools::isEmpty($minimum_hint)) {
+                        $result['message'] .= ' ' . $minimum_hint;
                     }
                 }
 
@@ -6401,6 +6567,17 @@ class Twopayment extends PaymentModule
                         $due = isset($response['due_in_days']) ? $response['due_in_days'] : null;
                         $due_days = (is_numeric($due) && (int) $due > 0) ? (int) $due : 0;
                         Configuration::updateValue(self::CONFIG_MERCHANT_DUE_IN_DAYS, $due_days);
+                        // Third cache fed by the same fetch: the platform
+                        // minimum-order tuple (TWO-24775). Unlike the term
+                        // list, an absent or malformed tuple IS the answer
+                        // ("no minimum configured") - overwrite with '' so
+                        // the no-minimum outcome is cached and the gate does
+                        // not refetch on every checkout render.
+                        $platform_minimum = $this->parseTwoPlatformMinimumOrder($response);
+                        Configuration::updateValue(
+                            self::CONFIG_PLATFORM_MIN_ORDER,
+                            $platform_minimum ? json_encode($platform_minimum) : ''
+                        );
                         // Success: keep the full-TTL clock set above.
                     } else {
                         // Failed fetch (network blip / 5xx / bad body). Roll the
@@ -6466,7 +6643,350 @@ class Twopayment extends PaymentModule
         // or the new merchant would inherit the old merchant's default term
         // (TWO-24859). Shared timestamp reset last, forcing a re-fetch.
         Configuration::updateValue(self::CONFIG_MERCHANT_DUE_IN_DAYS, 0);
+        // The platform minimum is part of the same merchant record: a new
+        // identity must not be gated by the old merchant's minimum. '' means
+        // "no minimum" - the correct fail-open posture until the re-fetch
+        // (the API still enforces the real minimum at order create).
+        Configuration::updateValue(self::CONFIG_PLATFORM_MIN_ORDER, '');
         Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, 0);
+    }
+
+    /**
+     * Project the platform minimum-order tuple out of a GET /v1/merchant
+     * response body (TWO-24775). The API omits all three min_order_* fields
+     * when no minimum is configured; a partial or malformed tuple is treated
+     * the same way rather than gating on a guess. Mirrors woocommerce-plugin's
+     * get_platform_minimum_order() parsing and magento-plugin's
+     * MinimumOrderProvider::parseMinimum().
+     *
+     * @param mixed $response Decoded response body.
+     * @return array{amount: float, currency: string, basis: string}|null
+     */
+    public function parseTwoPlatformMinimumOrder($response)
+    {
+        if (!is_array($response)) {
+            return null;
+        }
+        $amount = isset($response['min_order_amount']) ? $response['min_order_amount'] : null;
+        $currency = isset($response['min_order_currency']) ? $response['min_order_currency'] : null;
+        $basis = isset($response['min_order_basis']) ? $response['min_order_basis'] : null;
+        if (
+            !is_numeric($amount) || (float) $amount <= 0
+            || !is_string($currency) || trim($currency) === ''
+            || !in_array($basis, array('net', 'gross'), true)
+        ) {
+            return null;
+        }
+        return array(
+            'amount' => (float) $amount,
+            'currency' => Tools::strtoupper(trim($currency)),
+            'basis' => $basis,
+        );
+    }
+
+    /**
+     * The platform's minimum order value for this merchant (funding-partner
+     * default with any merchant override, resolved server-side on
+     * GET /v1/merchant/{id} - the same value checkout-api enforces at order
+     * create/intent), as ['amount','currency','basis'] or null when none is
+     * configured or the record is not yet resolved (TWO-24775).
+     *
+     * CACHE-ONLY - never blocks on HTTP. Primed by the SAME fetch as the
+     * available_terms list (getMerchantAvailableTerms) from the sanctioned
+     * refresh points (checkout media render, admin config render). A cold or
+     * failed cache resolves to null = no minimum: the server still enforces,
+     * and hiding the payment method on an API blip would be the worse failure
+     * (fail-open, matching woocommerce-plugin and magento-plugin).
+     *
+     * @return array{amount: float, currency: string, basis: string}|null
+     */
+    public function getPlatformMinimumOrder()
+    {
+        $cached = Configuration::get(self::CONFIG_PLATFORM_MIN_ORDER);
+        if (Tools::isEmpty($cached)) {
+            return null;
+        }
+        $decoded = json_decode((string) $cached, true);
+        // Re-validate on read: Configuration is shared mutable state and the
+        // tuple shape is the gate's contract.
+        return $this->parseTwoPlatformMinimumOrder(array(
+            'min_order_amount' => isset($decoded['amount']) ? $decoded['amount'] : null,
+            'min_order_currency' => isset($decoded['currency']) ? $decoded['currency'] : null,
+            'min_order_basis' => isset($decoded['basis']) ? $decoded['basis'] : null,
+        ));
+    }
+
+    /**
+     * The merchant's own optional minimum order value from the admin config,
+     * as ['amount','currency','basis'] or null when unset. Interpreted in the
+     * SHOP DEFAULT currency on the tax basis the merchant selects, falling
+     * back to the platform minimum's basis when unset, else gross - the same
+     * semantics as woocommerce-plugin's get_merchant_minimum_order()
+     * (TWO-24775).
+     *
+     * @return array{amount: float, currency: string, basis: string}|null
+     */
+    public function getMerchantMinimumOrder()
+    {
+        $value = (float) Configuration::get(self::CONFIG_MERCHANT_MIN_ORDER);
+        if ($value <= 0) {
+            return null;
+        }
+        $currency_iso = $this->getTwoShopDefaultCurrencyIso();
+        if ($currency_iso === '') {
+            return null;
+        }
+        $basis = (string) Configuration::get(self::CONFIG_MERCHANT_MIN_ORDER_BASIS);
+        if (!in_array($basis, array('net', 'gross'), true)) {
+            $platform_minimum = $this->getPlatformMinimumOrder();
+            $basis = $platform_minimum ? $platform_minimum['basis'] : 'gross';
+        }
+        return array(
+            'amount' => $value,
+            'currency' => $currency_iso,
+            'basis' => $basis,
+        );
+    }
+
+    /**
+     * ISO code of the shop's default currency ('' when unresolvable).
+     *
+     * @return string
+     */
+    public function getTwoShopDefaultCurrencyIso()
+    {
+        $default_currency = new Currency((int) Configuration::get('PS_CURRENCY_DEFAULT'));
+        if (!Validate::isLoadedObject($default_currency)) {
+            return '';
+        }
+        return Tools::strtoupper(trim((string) $default_currency->iso_code));
+    }
+
+    /**
+     * Convert an amount between two installed currencies via PrestaShop's own
+     * conversion rates (each Currency's conversion_rate is expressed against
+     * the shop default currency). Returns null when either currency is not
+     * installed or carries no usable rate - the CALLER decides the failure
+     * posture (the checkout gate fails closed on the platform minimum, the
+     * decline hint fails soft). Mirrors magento-plugin's
+     * CurrencyRatesProviderInterface contract (TWO-24775).
+     *
+     * @param float $amount
+     * @param string $from_iso
+     * @param string $to_iso
+     * @return float|null Converted amount rounded to 2 decimals, or null.
+     */
+    public function convertTwoAmountBetweenCurrencies($amount, $from_iso, $to_iso)
+    {
+        $from_iso = Tools::strtoupper(trim((string) $from_iso));
+        $to_iso = Tools::strtoupper(trim((string) $to_iso));
+        if ($from_iso === '' || $to_iso === '') {
+            return null;
+        }
+        if ($from_iso === $to_iso) {
+            return round((float) $amount, 2);
+        }
+        $from_id = (int) Currency::getIdByIsoCode($from_iso);
+        $to_id = (int) Currency::getIdByIsoCode($to_iso);
+        if ($from_id <= 0 || $to_id <= 0) {
+            return null;
+        }
+        $from = new Currency($from_id);
+        $to = new Currency($to_id);
+        if (!Validate::isLoadedObject($from) || !Validate::isLoadedObject($to)) {
+            return null;
+        }
+        $from_rate = isset($from->conversion_rate) ? (float) $from->conversion_rate : 0.0;
+        $to_rate = isset($to->conversion_rate) ? (float) $to->conversion_rate : 0.0;
+        if ($from_rate <= 0 || $to_rate <= 0) {
+            return null;
+        }
+        // conversion_rate = units of the currency per 1 unit of the shop
+        // default currency; route through the default to cross-convert.
+        // Full-precision arithmetic, rounded once at the boundary.
+        return round((float) $amount / $from_rate * $to_rate, 2);
+    }
+
+    /**
+     * The cart's total on the given tax basis, via PrestaShop's own cart
+     * total API (net = everything excluding tax, gross = including tax).
+     *
+     * @param Cart $cart
+     * @param string $basis 'net' or 'gross'
+     * @return float
+     */
+    public function getTwoMinimumOrderBasketValue($cart, $basis)
+    {
+        return (float) $cart->getOrderTotal($basis === 'gross', Cart::BOTH);
+    }
+
+    /**
+     * Whether the cart satisfies the platform minimum order value AND the
+     * merchant's own optional minimum (TWO-24775). Both bars must pass; each
+     * is compared on its own declared tax basis, inclusive (an
+     * exactly-minimum basket passes - woocommerce/magento parity).
+     *
+     * Failure posture per bar, matching magento-plugin's MinimumOrderGate:
+     * - No minimum resolved (cold cache, API blip, none configured): pass -
+     *   the API still enforces the platform minimum at order create.
+     * - Cross-currency basket that CANNOT be converted to the platform
+     *   minimum's currency (currency not installed / no usable rate): fail
+     *   CLOSED - an order that cannot be proven to satisfy the funding
+     *   partner's product minimum must not be offered the method.
+     * - Merchant's own bar unjudgeable for the same reason: fail OPEN - it is
+     *   the merchant's optional preference, and the platform floor above
+     *   still applies.
+     *
+     * @param Cart $cart
+     * @return bool
+     */
+    public function isTwoMinimumOrderSatisfied($cart)
+    {
+        $platform_minimum = $this->getPlatformMinimumOrder();
+        $merchant_minimum = $this->getMerchantMinimumOrder();
+        if (!$platform_minimum && !$merchant_minimum) {
+            return true;
+        }
+        if (!Validate::isLoadedObject($cart)) {
+            return true;
+        }
+
+        $cart_currency = new Currency((int) $cart->id_currency);
+        $cart_iso = Validate::isLoadedObject($cart_currency)
+            ? Tools::strtoupper(trim((string) $cart_currency->iso_code))
+            : '';
+
+        if ($platform_minimum) {
+            $basket_value = $this->getTwoMinimumOrderBasketValue($cart, $platform_minimum['basis']);
+            $converted = $this->convertTwoAmountBetweenCurrencies($basket_value, $cart_iso, $platform_minimum['currency']);
+            if ($converted === null) {
+                // Fail closed: cannot compare apples to apples.
+                $this->logTwoMinimumOrderGateDecision($cart, $platform_minimum, 'platform minimum unjudgeable (no FX rate ' . ($cart_iso ?: '?') . '->' . $platform_minimum['currency'] . '), failing closed');
+                return false;
+            }
+            if ($converted < $platform_minimum['amount']) {
+                $this->logTwoMinimumOrderGateDecision($cart, $platform_minimum, 'below platform minimum (basket ' . $converted . ' ' . $platform_minimum['currency'] . ' ' . $platform_minimum['basis'] . ')');
+                return false;
+            }
+        }
+
+        if ($merchant_minimum) {
+            $basket_value = $this->getTwoMinimumOrderBasketValue($cart, $merchant_minimum['basis']);
+            $converted = $this->convertTwoAmountBetweenCurrencies($basket_value, $cart_iso, $merchant_minimum['currency']);
+            // $converted === null: fail open on the merchant's own optional
+            // bar (see docblock) - only a resolved comparison may hide.
+            if ($converted !== null && $converted < $merchant_minimum['amount']) {
+                $this->logTwoMinimumOrderGateDecision($cart, $merchant_minimum, 'below merchant minimum (basket ' . $converted . ' ' . $merchant_minimum['currency'] . ' ' . $merchant_minimum['basis'] . ')');
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Removing a payment method is invisible to the merchant - log the
+     * failing basket so a gate misconfiguration doesn't read as the payment
+     * option silently vanishing.
+     *
+     * @param Cart $cart
+     * @param array $minimum
+     * @param string $reason
+     * @return void
+     */
+    private function logTwoMinimumOrderGateDecision($cart, $minimum, $reason)
+    {
+        PrestaShopLogger::addLog(
+            'TwoPayment: Payment option hidden for cart ' . (int) $cart->id . ' - ' . $reason
+            . ' (minimum ' . $minimum['amount'] . ' ' . $minimum['currency'] . ' ' . $minimum['basis'] . ')',
+            2
+        );
+    }
+
+    /**
+     * Buyer-facing minimum-order hint for a declined order create / order
+     * intent response (TWO-24775): '' when the decline is not attributable to
+     * the platform minimum, else a hint formatted in the CART currency
+     * ("Minimum order value is <symbol><amount> excluding|including tax." -
+     * woocommerce/magento wording parity).
+     *
+     * Attribution: primarily the API's machine-readable decline reason
+     * (decline_reason === ORDER_BELOW_MIN_INVOICE_AMOUNT), with a
+     * strictly-below-minimum check on the cart value as fallback while older
+     * backends carry only a generic reason. Fail-soft throughout: an
+     * unresolvable FX conversion means no hint, never a blocked message
+     * (mirrors magento-plugin's isBelowMinimum/getMinimumForDisplay).
+     *
+     * @param mixed $response Decoded provider response body (order create or intent).
+     * @param Cart $cart
+     * @return string
+     */
+    public function getTwoMinimumOrderDeclineHint($response, $cart)
+    {
+        $platform_minimum = $this->getPlatformMinimumOrder();
+        if (!$platform_minimum || !Validate::isLoadedObject($cart)) {
+            return '';
+        }
+
+        $decline_reason = null;
+        if (is_array($response)) {
+            if (isset($response['decline_reason'])) {
+                $decline_reason = $response['decline_reason'];
+            } elseif (isset($response['data']['decline_reason'])) {
+                $decline_reason = $response['data']['decline_reason'];
+            }
+        }
+
+        $cart_currency = new Currency((int) $cart->id_currency);
+        if (!Validate::isLoadedObject($cart_currency)) {
+            return '';
+        }
+        $cart_iso = Tools::strtoupper(trim((string) $cart_currency->iso_code));
+
+        $declined_on_minimum = ($decline_reason === 'ORDER_BELOW_MIN_INVOICE_AMOUNT');
+        if (!$declined_on_minimum) {
+            // Fallback: strictly below the minimum on the minimum's basis.
+            $basket_value = $this->getTwoMinimumOrderBasketValue($cart, $platform_minimum['basis']);
+            $converted = $this->convertTwoAmountBetweenCurrencies($basket_value, $cart_iso, $platform_minimum['currency']);
+            $declined_on_minimum = ($converted !== null && $converted < $platform_minimum['amount']);
+        }
+        if (!$declined_on_minimum) {
+            return '';
+        }
+
+        // Express the minimum in the buyer's (cart) currency for display.
+        $display_amount = $this->convertTwoAmountBetweenCurrencies(
+            $platform_minimum['amount'],
+            $platform_minimum['currency'],
+            $cart_iso
+        );
+        if ($display_amount === null) {
+            return '';
+        }
+        return sprintf(
+            $this->l('Minimum order value is %1$s%2$s %3$s tax.'),
+            $this->getTwoCurrencyDisplaySymbol($cart_currency),
+            number_format($display_amount, 2),
+            $platform_minimum['basis'] === 'gross' ? $this->l('including') : $this->l('excluding')
+        );
+    }
+
+    /**
+     * Display symbol for a currency, falling back to "ISO " when the
+     * installation carries no symbol.
+     *
+     * @param Currency $currency
+     * @return string
+     */
+    private function getTwoCurrencyDisplaySymbol($currency)
+    {
+        if (isset($currency->symbol) && !Tools::isEmpty($currency->symbol)) {
+            return (string) $currency->symbol;
+        }
+        if (isset($currency->sign) && !Tools::isEmpty($currency->sign)) {
+            return (string) $currency->sign;
+        }
+        return Tools::strtoupper(trim((string) $currency->iso_code)) . ' ';
     }
 
     /**
