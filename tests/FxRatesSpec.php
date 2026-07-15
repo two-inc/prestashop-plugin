@@ -248,7 +248,7 @@ final class FxRatesSpec
         TinyAssert::true($module->refreshTwoFxRates());
         // Fresh values win; the dropped currency keeps its last-known-good
         // rate instead of failing its gate closed for a whole TTL.
-        TinyAssert::same(90.0, $module->convertTwoAmountBetweenCurrencies(10.0, 'EUR', 'NOK'));
+        TinyAssert::same(111.11, $module->convertTwoAmountBetweenCurrencies(10.0, 'EUR', 'NOK'), 'fresh NOK rate (0.09 EUR/NOK) must replace the cached 0.1');
         TinyAssert::same(12.5, $module->convertTwoAmountBetweenCurrencies(10.0, 'EUR', 'GBP'));
         TinyAssert::same(1, $module->fxFetchCount);
     }
