@@ -39,11 +39,14 @@ class TwoSoleTrader {
         this.availabilityByCountry = {};
         this.renderedForCountry = null;
         this.observer = null;
-        // In-flight guard + cooldown: the MutationObserver below fires on
-        // essentially any DOM change during checkout (spinners, unrelated
-        // widget re-renders). Without these, a persistent token-mint
-        // failure would re-invoke fetchTokens() - two upstream Two API
-        // calls - on every single mutation, with no backoff.
+        // In-flight guard + cooldown: setMode('sole_trader') re-invokes
+        // fetchTokens() whenever tokens aren't set yet, so repeated clicks
+        // on the "Sole trader" chip while a mint keeps failing (network
+        // blip, no invoice address yet) would otherwise re-issue the mint
+        // - two upstream Two API calls - on every click, with no backoff.
+        // (The MutationObserver only calls the cheap, self-caching
+        // refreshAvailability(), not fetchTokens(), so it is not the
+        // threat this guards against.)
         this.isFetchingTokens = false;
         this.nextRetryAt = 0;
         this.retryCooldownMs = 5000;
@@ -101,7 +104,12 @@ class TwoSoleTrader {
     billingCountry() {
         const field = document.querySelector("select[name='id_country'], select[name='country']");
         if (field && field.selectedOptions && field.selectedOptions.length) {
-            const iso = field.selectedOptions[0].getAttribute('data-iso-code');
+            const option = field.selectedOptions[0];
+            // Same attribute-name fallback chain as TwoOrderIntent.js/
+            // TwoCompanySearch.js - themes vary in which one they render.
+            const iso = option.getAttribute('data-iso-code')
+                || option.getAttribute('data-iso')
+                || option.getAttribute('data-country-iso');
             if (iso) {
                 return iso.toUpperCase();
             }
@@ -245,9 +253,9 @@ class TwoSoleTrader {
      * Mint tokens, guarded against a request storm: refuses re-entry
      * while a request is already outstanding (isFetchingTokens) and
      * enforces a minimum gap between attempts after a failure
-     * (nextRetryAt/retryCooldownMs) - the body-wide MutationObserver and
-     * repeated mode switches could otherwise re-invoke this on every DOM
-     * change while the flow is broken.
+     * (nextRetryAt/retryCooldownMs) - repeated clicks on the toggle chip
+     * while the flow is broken could otherwise re-invoke this on every
+     * click.
      */
     fetchTokens() {
         if (this.isFetchingTokens || Date.now() < this.nextRetryAt) {

@@ -50,6 +50,7 @@ final class TwoSoleTraderSpec
             'testCookieCacheExpiresAfterTtl',
             'testFetchErrorIsNotCached',
             'testTokenMintReadsHeaderAndFailsClosed',
+            'testConfigureSslVerificationIsCallableFromOutsideTwopayment',
             'testSignupUrlFollowsEnvironment',
             'testFormatterHasNoAccountTypeField',
         ];
@@ -289,6 +290,23 @@ final class TwoSoleTraderSpec
             return ['status' => 200, 'headers' => []];
         };
         TinyAssert::same(null, TwoSoleTrader::mintTokens($module));
+    }
+
+    /**
+     * Regression guard: TwoSoleTrader::postCapturingHeaders() calls
+     * $module->configureSslVerification($ch) from OUTSIDE the Twopayment
+     * class (TwoSoleTrader does not extend it). Every $transport-seamed
+     * test above bypasses that real call entirely, so a caught-too-late
+     * bug here (Twopayment::configureSslVerification declared private)
+     * would fatal every real, non-test token mint while every other test
+     * in this suite kept passing. Cheap, network-free tripwire: assert
+     * the method is actually callable from another class without
+     * needing to exercise curl.
+     */
+    private static function testConfigureSslVerificationIsCallableFromOutsideTwopayment(): void
+    {
+        $method = new ReflectionMethod('Twopayment', 'configureSslVerification');
+        TinyAssert::true($method->isPublic(), 'configureSslVerification must be public - TwoSoleTrader calls it from outside the Twopayment class');
     }
 
     private static function testSignupUrlFollowsEnvironment(): void
