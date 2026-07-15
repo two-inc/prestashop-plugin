@@ -64,3 +64,4 @@ Thumbs.db
 
 .worktrees/
 .review/
+.php-cs-fixer.cache
