@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Discount lines keep the exact-cent canonical-rate split; unattributable discounts now fail loud instead of emitting a blended synthetic rate
   - `PS_ATCP_SHIPWRAP` (average-tax shipping/wrapping) carts split the charge across the cart's canonical product rate classes instead of ever emitting the blended average rate
   - Free-shipping discount lines mirror the shipping line's emitted rate, and the net-cap path now keeps gross/net/tax rate-consistent
-  - Tax rate precision raised to PrestaShop-native 6dp (rates still capped at 2 decimals of percent per e-invoicing rules); per-line validation now also asserts `gross == net + tax` exactly
+  - Tax rate precision raised to PrestaShop-native 6dp (rates still capped at 2 decimals of percent per e-invoicing rules); per-line validation now validates the emitted amounts and also asserts `gross == net + tax` exactly
 
 ### Removed
 - **`PS_TWO_USE_OWN_INVOICES` admin setting retired** (TWO-25111)
