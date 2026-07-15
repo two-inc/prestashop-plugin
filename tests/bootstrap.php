@@ -61,6 +61,8 @@ namespace {
         public static array $taxRuleRates = [];
         public static array $dbExecuteSResponses = [];
         public static array $dbLastExecuteS = [];
+        /** @var object|null returned by Module::getInstanceByName in tests */
+        public static $moduleInstance = null;
         public static array $orderCarriers = [];
         public static array $carts = [];
         /** @var array<string,int> Registered admin tab ids by class name */
@@ -164,6 +166,7 @@ namespace {
             self::$taxRuleRates = [];
             self::$dbExecuteSResponses = [];
             self::$dbLastExecuteS = [];
+            self::$moduleInstance = null;
             self::$products = [];
             self::$specificPrices = [];
             self::$stock = [];
@@ -237,6 +240,11 @@ namespace {
     class Module
     {
         public int $id = 1;
+
+        public static function getInstanceByName($name)
+        {
+            return StubStore::$moduleInstance;
+        }
 
         public static function isInstalled($name): bool
         {
@@ -508,6 +516,8 @@ namespace {
 
     class Country
     {
+        public $iso_code = '';
+
         public static function getIsoById($id)
         {
             return StubStore::$countries[(int) $id] ?? false;
@@ -1494,6 +1504,10 @@ namespace {
             }
             return true;
         }
+    }
+
+    if (!defined('_PS_MODULE_DIR_')) {
+        define('_PS_MODULE_DIR_', dirname(__DIR__, 2) . '/');
     }
 
     require_once dirname(__DIR__) . '/twopayment.php';

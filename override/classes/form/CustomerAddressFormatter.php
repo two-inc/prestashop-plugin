@@ -48,6 +48,12 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
                 ->addAvailableValue('personal', $this->getFieldLabel('personal_type'))
                 ->addAvailableValue('business', $this->getFieldLabel('business_type'))
                 ->setLabel($this->getFieldLabel('account_type'));
+            // Sole trader (TWO-24755): third option, only where the country
+            // legally supports it AND the merchant opted in. The address form
+            // re-renders per country, so the decision stays server-side.
+            if ($this->isSoleTraderAvailable()) {
+                $accountTypeField->addAvailableValue('sole_trader', $this->getFieldLabel('sole_trader_type'));
+            }
             $this->applyFieldDefinitionMetadata($accountTypeField, 'account_type');
             $format = $this->insertFieldAfter($format, 'token', 'account_type', $accountTypeField);
         }
@@ -85,6 +91,28 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
         }
 
         return $format;
+    }
+
+    /**
+     * Whether the Sole Trader account type applies for this form's country.
+     * Delegates to the module's business-logic class (TWO-24755); rendering
+     * stays here, decisioning there.
+     */
+    private function isSoleTraderAvailable()
+    {
+        if (!class_exists('TwoSoleTrader')) {
+            $classFile = _PS_MODULE_DIR_ . 'twopayment/classes/TwoSoleTrader.php';
+            if (!file_exists($classFile)) {
+                return false;
+            }
+            require_once $classFile;
+        }
+        $module = Module::getInstanceByName('twopayment');
+        $country = $this->getCountry();
+        if (!$module || !$country || empty($country->iso_code)) {
+            return false;
+        }
+        return TwoSoleTrader::isAvailable($module, $country->iso_code);
     }
 
     private function insertFieldAfter(array $format, $afterKey, $newKey, FormField $field)
@@ -214,6 +242,8 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
                 return $this->translator->trans('Personal', [], 'Shop.Forms.Labels');
             case 'business_type':
                 return $this->translator->trans('Business', [], 'Shop.Forms.Labels');
+            case 'sole_trader_type':
+                return $this->translator->trans('Sole trader', [], 'Shop.Forms.Labels');
             case 'companyid':
                 return $this->translator->trans('Company ID', [], 'Shop.Forms.Labels');
             case 'department':

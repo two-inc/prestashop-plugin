@@ -12,6 +12,7 @@ if (!defined('_PS_VERSION_')) {
 }
 
 require_once dirname(__FILE__) . '/classes/TwoSurchargeCalculator.php';
+require_once dirname(__FILE__) . '/classes/TwoSoleTrader.php';
 
 class Twopayment extends PaymentModule
 {
@@ -299,6 +300,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_ID', 1);
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', 1);
         Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', 0);
+        Configuration::updateValue('PS_TWO_ENABLE_SOLE_TRADER', 0); // Default: off; merchant opts in (TWO-24755)
         Configuration::updateValue('PS_TWO_USE_OWN_INVOICES', 0); // Disabled by default - must be enabled after coordinating with Two
         Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', 'STANDARD'); // Default: Standard payment terms (not EOM)
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1); // Default: 30 days enabled
@@ -534,6 +536,7 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_ENABLE_TAX_SUBTOTALS');
         Configuration::deleteByName('PS_TWO_FINALIZE_PURCHASE');
         Configuration::deleteByName('PS_TWO_USE_ACCOUNT_TYPE');
+        Configuration::deleteByName('PS_TWO_ENABLE_SOLE_TRADER');
         Configuration::deleteByName('PS_TWO_DEBUG_MODE');
         $this->deleteTwoSurchargeCartProduct();
         Configuration::deleteByName(self::CONFIG_SURCHARGE_PRODUCT_ID);
@@ -1136,6 +1139,26 @@ class Twopayment extends PaymentModule
                     ),
                     array(
                         'type' => 'switch',
+                        'label' => $this->l('Enable sole trader checkout'),
+                        'name' => 'PS_TWO_ENABLE_SOLE_TRADER',
+                        'is_bool' => true,
+                        'desc' => $this->l('Adds a Sole Trader option to the Account Type selector for buyers in countries where Two supports sole traders. Requires Account Type selection to be enabled.'),
+                        'required' => true,
+                        'values' => array(
+                            array(
+                                'id' => 'PS_TWO_ENABLE_SOLE_TRADER_ON',
+                                'value' => 1,
+                                'label' => $this->l('Yes')
+                            ),
+                            array(
+                                'id' => 'PS_TWO_ENABLE_SOLE_TRADER_OFF',
+                                'value' => 0,
+                                'label' => $this->l('No')
+                            ),
+                        ),
+                    ),
+                    array(
+                        'type' => 'switch',
                         'label' => $this->l('Activate company name auto-complete'),
                         'name' => 'PS_TWO_ENABLE_COMPANY_NAME',
                         'is_bool' => true,
@@ -1286,6 +1309,7 @@ class Twopayment extends PaymentModule
     {
         $fields_values = array();
         $fields_values['PS_TWO_USE_ACCOUNT_TYPE'] = Tools::getValue('PS_TWO_USE_ACCOUNT_TYPE', Configuration::get('PS_TWO_USE_ACCOUNT_TYPE'));
+        $fields_values['PS_TWO_ENABLE_SOLE_TRADER'] = Tools::getValue('PS_TWO_ENABLE_SOLE_TRADER', Configuration::get('PS_TWO_ENABLE_SOLE_TRADER'));
         $fields_values['PS_TWO_ENABLE_COMPANY_NAME'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME', Configuration::get('PS_TWO_ENABLE_COMPANY_NAME'));
         $fields_values['PS_TWO_ENABLE_COMPANY_ID'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_ID', Configuration::get('PS_TWO_ENABLE_COMPANY_ID'));
         $fields_values['PS_TWO_FINALIZE_PURCHASE'] = Tools::getValue('PS_TWO_FINALIZE_PURCHASE', Configuration::get('PS_TWO_FINALIZE_PURCHASE'));
@@ -1303,6 +1327,7 @@ class Twopayment extends PaymentModule
     protected function saveTwoOtherFormValues()
     {
         Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', Tools::getValue('PS_TWO_USE_ACCOUNT_TYPE'));
+        Configuration::updateValue('PS_TWO_ENABLE_SOLE_TRADER', (int) Tools::getValue('PS_TWO_ENABLE_SOLE_TRADER', 0));
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME'));
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_ID', Tools::getValue('PS_TWO_ENABLE_COMPANY_ID'));
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', Tools::getValue('PS_TWO_FINALIZE_PURCHASE'));
@@ -2784,6 +2809,11 @@ class Twopayment extends PaymentModule
                 'enable_project' => $this->enable_project,
                 'enable_order_intent' => $this->enable_order_intent,
                 'use_account_type' => (int) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE'),
+                'sole_trader' => array(
+                    'enabled' => TwoSoleTrader::isEnabled() ? 1 : 0,
+                    'signup_url' => TwoSoleTrader::getSignupPageUrl(),
+                ),
+                'shop_country' => (string) Context::getContext()->country->iso_code,
                 'order_intent_url' => $this->context->link->getModuleLink($this->name, 'orderintent'),
                 'ajax_token' => Tools::getToken(false),
                 'module_dir' => $this->_path,
@@ -2813,6 +2843,7 @@ class Twopayment extends PaymentModule
         // Ensures they load AFTER jQuery
         $this->context->controller->registerJavascript('two-company-search', 'modules/twopayment/views/js/modules/TwoCompanySearch.js', array('priority' => 201, 'async' => false));
         $this->context->controller->registerJavascript('two-order-intent', 'modules/twopayment/views/js/modules/TwoOrderIntent.js', array('priority' => 202, 'async' => false));
+        $this->context->controller->registerJavascript('two-sole-trader', 'modules/twopayment/views/js/modules/TwoSoleTrader.js', array('priority' => 204, 'async' => false));
         $this->context->controller->registerJavascript('two-field-validation', 'modules/twopayment/views/js/modules/TwoFieldValidation.js', array('priority' => 203, 'async' => false));
         // Phone validation removed - Two API handles phone number validation
         $this->context->controller->registerJavascript('two-checkout-manager', 'modules/twopayment/views/js/modules/TwoCheckoutManager.js', array('priority' => 205, 'async' => false));
@@ -2893,11 +2924,12 @@ class Twopayment extends PaymentModule
         // If merchant uses account type selection, gate payment option to business accounts
         if ((int) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE')) {
             $account_type = property_exists($billing_address, 'account_type') ? trim((string) $billing_address->account_type) : '';
-            if ($account_type !== 'business') {
-                PrestaShopLogger::addLog('TwoPayment: Payment option hidden - account type is not business (current: ' . ($account_type ?: 'not set') . ')', 1);
+            $billing_country_iso = (string) Country::getIsoById((int) $billing_address->id_country);
+            if (!TwoSoleTrader::isAccountTypeAllowed($this, $account_type, $billing_country_iso)) {
+                PrestaShopLogger::addLog('TwoPayment: Payment option hidden - account type not eligible (current: ' . ($account_type ?: 'not set') . ')', 1);
                 return [];
             }
-            PrestaShopLogger::addLog('TwoPayment: Payment option shown for business account path', 1);
+            PrestaShopLogger::addLog('TwoPayment: Payment option shown for ' . $account_type . ' account path', 1);
         } else {
             // When account type selection is disabled, allow showing Two option; FE will prompt for company selection as needed
             PrestaShopLogger::addLog('TwoPayment: Payment option shown (account type disabled)', 1);
@@ -9095,7 +9127,7 @@ class Twopayment extends PaymentModule
      * @param resource|CurlHandle $ch cURL handle
      * @return void
      */
-    private function configureSslVerification($ch)
+    public function configureSslVerification($ch)
     {
         // Check if SSL verification is disabled via configuration (for corporate networks)
         $disable_ssl_verify = (bool)Configuration::get('PS_TWO_DISABLE_SSL_VERIFY', false);

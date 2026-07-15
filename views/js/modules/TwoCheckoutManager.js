@@ -148,7 +148,9 @@ class TwoCheckoutManager {
         if (!this.isBusinessAccount) {
             const accountTypeField = document.querySelector("select[name='account_type']");
             if (accountTypeField) {
-                this.isBusinessAccount = accountTypeField.value === 'business';
+                // Sole trader counts as a company-bearing flow (TWO-24755):
+                // the order-intent machinery must run for it too.
+                this.isBusinessAccount = accountTypeField.value === 'business' || accountTypeField.value === 'sole_trader';
             }
         }
         
@@ -298,7 +300,7 @@ class TwoCheckoutManager {
         this._accountTypeListenerAdded = true;
         accountTypeField.addEventListener('change', () => {
             const value = accountTypeField.value;
-            this.isBusinessAccount = (value === 'business');
+            this.isBusinessAccount = (value === 'business' || value === 'sole_trader');
             try { sessionStorage.setItem('two_account_type', value); } catch (e) {}
             // Keep company search available on address forms for reliable company selection.
             if (this.config.companySearchEnabled && !this.companySearch) {
@@ -1797,7 +1799,7 @@ class TwoCheckoutManager {
                 if (saved && accountTypeField && accountTypeField.value !== saved) {
                     accountTypeField.value = saved;
                     accountTypeField.dispatchEvent(new Event('change', { bubbles: true }));
-                    this.isBusinessAccount = (saved === 'business');
+                    this.isBusinessAccount = (saved === 'business' || saved === 'sole_trader');
                 }
             } catch (e) {}
 

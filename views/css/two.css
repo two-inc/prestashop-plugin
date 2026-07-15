@@ -1185,3 +1185,24 @@
 .payment-option.two-loading::after {
     display: none !important;
 }
+
+/* Sole trader flow (TWO-24755) */
+.two-sole-trader {
+    margin: 0 0 12px;
+}
+
+.two-sole-trader__prompt {
+    display: inline-block;
+    font-size: 13px;
+    text-decoration: underline;
+}
+
+.two-sole-trader__status {
+    font-size: 13px;
+    color: #027a48;
+}
+
+.two-sole-trader__error {
+    font-size: 13px;
+    color: #b42318;
+}

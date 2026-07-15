@@ -5016,6 +5016,7 @@ require __DIR__ . '/MerchantFeeRatesSpec.php';
 require __DIR__ . '/TermSurchargeAmountsSpec.php';
 require __DIR__ . '/SurchargeCartLineSpec.php';
 require __DIR__ . '/ConfirmationLegacyParitySpec.php';
+require __DIR__ . '/TwoSoleTraderSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
@@ -5030,6 +5031,7 @@ $tests = [
     'TermSurchargeAmountsSpec::runAll' => [TermSurchargeAmountsSpec::class, 'runAll'],
     'SurchargeCartLineSpec::runAll' => [SurchargeCartLineSpec::class, 'runAll'],
     'ConfirmationLegacyParitySpec::runAll' => [ConfirmationLegacyParitySpec::class, 'runAll'],
+    'TwoSoleTraderSpec::runAll' => [TwoSoleTraderSpec::class, 'runAll'],
 ];
 
 $failed = 0;
