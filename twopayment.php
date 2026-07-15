@@ -12,6 +12,7 @@ if (!defined('_PS_VERSION_')) {
 }
 
 require_once dirname(__FILE__) . '/classes/TwoSurchargeCalculator.php';
+require_once dirname(__FILE__) . '/classes/TwoSoleTrader.php';
 
 class Twopayment extends PaymentModule
 {
@@ -41,7 +42,22 @@ class Twopayment extends PaymentModule
     // term). Populated by the SAME fetch as CONFIG_MERCHANT_AVAILABLE_TERMS and
     // gated by the shared CONFIG_MERCHANT_AVAILABLE_TERMS_TS (TWO-24859).
     const CONFIG_MERCHANT_DUE_IN_DAYS = 'PS_TWO_MERCHANT_DUE_IN_DAYS';
-    
+    // Cached GET /v1/merchant minimum-order tuple (min_order_amount /
+    // min_order_currency / min_order_basis - the funding-partner default with
+    // any merchant override, resolved server-side, the same value checkout-api
+    // enforces at order create/intent; TWO-24775). Populated by the SAME fetch
+    // as CONFIG_MERCHANT_AVAILABLE_TERMS and gated by the shared
+    // CONFIG_MERCHANT_AVAILABLE_TERMS_TS. JSON {amount,currency,basis}, or ''
+    // when the API declares no minimum - the no-minimum outcome is cached too,
+    // so the common case costs no refetch per checkout render.
+    const CONFIG_PLATFORM_MIN_ORDER = 'PS_TWO_PLATFORM_MIN_ORDER';
+    // The merchant's own optional minimum order value (admin config field,
+    // interpreted in the shop default currency). Stacks ON TOP of the platform
+    // minimum: it may only raise the effective bar, never lower it below the
+    // platform floor (validated on save - TWO-24775).
+    const CONFIG_MERCHANT_MIN_ORDER = 'PS_TWO_MERCHANT_MIN_ORDER';
+    const CONFIG_MERCHANT_MIN_ORDER_BASIS = 'PS_TWO_MERCHANT_MIN_ORDER_BASIS';
+
     // Constants for API timeouts (seconds)
     const API_TIMEOUT_SHORT = 30; // Standard API timeout
     const API_TIMEOUT_LONG = 60; // Extended timeout for file uploads
@@ -63,7 +79,28 @@ class Twopayment extends PaymentModule
     // Two module currency coverage baseline: keep these provider currencies explicitly allowed.
     // Required coverage: NOK, GBP, SEK, USD, DKK, EUR
     const TWO_SUPPORTED_CURRENCY_ISOS = ['NOK', 'GBP', 'SEK', 'USD', 'DKK', 'EUR'];
-    
+
+    // Hidden virtual product that mirrors the Two buyer surcharge as a REAL
+    // PrestaShop cart line, so the fee shows in the order summary, cart,
+    // order and invoice (not only on the Two-side invoice). Lazily created
+    // on first use; identified by Configuration id + reference cross-check.
+    const TWO_SURCHARGE_PRODUCT_REFERENCE = 'TWO-SURCHARGE-FEE';
+    const CONFIG_SURCHARGE_PRODUCT_ID = 'PS_TWO_SURCHARGE_PRODUCT_ID';
+    // Merchant-selected TaxRulesGroup applied to the hidden surcharge
+    // product - the SAME id_tax_rules_group field every real Product uses,
+    // so the fee line gets PrestaShop's full native tax capability
+    // (per-country/state rules, additive stacking, destination-based
+    // zero-rating when no rule matches). 0 is core's first-class "No tax"
+    // sentinel. TWO-25071 (replaces the module-managed synthetic
+    // Tax/TaxRulesGroup/TaxRule graph + flat PS_TWO_SURCHARGE_TAX_RATE).
+    const CONFIG_SURCHARGE_TAX_RULES_GROUP = 'PS_TWO_SURCHARGE_TAX_RULES_GROUP';
+    // Set by upgrade-2.5.0.php when a pre-release flat surcharge tax rate
+    // (PS_TWO_SURCHARGE_TAX_RATE) was configured but no TaxRulesGroup has
+    // been selected yet: on upgrade the fee silently became untaxed, so a
+    // persistent back-office warning nags until the merchant saves a
+    // selection (any explicit save - including "No tax" - clears it).
+    const CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE = 'PS_TWO_SURCHARGE_TAX_MIGRATION_NOTICE';
+
     // Constants for delivery dates
     const DEFAULT_DELIVERY_DAYS_OFFSET = 7; // Default expected delivery date offset
     
@@ -96,7 +133,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.4.0';
+        $this->version = '2.5.1';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -114,7 +151,6 @@ class Twopayment extends PaymentModule
         $this->enable_project = Configuration::get('PS_TWO_ENABLE_PROJECT');
         // Order intent pre-check is mandatory for all checkouts.
         $this->enable_order_intent = 1;
-        $this->use_account_type = Configuration::get('PS_TWO_USE_ACCOUNT_TYPE');
         $this->finalize_purchase_shipping = Configuration::get('PS_TWO_FINALIZE_PURCHASE');
         
         // Ensure custom Two states exist (for existing installations)
@@ -157,6 +193,8 @@ class Twopayment extends PaymentModule
 
         $required_hooks = array(
             'actionObjectOrderHistoryAddBefore',
+            'actionFrontControllerInitAfter',
+            'actionObjectOrderDetailAddBefore',
         );
 
         foreach ($required_hooks as $hook_name) {
@@ -248,6 +286,8 @@ class Twopayment extends PaymentModule
             $this->registerHook('actionOrderEdited') &&
             $this->registerHook('actionAdminOrdersTrackingNumberUpdate') &&
             $this->registerHook('actionCustomerAddressSave') &&
+            $this->registerHook('actionFrontControllerInitAfter') &&
+            $this->registerHook('actionObjectOrderDetailAddBefore') &&
             $this->installTwoInvoiceAdminTab() &&
             $this->installTwoSettings() &&
             $this->createTwoOrderState() &&
@@ -273,7 +313,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', 1);
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_ID', 1);
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', 1);
-        Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', 0);
+        Configuration::updateValue('PS_TWO_ENABLE_SOLE_TRADER', 0); // Default: off; merchant opts in (TWO-24755)
         Configuration::updateValue('PS_TWO_USE_OWN_INVOICES', 0); // Disabled by default - must be enabled after coordinating with Two
         Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', 'STANDARD'); // Default: Standard payment terms (not EOM)
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1); // Default: 30 days enabled
@@ -442,6 +482,16 @@ class Twopayment extends PaymentModule
             KEY `idx_attempt_two_order_id` (`two_order_id`),
             KEY `idx_attempt_updated_at` (`updated_at`)
         ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8;';
+
+        // Per-cart last-applied surcharge sync sequence (buyer AJAX ordering
+        // guard). Also lazily created in ensureTwoSurchargeSyncTable() for
+        // installations upgraded from versions without it.
+        $sql[] = 'CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'twopayment_surcharge_sync` (
+            `id_cart` INT(11) UNSIGNED NOT NULL,
+            `seq` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            `updated_at` DATETIME NOT NULL,
+            PRIMARY KEY (`id_cart`)
+        ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8;';
         // Note: invoice_details (payment info) is NOT stored in DB - fetched from Two API when needed
         // This ensures payment details are always current and avoids stale data issues
 
@@ -450,6 +500,11 @@ class Twopayment extends PaymentModule
                 return false;
             }
         }
+
+        // DB-level guard against manual/duplicate fee-product order rows.
+        // Best-effort (logs loudly on failure) - must not break install.
+        $this->installTwoOrderDetailFeeGuardTrigger();
+
         return true;
     }
 
@@ -470,6 +525,8 @@ class Twopayment extends PaymentModule
             $this->unregisterHook('actionOrderEdited') &&
             $this->unregisterHook('actionAdminOrdersTrackingNumberUpdate') &&
             $this->unregisterHook('actionCustomerAddressSave') &&
+            $this->unregisterHook('actionFrontControllerInitAfter') &&
+            $this->unregisterHook('actionObjectOrderDetailAddBefore') &&
             $this->uninstallTwoInvoiceAdminTab() &&
             $this->uninstallTwoSettings() &&
             $this->deleteTwoTables();
@@ -483,6 +540,9 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_MERCHANT_SHORT_NAME');
         Configuration::deleteByName('PS_TWO_MERCHANT_API_KEY');
         Configuration::deleteByName('PS_TWO_MERCHANT_ID');
+        Configuration::deleteByName(self::CONFIG_PLATFORM_MIN_ORDER);
+        Configuration::deleteByName(self::CONFIG_MERCHANT_MIN_ORDER);
+        Configuration::deleteByName(self::CONFIG_MERCHANT_MIN_ORDER_BASIS);
         Configuration::deleteByName('PS_TWO_API_KEY_VERIFIED');
         Configuration::deleteByName('PS_TWO_DISABLE_SSL_VERIFY');
         Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_NAME');
@@ -491,14 +551,48 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_ENABLE_PROJECT');
         Configuration::deleteByName('PS_TWO_ENABLE_TAX_SUBTOTALS');
         Configuration::deleteByName('PS_TWO_FINALIZE_PURCHASE');
-        Configuration::deleteByName('PS_TWO_USE_ACCOUNT_TYPE');
+        Configuration::deleteByName('PS_TWO_ENABLE_SOLE_TRADER');
         Configuration::deleteByName('PS_TWO_DEBUG_MODE');
+        $this->deleteTwoSurchargeCartProduct();
+        Configuration::deleteByName(self::CONFIG_SURCHARGE_PRODUCT_ID);
+        // The merchant's own TaxRulesGroup referenced by this config is NOT
+        // module-owned: delete only the reference, never the group.
+        Configuration::deleteByName(self::CONFIG_SURCHARGE_TAX_RULES_GROUP);
+        // Legacy config rows from the retired synthetic-tax implementation
+        // (pre-release builds only; the surcharge feature never shipped with
+        // them). The synthetic Tax/TaxRulesGroup/TaxRule objects themselves
+        // are no longer created and no longer cleaned up here.
+        Configuration::deleteByName('PS_TWO_SURCHARGE_TAX_RATE');
+        Configuration::deleteByName('PS_TWO_SURCHARGE_TAX_SETUP');
+        Configuration::deleteByName(self::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE);
         return true;
+    }
+
+    /**
+     * Best-effort removal of the hidden surcharge product at uninstall.
+     * Order details keep their own copied rows, so deleting the product does
+     * not damage historical orders. Never blocks uninstall on failure.
+     */
+    protected function deleteTwoSurchargeCartProduct()
+    {
+        try {
+            $productId = (int) Configuration::get(self::CONFIG_SURCHARGE_PRODUCT_ID);
+            if ($productId > 0 && class_exists('Product')) {
+                $product = new Product($productId);
+                if (Validate::isLoadedObject($product) && method_exists($product, 'delete')) {
+                    $product->delete();
+                }
+            }
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Failed deleting surcharge product at uninstall - ' . $e->getMessage(), 2);
+        }
     }
 
     protected function deleteTwoTables()
     {
+        $this->dropTwoOrderDetailFeeGuardTrigger();
         $sql = array();
+        $sql[] = 'DROP TABLE IF EXISTS `' . _DB_PREFIX_ . 'twopayment_surcharge_sync`';
         foreach ($sql as $query) {
             if (Db::getInstance()->execute($query) == false) {
                 return false;
@@ -548,6 +642,15 @@ class Twopayment extends PaymentModule
         if (((bool) Tools::isSubmit('submitTwoOrderStatusForm')) == true) {
             Configuration::updateValue('PS_TWO_TAB_VALUE', 3);
             $this->saveTwoOrderStatusFormValues();
+        }
+
+        // Post-upgrade nag (upgrade-2.5.0.php): a pre-release flat surcharge
+        // tax rate existed but no TaxRulesGroup is selected - the fee is
+        // untaxed until the merchant re-selects. Rendered on every config
+        // page load until a surcharge-settings save clears the flag.
+        $migrationNotice = $this->getTwoSurchargeTaxMigrationNotice();
+        if ($migrationNotice !== '') {
+            $this->output .= $this->displayWarning($migrationNotice);
         }
 
         $this->context->smarty->assign(
@@ -914,6 +1017,35 @@ class Twopayment extends PaymentModule
         // TWO-24752 / TWO-24893.
         $inputs = array_merge($inputs, $this->getTwoSurchargeFormInputs());
 
+        // Minimum order value (TWO-24775): the merchant's own optional bar,
+        // stacked on top of the API-resolved platform minimum. Field UX
+        // mirrors woocommerce-plugin / magento-plugin: currency in the label
+        // ("Minimum Order Value, EUR"), platform floor in the description,
+        // net/gross basis selector.
+        $default_currency_iso = $this->getTwoShopDefaultCurrencyIso();
+        $inputs[] = array(
+            'type' => 'text',
+            'label' => $default_currency_iso !== ''
+                ? sprintf($this->l('Minimum Order Value, %s'), $default_currency_iso)
+                : $this->l('Minimum Order Value'),
+            'name' => 'PS_TWO_MERCHANT_MIN_ORDER',
+            'desc' => $this->getTwoMerchantMinimumOrderDescription(),
+        );
+        $inputs[] = array(
+            'type' => 'select',
+            'label' => $this->l('Minimum Order Value Tax Basis'),
+            'name' => 'PS_TWO_MERCHANT_MIN_ORDER_BASIS',
+            'desc' => $this->l('Whether the basket is compared against the minimum including or excluding tax.'),
+            'options' => array(
+                'query' => array(
+                    array('id_option' => 'gross', 'name' => $this->l('Including tax (gross)')),
+                    array('id_option' => 'net', 'name' => $this->l('Excluding tax (net)')),
+                ),
+                'id' => 'id_option',
+                'name' => 'name',
+            ),
+        );
+
         return array(
             'form' => array(
                 'legend' => array(
@@ -945,9 +1077,62 @@ class Twopayment extends PaymentModule
             $fields_values['PS_TWO_PAYMENT_TERMS_' . $term] = Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term, Configuration::get('PS_TWO_PAYMENT_TERMS_' . $term));
         }
 
+        $fields_values['PS_TWO_MERCHANT_MIN_ORDER'] = Tools::getValue(
+            'PS_TWO_MERCHANT_MIN_ORDER',
+            Configuration::get(self::CONFIG_MERCHANT_MIN_ORDER)
+        );
+        $saved_basis = Configuration::get(self::CONFIG_MERCHANT_MIN_ORDER_BASIS);
+        $fields_values['PS_TWO_MERCHANT_MIN_ORDER_BASIS'] = Tools::getValue(
+            'PS_TWO_MERCHANT_MIN_ORDER_BASIS',
+            in_array($saved_basis, array('net', 'gross'), true) ? $saved_basis : 'gross'
+        );
+
         $fields_values = array_merge($fields_values, $this->getTwoSurchargeFormValues());
 
         return $fields_values;
+    }
+
+    /**
+     * Dynamic description for the Minimum Order Value field: shows the
+     * platform minimum the merchant's value must meet or exceed, in the shop
+     * default currency when a conversion rate is available (with the native
+     * figure alongside when the currencies differ). Mirrors
+     * woocommerce-plugin's get_merchant_minimum_order_description() with
+     * PrestaShop's own FX rates filling the gap WooCommerce has (TWO-24776).
+     *
+     * @return string
+     */
+    protected function getTwoMerchantMinimumOrderDescription()
+    {
+        $platform_minimum = $this->getPlatformMinimumOrder();
+        if (!$platform_minimum) {
+            return $this->l('Hide the payment method below this order value (shop default currency, on the tax basis selected below). Leave empty for no minimum.');
+        }
+        $basis_label = $platform_minimum['basis'] === 'gross'
+            ? $this->l('including')
+            : $this->l('excluding');
+        $native_display = $platform_minimum['amount'] . ' ' . $platform_minimum['currency'];
+        $shop_iso = $this->getTwoShopDefaultCurrencyIso();
+        $floor = $this->convertTwoAmountBetweenCurrencies(
+            $platform_minimum['amount'],
+            $platform_minimum['currency'],
+            $shop_iso
+        );
+        if ($floor === null) {
+            return sprintf(
+                $this->l('Platform minimum %1$s, %2$s tax. A value here is interpreted in the shop default currency on the tax basis selected below; it cannot be checked against the platform minimum (no conversion rate) - both minimums are enforced independently.'),
+                $native_display,
+                $basis_label
+            );
+        }
+        $floor_display = $shop_iso === $platform_minimum['currency']
+            ? $native_display
+            : $floor . ' ' . $shop_iso . ' (' . $native_display . ')';
+        return sprintf(
+            $this->l('Platform minimum %1$s, %2$s tax. A value here is interpreted in the shop default currency on the tax basis selected below and must be at least the platform minimum.'),
+            $floor_display,
+            $basis_label
+        );
     }
 
     protected function validTwoPaymentSettingsFormValues()
@@ -963,6 +1148,42 @@ class Twopayment extends PaymentModule
 
         if (empty($selected_terms)) {
             $this->errors[] = $this->l('You must select at least one payment term.');
+        }
+
+        // Minimum order value (TWO-24775): numeric and non-negative always;
+        // at least the platform floor when one is resolved AND expressible in
+        // the shop default currency. A floor that cannot be converted (no
+        // rate) skips the numeric check - the checkout gate enforces both
+        // minima independently (magento-plugin beforeSave parity).
+        $raw_minimum = trim((string) Tools::getValue('PS_TWO_MERCHANT_MIN_ORDER'));
+        if ($raw_minimum !== '') {
+            $normalised = str_replace(',', '.', $raw_minimum);
+            if (!is_numeric($normalised) || (float) $normalised < 0) {
+                $this->errors[] = $this->l('Minimum Order Value must be a non-negative number.');
+            } elseif ((float) $normalised > 0) {
+                $platform_minimum = $this->getPlatformMinimumOrder();
+                if ($platform_minimum) {
+                    $floor = $this->convertTwoAmountBetweenCurrencies(
+                        $platform_minimum['amount'],
+                        $platform_minimum['currency'],
+                        $this->getTwoShopDefaultCurrencyIso()
+                    );
+                    if ($floor !== null && (float) $normalised < $floor) {
+                        $this->errors[] = sprintf(
+                            $this->l('Minimum Order Value must be at least the platform minimum of %1$s, %2$s tax.'),
+                            $floor . ' ' . $this->getTwoShopDefaultCurrencyIso()
+                                . ($this->getTwoShopDefaultCurrencyIso() !== $platform_minimum['currency']
+                                    ? ' (' . $platform_minimum['amount'] . ' ' . $platform_minimum['currency'] . ')'
+                                    : ''),
+                            $platform_minimum['basis'] === 'gross' ? $this->l('including') : $this->l('excluding')
+                        );
+                    }
+                }
+            }
+        }
+        $basis = (string) Tools::getValue('PS_TWO_MERCHANT_MIN_ORDER_BASIS');
+        if ($basis !== '' && !in_array($basis, array('net', 'gross'), true)) {
+            $this->errors[] = $this->l('Minimum Order Value Tax Basis must be either including or excluding tax.');
         }
 
         $this->validTwoSurchargeFormValues();
@@ -992,6 +1213,19 @@ class Twopayment extends PaymentModule
         $payment_terms = array_map('strval', $this->getOfferableTermSource(false));
         foreach ($payment_terms as $term) {
             Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . $term, Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term) ? 1 : 0);
+        }
+
+        // Minimum order value (TWO-24775). Normalise the decimal comma; store
+        // '' when empty (no merchant minimum). Values reaching here passed
+        // validTwoPaymentSettingsFormValues (the caller aborts on errors).
+        $raw_minimum = trim((string) Tools::getValue('PS_TWO_MERCHANT_MIN_ORDER'));
+        Configuration::updateValue(
+            self::CONFIG_MERCHANT_MIN_ORDER,
+            $raw_minimum === '' ? '' : str_replace(',', '.', $raw_minimum)
+        );
+        $basis = (string) Tools::getValue('PS_TWO_MERCHANT_MIN_ORDER_BASIS');
+        if (in_array($basis, array('net', 'gross'), true)) {
+            Configuration::updateValue(self::CONFIG_MERCHANT_MIN_ORDER_BASIS, $basis);
         }
 
         $this->saveTwoSurchargeFormValues();
@@ -1031,19 +1265,19 @@ class Twopayment extends PaymentModule
                 'input' => array(
                     array(
                         'type' => 'switch',
-                        'label' => $this->l('Use Account Type selection'),
-                        'name' => 'PS_TWO_USE_ACCOUNT_TYPE',
+                        'label' => $this->l('Enable sole trader checkout'),
+                        'name' => 'PS_TWO_ENABLE_SOLE_TRADER',
                         'is_bool' => true,
-                        'desc' => $this->l('If Yes, the address form will show Account Type and company fields become required for business. If No, the address form will not show Account Type and Two will prompt for company only at payment time.'),
+                        'desc' => $this->l('Shows a Business / Sole trader toggle on the payment step for buyers in countries where Two supports sole traders (currently the UK and US).'),
                         'required' => true,
                         'values' => array(
                             array(
-                                'id' => 'PS_TWO_USE_ACCOUNT_TYPE_ON',
+                                'id' => 'PS_TWO_ENABLE_SOLE_TRADER_ON',
                                 'value' => 1,
                                 'label' => $this->l('Yes')
                             ),
                             array(
-                                'id' => 'PS_TWO_USE_ACCOUNT_TYPE_OFF',
+                                'id' => 'PS_TWO_ENABLE_SOLE_TRADER_OFF',
                                 'value' => 0,
                                 'label' => $this->l('No')
                             ),
@@ -1200,7 +1434,7 @@ class Twopayment extends PaymentModule
     protected function getTwoOtherFormValues()
     {
         $fields_values = array();
-        $fields_values['PS_TWO_USE_ACCOUNT_TYPE'] = Tools::getValue('PS_TWO_USE_ACCOUNT_TYPE', Configuration::get('PS_TWO_USE_ACCOUNT_TYPE'));
+        $fields_values['PS_TWO_ENABLE_SOLE_TRADER'] = Tools::getValue('PS_TWO_ENABLE_SOLE_TRADER', Configuration::get('PS_TWO_ENABLE_SOLE_TRADER'));
         $fields_values['PS_TWO_ENABLE_COMPANY_NAME'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME', Configuration::get('PS_TWO_ENABLE_COMPANY_NAME'));
         $fields_values['PS_TWO_ENABLE_COMPANY_ID'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_ID', Configuration::get('PS_TWO_ENABLE_COMPANY_ID'));
         $fields_values['PS_TWO_FINALIZE_PURCHASE'] = Tools::getValue('PS_TWO_FINALIZE_PURCHASE', Configuration::get('PS_TWO_FINALIZE_PURCHASE'));
@@ -1217,7 +1451,7 @@ class Twopayment extends PaymentModule
 
     protected function saveTwoOtherFormValues()
     {
-        Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', Tools::getValue('PS_TWO_USE_ACCOUNT_TYPE'));
+        Configuration::updateValue('PS_TWO_ENABLE_SOLE_TRADER', Tools::getValue('PS_TWO_ENABLE_SOLE_TRADER'));
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME'));
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_ID', Tools::getValue('PS_TWO_ENABLE_COMPANY_ID'));
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', Tools::getValue('PS_TWO_FINALIZE_PURCHASE'));
@@ -2683,6 +2917,8 @@ class Twopayment extends PaymentModule
             'from_end_of_month' => $this->l('from end of month'),
             'end_of_month_plus_days' => $this->l('End of Month + %s days'),
             'company_search_searching' => $this->l('Searching...'),
+            'sole_trader_registered_business' => $this->l('Registered business'),
+            'sole_trader_label' => $this->l('Sole trader'),
         );
 
         // Checkout media render is a sanctioned refresh point for the backend
@@ -2698,7 +2934,15 @@ class Twopayment extends PaymentModule
                 'enable_department' => $this->enable_department,
                 'enable_project' => $this->enable_project,
                 'enable_order_intent' => $this->enable_order_intent,
-                'use_account_type' => (int) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE'),
+                'sole_trader' => array(
+                    // Only the feature flag - the availability check runs
+                    // live per billing country via soleTraderAvailability,
+                    // and the signup URL / resolved invoice country come
+                    // from soleTraderTokens (see classes/TwoSoleTrader.php
+                    // and controllers/front/orderintent.php).
+                    'enabled' => TwoSoleTrader::isEnabled() ? 1 : 0,
+                ),
+                'shop_country' => (string) Context::getContext()->country->iso_code,
                 'order_intent_url' => $this->context->link->getModuleLink($this->name, 'orderintent'),
                 'ajax_token' => Tools::getToken(false),
                 'module_dir' => $this->_path,
@@ -2707,6 +2951,9 @@ class Twopayment extends PaymentModule
                 'countries' => $param_countries,
                 'available_payment_terms' => $this->getAvailablePaymentTerms(),
                 'default_payment_term' => $this->getDefaultPaymentTerm(),
+                // Enables the checkout JS to mirror the buyer surcharge as a
+                // real PrestaShop cart line on payment-option selection.
+                'surcharge_cart_line' => !empty($this->getTwoSurchargeSettings()['enabled']),
                 'payment_term_type' => Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'),
                 'i18n' => $i18n,
                 'phone_i18n' => array(
@@ -2725,7 +2972,7 @@ class Twopayment extends PaymentModule
         // Ensures they load AFTER jQuery
         $this->context->controller->registerJavascript('two-company-search', 'modules/twopayment/views/js/modules/TwoCompanySearch.js', array('priority' => 201, 'async' => false));
         $this->context->controller->registerJavascript('two-order-intent', 'modules/twopayment/views/js/modules/TwoOrderIntent.js', array('priority' => 202, 'async' => false));
-        $this->context->controller->registerJavascript('two-field-validation', 'modules/twopayment/views/js/modules/TwoFieldValidation.js', array('priority' => 203, 'async' => false));
+        $this->context->controller->registerJavascript('two-sole-trader', 'modules/twopayment/views/js/modules/TwoSoleTrader.js', array('priority' => 204, 'async' => false));
         // Phone validation removed - Two API handles phone number validation
         $this->context->controller->registerJavascript('two-checkout-manager', 'modules/twopayment/views/js/modules/TwoCheckoutManager.js', array('priority' => 205, 'async' => false));
         $this->context->controller->registerJavascript('two-script', 'modules/twopayment/views/js/twopayment.js', array('priority' => 206, 'async' => false));
@@ -2781,7 +3028,6 @@ class Twopayment extends PaymentModule
             return;
         }
 
-        // BUSINESS ACCOUNT RESTRICTION: Only show Two for business accounts (when account type is enabled)
         $cart = $this->context->cart;
         if (!Validate::isLoadedObject($cart) || $cart->id_address_invoice == 0) {
             PrestaShopLogger::addLog('TwoPayment: No valid cart or billing address found for payment options', 2);
@@ -2802,18 +3048,22 @@ class Twopayment extends PaymentModule
             return [];
         }
 
-        // If merchant uses account type selection, gate payment option to business accounts
-        if ((int) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE')) {
-            $account_type = property_exists($billing_address, 'account_type') ? trim((string) $billing_address->account_type) : '';
-            if ($account_type !== 'business') {
-                PrestaShopLogger::addLog('TwoPayment: Payment option hidden - account type is not business (current: ' . ($account_type ?: 'not set') . ')', 1);
-                return [];
-            }
-            PrestaShopLogger::addLog('TwoPayment: Payment option shown for business account path', 1);
-        } else {
-            // When account type selection is disabled, allow showing Two option; FE will prompt for company selection as needed
-            PrestaShopLogger::addLog('TwoPayment: Payment option shown (account type disabled)', 1);
+        // Minimum-order gate (TWO-24775): hide the payment option when the
+        // cart is below the platform minimum (API-resolved, cache-only read
+        // primed by the checkout media hook) or the merchant's own configured
+        // minimum. Display/UX gate only - the API still enforces the platform
+        // minimum server-side at order creation.
+        if (!$this->isTwoMinimumOrderSatisfied($cart)) {
+            return [];
         }
+
+        // B2B checkout: Two shows for any company-bearing buyer. There is
+        // no account-type selector to also gate on (TWO-24755 rework) -
+        // the front-end prompts for the company at payment time when
+        // needed, and sole traders enrol through the payment-step
+        // Business / Sole trader toggle; the order-intent pre-check
+        // enforces a verified company + org number either way.
+        PrestaShopLogger::addLog('TwoPayment: Payment option shown', 1);
         
         $payment_options = [
             $this->getTwoPaymentOption(),
@@ -2915,8 +3165,19 @@ class Twopayment extends PaymentModule
      * @return array
      * @throws Exception
      */
-    private function buildTwoOrderPricingData($cart, $contextLabel = 'order payload', $strictReconciliation = false, $paymentTermDays = null)
+    private function buildTwoOrderPricingData($cart, $contextLabel = 'order payload', $strictReconciliation = false, $paymentTermDays = null, $syncSurchargeCartLine = false)
     {
+        // Money-critical self-heal (create + strict-submit paths only; never
+        // the update path, whose cart belongs to an already-placed order):
+        // reconcile the cart's surcharge line with the fee this payload will
+        // carry BEFORE totals are read, so a missed/failed frontend sync
+        // (broken theme JS, raced AJAX) cannot ship a PrestaShop total that
+        // diverges from the Two invoice. The parity gate below then verifies
+        // the result and fails closed on any residual mismatch.
+        if ($syncSurchargeCartLine) {
+            $this->syncTwoSurchargeCartLine($cart, true);
+        }
+
         $line_items = $this->getTwoProductItems($cart);
         if (empty($line_items)) {
             PrestaShopLogger::addLog('TwoPayment: Cannot build ' . $contextLabel . ' - no valid line items', 3);
@@ -2979,6 +3240,40 @@ class Twopayment extends PaymentModule
             $line_items[] = $surchargeLine;
             $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
             $subtotalsTotals = $this->calculateOrderTotalsFromTaxSubtotals($tax_subtotals);
+        } else {
+            $surchargeLine = null;
+        }
+
+        // PARITY GATE (the single most important correctness edge of the
+        // surcharge-as-cart-line feature): the fee PrestaShop charges the
+        // buyer (hidden virtual product line) and the fee the Two payload
+        // carries must be the same money. On the create/strict paths a
+        // mismatch beyond ORDER_RECONCILIATION_TOLERANCE throws - checkout
+        // fails with a retryable error instead of ever creating an order
+        // whose PrestaShop total diverges from the Two invoice. The update
+        // path and the non-strict intent precheck log a warning only
+        // (pre-feature orders legitimately have no cart line).
+        $cartSurchargeLine = $this->getTwoSurchargeCartLine($cart);
+        $payloadFeeGrossCents = $surchargeLine !== null ? $this->convertAmountToCents($surchargeLine['gross_amount']) : 0;
+        $payloadFeeNetCents = $surchargeLine !== null ? $this->convertAmountToCents($surchargeLine['net_amount']) : 0;
+        $cartFeeGrossCents = $cartSurchargeLine !== null ? $this->convertAmountToCents($cartSurchargeLine['gross']) : 0;
+        $cartFeeNetCents = $cartSurchargeLine !== null ? $this->convertAmountToCents($cartSurchargeLine['net']) : 0;
+        $surchargeParityDiffCents = max(
+            abs($payloadFeeGrossCents - $cartFeeGrossCents),
+            abs($payloadFeeNetCents - $cartFeeNetCents)
+        );
+        $enforceSurchargeParity = (bool) $syncSurchargeCartLine;
+        if ($surchargeParityDiffCents > $this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE)) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: ' . $contextLabel . ' surcharge parity mismatch - cart line (net/gross)=(' .
+                $this->getTwoRoundAmount($cartFeeNetCents / 100) . '/' . $this->getTwoRoundAmount($cartFeeGrossCents / 100) .
+                ') vs payload fee line (net/gross)=(' .
+                $this->getTwoRoundAmount($payloadFeeNetCents / 100) . '/' . $this->getTwoRoundAmount($payloadFeeGrossCents / 100) . ')',
+                $enforceSurchargeParity ? 3 : 2
+            );
+            if ($enforceSurchargeParity) {
+                throw new Exception('Surcharge line mismatch between cart and Two payload');
+            }
         }
 
         return [
@@ -3043,6 +3338,14 @@ class Twopayment extends PaymentModule
 
         $cartGross = round((float)$cart->getOrderTotal(true, Cart::BOTH), 2);
         $cartNet = round((float)$cart->getOrderTotal(false, Cart::BOTH), 2);
+        // The hidden surcharge line is excluded from the product line items
+        // (its payload counterpart is appended AFTER this gate), so subtract
+        // its cart-side totals to compare like with like.
+        $surchargeCartLine = $this->getTwoSurchargeCartLine($cart);
+        if ($surchargeCartLine !== null && ($cartGross != 0.0 || $cartNet != 0.0)) {
+            $cartGross = round($cartGross - $surchargeCartLine['gross'], 2);
+            $cartNet = round($cartNet - $surchargeCartLine['net'], 2);
+        }
         if ($cart->nbProducts() > 0 && $cartGross == 0.0 && $cartNet == 0.0) {
             PrestaShopLogger::addLog(
                 'TwoPayment: Cart totals unavailable for ' . $contextLabel . '; skipping strict reconciliation gate.',
@@ -3167,7 +3470,9 @@ class Twopayment extends PaymentModule
         $contextLabel = (bool)$strictReconciliation ? 'order intent strict submit' : 'order intent';
         // Order intent pre-check remains permissive for UX refresh checks.
         // Payment-submit authoritative intent checks must be strict.
-        $pricingData = $this->buildTwoOrderPricingData($cart, $contextLabel, (bool)$strictReconciliation);
+        // Strict submit is the authoritative pre-create check: self-heal the
+        // cart's surcharge line and enforce cart-vs-payload fee parity.
+        $pricingData = $this->buildTwoOrderPricingData($cart, $contextLabel, (bool)$strictReconciliation, null, (bool)$strictReconciliation);
         $line_items = $pricingData['line_items'];
         $tax_subtotals = $pricingData['tax_subtotals'];
         $final_net = $pricingData['net_amount'];
@@ -3312,6 +3617,14 @@ class Twopayment extends PaymentModule
 
                     if (!Tools::isEmpty($provider_message)) {
                         $result['message'] = $provider_message;
+                    }
+
+                    // Surface the platform minimum when the decline is
+                    // attributable to it (TWO-24775) - decline_reason first,
+                    // strictly-below fallback; fail-soft (no hint) otherwise.
+                    $minimum_hint = $this->getTwoMinimumOrderDeclineHint($response, $cart);
+                    if (!Tools::isEmpty($minimum_hint)) {
+                        $result['message'] .= ' ' . $minimum_hint;
                     }
                 }
 
@@ -3489,7 +3802,18 @@ class Twopayment extends PaymentModule
         return round($gross_amount, 2);
     }
 
-    public function getTwoNewOrderData($merchant_order_id, $cart, $merchant_urls = null)
+    /**
+     * @param string $merchant_order_id
+     * @param Cart $cart
+     * @param array|null $merchant_urls
+     * @param bool $syncSurchargeCartLine when true (default, order-create
+     *        paths) the cart's surcharge line is self-healed and fee parity
+     *        is ENFORCED before totals are read; pass false for pure
+     *        comparison/snapshot builds that must not mutate the cart.
+     * @return array
+     * @throws Exception
+     */
+    public function getTwoNewOrderData($merchant_order_id, $cart, $merchant_urls = null, $syncSurchargeCartLine = true)
     {
         // Validate cart has products before building order data
         if (!Validate::isLoadedObject($cart) || $cart->nbProducts() <= 0) {
@@ -3517,7 +3841,7 @@ class Twopayment extends PaymentModule
             }
         }
 
-        $pricingData = $this->buildTwoOrderPricingData($cart, 'order data (merchant_order_id=' . $merchant_order_id . ')');
+        $pricingData = $this->buildTwoOrderPricingData($cart, 'order data (merchant_order_id=' . $merchant_order_id . ')', false, null, (bool) $syncSurchargeCartLine);
         $line_items = $pricingData['line_items'];
         $tax_subtotals = $pricingData['tax_subtotals'];
         $final_net = $pricingData['net_amount'];
@@ -3759,8 +4083,17 @@ class Twopayment extends PaymentModule
             return $items; // Return empty array (caller should handle empty cart)
         }
         $known_product_rate_candidates = $this->collectTwoKnownTaxRatesFromConfiguredProductRates($line_items);
-        
+        $surchargeProductId = $this->getTwoSurchargeCartProductId(false);
+
         foreach ($line_items as $line_item) {
+            // The hidden surcharge product is NOT merchandise: the Two payload
+            // carries the fee as its own appended SERVICE line
+            // (buildTwoSurchargeLineItemForCart), and the fee basis must never
+            // include the fee itself. Skip it here; reconciliation subtracts
+            // its cart totals symmetrically.
+            if ($surchargeProductId > 0 && (int) $line_item['id_product'] === $surchargeProductId) {
+                continue;
+            }
             $categories = Product::getProductCategoriesFull($line_item['id_product'], $cart->id_lang);
             $image = Image::getCover($line_item['id_product']);
             $imagePath = $this->context->link->getImageLink($line_item['link_rewrite'], $image['id_image'], ImageType::getFormattedName('home'));
@@ -6238,6 +6571,17 @@ class Twopayment extends PaymentModule
                         $due = isset($response['due_in_days']) ? $response['due_in_days'] : null;
                         $due_days = (is_numeric($due) && (int) $due > 0) ? (int) $due : 0;
                         Configuration::updateValue(self::CONFIG_MERCHANT_DUE_IN_DAYS, $due_days);
+                        // Third cache fed by the same fetch: the platform
+                        // minimum-order tuple (TWO-24775). Unlike the term
+                        // list, an absent or malformed tuple IS the answer
+                        // ("no minimum configured") - overwrite with '' so
+                        // the no-minimum outcome is cached and the gate does
+                        // not refetch on every checkout render.
+                        $platform_minimum = $this->parseTwoPlatformMinimumOrder($response);
+                        Configuration::updateValue(
+                            self::CONFIG_PLATFORM_MIN_ORDER,
+                            $platform_minimum ? json_encode($platform_minimum) : ''
+                        );
                         // Success: keep the full-TTL clock set above.
                     } else {
                         // Failed fetch (network blip / 5xx / bad body). Roll the
@@ -6303,7 +6647,350 @@ class Twopayment extends PaymentModule
         // or the new merchant would inherit the old merchant's default term
         // (TWO-24859). Shared timestamp reset last, forcing a re-fetch.
         Configuration::updateValue(self::CONFIG_MERCHANT_DUE_IN_DAYS, 0);
+        // The platform minimum is part of the same merchant record: a new
+        // identity must not be gated by the old merchant's minimum. '' means
+        // "no minimum" - the correct fail-open posture until the re-fetch
+        // (the API still enforces the real minimum at order create).
+        Configuration::updateValue(self::CONFIG_PLATFORM_MIN_ORDER, '');
         Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, 0);
+    }
+
+    /**
+     * Project the platform minimum-order tuple out of a GET /v1/merchant
+     * response body (TWO-24775). The API omits all three min_order_* fields
+     * when no minimum is configured; a partial or malformed tuple is treated
+     * the same way rather than gating on a guess. Mirrors woocommerce-plugin's
+     * get_platform_minimum_order() parsing and magento-plugin's
+     * MinimumOrderProvider::parseMinimum().
+     *
+     * @param mixed $response Decoded response body.
+     * @return array{amount: float, currency: string, basis: string}|null
+     */
+    public function parseTwoPlatformMinimumOrder($response)
+    {
+        if (!is_array($response)) {
+            return null;
+        }
+        $amount = isset($response['min_order_amount']) ? $response['min_order_amount'] : null;
+        $currency = isset($response['min_order_currency']) ? $response['min_order_currency'] : null;
+        $basis = isset($response['min_order_basis']) ? $response['min_order_basis'] : null;
+        if (
+            !is_numeric($amount) || (float) $amount <= 0
+            || !is_string($currency) || trim($currency) === ''
+            || !in_array($basis, array('net', 'gross'), true)
+        ) {
+            return null;
+        }
+        return array(
+            'amount' => (float) $amount,
+            'currency' => Tools::strtoupper(trim($currency)),
+            'basis' => $basis,
+        );
+    }
+
+    /**
+     * The platform's minimum order value for this merchant (funding-partner
+     * default with any merchant override, resolved server-side on
+     * GET /v1/merchant/{id} - the same value checkout-api enforces at order
+     * create/intent), as ['amount','currency','basis'] or null when none is
+     * configured or the record is not yet resolved (TWO-24775).
+     *
+     * CACHE-ONLY - never blocks on HTTP. Primed by the SAME fetch as the
+     * available_terms list (getMerchantAvailableTerms) from the sanctioned
+     * refresh points (checkout media render, admin config render). A cold or
+     * failed cache resolves to null = no minimum: the server still enforces,
+     * and hiding the payment method on an API blip would be the worse failure
+     * (fail-open, matching woocommerce-plugin and magento-plugin).
+     *
+     * @return array{amount: float, currency: string, basis: string}|null
+     */
+    public function getPlatformMinimumOrder()
+    {
+        $cached = Configuration::get(self::CONFIG_PLATFORM_MIN_ORDER);
+        if (Tools::isEmpty($cached)) {
+            return null;
+        }
+        $decoded = json_decode((string) $cached, true);
+        // Re-validate on read: Configuration is shared mutable state and the
+        // tuple shape is the gate's contract.
+        return $this->parseTwoPlatformMinimumOrder(array(
+            'min_order_amount' => isset($decoded['amount']) ? $decoded['amount'] : null,
+            'min_order_currency' => isset($decoded['currency']) ? $decoded['currency'] : null,
+            'min_order_basis' => isset($decoded['basis']) ? $decoded['basis'] : null,
+        ));
+    }
+
+    /**
+     * The merchant's own optional minimum order value from the admin config,
+     * as ['amount','currency','basis'] or null when unset. Interpreted in the
+     * SHOP DEFAULT currency on the tax basis the merchant selects, falling
+     * back to the platform minimum's basis when unset, else gross - the same
+     * semantics as woocommerce-plugin's get_merchant_minimum_order()
+     * (TWO-24775).
+     *
+     * @return array{amount: float, currency: string, basis: string}|null
+     */
+    public function getMerchantMinimumOrder()
+    {
+        $value = (float) Configuration::get(self::CONFIG_MERCHANT_MIN_ORDER);
+        if ($value <= 0) {
+            return null;
+        }
+        $currency_iso = $this->getTwoShopDefaultCurrencyIso();
+        if ($currency_iso === '') {
+            return null;
+        }
+        $basis = (string) Configuration::get(self::CONFIG_MERCHANT_MIN_ORDER_BASIS);
+        if (!in_array($basis, array('net', 'gross'), true)) {
+            $platform_minimum = $this->getPlatformMinimumOrder();
+            $basis = $platform_minimum ? $platform_minimum['basis'] : 'gross';
+        }
+        return array(
+            'amount' => $value,
+            'currency' => $currency_iso,
+            'basis' => $basis,
+        );
+    }
+
+    /**
+     * ISO code of the shop's default currency ('' when unresolvable).
+     *
+     * @return string
+     */
+    public function getTwoShopDefaultCurrencyIso()
+    {
+        $default_currency = new Currency((int) Configuration::get('PS_CURRENCY_DEFAULT'));
+        if (!Validate::isLoadedObject($default_currency)) {
+            return '';
+        }
+        return Tools::strtoupper(trim((string) $default_currency->iso_code));
+    }
+
+    /**
+     * Convert an amount between two installed currencies via PrestaShop's own
+     * conversion rates (each Currency's conversion_rate is expressed against
+     * the shop default currency). Returns null when either currency is not
+     * installed or carries no usable rate - the CALLER decides the failure
+     * posture (the checkout gate fails closed on the platform minimum, the
+     * decline hint fails soft). Mirrors magento-plugin's
+     * CurrencyRatesProviderInterface contract (TWO-24775).
+     *
+     * @param float $amount
+     * @param string $from_iso
+     * @param string $to_iso
+     * @return float|null Converted amount rounded to 2 decimals, or null.
+     */
+    public function convertTwoAmountBetweenCurrencies($amount, $from_iso, $to_iso)
+    {
+        $from_iso = Tools::strtoupper(trim((string) $from_iso));
+        $to_iso = Tools::strtoupper(trim((string) $to_iso));
+        if ($from_iso === '' || $to_iso === '') {
+            return null;
+        }
+        if ($from_iso === $to_iso) {
+            return round((float) $amount, 2);
+        }
+        $from_id = (int) Currency::getIdByIsoCode($from_iso);
+        $to_id = (int) Currency::getIdByIsoCode($to_iso);
+        if ($from_id <= 0 || $to_id <= 0) {
+            return null;
+        }
+        $from = new Currency($from_id);
+        $to = new Currency($to_id);
+        if (!Validate::isLoadedObject($from) || !Validate::isLoadedObject($to)) {
+            return null;
+        }
+        $from_rate = isset($from->conversion_rate) ? (float) $from->conversion_rate : 0.0;
+        $to_rate = isset($to->conversion_rate) ? (float) $to->conversion_rate : 0.0;
+        if ($from_rate <= 0 || $to_rate <= 0) {
+            return null;
+        }
+        // conversion_rate = units of the currency per 1 unit of the shop
+        // default currency; route through the default to cross-convert.
+        // Full-precision arithmetic, rounded once at the boundary.
+        return round((float) $amount / $from_rate * $to_rate, 2);
+    }
+
+    /**
+     * The cart's total on the given tax basis, via PrestaShop's own cart
+     * total API (net = everything excluding tax, gross = including tax).
+     *
+     * @param Cart $cart
+     * @param string $basis 'net' or 'gross'
+     * @return float
+     */
+    public function getTwoMinimumOrderBasketValue($cart, $basis)
+    {
+        return (float) $cart->getOrderTotal($basis === 'gross', Cart::BOTH);
+    }
+
+    /**
+     * Whether the cart satisfies the platform minimum order value AND the
+     * merchant's own optional minimum (TWO-24775). Both bars must pass; each
+     * is compared on its own declared tax basis, inclusive (an
+     * exactly-minimum basket passes - woocommerce/magento parity).
+     *
+     * Failure posture per bar, matching magento-plugin's MinimumOrderGate:
+     * - No minimum resolved (cold cache, API blip, none configured): pass -
+     *   the API still enforces the platform minimum at order create.
+     * - Cross-currency basket that CANNOT be converted to the platform
+     *   minimum's currency (currency not installed / no usable rate): fail
+     *   CLOSED - an order that cannot be proven to satisfy the funding
+     *   partner's product minimum must not be offered the method.
+     * - Merchant's own bar unjudgeable for the same reason: fail OPEN - it is
+     *   the merchant's optional preference, and the platform floor above
+     *   still applies.
+     *
+     * @param Cart $cart
+     * @return bool
+     */
+    public function isTwoMinimumOrderSatisfied($cart)
+    {
+        $platform_minimum = $this->getPlatformMinimumOrder();
+        $merchant_minimum = $this->getMerchantMinimumOrder();
+        if (!$platform_minimum && !$merchant_minimum) {
+            return true;
+        }
+        if (!Validate::isLoadedObject($cart)) {
+            return true;
+        }
+
+        $cart_currency = new Currency((int) $cart->id_currency);
+        $cart_iso = Validate::isLoadedObject($cart_currency)
+            ? Tools::strtoupper(trim((string) $cart_currency->iso_code))
+            : '';
+
+        if ($platform_minimum) {
+            $basket_value = $this->getTwoMinimumOrderBasketValue($cart, $platform_minimum['basis']);
+            $converted = $this->convertTwoAmountBetweenCurrencies($basket_value, $cart_iso, $platform_minimum['currency']);
+            if ($converted === null) {
+                // Fail closed: cannot compare apples to apples.
+                $this->logTwoMinimumOrderGateDecision($cart, $platform_minimum, 'platform minimum unjudgeable (no FX rate ' . ($cart_iso ?: '?') . '->' . $platform_minimum['currency'] . '), failing closed');
+                return false;
+            }
+            if ($converted < $platform_minimum['amount']) {
+                $this->logTwoMinimumOrderGateDecision($cart, $platform_minimum, 'below platform minimum (basket ' . $converted . ' ' . $platform_minimum['currency'] . ' ' . $platform_minimum['basis'] . ')');
+                return false;
+            }
+        }
+
+        if ($merchant_minimum) {
+            $basket_value = $this->getTwoMinimumOrderBasketValue($cart, $merchant_minimum['basis']);
+            $converted = $this->convertTwoAmountBetweenCurrencies($basket_value, $cart_iso, $merchant_minimum['currency']);
+            // $converted === null: fail open on the merchant's own optional
+            // bar (see docblock) - only a resolved comparison may hide.
+            if ($converted !== null && $converted < $merchant_minimum['amount']) {
+                $this->logTwoMinimumOrderGateDecision($cart, $merchant_minimum, 'below merchant minimum (basket ' . $converted . ' ' . $merchant_minimum['currency'] . ' ' . $merchant_minimum['basis'] . ')');
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Removing a payment method is invisible to the merchant - log the
+     * failing basket so a gate misconfiguration doesn't read as the payment
+     * option silently vanishing.
+     *
+     * @param Cart $cart
+     * @param array $minimum
+     * @param string $reason
+     * @return void
+     */
+    private function logTwoMinimumOrderGateDecision($cart, $minimum, $reason)
+    {
+        PrestaShopLogger::addLog(
+            'TwoPayment: Payment option hidden for cart ' . (int) $cart->id . ' - ' . $reason
+            . ' (minimum ' . $minimum['amount'] . ' ' . $minimum['currency'] . ' ' . $minimum['basis'] . ')',
+            2
+        );
+    }
+
+    /**
+     * Buyer-facing minimum-order hint for a declined order create / order
+     * intent response (TWO-24775): '' when the decline is not attributable to
+     * the platform minimum, else a hint formatted in the CART currency
+     * ("Minimum order value is <symbol><amount> excluding|including tax." -
+     * woocommerce/magento wording parity).
+     *
+     * Attribution: primarily the API's machine-readable decline reason
+     * (decline_reason === ORDER_BELOW_MIN_INVOICE_AMOUNT), with a
+     * strictly-below-minimum check on the cart value as fallback while older
+     * backends carry only a generic reason. Fail-soft throughout: an
+     * unresolvable FX conversion means no hint, never a blocked message
+     * (mirrors magento-plugin's isBelowMinimum/getMinimumForDisplay).
+     *
+     * @param mixed $response Decoded provider response body (order create or intent).
+     * @param Cart $cart
+     * @return string
+     */
+    public function getTwoMinimumOrderDeclineHint($response, $cart)
+    {
+        $platform_minimum = $this->getPlatformMinimumOrder();
+        if (!$platform_minimum || !Validate::isLoadedObject($cart)) {
+            return '';
+        }
+
+        $decline_reason = null;
+        if (is_array($response)) {
+            if (isset($response['decline_reason'])) {
+                $decline_reason = $response['decline_reason'];
+            } elseif (isset($response['data']['decline_reason'])) {
+                $decline_reason = $response['data']['decline_reason'];
+            }
+        }
+
+        $cart_currency = new Currency((int) $cart->id_currency);
+        if (!Validate::isLoadedObject($cart_currency)) {
+            return '';
+        }
+        $cart_iso = Tools::strtoupper(trim((string) $cart_currency->iso_code));
+
+        $declined_on_minimum = ($decline_reason === 'ORDER_BELOW_MIN_INVOICE_AMOUNT');
+        if (!$declined_on_minimum) {
+            // Fallback: strictly below the minimum on the minimum's basis.
+            $basket_value = $this->getTwoMinimumOrderBasketValue($cart, $platform_minimum['basis']);
+            $converted = $this->convertTwoAmountBetweenCurrencies($basket_value, $cart_iso, $platform_minimum['currency']);
+            $declined_on_minimum = ($converted !== null && $converted < $platform_minimum['amount']);
+        }
+        if (!$declined_on_minimum) {
+            return '';
+        }
+
+        // Express the minimum in the buyer's (cart) currency for display.
+        $display_amount = $this->convertTwoAmountBetweenCurrencies(
+            $platform_minimum['amount'],
+            $platform_minimum['currency'],
+            $cart_iso
+        );
+        if ($display_amount === null) {
+            return '';
+        }
+        return sprintf(
+            $this->l('Minimum order value is %1$s%2$s %3$s tax.'),
+            $this->getTwoCurrencyDisplaySymbol($cart_currency),
+            number_format($display_amount, 2),
+            $platform_minimum['basis'] === 'gross' ? $this->l('including') : $this->l('excluding')
+        );
+    }
+
+    /**
+     * Display symbol for a currency, falling back to "ISO " when the
+     * installation carries no symbol.
+     *
+     * @param Currency $currency
+     * @return string
+     */
+    private function getTwoCurrencyDisplaySymbol($currency)
+    {
+        if (isset($currency->symbol) && !Tools::isEmpty($currency->symbol)) {
+            return (string) $currency->symbol;
+        }
+        if (isset($currency->sign) && !Tools::isEmpty($currency->sign)) {
+            return (string) $currency->sign;
+        }
+        return Tools::strtoupper(trim((string) $currency->iso_code)) . ' ';
     }
 
     /**
@@ -6698,42 +7385,108 @@ class Twopayment extends PaymentModule
      * @param mixed $rate
      * @return float
      */
-    private function normalizeTwoFeeTaxRate($rate)
+    /**
+     * Merchant-selected TaxRulesGroup id for the hidden surcharge product
+     * (CONFIG_SURCHARGE_TAX_RULES_GROUP). 0 - also the unset/blank/garbage
+     * fallback - is PrestaShop's first-class "No tax" sentinel: fail-safe is
+     * an untaxed fee, never an invented rate. TWO-25071.
+     *
+     * @return int
+     */
+    public function getTwoSurchargeTaxRulesGroupId()
     {
-        if ($rate === null || $rate === '') {
-            return 0.0;
-        }
-        $rate = (float) $rate;
-        if ($rate <= 0) {
-            return 0.0;
-        }
-        if ($rate > 1.0) {
-            $rate = $rate / 100.0;
+        $raw = Configuration::get(self::CONFIG_SURCHARGE_TAX_RULES_GROUP);
+        if ($raw === false || $raw === null || !is_numeric($raw)) {
+            return 0;
         }
 
-        return $rate;
+        return max(0, (int) $raw);
     }
 
     /**
-     * Admin-configured Surcharge Tax Rate for the Two order-creation fee line
-     * (Magento parity: Config\Repository::getSurchargeTaxRate /
-     * XML_PATH_SURCHARGE_TAX_RATE), as a decimal FRACTION (stored "25" →
-     * 0.25) via the same normalizeTwoFeeTaxRate scaling convention the rest
-     * of the file uses. Returns 0.0 when the field is blank/unset/
-     * non-numeric/negative — deliberate deviation from Magento, whose blank
-     * fallback is the store's default product tax class rate: PrestaShop has
-     * no equivalent store-wide default tax rate concept.
+     * Post-upgrade "surcharge tax needs re-selection" warning text, or ''
+     * when no warning is due. Due when upgrade-2.5.0.php flagged a shop that
+     * had the pre-release flat rate (PS_TWO_SURCHARGE_TAX_RATE) configured
+     * and no TaxRulesGroup has been saved since: the surcharge is silently
+     * untaxed until the merchant picks a group. Self-retires if a selection
+     * exists (covers saves made outside this module's own form path).
      *
+     * @return string
+     */
+    public function getTwoSurchargeTaxMigrationNotice()
+    {
+        if (!Configuration::get(self::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE)) {
+            return '';
+        }
+        $stored = Configuration::get(self::CONFIG_SURCHARGE_TAX_RULES_GROUP);
+        if ($stored !== false && $stored !== null && trim((string) $stored) !== '') {
+            Configuration::updateValue(self::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE, '');
+
+            return '';
+        }
+
+        return $this->l('Surcharge tax needs re-selection: this shop previously used a flat surcharge tax rate, which has been replaced by a tax rules group. Until you select and save a "Surcharge Tax Rules Group" under Payment settings, the surcharge is NOT taxed.');
+    }
+
+    /**
+     * Effective tax rate (decimal FRACTION, e.g. 0.25) the selected
+     * TaxRulesGroup applies to the surcharge for THIS cart's tax destination
+     * - resolved through the SAME core machinery PrestaShop's own cart
+     * pricing uses for the hidden fee product (Product::priceCalculation):
+     * TaxManagerFactory over the cart's PS_TAX_ADDRESS_TYPE address, with
+     * the same shop-wide gates (PS_TAX off, vatnumber-module B2B exemption).
+     * Using one resolution for both the PS cart line and the Two payload is
+     * what makes the PR #64 parity gate unable to trip on destination-based
+     * rates. Empirically verified on PS 8.2.6 core: no matching rule for the
+     * destination -> 0 (zero-rating for free), combined multi-rate rules sum
+     * (6%+2% -> 8), group id 0 -> 0 everywhere.
+     *
+     * @param Cart $cart
      * @return float
      */
-    public function getTwoSurchargeTaxRate()
+    public function getTwoSurchargeTaxRateForCart($cart)
     {
-        $raw = trim((string) Configuration::get('PS_TWO_SURCHARGE_TAX_RATE'));
-        if ($raw === '' || !is_numeric($raw)) {
+        $groupId = $this->getTwoSurchargeTaxRulesGroupId();
+        if ($groupId <= 0 || !Validate::isLoadedObject($cart)) {
             return 0.0;
         }
 
-        return $this->normalizeTwoFeeTaxRate($raw);
+        // Shop-wide "disable taxes" switch (core: Tax::excludeTaxeOption
+        // inside Product::priceCalculation zeroes every product's tax).
+        if (class_exists('Tax') && method_exists('Tax', 'excludeTaxeOption')) {
+            if (Tax::excludeTaxeOption()) {
+                return 0.0;
+            }
+        } elseif (!Configuration::get('PS_TAX')) {
+            return 0.0;
+        }
+
+        $taxAddressField = (string) Configuration::get('PS_TAX_ADDRESS_TYPE');
+        if ($taxAddressField !== 'id_address_delivery') {
+            $taxAddressField = 'id_address_invoice';
+        }
+        $address = new Address((int) $cart->{$taxAddressField});
+        if (!Validate::isLoadedObject($address)) {
+            // No usable tax destination. Cannot legitimately happen at the
+            // payment step (PS requires addresses first); if it ever does,
+            // the payload carries no tax and the fail-closed parity gate /
+            // post-write sync verification blocks any divergence.
+            return 0.0;
+        }
+
+        // vatnumber-module B2B exemption - the exact condition core's
+        // Product::priceCalculation flips usetax off with.
+        if (
+            !empty($address->vat_number)
+            && (int) $address->id_country !== (int) Configuration::get('VATNUMBER_COUNTRY')
+            && Configuration::get('VATNUMBER_MANAGEMENT')
+        ) {
+            return 0.0;
+        }
+
+        $calculator = TaxManagerFactory::getManager($address, $groupId)->getTaxCalculator();
+
+        return max(0.0, (float) $calculator->getTotalRate()) / 100.0;
     }
 
     /**
@@ -6761,12 +7514,13 @@ class Twopayment extends PaymentModule
     /**
      * Build the buyer-surcharge line item for the Two order payload, or null
      * when no surcharge is configured / the quote fails / the fee is zero.
-     * The line's tax_rate carries the admin-configured Surcharge Tax Rate
-     * (PS_TWO_SURCHARGE_TAX_RATE via getTwoSurchargeTaxRate, Magento parity:
-     * XML_PATH_SURCHARGE_TAX_RATE) — NOT the pricing-preview response's
-     * total_fee_tax_rate, which the plugin never populates in its own
-     * /v1/pricing/order/fee request and is therefore always empty; net/tax/
-     * gross satisfy the Two line-item formulas so validateTwoLineItems
+     * The line's tax_rate is the merchant-selected TaxRulesGroup's effective
+     * rate for THIS cart's tax destination (getTwoSurchargeTaxRateForCart -
+     * the same core resolution PrestaShop applies to the hidden fee cart
+     * line, so the two sides cannot drift) — NOT the pricing-preview
+     * response's total_fee_tax_rate, which the plugin never populates in its
+     * own /v1/pricing/order/fee request and is therefore always empty; net/
+     * tax/gross satisfy the Two line-item formulas so validateTwoLineItems
      * accepts it.
      *
      * @param Cart     $cart
@@ -6804,10 +7558,11 @@ class Twopayment extends PaymentModule
         if ($net <= 0) {
             return null;
         }
-        // The rate comes from the admin-configured Surcharge Tax Rate — the
-        // pricing-preview response's total_fee_tax_rate is never populated
-        // (the plugin sends no tax-rate field in its own fee request), so it
-        // is NOT a usable source. Compute tax from the SAME rate string that
+        // The rate is the selected TaxRulesGroup's destination-resolved rate
+        // (getTwoSurchargeTaxRateForCart) — the pricing-preview response's
+        // total_fee_tax_rate is never populated (the plugin sends no
+        // tax-rate field in its own fee request), so it is NOT a usable
+        // source. Compute tax from the SAME rate string that
         // is sent (formatTwoTaxRate snaps to TAX_RATE_PRECISION dp). Using
         // the full-precision rate to compute tax while sending a rounded rate
         // makes the line fail validateTwoLineItems (tax_amount vs
@@ -6815,7 +7570,7 @@ class Twopayment extends PaymentModule
         // decimals, silently dropping the whole surcharge line. Snapping
         // first mirrors the product-line convention (snapped_product_rate).
         // TWO-24752.
-        $taxRate = $this->getTwoSurchargeTaxRate();
+        $taxRate = $this->getTwoSurchargeTaxRateForCart($cart);
         $taxRateString = $this->formatTwoTaxRate($taxRate);
         $sentRate = (float) $taxRateString;
         $tax = round($net * $sentRate, 2);
@@ -6882,6 +7637,12 @@ class Twopayment extends PaymentModule
             // gross (getTwoNewOrderData) — NOT the full line-item pipeline,
             // which is far too heavy for a render-time preview call.
             $gross_basis = round((float) $cart->getOrderTotal(true, Cart::BOTH), 2);
+            // The hidden surcharge line must never feed its own basis: quote
+            // every term against the merchandise+shipping total only.
+            $surchargeCartLine = $this->getTwoSurchargeCartLine($cart);
+            if ($surchargeCartLine !== null) {
+                $gross_basis = round($gross_basis - $surchargeCartLine['gross'], 2);
+            }
             if ($gross_basis <= 0) {
                 // Empty cart / anonymous probe: nothing to quote against —
                 // the JS clears the chips' loading indicators to blank.
@@ -6915,6 +7676,949 @@ class Twopayment extends PaymentModule
             // Checkout render must never break on a preview quote.
             return array('success' => false);
         }
+    }
+
+    /* ------------------------------------------------------------------ *
+     *  Surcharge as a REAL PrestaShop cart line (hidden virtual product)  *
+     * ------------------------------------------------------------------ */
+
+    /**
+     * Id of the hidden virtual product mirroring the Two buyer surcharge in
+     * the PrestaShop cart. Lazily created on first use (more robust than
+     * install-time creation: survives DB restores, module upgrades from
+     * versions without the product, and accidental catalog deletion). The
+     * stored id is cross-checked against the product reference so a recycled
+     * id can never silently point at a different catalog product.
+     *
+     * @param bool $createIfMissing
+     * @return int 0 when missing and creation was not requested / failed
+     */
+    public function getTwoSurchargeCartProductId($createIfMissing = false)
+    {
+        $productId = (int) Configuration::get(self::CONFIG_SURCHARGE_PRODUCT_ID);
+        if ($productId > 0) {
+            $product = new Product($productId);
+            if (
+                Validate::isLoadedObject($product)
+                && isset($product->reference)
+                && (string) $product->reference === self::TWO_SURCHARGE_PRODUCT_REFERENCE
+            ) {
+                return $productId;
+            }
+            // Stored id no longer points at OUR product. If the object still
+            // exists AND carries our hidden-fee shape (virtual + invisible -
+            // e.g. its reference was edited in the BO), delete it best-effort
+            // so it is not orphaned forever behind its replacement. A
+            // recycled id pointing at a real catalog product will not match
+            // the shape and is never touched.
+            if (
+                Validate::isLoadedObject($product)
+                && (int) $product->is_virtual === 1
+                && (string) $product->visibility === 'none'
+            ) {
+                try {
+                    if (method_exists($product, 'delete')) {
+                        $product->delete();
+                        PrestaShopLogger::addLog('TwoPayment: Deleted stale surcharge product ' . $productId . ' (reference mismatch)', 2);
+                    }
+                } catch (Exception $e) {
+                    PrestaShopLogger::addLog('TwoPayment: Failed deleting stale surcharge product ' . $productId . ' - ' . $e->getMessage(), 2);
+                }
+            }
+            $productId = 0;
+        }
+
+        if (!$createIfMissing) {
+            return 0;
+        }
+
+        // Advisory lock: two concurrent FIRST-EVER requests (fresh install,
+        // two buyers selecting Two near-simultaneously) would otherwise each
+        // pass the read-check above and create a duplicate hidden product,
+        // orphaning the loser's copy forever.
+        if (!$this->acquireTwoDbLock('two_surcharge_product_create')) {
+            PrestaShopLogger::addLog('TwoPayment: Surcharge product creation lock not acquired', 2);
+            return 0;
+        }
+        try {
+            // Double-check UNDER the lock, straight from the DB: the winner
+            // of the race wrote Configuration in ITS request, which this
+            // request's per-request Configuration cache cannot see.
+            $storedId = (int) Db::getInstance()->getValue(
+                'SELECT `value` FROM `' . _DB_PREFIX_ . "configuration` WHERE `name` = '" . pSQL(self::CONFIG_SURCHARGE_PRODUCT_ID) . "'"
+            );
+            if ($storedId > 0) {
+                $product = new Product($storedId);
+                if (
+                    Validate::isLoadedObject($product)
+                    && isset($product->reference)
+                    && (string) $product->reference === self::TWO_SURCHARGE_PRODUCT_REFERENCE
+                ) {
+                    return $storedId;
+                }
+            }
+
+            try {
+                $productId = $this->createTwoSurchargeCartProduct();
+            } catch (Exception $e) {
+                PrestaShopLogger::addLog('TwoPayment: Failed creating surcharge cart product - ' . $e->getMessage(), 3);
+                return 0;
+            }
+            if ($productId > 0) {
+                Configuration::updateValue(self::CONFIG_SURCHARGE_PRODUCT_ID, $productId);
+            }
+
+            return $productId;
+        } finally {
+            $this->releaseTwoDbLock('two_surcharge_product_create');
+        }
+    }
+
+    /**
+     * Create the hidden virtual surcharge product. Empirically verified
+     * pattern on PS8 core: visibility 'none' keeps it out of catalog, search
+     * and listings; indexed=0 keeps it out of the search index; is_virtual=1
+     * bypasses all shipping/carrier logic; active=1 + available_for_order=1
+     * + out_of_stock=1 (+ large stock) are REQUIRED for Cart::updateQty and
+     * Cart::checkQuantities to accept it at order time.
+     *
+     * The catalog product name is term-agnostic (a shared catalog object
+     * cannot carry per-buyer term days; concurrent carts may hold different
+     * terms). The Two-side payload line keeps the term-specific label from
+     * getTwoSurchargeLineLabel; amounts - not labels - are the parity
+     * contract between the two lines.
+     *
+     * @return int new product id (0 on failure)
+     */
+    protected function createTwoSurchargeCartProduct()
+    {
+        $label = $this->getTwoBrandConfig('fee_line_label');
+        $label = !empty($label) ? $this->l((string) $label) : $this->l('Payment terms fee');
+
+        $languageIds = array();
+        foreach ((array) Language::getLanguages(false) as $lang) {
+            if (isset($lang['id_lang'])) {
+                $languageIds[] = (int) $lang['id_lang'];
+            }
+        }
+        if (empty($languageIds)) {
+            $languageIds[] = isset($this->context->language->id) ? (int) $this->context->language->id : 1;
+        }
+
+        $product = new Product();
+        $product->name = array();
+        $product->link_rewrite = array();
+        foreach ($languageIds as $idLang) {
+            $product->name[$idLang] = $label;
+            $product->link_rewrite[$idLang] = 'two-payment-terms-fee';
+        }
+        $product->reference = self::TWO_SURCHARGE_PRODUCT_REFERENCE;
+        $product->price = 0;
+        $product->id_tax_rules_group = $this->getTwoSurchargeTaxRulesGroupId();
+        $product->active = 1;
+        $product->available_for_order = 1;
+        $product->visibility = 'none';
+        $product->indexed = 0;
+        $product->is_virtual = 1;
+        $product->out_of_stock = 1; // allow orders regardless of stock
+        $product->minimal_quantity = 1;
+        $product->id_category_default = (int) Configuration::get('PS_HOME_CATEGORY');
+
+        if (!$product->add()) {
+            return 0;
+        }
+
+        if (class_exists('StockAvailable')) {
+            StockAvailable::setQuantity((int) $product->id, 0, 1000000);
+            if (method_exists('StockAvailable', 'setProductOutOfStock')) {
+                StockAvailable::setProductOutOfStock((int) $product->id, 1);
+            }
+        }
+
+        PrestaShopLogger::addLog('TwoPayment: Created hidden surcharge cart product ' . (int) $product->id, 1);
+
+        return (int) $product->id;
+    }
+
+    /**
+     * Ensure the hidden surcharge product carries the merchant-selected
+     * TaxRulesGroup (CONFIG_SURCHARGE_TAX_RULES_GROUP) - the exact same
+     * id_tax_rules_group assignment PrestaShop's own product-edit page
+     * makes, so core resolves the fee line's tax natively (per-destination
+     * rules, stacking, "No tax" id 0). Idempotent single-row self-heal: a
+     * merchant re-pointing or clearing the selection is picked up on the
+     * next cart sync. No synthetic Tax/TaxRulesGroup/TaxRule objects are
+     * created any more (TWO-25071); if the merchant deletes the selected
+     * group in the BO, core resolves 0 for every destination on BOTH the
+     * cart line and the Two payload (same resolution path), so parity holds.
+     *
+     * @param int $productId
+     * @return bool false when the product could not be loaded/updated
+     */
+    public function ensureTwoSurchargeProductTaxRulesGroup($productId)
+    {
+        $product = new Product((int) $productId);
+        if (!Validate::isLoadedObject($product)) {
+            return false;
+        }
+
+        $groupId = $this->getTwoSurchargeTaxRulesGroupId();
+        if ((int) $product->id_tax_rules_group !== $groupId) {
+            $product->id_tax_rules_group = $groupId;
+            if (!$product->update()) {
+                return false;
+            }
+            $this->flushTwoProductTaxRulesGroupCache((int) $product->id);
+        }
+
+        return true;
+    }
+
+    /**
+     * Invalidate core's per-request tax-rules-group cache for one product.
+     *
+     * EMPIRICALLY REQUIRED (verified live on PS8 core): cart pricing resolves
+     * the product's group via Product::getIdTaxRulesGroupByIdProduct, which
+     * memoises 'product_id_tax_rules_group_{id}_{shop}' in Cache. The value
+     * gets primed with 0 during product creation, and Product::update does
+     * NOT clean it - so the very first request that re-points the product's
+     * tax rules group would price the fee line WITHOUT tax (gross == net)
+     * while the Two payload carries tax, and the stale line would then never self-correct
+     * (the sync no-op check compares net, which matches). Cleaning the exact
+     * key here makes the first request price correctly.
+     *
+     * @param int $productId
+     */
+    protected function flushTwoProductTaxRulesGroupCache($productId)
+    {
+        if (!class_exists('Cache') || !method_exists('Cache', 'clean')) {
+            return;
+        }
+        $shopId = isset($this->context->shop->id) ? (int) $this->context->shop->id : 0;
+        Cache::clean('product_id_tax_rules_group_' . (int) $productId . '_' . $shopId);
+        if ($shopId !== 0) {
+            // Defensive: some call paths resolve with a null/default shop.
+            Cache::clean('product_id_tax_rules_group_' . (int) $productId . '_0');
+        }
+    }
+
+    /**
+     * MySQL advisory lock (GET_LOCK). Used to serialise the surcharge
+     * check-then-create/check-then-act sequences across concurrent requests.
+     * NOTE: paths below may hold two differently-named locks at once; that
+     * requires MySQL >= 5.7.5 or MariaDB >= 10.0.2 (older servers silently
+     * release the first lock on the second GET_LOCK) - both far below any
+     * realistic PrestaShop 8 database floor.
+     *
+     * @param string $name
+     * @param int $timeoutSeconds
+     * @return bool
+     */
+    protected function acquireTwoDbLock($name, $timeoutSeconds = 5)
+    {
+        try {
+            return (string) Db::getInstance()->getValue(
+                "SELECT GET_LOCK('" . pSQL($name) . "', " . (int) $timeoutSeconds . ')'
+            ) === '1';
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: GET_LOCK failed for ' . $name . ' - ' . $e->getMessage(), 3);
+            return false;
+        }
+    }
+
+    /**
+     * Release a lock taken with acquireTwoDbLock. Callers use try/finally so
+     * the lock is released even when the guarded section throws.
+     *
+     * @param string $name
+     */
+    protected function releaseTwoDbLock($name)
+    {
+        try {
+            Db::getInstance()->getValue("SELECT RELEASE_LOCK('" . pSQL($name) . "')");
+        } catch (Exception $e) {
+            // Session teardown releases the lock anyway; log only.
+            PrestaShopLogger::addLog('TwoPayment: RELEASE_LOCK failed for ' . $name . ' - ' . $e->getMessage(), 2);
+        }
+    }
+
+    /**
+     * Lazily create the per-cart surcharge sync-sequence table. Also created
+     * at install; the lazy path covers module upgrades from versions without
+     * it (install() does not re-run on upgrade).
+     */
+    protected function ensureTwoSurchargeSyncTable()
+    {
+        static $ensured = false;
+        if ($ensured) {
+            return;
+        }
+        Db::getInstance()->execute(
+            'CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'twopayment_surcharge_sync` (
+                `id_cart` INT(11) UNSIGNED NOT NULL,
+                `seq` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+                `updated_at` DATETIME NOT NULL,
+                PRIMARY KEY (`id_cart`)
+            ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8'
+        );
+        $ensured = true;
+    }
+
+    /**
+     * Name of the order_detail fee-guard trigger (prefixed like the module's
+     * tables so several shops sharing one database never collide).
+     *
+     * @return string
+     */
+    protected function getTwoFeeGuardTriggerName()
+    {
+        return _DB_PREFIX_ . 'twopayment_fee_guard';
+    }
+
+    /**
+     * DDL for the DB-level fee-row guard. This trigger - not the
+     * actionObjectOrderDetailAddBefore hook - is the actual enforcement
+     * layer: Hook::callHookOn() swallows module exceptions unless the shop
+     * runs in debug mode (verified against PS8 core), so a thrown
+     * PrestaShopException protects nothing in a production shop. A BEFORE
+     * INSERT trigger holds on EVERY insertion path (front order creation,
+     * back-office AddProductToOrderHandler, webservice order_details
+     * resource, direct SQL).
+     *
+     * Rules enforced for the hidden fee product (looked up LIVE from the
+     * configuration table, so recreating the product never requires
+     * recreating the trigger):
+     *  1. at most ONE fee row per order, ever - the single legitimate row
+     *     is written by PaymentModule::validateOrder at order creation
+     *     (Order::add() precedes OrderDetail::createList(), verified against
+     *     PS8 core), and a fee line is never edited or re-added afterwards;
+     *  2. a fee row is only accepted for an order whose originating CART
+     *     actually carries the fee line - which is true for every genuine
+     *     Two order at creation time and false for a webservice/back-office
+     *     caller grafting the fee onto an arbitrary existing order.
+     *
+     * Empirically verified on the live PS8 container (MariaDB 10.11):
+     * legitimate first insert passes, duplicate insert and fee-less-cart
+     * insert are rejected with SIGNAL 45000, ordinary products unaffected.
+     * SIGNAL requires MySQL >= 5.5 / MariaDB >= 5.5 - far below any PS8
+     * platform floor.
+     *
+     * @return string
+     */
+    protected function buildTwoFeeGuardTriggerSql()
+    {
+        return 'CREATE TRIGGER `' . $this->getTwoFeeGuardTriggerName() . '`
+            BEFORE INSERT ON `' . _DB_PREFIX_ . 'order_detail`
+            FOR EACH ROW
+            BEGIN
+                IF NEW.product_id > 0
+                    AND EXISTS (
+                        SELECT 1 FROM `' . _DB_PREFIX_ . 'configuration`
+                        WHERE `name` = \'' . pSQL(self::CONFIG_SURCHARGE_PRODUCT_ID) . '\'
+                          AND CAST(`value` AS UNSIGNED) = NEW.product_id
+                    )
+                THEN
+                    IF EXISTS (
+                        SELECT 1 FROM `' . _DB_PREFIX_ . 'order_detail`
+                        WHERE `id_order` = NEW.id_order
+                          AND `product_id` = NEW.product_id
+                    ) THEN
+                        SIGNAL SQLSTATE \'45000\'
+                            SET MESSAGE_TEXT = \'TwoPayment: rejected duplicate payment terms fee row (fee is added once, at order creation only)\';
+                    END IF;
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM `' . _DB_PREFIX_ . 'orders` o
+                        INNER JOIN `' . _DB_PREFIX_ . 'cart_product` cp
+                            ON cp.`id_cart` = o.`id_cart`
+                           AND cp.`id_product` = NEW.product_id
+                        WHERE o.`id_order` = NEW.id_order
+                    ) THEN
+                        SIGNAL SQLSTATE \'45000\'
+                            SET MESSAGE_TEXT = \'TwoPayment: rejected payment terms fee row for an order whose cart does not carry the fee line\';
+                    END IF;
+                END IF;
+            END';
+    }
+
+    /**
+     * Create the fee-guard trigger if absent. Best-effort by design: a DB
+     * user without the TRIGGER privilege (or a pathologically old server)
+     * must not break install or checkout - the failure is logged loudly and
+     * the hook-based guard remains as the (debug-mode-only) fallback.
+     *
+     * @return bool trigger present after the call
+     */
+    public function installTwoOrderDetailFeeGuardTrigger()
+    {
+        try {
+            $exists = (int) Db::getInstance()->getValue(
+                'SELECT COUNT(*) FROM information_schema.TRIGGERS' .
+                " WHERE TRIGGER_SCHEMA = DATABASE() AND TRIGGER_NAME = '" . pSQL($this->getTwoFeeGuardTriggerName()) . "'"
+            );
+            if ($exists > 0) {
+                return true;
+            }
+            if (Db::getInstance()->execute($this->buildTwoFeeGuardTriggerSql())) {
+                PrestaShopLogger::addLog('TwoPayment: Installed order_detail fee-guard trigger ' . $this->getTwoFeeGuardTriggerName(), 1);
+                return true;
+            }
+            PrestaShopLogger::addLog('TwoPayment: Could not create fee-guard trigger ' . $this->getTwoFeeGuardTriggerName() . ' - duplicate fee rows are NOT DB-enforced (TRIGGER privilege missing?)', 3);
+            return false;
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Fee-guard trigger creation failed - duplicate fee rows are NOT DB-enforced. ' . $e->getMessage(), 3);
+            return false;
+        }
+    }
+
+    /**
+     * Lazily (re)install the fee-guard trigger once per request. Covers
+     * module upgrades from versions without it (install() does not re-run on
+     * upgrade), DB restores that dropped triggers, and manual drops -
+     * self-healing on the next checkout instead of trusting a stale flag.
+     */
+    protected function ensureTwoOrderDetailFeeGuardTrigger()
+    {
+        if ($this->twoFeeGuardTriggerEnsured) {
+            return;
+        }
+        $this->twoFeeGuardTriggerEnsured = true;
+        $this->installTwoOrderDetailFeeGuardTrigger();
+    }
+
+    /** @var bool once-per-request memo for ensureTwoOrderDetailFeeGuardTrigger */
+    protected $twoFeeGuardTriggerEnsured = false;
+
+    /**
+     * Best-effort trigger drop at uninstall - never blocks uninstall.
+     */
+    protected function dropTwoOrderDetailFeeGuardTrigger()
+    {
+        try {
+            Db::getInstance()->execute('DROP TRIGGER IF EXISTS `' . $this->getTwoFeeGuardTriggerName() . '`');
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Failed dropping fee-guard trigger at uninstall - ' . $e->getMessage(), 2);
+        }
+    }
+
+    /**
+     * Last-applied buyer-driven sync sequence for a cart, or null when the
+     * cart has never synced with a sequence number.
+     *
+     * @param int $cartId
+     * @return int|null
+     */
+    protected function getTwoSurchargeSyncLastSeq($cartId)
+    {
+        $this->ensureTwoSurchargeSyncTable();
+        $value = Db::getInstance()->getValue(
+            'SELECT `seq` FROM `' . _DB_PREFIX_ . 'twopayment_surcharge_sync` WHERE `id_cart` = ' . (int) $cartId
+        );
+        if ($value === false || $value === null) {
+            return null;
+        }
+
+        return (int) $value;
+    }
+
+    /**
+     * Persist the last-applied sync sequence for a cart (caller holds the
+     * per-cart advisory lock, so plain REPLACE is race-free here).
+     *
+     * @param int $cartId
+     * @param int $seq
+     */
+    protected function setTwoSurchargeSyncLastSeq($cartId, $seq)
+    {
+        $this->ensureTwoSurchargeSyncTable();
+        Db::getInstance()->execute(
+            'REPLACE INTO `' . _DB_PREFIX_ . 'twopayment_surcharge_sync` (`id_cart`, `seq`, `updated_at`) ' .
+            'VALUES (' . (int) $cartId . ', ' . (int) $seq . ", '" . pSQL(date('Y-m-d H:i:s')) . "')"
+        );
+    }
+
+    /**
+     * The surcharge product's line in the given cart, or null when absent.
+     * Amounts are PrestaShop's OWN applied totals for the line (the figures
+     * the buyer sees), used both for idempotency checks and for the
+     * cart-vs-payload parity gate.
+     *
+     * @param Cart $cart
+     * @return array{quantity:int,net:float,gross:float}|null
+     */
+    public function getTwoSurchargeCartLine($cart)
+    {
+        if (!Validate::isLoadedObject($cart)) {
+            return null;
+        }
+        $productId = $this->getTwoSurchargeCartProductId(false);
+        if ($productId <= 0) {
+            return null;
+        }
+        foreach ((array) $cart->getProducts(true) as $row) {
+            if ((int) $row['id_product'] === $productId) {
+                return array(
+                    'quantity' => (int) $row['cart_quantity'],
+                    'net' => round((float) $row['total'], 2),
+                    'gross' => round((float) $row['total_wt'], 2),
+                );
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Reconcile the cart's surcharge line with the buyer's Two selection:
+     * upsert exactly one unit priced at the CURRENT quoted net fee when Two
+     * is selected, remove it otherwise. This is the single writer for the
+     * line - AJAX selection changes, term changes, and the order-create
+     * self-heal all converge through here.
+     *
+     * AMOUNT SOURCE (requirement: zero drift vs the Two payload): the net is
+     * taken from buildTwoSurchargeLineItemForCart() - the exact function
+     * that builds the Two order payload's fee line - fed with the SAME basis
+     * derivation the payload builder uses (calculateTwoLineItemTotals over
+     * getTwoProductItems, which excludes this very product), so the quote
+     * cache key (days|gross|country|currency) is byte-identical and both
+     * sides read the same cached quote. There is no second computation that
+     * could drift.
+     *
+     * IDEMPOTENCY: add-if-absent / remove-if-present keyed on the product id
+     * via getTwoSurchargeCartLine; repeated calls with the same selection are
+     * no-ops ('changed' => false). A quantity other than 1 or a stale amount
+     * is corrected by delete + re-add. Never throws (fail-soft AJAX
+     * contract); 'success' => false tells the caller nothing was reconciled.
+     *
+     * ORDERING (buyer-driven AJAX only): two rapid selection changes can have
+     * their requests complete on the server in the wrong order (switch away
+     * from Two, then back - the "back" request may finish first). When the
+     * caller passes a monotonically increasing $syncSeq (the checkout JS
+     * sends one), the last-applied sequence is stored per cart and any
+     * request whose sequence is not strictly greater is a no-op that reports
+     * the current state unchanged. Callers that pass null (the order-create
+     * self-heal in buildTwoOrderPricingData - the final authoritative sync
+     * before charging - and legacy frontends) bypass the guard entirely and
+     * always apply.
+     *
+     * @param Cart $cart
+     * @param bool $selected Two is the buyer's selected payment option
+     * @param int|null $syncSeq buyer-driven request ordering guard (null = authoritative, always applies)
+     * @return array{success:bool,changed:bool,present:bool}
+     */
+    public function syncTwoSurchargeCartLine($cart, $selected, $syncSeq = null)
+    {
+        // Upgrades from versions without the fee-guard trigger (and DB
+        // restores that dropped it) get it back on the next checkout.
+        $this->ensureTwoOrderDetailFeeGuardTrigger();
+
+        $result = array('success' => false, 'changed' => false, 'present' => false);
+        if ($syncSeq === null) {
+            return $this->applyTwoSurchargeCartLineSync($cart, $selected);
+        }
+
+        try {
+            if (!Validate::isLoadedObject($cart)) {
+                return $result;
+            }
+            // Serialise buyer-driven syncs per cart so the seq check-then-act
+            // and the cart mutation cannot interleave between two requests.
+            $lockName = 'two_surcharge_sync_' . (int) $cart->id;
+            if (!$this->acquireTwoDbLock($lockName)) {
+                PrestaShopLogger::addLog('TwoPayment: Surcharge sync lock not acquired for cart ' . (int) $cart->id, 2);
+                return $result;
+            }
+            try {
+                $lastSeq = $this->getTwoSurchargeSyncLastSeq((int) $cart->id);
+                if ($lastSeq !== null && (int) $syncSeq <= $lastSeq) {
+                    // Stale request (an out-of-order older click): leave the
+                    // cart exactly as the newer request left it.
+                    PrestaShopLogger::addLog(
+                        'TwoPayment: Ignored stale surcharge sync (seq ' . (int) $syncSeq . ' <= ' . $lastSeq . ') for cart ' . (int) $cart->id,
+                        1
+                    );
+                    $result['success'] = true;
+                    $result['present'] = $this->getTwoSurchargeCartLine($cart) !== null;
+                    return $result;
+                }
+                $this->setTwoSurchargeSyncLastSeq((int) $cart->id, (int) $syncSeq);
+                return $this->applyTwoSurchargeCartLineSync($cart, $selected);
+            } finally {
+                $this->releaseTwoDbLock($lockName);
+            }
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Surcharge sync ordering guard failed for cart ' . (isset($cart->id) ? (int) $cart->id : 0) . ' - ' . $e->getMessage(), 3);
+            return $result;
+        }
+    }
+
+    /**
+     * The actual reconciliation body of syncTwoSurchargeCartLine (see its
+     * docblock); split out so the buyer-AJAX ordering guard wraps it without
+     * touching the money logic.
+     *
+     * @param Cart $cart
+     * @param bool $selected
+     * @return array{success:bool,changed:bool,present:bool}
+     */
+    protected function applyTwoSurchargeCartLineSync($cart, $selected)
+    {
+        $result = array('success' => false, 'changed' => false, 'present' => false);
+        try {
+            if (!Validate::isLoadedObject($cart)) {
+                return $result;
+            }
+
+            // Only materialise the product when actually adding a line.
+            $productId = $this->getTwoSurchargeCartProductId((bool) $selected);
+            if ($productId <= 0) {
+                // Nothing ever created and nothing to remove -> vacuous success.
+                $result['success'] = !$selected || empty($this->getTwoSurchargeSettings()['enabled']);
+                return $result;
+            }
+
+            $existing = $this->getTwoSurchargeCartLine($cart);
+
+            $expectedNet = null;
+            $expectedGross = null;
+            if ($selected) {
+                $settings = $this->getTwoSurchargeSettings();
+                if (!empty($settings['enabled'])) {
+                    // Same basis derivation as buildTwoOrderPricingData:
+                    // product+shipping line items, surcharge product excluded.
+                    $basisTotals = $this->calculateTwoLineItemTotals($this->getTwoProductItems($cart));
+                    $basis = round((float) $basisTotals['gross'], 2);
+                    if ($basis > 0) {
+                        $line = $this->buildTwoSurchargeLineItemForCart($cart, $basis);
+                        if ($line !== null) {
+                            $expectedNet = round((float) $line['net_amount'], 2);
+                            $expectedGross = round((float) $line['gross_amount'], 2);
+                        }
+                    }
+                }
+            }
+
+            if ($expectedNet === null || $expectedNet <= 0) {
+                // Deselected / disabled / quote unavailable / empty basis:
+                // the Two payload will carry no fee line either (same quote
+                // source), so removing keeps both sides consistent.
+                if ($existing !== null) {
+                    $this->removeTwoSurchargeCartLineInternal($cart, $productId);
+                    $result['changed'] = true;
+                }
+                $this->clearTwoSurchargeCartCookie();
+                $result['success'] = true;
+                return $result;
+            }
+
+            if (
+                $existing !== null
+                && (int) $existing['quantity'] === 1
+                && $this->convertAmountToCents($existing['net']) === $this->convertAmountToCents($expectedNet)
+                // Gross must match too: a net-only check would let a stale
+                // tax application (rate change, primed tax-group cache)
+                // persist forever, since net comes from the SpecificPrice
+                // and never drifts on its own.
+                && abs($this->convertAmountToCents($existing['gross']) - $this->convertAmountToCents($expectedGross))
+                    <= $this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE)
+            ) {
+                // Already exactly one unit at the current quote: no-op.
+                $this->setTwoSurchargeCartCookie($cart);
+                $result['success'] = true;
+                $result['present'] = true;
+                return $result;
+            }
+
+            if (!$this->ensureTwoSurchargeProductTaxRulesGroup($productId)) {
+                PrestaShopLogger::addLog('TwoPayment: Surcharge cart line skipped - tax rules group could not be applied to product ' . (int) $productId . ' for cart ' . (int) $cart->id, 3);
+                return $result;
+            }
+
+            $this->upsertTwoSurchargeSpecificPrice($cart, $productId, $expectedNet);
+            if ($existing !== null) {
+                // Wrong quantity or stale amount: rebuild the line cleanly.
+                $cart->deleteProduct($productId);
+            }
+            if (!$cart->updateQty(1, $productId)) {
+                PrestaShopLogger::addLog('TwoPayment: Failed adding surcharge line to cart ' . (int) $cart->id, 3);
+                SpecificPrice::deleteByIdCart((int) $cart->id, $productId);
+                return $result;
+            }
+
+            // Post-write verification: PrestaShop's own applied amounts must
+            // match what the Two payload will carry. If they don't (broken
+            // tax config the ensure step could not represent), REMOVE the
+            // line and report success=false with changed=false - reporting a
+            // change here would let the frontend refresh/restore cycle retry
+            // forever. With no cart line and a fee-bearing payload, the
+            // order-create parity gate blocks Two checkout loudly instead of
+            // ever mischarging.
+            $written = $this->getTwoSurchargeCartLine($cart);
+            $toleranceCents = $this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE);
+            if (
+                $written === null
+                || $this->convertAmountToCents($written['net']) !== $this->convertAmountToCents($expectedNet)
+                || abs($this->convertAmountToCents($written['gross']) - $this->convertAmountToCents($expectedGross)) > $toleranceCents
+            ) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Surcharge line verification failed for cart ' . (int) $cart->id .
+                    ' - expected (net/gross)=(' . $this->getTwoRoundAmount($expectedNet) . '/' . $this->getTwoRoundAmount($expectedGross) .
+                    '), cart applied ' . ($written === null ? 'no line' :
+                        '(net/gross)=(' . $this->getTwoRoundAmount($written['net']) . '/' . $this->getTwoRoundAmount($written['gross']) . ')') .
+                    '. Line removed; check the selected surcharge tax rules group configuration.',
+                    3
+                );
+                $this->removeTwoSurchargeCartLineInternal($cart, $productId);
+                return $result;
+            }
+
+            $this->setTwoSurchargeCartCookie($cart);
+            $result['success'] = true;
+            $result['changed'] = true;
+            $result['present'] = true;
+            return $result;
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Surcharge cart line sync failed for cart ' . (isset($cart->id) ? (int) $cart->id : 0) . ' - ' . $e->getMessage(), 3);
+            return $result;
+        }
+    }
+
+    /**
+     * Cart-scoped, currency-pinned SpecificPrice carrying the quoted net fee.
+     * id_cart scopes the price to THIS cart only (concurrent buyers hold
+     * their own rows); id_currency pins the amount so core never applies FX
+     * conversion (empirically verified: Product::priceCalculation skips
+     * Tools::convertPrice when the specific price's currency matches).
+     *
+     * @param Cart $cart
+     * @param int $productId
+     * @param float $net tax-excluded fee amount in the cart currency
+     */
+    protected function upsertTwoSurchargeSpecificPrice($cart, $productId, $net)
+    {
+        $existingIds = SpecificPrice::getIdsByProductId((int) $productId, false, (int) $cart->id);
+        $row = is_array($existingIds) && !empty($existingIds) ? $existingIds[0] : null;
+        $specificPriceId = is_array($row) ? (int) reset($row) : (int) $row;
+
+        $sp = $specificPriceId > 0 ? new SpecificPrice($specificPriceId) : new SpecificPrice();
+        $sp->id_product = (int) $productId;
+        $sp->id_product_attribute = 0;
+        $sp->id_shop = 0;
+        $sp->id_currency = (int) $cart->id_currency;
+        $sp->id_country = 0;
+        $sp->id_group = 0;
+        $sp->id_customer = 0;
+        $sp->id_cart = (int) $cart->id;
+        $sp->price = (float) $net;
+        $sp->from_quantity = 1;
+        $sp->reduction = 0;
+        $sp->reduction_type = 'amount';
+        $sp->reduction_tax = 1;
+        $sp->from = '0000-00-00 00:00:00';
+        $sp->to = '0000-00-00 00:00:00';
+        if ($specificPriceId > 0 && Validate::isLoadedObject($sp)) {
+            $sp->update();
+        } else {
+            $sp->add();
+        }
+
+        // Same-request price caches would otherwise serve the pre-update
+        // figure to the parity gate right after a self-heal resync.
+        if (method_exists('SpecificPrice', 'flushCache')) {
+            SpecificPrice::flushCache();
+        }
+        if (method_exists('Product', 'flushPriceCache')) {
+            Product::flushPriceCache((int) $productId);
+        }
+    }
+
+    /**
+     * Remove the surcharge line and its cart-scoped price row.
+     *
+     * @param Cart $cart
+     * @param int $productId
+     */
+    protected function removeTwoSurchargeCartLineInternal($cart, $productId)
+    {
+        $cart->deleteProduct((int) $productId);
+        SpecificPrice::deleteByIdCart((int) $cart->id, (int) $productId);
+        $this->clearTwoSurchargeCartCookie();
+    }
+
+    /**
+     * Session marker legitimising the surcharge line for THIS cart. Absent
+     * marker + present line = stale (abandoned/resumed cart in a fresh
+     * session) and the stale-guard removes the line.
+     *
+     * @param Cart $cart
+     */
+    protected function setTwoSurchargeCartCookie($cart)
+    {
+        if (isset($this->context->cookie)) {
+            $this->context->cookie->two_surcharge_cart_id = (string) (int) $cart->id;
+            // Force an immediate write: the sync AJAX request ends via
+            // ajaxDie()/exit, which does not guarantee Cookie::__destruct in
+            // every PHP/webserver configuration (same precedent as
+            // storeTwoFeeQuoteInSession). A lost marker would make the
+            // stale-guard strip the line on the very next request.
+            if (method_exists($this->context->cookie, 'write')) {
+                $this->context->cookie->write();
+            }
+        }
+    }
+
+    protected function clearTwoSurchargeCartCookie()
+    {
+        if (isset($this->context->cookie) && isset($this->context->cookie->two_surcharge_cart_id)) {
+            unset($this->context->cookie->two_surcharge_cart_id);
+            if (method_exists($this->context->cookie, 'write')) {
+                $this->context->cookie->write();
+            }
+        }
+    }
+
+    /**
+     * Stale-line guard (runs on every front request, cheap early-outs).
+     *
+     * Two removal rules, both money-protective:
+     * 1. ANOTHER payment module's front controller is executing (its order
+     *    validation POST included): the buyer is not paying with Two, so the
+     *    Two fee must never be charged - remove before that module computes
+     *    totals. False positives (non-payment module controllers) only cost
+     *    a re-add on the next Two selection / order-create self-heal.
+     * 2. The session marker does not match the cart (abandoned cart resumed
+     *    in a fresh session, cookie expired): the selection that justified
+     *    the line is gone - remove so the buyer never sees a fee line
+     *    without having selected Two.
+     *
+     * Own-module controllers are exempt so the payment/confirmation flow and
+     * the sync endpoint itself never race their own line.
+     *
+     * @param array $params
+     */
+    public function hookActionFrontControllerInitAfter($params)
+    {
+        try {
+            $cart = isset($this->context->cart) ? $this->context->cart : null;
+            if (!Validate::isLoadedObject($cart)) {
+                return;
+            }
+            $productId = $this->getTwoSurchargeCartProductId(false);
+            if ($productId <= 0) {
+                return;
+            }
+            if ($this->getTwoSurchargeCartLine($cart) === null) {
+                return;
+            }
+
+            $controller = isset($params['controller']) ? $params['controller'] : (isset($this->context->controller) ? $this->context->controller : null);
+            $controllerModuleName = '';
+            if (is_object($controller) && isset($controller->module) && is_object($controller->module) && isset($controller->module->name)) {
+                $controllerModuleName = (string) $controller->module->name;
+            }
+            if ($controllerModuleName === $this->name) {
+                return;
+            }
+
+            $isOtherModuleController = $controllerModuleName !== '';
+            $cookieCartId = isset($this->context->cookie->two_surcharge_cart_id) ? (int) $this->context->cookie->two_surcharge_cart_id : 0;
+            $markerValid = $cookieCartId === (int) $cart->id;
+
+            if ($isOtherModuleController || !$markerValid) {
+                $this->removeTwoSurchargeCartLineInternal($cart, $productId);
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Removed stale surcharge line from cart ' . (int) $cart->id .
+                    ($isOtherModuleController ? ' (other module controller: ' . $controllerModuleName . ')' : ' (session marker mismatch)'),
+                    1
+                );
+            }
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Surcharge stale-guard failed - ' . $e->getMessage(), 2);
+        }
+    }
+
+    /**
+     * Guard the ORDER (post-creation) against ever gaining an illegitimate
+     * surcharge fee row. All the idempotency logic in this feature protects
+     * the CART before order creation; nothing in core stops a back-office
+     * employee from using the AdminOrders "Add product" search to add the
+     * hidden "Payment terms fee" product to an already-placed, already-
+     * invoiced Two order - a real duplicate financial line. OrderDetail rows
+     * are only ever legitimately created for this product by PrestaShop's
+     * own order-creation pipeline (validateOrder over a cart this module
+     * synced), which runs in a FRONT context and always as the product's
+     * FIRST row on the order.
+     *
+     * Fires on ObjectModel::add for every OrderDetail (verified against PS8
+     * core: OrderDetail::create() -> save() -> add() -> this hook, both at
+     * order creation and in the BO AddProductToOrderHandler).
+     *
+     * IMPORTANT - this hook is dev-environment UX ONLY, not the enforcement
+     * layer. Hook::callHookOn() (PS8 core, verified) catches every module
+     * exception and only re-throws when Environment::isDebug() is true
+     * (_PS_MODE_DEV_, false in production) - in a production shop a throw
+     * here is silently swallowed and the insert proceeds. The ACTUAL
+     * enforcement is the database BEFORE INSERT trigger installed by
+     * installTwoOrderDetailFeeGuardTrigger(), which rejects illegitimate fee
+     * rows on every insertion path regardless of PHP context. This hook is
+     * kept because in debug/dev shops it produces a friendlier,
+     * properly-surfaced admin error before the SQL layer is ever reached.
+     *
+     * @param array $params ['object' => OrderDetail]
+     * @throws PrestaShopException when the add must be blocked
+     */
+    public function hookActionObjectOrderDetailAddBefore($params)
+    {
+        $orderDetail = isset($params['object']) ? $params['object'] : null;
+        if (!is_object($orderDetail) || !isset($orderDetail->product_id)) {
+            return;
+        }
+
+        $surchargeProductId = $this->getTwoSurchargeCartProductId(false);
+        if ($surchargeProductId <= 0 || (int) $orderDetail->product_id !== $surchargeProductId) {
+            return;
+        }
+
+        // Manual back-office adds are NEVER legitimate for this product:
+        // only the module's own automated cart-sync + order creation may
+        // materialise it.
+        if ($this->isTwoAdminContext()) {
+            throw new PrestaShopException(
+                'The payment terms fee product is managed automatically by the Two payment module and cannot be added to an order manually.'
+            );
+        }
+
+        // Belt-and-braces for any other path: a SECOND fee row on the same
+        // order is always a duplicate charge - fail loudly, never silently.
+        $idOrder = isset($orderDetail->id_order) ? (int) $orderDetail->id_order : 0;
+        if ($idOrder > 0) {
+            $existingRows = (int) Db::getInstance()->getValue(
+                'SELECT COUNT(*) FROM `' . _DB_PREFIX_ . 'order_detail` WHERE `id_order` = ' . $idOrder .
+                ' AND `product_id` = ' . $surchargeProductId
+            );
+            if ($existingRows >= 1) {
+                throw new PrestaShopException(
+                    'Order ' . $idOrder . ' already carries the payment terms fee line; refusing to add a duplicate fee row.'
+                );
+            }
+        }
+    }
+
+    /**
+     * Whether the current request executes in a back-office context.
+     * Primary signal is the controller_type PrestaShop stamps on every
+     * controller; _PS_ADMIN_DIR_ is the fallback for early/legacy paths.
+     *
+     * @return bool
+     */
+    protected function isTwoAdminContext()
+    {
+        $controller = isset($this->context->controller) ? $this->context->controller : null;
+        if (is_object($controller) && isset($controller->controller_type)) {
+            return in_array((string) $controller->controller_type, array('admin', 'moduleadmin'), true);
+        }
+
+        return defined('_PS_ADMIN_DIR_');
     }
 
     /**
@@ -7053,11 +8757,15 @@ class Twopayment extends PaymentModule
             'options' => array('query' => $stepQuery, 'id' => 'id', 'name' => 'name'),
         );
         $inputs[] = array(
-            'type' => 'text',
-            'label' => $this->l('Surcharge Tax Rate (%)'),
-            'name' => 'PS_TWO_SURCHARGE_TAX_RATE',
-            'suffix' => '%',
-            'desc' => $this->l('Tax rate applied to the surcharge line sent to Two (e.g. 25 for 25%). Leave blank for no tax on the surcharge line.'),
+            'type' => 'select',
+            'label' => $this->l('Surcharge Tax Rules Group'),
+            'name' => self::CONFIG_SURCHARGE_TAX_RULES_GROUP,
+            'desc' => $this->l('Tax rules group applied to the payment terms fee - the same tax rules groups you assign to products. Country and state rules, combined rates and zero-rating apply exactly as they do for any product. Select "No tax" to never tax the fee. A selection is required while surcharges are enabled.'),
+            'options' => array(
+                'query' => $this->getTwoSurchargeTaxRulesGroupOptions(),
+                'id' => 'id',
+                'name' => 'name',
+            ),
         );
         $inputs[] = array(
             'type' => 'html',
@@ -7140,6 +8848,81 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Dropdown options for the surcharge tax rules group: an unselected
+     * placeholder (id '' - never a valid selection, save-blocked while
+     * surcharges are enabled, see validTwoSurchargeFormValues), then
+     * PrestaShop's "No tax" sentinel (id 0), then the merchant's active tax
+     * rules groups - the same list core's own product-edit page offers (its
+     * TaxRulesGroup::getTaxRulesGroupsForOptions duplicates a group per
+     * rate, so the deduplicated getTaxRulesGroups source is used with the
+     * same manual "No tax" prepend). Ids are emitted as STRINGS so the
+     * form template's loose == never conflates the placeholder ('') with
+     * "No tax" ('0') on PHP 7 shops ('' == 0 is true there). The
+     * currently-configured group is ALWAYS present even when deactivated
+     * (suffixed "(inactive)"): if a stale selection dropped out of the
+     * list, the browser would submit the first option (the placeholder) on
+     * the next unrelated settings save and silently unset the treatment.
+     *
+     * @return array<int,array{id:string,name:string}>
+     */
+    protected function getTwoSurchargeTaxRulesGroupOptions()
+    {
+        $options = array(
+            array('id' => '', 'name' => $this->l('-- Select surcharge tax treatment --')),
+            array('id' => '0', 'name' => $this->l('No tax')),
+        );
+        $groups = TaxRulesGroup::getTaxRulesGroups(true);
+        $seen = array(0 => true);
+        foreach ((array) $groups as $group) {
+            if (!isset($group['id_tax_rules_group'])) {
+                continue;
+            }
+            $id = (int) $group['id_tax_rules_group'];
+            $options[] = array(
+                'id' => (string) $id,
+                'name' => (string) $group['name'],
+            );
+            $seen[$id] = true;
+        }
+
+        $configuredId = $this->getTwoSurchargeTaxRulesGroupId();
+        if ($configuredId > 0 && !isset($seen[$configuredId])) {
+            $configured = new TaxRulesGroup($configuredId);
+            if (Validate::isLoadedObject($configured)) {
+                $options[] = array(
+                    'id' => (string) $configuredId,
+                    'name' => (string) $configured->name . ' (' . $this->l('inactive') . ')',
+                );
+            }
+        }
+
+        return $options;
+    }
+
+    /**
+     * Pre-selection for the surcharge tax rules group dropdown: the stored
+     * selection, else '' - the unselected placeholder. NEVER auto-defaults:
+     * not Product::getIdTaxRulesGroupMostUsed() (a full-catalog COUNT/GROUP
+     * BY re-run on every unsaved config page render, pre-selecting a taxing
+     * group the merchant never chose), and not "No tax" either - untaxed is
+     * a tax treatment, not an absence of one, and pre-selecting it invites
+     * an accidental save. The merchant must pick explicitly; while
+     * surcharges are enabled the save is blocked until they do
+     * (validTwoSurchargeFormValues).
+     *
+     * @return string '' (unselected) or the stored group id ('0' = No tax)
+     */
+    protected function getTwoSurchargeTaxRulesGroupFormDefault()
+    {
+        $stored = Configuration::get(self::CONFIG_SURCHARGE_TAX_RULES_GROUP);
+        if ($stored !== false && $stored !== null && $stored !== '' && is_numeric($stored)) {
+            return (string) max(0, (int) $stored);
+        }
+
+        return '';
+    }
+
+    /**
      * Current values for the surcharge form fields.
      *
      * @return array
@@ -7152,7 +8935,13 @@ class Twopayment extends PaymentModule
             'PS_TWO_SURCHARGE_LINE_DESC' => Tools::getValue('PS_TWO_SURCHARGE_LINE_DESC', Configuration::get('PS_TWO_SURCHARGE_LINE_DESC')),
             'PS_TWO_SURCHARGE_ROUNDING_BASIS' => Tools::getValue('PS_TWO_SURCHARGE_ROUNDING_BASIS', Configuration::get('PS_TWO_SURCHARGE_ROUNDING_BASIS')),
             'PS_TWO_SURCHARGE_ROUNDING_STEP' => Tools::getValue('PS_TWO_SURCHARGE_ROUNDING_STEP', Configuration::get('PS_TWO_SURCHARGE_ROUNDING_STEP')),
-            'PS_TWO_SURCHARGE_TAX_RATE' => Tools::getValue('PS_TWO_SURCHARGE_TAX_RATE', Configuration::get('PS_TWO_SURCHARGE_TAX_RATE')),
+            // Kept a STRING ('' = unselected placeholder): an (int) cast
+            // would turn the unselected state into 0 and silently
+            // pre-select "No tax".
+            self::CONFIG_SURCHARGE_TAX_RULES_GROUP => (string) Tools::getValue(
+                self::CONFIG_SURCHARGE_TAX_RULES_GROUP,
+                $this->getTwoSurchargeTaxRulesGroupFormDefault()
+            ),
         );
         foreach ($this->getAvailablePaymentTerms() as $days) {
             $days = (int) $days;
@@ -7179,9 +8968,22 @@ class Twopayment extends PaymentModule
         if ($step !== '' && !array_key_exists($step, $this->getTwoRoundingStepOptions())) {
             $this->errors[] = $this->l('Rounding step must be one of the offered values.');
         }
-        $taxRate = Tools::getValue('PS_TWO_SURCHARGE_TAX_RATE');
-        if ($taxRate !== false && $taxRate !== '' && (!is_numeric($taxRate) || (float) $taxRate < 0)) {
-            $this->errors[] = $this->l('Surcharge tax rate must be a non-negative number.');
+        // Surcharges are enabled (type !== 'none' - the early return above):
+        // an explicit tax treatment is REQUIRED. The unselected placeholder
+        // ('' / absent) blocks the save server-side - never silently falls
+        // back to "No tax".
+        $groupRaw = Tools::getValue(self::CONFIG_SURCHARGE_TAX_RULES_GROUP);
+        $groupTrimmed = is_string($groupRaw) ? trim($groupRaw) : '';
+        if ($groupTrimmed === '') {
+            $this->errors[] = $this->l('Select a surcharge tax treatment: surcharges are enabled, so you must explicitly choose a tax rules group (or "No tax") before saving.');
+        } else {
+            // ctype_digit: a whole non-negative integer only - '0.5', '-5'
+            // and friends are rejected, never truncated into a selection
+            // the merchant did not make.
+            $groupId = ctype_digit($groupTrimmed) ? (int) $groupTrimmed : -1;
+            if ($groupId < 0 || ($groupId > 0 && !Validate::isLoadedObject(new TaxRulesGroup($groupId)))) {
+                $this->errors[] = $this->l('Surcharge tax rules group must be "No tax" or one of the shop\'s existing tax rules groups.');
+            }
         }
         foreach ($this->getAvailablePaymentTerms() as $days) {
             $days = (int) $days;
@@ -7217,13 +9019,38 @@ class Twopayment extends PaymentModule
         }
         Configuration::updateValue('PS_TWO_SURCHARGE_ROUNDING_STEP', $step);
 
-        // Same coercion discipline as the grid: invalid input is stored as
-        // blank (→ getTwoSurchargeTaxRate() falls back to 0.0), never fatal.
-        $taxRateRaw = trim((string) Tools::getValue('PS_TWO_SURCHARGE_TAX_RATE', ''));
-        Configuration::updateValue(
-            'PS_TWO_SURCHARGE_TAX_RATE',
-            (is_numeric($taxRateRaw) && (float) $taxRateRaw >= 0) ? (string) (float) $taxRateRaw : ''
-        );
+        // NEVER silently coerce to "No tax": absent/blank/invalid input is
+        // stored as '' (unselected - the dropdown re-renders on its
+        // placeholder). While surcharges are enabled this path is
+        // unreachable with '' (validTwoSurchargeFormValues blocks the save
+        // first); while disabled, staying unselected is the point - the
+        // merchant must pick explicitly before enabling. '0' ("No tax") is
+        // only ever stored when the merchant submitted it.
+        $groupRaw = Tools::getValue(self::CONFIG_SURCHARGE_TAX_RULES_GROUP, '');
+        $groupTrimmed = is_string($groupRaw) ? trim($groupRaw) : '';
+        $groupValue = '';
+        if ($groupTrimmed !== '' && ctype_digit($groupTrimmed)) {
+            $groupId = (int) $groupTrimmed;
+            if ($groupId === 0 || Validate::isLoadedObject(new TaxRulesGroup($groupId))) {
+                $groupValue = (string) $groupId;
+            }
+        }
+        Configuration::updateValue(self::CONFIG_SURCHARGE_TAX_RULES_GROUP, $groupValue);
+        // An explicit merchant selection ("No tax" included) retires the
+        // post-upgrade "needs re-selection" nag from upgrade-2.5.0.php. A
+        // save that stored '' (still unselected) does NOT - the nag is
+        // accurate until a real choice is made.
+        if ($groupValue !== '') {
+            Configuration::updateValue(self::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE, '');
+        }
+
+        // Apply the selection to the hidden fee product immediately (the
+        // same id_tax_rules_group field every real Product uses); if the
+        // product does not exist yet, lazy creation picks the config up.
+        $productId = (int) Configuration::get(self::CONFIG_SURCHARGE_PRODUCT_ID);
+        if ($productId > 0) {
+            $this->ensureTwoSurchargeProductTaxRulesGroup($productId);
+        }
 
         foreach ($this->getAvailablePaymentTerms() as $days) {
             $days = (int) $days;
@@ -7792,7 +9619,7 @@ class Twopayment extends PaymentModule
      * @param resource|CurlHandle $ch cURL handle
      * @return void
      */
-    private function configureSslVerification($ch)
+    public function configureSslVerification($ch)
     {
         // Check if SSL verification is disabled via configuration (for corporate networks)
         $disable_ssl_verify = (bool)Configuration::get('PS_TWO_DISABLE_SSL_VERIFY', false);

@@ -6,6 +6,15 @@ namespace {
     if (!defined('_PS_VERSION_')) {
         define('_PS_VERSION_', '8.0.0');
     }
+    if (!defined('_MYSQL_ENGINE_')) {
+        define('_MYSQL_ENGINE_', 'InnoDB');
+    }
+    if (!function_exists('pSQL')) {
+        function pSQL($value, $htmlOK = false)
+        {
+            return addslashes((string) $value);
+        }
+    }
     if (!defined('_PS_CACHE_DIR_')) {
         define('_PS_CACHE_DIR_', sys_get_temp_dir() . DIRECTORY_SEPARATOR);
     }
@@ -37,6 +46,18 @@ namespace {
         public static array $moduleCurrencies = [];
         public static array $productCategories = [];
         public static array $images = [];
+        /**
+         * Effective tax rates by tax rules group, mirroring core's
+         * TaxManagerFactory resolution (live-container verified on PS 8.2.6):
+         *   - float: flat rate for EVERY destination (legacy shape)
+         *   - array<int,float|float[]>: rate by COUNTRY id; a missing country
+         *     resolves 0 (core: no matching TaxRule -> untaxed destination);
+         *     a float[] value SUMS (core: combined multi-rate rules stack
+         *     additively, e.g. 6% + 2% -> 8%).
+         * Group id 0 always resolves 0 (core "No tax" sentinel).
+         *
+         * @var array<int,float|array<int,float|float[]>>
+         */
         public static array $taxRuleRates = [];
         public static array $dbExecuteSResponses = [];
         public static array $dbLastExecuteS = [];
@@ -47,6 +68,60 @@ namespace {
         /** @var string[] Class names passed to Tab::add() */
         public static array $tabAddCalls = [];
 
+        /**
+         * Resolve a tax rules group's effective rate for a destination
+         * country - the stub twin of core's
+         * TaxManagerFactory::getManager($address, $groupId)
+         *     ->getTaxCalculator()->getTotalRate().
+         * See $taxRuleRates for the fixture shapes.
+         */
+        public static function resolveTaxRate(int $groupId, int $countryId): float
+        {
+            if ($groupId <= 0 || !isset(self::$taxRuleRates[$groupId])) {
+                return 0.0;
+            }
+            $entry = self::$taxRuleRates[$groupId];
+            if (is_array($entry)) {
+                $entry = $entry[$countryId] ?? 0.0;
+            }
+            if (is_array($entry)) {
+                // Combined multi-rate rules stack additively (core-verified).
+                $sum = 0.0;
+                foreach ($entry as $rate) {
+                    $sum += (float) $rate;
+                }
+                return $sum;
+            }
+
+            return (float) $entry;
+        }
+        /** @var array<int,array> Catalog products by id (surcharge cart-line feature) */
+        public static array $products = [];
+        /** @var array<int,array> Specific prices by id */
+        public static array $specificPrices = [];
+        /** @var array<int,array> StockAvailable writes by product id */
+        public static array $stock = [];
+        /** @var array<int,array> Taxes by id */
+        public static array $taxes = [];
+        /** @var array<int,array> Tax rules groups by id */
+        public static array $taxRulesGroups = [];
+        /** @var array<int,array> Tax rules by id */
+        public static array $taxRules = [];
+        /** @var array<string,bool> Held MySQL advisory locks (GET_LOCK stubs) */
+        public static array $dbLocks = [];
+        /** @var array<int,int> Last-applied surcharge sync seq by cart id */
+        public static array $surchargeSyncSeqs = [];
+        /** @var array<int,array{id_order:int,product_id:int}> order_detail rows */
+        public static array $orderDetails = [];
+        /** @var string[] Every SQL string passed to Db::execute() */
+        public static array $dbExecuted = [];
+        /** @var array<int,array> Orders by id (controller specs) */
+        public static array $orders = [];
+        /** @var array<string,string> Existing DB triggers by name => CREATE sql */
+        public static array $dbTriggers = [];
+        /** @var int Shared auto-increment for ObjectModel-style stubs */
+        public static int $nextId = 90000;
+
         public static function reset(): void
         {
             self::$configuration = [
@@ -55,6 +130,7 @@ namespace {
                 'PS_TWO_ENVIRONMENT' => 'development',
                 'PS_OS_SHIPPING' => 4,
                 'PS_OS_CANCELED' => 6,
+                'PS_TAX' => 1, // core default: taxes enabled shop-wide
             ];
             self::$countries = [34 => 'ES', 47 => 'NO', 56 => 'BE'];
             self::$states = [
@@ -88,6 +164,19 @@ namespace {
             self::$taxRuleRates = [];
             self::$dbExecuteSResponses = [];
             self::$dbLastExecuteS = [];
+            self::$products = [];
+            self::$specificPrices = [];
+            self::$stock = [];
+            self::$taxes = [];
+            self::$taxRulesGroups = [];
+            self::$taxRules = [];
+            self::$dbLocks = [];
+            self::$surchargeSyncSeqs = [];
+            self::$orderDetails = [];
+            self::$dbExecuted = [];
+            self::$dbTriggers = [];
+            self::$orders = [];
+            self::$nextId = 90000;
 
             $context = Context::getContext();
             $context->cookie = new Cookie();
@@ -108,6 +197,40 @@ namespace {
             if (class_exists('Tools') && method_exists('Tools', 'resetTestValues')) {
                 Tools::resetTestValues();
             }
+        }
+    }
+
+    class PrestaShopException extends Exception
+    {
+    }
+
+    /**
+     * Thrown by the front-controller stubs wherever real PrestaShop would
+     * redirect-and-exit, so controller specs observe the redirect instead of
+     * falling through code the real flow never reaches.
+     */
+    class StubRedirect extends Exception
+    {
+    }
+
+    class ModuleFrontController
+    {
+        public $module;
+        public $context;
+        public $errors = [];
+
+        public function __construct()
+        {
+            $this->context = Context::getContext();
+        }
+
+        public function postProcess()
+        {
+        }
+
+        public function redirectWithNotifications($url)
+        {
+            throw new StubRedirect((string) $url);
         }
     }
 
@@ -158,6 +281,11 @@ namespace {
             return (string) $message;
         }
 
+        public function displayWarning($message): string
+        {
+            return (string) $message;
+        }
+
         public function display($file, $template): string
         {
             return '';
@@ -189,6 +317,8 @@ namespace {
         public $link;
         public $controller;
         public $cart;
+        public $customer;
+        public $currency;
         public $language;
         public $smarty;
 
@@ -283,6 +413,12 @@ namespace {
             StubStore::$configuration[$key] = $value;
             return true;
         }
+
+        public static function deleteByName($key): bool
+        {
+            unset(StubStore::$configuration[$key]);
+            return true;
+        }
     }
 
     class PrestaShopLogger
@@ -359,9 +495,19 @@ namespace {
             return 'token';
         }
 
+        public static function redirect($url): void
+        {
+            throw new StubRedirect((string) $url);
+        }
+
         public static function strtolower($value): string
         {
             return strtolower((string) $value);
+        }
+
+        public static function strtoupper($value): string
+        {
+            return strtoupper((string) $value);
         }
     }
 
@@ -383,9 +529,305 @@ namespace {
 
     class Product
     {
+        public bool $loaded = false;
+        public int $id = 0;
+        public $name = [];
+        public $link_rewrite = [];
+        public $reference = '';
+        public $price = 0;
+        public $id_tax_rules_group = 0;
+        public $active = 0;
+        public $available_for_order = 0;
+        public $visibility = 'both';
+        public $indexed = 1;
+        public $is_virtual = 0;
+        public $out_of_stock = 0;
+        public $minimal_quantity = 1;
+        public $id_category_default = 0;
+
+        public function __construct($id = null, $full = false, $idLang = null, $idShop = null)
+        {
+            $id = (int) $id;
+            if ($id > 0 && isset(StubStore::$products[$id])) {
+                foreach (StubStore::$products[$id] as $property => $value) {
+                    if (property_exists($this, $property)) {
+                        $this->$property = $value;
+                    }
+                }
+                $this->id = $id;
+                $this->loaded = true;
+            }
+        }
+
+        public function add(): bool
+        {
+            $this->id = StubStore::$nextId++;
+            $this->loaded = true;
+            $this->persist();
+            return true;
+        }
+
+        public function update($nullValues = false): bool
+        {
+            $this->persist();
+            return true;
+        }
+
+        public function delete(): bool
+        {
+            unset(StubStore::$products[$this->id]);
+            return true;
+        }
+
+        private function persist(): void
+        {
+            $data = get_object_vars($this);
+            unset($data['loaded']);
+            StubStore::$products[$this->id] = $data;
+        }
+
         public static function getProductCategoriesFull($idProduct, $idLang)
         {
             return StubStore::$productCategories[(int) $idProduct] ?? [];
+        }
+    }
+
+    class SpecificPrice
+    {
+        public bool $loaded = false;
+        public int $id = 0;
+        public $id_product = 0;
+        public $id_product_attribute = 0;
+        public $id_shop = 0;
+        public $id_currency = 0;
+        public $id_country = 0;
+        public $id_group = 0;
+        public $id_customer = 0;
+        public $id_cart = 0;
+        public $price = 0;
+        public $from_quantity = 1;
+        public $reduction = 0;
+        public $reduction_type = 'amount';
+        public $reduction_tax = 1;
+        public $from = '0000-00-00 00:00:00';
+        public $to = '0000-00-00 00:00:00';
+
+        public function __construct($id = null)
+        {
+            $id = (int) $id;
+            if ($id > 0 && isset(StubStore::$specificPrices[$id])) {
+                foreach (StubStore::$specificPrices[$id] as $property => $value) {
+                    if (property_exists($this, $property)) {
+                        $this->$property = $value;
+                    }
+                }
+                $this->id = $id;
+                $this->loaded = true;
+            }
+        }
+
+        public function add(): bool
+        {
+            $this->id = StubStore::$nextId++;
+            $this->loaded = true;
+            $this->persist();
+            return true;
+        }
+
+        public function update($nullValues = false): bool
+        {
+            $this->persist();
+            return true;
+        }
+
+        private function persist(): void
+        {
+            $data = get_object_vars($this);
+            unset($data['loaded']);
+            StubStore::$specificPrices[$this->id] = $data;
+        }
+
+        /** Core-shape result: rows of ['id_specific_price' => n]. */
+        public static function getIdsByProductId($idProduct, $idProductAttribute = false, $idCart = 0): array
+        {
+            $ids = [];
+            foreach (StubStore::$specificPrices as $id => $row) {
+                if ((int) $row['id_product'] === (int) $idProduct && (int) $row['id_cart'] === (int) $idCart) {
+                    $ids[] = ['id_specific_price' => $id];
+                }
+            }
+            return $ids;
+        }
+
+        public static function deleteByIdCart($idCart, $idProduct = false, $idProductAttribute = false): bool
+        {
+            foreach (StubStore::$specificPrices as $id => $row) {
+                if ((int) $row['id_cart'] !== (int) $idCart) {
+                    continue;
+                }
+                if ($idProduct !== false && (int) $row['id_product'] !== (int) $idProduct) {
+                    continue;
+                }
+                unset(StubStore::$specificPrices[$id]);
+            }
+            return true;
+        }
+
+        /** Net unit price for a cart-scoped row, or null. */
+        public static function getCartUnitPrice(int $idCart, int $idProduct): ?float
+        {
+            foreach (StubStore::$specificPrices as $row) {
+                if ((int) $row['id_cart'] === $idCart && (int) $row['id_product'] === $idProduct) {
+                    return (float) $row['price'];
+                }
+            }
+            return null;
+        }
+    }
+
+    class StockAvailable
+    {
+        public static function setQuantity($idProduct, $idProductAttribute, $quantity, $idShop = null): void
+        {
+            StubStore::$stock[(int) $idProduct]['quantity'] = (int) $quantity;
+        }
+
+        public static function setProductOutOfStock($idProduct, $outOfStock = false, $idShop = null, $idProductAttribute = 0): void
+        {
+            StubStore::$stock[(int) $idProduct]['out_of_stock'] = (int) $outOfStock;
+        }
+    }
+
+    class Tax
+    {
+        public bool $loaded = false;
+        public int $id = 0;
+        public $name = [];
+        public $rate = 0;
+        public $active = 0;
+
+        public function __construct($id = null)
+        {
+            $id = (int) $id;
+            if ($id > 0 && isset(StubStore::$taxes[$id])) {
+                foreach (StubStore::$taxes[$id] as $property => $value) {
+                    if (property_exists($this, $property)) {
+                        $this->$property = $value;
+                    }
+                }
+                $this->id = $id;
+                $this->loaded = true;
+            }
+        }
+
+        public function add(): bool
+        {
+            $this->id = StubStore::$nextId++;
+            $this->loaded = true;
+            StubStore::$taxes[$this->id] = ['name' => $this->name, 'rate' => $this->rate, 'active' => $this->active];
+            return true;
+        }
+
+        public function update($nullValues = false): bool
+        {
+            StubStore::$taxes[$this->id] = ['name' => $this->name, 'rate' => $this->rate, 'active' => $this->active];
+            return true;
+        }
+    }
+
+    class TaxRulesGroup
+    {
+        public bool $loaded = false;
+        public int $id = 0;
+        public $name = '';
+        public $active = 0;
+
+        public function __construct($id = null)
+        {
+            $id = (int) $id;
+            if ($id > 0 && isset(StubStore::$taxRulesGroups[$id])) {
+                foreach (StubStore::$taxRulesGroups[$id] as $property => $value) {
+                    if (property_exists($this, $property)) {
+                        $this->$property = $value;
+                    }
+                }
+                $this->id = $id;
+                $this->loaded = true;
+            }
+        }
+
+        public function add(): bool
+        {
+            $this->id = StubStore::$nextId++;
+            $this->loaded = true;
+            StubStore::$taxRulesGroups[$this->id] = ['name' => $this->name, 'active' => $this->active];
+            return true;
+        }
+
+        /** Core-shape rows: id_tax_rules_group / name / active. */
+        public static function getTaxRulesGroups($onlyActive = true): array
+        {
+            $rows = [];
+            foreach (StubStore::$taxRulesGroups as $id => $data) {
+                if ($onlyActive && empty($data['active'])) {
+                    continue;
+                }
+                $rows[] = [
+                    'id_tax_rules_group' => $id,
+                    'name' => (string) ($data['name'] ?? ''),
+                    'active' => (int) ($data['active'] ?? 0),
+                ];
+            }
+            return $rows;
+        }
+    }
+
+    class TaxRule
+    {
+        public bool $loaded = false;
+        public int $id = 0;
+        public $id_tax_rules_group = 0;
+        public $id_country = 0;
+        public $id_state = 0;
+        public $zipcode_from = 0;
+        public $zipcode_to = 0;
+        public $id_tax = 0;
+        public $behavior = 0;
+        public $description = '';
+
+        public function __construct($id = null)
+        {
+            $id = (int) $id;
+            if ($id > 0 && isset(StubStore::$taxRules[$id])) {
+                foreach (StubStore::$taxRules[$id] as $property => $value) {
+                    if (property_exists($this, $property)) {
+                        $this->$property = $value;
+                    }
+                }
+                $this->id = $id;
+                $this->loaded = true;
+            }
+        }
+
+        public function add(): bool
+        {
+            $this->id = StubStore::$nextId++;
+            $this->loaded = true;
+            $this->persist();
+            return true;
+        }
+
+        public function update($nullValues = false): bool
+        {
+            $this->persist();
+            return true;
+        }
+
+        private function persist(): void
+        {
+            $data = get_object_vars($this);
+            unset($data['loaded']);
+            StubStore::$taxRules[$this->id] = $data;
         }
     }
 
@@ -423,15 +865,17 @@ namespace {
     class TaxManager
     {
         private int $groupId;
+        private int $countryId;
 
-        public function __construct(int $groupId)
+        public function __construct(int $groupId, int $countryId)
         {
             $this->groupId = $groupId;
+            $this->countryId = $countryId;
         }
 
         public function getTaxCalculator(): TaxCalculator
         {
-            return new TaxCalculator((float) (StubStore::$taxRuleRates[$this->groupId] ?? 0.0));
+            return new TaxCalculator(StubStore::resolveTaxRate($this->groupId, $this->countryId));
         }
     }
 
@@ -439,7 +883,8 @@ namespace {
     {
         public static function getManager($address, $taxRulesGroupId): TaxManager
         {
-            return new TaxManager((int) $taxRulesGroupId);
+            $countryId = is_object($address) && isset($address->id_country) ? (int) $address->id_country : 0;
+            return new TaxManager((int) $taxRulesGroupId, $countryId);
         }
     }
 
@@ -623,6 +1068,10 @@ namespace {
         public bool $loaded = false;
         public int $id = 0;
         public string $iso_code = 'EUR';
+        /** Units of this currency per 1 unit of the shop default currency. */
+        public float $conversion_rate = 1.0;
+        public string $symbol = '';
+        public string $sign = '';
 
         public function __construct($id = null)
         {
@@ -634,6 +1083,16 @@ namespace {
                 $this->id = $id;
                 $this->loaded = true;
             }
+        }
+
+        public static function getIdByIsoCode($isoCode, $idShop = 0)
+        {
+            foreach (StubStore::$currencies as $id => $props) {
+                if (strcasecmp((string) ($props['iso_code'] ?? ''), (string) $isoCode) === 0) {
+                    return (int) $id;
+                }
+            }
+            return 0;
         }
     }
 
@@ -674,6 +1133,135 @@ namespace {
         public function getProducts($refresh = false): array
         {
             return StubStore::$cartProducts[$this->id] ?? [];
+        }
+
+        public function containsProduct($idProduct, $idProductAttribute = 0, $idCustomization = false, $idAddressDelivery = 0)
+        {
+            foreach (StubStore::$cartProducts[$this->id] ?? [] as $row) {
+                if ((int) $row['id_product'] === (int) $idProduct) {
+                    return ['quantity' => (int) $row['cart_quantity']];
+                }
+            }
+            return false;
+        }
+
+        /**
+         * Minimal core-faithful updateQty: prices a NEW line from the
+         * cart-scoped SpecificPrice (net) and the product's tax rules group
+         * rate (gross), mirroring what PS core computes for the hidden
+         * surcharge product. Repeat 'up' calls INCREMENT quantity - exactly
+         * like core - so idempotency must come from the module, not the stub.
+         */
+        public function updateQty($quantity, $idProduct, $idProductAttribute = null, $idCustomization = false, $operator = 'up')
+        {
+            $idProduct = (int) $idProduct;
+            $quantity = (int) $quantity;
+            $rows = StubStore::$cartProducts[$this->id] ?? [];
+
+            $net = SpecificPrice::getCartUnitPrice((int) $this->id, $idProduct);
+            $product = new Product($idProduct);
+            if ($net === null) {
+                $net = $product->loaded ? (float) $product->price : 0.0;
+            }
+            // Destination-based rate, exactly like core Product::priceCalculation:
+            // the product's tax rules group resolved against the cart's
+            // PS_TAX_ADDRESS_TYPE address (invoice unless configured delivery).
+            $taxAddressField = Configuration::get('PS_TAX_ADDRESS_TYPE') === 'id_address_delivery'
+                ? 'id_address_delivery'
+                : 'id_address_invoice';
+            $taxAddress = new Address((int) $this->{$taxAddressField});
+            // vatnumber-module B2B exemption, exactly like core
+            // Product::priceCalculation: VAT number present, buyer country
+            // differs from the module's configured country, management on.
+            $vatExempt = !empty($taxAddress->vat_number)
+                && (int) $taxAddress->id_country !== (int) Configuration::get('VATNUMBER_COUNTRY')
+                && Configuration::get('VATNUMBER_MANAGEMENT');
+            $rate = (Configuration::get('PS_TAX') && !$vatExempt)
+                ? StubStore::resolveTaxRate((int) $product->id_tax_rules_group, (int) $taxAddress->id_country)
+                : 0.0;
+
+            $found = false;
+            foreach ($rows as $i => $row) {
+                if ((int) $row['id_product'] === $idProduct) {
+                    $newQty = (int) $row['cart_quantity'] + ($operator === 'up' ? $quantity : -$quantity);
+                    $this->applyCartTotalsDelta(-(float) $row['total'], -(float) $row['total_wt']);
+                    if ($newQty <= 0) {
+                        unset($rows[$i]);
+                    } else {
+                        $rows[$i]['cart_quantity'] = $newQty;
+                        $rows[$i]['total'] = round($net * $newQty, 2);
+                        $rows[$i]['total_wt'] = round($net * $newQty * (1 + $rate / 100), 2);
+                        $this->applyCartTotalsDelta((float) $rows[$i]['total'], (float) $rows[$i]['total_wt']);
+                    }
+                    $found = true;
+                    break;
+                }
+            }
+
+            if (!$found) {
+                if ($operator !== 'up') {
+                    return false;
+                }
+                $langId = 1;
+                $name = 'Product ' . $idProduct;
+                if ($product->loaded && is_array($product->name)) {
+                    $name = (string) (reset($product->name) ?: $name);
+                }
+                $rewrite = 'product-' . $idProduct;
+                if ($product->loaded && is_array($product->link_rewrite)) {
+                    $rewrite = (string) (reset($product->link_rewrite) ?: $rewrite);
+                }
+                $row = [
+                    'id_product' => $idProduct,
+                    'link_rewrite' => $rewrite,
+                    'name' => $name,
+                    'description_short' => '',
+                    'manufacturer_name' => '',
+                    'ean13' => '',
+                    'upc' => '',
+                    'cart_quantity' => $quantity,
+                    'price' => $net,
+                    'total' => round($net * $quantity, 2),
+                    'total_wt' => round($net * $quantity * (1 + $rate / 100), 2),
+                    'rate' => $rate,
+                    'reduction' => 0,
+                    'is_virtual' => $product->loaded ? (int) $product->is_virtual : 0,
+                ];
+                $rows[] = $row;
+                $this->applyCartTotalsDelta((float) $row['total'], (float) $row['total_wt']);
+            }
+
+            StubStore::$cartProducts[$this->id] = array_values($rows);
+            return true;
+        }
+
+        public function deleteProduct($idProduct, $idProductAttribute = 0, $idCustomization = 0, $idAddressDelivery = 0)
+        {
+            $rows = StubStore::$cartProducts[$this->id] ?? [];
+            foreach ($rows as $i => $row) {
+                if ((int) $row['id_product'] === (int) $idProduct) {
+                    $this->applyCartTotalsDelta(-(float) $row['total'], -(float) $row['total_wt']);
+                    unset($rows[$i]);
+                }
+            }
+            StubStore::$cartProducts[$this->id] = array_values($rows);
+            return true;
+        }
+
+        private function applyCartTotalsDelta(float $netDelta, float $grossDelta): void
+        {
+            if (isset(StubStore::$cartTotals[$this->id][false][self::BOTH])) {
+                StubStore::$cartTotals[$this->id][false][self::BOTH] = round(
+                    (float) StubStore::$cartTotals[$this->id][false][self::BOTH] + $netDelta,
+                    2
+                );
+            }
+            if (isset(StubStore::$cartTotals[$this->id][true][self::BOTH])) {
+                StubStore::$cartTotals[$this->id][true][self::BOTH] = round(
+                    (float) StubStore::$cartTotals[$this->id][true][self::BOTH] + $grossDelta,
+                    2
+                );
+            }
         }
 
         public function getOrderTotal($withTaxes, $type)
@@ -736,7 +1324,60 @@ namespace {
 
         public function execute($sql): bool
         {
+            $sql = (string) $sql;
+            StubStore::$dbExecuted[] = $sql;
+            if (preg_match('/REPLACE INTO `ps_twopayment_surcharge_sync` \(`id_cart`, `seq`, `updated_at`\) VALUES \((\d+), (\d+)/', $sql, $m)) {
+                StubStore::$surchargeSyncSeqs[(int) $m[1]] = (int) $m[2];
+            }
+            // Trigger bookkeeping so specs can assert the DB-enforcement DDL
+            // is issued. The stub CANNOT evaluate trigger semantics (no SQL
+            // engine); rejection behaviour is live-container verified only.
+            if (preg_match('/^\s*CREATE TRIGGER `([^`]+)`/', $sql, $m)) {
+                StubStore::$dbTriggers[$m[1]] = $sql;
+            }
+            if (preg_match('/^\s*DROP TRIGGER IF EXISTS `([^`]+)`/', $sql, $m)) {
+                unset(StubStore::$dbTriggers[$m[1]]);
+            }
             return true;
+        }
+
+        /**
+         * Recognises exactly the scalar queries the module issues; anything
+         * else answers false (core Db returns false on empty results).
+         */
+        public function getValue($sql)
+        {
+            $sql = (string) $sql;
+            if (preg_match("/GET_LOCK\\('([^']+)'/", $sql, $m)) {
+                if (!empty(StubStore::$dbLocks[$m[1]])) {
+                    return '0'; // held by a simulated concurrent request
+                }
+                StubStore::$dbLocks[$m[1]] = true;
+                return '1';
+            }
+            if (preg_match("/RELEASE_LOCK\\('([^']+)'/", $sql, $m)) {
+                unset(StubStore::$dbLocks[$m[1]]);
+                return '1';
+            }
+            if (preg_match('/SELECT `seq` FROM `ps_twopayment_surcharge_sync` WHERE `id_cart` = (\d+)/', $sql, $m)) {
+                return StubStore::$surchargeSyncSeqs[(int) $m[1]] ?? false;
+            }
+            if (preg_match('/SELECT COUNT\(\*\) FROM `ps_order_detail` WHERE `id_order` = (\d+) AND `product_id` = (\d+)/', $sql, $m)) {
+                $count = 0;
+                foreach (StubStore::$orderDetails as $row) {
+                    if ((int) $row['id_order'] === (int) $m[1] && (int) $row['product_id'] === (int) $m[2]) {
+                        $count++;
+                    }
+                }
+                return (string) $count;
+            }
+            if (preg_match("/SELECT `value` FROM `ps_configuration` WHERE `name` = '([A-Za-z0-9_]+)'/", $sql, $m)) {
+                return StubStore::$configuration[$m[1]] ?? false;
+            }
+            if (preg_match("/FROM information_schema\.TRIGGERS.*TRIGGER_NAME = '([^']+)'/s", $sql, $m)) {
+                return isset(StubStore::$dbTriggers[$m[1]]) ? '1' : '0';
+            }
+            return false;
         }
 
         public function executeS($sql): array
@@ -757,6 +1398,28 @@ namespace {
         public function update($table, $data, $where): bool
         {
             return true;
+        }
+    }
+
+    class Order
+    {
+        public $id = 0;
+        public $id_cart = 0;
+        public $id_customer = 0;
+        public $total_paid = 0.0;
+        public bool $loaded = false;
+
+        public function __construct($id = 0)
+        {
+            $id = (int) $id;
+            if ($id > 0 && isset(StubStore::$orders[$id])) {
+                $row = StubStore::$orders[$id];
+                $this->id = $id;
+                $this->loaded = true;
+                $this->id_cart = (int) ($row['id_cart'] ?? 0);
+                $this->id_customer = (int) ($row['id_customer'] ?? 0);
+                $this->total_paid = (float) ($row['total_paid'] ?? 0.0);
+            }
         }
     }
 

@@ -17,7 +17,6 @@ class TwoCheckoutManager {
         
         this.companySearch = null;
         this.orderIntent = null;
-        this.fieldValidation = null;
         this.currentStep = 'unknown';
         this.isBusinessAccount = false;
         this.isInitialized = false;
@@ -26,7 +25,16 @@ class TwoCheckoutManager {
         this._intentCooldownMs = 800;
         this._lastIntentRunAt = 0;
         this._initialIntentTriggered = false;
-        
+        // Monotonic sequence for surcharge cart-line syncs: only the LATEST
+        // selection's response may drive the UI (last-wins against re-ordered
+        // AJAX responses when the buyer clicks between options quickly), and
+        // the same value is sent to the server so a slower OLDER request can
+        // never overwrite a newer one there either. Seeded with Date.now()
+        // (not 0) so the sequence stays monotonic across page reloads - the
+        // server persists the last-applied value per cart.
+        this._surchargeSyncSeq = Date.now();
+        this._surchargeRestoreKey = 'two_restore_payment_selection';
+
         this.init();
     }
 
@@ -59,7 +67,12 @@ class TwoCheckoutManager {
         
         // Setup PrestaShop-native event listeners
         this.setupPrestaShopEventListeners();
-        
+
+        // If the native cart refresh (full payment-step reload) was triggered
+        // by a surcharge line sync, restore the payment option the buyer had
+        // clicked - the reload wipes radio state.
+        this.restorePaymentSelectionAfterCartRefresh();
+
         this.isInitialized = true;
     }
     
@@ -116,27 +129,13 @@ class TwoCheckoutManager {
     }
     
     /**
-     * ENHANCED: Account type detection with extensive fallback chain for compatibility
+     * There is no account-type selector (TWO-24755 rework: B2B checkout
+     * always allows company search and the Two flow; order intent gates
+     * later by actual company presence, not a selector value).
      */
     detectAccountType() {
-        // ENHANCED: Try multiple methods to find Two payment option for better compatibility
         this.twoPaymentOption = this.detectTwoPaymentOption();
-
-        // When account type is disabled, treat Two as available regardless of business/personal at address step
-        const useAccountType = !!(window.twopayment && String(window.twopayment.use_account_type) === '1');
-        if (!useAccountType) {
-            this.isBusinessAccount = true; // allow company search & Two flow; we will gate order intent later by company presence
-        } else {
-            this.isBusinessAccount = !!this.twoPaymentOption;
-        }
-
-        // Fallback for address step: use account_type select value
-        if (!this.isBusinessAccount) {
-            const accountTypeField = document.querySelector("select[name='account_type']");
-            if (accountTypeField) {
-                this.isBusinessAccount = accountTypeField.value === 'business';
-            }
-        }
+        this.isBusinessAccount = true;
         
         // Also store reference to payment radio for easy access
         if (this.twoPaymentOption) {
@@ -235,34 +234,45 @@ class TwoCheckoutManager {
             prestashop.on('checkout', (event) => {
                 this.handleCheckoutEvent(event);
             });
+
+            // Cart-content changes while Two is selected (quantity spinners /
+            // remove links on the checkout order-summary widget): core emits
+            // 'updatedCart' AFTER it re-renders the summary (verified against
+            // classic theme theme.js - distinct from the 'updateCart' event
+            // this module itself emits to REQUEST a refresh). The fee is a
+            // percentage of the cart basis, so re-quote and resync the line.
+            // No loop risk: the server endpoint is idempotent - when nothing
+            // changed it reports changed=false and no further refresh fires.
+            //
+            // ACCEPTED LIMITATION - admin mid-session tax-rate change: there
+            // is no push channel from the back office into an open buyer
+            // session, so a live payment step can display the old rate until
+            // any of these triggers fires. The order-create self-heal always
+            // reprices authoritatively and the server-side parity gate fails
+            // closed, so the buyer can never be CHARGED off a stale rate.
+            prestashop.on('updatedCart', () => {
+                if (this.isTwoPaymentSelected()) {
+                    this.syncSurchargeCartLine(true);
+                }
+            });
+        }
+
+        // Page-load resync: currency switching is a plain link in core (full
+        // page reload - verified against ps_currencyselector), so if the
+        // theme restores the Two selection after the reload the existing
+        // line still carries the OLD currency's amount until resynced.
+        // Idempotent no-op in the common case where nothing changed.
+        if (this.isTwoPaymentSelected()) {
+            this.syncSurchargeCartLine(true);
         }
         
         // CRITICAL: Listen for payment option selection (theme-independent)
         this.setupPaymentOptionSelectionListener();
         
-        // Listen for account type changes to re-init company search
-        this.setupAccountTypeChangeListener();
-
         // Listen for DOM mutations for dynamic content
         this.setupMutationObserver();
     }
 
-    setupAccountTypeChangeListener() {
-        if (this._accountTypeListenerAdded) return;
-        const accountTypeField = document.querySelector("select[name='account_type']");
-        if (!accountTypeField) return;
-        this._accountTypeListenerAdded = true;
-        accountTypeField.addEventListener('change', () => {
-            const value = accountTypeField.value;
-            this.isBusinessAccount = (value === 'business');
-            try { sessionStorage.setItem('two_account_type', value); } catch (e) {}
-            // Keep company search available on address forms for reliable company selection.
-            if (this.config.companySearchEnabled && !this.companySearch) {
-                this.initializeCompanySearch();
-            }
-        });
-    }
-    
     /**
      * ENHANCED: Only trigger order intent when Two payment is selected (more comprehensive detection)
      */
@@ -352,7 +362,12 @@ class TwoCheckoutManager {
     handlePaymentOptionChange(radioButton) {
         // Check if Two payment is selected using various patterns
         const isTwoSelected = this.isTwoPaymentSelected(radioButton);
-        
+
+        // Mirror the buyer surcharge as a real PrestaShop cart line (add on
+        // Two selection, remove on any other selection). Server-side endpoint
+        // is idempotent, so repeated change events are harmless.
+        this.syncSurchargeCartLine(isTwoSelected);
+
         if (isTwoSelected && this.config.orderIntentEnabled) {
             // Ensure orderIntent is initialized even after dynamic DOM changes
             if (!this.orderIntent && window.TwoOrderIntent) {
@@ -374,6 +389,125 @@ class TwoCheckoutManager {
         }
     }
     
+    /**
+     * Reconcile the cart's hidden surcharge line with the current payment
+     * selection via the syncSurchargeLine AJAX action, then - only when the
+     * server reports an actual cart change - trigger PrestaShop's NATIVE
+     * cart-refresh plumbing so the order summary re-renders itself.
+     *
+     * FAILURE HANDLING (documented decision): the call is fail-soft in the
+     * UI - one silent retry, then a console warning; checkout is never
+     * blocked and the Place-order button is never touched from here. The
+     * HARD guarantee that a buyer can never complete a Two order whose
+     * PrestaShop total diverges from the Two invoice lives server-side: the
+     * order-create path self-heals the cart line and fails closed on any
+     * residual mismatch (Twopayment::buildTwoOrderPricingData parity gate).
+     * A lost remove-sync for OTHER payment methods is likewise covered
+     * server-side (actionFrontControllerInitAfter stale-guard strips the
+     * line before any other payment module computes totals).
+     *
+     * @param {boolean} selected Two is the buyer's selected payment option
+     * @returns {Promise<object>} the endpoint's {success, changed, present}
+     */
+    syncSurchargeCartLine(selected) {
+        if (!window.twopayment || !window.twopayment.surcharge_cart_line ||
+            !window.twopayment.order_intent_url || !window.twopayment.ajax_token ||
+            typeof jQuery === 'undefined') {
+            return Promise.resolve({ success: true, changed: false, present: false });
+        }
+
+        const seq = ++this._surchargeSyncSeq;
+        const requestOnce = () => new Promise((resolve, reject) => {
+            jQuery.ajax({
+                url: window.twopayment.order_intent_url,
+                type: 'POST',
+                dataType: 'json',
+                timeout: 10000,
+                data: {
+                    ajax: 1,
+                    action: 'syncSurchargeLine',
+                    token: window.twopayment.ajax_token,
+                    selected: selected ? 1 : 0,
+                    // Server-side ordering guard: requests carrying a lower
+                    // seq than the last applied one are ignored server-side.
+                    seq: seq
+                }
+            }).done(resolve).fail(reject);
+        });
+
+        return requestOnce()
+            .catch(() => requestOnce()) // one silent retry on transport failure
+            .catch(() => ({ success: false, changed: false, present: false }))
+            .then((response) => {
+                if (seq !== this._surchargeSyncSeq) {
+                    // A newer selection superseded this sync; let it drive the UI.
+                    return response;
+                }
+                if (response && response.success && response.changed) {
+                    this.triggerNativeCartRefresh();
+                } else if (!response || !response.success) {
+                    console.warn('Two Payment: surcharge cart line sync failed; server-side order-create gate remains authoritative.');
+                }
+                return response;
+            });
+    }
+
+    /**
+     * Trigger PrestaShop core's own cart-refresh pipeline (no hand-rolled
+     * summary re-render). Empirically verified against PS8 themes/core.js:
+     * core listens on the 'updateCart' event, POSTs the .js-cart
+     * data-refresh-url, replaces the summary partials, and - because the
+     * payment step carries the .js-cart-payment-step-refresh marker - fully
+     * reloads the checkout page (then emits 'updatedCart' post-render). The
+     * handler dereferences event.resp.cart unconditionally, so a cart object
+     * (prestashop.cart or {}) must always be passed.
+     */
+    triggerNativeCartRefresh() {
+        try {
+            const checkedRadio = document.querySelector('input[name="payment-option"]:checked, .payment-options input[type="radio"]:checked');
+            if (checkedRadio && checkedRadio.id) {
+                sessionStorage.setItem(this._surchargeRestoreKey, checkedRadio.id);
+            }
+        } catch (e) {
+            // sessionStorage unavailable: reload still happens, buyer re-picks manually.
+        }
+
+        if (window.prestashop && typeof window.prestashop.emit === 'function') {
+            window.prestashop.emit('updateCart', {
+                reason: { linkAction: 'twoSurchargeSync' },
+                resp: { cart: (window.prestashop && window.prestashop.cart) || {} }
+            });
+        }
+    }
+
+    /**
+     * After the native payment-step reload, re-check the payment option the
+     * buyer had clicked and re-fire its change event so all listeners
+     * (PrestaShop core's option toggling, our own handler) rebuild their
+     * state. The server-side sync endpoint is idempotent, so the re-fired
+     * change cannot loop: it reports changed=false and no refresh is
+     * triggered again.
+     */
+    restorePaymentSelectionAfterCartRefresh() {
+        let radioId = null;
+        try {
+            radioId = sessionStorage.getItem(this._surchargeRestoreKey);
+            if (radioId !== null) {
+                sessionStorage.removeItem(this._surchargeRestoreKey);
+            }
+        } catch (e) {
+            return;
+        }
+        if (!radioId) {
+            return;
+        }
+        const radio = document.getElementById(radioId);
+        if (radio && !radio.checked) {
+            radio.checked = true;
+            radio.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+    }
+
     /**
      * ENHANCED: Check if Two payment is selected (theme-independent with better detection)
      */
@@ -544,8 +678,7 @@ class TwoCheckoutManager {
             const status = result.status || '';
             const err = (result && result.error) ? String(result.error) : '';
             const errLower = err.toLowerCase();
-            const useAccountType = !!(window.twopayment && String(window.twopayment.use_account_type) === '1');
-            
+
             // Handle specific status codes for clear user guidance
             // 'no_company' = no company name entered at all
             // 'incomplete_company' = company name exists but backend couldn't auto-resolve org number
@@ -562,12 +695,12 @@ class TwoCheckoutManager {
             }
             
             // Legacy: If order intent was skipped (frontend-side skip), show appropriate prompt
-            if (errLower.includes('skipped_no_company') && !useAccountType) {
+            if (errLower.includes('skipped_no_company')) {
                 this.showCompanyRequiredMessage(err, 'no_company');
                 return;
             }
             
-            if (errLower.includes('skipped') && !useAccountType) {
+            if (errLower.includes('skipped')) {
                 // Generic skip - show company selection prompt
                 const messageContainer = this.getOrCreateMessageContainer();
                 const requiredMsg = this.t(
@@ -1339,6 +1472,14 @@ class TwoCheckoutManager {
                             dataType: 'json',
                             data: { ajax: 1, action: 'savePaymentTerm', token: window.twopayment.ajax_token, days: days },
                             timeout: 10000
+                        }).done(() => {
+                            // The surcharge amount is term-dependent: with Two
+                            // selected, re-quote and update the cart line for
+                            // the newly persisted term (idempotent server-side;
+                            // no-op when the amount is unchanged).
+                            if (this.isTwoPaymentSelected()) {
+                                this.syncSurchargeCartLine(true);
+                            }
                         }).fail((xhr, statusText) => {
                             if (statusText !== 'abort') {
                                 console.error('Two Payment: Error saving term:', statusText);
@@ -1610,21 +1751,6 @@ class TwoCheckoutManager {
 
         // Re-initialize company search when address form updates
         if (this.config.companySearchEnabled) {
-            // Attach fresh listener to new select element after DOM replacement
-            this._accountTypeListenerAdded = false;
-            this.setupAccountTypeChangeListener();
-
-            // Restore previously selected account type if we have it
-            try {
-                const saved = sessionStorage.getItem('two_account_type');
-                const accountTypeField = document.querySelector("select[name='account_type']");
-                if (saved && accountTypeField && accountTypeField.value !== saved) {
-                    accountTypeField.value = saved;
-                    accountTypeField.dispatchEvent(new Event('change', { bubbles: true }));
-                    this.isBusinessAccount = (saved === 'business');
-                }
-            } catch (e) {}
-
             if (this.companySearch && this.companySearch.destroy) {
                 this.companySearch.destroy();
                 this.companySearch = null;
@@ -1732,7 +1858,6 @@ class TwoCheckoutManager {
      */
     initializeModules() {
         // Always initialize field validation (for address step)
-        this.initializeFieldValidation();
         
         // Initialize company search for address step
         if (this.config.companySearchEnabled && this.currentStep === 'address') {
@@ -1766,23 +1891,21 @@ class TwoCheckoutManager {
     /**
      * Initialize field validation module
      */
-    initializeFieldValidation() {
-        if (!this.fieldValidation && window.TwoFieldValidation) {
-            this.fieldValidation = new TwoFieldValidation();
-        }
-    }
-
     /**
      * Initialize order intent module
      */
     initializeOrderIntent() {
         if (!this.orderIntent && window.TwoOrderIntent) {
-            const useAccountType = !!(window.twopayment && String(window.twopayment.use_account_type) === '1');
+            // Block submitting the order while Two is selected and the
+            // last order-intent came back declined - this used to be
+            // conditional on the (now-removed) account-type toggle; there
+            // is no longer a reason to ever skip it, so it is unconditional
+            // (TwoOrderIntent's own default is also true).
             this.orderIntent = new TwoOrderIntent({
                 enabled: true,
                 orderIntentUrl: this.config.orderIntentUrl,
                 ajaxToken: this.config.ajaxToken,
-                enablePaymentPreventionOnDecline: useAccountType // do not globally block when account type is disabled
+                enablePaymentPreventionOnDecline: true
             });
         }
     }
@@ -1866,10 +1989,6 @@ class TwoCheckoutManager {
         
         if (this.orderIntent && typeof this.orderIntent.reset === 'function') {
             this.orderIntent.reset();
-        }
-        
-        if (this.fieldValidation && typeof this.fieldValidation.cleanup === 'function') {
-            this.fieldValidation.cleanup();
         }
     }
 }

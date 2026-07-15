@@ -8,8 +8,9 @@ declare(strict_types=1);
  *
  * Covers: buyer_fee_share payload construction per term, the rounding relay
  * and its edge cases, the fee-quote fetch (fail-soft), fee-line construction
- * with the admin-configured Surcharge Tax Rate (PS_TWO_SURCHARGE_TAX_RATE —
- * the pricing-preview response's total_fee_tax_rate is never a source), and
+ * with the merchant-selected TaxRulesGroup's destination-resolved rate
+ * (CONFIG_SURCHARGE_TAX_RULES_GROUP via getTwoSurchargeTaxRateForCart — the
+ * pricing-preview response's total_fee_tax_rate is never a source), and
  * end-to-end injection into the order payload including a rounding-boundary
  * amount.
  */
@@ -38,8 +39,14 @@ final class SurchargeSpec
         self::testFetchTermFeeFailsSoftOnHttpError();
         self::testFetchTermFeeFailsSoftOnCurrencyMismatch();
         self::testFetchTermFeeParsesSuccess();
-        self::testSurchargeTaxRateReadsAdminConfig();
-        self::testSurchargeLineItemUsesAdminConfiguredTaxRate();
+        self::testSurchargeTaxRulesGroupIdReadsAdminConfig();
+        self::testSurchargeTaxRateForCartResolvesDestinationThroughCoreGates();
+        self::testSurchargeTaxRulesGroupOptionsNeverDropTheConfiguredSelection();
+        self::testSurchargeTaxRulesGroupFormDefaultRequiresExplicitChoice();
+        self::testSurchargeTaxTreatmentRequiredWhenSurchargesEnabled();
+        self::testUpgrade250FlagsFlatRateShopsForTaxReselection();
+        self::testSurchargeTaxMigrationNoticeLifecycle();
+        self::testSurchargeLineItemUsesSelectedGroupDestinationRate();
         self::testSurchargeLineItemIgnoresApiTaxRateEntirely();
         self::testSurchargeLineItemDisabledReturnsNull();
         self::testSurchargeLineItemRoundsTaxOnBoundary();
@@ -404,47 +411,335 @@ final class SurchargeSpec
         TinyAssert::same('NOK', $fee['currency']);
     }
 
-    private static function testSurchargeTaxRateReadsAdminConfig(): void
+    private static function testSurchargeTaxRulesGroupIdReadsAdminConfig(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
 
-        // Blank/unset → 0.0 (deliberate deviation from Magento's default-tax-
-        // class fallback: PrestaShop has no store-wide default tax rate).
-        TinyAssert::same(0.0, $module->getTwoSurchargeTaxRate(), 'unset config must yield 0.0');
-        Configuration::updateValue('PS_TWO_SURCHARGE_TAX_RATE', '');
-        TinyAssert::same(0.0, $module->getTwoSurchargeTaxRate(), 'blank config must yield 0.0');
+        // Blank/unset/garbage/negative → 0, PrestaShop's "No tax" sentinel
+        // (fail-safe: never tax the fee on a selection the merchant did not
+        // make).
+        TinyAssert::same(0, $module->getTwoSurchargeTaxRulesGroupId(), 'unset config must yield 0 (No tax)');
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '');
+        TinyAssert::same(0, $module->getTwoSurchargeTaxRulesGroupId(), 'blank config must yield 0');
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, 'abc');
+        TinyAssert::same(0, $module->getTwoSurchargeTaxRulesGroupId(), 'non-numeric config must yield 0');
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '-5');
+        TinyAssert::same(0, $module->getTwoSurchargeTaxRulesGroupId(), 'negative config must yield 0');
 
-        // Percentage form scales down (normalizeTwoFeeTaxRate convention).
-        Configuration::updateValue('PS_TWO_SURCHARGE_TAX_RATE', '25');
-        TinyAssert::same(0.25, $module->getTwoSurchargeTaxRate(), 'stored "25" means 25% → 0.25');
-
-        // Already-fractional input passes through unscaled — the exact
-        // normalizeTwoFeeTaxRate edge behaviour (<= 1.0 is left as-is).
-        Configuration::updateValue('PS_TWO_SURCHARGE_TAX_RATE', '0.25');
-        TinyAssert::same(0.25, $module->getTwoSurchargeTaxRate(), 'fractional "0.25" stays 0.25');
-
-        // Garbage and negatives degrade to 0.0, never fatal.
-        Configuration::updateValue('PS_TWO_SURCHARGE_TAX_RATE', 'abc');
-        TinyAssert::same(0.0, $module->getTwoSurchargeTaxRate(), 'non-numeric config must yield 0.0');
-        Configuration::updateValue('PS_TWO_SURCHARGE_TAX_RATE', '-5');
-        TinyAssert::same(0.0, $module->getTwoSurchargeTaxRate(), 'negative config must yield 0.0');
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+        TinyAssert::same(400, $module->getTwoSurchargeTaxRulesGroupId(), 'stored group id is returned as int');
     }
 
-    private static function testSurchargeLineItemUsesAdminConfiguredTaxRate(): void
+    private static function testSurchargeTaxRateForCartResolvesDestinationThroughCoreGates(): void
+    {
+        self::reset();
+        StubStore::$addresses[900] = ['id_country' => 34, 'loaded' => true]; // ES
+        StubStore::$addresses[901] = ['id_country' => 47, 'loaded' => true]; // NO - group has no rule
+        StubStore::$taxRuleRates[400] = [34 => 21.0];
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+        $module = new TwopaymentTestHarness();
+        $cart = new Cart(1);
+        $cart->id_address_invoice = 900;
+        $cart->id_address_delivery = 901;
+
+        // Covered destination resolves the group's rate as a fraction.
+        TinyAssert::same(0.21, $module->getTwoSurchargeTaxRateForCart($cart), 'covered destination resolves the group rate');
+
+        // Destination without a matching rule -> 0 (core zero-rating).
+        $cart->id_address_invoice = 901;
+        TinyAssert::same(0.0, $module->getTwoSurchargeTaxRateForCart($cart), 'no rule for the destination must resolve 0');
+        $cart->id_address_invoice = 900;
+
+        // PS_TAX_ADDRESS_TYPE=delivery: the DELIVERY address is the tax
+        // destination, exactly like core cart pricing.
+        Configuration::updateValue('PS_TAX_ADDRESS_TYPE', 'id_address_delivery');
+        TinyAssert::same(0.0, $module->getTwoSurchargeTaxRateForCart($cart), 'delivery-address tax destination must be honoured');
+        Configuration::updateValue('PS_TAX_ADDRESS_TYPE', 'id_address_invoice');
+
+        // Shop-wide PS_TAX off zeroes the rate (core Tax::excludeTaxeOption).
+        Configuration::updateValue('PS_TAX', 0);
+        TinyAssert::same(0.0, $module->getTwoSurchargeTaxRateForCart($cart), 'PS_TAX disabled must zero the rate');
+        Configuration::updateValue('PS_TAX', 1);
+
+        // vatnumber-module B2B exemption: foreign VAT number + management on.
+        StubStore::$addresses[900]['vat_number'] = 'NO999999999';
+        Configuration::updateValue('VATNUMBER_MANAGEMENT', 1);
+        Configuration::updateValue('VATNUMBER_COUNTRY', 8); // shop country != buyer country
+        TinyAssert::same(0.0, $module->getTwoSurchargeTaxRateForCart($cart), 'VAT-exempt B2B buyer must resolve 0');
+        Configuration::updateValue('VATNUMBER_MANAGEMENT', 0);
+        TinyAssert::same(0.21, $module->getTwoSurchargeTaxRateForCart($cart), 'exemption only applies when the vatnumber module manages it');
+
+        // "No tax" sentinel (id 0) resolves 0 for every destination.
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '0');
+        TinyAssert::same(0.0, $module->getTwoSurchargeTaxRateForCart($cart), 'group id 0 must always resolve 0');
+    }
+
+    /** Harness exposing the protected config-form helpers under test. */
+    private static function makeConfigHarness(): TwopaymentTestHarness
+    {
+        return new class extends TwopaymentTestHarness {
+            public function optionsForTest(): array
+            {
+                return $this->getTwoSurchargeTaxRulesGroupOptions();
+            }
+
+            public function formDefaultForTest(): string
+            {
+                return $this->getTwoSurchargeTaxRulesGroupFormDefault();
+            }
+
+            public function saveSurchargeFormForTest(): void
+            {
+                $this->saveTwoSurchargeFormValues();
+            }
+
+            public function validateSurchargeFormForTest(): array
+            {
+                $this->errors = [];
+                $this->validTwoSurchargeFormValues();
+
+                return $this->errors;
+            }
+        };
+    }
+
+    /**
+     * The currently-configured group must stay in the dropdown even when
+     * deactivated: if it dropped out, the browser would submit the first
+     * option (the unselected placeholder) on the next unrelated settings
+     * save and silently unset the treatment.
+     */
+    private static function testSurchargeTaxRulesGroupOptionsNeverDropTheConfiguredSelection(): void
+    {
+        self::reset();
+        StubStore::$taxRulesGroups[400] = ['name' => 'Standard rate', 'active' => 1];
+        StubStore::$taxRulesGroups[500] = ['name' => 'Retired rate', 'active' => 0];
+        StubStore::$taxRulesGroups[600] = ['name' => 'Unused retired rate', 'active' => 0];
+        $module = self::makeConfigHarness();
+
+        // Configured group deactivated -> injected with an "(inactive)" tag.
+        // Ids are strings, and the unselected placeholder ('') leads.
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '500');
+        $options = $module->optionsForTest();
+        $byId = [];
+        foreach ($options as $option) {
+            TinyAssert::true(is_string($option['id']), 'option ids must be strings (PHP 7 template loose == would conflate \'\' with 0)');
+            $byId[$option['id']] = (string) $option['name'];
+        }
+        TinyAssert::same(['-- Select surcharge tax treatment --', 'No tax', 'Standard rate', 'Retired rate (inactive)'], array_values($byId), 'placeholder leads; deactivated configured group must stay selectable, flagged inactive');
+        TinyAssert::same(['', '0', '400', '500'], array_map('strval', array_keys($byId)), 'inactive groups that are NOT configured stay hidden');
+
+        // Configured group active -> plain listing, no duplicate, no tag.
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+        $options = $module->optionsForTest();
+        TinyAssert::count(3, $options);
+        TinyAssert::same('Standard rate', (string) $options[2]['name'], 'active configured group is listed once, untagged');
+
+        // Configured group deleted entirely -> nothing to inject (runtime
+        // already fails safe to "No tax" for a nonexistent group).
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '999');
+        TinyAssert::count(3, $module->optionsForTest());
+    }
+
+    /**
+     * Unsaved config pre-selects NOTHING - the dropdown renders on the
+     * unselected placeholder (''). Never an auto-default: not
+     * Product::getIdTaxRulesGroupMostUsed() (full-catalog COUNT/GROUP BY on
+     * every config page render), and not "No tax" either - the merchant
+     * must pick explicitly. A stored selection ("No tax" included) is the
+     * pre-selection.
+     */
+    private static function testSurchargeTaxRulesGroupFormDefaultRequiresExplicitChoice(): void
+    {
+        self::reset();
+        $module = self::makeConfigHarness();
+
+        TinyAssert::same('', $module->formDefaultForTest(), 'unset config must stay on the unselected placeholder');
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '');
+        TinyAssert::same('', $module->formDefaultForTest(), 'blank config must stay on the unselected placeholder');
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '0');
+        TinyAssert::same('0', $module->formDefaultForTest(), 'an explicitly saved "No tax" IS a selection and pre-selects');
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+        TinyAssert::same('400', $module->formDefaultForTest(), 'stored selection is the pre-selection');
+    }
+
+    /**
+     * While surcharges are enabled (type !== 'none') the save is blocked
+     * server-side until an explicit tax treatment is submitted: the
+     * unselected placeholder ('' / absent) is a validation error, never a
+     * silent "No tax" fallback. With surcharges disabled no selection is
+     * required, and an invalid submission is stored as '' (unselected),
+     * not coerced to 0.
+     */
+    private static function testSurchargeTaxTreatmentRequiredWhenSurchargesEnabled(): void
+    {
+        self::reset();
+        Tools::resetTestValues();
+        StubStore::$taxRulesGroups[400] = ['name' => 'Standard rate', 'active' => 1];
+        $module = self::makeConfigHarness();
+
+        // Neutralise the unrelated grid checks (the Tools stub defaults
+        // absent keys to null, unlike core's false).
+        foreach (['PCT', 'FIXED', 'CAP'] as $suffix) {
+            Tools::setTestValue('PS_TWO_SURCHARGE_' . $suffix . '_30', '');
+        }
+
+        // Enabled + nothing submitted -> blocked.
+        Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+        $errors = $module->validateSurchargeFormForTest();
+        TinyAssert::count(1, $errors);
+        TinyAssert::true(strpos((string) $errors[0], 'Select a surcharge tax treatment') !== false, 'error names the missing selection');
+
+        // Enabled + blank submitted (the placeholder) -> blocked.
+        Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '');
+        TinyAssert::count(1, $module->validateSurchargeFormForTest());
+
+        // Enabled + whitespace submitted -> blocked.
+        Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, ' ');
+        TinyAssert::count(1, $module->validateSurchargeFormForTest());
+
+        // Enabled + explicit "No tax" -> allowed.
+        Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '0');
+        TinyAssert::count(0, $module->validateSurchargeFormForTest());
+
+        // Enabled + existing group -> allowed.
+        Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+        TinyAssert::count(0, $module->validateSurchargeFormForTest());
+
+        // Enabled + nonexistent group -> blocked (pre-existing rule intact).
+        Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '999');
+        TinyAssert::count(1, $module->validateSurchargeFormForTest());
+
+        // Enabled + decimal/negative -> blocked, never truncated into a
+        // selection the merchant did not make.
+        Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '0.5');
+        TinyAssert::count(1, $module->validateSurchargeFormForTest());
+        Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '-5');
+        TinyAssert::count(1, $module->validateSurchargeFormForTest());
+
+        // Disabled -> no selection required, save allowed.
+        Tools::resetTestValues();
+        Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', 'none');
+        TinyAssert::count(0, $module->validateSurchargeFormForTest());
+
+        // Disabled + garbage submitted -> stored '' (unselected), never 0.
+        Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, 'abc');
+        $module->saveSurchargeFormForTest();
+        TinyAssert::same('', (string) Configuration::get(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP), 'garbage never coerces to "No tax"');
+        Tools::resetTestValues();
+    }
+
+    /**
+     * upgrade-2.5.0.php: a shop upgrading with the pre-release flat rate
+     * (PS_TWO_SURCHARGE_TAX_RATE) configured and no TaxRulesGroup selected
+     * gets a logged warning + the persistent "needs re-selection" flag - it
+     * must never pass silently. Shops without the flat rate, or that already
+     * selected a group, are untouched.
+     */
+    private static function testUpgrade250FlagsFlatRateShopsForTaxReselection(): void
+    {
+        require_once __DIR__ . '/../upgrade/upgrade-2.5.0.php';
+
+        // Flat rate set, group unset -> warning log + persistent flag.
+        self::reset();
+        PrestaShopLogger::reset();
+        Configuration::updateValue('PS_TWO_SURCHARGE_TAX_RATE', '25');
+        $module = new TwopaymentTestHarness();
+        TinyAssert::true(upgrade_module_2_5_0($module));
+        TinyAssert::same('1', (string) Configuration::get(Twopayment::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE), 'flat-rate shop without a group selection must be flagged');
+        TinyAssert::count(1, PrestaShopLogger::$logs);
+        TinyAssert::same(2, PrestaShopLogger::$logs[0]['severity'], 'logged as a warning');
+        TinyAssert::true(strpos(PrestaShopLogger::$logs[0]['message'], 'UNTAXED') !== false, 'log spells out the consequence');
+
+        // Group already selected -> no flag, no log.
+        self::reset();
+        PrestaShopLogger::reset();
+        Configuration::updateValue('PS_TWO_SURCHARGE_TAX_RATE', '25');
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+        TinyAssert::true(upgrade_module_2_5_0($module));
+        TinyAssert::false((bool) Configuration::get(Twopayment::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE), 'a shop that already selected a group is not nagged');
+        TinyAssert::count(0, PrestaShopLogger::$logs);
+
+        // No flat rate (fresh install / never configured) -> untouched.
+        self::reset();
+        PrestaShopLogger::reset();
+        TinyAssert::true(upgrade_module_2_5_0($module));
+        TinyAssert::false((bool) Configuration::get(Twopayment::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE));
+        TinyAssert::count(0, PrestaShopLogger::$logs);
+
+        // Blank flat rate counts as unset.
+        self::reset();
+        PrestaShopLogger::reset();
+        Configuration::updateValue('PS_TWO_SURCHARGE_TAX_RATE', '  ');
+        TinyAssert::true(upgrade_module_2_5_0($module));
+        TinyAssert::false((bool) Configuration::get(Twopayment::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE));
+        TinyAssert::count(0, PrestaShopLogger::$logs);
+    }
+
+    /**
+     * The post-upgrade notice is persistent (re-renders on every config
+     * page load) until the merchant makes a selection: it self-retires if a
+     * selection exists, and any explicit surcharge-settings save - "No tax"
+     * included - clears the flag.
+     */
+    private static function testSurchargeTaxMigrationNoticeLifecycle(): void
+    {
+        self::reset();
+        Tools::resetTestValues();
+        $module = self::makeConfigHarness();
+
+        // No flag -> no notice.
+        TinyAssert::same('', $module->getTwoSurchargeTaxMigrationNotice());
+
+        // Flag + no selection -> notice, and it PERSISTS across renders.
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE, '1');
+        $notice = $module->getTwoSurchargeTaxMigrationNotice();
+        TinyAssert::true($notice !== '', 'flagged shop must see the warning');
+        TinyAssert::true(strpos($notice, 'NOT taxed') !== false, 'warning spells out the consequence');
+        TinyAssert::true($module->getTwoSurchargeTaxMigrationNotice() !== '', 'warning persists until a selection is saved');
+
+        // Selection appears (any save path) -> notice self-retires and the
+        // flag is cleared.
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+        TinyAssert::same('', $module->getTwoSurchargeTaxMigrationNotice());
+        TinyAssert::false((bool) Configuration::get(Twopayment::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE), 'self-retire clears the flag');
+
+        // A save WITHOUT a submitted group stores '' (still unselected) and
+        // does NOT retire the nag - it is accurate until a real choice is
+        // made. No silent "No tax" fallback.
+        self::reset();
+        Tools::resetTestValues();
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE, '1');
+        $module->saveSurchargeFormForTest();
+        TinyAssert::same('', (string) Configuration::get(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP), 'save without a submitted group must stay unselected, never silently "No tax"');
+        TinyAssert::same('1', (string) Configuration::get(Twopayment::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE), 'an unselected save must NOT retire the nag');
+        TinyAssert::true($module->getTwoSurchargeTaxMigrationNotice() !== '', 'notice persists after an unselected save');
+
+        // An explicit "No tax" submission stores '0' and retires the nag.
+        Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '0');
+        $module->saveSurchargeFormForTest();
+        Tools::resetTestValues();
+        TinyAssert::same('0', (string) Configuration::get(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP), 'explicit "No tax" submission stores the sentinel');
+        TinyAssert::false((bool) Configuration::get(Twopayment::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE), 'explicit selection retires the nag');
+        TinyAssert::same('', $module->getTwoSurchargeTaxMigrationNotice());
+    }
+
+    private static function testSurchargeLineItemUsesSelectedGroupDestinationRate(): void
     {
         self::reset();
         Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
         Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '2');
-        Configuration::updateValue('PS_TWO_SURCHARGE_TAX_RATE', '25');
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+        StubStore::$taxRuleRates[400] = [34 => 25.0];
         StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
         StubStore::$addresses[900] = ['id_country' => 34, 'loaded' => true];
         $module = new class extends TwopaymentTestHarness {
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 // The response carries a WILDLY different total_fee_tax_rate —
-                // it must have zero influence on the line's tax: the admin
-                // config is the only source.
+                // it must have zero influence on the line's tax: the selected
+                // group's destination rate is the only source.
                 return [
                     'http_status' => 200,
                     'buyer_fee_share' => '5.00',
@@ -460,7 +755,7 @@ final class SurchargeSpec
         TinyAssert::same('SERVICE', $line['type']);
         TinyAssert::same('Payment terms fee - 30 days', $line['name']);
         TinyAssert::same('5.00', $line['net_amount']);
-        TinyAssert::same('0.25', $line['tax_rate'], 'tax rate comes from admin config, never the pricing response');
+        TinyAssert::same('0.25', $line['tax_rate'], 'tax rate comes from the selected group, never the pricing response');
         TinyAssert::same('1.25', $line['tax_amount']);
         TinyAssert::same('6.25', $line['gross_amount']);
     }
@@ -475,8 +770,8 @@ final class SurchargeSpec
         $module = new class extends TwopaymentTestHarness {
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
-                // Response has a rate but the admin field is blank: the line
-                // must be untaxed (0), proving the response rate is dead.
+                // Response has a rate but no tax rules group is selected: the
+                // line must be untaxed (0), proving the response rate is dead.
                 return [
                     'http_status' => 200,
                     'buyer_fee_share' => '5.00',
@@ -490,7 +785,7 @@ final class SurchargeSpec
         $cart->id_address_invoice = 900;
         $line = $module->buildTwoSurchargeLineItemForCart($cart, 100.0);
         TinyAssert::same('5.00', $line['net_amount']);
-        TinyAssert::same('0', $line['tax_rate'], 'blank admin config means untaxed line even when the response carries a rate');
+        TinyAssert::same('0', $line['tax_rate'], 'no selected group means untaxed line even when the response carries a rate');
         TinyAssert::same('0.00', $line['tax_amount']);
         TinyAssert::same('5.00', $line['gross_amount']);
     }
@@ -514,7 +809,9 @@ final class SurchargeSpec
         self::reset();
         Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
         Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '2');
-        Configuration::updateValue('PS_TWO_SURCHARGE_TAX_RATE', '25');
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+        StubStore::$taxRuleRates[400] = [34 => 25.0];
+        StubStore::$addresses[900] = ['id_country' => 34, 'loaded' => true];
         StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
         $module = new class extends TwopaymentTestHarness {
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
@@ -530,6 +827,7 @@ final class SurchargeSpec
         };
         $cart = new Cart(1);
         $cart->id_currency = 978;
+        $cart->id_address_invoice = 900;
         $line = $module->buildTwoSurchargeLineItemForCart($cart, 500.0);
         TinyAssert::same('10.10', $line['net_amount']);
         TinyAssert::same('2.53', $line['tax_amount']);
@@ -543,11 +841,13 @@ final class SurchargeSpec
         self::reset();
         Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
         Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '2');
-        // Configured rate needing more than TAX_RATE_PRECISION (3dp) decimals
+        // Group rate needing more than TAX_RATE_PRECISION (3dp) decimals
         // as a fraction (21.0098% → 0.210098). Tax must be computed from the
         // SNAPPED rate that is actually sent, else the line fails
         // validateTwoLineItems and is dropped.
-        Configuration::updateValue('PS_TWO_SURCHARGE_TAX_RATE', '21.0098');
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+        StubStore::$taxRuleRates[400] = [34 => 21.0098];
+        StubStore::$addresses[900] = ['id_country' => 34, 'loaded' => true];
         StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
         $module = new class extends TwopaymentTestHarness {
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
@@ -561,6 +861,7 @@ final class SurchargeSpec
         };
         $cart = new Cart(1);
         $cart->id_currency = 978;
+        $cart->id_address_invoice = 900;
         $line = $module->buildTwoSurchargeLineItemForCart($cart, 5000.0);
         TinyAssert::same('0.21', $line['tax_rate'], 'rate is snapped to the sent precision');
         TinyAssert::same('210.00', $line['tax_amount'], 'tax computed from the sent (snapped) rate, not full precision');
@@ -601,7 +902,10 @@ final class SurchargeSpec
         self::reset();
         Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
         Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '5');
-        Configuration::updateValue('PS_TWO_SURCHARGE_TAX_RATE', '25');
+        // Merchant-selected group: FR (country 33, the cart's destination)
+        // at 25%.
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+        StubStore::$taxRuleRates[400] = [33 => 25.0];
 
         StubStore::$customers[7001] = [
             'email' => 'buyer@example.com',
