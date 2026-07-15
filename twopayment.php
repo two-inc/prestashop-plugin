@@ -6974,9 +6974,18 @@ class Twopayment extends PaymentModule
             self::API_TIMEOUT_STATE_CHECK
         );
         $http_status = isset($response['http_status']) ? (int) $response['http_status'] : 0;
-        $rates = (is_array($response) && isset($response['rates']) && is_array($response['rates']))
-            ? $response['rates']
-            : null;
+        // Validate BEFORE merging/storing: only positive-numeric rates may
+        // displace cached last-known-good values, otherwise a 200 carrying
+        // zero/junk rates would erode (or wholesale destroy) the validated
+        // table the serve-stale contract depends on.
+        $rates = array();
+        if (is_array($response) && isset($response['rates']) && is_array($response['rates'])) {
+            foreach ($response['rates'] as $iso => $rate) {
+                if (is_string($iso) && $iso !== '' && is_numeric($rate) && (float) $rate > 0) {
+                    $rates[Tools::strtoupper($iso)] = (float) $rate;
+                }
+            }
+        }
         if ($http_status !== self::HTTP_STATUS_OK || empty($rates)) {
             // Failed fetch: roll the pre-bumped clock back so retry happens
             // after the short backoff, not a whole TTL; the last-known-good
