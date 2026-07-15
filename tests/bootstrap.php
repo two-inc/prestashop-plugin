@@ -504,6 +504,11 @@ namespace {
         {
             return strtolower((string) $value);
         }
+
+        public static function strtoupper($value): string
+        {
+            return strtoupper((string) $value);
+        }
     }
 
     class Country
@@ -1063,6 +1068,10 @@ namespace {
         public bool $loaded = false;
         public int $id = 0;
         public string $iso_code = 'EUR';
+        /** Units of this currency per 1 unit of the shop default currency. */
+        public float $conversion_rate = 1.0;
+        public string $symbol = '';
+        public string $sign = '';
 
         public function __construct($id = null)
         {
@@ -1074,6 +1083,16 @@ namespace {
                 $this->id = $id;
                 $this->loaded = true;
             }
+        }
+
+        public static function getIdByIsoCode($isoCode, $idShop = 0)
+        {
+            foreach (StubStore::$currencies as $id => $props) {
+                if (strcasecmp((string) ($props['iso_code'] ?? ''), (string) $isoCode) === 0) {
+                    return (int) $id;
+                }
+            }
+            return 0;
         }
     }
 

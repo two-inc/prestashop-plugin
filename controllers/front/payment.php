@@ -226,7 +226,25 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             } elseif ($http_status >= Twopayment::HTTP_STATUS_SERVER_ERROR) {
                 $message = $this->module->l('Payment provider temporarily unavailable. Please try again later.');
             }
-            
+
+            // Surface the platform minimum when the rejection is attributable
+            // to it (TWO-24775): the API's machine-readable decline_reason
+            // first, with a strictly-below-minimum fallback while older
+            // backends carry only a generic reason. Only on a 4xx rejection -
+            // a connection error or provider outage says nothing about the
+            // order value. Fail-soft: no hint when it cannot be attributed.
+            if ($http_status >= Twopayment::HTTP_STATUS_BAD_REQUEST
+                && $http_status < Twopayment::HTTP_STATUS_SERVER_ERROR
+            ) {
+                $minimum_hint = $this->module->getTwoMinimumOrderDeclineHint(
+                    is_array($response) ? $response : array(),
+                    $cart
+                );
+                if (!Tools::isEmpty($minimum_hint)) {
+                    $message .= ' ' . $minimum_hint;
+                }
+            }
+
             $this->errors[] = $message;
             $this->redirectWithNotifications('index.php?controller=order');
         }
