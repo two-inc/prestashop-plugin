@@ -85,7 +85,7 @@ class Twopayment extends PaymentModule
     // Constants for API timeouts (seconds)
     const API_TIMEOUT_SHORT = 30; // Standard API timeout
     const API_TIMEOUT_LONG = 60; // Extended timeout for file uploads
-    const API_TIMEOUT_STATE_CHECK = 10; // Tight timeout for the invoice-download order state check
+    const API_TIMEOUT_STATE_CHECK = 10; // Tight timeout for render-path fetches (invoice-download state check, merchant-record and FX-rate refreshes, fee quotes)
     const API_TIMEOUT_PDF_FETCH = 10; // Tight timeout for synchronous invoice PDF fetches (buyer + admin download clicks)
     const API_CONNECT_TIMEOUT = 5; // Connection-establishment timeout for all Two API calls
     
@@ -6990,6 +6990,16 @@ class Twopayment extends PaymentModule
                 2
             );
             return false;
+        }
+        // Merge the fresh rates OVER the cached table rather than replacing
+        // it: a 200 that transiently drops a previously-known currency must
+        // not erode that currency's last-known-good rate (which would fail
+        // its gate closed for a full TTL). Fresh values always win; retained
+        // stragglers may predate the stored as_of, which is the freshness
+        // floor of the NEW response.
+        $previous = $this->getTwoFxRatesTable();
+        if ($previous !== null) {
+            $rates = array_merge($previous['rates'], $rates);
         }
         Configuration::updateValue(self::CONFIG_FX_RATES, json_encode(array(
             'base' => isset($response['base']) ? (string) $response['base'] : 'EUR',
