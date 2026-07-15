@@ -17,7 +17,6 @@ class TwoCheckoutManager {
         
         this.companySearch = null;
         this.orderIntent = null;
-        this.fieldValidation = null;
         this.currentStep = 'unknown';
         this.isBusinessAccount = false;
         this.isInitialized = false;
@@ -270,29 +269,10 @@ class TwoCheckoutManager {
         // CRITICAL: Listen for payment option selection (theme-independent)
         this.setupPaymentOptionSelectionListener();
         
-        // Listen for account type changes to re-init company search
-        this.setupAccountTypeChangeListener();
-
         // Listen for DOM mutations for dynamic content
         this.setupMutationObserver();
     }
 
-    setupAccountTypeChangeListener() {
-        if (this._accountTypeListenerAdded) return;
-        const accountTypeField = document.querySelector("select[name='account_type']");
-        if (!accountTypeField) return;
-        this._accountTypeListenerAdded = true;
-        accountTypeField.addEventListener('change', () => {
-            const value = accountTypeField.value;
-            this.isBusinessAccount = (value === 'business');
-            try { sessionStorage.setItem('two_account_type', value); } catch (e) {}
-            // Keep company search available on address forms for reliable company selection.
-            if (this.config.companySearchEnabled && !this.companySearch) {
-                this.initializeCompanySearch();
-            }
-        });
-    }
-    
     /**
      * ENHANCED: Only trigger order intent when Two payment is selected (more comprehensive detection)
      */
@@ -1771,21 +1751,6 @@ class TwoCheckoutManager {
 
         // Re-initialize company search when address form updates
         if (this.config.companySearchEnabled) {
-            // Attach fresh listener to new select element after DOM replacement
-            this._accountTypeListenerAdded = false;
-            this.setupAccountTypeChangeListener();
-
-            // Restore previously selected account type if we have it
-            try {
-                const saved = sessionStorage.getItem('two_account_type');
-                const accountTypeField = document.querySelector("select[name='account_type']");
-                if (saved && accountTypeField && accountTypeField.value !== saved) {
-                    accountTypeField.value = saved;
-                    accountTypeField.dispatchEvent(new Event('change', { bubbles: true }));
-                    this.isBusinessAccount = (saved === 'business');
-                }
-            } catch (e) {}
-
             if (this.companySearch && this.companySearch.destroy) {
                 this.companySearch.destroy();
                 this.companySearch = null;
@@ -1893,7 +1858,6 @@ class TwoCheckoutManager {
      */
     initializeModules() {
         // Always initialize field validation (for address step)
-        this.initializeFieldValidation();
         
         // Initialize company search for address step
         if (this.config.companySearchEnabled && this.currentStep === 'address') {
@@ -1927,12 +1891,6 @@ class TwoCheckoutManager {
     /**
      * Initialize field validation module
      */
-    initializeFieldValidation() {
-        if (!this.fieldValidation && window.TwoFieldValidation) {
-            this.fieldValidation = new TwoFieldValidation();
-        }
-    }
-
     /**
      * Initialize order intent module
      */
@@ -2031,10 +1989,6 @@ class TwoCheckoutManager {
         
         if (this.orderIntent && typeof this.orderIntent.reset === 'function') {
             this.orderIntent.reset();
-        }
-        
-        if (this.fieldValidation && typeof this.fieldValidation.cleanup === 'function') {
-            this.fieldValidation.cleanup();
         }
     }
 }
