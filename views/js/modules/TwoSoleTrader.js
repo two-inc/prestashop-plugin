@@ -25,6 +25,17 @@ class TwoSoleTrader {
         this.flowStarted = false;
         this.messageListenerBound = false;
         this.observer = null;
+        // In-flight guard + cooldown: the MutationObserver below fires on
+        // essentially any DOM change during checkout (spinners, unrelated
+        // widget re-renders). Without these, a persistent token-mint
+        // failure (no invoice address yet, registry down, rate-limited...)
+        // would re-invoke fetchTokens() - two upstream Two API calls - on
+        // every single mutation, with overlapping in-flight requests and
+        // no backoff. isFetchingTokens blocks re-entry while a request is
+        // outstanding; nextRetryAt enforces a minimum gap between attempts.
+        this.isFetchingTokens = false;
+        this.nextRetryAt = 0;
+        this.retryCooldownMs = 5000;
 
         if (this.config.enabled) {
             this.init();
@@ -84,7 +95,10 @@ class TwoSoleTrader {
      * (e.g. address step -> payment step transition, or the buyer leaving
      * and re-entering sole-trader mode) whenever the previous attempt
      * didn't leave us with usable tokens - a transient failure must not
-     * strand the buyer until a full page reload.
+     * strand the buyer until a full page reload. fetchTokens() itself
+     * guards against overlapping requests and enforces a cooldown, so this
+     * can be called as often as the (body-wide) MutationObserver fires
+     * without risking a request storm.
      */
     evaluate() {
         const container = this.container();
@@ -110,7 +124,17 @@ class TwoSoleTrader {
         return url.toString();
     }
 
+    /**
+     * Mint tokens, guarded against the retry-on-every-mutation path above
+     * turning into a request storm: refuses re-entry while a request is
+     * already outstanding (isFetchingTokens) and enforces a minimum gap
+     * between attempts after a failure (nextRetryAt/retryCooldownMs).
+     */
     fetchTokens() {
+        if (this.isFetchingTokens || Date.now() < this.nextRetryAt) {
+            return;
+        }
+        this.isFetchingTokens = true;
         const self = this;
         fetch(this.moduleUrl('soleTraderTokens'), { method: 'POST' })
             .then(function (response) { return response.json(); })
@@ -121,12 +145,17 @@ class TwoSoleTrader {
                     self.getCurrentBuyer();
                 } else {
                     self.tokens = null;
+                    self.nextRetryAt = Date.now() + self.retryCooldownMs;
                     self.showError();
                 }
             })
             .catch(function () {
                 self.tokens = null;
+                self.nextRetryAt = Date.now() + self.retryCooldownMs;
                 self.showError();
+            })
+            .finally(function () {
+                self.isFetchingTokens = false;
             });
     }
 
