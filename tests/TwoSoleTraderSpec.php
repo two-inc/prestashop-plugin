@@ -45,6 +45,9 @@ final class TwoSoleTraderSpec
             'testRegistryErrorFallsBackToNoSoleTrader',
             'testRegistryRejectsMalformedCountry',
             'testRegistryResponseCachedPerRequest',
+            'testCookieCacheIsSingleSlotAndOverwritesOnCountryChange',
+            'testCookieCacheExpiresAfterTtl',
+            'testFetchErrorIsNotCached',
             'testAccountTypeAllowedMatrix',
             'testTokenMintReadsHeaderAndFailsClosed',
             'testSignupUrlFollowsEnvironment',
@@ -177,6 +180,80 @@ final class TwoSoleTraderSpec
         // A different country is its own cache entry
         TwoSoleTrader::getSupportedCompanyTypes($module, 'US');
         TinyAssert::count(2, $module->requests);
+    }
+
+    /**
+     * The cookie cache is a single slot (TWO-24755 F3): switching country
+     * overwrites it rather than growing a new key per country, capping the
+     * PrestaShop session cookie's growth regardless of how many countries
+     * a caller requests.
+     */
+    private static function testCookieCacheIsSingleSlotAndOverwritesOnCountryChange(): void
+    {
+        $module = self::harness(
+            ['PS_TWO_ENABLE_SOLE_TRADER' => 1, 'PS_TWO_USE_ACCOUNT_TYPE' => 1],
+            [
+                '/registry/v1/supported-company-types/GB' => self::registryOk(['SOLE_TRADER']),
+                '/registry/v1/supported-company-types/US' => self::registryOk([]),
+            ]
+        );
+        TwoSoleTrader::getSupportedCompanyTypes($module, 'GB');
+        $cookie = Context::getContext()->cookie;
+        TinyAssert::true(isset($cookie->{TwoSoleTrader::COOKIE_KEY}), 'Expected the single cache cookie to be set');
+        $afterGb = json_decode($cookie->{TwoSoleTrader::COOKIE_KEY}, true);
+        TinyAssert::same('GB', $afterGb['country']);
+
+        // Switching country overwrites the same key rather than adding one
+        TwoSoleTrader::resetCache();
+        TwoSoleTrader::getSupportedCompanyTypes($module, 'US');
+        $afterUs = json_decode($cookie->{TwoSoleTrader::COOKIE_KEY}, true);
+        TinyAssert::same('US', $afterUs['country']);
+        TinyAssert::same([], $afterUs['types']);
+    }
+
+    /**
+     * A cached answer for the same country within the TTL is reused
+     * without hitting the registry again; once stale it re-fetches.
+     */
+    private static function testCookieCacheExpiresAfterTtl(): void
+    {
+        $module = self::harness(
+            ['PS_TWO_ENABLE_SOLE_TRADER' => 1, 'PS_TWO_USE_ACCOUNT_TYPE' => 1],
+            ['/registry/v1/supported-company-types/GB' => self::registryOk(['SOLE_TRADER'])]
+        );
+        $cookie = Context::getContext()->cookie;
+        // Seed a stale cookie entry (older than CACHE_TTL_SECONDS) directly,
+        // bypassing the request-scoped static cache this test doesn't want.
+        $cookie->{TwoSoleTrader::COOKIE_KEY} = json_encode([
+            'country' => 'GB',
+            'types' => ['SOME_STALE_VALUE'],
+            'fetched_at' => time() - TwoSoleTrader::CACHE_TTL_SECONDS - 1,
+        ]);
+        $types = TwoSoleTrader::getSupportedCompanyTypes($module, 'GB');
+        TinyAssert::same(['SOLE_TRADER'], $types, 'Stale cookie entry must trigger a re-fetch, not be reused');
+        TinyAssert::count(1, $module->requests);
+    }
+
+    /**
+     * A registry fetch ERROR must not be cached (TWO-24755 Y3) - otherwise
+     * a single transient blip suppresses the sole-trader option for the
+     * rest of the TTL window, indistinguishable from a real business-only
+     * country.
+     */
+    private static function testFetchErrorIsNotCached(): void
+    {
+        $module = self::harness(['PS_TWO_ENABLE_SOLE_TRADER' => 1, 'PS_TWO_USE_ACCOUNT_TYPE' => 1], []);
+        // No canned response for GB => setTwoPaymentRequest returns false => fetch error
+        $types = TwoSoleTrader::getSupportedCompanyTypes($module, 'GB');
+        TinyAssert::same([], $types);
+        $cookie = Context::getContext()->cookie;
+        TinyAssert::true(!isset($cookie->{TwoSoleTrader::COOKIE_KEY}) || empty($cookie->{TwoSoleTrader::COOKIE_KEY}), 'A fetch error must not populate the cookie cache');
+
+        // Now the registry recovers - resetCache clears the request-scoped
+        // cache so the recovered answer is actually fetched and used
+        TwoSoleTrader::resetCache();
+        $module->cannedResponses = ['/registry/v1/supported-company-types/GB' => self::registryOk(['SOLE_TRADER'])];
+        TinyAssert::same(['SOLE_TRADER'], TwoSoleTrader::getSupportedCompanyTypes($module, 'GB'));
     }
 
     private static function testAccountTypeAllowedMatrix(): void

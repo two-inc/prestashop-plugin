@@ -19,12 +19,12 @@ class TwoSoleTrader {
             checkoutHost: '',
             orderIntentUrl: '',
             ajaxToken: '',
-            signupUrl: '',
             ...config
         };
         this.tokens = null;
         this.flowStarted = false;
         this.messageListenerBound = false;
+        this.observer = null;
 
         if (this.config.enabled) {
             this.init();
@@ -41,11 +41,23 @@ class TwoSoleTrader {
                 self.evaluate();
             }
         });
-        const observer = new MutationObserver(function () {
+        this.observer = new MutationObserver(function () {
             self.evaluate();
         });
-        observer.observe(document.body, { childList: true, subtree: true });
+        this.observer.observe(document.body, { childList: true, subtree: true });
         this.evaluate();
+    }
+
+    /**
+     * Once the flow has resolved (enrolled company saved) there is nothing
+     * left for this instance to react to; stop observing rather than
+     * running a body-wide observer for the rest of checkout.
+     */
+    stopObserving() {
+        if (this.observer) {
+            this.observer.disconnect();
+            this.observer = null;
+        }
     }
 
     accountType() {
@@ -67,8 +79,12 @@ class TwoSoleTrader {
     }
 
     /**
-     * Show/hide the sole-trader block and kick the flow off exactly once
-     * per page when the buyer is in sole-trader mode at the payment step.
+     * Show/hide the sole-trader block and kick the flow off when the buyer
+     * is in sole-trader mode at the payment step. Retries on re-evaluation
+     * (e.g. address step -> payment step transition, or the buyer leaving
+     * and re-entering sole-trader mode) whenever the previous attempt
+     * didn't leave us with usable tokens - a transient failure must not
+     * strand the buyer until a full page reload.
      */
     evaluate() {
         const container = this.container();
@@ -77,7 +93,7 @@ class TwoSoleTrader {
         }
         if (this.accountType() === 'sole_trader') {
             container.style.display = 'block';
-            if (!this.flowStarted) {
+            if (!this.flowStarted || !this.tokens) {
                 this.flowStarted = true;
                 this.fetchTokens();
             }
@@ -104,10 +120,12 @@ class TwoSoleTrader {
                     self.bindPopupMessageListener();
                     self.getCurrentBuyer();
                 } else {
+                    self.tokens = null;
                     self.showError();
                 }
             })
             .catch(function () {
+                self.tokens = null;
                 self.showError();
             });
     }
@@ -168,14 +186,26 @@ class TwoSoleTrader {
      * Persist the enrolled sole trader's company data through the existing
      * saveCompany cookie action; the order-intent and payment paths then
      * pick it up via the regular company-data fallback chain.
+     *
+     * Two things a naive implementation gets wrong here:
+     *  - company_name may be BLANK for a sole trader (they often trade
+     *    under their own name, not a company name); saveCompany rejects an
+     *    empty company, so fall back to the organization number - the
+     *    order-intent payload only needs a non-empty, non-blank pair, and
+     *    the org-number prefix is what carries the sole-trader semantics
+     *    server-side anyway (TWO-24749).
+     *  - the country MUST be the token response's server-resolved invoice
+     *    country, not a DOM guess: getTwoValidatedSessionCompanyData()
+     *    wipes the whole session company the moment the saved country
+     *    disagrees with the cart's actual invoice-address country.
      */
     applyBuyer(buyer) {
         const self = this;
-        const country = this.billingCountry();
+        const companyLabel = buyer.company_name || buyer.organization_number || '';
         const body = new URLSearchParams({
-            company: buyer.company_name || '',
+            company: companyLabel,
             companyid: buyer.organization_number || '',
-            country: country
+            country: (this.tokens && this.tokens.country) || ''
         });
         fetch(this.moduleUrl('saveCompany'), {
             method: 'POST',
@@ -185,8 +215,9 @@ class TwoSoleTrader {
             .then(function (response) { return response.json(); })
             .then(function (json) {
                 if (json && json.success) {
-                    self.showStatus(buyer.company_name || buyer.organization_number);
+                    self.showStatus(companyLabel);
                     self.hidePrompt();
+                    self.stopObserving();
                     document.dispatchEvent(new CustomEvent('two:sole-trader-ready'));
                 } else {
                     self.showError();
@@ -195,17 +226,6 @@ class TwoSoleTrader {
             .catch(function () {
                 self.showError();
             });
-    }
-
-    billingCountry() {
-        const field = document.querySelector("select[name='id_country'], select[name='country']");
-        if (field && field.selectedOptions && field.selectedOptions.length) {
-            const iso = field.selectedOptions[0].getAttribute('data-iso-code');
-            if (iso) {
-                return iso;
-            }
-        }
-        return (window.twopayment && window.twopayment.shop_country) || '';
     }
 
     /**
@@ -233,6 +253,12 @@ class TwoSoleTrader {
             last_name: (lastName && lastName.value) || customer.lastname || '',
             phone_number: phone ? phone.value : ''
         };
+        // Tokens travel in the popup URL's query string (browser history,
+        // Referer to third-party assets on the signup page) - the same
+        // trade-off the WooCommerce plugin makes. Acceptable here because
+        // both tokens are scoped to this buyer and short-lived; a
+        // meaningfully more private delivery (postMessage/fragment) would
+        // require the hosted signup page to support it first.
         const url =
             this.tokens.signup_url +
             '?businessToken=' + encodeURIComponent(this.tokens.delegation_token) +
@@ -254,8 +280,10 @@ class TwoSoleTrader {
     /**
      * The hosted signup posts 'ACCEPTED' back to the opener when the buyer
      * completes registration; re-fetch the buyer to autofill. Origin must
-     * be the signup page's own; anything else from that origin is a
-     * failure signal.
+     * be the signup page's own. Any other message from that origin is
+     * ignored rather than treated as a failure - the signup page may emit
+     * unrelated messages (resize/analytics) that are none of our business,
+     * and only an explicit ACCEPTED is a signal we act on.
      */
     bindPopupMessageListener() {
         if (this.messageListenerBound) {
@@ -272,8 +300,6 @@ class TwoSoleTrader {
             }
             if (event.data === 'ACCEPTED') {
                 self.getCurrentBuyer();
-            } else {
-                self.showError();
             }
         });
     }

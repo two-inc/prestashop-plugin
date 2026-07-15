@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Sole trader checkout** (TWO-24755, WooCommerce/Magento parity)
+  - Buyers in countries where Two's registry supports sole traders (`GET /registry/v1/supported-company-types/<ISO>`) get a Sole Trader option on the existing Personal/Business account-type selector, gated by a new "Enable sole trader checkout" admin toggle (default off, requires Account Type selection to be enabled)
+  - At the payment step, choosing Sole Trader mints delegation + autofill tokens server-side with the merchant API key and opens Two's hosted signup popup; on completion the buyer's company data autofills from `GET /autofill/v1/buyer/current` (case-insensitive email match) and persists through the existing company-save path, so order-intent and payment run unchanged
+  - Module version bumped to `2.5.1`; the upgrade script sets an explicit default (off) for the new toggle on existing installs
 - **Buyer surcharge shown as a real PrestaShop cart line** (TWO-24739 parity)
   - Selecting Two at checkout now adds the payment-terms fee as a hidden virtual product line, so the fee appears in PrestaShop's own order summary, cart, order and invoice totals - previously it existed only on the Two-side invoice
   - The line's net amount comes from the same live fee quote as the Two order payload (single computation path); its tax applies the merchant-selected tax rules group (see TWO-25071 below)

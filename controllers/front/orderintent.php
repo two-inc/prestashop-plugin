@@ -111,8 +111,11 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
      * signup popup and autofill the buyer. The merchant API key stays
      * server-side; tokens are scoped and short-lived by the Two API.
      * Defence-in-depth: minting requires the flow to actually be available
-     * for the cart's billing country, so this endpoint cannot be used as a
-     * token oracle where the feature is off or the country is ineligible.
+     * for the CART'S billing country (never a client-supplied one), so
+     * this endpoint cannot be used as a token oracle where the feature is
+     * off, the country is ineligible, or there is no invoice address yet
+     * to check against - fails closed in that last case rather than
+     * trusting an unvalidated 'country' request param.
      */
     public function ajaxProcessSoleTraderTokens()
     {
@@ -124,15 +127,13 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Only POST requests allowed')]));
             return;
         }
-        $countryIso = '';
         $cart = $this->context->cart;
-        if ($cart && (int) $cart->id_address_invoice) {
-            $address = new Address((int) $cart->id_address_invoice);
-            $countryIso = (string) Country::getIsoById((int) $address->id_country);
+        if (!$cart || !(int) $cart->id_address_invoice) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('No billing address set for this order')]));
+            return;
         }
-        if ($countryIso === '') {
-            $countryIso = (string) Tools::getValue('country');
-        }
+        $address = new Address((int) $cart->id_address_invoice);
+        $countryIso = (string) Country::getIsoById((int) $address->id_country);
         if (!TwoSoleTrader::isAvailable($this->module, $countryIso)) {
             $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Sole trader checkout is not available')]));
             return;
@@ -147,6 +148,11 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             'delegation_token' => $tokens['delegation_token'],
             'autofill_token' => $tokens['autofill_token'],
             'signup_url' => TwoSoleTrader::getSignupPageUrl(),
+            // Server-resolved invoice-address country (TWO-24755 F2): the
+            // JS must use THIS, not a DOM guess, when it later saves the
+            // enrolled company - getTwoValidatedSessionCompanyData()
+            // wipes the session company on any country mismatch.
+            'country' => $countryIso,
         ]));
     }
 

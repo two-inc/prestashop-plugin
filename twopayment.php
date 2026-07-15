@@ -118,7 +118,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.5.0';
+        $this->version = '2.5.1';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -1327,7 +1327,7 @@ class Twopayment extends PaymentModule
     protected function saveTwoOtherFormValues()
     {
         Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', Tools::getValue('PS_TWO_USE_ACCOUNT_TYPE'));
-        Configuration::updateValue('PS_TWO_ENABLE_SOLE_TRADER', (int) Tools::getValue('PS_TWO_ENABLE_SOLE_TRADER', 0));
+        Configuration::updateValue('PS_TWO_ENABLE_SOLE_TRADER', Tools::getValue('PS_TWO_ENABLE_SOLE_TRADER'));
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME'));
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_ID', Tools::getValue('PS_TWO_ENABLE_COMPANY_ID'));
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', Tools::getValue('PS_TWO_FINALIZE_PURCHASE'));
@@ -2810,10 +2810,15 @@ class Twopayment extends PaymentModule
                 'enable_order_intent' => $this->enable_order_intent,
                 'use_account_type' => (int) Configuration::get('PS_TWO_USE_ACCOUNT_TYPE'),
                 'sole_trader' => array(
+                    // The signup URL and invoice-address country are
+                    // resolved fresh per-request by soleTraderTokens (the
+                    // reliable source for both - see
+                    // classes/TwoSoleTrader.php and controllers/front/
+                    // orderintent.php::ajaxProcessSoleTraderTokens); only
+                    // the feature flag is needed here to decide whether to
+                    // run the flow at all.
                     'enabled' => TwoSoleTrader::isEnabled() ? 1 : 0,
-                    'signup_url' => TwoSoleTrader::getSignupPageUrl(),
                 ),
-                'shop_country' => (string) Context::getContext()->country->iso_code,
                 'order_intent_url' => $this->context->link->getModuleLink($this->name, 'orderintent'),
                 'ajax_token' => Tools::getToken(false),
                 'module_dir' => $this->_path,

@@ -23,18 +23,49 @@
  * trader's organization number (TWO:ST…) carries the semantics and the
  * backend derives the company type from it (TWO-24749 spike).
  */
+
+if (!defined('_PS_VERSION_')) {
+    exit;
+}
+
 class TwoSoleTrader
 {
     const SOLE_TRADER = 'SOLE_TRADER';
 
-    /** Cookie key prefix; full key is prefix + ISO country code. */
-    const COOKIE_KEY_PREFIX = 'two_company_types_';
+    /**
+     * Single cookie key for the registry-answer cache. Deliberately one
+     * slot, not one key per country: the checkout only ever cares about
+     * the buyer's currently-selected country, and a per-country key
+     * (keyed on unvalidated client input) would let a caller with a
+     * valid ajax token grow the single PrestaShop session cookie without
+     * bound by requesting many ISO codes. Overwriting on every lookup
+     * caps growth at one entry, at the cost of a re-fetch when the buyer
+     * switches country back and forth within the TTL - an acceptable
+     * trade for a value that changes at most a few times per checkout.
+     */
+    const COOKIE_KEY = 'two_sole_trader_types';
 
     /** Matches the registry endpoint's Cache-Control max-age. */
     const CACHE_TTL_SECONDS = 3600;
 
     /** @var array<string, string[]> request-scoped cache, keyed by country */
     private static $types_cache = array();
+
+    /** @var callable|null test seam for postCapturingHeaders */
+    public static $transport = null;
+
+    /**
+     * Explicit environment -> checkout-page host map for Two's hosted
+     * sole-trader signup page (the checkout-page app, not the API).
+     * Mirrors Twopayment::ENVIRONMENT_HOSTS: anything not in the map
+     * (legacy 'development', empty/unset) falls back to sandbox.
+     *
+     * @var array<string, string>
+     */
+    private static $signup_hosts = array(
+        'production' => 'https://checkout.two.inc',
+        'staging' => 'https://checkout.staging.two.inc',
+    );
 
     /**
      * Whether the merchant has opted into sole trader checkout. The option
@@ -91,10 +122,13 @@ class TwoSoleTrader
      * types that need registry enrollment before they can buy (sole
      * traders). Registered businesses need no enrollment and are always
      * supported, so the endpoint deliberately omits them: an empty list
-     * means business-only checkout. Cached in the context cookie for the
-     * endpoint's own max-age. Fail-soft: any error (network, non-200,
-     * malformed body) also resolves to an empty list — checkout never
-     * blocks, the option just doesn't show.
+     * is a legitimate answer meaning business-only checkout for that
+     * country. Cached in the context cookie for the endpoint's own
+     * max-age (single slot - see COOKIE_KEY). A fetch ERROR (network,
+     * non-200, malformed body) is fail-soft for the current lookup
+     * (resolves to an empty list, checkout never blocks) but is
+     * deliberately NOT cached, so a transient registry blip does not
+     * suppress the option for the rest of the TTL window.
      *
      * @param Twopayment $module
      * @param string $countryIso
@@ -113,12 +147,12 @@ class TwoSoleTrader
         }
 
         $cookie = Context::getContext()->cookie;
-        $cookieKey = self::COOKIE_KEY_PREFIX . $countryIso;
-        if ($cookie && !empty($cookie->{$cookieKey})) {
-            $cached = json_decode($cookie->{$cookieKey}, true);
+        if ($cookie && !empty($cookie->{self::COOKIE_KEY})) {
+            $cached = json_decode($cookie->{self::COOKIE_KEY}, true);
             if (
                 is_array($cached)
-                && isset($cached['types'], $cached['fetched_at'])
+                && isset($cached['country'], $cached['types'], $cached['fetched_at'])
+                && $cached['country'] === $countryIso
                 && is_array($cached['types'])
                 && time() - (int) $cached['fetched_at'] < self::CACHE_TTL_SECONDS
             ) {
@@ -128,19 +162,24 @@ class TwoSoleTrader
 
         $types = self::fetchSupportedCompanyTypes($module, $countryIso);
 
-        if ($cookie) {
-            $cookie->{$cookieKey} = json_encode(array(
+        if ($cookie && $types !== null) {
+            $cookie->{self::COOKIE_KEY} = json_encode(array(
+                'country' => $countryIso,
                 'types' => $types,
                 'fetched_at' => time(),
             ));
         }
-        return self::$types_cache[$countryIso] = $types;
+        return self::$types_cache[$countryIso] = ($types ?? array());
     }
 
     /**
      * Uncached registry call. @see getSupportedCompanyTypes()
      *
-     * @return string[]
+     * Null distinguishes a fetch ERROR (network, non-200, malformed body -
+     * not cached by the caller) from a real empty answer (business-only
+     * country - cached normally).
+     *
+     * @return string[]|null
      */
     private static function fetchSupportedCompanyTypes($module, $countryIso)
     {
@@ -155,7 +194,7 @@ class TwoSoleTrader
             || !isset($response['supported_company_types'])
             || !is_array($response['supported_company_types'])
         ) {
-            return array();
+            return null;
         }
         return array_values(array_filter($response['supported_company_types'], 'is_string'));
     }
@@ -258,17 +297,6 @@ class TwoSoleTrader
     }
 
     /**
-     * Explicit environment -> checkout-page host map for Two's hosted
-     * sole-trader signup page (the checkout-page app, not the API).
-     * Mirrors Twopayment::ENVIRONMENT_HOSTS: anything not in the map
-     * (legacy 'development', empty/unset) falls back to sandbox.
-     */
-    private static $signup_hosts = array(
-        'production' => 'https://checkout.two.inc',
-        'staging' => 'https://checkout.staging.two.inc',
-    );
-
-    /**
      * Full URL of Two's hosted sole-trader signup page for the configured
      * environment.
      *
@@ -282,9 +310,6 @@ class TwoSoleTrader
             : 'https://checkout.sandbox.two.inc';
         return $host . '/soletrader/signup';
     }
-
-    /** @var callable|null test seam for postCapturingHeaders */
-    public static $transport = null;
 
     /**
      * Test seam: clear the request-scoped types cache and transport hook.

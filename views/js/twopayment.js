@@ -132,8 +132,7 @@
                     enabled: true,
                     checkoutHost: twopayment.checkout_host,
                     orderIntentUrl: twopayment.order_intent_url,
-                    ajaxToken: twopayment.ajax_token,
-                    signupUrl: twopayment.sole_trader.signup_url
+                    ajaxToken: twopayment.ajax_token
                 });
             }
 
