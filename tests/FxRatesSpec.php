@@ -31,6 +31,7 @@ final class FxRatesSpec
         self::testSameCurrencyConversionNeedsNoRates();
         self::testRefreshHonoursTtl();
         self::testFailedRefreshServesLastKnownGoodAndBacksOff();
+        self::testPartialResponseMergesOverLastKnownGood();
         self::testNeverFetchedFailsGateClosedAndDisplaySoft();
         self::testMissingApiKeyNeverFetches();
         self::testGateJudgesCrossCurrencyBasketOnEndpointRate();
@@ -225,6 +226,31 @@ final class FxRatesSpec
         Configuration::updateValue(Twopayment::CONFIG_FX_RATES_TS, time() - Twopayment::FX_RATES_TTL - 1);
         TinyAssert::false($module->refreshTwoFxRates());
         TinyAssert::same(2, $module->fxFetchCount, 'after the backoff a retry must fire');
+    }
+
+    private static function testPartialResponseMergesOverLastKnownGood(): void
+    {
+        self::reset();
+        // The refetch succeeds but transiently DROPS GBP and moves NOK.
+        $module = self::fxModule([
+            'http_status' => 200,
+            'base' => 'EUR',
+            'as_of' => '2026-07-15',
+            'rates' => ['EUR' => 1.0, 'NOK' => 0.09],
+        ]);
+        Configuration::updateValue(Twopayment::CONFIG_FX_RATES, json_encode([
+            'base' => 'EUR',
+            'as_of' => '2026-07-01',
+            'rates' => ['EUR' => 1.0, 'NOK' => 0.1, 'GBP' => 1.25],
+        ]));
+        Configuration::updateValue(Twopayment::CONFIG_FX_RATES_TS, time() - Twopayment::FX_RATES_TTL - 1);
+
+        TinyAssert::true($module->refreshTwoFxRates());
+        // Fresh values win; the dropped currency keeps its last-known-good
+        // rate instead of failing its gate closed for a whole TTL.
+        TinyAssert::same(90.0, $module->convertTwoAmountBetweenCurrencies(10.0, 'EUR', 'NOK'));
+        TinyAssert::same(12.5, $module->convertTwoAmountBetweenCurrencies(10.0, 'EUR', 'GBP'));
+        TinyAssert::same(1, $module->fxFetchCount);
     }
 
     private static function testNeverFetchedFailsGateClosedAndDisplaySoft(): void
