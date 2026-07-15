@@ -93,8 +93,7 @@ class TwoOrderIntent {
             const formData = {
                 ajax: 1,
                 action: 'checkOrderIntent',
-                token: this.config.ajaxToken,
-                account_type: 'business'
+                token: this.config.ajaxToken
             };
             const companyField = document.querySelector("input[name='company']");
             const companyIdField = document.querySelector("input[name='companyid']");
