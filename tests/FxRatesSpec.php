@@ -32,6 +32,7 @@ final class FxRatesSpec
         self::testRefreshHonoursTtl();
         self::testFailedRefreshServesLastKnownGoodAndBacksOff();
         self::testPartialResponseMergesOverLastKnownGood();
+        self::testAllJunkResponseIsAFailedFetch();
         self::testNeverFetchedFailsGateClosedAndDisplaySoft();
         self::testMissingApiKeyNeverFetches();
         self::testGateJudgesCrossCurrencyBasketOnEndpointRate();
@@ -231,25 +232,53 @@ final class FxRatesSpec
     private static function testPartialResponseMergesOverLastKnownGood(): void
     {
         self::reset();
-        // The refetch succeeds but transiently DROPS GBP and moves NOK.
+        // The refetch succeeds but moves NOK, DROPS SEK entirely, and
+        // carries a malformed (zero) GBP rate.
         $module = self::fxModule([
             'http_status' => 200,
             'base' => 'EUR',
             'as_of' => '2026-07-15',
-            'rates' => ['EUR' => 1.0, 'NOK' => 0.09],
+            'rates' => ['EUR' => 1.0, 'NOK' => 0.09, 'GBP' => 0],
         ]);
         Configuration::updateValue(Twopayment::CONFIG_FX_RATES, json_encode([
             'base' => 'EUR',
             'as_of' => '2026-07-01',
-            'rates' => ['EUR' => 1.0, 'NOK' => 0.1, 'GBP' => 1.25],
+            'rates' => ['EUR' => 1.0, 'NOK' => 0.1, 'GBP' => 1.25, 'SEK' => 0.09],
         ]));
         Configuration::updateValue(Twopayment::CONFIG_FX_RATES_TS, time() - Twopayment::FX_RATES_TTL - 1);
 
         TinyAssert::true($module->refreshTwoFxRates());
-        // Fresh values win; the dropped currency keeps its last-known-good
-        // rate instead of failing its gate closed for a whole TTL.
+        // Fresh validated values win; dropped and malformed currencies keep
+        // their last-known-good rates instead of failing their gates closed
+        // for a whole TTL.
         TinyAssert::same(111.11, $module->convertTwoAmountBetweenCurrencies(10.0, 'EUR', 'NOK'), 'fresh NOK rate (0.09 EUR/NOK) must replace the cached 0.1');
-        TinyAssert::same(8.0, $module->convertTwoAmountBetweenCurrencies(10.0, 'EUR', 'GBP'), 'dropped GBP keeps its last-known-good rate (1.25 EUR/GBP)');
+        TinyAssert::same(8.0, $module->convertTwoAmountBetweenCurrencies(10.0, 'EUR', 'GBP'), 'malformed (zero) GBP rate must not displace the cached 1.25');
+        TinyAssert::same(111.11, $module->convertTwoAmountBetweenCurrencies(10.0, 'EUR', 'SEK'), 'dropped SEK keeps its last-known-good rate');
+        TinyAssert::same(1, $module->fxFetchCount);
+    }
+
+    private static function testAllJunkResponseIsAFailedFetch(): void
+    {
+        self::reset();
+        // A 200 whose rates are entirely unusable must take the FAILURE path
+        // (backoff + serve-stale), not wipe the validated table.
+        $module = self::fxModule([
+            'http_status' => 200,
+            'base' => 'EUR',
+            'as_of' => '2026-07-15',
+            'rates' => ['EUR' => 0, 'NOK' => 'junk'],
+        ]);
+        Configuration::updateValue(Twopayment::CONFIG_FX_RATES, json_encode([
+            'base' => 'EUR',
+            'as_of' => '2026-07-01',
+            'rates' => ['EUR' => 1.0, 'NOK' => 0.1],
+        ]));
+        Configuration::updateValue(Twopayment::CONFIG_FX_RATES_TS, time() - Twopayment::FX_RATES_TTL - 1);
+
+        TinyAssert::false($module->refreshTwoFxRates());
+        TinyAssert::same(100.0, $module->convertTwoAmountBetweenCurrencies(10.0, 'EUR', 'NOK'), 'last-known-good table survives an all-junk 200');
+        // Failure backoff engaged: no immediate retry.
+        TinyAssert::false($module->refreshTwoFxRates());
         TinyAssert::same(1, $module->fxFetchCount);
     }
 
