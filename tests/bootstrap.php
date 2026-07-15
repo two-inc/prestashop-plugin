@@ -571,6 +571,20 @@ namespace {
             }
         }
 
+        /**
+         * Core-faithful static resolver: the product's tax rules group id
+         * (product+shop scoped; combinations do not carry their own group).
+         */
+        public static function getIdTaxRulesGroupByIdProduct($idProduct, $context = null)
+        {
+            $idProduct = (int) $idProduct;
+            if (isset(StubStore::$products[$idProduct]['id_tax_rules_group'])) {
+                return (int) StubStore::$products[$idProduct]['id_tax_rules_group'];
+            }
+
+            return 0;
+        }
+
         public function add(): bool
         {
             $this->id = StubStore::$nextId++;
