@@ -2263,7 +2263,14 @@ class Twopayment extends PaymentModule
                             }
                             
                             // Invoice Upload: upload the PrestaShop invoice to Two when the
-                            // merchant's invoice_distributed_by_merchant flag is set (TWO-25111)
+                            // merchant's invoice_distributed_by_merchant flag is set (TWO-25111).
+                            // Prime the merchant-record cache first (TTL-gated, a no-op while
+                            // fresh): fulfilment may be the first merchant-record touch since
+                            // deploy/upgrade, and the gate must not read an unresolved flag and
+                            // silently skip the upload for a one-shot fulfilment transition.
+                            // This path already makes synchronous Two calls, so one more
+                            // capped GET (at most once per TTL) is acceptable here.
+                            $this->getMerchantAvailableTerms(true);
                             $use_own_invoices = $this->isMerchantInvoiceDistributed();
                             PrestaShopLogger::addLog(
                                 'TwoPayment: Invoice upload check - invoice_distributed_by_merchant=' . ($use_own_invoices ? 'YES' : 'NO') . ', Order ID=' . $id_order,
@@ -6540,8 +6547,8 @@ class Twopayment extends PaymentModule
                         $due = isset($response['due_in_days']) ? $response['due_in_days'] : null;
                         $due_days = (is_numeric($due) && (int) $due > 0) ? (int) $due : 0;
                         Configuration::updateValue(self::CONFIG_MERCHANT_DUE_IN_DAYS, $due_days);
-                        // Third cache fed by this fetch: the invoice-upload
-                        // gate (TWO-25111). Unlike the term list, an absent
+                        // The invoice-upload gate is fed by this same fetch
+                        // (TWO-25111). Unlike the term list, an absent
                         // field IS an answer here - the backend omitting the
                         // flag means uploads are not enabled for this
                         // merchant, so cache 0 rather than serving stale
@@ -11277,7 +11284,12 @@ class Twopayment extends PaymentModule
                 'twopaymentdata' => $twopaymentdata,
                 'two_portal_url' => $this->getTwoPortalUrl(), // Dynamic portal URL based on environment
                 'two_pdf_url' => $pdf_url, // PDF invoice URL if available
-                'use_own_invoices' => $this->isMerchantInvoiceDistributed(),
+                // Show the upload-status section when the merchant currently
+                // has the feature OR this order already carries upload history
+                // (an order uploaded under a past entitlement must keep showing
+                // what happened to it even if the flag is later revoked).
+                'use_own_invoices' => $this->isMerchantInvoiceDistributed()
+                    || !empty($twopaymentdata['two_invoice_upload_status']),
                 'two_invoice_actions_available' => $invoice_actions_available,
                 'two_invoice_notice' => $this->getTwoInvoiceNoticeFromRequest(),
             ));
