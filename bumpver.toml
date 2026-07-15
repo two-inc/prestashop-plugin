@@ -1,0 +1,19 @@
+# tag/push deliberately off (mirrors magento-abn-plugin's bumpver.toml fix) —
+# a human runs `git push --follow-tags` explicitly when actually cutting a
+# release. Without this, `make patch/minor/major` on any branch would push a
+# version-bump commit + tag straight to origin.
+[tool.bumpver]
+current_version = "2.5.0"
+version_pattern = "MAJOR.MINOR.PATCH[-TAGNUM]"
+commit_message = "chore: Bump version {old_version} -> {new_version}"
+commit = true
+fetch = true
+tag = false
+push = false
+
+# NOTE: bumpver treats [ and ] as optional-section markers and $ as a regex
+# end-anchor (it never escapes $), so the CDATA brackets are backslash-escaped
+# and the PHP pattern anchors on "this->version" without the leading $.
+[tool.bumpver.file_patterns]
+"twopayment.php" = ["this->version = '{version}';"]
+"config.xml" = ['<version><!\[CDATA\[{version}\]\]></version>']
