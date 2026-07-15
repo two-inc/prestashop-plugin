@@ -73,12 +73,91 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             case 'clearOrderIntentResult':
                 $this->ajaxProcessClearOrderIntentResult();
                 break;
+            case 'soleTraderAvailability':
+                $this->ajaxProcessSoleTraderAvailability();
+                break;
+            case 'soleTraderTokens':
+                $this->ajaxProcessSoleTraderTokens();
+                break;
             default:
                 $this->sendJsonResponse(json_encode([
                     'success' => false,
                     'error' => $this->module->l('Unknown action requested.')
                 ]));
         }
+    }
+
+    /**
+     * Whether the sole trader toggle applies for a billing country
+     * (TWO-24755). Combines the registry endpoint's country answer with
+     * the merchant toggle, both server-side; JS only renders the result.
+     * Runs live as the buyer edits the address form (before any invoice
+     * address is necessarily saved on the cart), so the country is
+     * whatever the buyer currently has selected - this endpoint only
+     * decides whether to SHOW the toggle, not anything security-bearing.
+     */
+    public function ajaxProcessSoleTraderAvailability()
+    {
+        if (!$this->validateAjaxToken()) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Invalid token')]));
+            return;
+        }
+        $country = (string) Tools::getValue('country');
+        $this->sendJsonResponse(json_encode([
+            'success' => true,
+            'available' => TwoSoleTrader::isAvailable($this->module, $country),
+        ]));
+    }
+
+    /**
+     * Mint the delegation + autofill tokens for the sole-trader flow
+     * (TWO-24755) and hand the browser what it needs to open the hosted
+     * signup popup and autofill the buyer. The merchant API key stays
+     * server-side; tokens are scoped and short-lived by the Two API.
+     * Defence-in-depth: minting requires the flow to actually be available
+     * for the CART'S billing country (never a client-supplied one), so
+     * this endpoint cannot be used as a token oracle where the feature is
+     * off, the country is ineligible, or there is no invoice address yet
+     * to check against - fails closed in that last case rather than
+     * trusting an unvalidated 'country' request param.
+     */
+    public function ajaxProcessSoleTraderTokens()
+    {
+        if (!$this->validateAjaxToken()) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Invalid token')]));
+            return;
+        }
+        if (!$this->isPost()) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Only POST requests allowed')]));
+            return;
+        }
+        $cart = $this->context->cart;
+        if (!$cart || !(int) $cart->id_address_invoice) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('No billing address set for this order')]));
+            return;
+        }
+        $address = new Address((int) $cart->id_address_invoice);
+        $countryIso = (string) Country::getIsoById((int) $address->id_country);
+        if (!TwoSoleTrader::isAvailable($this->module, $countryIso)) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Sole trader checkout is not available')]));
+            return;
+        }
+        $tokens = TwoSoleTrader::mintTokens($this->module);
+        if ($tokens === null) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Could not initialise the sole trader flow')]));
+            return;
+        }
+        $this->sendJsonResponse(json_encode([
+            'success' => true,
+            'delegation_token' => $tokens['delegation_token'],
+            'autofill_token' => $tokens['autofill_token'],
+            'signup_url' => TwoSoleTrader::getSignupPageUrl(),
+            // Server-resolved invoice-address country: the JS must use
+            // THIS, not a DOM guess, when it later saves the enrolled
+            // company - getTwoValidatedSessionCompanyData() wipes the
+            // session company on any country mismatch.
+            'country' => $countryIso,
+        ]));
     }
 
     /**
@@ -295,14 +374,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $companyData = $this->getCompanyDataWithFallbacks();
         $companyName = $companyData['company'];
         $companyId = $companyData['companyid'];
-        // Determine account type only when merchant explicitly enabled account-type mode.
-        // In strict account-type mode, missing/invalid account_type must be blocked.
-        $useAccountType = (int)Configuration::get('PS_TWO_USE_ACCOUNT_TYPE');
-        $accountType = 'business';
-        if ($useAccountType) {
-            $accountType = property_exists($address, 'account_type') ? trim((string) $address->account_type) : '';
-        }
-        
+
         // Store company data in PrestaShop session for future use
         $this->storeCompanyDataInSession($companyData);
         
@@ -330,17 +402,12 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             ]));
             return;
         }
-        
 
-        // SECURITY LAYER: Verify account type (kept for defense-in-depth)
-        if (empty($accountType) || $accountType !== 'business') {
-            PrestaShopLogger::addLog('TwoPayment: Order intent blocked - non-business account type: ' . $accountType, 2);
-            $this->sendJsonResponse(json_encode([
-                'success' => false,
-                'error' => $this->module->l('Two payment is only available for business accounts')
-            ]));
-            return;
-        }
+        // A company name plus a verified org number is the business guard
+        // (TWO-24755): registered businesses search/select their company,
+        // and enrolled sole traders carry the synthetic org number their
+        // Two registration minted, so both arrive here as a valid
+        // business - there is no account-type selector to also check.
 
         try {
             // Set address with validated form data for API call (form-first approach)

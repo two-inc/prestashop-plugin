@@ -119,7 +119,28 @@
             
             // Store global reference for modules
             window.TwoCheckoutManager_Instance = checkoutManager;
-            
+
+            // Sole trader flow (TWO-24755) - separate presentation module,
+            // active only when the merchant enabled it.
+            if (
+                typeof TwoSoleTrader !== 'undefined' &&
+                twopayment.sole_trader &&
+                String(twopayment.sole_trader.enabled) === '1' &&
+                !window.TwoSoleTrader_Instance
+            ) {
+                window.TwoSoleTrader_Instance = new TwoSoleTrader({
+                    enabled: true,
+                    checkoutHost: twopayment.checkout_host,
+                    orderIntentUrl: twopayment.order_intent_url,
+                    ajaxToken: twopayment.ajax_token,
+                    shopCountry: twopayment.shop_country,
+                    i18n: {
+                        registered_business: twopayment.i18n && twopayment.i18n.sole_trader_registered_business,
+                        sole_trader: twopayment.i18n && twopayment.i18n.sole_trader_label
+                    }
+                });
+            }
+
         } catch (error) {
             console.error('Two Payment: Initialization failed:', error);
             
