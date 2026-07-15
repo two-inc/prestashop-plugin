@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The flag is cached by the existing TTL-gated merchant-record fetch (shared with `available_terms`/`due_in_days`); absent-from-response is treated as false, a failed fetch serves the last known value, and a merchant identity change fails closed
   - Module version bumped to `2.6.0`
 
+- **Line-item VAT rates are now relayed from PrestaShop's own tax configuration** (TWO-24880)
+  - Product, ecotax, shipping and gift-wrapping lines source their tax rate from the merchant's configured tax rules group, resolved at the cart's tax address (`PS_TAX_ADDRESS_TYPE` granularity) - the same resolution PrestaShop uses to compute the amounts. The rate is never derived from `tax / net`, never snapped toward nearby rates, and never substituted with a fallback
+  - Removed the hardcoded Spanish 21% fallback and the snap-to-known-contexts machinery entirely - a snap-to-canonical step could relabel a reduced-rate line (e.g. 10%) to a neighbouring rate (e.g. 21%) while still passing amount checks, producing an incorrect VAT breakdown on the invoice
+  - Divergence now fails loud: when the declared rate does not reconcile with PrestaShop's applied amounts (beyond a 2-cent rounding tolerance), order building throws instead of silently correcting - the merchant sees the actionable cause in the shop log, the buyer sees a controlled decline
+  - Discount lines keep the exact-cent canonical-rate split; unattributable discounts now fail loud instead of emitting a blended synthetic rate
+  - `PS_ATCP_SHIPWRAP` (average-tax shipping/wrapping) carts split the charge across the cart's canonical product rate classes instead of ever emitting the blended average rate
+  - Free-shipping discount lines mirror the shipping line's emitted rate, and the net-cap path now keeps gross/net/tax rate-consistent
+  - Tax rate precision raised to PrestaShop-native 6dp (rates still capped at 2 decimals of percent per e-invoicing rules); per-line validation now also asserts `gross == net + tax` exactly
+
 ### Removed
 - **`PS_TWO_USE_OWN_INVOICES` admin setting retired** (TWO-25111)
   - The "Upload Own Invoices to Two" switch is removed from the module configuration page; the upgrade script deletes the configuration row and any leftover value has zero effect (covered by unit test)

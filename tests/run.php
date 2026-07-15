@@ -62,13 +62,18 @@ final class OrderBuilderSpec
     {
         self::testValidateTwoLineItemsRejectsBrokenTaxFormula();
         self::testGetTwoTaxSubtotalsNormalizesTaxRateToTwoDecimals();
-        self::testGetTwoProductItemsUsesAppliedTaxRateWhenConfiguredRateDiffers();
+        self::testGetTwoProductItemsThrowsWhenDeclaredRateDivergesFromAmounts();
         self::testGetTwoProductItemsSplitsEcotaxIntoServiceLine();
         self::testGetTwoNewOrderDataSupportsFivePointFivePercentVat();
         self::testGetTwoNewOrderDataIncludesGiftWrappingLine();
-        self::testGetTwoNewOrderDataSnapsGiftWrappingRateToCanonicalContext();
-        self::testGetTwoProductItemsSnapsMinorRateDriftToKnownProductContexts();
-        self::testGetTwoProductItemsSpanishFallbackDefaultsToTwentyOnePercentWithoutKnownContext();
+        self::testGetTwoNewOrderDataSourcesGiftWrappingRateFromConfiguredGroup();
+        self::testGetTwoProductItemsRelaysDeclaredRateWithinRoundingTolerance();
+        self::testGetTwoProductItemsRelaysNonCanonicalDeclaredRateInsteadOfSpanishFallback();
+        self::testGetTwoProductItemsMultiJurisdictionCartRelaysPerLineDeclaredRates();
+        self::testGetTwoProductItemsIgnoresCountryOnlyRateFieldAndRelaysAddressCorrectRate();
+        self::testGetTwoNewOrderDataSplitsAtcpShippingAcrossProductRateClasses();
+        self::testGetTwoNewOrderDataFreeShippingDiscountRederivesGrossWhenNetCapBites();
+        self::testGetTwoProductItemsHighQuantityLineStaysWithinNetTolerance();
         self::testGetTwoNewOrderDataOmitsTopLevelTaxRate();
         self::testGetTwoNewOrderDataOmitsTaxSubtotalsWhenDisabled();
         self::testGetTwoIntentOrderDataOmitsTopLevelTaxRateAndOmitsTaxSubtotalsWhenDisabled();
@@ -178,6 +183,60 @@ final class OrderBuilderSpec
         PrestaShopLogger::reset();
     }
 
+    /**
+     * Declared-rate relay wiring (TWO-24880): a product's tax rate is
+     * sourced from its tax-rules group resolved at the cart's tax address,
+     * never from amounts or the row's 'rate' field. This declares the
+     * merchant-configured rate for a product and guarantees the cart has a
+     * loaded tax address for the resolver.
+     */
+    private static function declareProductRate(Cart $cart, int $pid, float $ratePct): void
+    {
+        self::ensureCartTaxAddress($cart);
+        StubStore::$products[$pid]['id_tax_rules_group'] = 9000 + $pid;
+        StubStore::$taxRuleRates[9000 + $pid] = $ratePct;
+    }
+
+    /** Declare the shop's configured gift-wrapping tax group rate. */
+    private static function declareWrappingRate(Cart $cart, float $ratePct): void
+    {
+        self::ensureCartTaxAddress($cart);
+        StubStore::$configuration['PS_GIFT_WRAPPING_TAX_RULES_GROUP'] = 7001;
+        StubStore::$taxRuleRates[7001] = $ratePct;
+    }
+
+    /** Declare the shop's configured ecotax tax group rate. */
+    private static function declareEcotaxRate(Cart $cart, float $ratePct): void
+    {
+        self::ensureCartTaxAddress($cart);
+        StubStore::$configuration['PS_ECOTAX_TAX_RULES_GROUP_ID'] = 7002;
+        StubStore::$taxRuleRates[7002] = $ratePct;
+    }
+
+    /** Declare a carrier's tax-rules group rate for shipping lines. */
+    private static function declareCarrierRate(Cart $cart, int $carrierId, float $ratePct): void
+    {
+        self::ensureCartTaxAddress($cart);
+        StubStore::$carriers[$carrierId]['tax_rules_group_id'] = 8000 + $carrierId;
+        StubStore::$taxRuleRates[8000 + $carrierId] = $ratePct;
+    }
+
+    /**
+     * The declared-rate resolver needs a LOADED cart tax address
+     * (PS_TAX_ADDRESS_TYPE, default invoice). Seed a minimal ES address only
+     * when the cart fixture set none of its own.
+     */
+    private static function ensureCartTaxAddress(Cart $cart): void
+    {
+        if ((int) $cart->id_address_invoice > 0 || (int) $cart->id_address_delivery > 0) {
+            return;
+        }
+        if (!isset(StubStore::$addresses[9901])) {
+            StubStore::$addresses[9901] = ['id_country' => 34, 'loaded' => true];
+        }
+        $cart->id_address_invoice = 9901;
+    }
+
     private static function testValidateTwoLineItemsRejectsBrokenTaxFormula(): void
     {
         self::reset();
@@ -187,6 +246,8 @@ final class OrderBuilderSpec
             'name' => 'TV',
             'net_amount' => '100.00',
             'tax_amount' => '15.00',
+            // Gross kept consistent (net + tax) so ONLY the tax formula is broken.
+            'gross_amount' => '115.00',
             'tax_rate' => '0.21',
             'unit_price' => '100.00',
             'quantity' => 1,
@@ -215,7 +276,7 @@ final class OrderBuilderSpec
         TinyAssert::same('72.75', $subtotals[0]['tax_amount']);
     }
 
-    private static function testGetTwoProductItemsUsesAppliedTaxRateWhenConfiguredRateDiffers(): void
+    private static function testGetTwoProductItemsThrowsWhenDeclaredRateDivergesFromAmounts(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
@@ -224,6 +285,8 @@ final class OrderBuilderSpec
         $cart->id_lang = 1;
         $cart->id_carrier = 999;
 
+        // Declared 21% but PrestaShop applied 20.50 tax on 100.00 net: the
+        // relay never derives/substitutes a rate — it fails loud.
         StubStore::$cartProducts[10] = [[
             'id_product' => 501,
             'link_rewrite' => 'smart-tv',
@@ -242,13 +305,14 @@ final class OrderBuilderSpec
 
         StubStore::$productCategories[501] = [['name' => 'Electronics']];
         StubStore::$images[501] = ['id_image' => 9001];
+        self::declareProductRate($cart, 501, 21.0);
 
-        $items = $module->getTwoProductItems($cart);
-
-        TinyAssert::count(1, $items);
-        TinyAssert::same('0.205', $items[0]['tax_rate']);
-        TinyAssert::same('20.50', $items[0]['tax_amount']);
-        TinyAssert::same('120.50', $items[0]['gross_amount']);
+        TinyAssert::throws(
+            static function () use ($module, $cart): void {
+                $module->getTwoProductItems($cart);
+            },
+            'Declared tax rate diverges'
+        );
     }
 
     private static function testGetTwoProductItemsSplitsEcotaxIntoServiceLine(): void
@@ -280,6 +344,10 @@ final class OrderBuilderSpec
 
         StubStore::$productCategories[777] = [['name' => 'Accessories']];
         StubStore::$images[777] = ['id_image' => 9011];
+        // Ecotax rate comes from the configured PS_ECOTAX_TAX_RULES_GROUP_ID
+        // group (the row's ecotax_tax_rate field is no longer read).
+        self::declareProductRate($cart, 777, 21.0);
+        self::declareEcotaxRate($cart, 5.5);
 
         $items = $module->getTwoProductItems($cart);
 
@@ -326,6 +394,7 @@ final class OrderBuilderSpec
 
         StubStore::$productCategories[888] = [['name' => 'Misc']];
         StubStore::$images[888] = ['id_image' => 9012];
+        self::declareProductRate($cart, 888, 21.0);
 
         TinyAssert::throws(
             static function () use ($module, $cart): void {
@@ -370,6 +439,7 @@ final class OrderBuilderSpec
 
         StubStore::$productCategories[889] = [['name' => 'Misc']];
         StubStore::$images[889] = ['id_image' => 9013];
+        self::declareProductRate($cart, 889, 21.0);
 
         TinyAssert::throws(
             static function () use ($module, $cart): void {
@@ -411,6 +481,7 @@ final class OrderBuilderSpec
 
         StubStore::$productCategories[890] = [['name' => 'Misc']];
         StubStore::$images[890] = ['id_image' => 9014];
+        self::declareProductRate($cart, 890, 21.0);
 
         $items = $module->getTwoProductItems($cart);
 
@@ -451,6 +522,7 @@ final class OrderBuilderSpec
 
         StubStore::$productCategories[891] = [['name' => 'Misc']];
         StubStore::$images[891] = ['id_image' => 9015];
+        self::declareProductRate($cart, 891, 21.0);
 
         $items = $module->getTwoProductItems($cart);
 
@@ -511,6 +583,7 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[9301] = [['name' => 'Books']];
         StubStore::$images[9301] = ['id_image' => 9301];
+        self::declareProductRate($cart, 9301, 5.5);
         StubStore::$cartTotals[7001] = [
             true => [
                 Cart::ONLY_DISCOUNTS => 0.0,
@@ -589,6 +662,8 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[9302] = [['name' => 'Gifts']];
         StubStore::$images[9302] = ['id_image' => 9302];
+        self::declareProductRate($cart, 9302, 21.0);
+        self::declareWrappingRate($cart, 21.0);
         StubStore::$cartTotals[7002] = [
             true => [
                 Cart::ONLY_DISCOUNTS => 0.0,
@@ -629,7 +704,7 @@ final class OrderBuilderSpec
         TinyAssert::true($hasWrappingLine);
     }
 
-    private static function testGetTwoNewOrderDataSnapsGiftWrappingRateToCanonicalContext(): void
+    private static function testGetTwoNewOrderDataSourcesGiftWrappingRateFromConfiguredGroup(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
@@ -680,6 +755,11 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[9303] = [['name' => 'Gifts']];
         StubStore::$images[9303] = ['id_image' => 9303];
+        // Wrapping (2.47 net / 2.99 gross -> 0.52 tax) reconciles with the
+        // configured PS_GIFT_WRAPPING_TAX_RULES_GROUP at 21%: the declared
+        // rate is relayed as-is.
+        self::declareProductRate($cart, 9303, 21.0);
+        self::declareWrappingRate($cart, 21.0);
         StubStore::$cartTotals[7003] = [
             true => [
                 Cart::ONLY_DISCOUNTS => 0.0,
@@ -718,7 +798,7 @@ final class OrderBuilderSpec
         TinyAssert::same('0.21', (string)$wrappingLine['tax_rate']);
     }
 
-    private static function testGetTwoProductItemsSnapsMinorRateDriftToKnownProductContexts(): void
+    private static function testGetTwoProductItemsRelaysDeclaredRateWithinRoundingTolerance(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
@@ -727,52 +807,40 @@ final class OrderBuilderSpec
         $cart->id_lang = 1;
         $cart->id_carrier = 0;
 
+        // Applied tax 21.01 on net 100.00 is within the 2-cent rounding
+        // tolerance of the declared 21% rate: the declared rate is relayed
+        // and PrestaShop's reported amounts are preserved untouched.
         StubStore::$cartProducts[12] = [
             [
-                'id_product' => 8801,
-                'link_rewrite' => 'anchor-product',
-                'name' => 'Anchor Product',
-                'description_short' => 'Anchor',
-                'manufacturer_name' => 'ACME',
-                'ean13' => '',
-                'upc' => '',
-                'total' => 100.00,
-                'total_wt' => 121.00,
-                'cart_quantity' => 1,
-                'rate' => 21.0,
-                'price' => 100.00,
-                'reduction' => 0,
-            ],
-            [
                 'id_product' => 8802,
-                'link_rewrite' => 'drift-product',
-                'name' => 'Drift Product',
+                'link_rewrite' => 'rounding-drift-product',
+                'name' => 'Rounding Drift Product',
                 'description_short' => 'Drift',
                 'manufacturer_name' => 'ACME',
                 'ean13' => '',
                 'upc' => '',
-                'total' => 2.47,
-                'total_wt' => 2.99,
+                'total' => 100.00,
+                'total_wt' => 121.01,
                 'cart_quantity' => 1,
-                // Intentionally missing rate field to simulate amount-derived drift.
-                'price' => 2.47,
+                'price' => 100.00,
                 'reduction' => 0,
             ],
         ];
 
-        StubStore::$productCategories[8801] = [['name' => 'General']];
         StubStore::$productCategories[8802] = [['name' => 'General']];
-        StubStore::$images[8801] = ['id_image' => 8801];
         StubStore::$images[8802] = ['id_image' => 8802];
+        self::declareProductRate($cart, 8802, 21.0);
 
         $items = $module->getTwoProductItems($cart);
 
-        TinyAssert::count(2, $items);
+        TinyAssert::count(1, $items);
         TinyAssert::same('0.21', (string)$items[0]['tax_rate']);
-        TinyAssert::same('0.21', (string)$items[1]['tax_rate']);
+        TinyAssert::same('21.01', (string)$items[0]['tax_amount']);
+        TinyAssert::same('121.01', (string)$items[0]['gross_amount']);
+        TinyAssert::same('100.00', (string)$items[0]['net_amount']);
     }
 
-    private static function testGetTwoProductItemsSpanishFallbackDefaultsToTwentyOnePercentWithoutKnownContext(): void
+    private static function testGetTwoProductItemsRelaysNonCanonicalDeclaredRateInsteadOfSpanishFallback(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
@@ -796,6 +864,11 @@ final class OrderBuilderSpec
         $cart->id_address_invoice = 7401;
         $cart->id_address_delivery = 7402;
 
+        // REGRESSION (TWO-24880): the deleted Spanish-fallback code relabeled
+        // near-canonical ES lines to 21% whenever |tax - net*0.21| <= 0.02.
+        // Here tax is 0.06 and |0.06 - 0.30*0.21| = 0.003, so the old code
+        // would have emitted 0.21. The relay must emit the merchant's
+        // declared 20% untouched.
         StubStore::$cartProducts[14] = [[
             'id_product' => 8811,
             'link_rewrite' => 'es-fallback-product',
@@ -804,20 +877,466 @@ final class OrderBuilderSpec
             'manufacturer_name' => 'ACME',
             'ean13' => '',
             'upc' => '',
-            'total' => 2.47,
-            'total_wt' => 2.99,
+            'total' => 0.30,
+            'total_wt' => 0.36,
             'cart_quantity' => 1,
-            // Intentionally no rate field to force amount-derived unresolved context.
-            'price' => 2.47,
+            'price' => 0.30,
             'reduction' => 0,
         ]];
         StubStore::$productCategories[8811] = [['name' => 'General']];
         StubStore::$images[8811] = ['id_image' => 8811];
+        self::declareProductRate($cart, 8811, 20.0);
 
         $items = $module->getTwoProductItems($cart);
 
         TinyAssert::count(1, $items);
+        TinyAssert::same('0.2', (string)$items[0]['tax_rate']);
+        TinyAssert::same('0.06', (string)$items[0]['tax_amount']);
+    }
+
+    private static function testGetTwoProductItemsMultiJurisdictionCartRelaysPerLineDeclaredRates(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $cart = new Cart(16);
+        $cart->id_lang = 1;
+        $cart->id_carrier = 0;
+
+        // One cart, three tax jurisdictions: each line relays its OWN
+        // declared group rate (21% / 10% / no group = 0%), never a blend.
+        StubStore::$cartProducts[16] = [
+            [
+                'id_product' => 8821,
+                'link_rewrite' => 'standard-rate-product',
+                'name' => 'Standard Rate Product',
+                'description_short' => 'Standard',
+                'manufacturer_name' => 'ACME',
+                'ean13' => '',
+                'upc' => '',
+                'total' => 100.00,
+                'total_wt' => 121.00,
+                'cart_quantity' => 1,
+                'rate' => 21.0,
+                'price' => 100.00,
+                'reduction' => 0,
+            ],
+            [
+                'id_product' => 8822,
+                'link_rewrite' => 'reduced-rate-product',
+                'name' => 'Reduced Rate Product',
+                'description_short' => 'Reduced',
+                'manufacturer_name' => 'ACME',
+                'ean13' => '',
+                'upc' => '',
+                'total' => 50.00,
+                'total_wt' => 55.00,
+                'cart_quantity' => 1,
+                'rate' => 10.0,
+                'price' => 50.00,
+                'reduction' => 0,
+            ],
+            [
+                'id_product' => 8823,
+                'link_rewrite' => 'zero-rate-product',
+                'name' => 'Zero Rate Product',
+                'description_short' => 'Zero',
+                'manufacturer_name' => 'ACME',
+                'ean13' => '',
+                'upc' => '',
+                'total' => 30.00,
+                'total_wt' => 30.00,
+                'cart_quantity' => 1,
+                'rate' => 0.0,
+                'price' => 30.00,
+                'reduction' => 0,
+            ],
+        ];
+        StubStore::$productCategories[8821] = [['name' => 'General']];
+        StubStore::$productCategories[8822] = [['name' => 'General']];
+        StubStore::$productCategories[8823] = [['name' => 'General']];
+        StubStore::$images[8821] = ['id_image' => 8821];
+        StubStore::$images[8822] = ['id_image' => 8822];
+        StubStore::$images[8823] = ['id_image' => 8823];
+        self::declareProductRate($cart, 8821, 21.0);
+        self::declareProductRate($cart, 8822, 10.0);
+        // 8823: no tax-rules group declared (core "No tax" sentinel -> 0).
+
+        $items = $module->getTwoProductItems($cart);
+
+        TinyAssert::count(3, $items);
         TinyAssert::same('0.21', (string)$items[0]['tax_rate']);
+        TinyAssert::same('21.00', (string)$items[0]['tax_amount']);
+        TinyAssert::same('0.1', (string)$items[1]['tax_rate']);
+        TinyAssert::same('5.00', (string)$items[1]['tax_amount']);
+        TinyAssert::same('0', (string)$items[2]['tax_rate']);
+        TinyAssert::same('0.00', (string)$items[2]['tax_amount']);
+    }
+
+    private static function testGetTwoProductItemsIgnoresCountryOnlyRateFieldAndRelaysAddressCorrectRate(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $cart = new Cart(17);
+        $cart->id_lang = 1;
+        $cart->id_carrier = 0;
+        self::ensureCartTaxAddress($cart); // seeds ES (country 34) invoice address
+
+        // Sub-national plumbing proof (Canary IGIC class of bug): the
+        // getProducts() row still carries the country-only 'rate' field
+        // (21.0), but the product's declared group resolves 7% for THIS
+        // cart's tax address and PrestaShop applied 7% to the amounts. The
+        // relay must emit the address-correct 7%, proving the country-only
+        // 'rate' field is dead.
+        StubStore::$cartProducts[17] = [[
+            'id_product' => 502,
+            'link_rewrite' => 'igic-product',
+            'name' => 'IGIC Product',
+            'description_short' => 'Sub-national rate',
+            'manufacturer_name' => 'ACME',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 100.00,
+            'total_wt' => 107.00,
+            'cart_quantity' => 1,
+            'rate' => 21.0, // country-only field: must be ignored
+            'price' => 100.00,
+            'reduction' => 0,
+        ]];
+        StubStore::$productCategories[502] = [['name' => 'General']];
+        StubStore::$images[502] = ['id_image' => 9502];
+        StubStore::$products[502]['id_tax_rules_group'] = 9502;
+        // Country-mapped shape: the group resolves 7% for country 34 only.
+        StubStore::$taxRuleRates[9502] = [34 => 7.0];
+
+        $items = $module->getTwoProductItems($cart);
+
+        TinyAssert::count(1, $items);
+        TinyAssert::same('0.07', (string)$items[0]['tax_rate']);
+        TinyAssert::same('7.00', (string)$items[0]['tax_amount']);
+        TinyAssert::same('107.00', (string)$items[0]['gross_amount']);
+    }
+
+    private static function testGetTwoNewOrderDataSplitsAtcpShippingAcrossProductRateClasses(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        // PS_ATCP_SHIPWRAP taxes shipping at the blended average product
+        // rate ((100*0.21 + 50*0.10) / 150 = 17.333% -> gross 11.73 on net
+        // 10.00). The payload must NEVER carry that blended rate: the charge
+        // is split across the cart's canonical product rate classes.
+        StubStore::$configuration['PS_ATCP_SHIPWRAP'] = 1;
+
+        StubStore::$customers[6201] = [
+            'email' => 'buyer@example.com',
+            'firstname' => 'Pia',
+            'lastname' => 'Sol',
+            'secure_key' => 'secure-key-6201',
+            'loaded' => true,
+        ];
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$countries[34] = 'ES';
+        StubStore::$addresses[7601] = [
+            'id_country' => 34,
+            'company' => 'SPAIN',
+            'companyid' => 'E20468708',
+            'address1' => 'Calle Tres 3',
+            'city' => 'Madrid',
+            'postcode' => '28009',
+            'phone' => '666666676',
+            'loaded' => true,
+        ];
+        StubStore::$addresses[7602] = StubStore::$addresses[7601];
+        StubStore::$carriers[62] = [
+            'name' => 'ATCP Carrier',
+            'delay' => '',
+            'shipping_method' => Carrier::SHIPPING_METHOD_PRICE,
+            'tax_rules_group_id' => 0, // irrelevant under PS_ATCP_SHIPWRAP
+        ];
+
+        $cart = new Cart(6201);
+        $cart->id_customer = 6201;
+        $cart->id_currency = 978;
+        $cart->id_address_invoice = 7601;
+        $cart->id_address_delivery = 7602;
+        $cart->id_carrier = 62;
+        $cart->id_lang = 1;
+
+        StubStore::$cartProducts[6201] = [
+            [
+                'id_product' => 8831,
+                'link_rewrite' => 'atcp-standard',
+                'name' => 'ATCP Standard',
+                'description_short' => 'Standard',
+                'manufacturer_name' => 'ACME',
+                'ean13' => '',
+                'upc' => '',
+                'total' => 100.00,
+                'total_wt' => 121.00,
+                'cart_quantity' => 1,
+                'rate' => 21.0,
+                'price' => 100.00,
+                'reduction' => 0,
+            ],
+            [
+                'id_product' => 8832,
+                'link_rewrite' => 'atcp-reduced',
+                'name' => 'ATCP Reduced',
+                'description_short' => 'Reduced',
+                'manufacturer_name' => 'ACME',
+                'ean13' => '',
+                'upc' => '',
+                'total' => 50.00,
+                'total_wt' => 55.00,
+                'cart_quantity' => 1,
+                'rate' => 10.0,
+                'price' => 50.00,
+                'reduction' => 0,
+            ],
+        ];
+        StubStore::$productCategories[8831] = [['name' => 'General']];
+        StubStore::$productCategories[8832] = [['name' => 'General']];
+        StubStore::$images[8831] = ['id_image' => 8831];
+        StubStore::$images[8832] = ['id_image' => 8832];
+        self::declareProductRate($cart, 8831, 21.0);
+        self::declareProductRate($cart, 8832, 10.0);
+        StubStore::$cartShipping[6201] = [
+            true => 11.73,
+            false => 10.00,
+        ];
+        StubStore::$cartTotals[6201] = [
+            true => [
+                Cart::ONLY_DISCOUNTS => 0.00,
+                Cart::BOTH => 187.73,
+                Cart::ONLY_SHIPPING => 11.73,
+            ],
+            false => [
+                Cart::ONLY_DISCOUNTS => 0.00,
+                Cart::BOTH => 160.00,
+                Cart::ONLY_SHIPPING => 10.00,
+            ],
+            'average_products_tax_rate' => 17.3333,
+        ];
+
+        $payload = $module->getTwoNewOrderData('merchant-attempt-6201', $cart, [
+            'merchant_confirmation_url' => 'https://shop.local/confirm',
+            'merchant_cancel_order_url' => 'https://shop.local/cancel',
+            'merchant_edit_order_url' => '',
+            'merchant_order_verification_failed_url' => '',
+            'merchant_invoice_url' => '',
+            'merchant_shipping_document_url' => '',
+        ]);
+
+        $shippingLines = [];
+        foreach ($payload['line_items'] as $line) {
+            if ((string)($line['type'] ?? '') === 'SHIPPING_FEE') {
+                $shippingLines[] = $line;
+            }
+        }
+
+        // Exactly the two canonical product rate classes - no blended rate.
+        TinyAssert::count(2, $shippingLines);
+        $seenRates = [];
+        $netSum = 0.0;
+        $taxSum = 0.0;
+        foreach ($shippingLines as $line) {
+            $seenRates[] = (string)$line['tax_rate'];
+            $lineNet = (float)$line['net_amount'];
+            $lineTax = (float)$line['tax_amount'];
+            $lineGross = (float)$line['gross_amount'];
+            $lineRate = (float)$line['tax_rate'];
+            $netSum = round($netSum + $lineNet, 2);
+            $taxSum = round($taxSum + $lineTax, 2);
+            // Each split line must be rate-consistent and gross-exact.
+            TinyAssert::true(
+                abs($lineTax - $lineRate * $lineNet) <= 0.02,
+                'Shipping split line must satisfy |tax - rate*net| <= 0.02, got tax=' . $line['tax_amount'] . ' rate=' . $line['tax_rate'] . ' net=' . $line['net_amount']
+            );
+            TinyAssert::same(
+                number_format($lineNet + $lineTax, 2, '.', ''),
+                number_format($lineGross, 2, '.', ''),
+                'Shipping split line gross must equal net + tax exactly'
+            );
+        }
+        sort($seenRates);
+        TinyAssert::same(['0.1', '0.21'], $seenRates, 'Expected ONLY the canonical 10% and 21% rate classes, never the blended 17.33%');
+        TinyAssert::same('10.00', number_format($netSum, 2, '.', ''), 'Split nets must sum to the PrestaShop shipping net');
+        TinyAssert::same('1.73', number_format($taxSum, 2, '.', ''), 'Split taxes must sum to the PrestaShop shipping tax');
+        TinyAssert::same('187.73', (string)$payload['gross_amount']);
+        TinyAssert::same('160.00', (string)$payload['net_amount']);
+    }
+
+    private static function testGetTwoNewOrderDataFreeShippingDiscountRederivesGrossWhenNetCapBites(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        StubStore::$countries[34] = 'ES';
+        StubStore::$addresses[7701] = [
+            'id_country' => 34,
+            'company' => 'SPAIN',
+            'companyid' => 'E20468708',
+            'address1' => 'Calle Cuatro 4',
+            'city' => 'Madrid',
+            'postcode' => '28010',
+            'phone' => '666666677',
+            'loaded' => true,
+        ];
+        StubStore::$addresses[7702] = StubStore::$addresses[7701];
+
+        $cart = new Cart(18);
+        $cart->id_lang = 1;
+        $cart->id_carrier = 41;
+        $cart->id_address_invoice = 7701;
+        $cart->id_address_delivery = 7702;
+
+        StubStore::$cartProducts[18] = [[
+            'id_product' => 8841,
+            'link_rewrite' => 'cap-bite-product',
+            'name' => 'Cap Bite Product',
+            'description_short' => 'Product',
+            'manufacturer_name' => 'ACME',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 100.00,
+            'total_wt' => 121.00,
+            'cart_quantity' => 1,
+            'rate' => 21.0,
+            'price' => 100.00,
+            'reduction' => 0,
+        ]];
+        StubStore::$productCategories[8841] = [['name' => 'General']];
+        StubStore::$images[8841] = ['id_image' => 8841];
+        self::declareProductRate($cart, 8841, 21.0);
+        StubStore::$carriers[41] = [
+            'name' => 'Cap Carrier',
+            'delay' => '',
+            'shipping_method' => Carrier::SHIPPING_METHOD_PRICE,
+        ];
+        self::declareCarrierRate($cart, 41, 21.0);
+        StubStore::$cartShipping[18] = [true => 12.10, false => 10.00];
+        // No discounts yet: build the clean product + shipping items first.
+        StubStore::$cartTotals[18] = [
+            true => [Cart::ONLY_DISCOUNTS => 0.00],
+            false => [Cart::ONLY_DISCOUNTS => 0.00],
+            'average_products_tax_rate' => 21.0,
+        ];
+        // Free-shipping rule WITHOUT net metadata (no value_tax_exc): the
+        // discount builder can only take the shipping-context fallback path.
+        StubStore::$cartRules[18] = [[
+            'name' => 'free-ship-cap',
+            'code' => 'free-ship-cap',
+            'value' => -12.10,
+            'value_real' => 12.10,
+            'free_shipping' => 1,
+        ]];
+
+        $items = $module->getTwoProductItems($cart);
+
+        // CAP PATH (TWO-24880 regression): the shipping-ratio-derived net
+        // for a 12.10 gross allocation is 10.00; a cart-level discount NET
+        // total of 9.40 is lower, so the min() cap bites. The old code kept
+        // the 12.10 gross with the clamped 9.40 net (tax 2.70 vs
+        // rate-implied 1.97 - a rate-inconsistent line); the new code
+        // re-derives gross from the capped net at the mirrored shipping
+        // rate. The branch is private and cannot return through the public
+        // builder (see below), so it is invoked directly.
+        $method = new ReflectionMethod(Twopayment::class, 'buildTwoFallbackFreeShippingDiscountLine');
+        $method->setAccessible(true);
+        $fallback = $method->invoke($module, $cart, $items, 12.10, 9.40, null);
+
+        TinyAssert::true(is_array($fallback), 'Expected a fallback free-shipping discount line');
+        TinyAssert::same('9.40', number_format((float)$fallback['net'], 2, '.', ''));
+        TinyAssert::same('11.37', number_format((float)$fallback['gross'], 2, '.', ''), 'Gross must be re-derived from the capped net, not clamped at 12.10');
+
+        $line = $fallback['line'];
+        TinyAssert::same('-9.40', (string)$line['net_amount']);
+        TinyAssert::same('-1.97', (string)$line['tax_amount']); // round(9.40 * 0.21, 2)
+        TinyAssert::same('-11.37', (string)$line['gross_amount']);
+        TinyAssert::same('0.21', (string)$line['tax_rate']);
+        $lineNet = (float)$line['net_amount'];
+        $lineTax = (float)$line['tax_amount'];
+        $lineGross = (float)$line['gross_amount'];
+        TinyAssert::same(
+            number_format($lineNet + $lineTax, 2, '.', ''),
+            number_format($lineGross, 2, '.', ''),
+            'Free-shipping discount line gross must equal net + tax exactly'
+        );
+        TinyAssert::true(
+            abs($lineTax - (float)$line['tax_rate'] * $lineNet) <= 0.02,
+            'Free-shipping discount line must satisfy |tax - rate*net| <= 0.02'
+        );
+
+        // Through the PUBLIC builder the same cart data must fail loud: the
+        // re-derived (smaller) gross leaves a 0.73 gross residue with zero
+        // net remaining, which is attributable to no declared rate - the
+        // cart's own discount totals (12.10 gross on 9.40 net = 28.7%)
+        // contradict the declared 21%. The old code silently absorbed that
+        // contradiction into a rate-inconsistent line.
+        StubStore::$cartTotals[18][true][Cart::ONLY_DISCOUNTS] = 12.10;
+        StubStore::$cartTotals[18][false][Cart::ONLY_DISCOUNTS] = 9.40;
+        TinyAssert::throws(
+            static function () use ($module, $cart): void {
+                $module->getTwoProductItems($cart);
+            },
+            'Discount amounts diverge from all declared cart tax rates'
+        );
+    }
+
+    private static function testGetTwoProductItemsHighQuantityLineStaysWithinNetTolerance(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $cart = new Cart(19);
+        $cart->id_lang = 1;
+        $cart->id_carrier = 0;
+
+        // High-quantity ROUND_ITEM-style edge: 400 x 8.34005 = 3336.02, but
+        // the emitted 2dp unit price (8.34) implies 400 x 8.34 = 3336.00 -
+        // exactly the 0.02 NET_FORMULA_TOLERANCE edge. (A unit price like
+        // 8.3449 is impossible at qty 400 under the tightened tolerance:
+        // 400 x 0.0049 = 1.96 of drift - any real 3rd/4th-decimal unit
+        // price would rightly fail; only sub-half-cent-per-400 precision
+        // survives.) Declared 21%: tax 700.56 = round(3336.02 * 0.21, 2).
+        StubStore::$cartProducts[19] = [[
+            'id_product' => 8851,
+            'link_rewrite' => 'bulk-precision-product',
+            'name' => 'Bulk Precision Product',
+            'description_short' => 'Bulk precision',
+            'manufacturer_name' => 'ACME',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 3336.02,
+            'total_wt' => 4036.58,
+            'cart_quantity' => 400,
+            'rate' => 21.0,
+            'price' => 8.34005,
+            'reduction' => 0,
+        ]];
+        StubStore::$productCategories[8851] = [['name' => 'Bulk']];
+        StubStore::$images[8851] = ['id_image' => 8851];
+        self::declareProductRate($cart, 8851, 21.0);
+
+        $items = $module->getTwoProductItems($cart);
+
+        TinyAssert::count(1, $items);
+        TinyAssert::same('3336.02', (string)$items[0]['net_amount']);
+        TinyAssert::same('700.56', (string)$items[0]['tax_amount']);
+        TinyAssert::same('4036.58', (string)$items[0]['gross_amount']);
+        TinyAssert::same('0.21', (string)$items[0]['tax_rate']);
+        TinyAssert::same('8.34', (string)$items[0]['unit_price']);
+        TinyAssert::same('0.00', (string)$items[0]['discount_amount']);
+        TinyAssert::same(400, (int)$items[0]['quantity']);
+        // The 0.02 drift between qty*unit_price and net must pass the
+        // tightened net-formula validation - at the exact boundary.
+        TinyAssert::true(
+            $module->validateTwoLineItems($items),
+            'High-quantity line at the 2-cent net-formula boundary must validate'
+        );
+        TinyAssert::count(0, PrestaShopLogger::$logs);
     }
 
     private static function testGetTwoNewOrderDataOmitsTopLevelTaxRate(): void
@@ -1113,6 +1632,8 @@ final class OrderBuilderSpec
                     'name' => 'Broken line',
                     'net_amount' => '100.00',
                     'tax_amount' => '10.00',
+                    // Gross consistent (net + tax); ONLY the tax formula is broken.
+                    'gross_amount' => '110.00',
                     'tax_rate' => '0.21',
                     'unit_price' => '100.00',
                     'quantity' => 1,
@@ -1717,6 +2238,7 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[777] = [['name' => 'TV']];
         StubStore::$images[777] = ['id_image' => 9901];
+        self::declareProductRate($cart, 777, 21.0);
         StubStore::$cartShipping[491] = [
             true => 58.00,
             false => 47.93,
@@ -1848,6 +2370,8 @@ final class OrderBuilderSpec
         StubStore::$productCategories[780] = [['name' => 'General']];
         StubStore::$images[779] = ['id_image' => 9903];
         StubStore::$images[780] = ['id_image' => 9904];
+        // 779 is zero-rated: no tax-rules group declared (resolves 0).
+        self::declareProductRate($cart, 780, 21.0);
         StubStore::$cartShipping[494] = [
             true => 116.00,
             false => 95.87,
@@ -1953,10 +2477,15 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[778] = [['name' => 'Bulk']];
         StubStore::$images[778] = ['id_image' => 9902];
+        self::declareProductRate($cart, 778, 21.0);
         StubStore::$cartShipping[492] = [
             true => 121.00,
             false => 100.00,
         ];
+        // Discount nets must reconcile with the declared 21% context under
+        // the relay (the deleted code blended a synthetic rate instead):
+        // free-shipping carve-out is 121.00/100.00, the remainder
+        // 588.25 gross / 486.16 net implies exactly round(486.16*0.21)=102.09.
         StubStore::$cartTotals[492] = [
             true => [
                 Cart::ONLY_DISCOUNTS => 709.25,
@@ -1964,8 +2493,8 @@ final class OrderBuilderSpec
                 Cart::ONLY_SHIPPING => 0.00,
             ],
             false => [
-                Cart::ONLY_DISCOUNTS => 586.25,
-                Cart::BOTH => 2513.75,
+                Cart::ONLY_DISCOUNTS => 586.16,
+                Cart::BOTH => 2513.84,
                 Cart::ONLY_SHIPPING => 0.00,
             ],
             'average_products_tax_rate' => 21.0,
@@ -2089,6 +2618,9 @@ final class OrderBuilderSpec
         StubStore::$productCategories[8202] = [['name' => 'Stationery']];
         StubStore::$images[8201] = ['id_image' => 8201];
         StubStore::$images[8202] = ['id_image' => 8202];
+        // 8201 is zero-rated (430.80/430.80): no group declared (resolves 0).
+        self::declareProductRate($cart, 8202, 21.0);
+        self::declareWrappingRate($cart, 21.0);
         StubStore::$cartShipping[493] = [
             true => 116.00,
             false => 95.87,
@@ -2219,6 +2751,7 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[8302] = [['name' => 'General']];
         StubStore::$images[8302] = ['id_image' => 8302];
+        self::declareProductRate($cart, 8302, 21.0);
         StubStore::$cartShipping[497] = [true => 0.00, false => 0.00];
         StubStore::$cartTotals[497] = [
             true => [
@@ -2343,6 +2876,7 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[8396] = [['name' => 'General']];
         StubStore::$images[8396] = ['id_image' => 8396];
+        self::declareProductRate($cart, 8396, 10.0);
         StubStore::$cartShipping[596] = [true => 12.10, false => 10.00];
         StubStore::$cartTotals[596] = [
             true => [
@@ -2476,6 +3010,9 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[8397] = [['name' => 'General']];
         StubStore::$images[8397] = ['id_image' => 8397];
+        // Declared 21%: applied tax 115.89 vs expected 115.88 is within the
+        // 2-cent relay tolerance, so the declared rate is relayed as-is.
+        self::declareProductRate($cart, 8397, 21.0);
         StubStore::$cartShipping[597] = [true => 2.99, false => 2.47];
         StubStore::$cartTotals[597] = [
             true => [
@@ -2604,6 +3141,7 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[8398] = [['name' => 'General']];
         StubStore::$images[8398] = ['id_image' => 8398];
+        self::declareProductRate($cart, 8398, 21.0);
         StubStore::$cartShipping[598] = [true => 1.21, false => 1.00];
         StubStore::$cartTotals[598] = [
             true => [
@@ -2733,6 +3271,7 @@ final class OrderBuilderSpec
         ];
         StubStore::$productCategories[8301] = [['name' => 'General']];
         StubStore::$images[8301] = ['id_image' => 8301];
+        self::declareProductRate($cart, 8301, 21.0);
         StubStore::$cartShipping[496] = [true => 0.00, false => 0.00];
         StubStore::$cartTotals[496] = [
             true => [
@@ -2837,6 +3376,7 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[9101] = [['name' => 'TV']];
         StubStore::$images[9101] = ['id_image' => 9101];
+        self::declareProductRate($cart, 9101, 21.0);
         StubStore::$cartShipping[6101] = [
             true => 58.00,
             false => 47.93,
@@ -2967,6 +3507,7 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[9201] = [['name' => 'Projectors']];
         StubStore::$images[9201] = ['id_image' => 9201];
+        self::declareProductRate($cart, 9201, 21.0);
         StubStore::$cartShipping[6102] = [
             true => 2.99,
             false => 2.47,
@@ -3057,6 +3598,7 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[9301] = [['name' => 'Audio']];
         StubStore::$images[9301] = ['id_image' => 9301];
+        self::declareProductRate($cart, 9301, 21.0);
         StubStore::$cartShipping[6103] = [
             true => 2.99,
             false => 2.47,
@@ -4932,6 +5474,7 @@ final class OrderBuilderSpec
 
         StubStore::$productCategories[701] = [['name' => 'Furniture']];
         StubStore::$images[701] = ['id_image' => 9901];
+        self::declareProductRate($cart, 701, 21.0);
 
         $items = $module->getTwoProductItems($cart);
 
@@ -5044,6 +5587,9 @@ foreach ($tests as $name => $callable) {
     } catch (Throwable $e) {
         $failed++;
         fwrite(STDERR, "FAIL {$name}: {$e->getMessage()}\n");
+        if (getenv('TESTS_TRACE')) {
+            fwrite(STDERR, $e->getTraceAsString() . "\n");
+        }
     }
 }
 

@@ -118,6 +118,11 @@ final class SurchargeCartLineSpec
         ]];
         StubStore::$productCategories[9401] = [['name' => 'Books']];
         StubStore::$images[9401] = ['id_image' => 9401];
+        // Declared-rate relay (TWO-24880): the ordinary product's own
+        // tax-rules group (flat 5.5%, matching total/total_wt) — distinct
+        // from the fee product's merchant-selected group (TAX_GROUP_ID).
+        StubStore::$products[9401]['id_tax_rules_group'] = 500;
+        StubStore::$taxRuleRates[500] = 5.5;
         StubStore::$cartTotals[self::CART_ID] = [
             true => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => self::PRODUCT_GROSS],
             false => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => self::PRODUCT_NET],
@@ -672,6 +677,16 @@ final class SurchargeCartLineSpec
         Configuration::updateValue('VATNUMBER_COUNTRY', 47);
         StubStore::$addresses[8201]['vat_number'] = 'FR999999999';
         StubStore::$addresses[8202]['vat_number'] = 'FR999999999';
+        // Core's Product::priceCalculation zeroes the tax on EVERY cart line
+        // for the exempt buyer, so the exempt cart reports untaxed amounts —
+        // keep the fixture coherent with what core would produce (the relay
+        // fails loud on taxed amounts under an exempt declaration).
+        StubStore::$cartProducts[self::CART_ID][0]['total_wt'] = self::PRODUCT_NET;
+        StubStore::$cartTotals[self::CART_ID] = [
+            true => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => self::PRODUCT_NET],
+            false => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => self::PRODUCT_NET],
+            'average_products_tax_rate' => 0.0,
+        ];
 
         $module->syncTwoSurchargeCartLine($cart, true);
         $lines = self::feeLines();
