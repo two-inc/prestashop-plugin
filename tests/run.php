@@ -1329,11 +1329,12 @@ final class OrderBuilderSpec
 
         // High-quantity ROUND_ITEM-style edge: 400 x 8.34005 = 3336.02, but
         // the emitted 2dp unit price (8.34) implies 400 x 8.34 = 3336.00 -
-        // exactly the 0.02 NET_FORMULA_TOLERANCE edge. (A unit price like
-        // 8.3449 is impossible at qty 400 under the tightened tolerance:
-        // 400 x 0.0049 = 1.96 of drift - any real 3rd/4th-decimal unit
-        // price would rightly fail; only sub-half-cent-per-400 precision
-        // survives.) Declared 21%: tax 700.56 = round(3336.02 * 0.21, 2).
+        // a 0.02 drift, comfortably inside NET_FORMULA_TOLERANCE (0.05).
+        // (NET_FORMULA_TOLERANCE is deliberately NOT tightened to 0.02:
+        // a >2dp unit price at high quantity drifts up to qty*0.005, e.g.
+        // 400 x 8.3449 = 1.96 of drift - the 2dp-unit/6dp-discount
+        // absorption gap must be fixed before tightening, design 4.3 pt 4.)
+        // Declared 21%: tax 700.56 = round(3336.02 * 0.21, 2).
         StubStore::$cartProducts[19] = [[
             'id_product' => 8851,
             'link_rewrite' => 'bulk-precision-product',
@@ -1364,10 +1365,10 @@ final class OrderBuilderSpec
         TinyAssert::same('0.00', (string)$items[0]['discount_amount']);
         TinyAssert::same(400, (int)$items[0]['quantity']);
         // The 0.02 drift between qty*unit_price and net must pass the
-        // tightened net-formula validation - at the exact boundary.
+        // net-formula validation (tolerance 0.05).
         TinyAssert::true(
             $module->validateTwoLineItems($items),
-            'High-quantity line at the 2-cent net-formula boundary must validate'
+            'High-quantity line with 2-cent net-formula drift must validate'
         );
         TinyAssert::count(0, PrestaShopLogger::$logs);
     }
