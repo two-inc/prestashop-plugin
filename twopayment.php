@@ -136,6 +136,37 @@ class Twopayment extends PaymentModule
     protected $verifiedMerchantId = null;
     protected $verifiedMerchantShortName = null;
 
+    // Module metadata fields ModuleCore does not declare on all supported
+    // PrestaShop versions ($bootstrap was only added to ModuleCore in PS 8;
+    // $author_address and $languages are never declared by core), plus this
+    // module's own configuration-backed fields. Declared explicitly so they
+    // are real properties (not PHP dynamic properties) and visible to
+    // static analysis.
+    /** @var bool */
+    public $bootstrap;
+    /** @var string */
+    public $author_address;
+    /** @var array */
+    public $languages = array();
+    /** @var string|false */
+    public $merchant_short_name;
+    /** @var string|false */
+    public $api_key;
+    /** @var string|false */
+    public $enable_company_name;
+    /** @var string|false */
+    public $enable_company_id;
+    /** @var string|false */
+    public $enable_department;
+    /** @var string|false */
+    public $enable_project;
+    /** @var int */
+    public $enable_order_intent;
+    /** @var string|false */
+    public $use_account_type;
+    /** @var string|false */
+    public $finalize_purchase_shipping;
+
     public function __construct()
     {
         $this->name = 'twopayment';
@@ -8439,7 +8470,11 @@ class Twopayment extends PaymentModule
             SpecificPrice::flushCache();
         }
         if (method_exists('Product', 'flushPriceCache')) {
-            Product::flushPriceCache((int) $productId);
+            // No arguments: flushPriceCache() takes none on any supported
+            // PrestaShop version (1.7.6 through 8.2) — it always clears the
+            // whole static price cache. The previously passed product id was
+            // silently ignored.
+            Product::flushPriceCache();
         }
     }
 

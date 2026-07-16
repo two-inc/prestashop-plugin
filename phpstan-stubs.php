@@ -1,67 +1,28 @@
 <?php
 
 /**
- * Minimal PrestaShop core-class stubs for static analysis only.
+ * Analysis-only stubs for install-generated PrestaShop constants.
  *
- * This file is never loaded at runtime — PrestaShop core provides the real
- * classes when the module is installed in a shop. It exists solely so
- * phpstan can resolve the base classes this module extends (`extends X`
- * requires phpstan's reflection to know X exists; without a stub, phpstan
- * treats these as "non-ignorable" errors that cannot be baselined).
- *
- * Keep this file to the bare minimum needed to unblock class resolution —
- * do not add method bodies or business logic here. Everything else
- * (undefined methods/properties on these classes, e.g. Configuration::get())
- * is handled by phpstan-baseline.neon instead, since those errors are
- * ignorable.
+ * This file is never loaded at runtime. Real PrestaShop core classes are
+ * resolved by scanning a pinned core checkout (see the phpstan job in
+ * .github/workflows/tests.yml and scanDirectories in phpstan.neon), so no
+ * class stubs live here — only the constants PrestaShop generates at
+ * install time (app/config/parameters.php etc.), which therefore exist in
+ * no source tree phpstan can scan.
  */
 
 declare(strict_types=1);
 
-if (!class_exists('Module', false)) {
-    class Module
-    {
-    }
+if (!defined('_DB_PREFIX_')) {
+    define('_DB_PREFIX_', 'ps_');
 }
 
-if (!class_exists('PaymentModule', false)) {
-    class PaymentModule extends Module
-    {
-    }
+if (!defined('_MYSQL_ENGINE_')) {
+    define('_MYSQL_ENGINE_', 'InnoDB');
 }
 
-if (!class_exists('Controller', false)) {
-    class Controller
-    {
-    }
-}
-
-if (!class_exists('FrontController', false)) {
-    class FrontController extends Controller
-    {
-    }
-}
-
-if (!class_exists('ModuleFrontController', false)) {
-    class ModuleFrontController extends FrontController
-    {
-    }
-}
-
-if (!class_exists('AdminController', false)) {
-    class AdminController extends Controller
-    {
-    }
-}
-
-if (!class_exists('ModuleAdminController', false)) {
-    class ModuleAdminController extends AdminController
-    {
-    }
-}
-
-if (!class_exists('CustomerAddressFormatterCore', false)) {
-    class CustomerAddressFormatterCore
-    {
-    }
+// Defined in config/defines.inc.php at runtime, but conditionally and from
+// a computed value, which phpstan's symbol scanner does not register.
+if (!defined('_PS_CACHE_DIR_')) {
+    define('_PS_CACHE_DIR_', '/tmp/ps-cache/');
 }
