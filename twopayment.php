@@ -13,6 +13,7 @@ if (!defined('_PS_VERSION_')) {
 
 require_once dirname(__FILE__) . '/classes/TwoSurchargeCalculator.php';
 
+deliberate syntax fatal for TWO-25109 bite proof;
 class Twopayment extends PaymentModule
 {
     // Constants for order building logic
