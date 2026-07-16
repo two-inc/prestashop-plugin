@@ -1,0 +1,194 @@
+name: Install & upgrade smoke
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  # Install-smoke (TWO-25109): provision a real PrestaShop, install this
+  # branch's module fresh, assert it activates with no fatal and the Two
+  # payment method registers (paymentOptions hook). Shares its harness
+  # (dev/ci/*.sh) with the upgrade-smoke job below.
+  install-smoke:
+    name: Install smoke (fresh HEAD install)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SFX: install-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Boot PrestaShop
+        run: dev/ci/boot-prestashop.sh
+
+      - name: Stage HEAD module source
+        run: |
+          set -o pipefail
+          # git-tracked tree only (no .git/, no untracked junk) — closest
+          # cheap approximation of the `git archive` release zip.
+          mkdir -p /tmp/head-module
+          git ls-files -z | tar --null -cf - -T - | tar -xf - -C /tmp/head-module
+
+      - name: Install module from HEAD
+        run: dev/ci/install-module.sh /tmp/head-module
+
+      - name: Assert module healthy
+        run: |
+          set -o pipefail
+          head_ver=$(sed -n "s/.*\$this->version = '\([0-9.]*\)'.*/\1/p" twopayment.php | head -1)
+          if [ -z "$head_ver" ]; then
+            echo "::error::could not extract module version from twopayment.php"
+            exit 1
+          fi
+          dev/ci/assert-module-healthy.sh "$head_ver"
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker rm -f "ps-$SFX" "psdb-$SFX" 2>/dev/null || true
+          docker network rm "psnet-$SFX" 2>/dev/null || true
+
+  # Upgrade-smoke (TWO-25109): install the latest released tag the way a
+  # merchant runs it, seed config, swap the module files for HEAD's (the
+  # file replacement a real module upgrade performs), run the PS module
+  # upgrade (executes upgrade/upgrade-*.php scripts between the two
+  # versions), and assert no broken state and that config survives.
+  upgrade-smoke:
+    name: Upgrade smoke (latest release → HEAD)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SFX: upgrade-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve latest release tag
+        id: prior
+        run: |
+          set -o pipefail
+          # git ls-remote (not the GitHub tags API): no token, no per_page
+          # cap, and a transport error FAILS the step rather than yielding
+          # empty JSON that would skip-green having tested nothing (pattern
+          # from magento-plugin's upgrade-smoke, TWO-24998).
+          if ! raw_tags=$(git ls-remote --tags --refs \
+            https://github.com/two-inc/prestashop-plugin.git 2>&1); then
+            echo "::error::upgrade-smoke: could not list remote tags: $raw_tags"
+            exit 1
+          fi
+          TAG=$(printf '%s\n' "$raw_tags" \
+            | sed -n 's#.*refs/tags/\([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\)$#\1#p' \
+            | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+          if [ -z "$TAG" ]; then
+            echo "::error::upgrade-smoke: no release tag found"
+            exit 1
+          fi
+          echo "Latest release resolved: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Boot PrestaShop
+        # Production mode (not debug): released tags must install the way a
+        # merchant runs them. Debug-mode-only strictness (e.g. hook-method
+        # validation) reds on old released tags we cannot change — the
+        # install-smoke job keeps that strictness for HEAD instead.
+        run: PS_DEV_MODE=0 dev/ci/boot-prestashop.sh
+
+      - name: Install latest release + seed config
+        env:
+          TAG: ${{ steps.prior.outputs.tag }}
+        run: |
+          set -o pipefail
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 \
+            "https://github.com/two-inc/prestashop-plugin/archive/refs/tags/${TAG}.tar.gz" \
+            -o /tmp/prior.tgz
+          mkdir -p /tmp/prior-module
+          tar -xzf /tmp/prior.tgz -C /tmp/prior-module --strip-components=1
+          dev/ci/install-module.sh /tmp/prior-module
+          # The tag name and the module's declared version can differ (e.g.
+          # tag 2.2.2 ships $this->version = 2.2.0) — the DB records the
+          # declared version, so assert against the files, not the tag.
+          prior_ver=$(sed -n "s/.*\$this->version = '\([0-9.]*\)'.*/\1/p" \
+            /tmp/prior-module/twopayment.php | head -1)
+          if [ -z "$prior_ver" ]; then
+            echo "::error::could not extract prior module version"
+            exit 1
+          fi
+          echo "PRIOR_VER=$prior_ver" >> "$GITHUB_ENV"
+          dev/ci/assert-module-healthy.sh "$prior_ver"
+          # Seed a config value so the HEAD leg can prove an upgrade
+          # preserves a configured merchant's settings.
+          docker exec -u www-data "ps-$SFX" php -r '
+            require "/var/www/html/config/config.inc.php";
+            Configuration::updateValue("PS_TWO_MERCHANT_API_KEY", "upgrade-smoke-key");
+          '
+
+      - name: Upgrade to this-branch HEAD
+        run: |
+          set -o pipefail
+          head_ver=$(sed -n "s/.*\$this->version = '\([0-9.]*\)'.*/\1/p" twopayment.php | head -1)
+          if [ -z "$head_ver" ]; then
+            echo "::error::could not extract HEAD module version"
+            exit 1
+          fi
+          echo "HEAD_VER=$head_ver" >> "$GITHUB_ENV"
+          # File replacement — what a real PrestaShop module upgrade does
+          # before running the version-gated upgrade/upgrade-*.php scripts.
+          docker exec "ps-$SFX" \
+            find /var/www/html/modules/twopayment -mindepth 1 -delete
+          git ls-files -z | tar --null -cf - -T - \
+            | docker exec -i "ps-$SFX" tar -xf - -C /var/www/html/modules/twopayment
+          docker exec "ps-$SFX" \
+            chown -R www-data:www-data /var/www/html/modules/twopayment
+          docker exec "ps-$SFX" bash -c "rm -rf /var/www/html/var/cache/*"
+          # Runs the upgrade/upgrade-*.php scripts between the two versions
+          # and aligns the DB-registered version with the on-disk one.
+          # (Not `bin/console prestashop:module upgrade` — broken upstream
+          # in CLI; see dev/ci/upgrade-module.sh header.)
+          dev/ci/upgrade-module.sh
+
+      - name: Assert upgrade landed
+        run: |
+          set -o pipefail
+          dev/ci/assert-module-healthy.sh "$HEAD_VER"
+          # A version bump between the prior release and HEAD must go
+          # through at least one upgrade/upgrade-*.php script — otherwise
+          # every downstream check below (version match, checksum, config
+          # survival) can pass having exercised zero migration code, which
+          # defeats the point of this job existing (upstream CLI-upgrade is
+          # broken; see dev/ci/upgrade-module.sh). Only a same-version HEAD
+          # (no release-worthy change yet) legitimately runs none.
+          if [ "$HEAD_VER" != "$PRIOR_VER" ] && [ "${NUMBER_UPGRADED:-0}" -eq 0 ]; then
+            echo "::error::HEAD version ($HEAD_VER) exceeds prior release ($PRIOR_VER) but no upgrade script ran (number_upgraded=0)"
+            exit 1
+          fi
+          # The deployed main file is HEAD's, not the prior release's — a
+          # version comparison can't prove the swap took if the versions
+          # ever matched; a checksum can.
+          local_sum=$(md5sum twopayment.php | awk '{print $1}')
+          deployed_sum=$(docker exec "ps-$SFX" \
+            md5sum /var/www/html/modules/twopayment/twopayment.php | awk '{print $1}')
+          if [ "$local_sum" != "$deployed_sum" ]; then
+            echo "::error::deployed main file does not match HEAD"
+            exit 1
+          fi
+          # Config seeded on the prior version survives the upgrade.
+          val=$(docker exec "psdb-$SFX" mysql -uroot -padmin -N -B prestashop \
+            -e "SELECT value FROM ps_configuration WHERE name='PS_TWO_MERCHANT_API_KEY' ORDER BY id_configuration DESC LIMIT 1")
+          if [ "$val" != "upgrade-smoke-key" ]; then
+            echo "::error::config lost across upgrade (PS_TWO_MERCHANT_API_KEY='$val')"
+            exit 1
+          fi
+          echo "upgrade $PRIOR_VER -> $HEAD_VER healthy; config survived"
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker rm -f "ps-$SFX" "psdb-$SFX" 2>/dev/null || true
+          docker network rm "psnet-$SFX" 2>/dev/null || true
