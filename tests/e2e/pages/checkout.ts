@@ -22,12 +22,18 @@ export async function completeGuestStep(page: Page, email: string) {
 }
 
 /**
- * Fills and submits the address step with a company name set (Two's
- * checkout gate gets past "no company" and as far as "no *verified*
- * company" — see checkTwoOrderIntentApprovalAtPayment in twopayment.php).
- * A real organization-number match requires driving Two's live company
- * search widget, which needs a real merchant key; out of scope for this
- * hermetic suite (see seed-two-config.sh).
+ * Fills and submits the address step with a company name set. This gets
+ * past controllers/front/payment.php's local, network-free pre-flight
+ * guard's "no company at all" branch and as far as its "no *verified*
+ * organization number" branch (getTwoCheckoutCompanyData ->
+ * getCompanyDataWithFallbacks in twopayment.php - a pure local check
+ * against the Address row and session cookies, no HTTP call). TWO-25110
+ * review: this is NOT the same gate as checkTwoOrderIntentApprovalAtPayment
+ * (the real /v1/order_intent live-API call) - that call is never reached
+ * here, since the pre-flight guard above returns first. A real
+ * organization-number match requires driving Two's live company search
+ * widget, which needs a real merchant key; out of scope for this hermetic
+ * suite (see seed-two-config.sh).
  */
 export async function completeAddressStep(page: Page, company: string) {
   const addr = page.locator("#checkout-addresses-step");
@@ -70,14 +76,18 @@ export async function selectTwoPaymentAndPlaceOrder(page: Page) {
 }
 
 /**
- * Two's own checkout-time gate rejects an unverified/uncommitted company
- * with this exact copy (twopayment.php: getTwoCheckoutCompanyData caller).
- * A dummy/unverified merchant key can never get further than this in a
- * hermetic CI run — see seed-two-config.sh header for why that's expected,
- * not a test bug.
+ * The pre-flight company/organization-number guard in
+ * controllers/front/payment.php rejects with this exact copy before any
+ * network call is made (see completeAddressStep's docblock above for the
+ * full trace) — a company filled via the plain text field, never through
+ * Two's live search widget, can never get past this locally in a
+ * hermetic CI run. Scoped to #notifications (PS's flash-message
+ * container) with .first(): a bare `.alert-danger` locator also matches
+ * PS core's per-field "address incomplete" validation markup elsewhere on
+ * this same page and trips Playwright's strict-mode multi-match error.
  */
 export async function expectCompanyRequiredRejection(page: Page) {
-  await expect(page.locator("article.alert-danger")).toContainText(
+  await expect(page.locator("#notifications article.alert-danger").first()).toContainText(
     /select your company/i,
     { timeout: LONG_TIMEOUT }
   );
