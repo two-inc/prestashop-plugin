@@ -17,11 +17,16 @@
 #
 # Usage: upgrade-module.sh
 # Required env: SFX (same namespacing suffix passed to boot-prestashop.sh)
+#
+# Writes NUMBER_UPGRADED=<n> to $GITHUB_ENV (when set) so the caller can
+# assert a migration actually ran when it expected one — a version bump
+# with a same-version no-op result would otherwise green identically to a
+# genuinely-applied upgrade.
 set -euo pipefail
 
 : "${SFX:?SFX (namespacing suffix) must be set}"
 
-docker exec -u www-data "ps-$SFX" php -d memory_limit=512M -r '
+number_upgraded=$(docker exec -u www-data "ps-$SFX" php -d memory_limit=512M -r '
   require "/var/www/html/config/config.inc.php";
 
   // Warm Module::$modules_cache BEFORE initUpgradeModule (see header).
@@ -33,6 +38,7 @@ docker exec -u www-data "ps-$SFX" php -d memory_limit=512M -r '
           continue;
       }
       $found = true;
+      $numberUpgraded = 0;
       if (Module::initUpgradeModule($m)) {
           $instance = Module::getInstanceByName("twopayment");
           $result = $instance->runUpgradeModule();
@@ -47,23 +53,30 @@ docker exec -u www-data "ps-$SFX" php -d memory_limit=512M -r '
               fwrite(STDERR, "module upgrade did not succeed\n");
               exit(1);
           }
-          printf(
+          $numberUpgraded = $result["number_upgraded"];
+          fwrite(STDERR, sprintf(
               "applied %d upgrade script(s), upgraded to %s\n",
               $result["number_upgraded"],
               $result["upgraded_to"]
-          );
+          ));
       } else {
-          echo "no upgrade scripts needed\n";
+          fwrite(STDERR, "no upgrade scripts needed\n");
       }
       // Mirror ModuleManager::upgradeMigration: align the DB version with
       // the on-disk version even when no upgrade script covers the last step.
       Module::upgradeModuleVersion("twopayment", $m->version);
+      // Sole stdout line: the caller reads this via command substitution,
+      // everything else above goes to stderr so it stays out of the value.
+      echo $numberUpgraded;
       break;
   }
   if (!$found) {
       fwrite(STDERR, "module twopayment not found on disk\n");
       exit(1);
   }
-'
+')
 docker exec "ps-$SFX" bash -c "rm -rf /var/www/html/var/cache/*"
-echo "module twopayment upgrade complete"
+echo "module twopayment upgrade complete (number_upgraded=$number_upgraded)"
+if [ -n "${GITHUB_ENV:-}" ]; then
+  echo "NUMBER_UPGRADED=$number_upgraded" >> "$GITHUB_ENV"
+fi

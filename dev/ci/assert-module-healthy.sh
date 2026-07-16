@@ -54,7 +54,13 @@ docker exec -u www-data "ps-$SFX" php -d memory_limit=512M -r '
   echo "module boots: " . $m->version . "\n";
 '
 
-# Storefront renders without a fatal.
-docker exec "ps-$SFX" curl -sf http://localhost/ -o /dev/null
+# Storefront renders without a fatal. Explicit status-code check, not
+# `curl -f`: -f only fails on 4xx/5xx, so a canonical-domain 301 or
+# maintenance 302 would exit 0 having rendered nothing.
+code=$(docker exec "ps-$SFX" curl -s -o /dev/null -w '%{http_code}' http://localhost/)
+if [ "$code" != "200" ]; then
+  echo "::error::storefront did not return 200 (got '$code')"
+  exit 1
+fi
 
 echo "module twopayment healthy at version $EXPECTED_VERSION"
