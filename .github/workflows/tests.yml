@@ -64,5 +64,26 @@ jobs:
           curl -sL -o /tmp/phpstan.phar "https://github.com/phpstan/phpstan/releases/download/${PHPSTAN_VERSION}/phpstan.phar"
           echo "${PHPSTAN_SHA256}  /tmp/phpstan.phar" | sha256sum -c -
 
+      # Real stub discovery (TWO-25107): phpstan resolves PrestaShop core
+      # classes from an actual core checkout instead of blanket
+      # class.notFound baseline ignores. Pinned to the module's minimum
+      # supported version (ps_versions_compliancy min in twopayment.php) so
+      # signatures are checked against the strictest floor the module
+      # claims to support. Sparse + blob-filtered: only the dirs
+      # scanDirectories in phpstan.neon needs (~9 MB, a few seconds).
+      - name: Fetch PrestaShop core sources (pinned)
+        env:
+          PS_CORE_TAG: "1.7.6.0"
+        run: |
+          git clone --depth 1 --branch "$PS_CORE_TAG" --filter=blob:none --sparse \
+            https://github.com/PrestaShop/PrestaShop.git /tmp/prestashop-core
+          git -C /tmp/prestashop-core sparse-checkout set classes config src/Core/Payment
+
+      # PrestaShop generates `class X extends XCore {}` aliases at runtime
+      # (PrestaShopAutoload); mirror them statically so phpstan can resolve
+      # the plain class names the module uses.
+      - name: Generate core class aliases
+        run: php dev/ci/generate-ps-class-aliases.php /tmp/prestashop-core /tmp/prestashop-class-aliases.php
+
       - name: Run phpstan
         run: php /tmp/phpstan.phar analyse --configuration=phpstan.neon --no-progress --memory-limit=1G
