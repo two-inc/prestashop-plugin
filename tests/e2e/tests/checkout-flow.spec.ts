@@ -13,6 +13,11 @@ import {
 
 // Unique per test run so PrestaShop's "email already registered" guard on
 // the guest-checkout form never blocks a retry within the same container.
+// (Playwright gives each test() its own BrowserContext by default - no
+// storageState/context reuse configured in playwright.config.ts - so
+// cookies/cart/session never leak between the two tests below or across
+// a retry; this email uniqueness is only guarding the one thing that
+// *does* persist server-side: the customer record itself.)
 function uniqueEmail(): string {
   return `two-e2e-${Date.now()}-${Math.floor(Math.random() * 1e6)}@two.inc`;
 }

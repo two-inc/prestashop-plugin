@@ -8,11 +8,20 @@
 # real merchant setup does. This repo's CI is deliberately hermetic (no
 # secrets, no live Two API dependency — see tests.yml/smoke.yml), so this
 # script writes the same config keys directly, bypassing the live call.
-# It's for e2e/UI-rendering assertions only: any actual Two API call made
-# later in a request (order_intent, order create) still hits the real
-# network with this dummy key and will legitimately fail/decline — that's
-# expected and is itself part of what the e2e suite asserts (checkout
-# fails gracefully, no fatal, no order silently created).
+# It's for e2e/UI-rendering assertions only. The e2e workflow also sets
+# TWO_API_BASE_URL to an unreachable port (see boot-prestashop.sh) so the
+# checkout-media priming calls (merchant terms/FX-rate refresh, fired on
+# every checkout page view) fail fast rather than hitting Two's real
+# sandbox from public CI with this dummy key.
+#
+# Deliberately NOT seeded: PS_TWO_MERCHANT_MIN_ORDER / the platform
+# minimum-order config (see isTwoMinimumOrderSatisfied /
+# getPlatformMinimumOrder in twopayment.php). Left unset so that gate
+# short-circuits to "satisfied" — it has a fail-closed branch on
+# FX-conversion with no cached rate, which would hide the payment option
+# and break the e2e suite's "option renders" assertion for a reason
+# unrelated to what that test is checking. If you add seeding for either
+# key here, re-verify that assertion still passes.
 #
 # Usage: seed-two-config.sh
 # Required env: SFX (same namespacing suffix passed to boot-prestashop.sh)

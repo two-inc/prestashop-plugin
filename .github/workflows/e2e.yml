@@ -36,15 +36,30 @@ jobs:
   e2e:
     name: E2E checkout flow (PS ${{ matrix.ps-version }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        ps-version: ["8", "9"]
+        # Explicit per-leg host-port (not a shared literal): keeps the
+        # collision-avoidance invariant every other resource in this
+        # harness follows (container/network names are namespaced by
+        # $SFX for the same reason) in case this workflow ever moves off
+        # isolated per-matrix-leg GitHub-hosted VMs.
+        include:
+          - ps-version: "8"
+            host-port: "18180"
+          - ps-version: "9"
+            host-port: "18190"
     env:
       SFX: e2e-${{ matrix.ps-version }}-${{ github.run_id }}
       PS_IMAGE: prestashop/prestashop:${{ matrix.ps-version }}-apache
-      PS_HOST_PORT: "18080"
+      PS_HOST_PORT: ${{ matrix.host-port }}
+      # Points the module's checkout-media priming calls (merchant terms /
+      # FX-rate refresh, fired on every checkout page view - see
+      # boot-prestashop.sh's TWO_API_BASE_URL comment) at a port nothing
+      # listens on, so they fail fast (connection refused) instead of
+      # making live calls to Two's real sandbox from public CI.
+      TWO_API_BASE_URL: "http://127.0.0.1:1"
     steps:
       - uses: actions/checkout@v4
 
@@ -69,7 +84,20 @@ jobs:
 
       - name: Install e2e dependencies
         working-directory: tests/e2e
-        run: npm ci && npx playwright install --with-deps chromium
+        run: npm ci
+
+      - name: Install Playwright browser (retry — CDN download flakes like Docker Hub pulls)
+        working-directory: tests/e2e
+        run: |
+          n=0
+          until npx playwright install --with-deps chromium; do
+            n=$((n + 1))
+            if [ "$n" -ge 3 ]; then
+              echo "::error::playwright install failed after 3 attempts"
+              exit 1
+            fi
+            sleep $((n * 10))
+          done
 
       - name: Run Playwright e2e
         working-directory: tests/e2e

@@ -29,6 +29,16 @@ DB_IMAGE="mariadb:10.11"
 # upgrade-smoke jobs (docker-exec-only) get the exact same `docker run`
 # invocation as before this was added.
 PS_HOST_PORT="${PS_HOST_PORT:-}"
+# Optional (TWO-25110): forwarded straight to the module's existing
+# TWO_API_BASE_URL dev-mode override (twopayment.php getDevEnvOverride,
+# gated on _PS_MODE_DEV_ i.e. PS_DEV_MODE=1). Unset by default, matching
+# every other job's behaviour (module falls back to the real
+# api.sandbox.two.inc host). The e2e job points this at a local port
+# nothing listens on so the module's checkout-media priming calls
+# (merchant terms/FX-rate refresh, fired on every checkout page view)
+# fail fast instead of making live calls to Two's real sandbox from
+# public CI with a throwaway key.
+TWO_API_BASE_URL="${TWO_API_BASE_URL:-}"
 
 # Docker Hub intermittently 429s GitHub-hosted runners; every other network
 # op in this harness is retry-wrapped (curl --retry, ls-remote fail-loud) —
@@ -81,7 +91,12 @@ if [ -n "$PS_HOST_PORT" ]; then
   PORT_ARGS=(-p "127.0.0.1:${PS_HOST_PORT}:80")
 fi
 
-docker run --detach --name "ps-$SFX" --network "psnet-$SFX" "${PORT_ARGS[@]}" \
+ENV_ARGS=()
+if [ -n "$TWO_API_BASE_URL" ]; then
+  ENV_ARGS=(-e "TWO_API_BASE_URL=$TWO_API_BASE_URL")
+fi
+
+docker run --detach --name "ps-$SFX" --network "psnet-$SFX" "${PORT_ARGS[@]}" "${ENV_ARGS[@]}" \
   -e DB_SERVER="psdb-$SFX" -e DB_NAME=prestashop \
   -e DB_USER=root -e DB_PASSWD=admin \
   -e PS_DOMAIN="$PS_DOMAIN_VALUE" -e PS_INSTALL_AUTO=1 -e PS_DEV_MODE="$PS_DEV_MODE" \
