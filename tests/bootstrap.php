@@ -213,6 +213,13 @@ namespace {
     {
     }
 
+    // Guarded the same way phpstan-stubs.php guards its PrestaShop core
+    // stand-ins: these three classes are only ever loaded together with the
+    // rest of this bootstrap in the offline test process, but the guard is
+    // cheap insurance against a "cannot redeclare class" fatal if a future
+    // refactor ever loads this file alongside another stub source in the
+    // same PHP process.
+    if (!class_exists('ModuleFrontController', false)) {
     class ModuleFrontController
     {
         public $module;
@@ -233,7 +240,9 @@ namespace {
             throw new StubRedirect((string) $url);
         }
     }
+    }
 
+    if (!class_exists('Module', false)) {
     class Module
     {
         public int $id = 1;
@@ -248,7 +257,9 @@ namespace {
             return (string) $name === 'twopayment';
         }
     }
+    }
 
+    if (!class_exists('PaymentModule', false)) {
     class PaymentModule extends Module
     {
         public string $name = 'twopayment';
@@ -309,6 +320,7 @@ namespace {
 
             return $filtered;
         }
+    }
     }
 
     class Context
