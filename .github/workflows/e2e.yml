@@ -1,0 +1,107 @@
+name: E2E (Playwright checkout flow)
+
+# PS version matrix (TWO-25110): Docker Hub's prestashop/prestashop repo
+# has dropped versioned 1.6/1.7 tags entirely — only bare major tags `8`
+# and `9` exist as of 2026-07-16. The module's declared floor
+# (ps_versions_compliancy min in twopayment.php) is 1.7.6.0, but with no
+# CI image left for that line it cannot be smoke-tested here. That gap is
+# made explicit via the "1.7 (no CI image)" skip job below rather than
+# silently dropped from the matrix — see its step for the full reasoning.
+#
+# Scope (see tests/e2e/pages/checkout.ts and the spec file for the full
+# reasoning): this suite drives a real guest checkout — cart, address,
+# delivery, payment — against an ephemeral, hermetically-configured PS
+# container (dev/ci/seed-two-config.sh, no live Two credentials, matching
+# this repo's existing no-secrets CI convention). It asserts the Two
+# payment option renders correctly, and that attempting to place an order
+# without a company verified through Two's live search widget is declined
+# gracefully (no fatal, no order silently created) — the deterministic,
+# secret-free outcome any unverified/dummy merchant key produces. It does
+# not exercise a real approved order end to end; that needs live Two
+# sandbox credentials, which this repo does not wire into CI for any job.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: E2E checkout flow (PS ${{ matrix.ps-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        ps-version: ["8", "9"]
+    env:
+      SFX: e2e-${{ matrix.ps-version }}-${{ github.run_id }}
+      PS_IMAGE: prestashop/prestashop:${{ matrix.ps-version }}-apache
+      PS_HOST_PORT: "18080"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Boot PrestaShop
+        run: dev/ci/boot-prestashop.sh
+
+      - name: Stage HEAD module source
+        run: |
+          set -o pipefail
+          mkdir -p /tmp/head-module
+          git ls-files -z | tar --null -cf - -T - | tar -xf - -C /tmp/head-module
+
+      - name: Install module from HEAD
+        run: dev/ci/install-module.sh /tmp/head-module
+
+      - name: Seed Two config (hermetic — no live merchant key)
+        run: dev/ci/seed-two-config.sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install e2e dependencies
+        working-directory: tests/e2e
+        run: npm ci && npx playwright install --with-deps chromium
+
+      - name: Run Playwright e2e
+        working-directory: tests/e2e
+        env:
+          STORE_URL: http://localhost:${{ env.PS_HOST_PORT }}
+        run: npx playwright test
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-ps${{ matrix.ps-version }}
+          path: tests/e2e/test-results/
+          retention-days: 7
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker rm -f "ps-$SFX" "psdb-$SFX" 2>/dev/null || true
+          docker network rm "psnet-$SFX" 2>/dev/null || true
+
+  # Explicit skip (TWO-25110): the module's declared version floor
+  # (ps_versions_compliancy min in twopayment.php) is 1.7.6.0, but Docker
+  # Hub's prestashop/prestashop repo has dropped all 1.6/1.7 tags — only
+  # bare major tags `8` and `9` remain (confirmed live 2026-07-16). There is
+  # no CI image left to smoke-test the 1.7 line against. This job exists so
+  # that gap is a visible, explained skip in the checks list rather than a
+  # silently-missing leg of coverage.
+  skip-1-7-no-ci-image:
+    name: E2E checkout flow (PS 1.7 — SKIPPED, no CI image)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain the skip
+        run: |
+          echo "::warning::PS 1.7 (module floor: ps_versions_compliancy min 1.7.6.0) is not covered by this suite. Docker Hub's prestashop/prestashop repo has dropped all 1.6/1.7 tags (only bare major tags 8 and 9 remain, confirmed 2026-07-16) - there is no CI image left to boot for that line. Skipped intentionally, not dropped silently."
