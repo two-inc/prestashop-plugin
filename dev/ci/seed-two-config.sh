@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Shared PrestaShop CI harness (TWO-25110): seed the Two module's merchant
+# config directly in the database so the payment option renders at
+# checkout, without a live network call to Two's verify_api_key endpoint.
+#
+# Why not dev/configure.php? That script calls the real Two API to verify
+# the key and populate merchant_short_name/merchant_id — exactly what a
+# real merchant setup does. This repo's CI is deliberately hermetic (no
+# secrets, no live Two API dependency — see tests.yml/smoke.yml), so this
+# script writes the same config keys directly, bypassing the live call.
+# It's for e2e/UI-rendering assertions only: any actual Two API call made
+# later in a request (order_intent, order create) still hits the real
+# network with this dummy key and will legitimately fail/decline — that's
+# expected and is itself part of what the e2e suite asserts (checkout
+# fails gracefully, no fatal, no order silently created).
+#
+# Usage: seed-two-config.sh
+# Required env: SFX (same namespacing suffix passed to boot-prestashop.sh)
+set -euo pipefail
+
+: "${SFX:?SFX (namespacing suffix) must be set}"
+
+docker exec -u www-data "ps-$SFX" php -d memory_limit=512M -r '
+require "/var/www/html/config/config.inc.php";
+Configuration::updateValue("PS_TWO_MERCHANT_API_KEY", "dummy-e2e-key");
+Configuration::updateValue("PS_TWO_ENVIRONMENT", "development");
+Configuration::updateValue("PS_TWO_MERCHANT_SHORT_NAME", "E2E Test Merchant");
+Configuration::updateValue("PS_TWO_MERCHANT_ID", "e2e-merchant-id");
+Configuration::updateValue("PS_TWO_API_KEY_VERIFIED", 1);
+echo "Two config seeded (hermetic — no live verify_api_key call)\n";
+'
+docker exec "ps-$SFX" bash -c "rm -rf /var/www/html/var/cache/*"
