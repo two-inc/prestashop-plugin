@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Invoice upload is now gated on the merchant record, not an admin toggle** (TWO-25111, per decision TWO-25106 Option A)
+  - The plugin-side invoice upload (own-invoice merchants) now triggers only when the `invoice_distributed_by_merchant` flag on the Two merchant record (`GET /v1/merchant`) is true - the same signal checkout-api itself enforces (TWO-24761), and the same gating model Magento (TWO-24758) and WooCommerce (TWO-24757) use
+  - The flag is cached by the existing TTL-gated merchant-record fetch (shared with `available_terms`/`due_in_days`); absent-from-response is treated as false, a failed fetch serves the last known value, and a merchant identity change fails closed
+  - Module version bumped to `2.6.0`
+
+### Removed
+- **`PS_TWO_USE_OWN_INVOICES` admin setting retired** (TWO-25111)
+  - The "Upload Own Invoices to Two" switch is removed from the module configuration page; the upgrade script deletes the configuration row and any leftover value has zero effect (covered by unit test)
+  - Merchants who had the toggle enabled were server-side whitelisted, and all previously-whitelisted merchants already carry `invoice_distributed_by_merchant = true` (TWO-24761), so no merchant loses the feature on upgrade
+
 ### Added
 - **Buyer surcharge shown as a real PrestaShop cart line** (TWO-24739 parity)
   - Selecting Two at checkout now adds the payment-terms fee as a hidden virtual product line, so the fee appears in PrestaShop's own order summary, cart, order and invoice totals - previously it existed only on the Two-side invoice

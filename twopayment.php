@@ -41,6 +41,14 @@ class Twopayment extends PaymentModule
     // term). Populated by the SAME fetch as CONFIG_MERCHANT_AVAILABLE_TERMS and
     // gated by the shared CONFIG_MERCHANT_AVAILABLE_TERMS_TS (TWO-24859).
     const CONFIG_MERCHANT_DUE_IN_DAYS = 'PS_TWO_MERCHANT_DUE_IN_DAYS';
+    // Cached GET /v1/merchant `invoice_distributed_by_merchant` flag (TWO-25111).
+    // Gates the plugin-side invoice upload (TwoInvoiceUploadService) - the
+    // merchant-controlled admin toggle PS_TWO_USE_OWN_INVOICES it replaces is
+    // retired (TWO-25106, Option A: flag-driven only, no admin toggle).
+    // Populated by the SAME fetch as CONFIG_MERCHANT_AVAILABLE_TERMS and gated
+    // by the shared CONFIG_MERCHANT_AVAILABLE_TERMS_TS. Null-safe: a response
+    // without the field caches `0` (absent = false).
+    const CONFIG_MERCHANT_INVOICE_DISTRIBUTED = 'PS_TWO_MERCHANT_INVOICE_DISTRIBUTED';
     // Cached GET /v1/merchant minimum-order tuple (min_order_amount /
     // min_order_currency / min_order_basis - the funding-partner default with
     // any merchant override, resolved server-side, the same value checkout-api
@@ -132,7 +140,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.5.0';
+        $this->version = '2.6.0';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -314,7 +322,6 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_ID', 1);
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', 1);
         Configuration::updateValue('PS_TWO_USE_ACCOUNT_TYPE', 0);
-        Configuration::updateValue('PS_TWO_USE_OWN_INVOICES', 0); // Disabled by default - must be enabled after coordinating with Two
         Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', 'STANDARD'); // Default: Standard payment terms (not EOM)
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1); // Default: 30 days enabled
         Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1); // Enabled by default; can be disabled for compatibility
@@ -553,6 +560,11 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_FINALIZE_PURCHASE');
         Configuration::deleteByName('PS_TWO_USE_ACCOUNT_TYPE');
         Configuration::deleteByName('PS_TWO_DEBUG_MODE');
+        Configuration::deleteByName(self::CONFIG_MERCHANT_INVOICE_DISTRIBUTED);
+        // Retired admin toggle (TWO-25111) - shops upgraded from <=2.5.0 may
+        // still carry the row; the upgrade script deletes it, this covers
+        // uninstall-without-upgrade.
+        Configuration::deleteByName('PS_TWO_USE_OWN_INVOICES');
         $this->deleteTwoSurchargeCartProduct();
         Configuration::deleteByName(self::CONFIG_SURCHARGE_PRODUCT_ID);
         // The merchant's own TaxRulesGroup referenced by this config is NOT
@@ -1345,44 +1357,6 @@ class Twopayment extends PaymentModule
                     ),
                     array(
                         'type' => 'switch',
-                        'label' => $this->l('Upload Own Invoices to Two'),
-                        'name' => 'PS_TWO_USE_OWN_INVOICES',
-                        'is_bool' => true,
-                        'desc' => $this->l('Enable this ONLY if you are using your own invoices instead of Two\'s generated invoices. This must be coordinated with Two before enabling.') . '<br><br>' .
-                                  '<strong>' . $this->l('When enabled:') . '</strong><br>' .
-                                  '• ' . $this->l('Your PrestaShop invoices will be uploaded to Two when orders are fulfilled') . '<br>' .
-                                  '• ' . $this->l('Two will NOT generate invoices - your invoice is used instead') . '<br><br>' .
-                                  '<strong style="color: #d63031;">' . $this->l('REQUIRED: You must customize your invoice template') . '</strong><br>' .
-                                  $this->l('Edit your invoice template to include Two\'s payment details FOR TWO ORDERS ONLY.') . '<br>' .
-                                  $this->l('Template location:') . ' <code>/themes/YOUR_THEME/pdf/invoice.tpl</code> ' . $this->l('or') . ' <code>/pdf/invoice.tpl</code><br><br>' .
-                                  '<strong>' . $this->l('Add this code to your invoice template:') . '</strong>' .
-                                  '<pre style="background:#f5f5f5; padding:10px; margin:10px 0; border-radius:4px; font-size:11px; overflow-x:auto;">' .
-                                  '{if $order->module == \'twopayment\'}<br>' .
-                                  '&lt;div style="margin-top:20px; padding:15px; border:1px solid #333;"&gt;<br>' .
-                                  '  &lt;strong&gt;Payment Instructions&lt;/strong&gt;&lt;br&gt;<br>' .
-                                  '  The debt represented by this invoice has been assigned to Two.<br>' .
-                                  '  Please pay to Two\'s bank account (details provided by Two).<br>' .
-                                  '  Include your payment reference when paying.<br>' .
-                                  '&lt;/div&gt;<br>' .
-                                  '{/if}</pre>' .
-                                  $this->l('Two will provide you with the specific bank details and payment reference format to include.') . '<br><br>' .
-                                  '<strong style="color: #d63031;">' . $this->l('Important: Contact Two support before enabling this feature.') . '</strong>',
-                        'required' => true,
-                        'values' => array(
-                            array(
-                                'id' => 'PS_TWO_USE_OWN_INVOICES_ON',
-                                'value' => 1,
-                                'label' => $this->l('Yes')
-                            ),
-                            array(
-                                'id' => 'PS_TWO_USE_OWN_INVOICES_OFF',
-                                'value' => 0,
-                                'label' => $this->l('No')
-                            ),
-                        ),
-                    ),
-                    array(
-                        'type' => 'switch',
                         'label' => $this->l('Send tax subtotals in request payloads'),
                         'name' => 'PS_TWO_ENABLE_TAX_SUBTOTALS',
                         'is_bool' => true,
@@ -1438,7 +1412,6 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_ENABLE_COMPANY_NAME'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME', Configuration::get('PS_TWO_ENABLE_COMPANY_NAME'));
         $fields_values['PS_TWO_ENABLE_COMPANY_ID'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_ID', Configuration::get('PS_TWO_ENABLE_COMPANY_ID'));
         $fields_values['PS_TWO_FINALIZE_PURCHASE'] = Tools::getValue('PS_TWO_FINALIZE_PURCHASE', Configuration::get('PS_TWO_FINALIZE_PURCHASE'));
-        $fields_values['PS_TWO_USE_OWN_INVOICES'] = Tools::getValue('PS_TWO_USE_OWN_INVOICES', Configuration::get('PS_TWO_USE_OWN_INVOICES'));
         $fields_values['PS_TWO_ENABLE_B2B_B2C'] = Tools::getValue('PS_TWO_ENABLE_B2B_B2C', Configuration::get('PS_TWO_ENABLE_B2B_B2C'));
         $fields_values['PS_TWO_ENABLE_TAX_SUBTOTALS'] = Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
@@ -1455,7 +1428,6 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME'));
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_ID', Tools::getValue('PS_TWO_ENABLE_COMPANY_ID'));
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', Tools::getValue('PS_TWO_FINALIZE_PURCHASE'));
-        Configuration::updateValue('PS_TWO_USE_OWN_INVOICES', Tools::getValue('PS_TWO_USE_OWN_INVOICES'));
         Configuration::updateValue('PS_TWO_ENABLE_B2B_B2C', Tools::getValue('PS_TWO_ENABLE_B2B_B2C'));
         Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', (int) Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
@@ -2290,10 +2262,18 @@ class Twopayment extends PaymentModule
                                 $this->setTwoOrderPaymentData($id_order, $payment_data);
                             }
                             
-                            // Invoice Upload: Upload PrestaShop invoice to Two when using own invoices
-                            $use_own_invoices = Configuration::get('PS_TWO_USE_OWN_INVOICES');
+                            // Invoice Upload: upload the PrestaShop invoice to Two when the
+                            // merchant's invoice_distributed_by_merchant flag is set (TWO-25111).
+                            // Prime the merchant-record cache first (TTL-gated, a no-op while
+                            // fresh): fulfilment may be the first merchant-record touch since
+                            // deploy/upgrade, and the gate must not read an unresolved flag and
+                            // silently skip the upload for a one-shot fulfilment transition.
+                            // This path already makes synchronous Two calls, so one more
+                            // capped GET (at most once per TTL) is acceptable here.
+                            $this->getMerchantAvailableTerms(true);
+                            $use_own_invoices = $this->isMerchantInvoiceDistributed();
                             PrestaShopLogger::addLog(
-                                'TwoPayment: Invoice upload check - PS_TWO_USE_OWN_INVOICES=' . ($use_own_invoices ? 'YES' : 'NO') . ', Order ID=' . $id_order,
+                                'TwoPayment: Invoice upload check - invoice_distributed_by_merchant=' . ($use_own_invoices ? 'YES' : 'NO') . ', Order ID=' . $id_order,
                                 1,
                                 null,
                                 'Order',
@@ -6567,6 +6547,16 @@ class Twopayment extends PaymentModule
                         $due = isset($response['due_in_days']) ? $response['due_in_days'] : null;
                         $due_days = (is_numeric($due) && (int) $due > 0) ? (int) $due : 0;
                         Configuration::updateValue(self::CONFIG_MERCHANT_DUE_IN_DAYS, $due_days);
+                        // The invoice-upload gate is fed by this same fetch
+                        // (TWO-25111). Unlike the term list, an absent
+                        // field IS an answer here - the backend omitting the
+                        // flag means uploads are not enabled for this
+                        // merchant, so cache 0 rather than serving stale
+                        // (null-safe absent-is-false, per TWO-25106).
+                        Configuration::updateValue(
+                            self::CONFIG_MERCHANT_INVOICE_DISTRIBUTED,
+                            (isset($response['invoice_distributed_by_merchant']) && $response['invoice_distributed_by_merchant'] === true) ? 1 : 0
+                        );
                         // Third cache fed by the same fetch: the platform
                         // minimum-order tuple (TWO-24775). Unlike the term
                         // list, an absent or malformed tuple IS the answer
@@ -6648,7 +6638,32 @@ class Twopayment extends PaymentModule
         // "no minimum" - the correct fail-open posture until the re-fetch
         // (the API still enforces the real minimum at order create).
         Configuration::updateValue(self::CONFIG_PLATFORM_MIN_ORDER, '');
+        // The invoice-upload gate is sourced from the same merchant record:
+        // an identity change must never leave the OLD merchant's upload
+        // entitlement in force for the new one (TWO-25111). Fail closed.
+        Configuration::updateValue(self::CONFIG_MERCHANT_INVOICE_DISTRIBUTED, 0);
         Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, 0);
+    }
+
+    /**
+     * Whether the merchant distributes their own invoices - the server-side
+     * `invoice_distributed_by_merchant` flag from the cached GET /v1/merchant
+     * record. This is the ONLY gate for the plugin-side invoice upload
+     * (TwoInvoiceUploadService): the manual PS_TWO_USE_OWN_INVOICES admin
+     * toggle is retired (TWO-25111 / TWO-25106 Option A) and any leftover
+     * value of it in the configuration table has zero effect. checkout-api
+     * enforces the same flag server-side (403 when false, TWO-24761), so this
+     * plugin-side gate only avoids doomed upload attempts; it is not a
+     * security boundary.
+     *
+     * Cache-only (never fetches): refreshed by the same TTL-gated fetch as
+     * the available-terms cache. Null-safe: unresolved/absent caches as 0.
+     *
+     * @return bool
+     */
+    public function isMerchantInvoiceDistributed()
+    {
+        return (bool) Configuration::get(self::CONFIG_MERCHANT_INVOICE_DISTRIBUTED);
     }
 
     /**
@@ -11269,7 +11284,12 @@ class Twopayment extends PaymentModule
                 'twopaymentdata' => $twopaymentdata,
                 'two_portal_url' => $this->getTwoPortalUrl(), // Dynamic portal URL based on environment
                 'two_pdf_url' => $pdf_url, // PDF invoice URL if available
-                'use_own_invoices' => (bool)Configuration::get('PS_TWO_USE_OWN_INVOICES'),
+                // Show the upload-status section when the merchant currently
+                // has the feature OR this order already carries upload history
+                // (an order uploaded under a past entitlement must keep showing
+                // what happened to it even if the flag is later revoked).
+                'use_own_invoices' => $this->isMerchantInvoiceDistributed()
+                    || !empty($twopaymentdata['two_invoice_upload_status']),
                 'two_invoice_actions_available' => $invoice_actions_available,
                 'two_invoice_notice' => $this->getTwoInvoiceNoticeFromRequest(),
             ));
