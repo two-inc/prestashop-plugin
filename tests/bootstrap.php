@@ -265,10 +265,10 @@ namespace {
         public string $name = 'twopayment';
         public string $version = '2.4.0';
         public string $displayName = 'Two';
-        public string $merchant_short_name = 'merchant';
-        public string $api_key = 'test-api-key';
+        public $merchant_short_name = 'merchant';
+        public $api_key = 'test-api-key';
         public bool $active = true;
-        public array $languages = [];
+        public $languages = [];
         public $context;
         public int $currentOrder = 0;
 
