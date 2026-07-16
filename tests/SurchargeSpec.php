@@ -841,9 +841,9 @@ final class SurchargeSpec
         self::reset();
         Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
         Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '2');
-        // Group rate needing more than TAX_RATE_PRECISION (3dp) decimals
-        // as a fraction (21.0098% → 0.210098). Tax must be computed from the
-        // SNAPPED rate that is actually sent, else the line fails
+        // High-precision group rate (21.0098% → 0.210098): TAX_RATE_PRECISION
+        // (6dp) now carries the full fraction in the sent payload. Tax must
+        // be computed from the SENT rate, else the line fails
         // validateTwoLineItems and is dropped.
         Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
         StubStore::$taxRuleRates[400] = [34 => 21.0098];
@@ -863,9 +863,9 @@ final class SurchargeSpec
         $cart->id_currency = 978;
         $cart->id_address_invoice = 900;
         $line = $module->buildTwoSurchargeLineItemForCart($cart, 5000.0);
-        TinyAssert::same('0.21', $line['tax_rate'], 'rate is snapped to the sent precision');
-        TinyAssert::same('210.00', $line['tax_amount'], 'tax computed from the sent (snapped) rate, not full precision');
-        TinyAssert::same('1210.00', $line['gross_amount']);
+        TinyAssert::same('0.210098', $line['tax_rate'], 'full 6dp rate survives the sent precision');
+        TinyAssert::same('210.10', $line['tax_amount'], 'tax computed from the sent rate');
+        TinyAssert::same('1210.10', $line['gross_amount']);
         TinyAssert::true($module->validateTwoLineItems([$line]), 'high-precision fee tax rate must not silently drop the line');
     }
 
@@ -953,6 +953,10 @@ final class SurchargeSpec
         ]];
         StubStore::$productCategories[9301] = [['name' => 'Books']];
         StubStore::$images[9301] = ['id_image' => 9301];
+        // Declared-rate relay (TWO-24880): product rate from its tax-rules
+        // group at the cart's tax address, never the row's 'rate' field.
+        StubStore::$products[9301]['id_tax_rules_group'] = 500;
+        StubStore::$taxRuleRates[500] = 5.5;
         StubStore::$cartTotals[7001] = [
             true => [
                 Cart::ONLY_DISCOUNTS => 0.0,
