@@ -15,6 +15,10 @@ PHP_CS_FIXER_VERSION := 3.92.0
 # Re-derive this hash from the official GitHub release page/checksums when
 # bumping PHP_CS_FIXER_VERSION — never copy it from elsewhere.
 PHP_CS_FIXER_SHA256  := 7ae9440e7ac8dca47d632cf07719d43bc65c0deef460d95c3cfea81979895f99
+PHPSTAN_VERSION      := 2.2.5
+# Re-derive this hash from the official GitHub release page/checksums when
+# bumping PHPSTAN_VERSION — never copy it from elsewhere.
+PHPSTAN_SHA256       := 1b2f03384ebcfd67053b06b69cbc0b9f62bf239349f69eaf723649409789e2e6
 ADMIN_MAIL  := exampleuser@two.inc
 ADMIN_PASSWD := examplepassword123
 export PORT
@@ -33,7 +37,7 @@ TWO_ENVIRONMENT      ?= sandbox
 TWO_STORE_COUNTRY    ?= NO
 export TWO_STORE_COUNTRY
 
-.PHONY: help install configure run debug stop clean flush logs proxy archive test patch minor major format bumpver-patch bumpver-minor bumpver-major
+.PHONY: help install configure run debug stop clean flush logs proxy archive test patch minor major format phpstan bumpver-patch bumpver-minor bumpver-major
 
 .DEFAULT_GOAL := help
 
@@ -149,6 +153,13 @@ format:
 		php -r \"copy('https://github.com/PHP-CS-Fixer/PHP-CS-Fixer/releases/download/v$(PHP_CS_FIXER_VERSION)/php-cs-fixer.phar', '/tmp/php-cs-fixer.phar');\" \
 		&& echo '$(PHP_CS_FIXER_SHA256)  /tmp/php-cs-fixer.phar' | sha256sum -c - \
 		&& php /tmp/php-cs-fixer.phar fix --config=.php-cs-fixer.dist.php"
+
+## Run phpstan static analysis (same gate CI runs)
+phpstan:
+	docker run --rm -v "$(CURDIR)":/app -w /app php:8.2-cli bash -c "\
+		php -r \"copy('https://github.com/phpstan/phpstan/releases/download/$(PHPSTAN_VERSION)/phpstan.phar', '/tmp/phpstan.phar');\" \
+		&& echo '$(PHPSTAN_SHA256)  /tmp/phpstan.phar' | sha256sum -c - \
+		&& php /tmp/phpstan.phar analyse --configuration=phpstan.neon --no-progress --memory-limit=1G"
 
 # Requires bumpver on PATH (pip install bumpver / pipx install bumpver),
 # same implicit prerequisite as magento-plugin / woocommerce-plugin.

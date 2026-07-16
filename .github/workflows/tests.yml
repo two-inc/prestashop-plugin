@@ -41,3 +41,28 @@ jobs:
 
       - name: Run offline test suite
         run: php tests/run.php
+
+  phpstan:
+    name: phpstan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          coverage: none
+
+      - name: Download phpstan (pinned + checksum-verified)
+        env:
+          PHPSTAN_VERSION: "2.2.5"
+          PHPSTAN_SHA256: "1b2f03384ebcfd67053b06b69cbc0b9f62bf239349f69eaf723649409789e2e6"
+        run: |
+          curl -sL -o /tmp/phpstan.phar "https://github.com/phpstan/phpstan/releases/download/${PHPSTAN_VERSION}/phpstan.phar"
+          echo "${PHPSTAN_SHA256}  /tmp/phpstan.phar" | sha256sum -c -
+
+      - name: Run phpstan
+        run: php /tmp/phpstan.phar analyse --configuration=phpstan.neon --no-progress --memory-limit=1G

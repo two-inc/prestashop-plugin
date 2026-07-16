@@ -1,0 +1,16 @@
+includes:
+    - phpstan-baseline.neon
+
+parameters:
+    level: 1
+    paths:
+        - twopayment.php
+        - classes
+        - controllers
+        - override
+    fileExtensions:
+        - php
+    excludePaths:
+        - tests/*
+    scanFiles:
+        - phpstan-stubs.php

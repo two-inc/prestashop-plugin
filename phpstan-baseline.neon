@@ -1,0 +1,1345 @@
+parameters:
+	ignoreErrors:
+		-
+			message: '#^Call to static method addLog\(\) on an unknown class PrestaShopLogger\.$#'
+			identifier: class.notFound
+			count: 1
+			path: classes/TwoInvoiceRetrievalService.php
+
+		-
+			message: '#^Call to static method isEmpty\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 2
+			path: classes/TwoInvoiceRetrievalService.php
+
+		-
+			message: '#^Access to constant TEMPLATE_INVOICE on an unknown class PDF\.$#'
+			identifier: class.notFound
+			count: 1
+			path: classes/TwoInvoiceUploadService.php
+
+		-
+			message: '#^Call to static method addLog\(\) on an unknown class PrestaShopLogger\.$#'
+			identifier: class.notFound
+			count: 12
+			path: classes/TwoInvoiceUploadService.php
+
+		-
+			message: '#^Call to static method get\(\) on an unknown class Configuration\.$#'
+			identifier: class.notFound
+			count: 1
+			path: classes/TwoInvoiceUploadService.php
+
+		-
+			message: '#^Call to static method getContext\(\) on an unknown class Context\.$#'
+			identifier: class.notFound
+			count: 1
+			path: classes/TwoInvoiceUploadService.php
+
+		-
+			message: '#^Call to static method getInstance\(\) on an unknown class Db\.$#'
+			identifier: class.notFound
+			count: 1
+			path: classes/TwoInvoiceUploadService.php
+
+		-
+			message: '#^Call to static method isLoadedObject\(\) on an unknown class Validate\.$#'
+			identifier: class.notFound
+			count: 2
+			path: classes/TwoInvoiceUploadService.php
+
+		-
+			message: '#^Function pSQL not found\.$#'
+			identifier: function.notFound
+			count: 3
+			path: classes/TwoInvoiceUploadService.php
+
+		-
+			message: '#^Instantiated class Order not found\.$#'
+			identifier: class.notFound
+			count: 1
+			path: classes/TwoInvoiceUploadService.php
+
+		-
+			message: '#^Instantiated class PDF not found\.$#'
+			identifier: class.notFound
+			count: 1
+			path: classes/TwoInvoiceUploadService.php
+
+		-
+			message: '#^Access to an undefined property AdminTwopaymentInvoiceController\:\:\$context\.$#'
+			identifier: property.notFound
+			count: 1
+			path: controllers/admin/AdminTwopaymentInvoiceController.php
+
+		-
+			message: '#^Access to an undefined property AdminTwopaymentInvoiceController\:\:\$module\.$#'
+			identifier: property.notFound
+			count: 3
+			path: controllers/admin/AdminTwopaymentInvoiceController.php
+
+		-
+			message: '#^Call to static method getValue\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/admin/AdminTwopaymentInvoiceController.php
+
+		-
+			message: '#^Call to static method isLoadedObject\(\) on an unknown class Validate\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/admin/AdminTwopaymentInvoiceController.php
+
+		-
+			message: '#^Call to static method redirectAdmin\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/admin/AdminTwopaymentInvoiceController.php
+
+		-
+			message: '#^Instantiated class Order not found\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/admin/AdminTwopaymentInvoiceController.php
+
+		-
+			message: '#^Access to an undefined property TwopaymentCancelModuleFrontController\:\:\$context\.$#'
+			identifier: property.notFound
+			count: 4
+			path: controllers/front/cancel.php
+
+		-
+			message: '#^Access to an undefined property TwopaymentCancelModuleFrontController\:\:\$errors\.$#'
+			identifier: property.notFound
+			count: 10
+			path: controllers/front/cancel.php
+
+		-
+			message: '#^Access to an undefined property TwopaymentCancelModuleFrontController\:\:\$module\.$#'
+			identifier: property.notFound
+			count: 30
+			path: controllers/front/cancel.php
+
+		-
+			message: '#^Call to an undefined method TwopaymentCancelModuleFrontController\:\:redirectWithNotifications\(\)\.$#'
+			identifier: method.notFound
+			count: 10
+			path: controllers/front/cancel.php
+
+		-
+			message: '#^Call to an undefined static method ModuleFrontController\:\:__construct\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: controllers/front/cancel.php
+
+		-
+			message: '#^Call to an undefined static method ModuleFrontController\:\:postProcess\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: controllers/front/cancel.php
+
+		-
+			message: '#^Call to static method addLog\(\) on an unknown class PrestaShopLogger\.$#'
+			identifier: class.notFound
+			count: 5
+			path: controllers/front/cancel.php
+
+		-
+			message: '#^Call to static method get\(\) on an unknown class Configuration\.$#'
+			identifier: class.notFound
+			count: 5
+			path: controllers/front/cancel.php
+
+		-
+			message: '#^Call to static method getContext\(\) on an unknown class Context\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/cancel.php
+
+		-
+			message: '#^Call to static method getValue\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 4
+			path: controllers/front/cancel.php
+
+		-
+			message: '#^Call to static method isEmpty\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/cancel.php
+
+		-
+			message: '#^Call to static method isLoadedObject\(\) on an unknown class Validate\.$#'
+			identifier: class.notFound
+			count: 3
+			path: controllers/front/cancel.php
+
+		-
+			message: '#^Instantiated class Cart not found\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/cancel.php
+
+		-
+			message: '#^Instantiated class Customer not found\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/cancel.php
+
+		-
+			message: '#^Instantiated class Order not found\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/cancel.php
+
+		-
+			message: '#^Access to an undefined property TwopaymentConfirmationModuleFrontController\:\:\$context\.$#'
+			identifier: property.notFound
+			count: 9
+			path: controllers/front/confirmation.php
+
+		-
+			message: '#^Access to an undefined property TwopaymentConfirmationModuleFrontController\:\:\$errors\.$#'
+			identifier: property.notFound
+			count: 24
+			path: controllers/front/confirmation.php
+
+		-
+			message: '#^Access to an undefined property TwopaymentConfirmationModuleFrontController\:\:\$module\.$#'
+			identifier: property.notFound
+			count: 96
+			path: controllers/front/confirmation.php
+
+		-
+			message: '#^Call to an undefined method TwopaymentConfirmationModuleFrontController\:\:redirectWithNotifications\(\)\.$#'
+			identifier: method.notFound
+			count: 24
+			path: controllers/front/confirmation.php
+
+		-
+			message: '#^Call to an undefined static method ModuleFrontController\:\:__construct\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: controllers/front/confirmation.php
+
+		-
+			message: '#^Call to an undefined static method ModuleFrontController\:\:postProcess\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: controllers/front/confirmation.php
+
+		-
+			message: '#^Call to static method addLog\(\) on an unknown class PrestaShopLogger\.$#'
+			identifier: class.notFound
+			count: 13
+			path: controllers/front/confirmation.php
+
+		-
+			message: '#^Call to static method get\(\) on an unknown class Configuration\.$#'
+			identifier: class.notFound
+			count: 9
+			path: controllers/front/confirmation.php
+
+		-
+			message: '#^Call to static method getContext\(\) on an unknown class Context\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/confirmation.php
+
+		-
+			message: '#^Call to static method getValue\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 4
+			path: controllers/front/confirmation.php
+
+		-
+			message: '#^Call to static method isEmpty\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 6
+			path: controllers/front/confirmation.php
+
+		-
+			message: '#^Call to static method isLoadedObject\(\) on an unknown class Validate\.$#'
+			identifier: class.notFound
+			count: 8
+			path: controllers/front/confirmation.php
+
+		-
+			message: '#^Call to static method redirect\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/confirmation.php
+
+		-
+			message: '#^Instantiated class Cart not found\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/confirmation.php
+
+		-
+			message: '#^Instantiated class Currency not found\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/confirmation.php
+
+		-
+			message: '#^Instantiated class Customer not found\.$#'
+			identifier: class.notFound
+			count: 2
+			path: controllers/front/confirmation.php
+
+		-
+			message: '#^Instantiated class Order not found\.$#'
+			identifier: class.notFound
+			count: 4
+			path: controllers/front/confirmation.php
+
+		-
+			message: '#^Variable \$current_snapshot_hash might not be defined\.$#'
+			identifier: variable.undefined
+			count: 2
+			path: controllers/front/confirmation.php
+
+		-
+			message: '#^Access to an undefined property TwopaymentInvoiceModuleFrontController\:\:\$context\.$#'
+			identifier: property.notFound
+			count: 1
+			path: controllers/front/invoice.php
+
+		-
+			message: '#^Access to an undefined property TwopaymentInvoiceModuleFrontController\:\:\$errors\.$#'
+			identifier: property.notFound
+			count: 3
+			path: controllers/front/invoice.php
+
+		-
+			message: '#^Access to an undefined property TwopaymentInvoiceModuleFrontController\:\:\$info\.$#'
+			identifier: property.notFound
+			count: 1
+			path: controllers/front/invoice.php
+
+		-
+			message: '#^Access to an undefined property TwopaymentInvoiceModuleFrontController\:\:\$module\.$#'
+			identifier: property.notFound
+			count: 6
+			path: controllers/front/invoice.php
+
+		-
+			message: '#^Call to an undefined method TwopaymentInvoiceModuleFrontController\:\:redirectWithNotifications\(\)\.$#'
+			identifier: method.notFound
+			count: 3
+			path: controllers/front/invoice.php
+
+		-
+			message: '#^Call to an undefined static method ModuleFrontController\:\:__construct\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: controllers/front/invoice.php
+
+		-
+			message: '#^Call to an undefined static method ModuleFrontController\:\:postProcess\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: controllers/front/invoice.php
+
+		-
+			message: '#^Call to static method addLog\(\) on an unknown class PrestaShopLogger\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/invoice.php
+
+		-
+			message: '#^Call to static method getContext\(\) on an unknown class Context\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/invoice.php
+
+		-
+			message: '#^Call to static method getValue\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 2
+			path: controllers/front/invoice.php
+
+		-
+			message: '#^Call to static method isLoadedObject\(\) on an unknown class Validate\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/invoice.php
+
+		-
+			message: '#^Instantiated class Customer not found\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/invoice.php
+
+		-
+			message: '#^Instantiated class Order not found\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/invoice.php
+
+		-
+			message: '#^Access to an undefined property TwopaymentOrderintentModuleFrontController\:\:\$context\.$#'
+			identifier: property.notFound
+			count: 32
+			path: controllers/front/orderintent.php
+
+		-
+			message: '#^Access to an undefined property TwopaymentOrderintentModuleFrontController\:\:\$module\.$#'
+			identifier: property.notFound
+			count: 26
+			path: controllers/front/orderintent.php
+
+		-
+			message: '#^Call to an undefined static method ModuleFrontController\:\:__construct\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: controllers/front/orderintent.php
+
+		-
+			message: '#^Call to an undefined static method ModuleFrontController\:\:init\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: controllers/front/orderintent.php
+
+		-
+			message: '#^Call to an undefined static method ModuleFrontController\:\:initContent\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: controllers/front/orderintent.php
+
+		-
+			message: '#^Call to an undefined static method ModuleFrontController\:\:postProcess\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: controllers/front/orderintent.php
+
+		-
+			message: '#^Call to static method addLog\(\) on an unknown class PrestaShopLogger\.$#'
+			identifier: class.notFound
+			count: 20
+			path: controllers/front/orderintent.php
+
+		-
+			message: '#^Call to static method get\(\) on an unknown class Configuration\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/orderintent.php
+
+		-
+			message: '#^Call to static method getContext\(\) on an unknown class Context\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/orderintent.php
+
+		-
+			message: '#^Call to static method getIsoById\(\) on an unknown class Country\.$#'
+			identifier: class.notFound
+			count: 3
+			path: controllers/front/orderintent.php
+
+		-
+			message: '#^Call to static method getToken\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/orderintent.php
+
+		-
+			message: '#^Call to static method getValue\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 20
+			path: controllers/front/orderintent.php
+
+		-
+			message: '#^Call to static method isEmpty\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/orderintent.php
+
+		-
+			message: '#^Call to static method isLoadedObject\(\) on an unknown class Validate\.$#'
+			identifier: class.notFound
+			count: 6
+			path: controllers/front/orderintent.php
+
+		-
+			message: '#^Instantiated class Address not found\.$#'
+			identifier: class.notFound
+			count: 4
+			path: controllers/front/orderintent.php
+
+		-
+			message: '#^Instantiated class Currency not found\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/orderintent.php
+
+		-
+			message: '#^Instantiated class Customer not found\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/orderintent.php
+
+		-
+			message: '#^Variable \$sessionCompanyId in empty\(\) always exists and is always falsy\.$#'
+			identifier: empty.variable
+			count: 1
+			path: controllers/front/orderintent.php
+
+		-
+			message: '#^Access to an undefined property TwopaymentPaymentModuleFrontController\:\:\$context\.$#'
+			identifier: property.notFound
+			count: 5
+			path: controllers/front/payment.php
+
+		-
+			message: '#^Access to an undefined property TwopaymentPaymentModuleFrontController\:\:\$errors\.$#'
+			identifier: property.notFound
+			count: 6
+			path: controllers/front/payment.php
+
+		-
+			message: '#^Access to an undefined property TwopaymentPaymentModuleFrontController\:\:\$module\.$#'
+			identifier: property.notFound
+			count: 43
+			path: controllers/front/payment.php
+
+		-
+			message: '#^Call to an undefined method TwopaymentPaymentModuleFrontController\:\:redirectWithNotifications\(\)\.$#'
+			identifier: method.notFound
+			count: 6
+			path: controllers/front/payment.php
+
+		-
+			message: '#^Call to an undefined static method Module\:\:getPaymentModules\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: controllers/front/payment.php
+
+		-
+			message: '#^Call to an undefined static method ModuleFrontController\:\:__construct\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: controllers/front/payment.php
+
+		-
+			message: '#^Call to an undefined static method ModuleFrontController\:\:postProcess\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: controllers/front/payment.php
+
+		-
+			message: '#^Call to static method addLog\(\) on an unknown class PrestaShopLogger\.$#'
+			identifier: class.notFound
+			count: 12
+			path: controllers/front/payment.php
+
+		-
+			message: '#^Call to static method get\(\) on an unknown class Configuration\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/payment.php
+
+		-
+			message: '#^Call to static method getContext\(\) on an unknown class Context\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/payment.php
+
+		-
+			message: '#^Call to static method getToken\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/payment.php
+
+		-
+			message: '#^Call to static method getValue\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/payment.php
+
+		-
+			message: '#^Call to static method isEmpty\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 9
+			path: controllers/front/payment.php
+
+		-
+			message: '#^Call to static method isLoadedObject\(\) on an unknown class Validate\.$#'
+			identifier: class.notFound
+			count: 4
+			path: controllers/front/payment.php
+
+		-
+			message: '#^Call to static method redirect\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 3
+			path: controllers/front/payment.php
+
+		-
+			message: '#^Instantiated class Address not found\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/payment.php
+
+		-
+			message: '#^Instantiated class Currency not found\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/payment.php
+
+		-
+			message: '#^Instantiated class Customer not found\.$#'
+			identifier: class.notFound
+			count: 1
+			path: controllers/front/payment.php
+
+		-
+			message: '#^Access to static property \$definition on an unknown class Address\.$#'
+			identifier: class.notFound
+			count: 1
+			path: override/classes/form/CustomerAddressFormatter.php
+
+		-
+			message: '#^Call to an undefined static method CustomerAddressFormatterCore\:\:__construct\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: override/classes/form/CustomerAddressFormatter.php
+
+		-
+			message: '#^Call to an undefined static method CustomerAddressFormatterCore\:\:getCountry\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: override/classes/form/CustomerAddressFormatter.php
+
+		-
+			message: '#^Call to an undefined static method CustomerAddressFormatterCore\:\:getFormat\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: override/classes/form/CustomerAddressFormatter.php
+
+		-
+			message: '#^Call to an undefined static method CustomerAddressFormatterCore\:\:setCountry\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: override/classes/form/CustomerAddressFormatter.php
+
+		-
+			message: '#^Call to an undefined static method Module\:\:isEnabled\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: override/classes/form/CustomerAddressFormatter.php
+
+		-
+			message: '#^Call to an undefined static method Module\:\:isInstalled\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: override/classes/form/CustomerAddressFormatter.php
+
+		-
+			message: '#^Call to static method get\(\) on an unknown class Configuration\.$#'
+			identifier: class.notFound
+			count: 3
+			path: override/classes/form/CustomerAddressFormatter.php
+
+		-
+			message: '#^Class FormField not found\.$#'
+			identifier: class.notFound
+			count: 2
+			path: override/classes/form/CustomerAddressFormatter.php
+
+		-
+			message: '#^Instantiated class FormField not found\.$#'
+			identifier: class.notFound
+			count: 3
+			path: override/classes/form/CustomerAddressFormatter.php
+
+		-
+			message: '#^Parameter \$country of method CustomerAddressFormatter\:\:__construct\(\) has invalid type Country\.$#'
+			identifier: class.notFound
+			count: 1
+			path: override/classes/form/CustomerAddressFormatter.php
+
+		-
+			message: '#^Parameter \$country of method CustomerAddressFormatter\:\:setCountry\(\) has invalid type Country\.$#'
+			identifier: class.notFound
+			count: 1
+			path: override/classes/form/CustomerAddressFormatter.php
+
+		-
+			message: '#^Parameter \$field of method CustomerAddressFormatter\:\:applyFieldDefinitionMetadata\(\) has invalid type FormField\.$#'
+			identifier: class.notFound
+			count: 1
+			path: override/classes/form/CustomerAddressFormatter.php
+
+		-
+			message: '#^Parameter \$field of method CustomerAddressFormatter\:\:insertFieldAfter\(\) has invalid type FormField\.$#'
+			identifier: class.notFound
+			count: 1
+			path: override/classes/form/CustomerAddressFormatter.php
+
+		-
+			message: '#^Access to an undefined property \$this\(Twopayment\)\:\:\$_path\.$#'
+			identifier: property.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property \$this\(Twopayment\)\:\:\$name\.$#'
+			identifier: property.notFound
+			count: 2
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$_path\.$#'
+			identifier: property.notFound
+			count: 2
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$active\.$#'
+			identifier: property.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$api_key\.$#'
+			identifier: property.notFound
+			count: 4
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$author\.$#'
+			identifier: property.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$author_address\.$#'
+			identifier: property.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$bootstrap\.$#'
+			identifier: property.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$context\.$#'
+			identifier: property.notFound
+			count: 59
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$currentOrder\.$#'
+			identifier: property.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$description\.$#'
+			identifier: property.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$displayName\.$#'
+			identifier: property.notFound
+			count: 2
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$enable_company_id\.$#'
+			identifier: property.notFound
+			count: 2
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$enable_company_name\.$#'
+			identifier: property.notFound
+			count: 2
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$enable_department\.$#'
+			identifier: property.notFound
+			count: 2
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$enable_order_intent\.$#'
+			identifier: property.notFound
+			count: 3
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$enable_project\.$#'
+			identifier: property.notFound
+			count: 2
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$finalize_purchase_shipping\.$#'
+			identifier: property.notFound
+			count: 2
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$id\.$#'
+			identifier: property.notFound
+			count: 4
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$identifier\.$#'
+			identifier: property.notFound
+			count: 4
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$languages\.$#'
+			identifier: property.notFound
+			count: 6
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$merchant_short_name\.$#'
+			identifier: property.notFound
+			count: 3
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$module_key\.$#'
+			identifier: property.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$name\.$#'
+			identifier: property.notFound
+			count: 26
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$ps_versions_compliancy\.$#'
+			identifier: property.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$tab\.$#'
+			identifier: property.notFound
+			count: 5
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$table\.$#'
+			identifier: property.notFound
+			count: 4
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$use_account_type\.$#'
+			identifier: property.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Access to an undefined property Twopayment\:\:\$version\.$#'
+			identifier: property.notFound
+			count: 7
+			path: twopayment.php
+
+		-
+			message: '#^Access to constant BOTH on an unknown class Cart\.$#'
+			identifier: class.notFound
+			count: 6
+			path: twopayment.php
+
+		-
+			message: '#^Access to constant CONTEXT_ALL on an unknown class Shop\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Access to constant ONLY_DISCOUNTS on an unknown class Cart\.$#'
+			identifier: class.notFound
+			count: 3
+			path: twopayment.php
+
+		-
+			message: '#^Access to constant ONLY_SHIPPING on an unknown class Cart\.$#'
+			identifier: class.notFound
+			count: 2
+			path: twopayment.php
+
+		-
+			message: '#^Access to constant ONLY_WRAPPING on an unknown class Cart\.$#'
+			identifier: class.notFound
+			count: 2
+			path: twopayment.php
+
+		-
+			message: '#^Access to constant SHIPPING_METHOD_PRICE on an unknown class Carrier\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Access to constant SHIPPING_METHOD_WEIGHT on an unknown class Carrier\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to an undefined method Twopayment\:\:display\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to an undefined method Twopayment\:\:displayConfirmation\(\)\.$#'
+			identifier: method.notFound
+			count: 4
+			path: twopayment.php
+
+		-
+			message: '#^Call to an undefined method Twopayment\:\:displayError\(\)\.$#'
+			identifier: method.notFound
+			count: 3
+			path: twopayment.php
+
+		-
+			message: '#^Call to an undefined method Twopayment\:\:displayWarning\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to an undefined method Twopayment\:\:getPathUri\(\)\.$#'
+			identifier: method.notFound
+			count: 4
+			path: twopayment.php
+
+		-
+			message: '#^Call to an undefined method Twopayment\:\:isRegisteredInHook\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to an undefined method Twopayment\:\:l\(\)\.$#'
+			identifier: method.notFound
+			count: 329
+			path: twopayment.php
+
+		-
+			message: '#^Call to an undefined method Twopayment\:\:registerHook\(\)\.$#'
+			identifier: method.notFound
+			count: 17
+			path: twopayment.php
+
+		-
+			message: '#^Call to an undefined method Twopayment\:\:unregisterHook\(\)\.$#'
+			identifier: method.notFound
+			count: 16
+			path: twopayment.php
+
+		-
+			message: '#^Call to an undefined method Twopayment\:\:validateOrder\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to an undefined static method Module\:\:isInstalled\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 2
+			path: twopayment.php
+
+		-
+			message: '#^Call to an undefined static method PaymentModule\:\:__construct\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to an undefined static method PaymentModule\:\:install\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to an undefined static method PaymentModule\:\:uninstall\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method addJsDef\(\) on an unknown class Media\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method addLog\(\) on an unknown class PrestaShopLogger\.$#'
+			identifier: class.notFound
+			count: 163
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method addSqlAssociation\(\) on an unknown class Shop\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method autoAddToCart\(\) on an unknown class CartRule\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method cleanHistoryCache\(\) on an unknown class Order\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method deleteByIdCart\(\) on an unknown class SpecificPrice\.$#'
+			identifier: class.notFound
+			count: 2
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method deleteByName\(\) on an unknown class Configuration\.$#'
+			identifier: class.notFound
+			count: 24
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method displayPrice\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method flushCache\(\) on an unknown class SpecificPrice\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method flushPriceCache\(\) on an unknown class Product\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method get\(\) on an unknown class Configuration\.$#'
+			identifier: class.notFound
+			count: 167
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method getAdminTokenLite\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 5
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method getCartIdStatic\(\) on an unknown class Order\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method getContext\(\) on an unknown class Context\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method getCountries\(\) on an unknown class Country\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method getCover\(\) on an unknown class Image\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method getFormattedName\(\) on an unknown class ImageType\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method getIdByIsoCode\(\) on an unknown class Currency\.$#'
+			identifier: class.notFound
+			count: 2
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method getIdFromClassName\(\) on an unknown class Tab\.$#'
+			identifier: class.notFound
+			count: 3
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method getIdsByProductId\(\) on an unknown class SpecificPrice\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method getInstance\(\) on an unknown class Db\.$#'
+			identifier: class.notFound
+			count: 31
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method getIsoById\(\) on an unknown class Country\.$#'
+			identifier: class.notFound
+			count: 5
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method getLanguages\(\) on an unknown class Language\.$#'
+			identifier: class.notFound
+			count: 3
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method getManager\(\) on an unknown class TaxManagerFactory\.$#'
+			identifier: class.notFound
+			count: 2
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method getNameById\(\) on an unknown class State\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method getOrderByCartId\(\) on an unknown class Order\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method getOrderStates\(\) on an unknown class OrderState\.$#'
+			identifier: class.notFound
+			count: 2
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method getProductCategoriesFull\(\) on an unknown class Product\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method getTaxRulesGroups\(\) on an unknown class TaxRulesGroup\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method getToken\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 2
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method getValue\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 88
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method isEmpty\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 74
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method isFeatureActive\(\) on an unknown class Shop\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method isLoadedObject\(\) on an unknown class Validate\.$#'
+			identifier: class.notFound
+			count: 68
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method isSubmit\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 4
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method setContext\(\) on an unknown class Shop\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method strlen\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method strtolower\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method strtoupper\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 7
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method substr\(\) on an unknown class Tools\.$#'
+			identifier: class.notFound
+			count: 13
+			path: twopayment.php
+
+		-
+			message: '#^Call to static method updateValue\(\) on an unknown class Configuration\.$#'
+			identifier: class.notFound
+			count: 84
+			path: twopayment.php
+
+		-
+			message: '#^Constant _DB_PREFIX_ not found\.$#'
+			identifier: constant.notFound
+			count: 21
+			path: twopayment.php
+
+		-
+			message: '#^Constant _MYSQL_ENGINE_ not found\.$#'
+			identifier: constant.notFound
+			count: 4
+			path: twopayment.php
+
+		-
+			message: '#^Constant _PS_CACHE_DIR_ not found\.$#'
+			identifier: constant.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Function pSQL not found\.$#'
+			identifier: function.notFound
+			count: 51
+			path: twopayment.php
+
+		-
+			message: '#^Instantiated class Address not found\.$#'
+			identifier: class.notFound
+			count: 12
+			path: twopayment.php
+
+		-
+			message: '#^Instantiated class Carrier not found\.$#'
+			identifier: class.notFound
+			count: 3
+			path: twopayment.php
+
+		-
+			message: '#^Instantiated class Cart not found\.$#'
+			identifier: class.notFound
+			count: 4
+			path: twopayment.php
+
+		-
+			message: '#^Instantiated class Currency not found\.$#'
+			identifier: class.notFound
+			count: 13
+			path: twopayment.php
+
+		-
+			message: '#^Instantiated class Customer not found\.$#'
+			identifier: class.notFound
+			count: 3
+			path: twopayment.php
+
+		-
+			message: '#^Instantiated class HelperForm not found\.$#'
+			identifier: class.notFound
+			count: 4
+			path: twopayment.php
+
+		-
+			message: '#^Instantiated class Order not found\.$#'
+			identifier: class.notFound
+			count: 5
+			path: twopayment.php
+
+		-
+			message: '#^Instantiated class OrderCarrier not found\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Instantiated class OrderHistory not found\.$#'
+			identifier: class.notFound
+			count: 3
+			path: twopayment.php
+
+		-
+			message: '#^Instantiated class OrderState not found\.$#'
+			identifier: class.notFound
+			count: 7
+			path: twopayment.php
+
+		-
+			message: '#^Instantiated class PrestaShopException not found\.$#'
+			identifier: class.notFound
+			count: 2
+			path: twopayment.php
+
+		-
+			message: '#^Instantiated class PrestaShop\\PrestaShop\\Core\\Payment\\PaymentOption not found\.$#'
+			identifier: class.notFound
+			count: 1
+			path: twopayment.php
+
+		-
+			message: '#^Instantiated class Product not found\.$#'
+			identifier: class.notFound
+			count: 4
+			path: twopayment.php
+
+		-
+			message: '#^Instantiated class SpecificPrice not found\.$#'
+			identifier: class.notFound
+			count: 2
+			path: twopayment.php
+
+		-
+			message: '#^Instantiated class Tab not found\.$#'
+			identifier: class.notFound
+			count: 2
+			path: twopayment.php
+
+		-
+			message: '#^Instantiated class TaxRulesGroup not found\.$#'
+			identifier: class.notFound
+			count: 3
+			path: twopayment.php
