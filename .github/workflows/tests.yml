@@ -37,6 +37,7 @@ jobs:
           php -l tests/TrackingNumberSpec.php
           php -l tests/DefaultPaymentTermSpec.php
           php -l tests/MinimumOrderGateSpec.php
+          php -l tests/FxRatesSpec.php
           php -l tests/run.php
 
       - name: Run offline test suite

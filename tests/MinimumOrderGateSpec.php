@@ -56,14 +56,24 @@ final class MinimumOrderGateSpec
         StubStore::reset();
         Tools::resetTestValues();
         PrestaShopLogger::reset();
-        // Shop currencies: 1=EUR (default), 2=NOK, 3=GBP.
-        // conversion_rate is expressed against the shop default currency.
+        // Shop currencies: 1=EUR (default), 2=NOK, 3=GBP. PS core
+        // conversion_rate values are deliberately POISONED: since TWO-25105
+        // every Two-side conversion must come from the cached
+        // /refdata/v1/fx-rates table, never from PS core's own rates.
         StubStore::$currencies = [
-            1 => ['iso_code' => 'EUR', 'conversion_rate' => 1.0, 'symbol' => "\u{20AC}"],
-            2 => ['iso_code' => 'NOK', 'conversion_rate' => 11.5, 'symbol' => 'kr'],
-            3 => ['iso_code' => 'GBP', 'conversion_rate' => 0.85, 'symbol' => "\u{A3}"],
+            1 => ['iso_code' => 'EUR', 'conversion_rate' => 999.0, 'symbol' => "\u{20AC}"],
+            2 => ['iso_code' => 'NOK', 'conversion_rate' => 999.0, 'symbol' => 'kr'],
+            3 => ['iso_code' => 'GBP', 'conversion_rate' => 999.0, 'symbol' => "\u{A3}"],
         ];
         Configuration::updateValue('PS_CURRENCY_DEFAULT', 1);
+        // Cached FX table (EUR pivot: rates[CCY] = 1 CCY in EUR), matching
+        // the historical fixture rates 11.5 NOK/EUR and 0.85 GBP/EUR.
+        Configuration::updateValue(Twopayment::CONFIG_FX_RATES, json_encode([
+            'base' => 'EUR',
+            'as_of' => '2026-07-15',
+            'rates' => ['EUR' => 1.0, 'NOK' => 1 / 11.5, 'GBP' => 1 / 0.85],
+        ]));
+        Configuration::updateValue(Twopayment::CONFIG_FX_RATES_TS, time());
         return new TwopaymentTestHarness();
     }
 
@@ -234,8 +244,9 @@ final class MinimumOrderGateSpec
     private static function testGateFailsClosedWithoutFxRate(): void
     {
         $module = self::freshModule();
-        // USD is not an installed shop currency - the basket cannot be proven
-        // to satisfy the funding partner's minimum: fail closed.
+        // USD carries no rate in the cached FX table (and no API key is
+        // configured, so no on-demand refetch happens) - the basket cannot be
+        // proven to satisfy the funding partner's minimum: fail closed.
         self::cachePlatformMinimum(['amount' => 100.0, 'currency' => 'USD', 'basis' => 'gross']);
         TinyAssert::false($module->isTwoMinimumOrderSatisfied(self::cart(1, 1000000.0, 999999.0)));
     }
