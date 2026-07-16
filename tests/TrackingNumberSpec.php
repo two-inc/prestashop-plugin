@@ -51,6 +51,17 @@ final class TrackingNumberSpec
         };
     }
 
+    /**
+     * Declared-rate relay wiring (TWO-24880): the payload's product tax rate
+     * comes from the product's tax-rules group resolved at the cart's tax
+     * address (the fixture cart carries its own loaded invoice address).
+     */
+    private static function declareProductRate(int $pid, float $ratePct): void
+    {
+        StubStore::$products[$pid]['id_tax_rules_group'] = 9000 + $pid;
+        StubStore::$taxRuleRates[9000 + $pid] = $ratePct;
+    }
+
     private static function testTrackingNumberComesFromOrderCarrier(): void
     {
         StubStore::reset();
@@ -323,6 +334,7 @@ final class TrackingNumberSpec
         ]];
         StubStore::$productCategories[9401] = [['name' => 'Gear']];
         StubStore::$images[9401] = ['id_image' => 9401];
+        self::declareProductRate(9401, 25.0);
         StubStore::$cartTotals[7300] = [
             true => [
                 Cart::ONLY_DISCOUNTS => 0.0,

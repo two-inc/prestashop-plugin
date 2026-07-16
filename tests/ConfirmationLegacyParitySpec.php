@@ -120,6 +120,11 @@ final class ConfirmationLegacyParitySpec
         ]];
         StubStore::$productCategories[9401] = [['name' => 'Books']];
         StubStore::$images[9401] = ['id_image' => 9401];
+        // Declared-rate relay (TWO-24880): the ordinary product's own
+        // tax-rules group (flat 5.5%, matching total/total_wt) — distinct
+        // from the fee product's merchant-selected group (400).
+        StubStore::$products[9401]['id_tax_rules_group'] = 500;
+        StubStore::$taxRuleRates[500] = 5.5;
         StubStore::$cartTotals[self::CART_ID] = [
             true => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => self::PRODUCT_GROSS],
             false => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => self::PRODUCT_NET],

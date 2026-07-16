@@ -91,15 +91,12 @@ class Twopayment extends PaymentModule
     
     // Constants for validation tolerances
     const TAX_FORMULA_TOLERANCE = 0.02; // Tolerance for tax formula validation
-    const NET_FORMULA_TOLERANCE = 0.05; // Tolerance for net formula validation
+    const NET_FORMULA_TOLERANCE = 0.05; // Tolerance for net formula validation. Deliberately NOT tightened to 0.02 yet: the emitted unit_price is 2dp while the discount is derived at 6dp, so a legitimate high-quantity line with a >2dp unit price can drift up to qty*0.005. Tighten only after that absorption gap is fixed (design 4.3 pt 4).
     const ORDER_RECONCILIATION_TOLERANCE = 0.02; // Warn-level parity tolerance against cart totals (PrestaShop rounding can drift by up to 2 cents)
-    const TAX_RATE_PRECISION = 3; // Decimal precision for line-item tax rates sent to Two
+    const TAX_RATE_PRECISION = 6; // Decimal precision for line-item tax rates sent to Two (native PrestaShop precision; must stay >= 4dp so the 2dp-of-percent normaliser output survives formatting)
     const TAX_SUBTOTAL_RATE_PRECISION = 2; // Keep tax subtotal grouping stable for compatibility
     const SNAPSHOT_TAX_RATE_PRECISION = 2; // Keep snapshot hash behavior stable across minor rate precision drift
     const TAX_RATE_PERCENT_PRECISION = 2; // Provider expects VAT rates rounded to 2 decimals in percent
-    const TAX_RATE_VARIANCE_TOLERANCE = 0.005; // Acceptable decimal variance between configured and applied rate
-    const TAX_RATE_CONTEXT_SNAP_TOLERANCE = 0.0025; // Snap near-context discount rates (e.g. 0.212 -> 0.21) for provider compatibility
-    const SPANISH_FALLBACK_TAX_RATE = 0.21; // ES strict fallback when unresolved line rates drift from canonical contexts
     // Two module currency coverage baseline: keep these provider currencies explicitly allowed.
     // Required coverage: NOK, GBP, SEK, USD, DKK, EUR
     const TWO_SUPPORTED_CURRENCY_ISOS = ['NOK', 'GBP', 'SEK', 'USD', 'DKK', 'EUR'];
@@ -4104,14 +4101,12 @@ class Twopayment extends PaymentModule
         $items = [];
         $carrier = new Carrier($cart->id_carrier, $cart->id_lang);
         $line_items = $cart->getProducts(true);
-        $use_spanish_rate_policy = $this->shouldApplyTwoSpanishTaxRatePolicy($cart);
-        
+
         //  Validate cart has products
         if (empty($line_items)) {
             PrestaShopLogger::addLog('TwoPayment: Cart is empty, cannot build line items', 3);
             return $items; // Return empty array (caller should handle empty cart)
         }
-        $known_product_rate_candidates = $this->collectTwoKnownTaxRatesFromConfiguredProductRates($line_items);
         $surchargeProductId = $this->getTwoSurchargeCartProductId(false);
 
         foreach ($line_items as $line_item) {
@@ -4144,7 +4139,8 @@ class Twopayment extends PaymentModule
                 $line_item,
                 $quantity,
                 $net_amount_prestashop,
-                $gross_amount_prestashop
+                $gross_amount_prestashop,
+                $cart
             );
             if (!empty($ecotax_breakdown['enabled'])) {
                 $net_amount_prestashop = (float)$ecotax_breakdown['product_net'];
@@ -4156,69 +4152,42 @@ class Twopayment extends PaymentModule
                 }
             }
             
-            // DIAGNOSTIC LOGGING: Log tax data for debugging store-specific issues
-            // Only log when debug mode is enabled to avoid excessive log entries in production
+            // DECLARED-RATE RELAY (TWO-24880): the line's tax rate is the
+            // merchant's own configured rate — the product's tax-rules group
+            // resolved at the cart's PS_TAX_ADDRESS_TYPE address, exactly the
+            // resolution PrestaShop used to compute the amounts. We never
+            // derive the rate from tax/net, never snap it toward canonical
+            // values, and never substitute a fallback. NOTE: the row's
+            // 'rate' field from getProducts() is country-only (it ignores
+            // state/zip tax rules) and must not be used.
+            $declared_tax_rules_group_id = (int) Product::getIdTaxRulesGroupByIdProduct(
+                (int) $line_item['id_product'],
+                $this->context
+            );
+            $tax_rate = $this->getTwoConfiguredTaxRateDecimalForGroup($declared_tax_rules_group_id, $cart);
+
             if (Configuration::get('PS_TWO_DEBUG_MODE')) {
-                $calculated_rate_for_log = ($net_amount_prestashop > 0) 
-                    ? round((($gross_amount_prestashop - $net_amount_prestashop) / $net_amount_prestashop) * 100, 2) 
-                    : 0;
                 PrestaShopLogger::addLog(
-                    'TwoPayment: Product tax debug - ID: ' . $line_item['id_product'] . 
-                    ' | rate field: ' . (isset($line_item['rate']) ? $line_item['rate'] : 'NULL') . 
-                    ' | total (net): ' . $net_amount_prestashop . 
-                    ' | total_wt (gross): ' . $gross_amount_prestashop .
-                    ' | calculated rate: ' . $calculated_rate_for_log . '%',
+                    'TwoPayment: Product tax debug - ID: ' . $line_item['id_product'] .
+                    ' | tax rules group: ' . $declared_tax_rules_group_id .
+                    ' | declared rate: ' . round($tax_rate * 100, 2) . '%' .
+                    ' | total (net): ' . $net_amount_prestashop .
+                    ' | total_wt (gross): ' . $gross_amount_prestashop,
                     1 // Info level
                 );
             }
-            
-            // Derive the effective tax rate from applied PrestaShop amounts first.
-            // Keep configured rate only when it is very close (normal variance).
-            $rate_from_field_percent = isset($line_item['rate']) ? (float)$line_item['rate'] : 0;
-            $rate_from_field_decimal = $rate_from_field_percent / 100;
-            $rate_from_amounts_decimal = 0.0;
 
-            if ($net_amount_prestashop > 0) {
-                $rate_from_amounts_decimal = $tax_amount_prestashop / $net_amount_prestashop;
-                if ($rate_from_amounts_decimal < 0) {
-                    $rate_from_amounts_decimal = 0.0;
-                }
-            }
-
-            $tax_rate = 0.0;
-            if ($net_amount_prestashop > 0) {
-                $rate_difference = abs($rate_from_field_decimal - $rate_from_amounts_decimal);
-                if ($rate_from_field_percent > 0 && $rate_difference <= self::TAX_RATE_VARIANCE_TOLERANCE) {
-                    $tax_rate = $rate_from_field_decimal;
-                } else {
-                    $tax_rate = $rate_from_amounts_decimal;
-                    if ($rate_from_field_percent > 0 && Configuration::get('PS_TWO_DEBUG_MODE')) {
-                        PrestaShopLogger::addLog(
-                            'TwoPayment: Tax rate variance - field: ' . $rate_from_field_percent . '%, amounts: ' .
-                            round($rate_from_amounts_decimal * 100, 2) . '% | Product: ' . $line_item['id_product'] .
-                            ' | Using applied rate from amounts',
-                            1
-                        );
-                    }
-                }
-            } elseif ($rate_from_field_percent > 0) {
-                $tax_rate = $rate_from_field_decimal;
-            }
-
-            $tax_rate = $this->normalizeTwoTaxRateToPercentPrecision($tax_rate);
-            $product_known_context_rates = $known_product_rate_candidates;
-            if ($rate_from_field_percent > 0) {
-                $product_known_context_rates[] = $this->normalizeTwoTaxRateToPercentPrecision($rate_from_field_decimal);
-            }
-            $snapped_product_rate = $this->normalizeTwoTaxRateToPercentPrecision(
-                $this->snapTwoTaxRateToKnownContexts($tax_rate, $product_known_context_rates)
+            // Fail loud when the declared rate contradicts PrestaShop's own
+            // applied amounts: we cannot faithfully represent an internally
+            // inconsistent line, and silently correcting it would be
+            // substituting our judgment for the merchant's declaration.
+            $this->assertTwoDeclaredRateReconcilesWithAmounts(
+                'product ' . $line_item['id_product'],
+                $net_amount_prestashop,
+                $tax_amount_prestashop,
+                $tax_rate
             );
-            if (
-                abs($tax_amount_prestashop - ($net_amount_prestashop * $snapped_product_rate)) <= self::TAX_FORMULA_TOLERANCE
-            ) {
-                $tax_rate = $snapped_product_rate;
-            }
-            
+
             // Use PrestaShop unit price when available; otherwise derive from net total.
             $unit_price_net_prestashop = isset($line_item['price']) ? (float)$line_item['price'] : null;
             
@@ -4356,26 +4325,7 @@ class Twopayment extends PaymentModule
             $shipping_net = round((float)$shipping_cost_without_tax, 2);
             $shipping_gross = round((float)$shipping_cost_with_tax, 2);
             $shipping_tax_amount = round($shipping_gross - $shipping_net, 2);
-            $shipping_tax_rate_decimal = $shipping_net > 0
-                ? max(0, $shipping_tax_amount / $shipping_net)
-                : 0.0;
-            $shipping_tax_rate_decimal = $this->normalizeTwoTaxRateToPercentPrecision($shipping_tax_rate_decimal);
-            $shipping_known_context_rates = $this->collectTwoKnownTaxRatesFromPositiveItems($items);
-            $carrier_configured_rate = $this->getTwoCarrierConfiguredTaxRateDecimal($carrier, $cart);
-            if ($carrier_configured_rate > 0) {
-                $shipping_known_context_rates[] = $carrier_configured_rate;
-            }
-            $snapped_shipping_tax_rate = $this->normalizeTwoTaxRateToPercentPrecision(
-                $this->snapTwoTaxRateToKnownContexts($shipping_tax_rate_decimal, $shipping_known_context_rates)
-            );
-            if (
-                abs($shipping_tax_amount - ($shipping_net * $snapped_shipping_tax_rate)) <= self::TAX_FORMULA_TOLERANCE
-            ) {
-                $shipping_tax_rate_decimal = $snapped_shipping_tax_rate;
-            }
-            $shipping_tax_rate_percent = round($shipping_tax_rate_decimal * 100, 2);
-            $shipping_unit_price = $shipping_net;
-            
+
             $shipping_name = $carrier->name ? $carrier->name : $this->l('Shipping');
             $shipping_delay = '';
             if ($carrier->delay && is_array($carrier->delay)) {
@@ -4392,59 +4342,87 @@ class Twopayment extends PaymentModule
             } elseif ($carrier->shipping_method == Carrier::SHIPPING_METHOD_PRICE) {
                 $shipping_description .= ' ' . sprintf($this->l('(by price)'));
             }
-            
-            $shipping_line = [
+
+            $shipping_line_template = [
                 'name' => $shipping_name,
                 'description' => Tools::substr(strip_tags($shipping_description), 0, 255),
-                'gross_amount' => (string)$this->getTwoRoundAmount($shipping_gross),
-                'net_amount' => (string)$this->getTwoRoundAmount($shipping_net),
-                'discount_amount' => '0.00',
-                'tax_amount' => (string)$this->getTwoRoundAmount($shipping_tax_amount),
-                'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($shipping_tax_rate_percent) . '%',
-                'tax_rate' => $this->formatTwoTaxRate($shipping_tax_rate_decimal),
-                'unit_price' => (string)$this->getTwoRoundAmount($shipping_unit_price),
-                'quantity' => 1,
                 'quantity_unit' => 'pcs',
-                'image_url' => '',
-                'product_page_url' => '',
-                'type' => 'SHIPPING_FEE'
+                'type' => 'SHIPPING_FEE',
             ];
 
-            $items[] = $shipping_line;
+            if ($this->isTwoAtcpShipWrapEnabled()) {
+                // PS_ATCP_SHIPWRAP taxes shipping at the average product tax
+                // rate (a blended, non-canonical rate). Split the charge
+                // across the cart's canonical product rate classes instead of
+                // ever emitting the blended rate.
+                foreach ($this->splitTwoChargeAcrossProductRateClasses(
+                    $shipping_net,
+                    $shipping_tax_amount,
+                    $items,
+                    'shipping'
+                ) as $segment) {
+                    $items[] = $this->buildTwoChargeLineFromSegment($shipping_line_template, $segment);
+                }
+            } else {
+                // DECLARED-RATE RELAY: the shipping rate is the carrier's own
+                // tax-rules group resolved at the cart's tax address — never
+                // derived from tax/net, never snapped.
+                $shipping_tax_rate_decimal = $this->getTwoCarrierConfiguredTaxRateDecimal($carrier, $cart);
+                $this->assertTwoDeclaredRateReconcilesWithAmounts(
+                    'shipping (' . $shipping_name . ')',
+                    $shipping_net,
+                    $shipping_tax_amount,
+                    $shipping_tax_rate_decimal
+                );
+                $items[] = $this->buildTwoChargeLineFromSegment($shipping_line_template, [
+                    'net' => $shipping_net,
+                    'tax' => $shipping_tax_amount,
+                    'gross' => $shipping_gross,
+                    'rate' => $shipping_tax_rate_decimal,
+                ]);
+            }
         }
 
         $wrapping_totals = $this->getTwoGiftWrappingTotals($cart);
         if ($wrapping_totals['gross'] > 0) {
-            $wrapping_rate_decimal = $wrapping_totals['net'] > 0
-                ? max(0, $wrapping_totals['tax'] / $wrapping_totals['net'])
-                : 0.0;
-            $wrapping_rate_decimal = $this->normalizeTwoTaxRateToPercentPrecision($wrapping_rate_decimal);
-            $wrapping_known_context_rates = $this->collectTwoKnownTaxRatesFromPositiveItems($items);
-            $snapped_wrapping_rate = $this->normalizeTwoTaxRateToPercentPrecision(
-                $this->snapTwoTaxRateToKnownContexts($wrapping_rate_decimal, $wrapping_known_context_rates)
-            );
-            if (
-                abs($wrapping_totals['tax'] - ($wrapping_totals['net'] * $snapped_wrapping_rate)) <= self::TAX_FORMULA_TOLERANCE
-            ) {
-                $wrapping_rate_decimal = $snapped_wrapping_rate;
-            }
-            $wrapping_rate_percent = round($wrapping_rate_decimal * 100, 2);
-            $items[] = [
+            $wrapping_line_template = [
                 'name' => $this->l('Gift wrapping'),
                 'description' => Tools::substr(strip_tags($this->l('Gift wrapping for this order')), 0, 255),
-                'gross_amount' => (string)$this->getTwoRoundAmount($wrapping_totals['gross']),
-                'net_amount' => (string)$this->getTwoRoundAmount($wrapping_totals['net']),
-                'discount_amount' => '0.00',
-                'tax_amount' => (string)$this->getTwoRoundAmount($wrapping_totals['tax']),
-                'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($wrapping_rate_percent) . '%',
-                'tax_rate' => $this->formatTwoTaxRate($wrapping_rate_decimal),
-                'unit_price' => (string)$this->getTwoRoundAmount($wrapping_totals['net']),
-                'quantity' => 1,
                 'quantity_unit' => 'item',
-                'image_url' => '',
-                'product_page_url' => '',
                 'type' => 'DIGITAL',
             ];
+
+            if ($this->isTwoAtcpShipWrapEnabled()) {
+                // PS_ATCP_SHIPWRAP also taxes wrapping at the blended average
+                // product rate — same canonical split as shipping.
+                foreach ($this->splitTwoChargeAcrossProductRateClasses(
+                    $wrapping_totals['net'],
+                    $wrapping_totals['tax'],
+                    $items,
+                    'gift wrapping'
+                ) as $segment) {
+                    $items[] = $this->buildTwoChargeLineFromSegment($wrapping_line_template, $segment);
+                }
+            } else {
+                // DECLARED-RATE RELAY: wrapping is taxed by the shop's
+                // configured PS_GIFT_WRAPPING_TAX_RULES_GROUP.
+                $wrapping_rate_decimal = $this->getTwoConfiguredTaxRateDecimalForGroup(
+                    (int) Configuration::get('PS_GIFT_WRAPPING_TAX_RULES_GROUP'),
+                    $cart
+                );
+                $this->assertTwoDeclaredRateReconcilesWithAmounts(
+                    'gift wrapping',
+                    $wrapping_totals['net'],
+                    $wrapping_totals['tax'],
+                    $wrapping_rate_decimal
+                );
+                $items[] = $this->buildTwoChargeLineFromSegment($wrapping_line_template, [
+                    'net' => $wrapping_totals['net'],
+                    'tax' => $wrapping_totals['tax'],
+                    'gross' => $wrapping_totals['gross'],
+                    'rate' => $wrapping_rate_decimal,
+                ]);
+            }
         }
 
         // Add cart-level discounts as one or more lines split by tax context when applicable.
@@ -4455,11 +4433,206 @@ class Twopayment extends PaymentModule
             }
         }
 
-        if ($use_spanish_rate_policy) {
-            $items = $this->applyTwoSpanishCanonicalTaxRateFallbackToItems($items);
+        return $items;
+    }
+
+    /**
+     * Whether PrestaShop's "average tax of cart products for shipping and
+     * wrapping" mode is enabled (PS_ATCP_SHIPWRAP).
+     *
+     * @return bool
+     */
+    private function isTwoAtcpShipWrapEnabled()
+    {
+        return (bool) Configuration::get('PS_ATCP_SHIPWRAP');
+    }
+
+    /**
+     * Materialize a payload line from a shared template plus a
+     * net/tax/gross/rate segment.
+     *
+     * @param array $template name/description/quantity_unit/type
+     * @param array{net:float,tax:float,gross:float,rate:float} $segment
+     * @return array
+     */
+    private function buildTwoChargeLineFromSegment($template, $segment)
+    {
+        $rate = max(0, (float) $segment['rate']);
+        $rate_percent = round($rate * 100, 2);
+
+        return [
+            'name' => $template['name'],
+            'description' => $template['description'],
+            'gross_amount' => (string) $this->getTwoRoundAmount($segment['gross']),
+            'net_amount' => (string) $this->getTwoRoundAmount($segment['net']),
+            'discount_amount' => '0.00',
+            'tax_amount' => (string) $this->getTwoRoundAmount($segment['tax']),
+            'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($rate_percent) . '%',
+            'tax_rate' => $this->formatTwoTaxRate($rate),
+            'unit_price' => (string) $this->getTwoRoundAmount($segment['net']),
+            'quantity' => 1,
+            'quantity_unit' => $template['quantity_unit'],
+            'image_url' => '',
+            'product_page_url' => '',
+            'type' => $template['type'],
+        ];
+    }
+
+    /**
+     * Split a charge taxed at PrestaShop's blended average product rate
+     * (PS_ATCP_SHIPWRAP) across the cart's canonical product rate classes,
+     * reconciling rounded sub-lines to the PrestaShop-authoritative totals
+     * cent-exactly (largest-remainder on net, bounded per-line nudge on tax).
+     * Fails loud when no rate-consistent distribution can hit the target.
+     *
+     * @param float $charge_net PrestaShop-authoritative net for the charge
+     * @param float $charge_tax PrestaShop-authoritative tax for the charge
+     * @param array $items Positive payload lines built so far (rate classes)
+     * @param string $label For error messages ('shipping', 'gift wrapping')
+     * @return array<int,array{net:float,tax:float,gross:float,rate:float}>
+     */
+    private function splitTwoChargeAcrossProductRateClasses($charge_net, $charge_tax, $items, $label)
+    {
+        $charge_net = round(max(0, (float) $charge_net), 2);
+        $charge_tax = round((float) $charge_tax, 2);
+        if ($charge_net <= 0 && $charge_tax <= 0) {
+            return [];
         }
 
-        return $items;
+        // Collect canonical rate classes from positive lines, net-weighted —
+        // the same basis PrestaShop's getAverageProductsTaxRate() blends.
+        $classes = [];
+        foreach ($items as $item) {
+            $line_net = isset($item['net_amount']) ? round((float) $item['net_amount'], 2) : 0.0;
+            $line_gross = isset($item['gross_amount']) ? round((float) $item['gross_amount'], 2) : 0.0;
+            if ($line_net <= 0 || $line_gross <= 0 || !isset($item['tax_rate'])) {
+                continue;
+            }
+            $rate = max(0, (float) $item['tax_rate']);
+            $key = $this->formatTwoTaxRate($rate);
+            if (!isset($classes[$key])) {
+                $classes[$key] = ['rate' => $rate, 'net_weight' => 0.0];
+            }
+            $classes[$key]['net_weight'] += $line_net;
+        }
+
+        if (empty($classes)) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Cannot split ' . $label . ' across product tax-rate classes - no positive product lines',
+                3
+            );
+            throw new Exception('Cannot attribute ' . $label . ' tax under PS_ATCP_SHIPWRAP: no product rate classes');
+        }
+
+        $net_weights = [];
+        foreach ($classes as $key => $class) {
+            $net_weights[$key] = (float) $class['net_weight'];
+        }
+        $allocated_nets = $this->allocateTwoAmountByWeights($charge_net, $net_weights);
+
+        // Per-class tax at the class's canonical rate, then reconcile the
+        // rounding residual to PrestaShop's authoritative tax total with a
+        // bounded per-line nudge that stays inside TAX_FORMULA_TOLERANCE.
+        $target_tax_cents = $this->convertAmountToCents($charge_tax);
+        $tax_cents = [];
+        $allocated_tax_cents_total = 0;
+        foreach ($classes as $key => $class) {
+            $class_net = isset($allocated_nets[$key]) ? (float) $allocated_nets[$key] : 0.0;
+            $tax_cents[$key] = (int) round($this->convertAmountToCents($class_net) * $class['rate'], 0);
+            $allocated_tax_cents_total += $tax_cents[$key];
+        }
+
+        $residual_cents = $target_tax_cents - $allocated_tax_cents_total;
+        $max_nudge_cents = (int) round(self::TAX_FORMULA_TOLERANCE * 100);
+        // Nudge largest classes first: bigger nets absorb a cent with the
+        // least relative distortion.
+        arsort($net_weights);
+        $nudged = [];
+        foreach (array_keys($net_weights) as $key) {
+            $nudged[$key] = 0;
+        }
+        while ($residual_cents !== 0) {
+            $applied = false;
+            foreach (array_keys($net_weights) as $key) {
+                if ($residual_cents === 0) {
+                    break;
+                }
+                $step = $residual_cents > 0 ? 1 : -1;
+                if (abs($nudged[$key] + $step) > $max_nudge_cents) {
+                    continue;
+                }
+                if ($step < 0 && $tax_cents[$key] <= 0) {
+                    continue;
+                }
+                $tax_cents[$key] += $step;
+                $nudged[$key] += $step;
+                $residual_cents -= $step;
+                $applied = true;
+            }
+            if (!$applied) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Cannot reconcile ' . $label . ' tax split to PrestaShop totals. ' .
+                    'Residual=' . $residual_cents . 'c beyond per-line tolerance',
+                    3
+                );
+                throw new Exception('Cannot reconcile ' . $label . ' tax under PS_ATCP_SHIPWRAP with canonical rates');
+            }
+        }
+
+        $segments = [];
+        foreach ($classes as $key => $class) {
+            $segment_net = isset($allocated_nets[$key]) ? round((float) $allocated_nets[$key], 2) : 0.0;
+            $segment_tax = round($tax_cents[$key] / 100, 2);
+            $segment_gross = round($segment_net + $segment_tax, 2);
+            if ($segment_gross <= 0 && $segment_net <= 0) {
+                continue;
+            }
+            $segments[] = [
+                'net' => $segment_net,
+                'tax' => $segment_tax,
+                'gross' => $segment_gross,
+                'rate' => $class['rate'],
+            ];
+        }
+
+        return $segments;
+    }
+
+    /**
+     * Fail loud when a line's declared (merchant-configured) tax rate does
+     * not reconcile with PrestaShop's own applied amounts. This is the
+     * deterministic, plugin-side divergence gate of the declared-rate relay
+     * design: we never derive, snap or substitute a rate — an internally
+     * contradictory line is surfaced to the merchant instead.
+     *
+     * @param string $label Line description for logs/errors
+     * @param float $net_amount Emitted 2dp net amount
+     * @param float $tax_amount Emitted 2dp tax amount
+     * @param float $rate_decimal Declared decimal rate (e.g. 0.21)
+     * @return void
+     * @throws Exception
+     */
+    private function assertTwoDeclaredRateReconcilesWithAmounts($label, $net_amount, $tax_amount, $rate_decimal)
+    {
+        $net_amount = round((float) $net_amount, 2);
+        $tax_amount = round((float) $tax_amount, 2);
+        $expected_tax = round($net_amount * max(0, (float) $rate_decimal), 2);
+        if (abs($tax_amount - $expected_tax) <= self::TAX_FORMULA_TOLERANCE) {
+            return;
+        }
+
+        PrestaShopLogger::addLog(
+            'TwoPayment: Declared tax rate does not reconcile with applied amounts for ' . $label .
+            '. Declared rate=' . round(max(0, (float) $rate_decimal) * 100, 2) . '%' .
+            ', net=' . $this->getTwoRoundAmount($net_amount) .
+            ', applied tax=' . $this->getTwoRoundAmount($tax_amount) .
+            ', expected tax at declared rate=' . $this->getTwoRoundAmount($expected_tax) .
+            '. Check the tax rules configured for this line (tax rules group, address-specific rules).',
+            3
+        );
+        throw new Exception(
+            'Declared tax rate diverges from applied tax amounts for ' . $label
+        );
     }
 
     /**
@@ -4481,7 +4654,14 @@ class Twopayment extends PaymentModule
         }
 
         if ($wrapping_gross < $wrapping_net) {
-            $wrapping_gross = $wrapping_net;
+            // Silently clamping gross to net would mask a genuine divergence
+            // in PrestaShop's own wrapping totals — fail loud instead.
+            PrestaShopLogger::addLog(
+                'TwoPayment: Gift wrapping totals diverge - gross (' . $this->getTwoRoundAmount($wrapping_gross) .
+                ') is below net (' . $this->getTwoRoundAmount($wrapping_net) . ')',
+                3
+            );
+            throw new Exception('Gift wrapping totals diverge (gross below net)');
         }
 
         return [
@@ -4500,9 +4680,10 @@ class Twopayment extends PaymentModule
      * @param int $quantity
      * @param float $line_net
      * @param float $line_gross
+     * @param Cart $cart
      * @return array{enabled:bool,net:float,tax:float,gross:float,rate:float,product_net:float,product_gross:float,unit_net:float}
      */
-    private function extractTwoEcotaxLineBreakdown($line_item, $quantity, $line_net, $line_gross)
+    private function extractTwoEcotaxLineBreakdown($line_item, $quantity, $line_net, $line_gross, $cart)
     {
         $quantity = (int)$quantity;
         if ($quantity <= 0) {
@@ -4520,10 +4701,14 @@ class Twopayment extends PaymentModule
             return ['enabled' => false];
         }
 
-        $ecotax_rate_percent = isset($line_item['ecotax_tax_rate']) && is_numeric($line_item['ecotax_tax_rate'])
-            ? max(0, (float)$line_item['ecotax_tax_rate'])
-            : (isset($line_item['rate']) ? max(0, (float)$line_item['rate']) : 0.0);
-        $ecotax_rate_decimal = round($ecotax_rate_percent / 100, self::TAX_RATE_PRECISION);
+        // Declared-rate relay: ecotax is taxed by the shop-configured
+        // PS_ECOTAX_TAX_RULES_GROUP_ID group (the rate PrestaShop itself
+        // embedded in total_ecotax), resolved at the cart's tax address via
+        // the shared helper. Never the row's country-only 'rate' field.
+        $ecotax_rate_decimal = $this->getTwoConfiguredTaxRateDecimalForGroup(
+            (int) Configuration::get('PS_ECOTAX_TAX_RULES_GROUP_ID'),
+            $cart
+        );
         $ecotax_total_tax = round($ecotax_total_net * $ecotax_rate_decimal, 2);
         $ecotax_total_gross = round($ecotax_total_net + $ecotax_total_tax, 2);
 
@@ -4678,23 +4863,16 @@ class Twopayment extends PaymentModule
 
             $segments = $this->buildTwoCanonicalDiscountRateSegments($line_net, $line_tax, $known_context_rates);
             if (empty($segments)) {
-                $line_rate_raw = $line_net > 0
-                    ? max(0, $line_tax / $line_net)
-                    : max(0, (float)$context_data['tax_rate']);
-                $line_rate = $this->normalizeTwoTaxRateToPercentPrecision($line_rate_raw);
-                $snapped_line_rate = $this->normalizeTwoTaxRateToPercentPrecision(
-                    $this->snapTwoTaxRateToKnownContexts($line_rate_raw, $known_context_rates)
+                // Declared-rate relay: a discount that cannot be attributed
+                // to the cart's declared rates (exactly or within rounding
+                // tolerance) is internally contradictory — fail loud, never
+                // emit a derived tax/net blend.
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Discount allocation does not reconcile with any declared cart tax rate. ' .
+                    'net=' . $this->getTwoRoundAmount($line_net) . ', tax=' . $this->getTwoRoundAmount($line_tax),
+                    3
                 );
-                if (abs($line_tax - ($line_net * $snapped_line_rate)) <= self::TAX_FORMULA_TOLERANCE) {
-                    $line_rate = $snapped_line_rate;
-                }
-                $segments = [[
-                    'net' => $line_net,
-                    'tax' => $line_tax,
-                    'gross' => $line_gross,
-                    'rate' => $line_rate,
-                    'precision' => 4,
-                ]];
+                throw new Exception('Discount amounts diverge from all declared cart tax rates');
             }
 
             $is_segment_split = count($segments) > 1;
@@ -4812,23 +4990,24 @@ class Twopayment extends PaymentModule
             return null;
         }
 
-        $shipping_ratio = $shipping_gross > 0 ? ($shipping_net / $shipping_gross) : 1.0;
-        $alloc_net = round($alloc_gross * $shipping_ratio, 2);
-        $alloc_net = min($alloc_net, round(max(0, (float)$discountNetTotal), 2), $alloc_gross);
-        $alloc_tax = round($alloc_gross - $alloc_net, 2);
+        // DECLARED-RATE RELAY: the free-shipping discount line MIRRORS the
+        // emitted rate of the shipping line it offsets, so the pair nets to
+        // zero at one consistent rate. Never derived from tax/net.
+        $shipping_rate = isset($shipping_line['tax_rate']) ? max(0, (float) $shipping_line['tax_rate']) : 0.0;
 
-        $shipping_rate = $shipping_net > 0 ? ($shipping_tax / $shipping_net) : 0.0;
-        if ($shipping_rate < 0) {
-            $shipping_rate = 0.0;
+        $shipping_ratio = $shipping_gross > 0 ? ($shipping_net / $shipping_gross) : 1.0;
+        $alloc_net_uncapped = round($alloc_gross * $shipping_ratio, 2);
+        $alloc_net = min($alloc_net_uncapped, round(max(0, (float)$discountNetTotal), 2), $alloc_gross);
+        if ($alloc_net < $alloc_net_uncapped) {
+            // The cap bit (multi-discount cart): re-derive gross from the
+            // capped net at the mirrored rate so gross/net/tax stay
+            // rate-consistent — never clamp net independently of gross.
+            $alloc_tax = round($alloc_net * $shipping_rate, 2);
+            $alloc_gross = round($alloc_net + $alloc_tax, 2);
+        } else {
+            $alloc_tax = round($alloc_gross - $alloc_net, 2);
         }
-        $shipping_rate = $this->normalizeTwoTaxRateToPercentPrecision($shipping_rate);
-        $shipping_known_context_rates = $this->collectTwoKnownTaxRatesFromPositiveItems($existingItems);
-        $snapped_shipping_rate = $this->normalizeTwoTaxRateToPercentPrecision(
-            $this->snapTwoTaxRateToKnownContexts($shipping_rate, $shipping_known_context_rates)
-        );
-        if (abs($shipping_tax - ($shipping_net * $snapped_shipping_rate)) <= self::TAX_FORMULA_TOLERANCE) {
-            $shipping_rate = $snapped_shipping_rate;
-        }
+
         $shipping_rate_percent = round($shipping_rate * 100, 2);
         $descriptor_rule = !empty($free_shipping_rules) ? reset($free_shipping_rules) : null;
         $descriptor = $descriptor_rule !== null
@@ -5007,22 +5186,15 @@ class Twopayment extends PaymentModule
             $line_tax = round($line_gross - $line_net, 2);
             $segments = $this->buildTwoCanonicalDiscountRateSegments($line_net, $line_tax, $known_context_rates);
             if (empty($segments)) {
-                $fallback_rate = $line_net > 0
-                    ? max(0, $line_tax / $line_net)
-                    : 0.0;
-                $fallback_rate = $this->normalizeTwoTaxRateToPercentPrecision($fallback_rate);
-                $snapped_fallback_rate = $this->normalizeTwoTaxRateToPercentPrecision(
-                    $this->snapTwoTaxRateToKnownContexts($fallback_rate, $known_context_rates)
+                // Declared-rate relay: fail loud instead of emitting a
+                // derived tax/net blend for an unattributable rule discount.
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Cart-rule discount "' . $descriptor['name'] . '" does not reconcile with any ' .
+                    'declared cart tax rate. net=' . $this->getTwoRoundAmount($line_net) .
+                    ', tax=' . $this->getTwoRoundAmount($line_tax),
+                    3
                 );
-                if (abs($line_tax - ($line_net * $snapped_fallback_rate)) <= self::TAX_FORMULA_TOLERANCE) {
-                    $fallback_rate = $snapped_fallback_rate;
-                }
-                $segments = [[
-                    'net' => $line_net,
-                    'tax' => $line_tax,
-                    'gross' => round($line_net + $line_tax, 2),
-                    'rate' => $fallback_rate,
-                ]];
+                throw new Exception('Discount amounts diverge from all declared cart tax rates');
             }
 
             $is_split = count($segments) > 1;
@@ -5093,6 +5265,17 @@ class Twopayment extends PaymentModule
             return [];
         }
 
+        // A zero-tax discount row is exactly representable at rate 0 —
+        // tax == rate * net holds identically. Not a derivation.
+        if ($tax_cents === 0) {
+            return [[
+                'net' => round($net_cents / 100, 2),
+                'tax' => 0.0,
+                'gross' => round($net_cents / 100, 2),
+                'rate' => 0.0,
+            ]];
+        }
+
         $rates = [];
         foreach ((array)$known_rates as $rate) {
             $normalized_rate = $this->normalizeTwoTaxRateToPercentPrecision((float)$rate);
@@ -5118,7 +5301,7 @@ class Twopayment extends PaymentModule
         }
 
         if (count($rates) < 2) {
-            return [];
+            return $this->buildTwoToleranceSingleRateSegment($net_cents, $tax_cents, $rates);
         }
 
         $implied_rate = $net_cents > 0 ? ((float)$tax_cents / (float)$net_cents) : 0.0;
@@ -5197,7 +5380,53 @@ class Twopayment extends PaymentModule
             }
         }
 
-        return [];
+        return $this->buildTwoToleranceSingleRateSegment($net_cents, $tax_cents, $rates);
+    }
+
+    /**
+     * Last resort before failing loud: represent the row at ONE declared
+     * cart rate whose implied tax is within TAX_FORMULA_TOLERANCE of the
+     * actual tax (PrestaShop rounds discount buckets once; per-line rounding
+     * can legitimately differ by a cent or two). The amounts are preserved
+     * as-is — the rate is only accepted, never derived from the amounts.
+     *
+     * UNIQUE-FIT RULE: if MORE THAN ONE declared rate fits within the
+     * tolerance the row is ambiguous (this only happens on tiny nets where
+     * neighbouring rates are cents apart) — returns [] so the caller fails
+     * loud rather than risk relabeling a line to a neighbouring rate, the
+     * exact failure mode the deleted snap/fallback machinery had. Also
+     * returns [] when no declared rate reconciles at all.
+     *
+     * @param int $net_cents
+     * @param int $tax_cents
+     * @param array $rates Declared decimal rates present on the cart
+     * @return array<int,array{net:float,tax:float,gross:float,rate:float}>
+     */
+    private function buildTwoToleranceSingleRateSegment($net_cents, $tax_cents, $rates)
+    {
+        $tolerance_cents = (int) round(self::TAX_FORMULA_TOLERANCE * 100);
+        $fitting_rates = [];
+        foreach ((array) $rates as $rate) {
+            $rate = max(0, (float) $rate);
+            $diff = abs((int) round($net_cents * $rate, 0) - $tax_cents);
+            if ($diff <= $tolerance_cents) {
+                $fitting_rates[$this->formatTwoTaxRate($rate)] = $rate;
+            }
+        }
+
+        if (count($fitting_rates) !== 1) {
+            // 0 fits: genuine divergence. 2+ fits: ambiguous attribution.
+            // Both fail loud at the caller.
+            return [];
+        }
+        $best_rate = reset($fitting_rates);
+
+        return [[
+            'net' => round($net_cents / 100, 2),
+            'tax' => round($tax_cents / 100, 2),
+            'gross' => round(($net_cents + $tax_cents) / 100, 2),
+            'rate' => $best_rate,
+        ]];
     }
 
     /**
@@ -5442,184 +5671,6 @@ class Twopayment extends PaymentModule
         return $contexts;
     }
 
-    /**
-     * Collect configured product tax rates from cart lines as decimal contexts.
-     *
-     * @param array $line_items
-     * @return array
-     */
-    private function collectTwoKnownTaxRatesFromConfiguredProductRates($line_items)
-    {
-        $known_rates = [];
-        foreach ($line_items as $line_item) {
-            if (!isset($line_item['rate']) || !is_numeric($line_item['rate'])) {
-                continue;
-            }
-
-            $rate_percent = max(0, (float)$line_item['rate']);
-            if ($rate_percent <= 0) {
-                continue;
-            }
-
-            $rate_decimal = $this->normalizeTwoTaxRateToPercentPrecision($rate_percent / 100);
-            $normalized = $this->formatTwoTaxRate($rate_decimal);
-            $known_rates[$normalized] = (float)$normalized;
-        }
-
-        return array_values($known_rates);
-    }
-
-    /**
-     * Determine whether ES canonical tax-rate policy should be applied for this cart.
-     *
-     * @param Cart $cart
-     * @return bool
-     */
-    private function shouldApplyTwoSpanishTaxRatePolicy($cart)
-    {
-        if (!Validate::isLoadedObject($cart)) {
-            return false;
-        }
-
-        $address_ids = array_unique(array_filter([
-            (int)$cart->id_address_invoice,
-            (int)$cart->id_address_delivery,
-        ]));
-
-        foreach ($address_ids as $address_id) {
-            $address = new Address((int)$address_id);
-            if (!Validate::isLoadedObject($address)) {
-                continue;
-            }
-
-            $country_iso = Country::getIsoById((int)$address->id_country);
-            if (is_string($country_iso) && strtoupper($country_iso) === 'ES') {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * Apply ES canonical tax-rate fallback across unresolved payload lines.
-     * Default fallback rate for unresolved lines is 0.21 when formula-safe.
-     *
-     * @param array $items
-     * @return array
-     */
-    private function applyTwoSpanishCanonicalTaxRateFallbackToItems($items)
-    {
-        if (empty($items)) {
-            return $items;
-        }
-
-        $canonical_rates = [
-            0.21,
-            0.10,
-            0.04,
-        ];
-
-        $known_canonical_rates = [];
-        foreach ($items as $item) {
-            if (!isset($item['tax_rate'])) {
-                continue;
-            }
-
-            $rate = $this->normalizeTwoTaxRateToPercentPrecision((float)$item['tax_rate']);
-            foreach ($canonical_rates as $canonical_rate) {
-                if (abs($rate - $canonical_rate) <= 0.000001) {
-                    $known_canonical_rates[(string)$canonical_rate] = $canonical_rate;
-                    break;
-                }
-            }
-        }
-
-        $fallback_candidates = array_values($known_canonical_rates);
-        if (empty($fallback_candidates)) {
-            $fallback_candidates[] = self::SPANISH_FALLBACK_TAX_RATE;
-        } elseif (!in_array(self::SPANISH_FALLBACK_TAX_RATE, $fallback_candidates, true)) {
-            $fallback_candidates[] = self::SPANISH_FALLBACK_TAX_RATE;
-        }
-
-        foreach ($items as $index => $item) {
-            if (!isset($item['tax_rate']) || !isset($item['net_amount']) || !isset($item['tax_amount'])) {
-                continue;
-            }
-
-            $line_rate = $this->normalizeTwoTaxRateToPercentPrecision((float)$item['tax_rate']);
-            $line_net = round((float)$item['net_amount'], 2);
-            $line_tax = round((float)$item['tax_amount'], 2);
-
-            if (abs($line_net) < 0.01) {
-                continue;
-            }
-
-            $is_already_canonical = false;
-            foreach ($canonical_rates as $canonical_rate) {
-                if (abs($line_rate - $canonical_rate) <= 0.000001) {
-                    $is_already_canonical = true;
-                    break;
-                }
-            }
-            if ($is_already_canonical) {
-                continue;
-            }
-
-            $selected_rate = null;
-            $nearest_diff = null;
-            foreach ($fallback_candidates as $candidate_rate) {
-                $candidate_rate = $this->normalizeTwoTaxRateToPercentPrecision((float)$candidate_rate);
-                $diff = abs($line_rate - $candidate_rate);
-                if ($nearest_diff === null || $diff < $nearest_diff) {
-                    $nearest_diff = $diff;
-                    $selected_rate = $candidate_rate;
-                }
-            }
-
-            if ($selected_rate === null) {
-                $selected_rate = self::SPANISH_FALLBACK_TAX_RATE;
-            }
-
-            $is_formula_safe = abs($line_tax - ($line_net * $selected_rate)) <= self::TAX_FORMULA_TOLERANCE;
-            if (!$is_formula_safe && abs($line_tax - ($line_net * self::SPANISH_FALLBACK_TAX_RATE)) <= self::TAX_FORMULA_TOLERANCE) {
-                $selected_rate = self::SPANISH_FALLBACK_TAX_RATE;
-                $is_formula_safe = true;
-            }
-
-            if (!$is_formula_safe) {
-                continue;
-            }
-
-            $items[$index]['tax_rate'] = $this->formatTwoTaxRate($selected_rate);
-            $items[$index]['tax_class_name'] = 'VAT ' . $this->getTwoRoundAmount($selected_rate * 100) . '%';
-        }
-
-        return $items;
-    }
-
-    /**
-     * Collect unique tax-rate contexts from positive payload lines.
-     *
-     * @param array $items
-     * @return array
-     */
-    private function collectTwoKnownTaxRatesFromPositiveItems($items)
-    {
-        $known_rates = [];
-        foreach ($items as $item) {
-            $line_gross = isset($item['gross_amount']) ? round((float)$item['gross_amount'], 2) : 0.0;
-            $line_net = isset($item['net_amount']) ? round((float)$item['net_amount'], 2) : 0.0;
-            if ($line_gross <= 0 || $line_net <= 0 || !isset($item['tax_rate'])) {
-                continue;
-            }
-
-            $normalized_rate = $this->formatTwoTaxRate((float)$item['tax_rate']);
-            $known_rates[$normalized_rate] = (float)$normalized_rate;
-        }
-
-        return array_values($known_rates);
-    }
 
     /**
      * Resolve carrier tax-rule rate as decimal (e.g. 0.21 for 21%).
@@ -5634,14 +5685,77 @@ class Twopayment extends PaymentModule
             return 0.0;
         }
 
-        $taxRulesGroupId = (int)$carrier->getIdTaxRulesGroup();
-        if ($taxRulesGroupId <= 0) {
+        // Route through the shared address-correct helper so the shipping
+        // RATE source uses the same PS_TAX_ADDRESS_TYPE address PrestaShop's
+        // getPackageShippingCost() used for the shipping AMOUNTS.
+        return $this->getTwoConfiguredTaxRateDecimalForGroup((int) $carrier->getIdTaxRulesGroup(), $cart);
+    }
+
+    /**
+     * Shared declared-rate resolver: the effective tax rate (decimal
+     * fraction, e.g. 0.21) a TaxRulesGroup applies for THIS cart's tax
+     * destination, resolved through the same core machinery PrestaShop's own
+     * pricing uses (TaxManagerFactory over the PS_TAX_ADDRESS_TYPE address,
+     * with the shop-wide PS_TAX gate and the vatnumber-module B2B
+     * exemption). This is the single rate source for product, ecotax,
+     * shipping and wrapping lines — the plugin relays the merchant's
+     * declared rate and never derives one from amounts.
+     *
+     * Group id 0/unset returns 0.0 (core's "No tax" sentinel — ecotax and
+     * wrapping groups are legitimately unset on many shops). Resolution
+     * failures are logged UNCONDITIONALLY (not gated on debug mode) so a
+     * swallowed-to-zero rate surfaces its root cause in the merchant log
+     * instead of only appearing downstream as a formula mismatch.
+     *
+     * @param int $taxRulesGroupId
+     * @param Cart $cart
+     * @return float Decimal rate normalised to 2dp-of-percent
+     */
+    private function getTwoConfiguredTaxRateDecimalForGroup($taxRulesGroupId, $cart)
+    {
+        $taxRulesGroupId = (int) $taxRulesGroupId;
+        if ($taxRulesGroupId <= 0 || !Validate::isLoadedObject($cart)) {
             return 0.0;
         }
 
-        $address = new Address((int)$cart->id_address_delivery);
+        // Shop-wide "disable taxes" switch (core: Tax::excludeTaxeOption
+        // inside Product::priceCalculation zeroes every product's tax).
+        if (class_exists('Tax') && method_exists('Tax', 'excludeTaxeOption')) {
+            if (Tax::excludeTaxeOption()) {
+                return 0.0;
+            }
+        } elseif (!Configuration::get('PS_TAX')) {
+            return 0.0;
+        }
+
+        // Same address granularity core used for the amounts: the cart's
+        // PS_TAX_ADDRESS_TYPE address (the Configuration value string IS the
+        // Cart property name), with a delivery fallback.
+        $taxAddressField = (string) Configuration::get('PS_TAX_ADDRESS_TYPE');
+        if ($taxAddressField !== 'id_address_delivery') {
+            $taxAddressField = 'id_address_invoice';
+        }
+        $address = new Address((int) $cart->{$taxAddressField});
         if (!Validate::isLoadedObject($address)) {
-            $address = new Address((int)$cart->id_address_invoice);
+            $address = new Address((int) $cart->id_address_delivery);
+        }
+        if (!Validate::isLoadedObject($address)) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: No usable tax address on cart ' . (int) $cart->id .
+                ' while resolving declared rate for tax rules group ' . $taxRulesGroupId,
+                3
+            );
+            return 0.0;
+        }
+
+        // vatnumber-module B2B exemption — the exact condition core's
+        // Product::priceCalculation flips usetax off with.
+        if (
+            !empty($address->vat_number)
+            && (int) $address->id_country !== (int) Configuration::get('VATNUMBER_COUNTRY')
+            && Configuration::get('VATNUMBER_MANAGEMENT')
+        ) {
+            return 0.0;
         }
 
         try {
@@ -5655,19 +5769,17 @@ class Twopayment extends PaymentModule
                 return 0.0;
             }
 
-            $ratePercent = max(0, (float)$taxCalculator->getTotalRate());
-            if ($ratePercent <= 0) {
-                return 0.0;
-            }
+            $ratePercent = max(0, (float) $taxCalculator->getTotalRate());
 
             return $this->normalizeTwoTaxRateToPercentPrecision($ratePercent / 100);
         } catch (Exception $e) {
-            if (Configuration::get('PS_TWO_DEBUG_MODE')) {
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Unable to resolve carrier tax rate from tax rules - ' . $e->getMessage(),
-                    2
-                );
-            }
+            // Unconditional: a broken/deleted tax group resolving to 0 must
+            // show its cause here, not only as a downstream formula mismatch.
+            PrestaShopLogger::addLog(
+                'TwoPayment: Unable to resolve declared tax rate for tax rules group ' .
+                $taxRulesGroupId . ' - ' . $e->getMessage(),
+                3
+            );
         }
 
         return 0.0;
@@ -6075,42 +6187,54 @@ class Twopayment extends PaymentModule
     public function validateTwoLineItems($line_items)
     {
         $validation_issues = 0;
-        
+
         foreach ($line_items as $item) {
-            $net_amount = (float)$item['net_amount'];
-            $tax_amount = (float)$item['tax_amount'];
+            // Validate the EMITTED 2dp amounts exactly as the API sees them.
+            $net_amount = round((float)$item['net_amount'], 2);
+            $tax_amount = round((float)$item['tax_amount'], 2);
+            $gross_amount = round((float)$item['gross_amount'], 2);
             $tax_rate = (float)$item['tax_rate'];
             $unit_price = (float)$item['unit_price'];
             $quantity = (int)$item['quantity'];
             $discount_amount = (float)$item['discount_amount'];
-            
-            // Critical validation: tax_amount = net_amount * tax_rate (tax_rate is now decimal)
-            // Allow 0.01 tolerance for rounding differences (2 decimal places = ±0.005 rounding error)
+
+            // Critical validation: tax_amount = net_amount * tax_rate (tax_rate is decimal)
             $expected_tax_amount = $net_amount * $tax_rate;
             if (abs($tax_amount - $expected_tax_amount) > self::TAX_FORMULA_TOLERANCE) {
                 PrestaShopLogger::addLog(
-                    'TwoPayment CRITICAL Tax Formula Error - Item: ' . $item['name'] . 
-                    ', Got: ' . $tax_amount . ', Expected: ' . $expected_tax_amount . 
-                    ' (diff: ' . abs($tax_amount - $expected_tax_amount) . ')', 
+                    'TwoPayment CRITICAL Tax Formula Error - Item: ' . $item['name'] .
+                    ', Got: ' . $tax_amount . ', Expected: ' . $expected_tax_amount .
+                    ' (diff: ' . abs($tax_amount - $expected_tax_amount) . ')',
                     3
                 );
                 $validation_issues++;
             }
-            
+
+            // Critical validation: gross_amount == net_amount + tax_amount EXACTLY
+            // (2dp, compared in cents). The API enforces this per line in
+            // addition to the tax-formula tolerance check.
+            if ($this->convertAmountToCents($gross_amount) !== $this->convertAmountToCents(round($net_amount + $tax_amount, 2))) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment CRITICAL Gross Formula Error - Item: ' . $item['name'] .
+                    ', Got gross: ' . $gross_amount . ', Expected net+tax: ' . round($net_amount + $tax_amount, 2),
+                    3
+                );
+                $validation_issues++;
+            }
+
             // Critical validation: net_amount = (quantity * unit_price) - discount_amount
-            // Allow 0.05 tolerance for rounding differences (accounts for multiple rounding operations)
             $expected_net_amount = ($quantity * $unit_price) - $discount_amount;
             if (abs($net_amount - $expected_net_amount) > self::NET_FORMULA_TOLERANCE) {
                 PrestaShopLogger::addLog(
-                    'TwoPayment CRITICAL Net Formula Error - Item: ' . $item['name'] . 
-                    ', Got: ' . $net_amount . ', Expected: ' . $expected_net_amount . 
-                    ' (diff: ' . abs($net_amount - $expected_net_amount) . ')', 
+                    'TwoPayment CRITICAL Net Formula Error - Item: ' . $item['name'] .
+                    ', Got: ' . $net_amount . ', Expected: ' . $expected_net_amount .
+                    ' (diff: ' . abs($net_amount - $expected_net_amount) . ')',
                     3
                 );
                 $validation_issues++;
             }
         }
-        
+
         return $validation_issues === 0;
     }
 
@@ -6152,67 +6276,6 @@ class Twopayment extends PaymentModule
     {
         $percent = round(max(0, (float)$rate) * 100, self::TAX_RATE_PERCENT_PRECISION);
         return $percent / 100;
-    }
-
-    /**
-     * Snap rate to known cart contexts when only minor rounding drift exists.
-     *
-     * @param float $rate
-     * @param array $known_rates
-     * @return float
-     */
-    private function snapTwoTaxRateToKnownContexts($rate, $known_rates)
-    {
-        $rate = max(0, (float)$rate);
-        if (empty($known_rates)) {
-            return $rate;
-        }
-
-        $nearest = null;
-        $nearest_diff = null;
-        foreach ($known_rates as $candidate) {
-            $candidate = max(0, (float)$candidate);
-            $diff = abs($rate - $candidate);
-            if ($nearest_diff === null || $diff < $nearest_diff) {
-                $nearest = $candidate;
-                $nearest_diff = $diff;
-            }
-        }
-
-        // Only snap when difference is tiny (pure rounding drift).
-        if (
-            $nearest !== null &&
-            $nearest_diff !== null &&
-            $nearest_diff <= self::TAX_RATE_CONTEXT_SNAP_TOLERANCE
-        ) {
-            return $nearest;
-        }
-
-        return $rate;
-    }
-
-    /**
-     * Calculate effective order-level tax rate from final net and tax totals.
-     *
-     * @param float $net_amount
-     * @param float $tax_amount
-     * @return float Decimal tax rate
-     */
-    private function calculateTwoOrderTaxRate($net_amount, $tax_amount)
-    {
-        $net_amount = (float)$net_amount;
-        $tax_amount = (float)$tax_amount;
-
-        if (abs($net_amount) < 0.000001) {
-            return 0.0;
-        }
-
-        $rate = $tax_amount / $net_amount;
-        if ($rate < 0) {
-            return 0.0;
-        }
-
-        return round($rate, self::TAX_RATE_PRECISION);
     }
 
     public function getTwoCheckoutHostUrl()
