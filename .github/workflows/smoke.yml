@@ -157,6 +157,17 @@ jobs:
         run: |
           set -o pipefail
           dev/ci/assert-module-healthy.sh "$HEAD_VER"
+          # A version bump between the prior release and HEAD must go
+          # through at least one upgrade/upgrade-*.php script — otherwise
+          # every downstream check below (version match, checksum, config
+          # survival) can pass having exercised zero migration code, which
+          # defeats the point of this job existing (upstream CLI-upgrade is
+          # broken; see dev/ci/upgrade-module.sh). Only a same-version HEAD
+          # (no release-worthy change yet) legitimately runs none.
+          if [ "$HEAD_VER" != "$PRIOR_VER" ] && [ "${NUMBER_UPGRADED:-0}" -eq 0 ]; then
+            echo "::error::HEAD version ($HEAD_VER) exceeds prior release ($PRIOR_VER) but no upgrade script ran (number_upgraded=0)"
+            exit 1
+          fi
           # The deployed main file is HEAD's, not the prior release's — a
           # version comparison can't prove the swap took if the versions
           # ever matched; a checksum can.

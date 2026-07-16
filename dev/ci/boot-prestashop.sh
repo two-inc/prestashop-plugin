@@ -22,6 +22,27 @@ set -euo pipefail
 : "${SFX:?SFX (namespacing suffix) must be set}"
 PS_IMAGE="${PS_IMAGE:-prestashop/prestashop:8-apache}"
 PS_DEV_MODE="${PS_DEV_MODE:-1}"
+DB_IMAGE="mariadb:10.11"
+
+# Docker Hub intermittently 429s GitHub-hosted runners; every other network
+# op in this harness is retry-wrapped (curl --retry, ls-remote fail-loud) —
+# pulls were the one bare-single-attempt exception. Bounded retry, fail loud
+# after exhausting it rather than leaving `docker run` to surface a raw pull
+# error.
+pull_with_retry() {
+  local image="$1" n=0
+  until docker pull "$image"; do
+    n=$((n + 1))
+    if [ "$n" -ge 5 ]; then
+      echo "::error::failed to pull $image after 5 attempts"
+      return 1
+    fi
+    sleep $((n * 5))
+  done
+}
+
+pull_with_retry "$DB_IMAGE"
+pull_with_retry "$PS_IMAGE"
 
 docker network create "psnet-$SFX"
 
@@ -29,7 +50,7 @@ docker run --detach --name "psdb-$SFX" --network "psnet-$SFX" \
   -e MYSQL_ROOT_PASSWORD=admin -e MYSQL_DATABASE=prestashop \
   --health-cmd="mysqladmin ping -h localhost -uroot -padmin" \
   --health-interval=5s --health-timeout=5s --health-retries=30 \
-  mariadb:10.11
+  "$DB_IMAGE"
 
 tries=0
 until [ "$(docker inspect -f '{{.State.Health.Status}}' "psdb-$SFX")" = "healthy" ]; do
@@ -74,7 +95,13 @@ done
 docker exec "ps-$SFX" bash -c \
   "chown -R www-data:www-data /var/www/html/var && chmod -R 775 /var/www/html/var"
 
-# Storefront must render before any module work starts.
-docker exec "ps-$SFX" curl -sf http://localhost/ -o /dev/null
+# Storefront must render before any module work starts. Explicit status-code
+# check, not `curl -f`: -f only fails on 4xx/5xx, so a canonical-domain 301
+# or maintenance 302 would exit 0 having rendered nothing.
+code=$(docker exec "ps-$SFX" curl -s -o /dev/null -w '%{http_code}' http://localhost/)
+if [ "$code" != "200" ]; then
+  echo "::error::storefront did not return 200 (got '$code')"
+  exit 1
+fi
 
 echo "PrestaShop ($PS_IMAGE) booted and installed."
