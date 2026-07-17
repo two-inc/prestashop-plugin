@@ -178,8 +178,6 @@ class Twopayment extends PaymentModule
     /** @var int */
     public $enable_order_intent;
     /** @var string|false */
-    public $use_account_type;
-    /** @var string|false */
     public $finalize_purchase_shipping;
 
     public function __construct()

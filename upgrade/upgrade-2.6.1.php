@@ -1,6 +1,6 @@
 <?php
 /**
- * UPGRADE SCRIPT: Version 2.5.1
+ * UPGRADE SCRIPT: Version 2.6.1
  *
  * Sole trader checkout rework (TWO-24755): the Personal/Business/Sole-
  * trader account-type selector on the address form is removed entirely
@@ -21,7 +21,7 @@ if (!defined('_PS_VERSION_')) {
     exit;
 }
 
-function upgrade_module_2_5_1($module)
+function upgrade_module_2_6_1($module)
 {
     Configuration::deleteByName('PS_TWO_USE_ACCOUNT_TYPE');
 
