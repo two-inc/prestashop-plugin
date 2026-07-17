@@ -108,9 +108,20 @@ export async function selectTwoPaymentAndPlaceOrder(page: Page) {
  * container) with .first(): a bare `.alert-danger` locator also matches
  * PS core's per-field "address incomplete" validation markup elsewhere on
  * this same page and trips Playwright's strict-mode multi-match error.
+ *
+ * Matched on the `.alert-danger` class rather than a specific tag name:
+ * PS 8's classic theme wraps this flash message in `<article
+ * class="alert-danger">`, but PS 9's Bootstrap-5 theme rewrite renders the
+ * identical alert as a plain `<div class="alert alert-danger
+ * alert-dismissible" role="alert">` (confirmed via the PS 9 CI run's trace
+ * DOM snapshot — same copy, same #notifications container, different
+ * wrapper element). Scoping to #notifications already prevents collisions
+ * with the other per-field alert-danger markup elsewhere on the page, so
+ * the tag qualifier was never load-bearing for uniqueness — only for
+ * (accidentally) pinning to PS 8's markup.
  */
 export async function expectCompanyRequiredRejection(page: Page) {
-  await expect(page.locator("#notifications article.alert-danger").first()).toContainText(
+  await expect(page.locator("#notifications .alert-danger").first()).toContainText(
     /select your company/i,
     { timeout: LONG_TIMEOUT }
   );
