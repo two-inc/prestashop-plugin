@@ -1185,3 +1185,53 @@
 .payment-option.two-loading::after {
     display: none !important;
 }
+
+/* Sole trader Business / Sole trader toggle (TWO-24755) */
+.two-sole-trader {
+    margin: 0 0 12px;
+}
+
+.two-sole-trader__toggle {
+    display: inline-flex;
+    border: 1px solid #d0d5dd;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.two-sole-trader__mode {
+    padding: 6px 14px;
+    font-size: 13px;
+    line-height: 1.4;
+    cursor: pointer;
+    background: #fff;
+    color: #344054;
+    user-select: none;
+}
+
+.two-sole-trader__mode + .two-sole-trader__mode {
+    border-left: 1px solid #d0d5dd;
+}
+
+.two-sole-trader__mode--selected {
+    background: #1a1a1a;
+    color: #fff;
+}
+
+.two-sole-trader__prompt {
+    display: inline-block;
+    margin-top: 8px;
+    font-size: 13px;
+    text-decoration: underline;
+}
+
+.two-sole-trader__status {
+    margin-top: 8px;
+    font-size: 13px;
+    color: #027a48;
+}
+
+.two-sole-trader__error {
+    margin-top: 8px;
+    font-size: 13px;
+    color: #b42318;
+}

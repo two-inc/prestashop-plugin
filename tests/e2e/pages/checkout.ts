@@ -93,36 +93,50 @@ export function twoPaymentOption(page: Page): Locator {
 export async function selectTwoPaymentAndPlaceOrder(page: Page) {
   const payment = page.locator("#checkout-payment-step");
   await twoPaymentOption(page).check({ force: true });
+  // Selecting Two kicks off an async order-intent AJAX check (see
+  // expectCompanyRequiredRejection's docblock below) that the real
+  // checkout-payment-step UI depends on to decide whether to allow
+  // submission. A real buyer takes at least a few seconds reading the
+  // payment step before clicking submit, giving that check time to
+  // settle; waiting here mirrors that instead of racing it.
+  await page.waitForLoadState("networkidle");
   await payment.locator('input[name="conditions_to_approve[terms-and-conditions]"]').check();
   await payment.locator("#payment-confirmation button[type=submit]").click();
   await page.waitForLoadState("networkidle");
 }
 
 /**
- * The pre-flight company/organization-number guard in
- * controllers/front/payment.php rejects with this exact copy before any
- * network call is made (see completeAddressStep's docblock above for the
- * full trace) — a company filled via the plain text field, never through
- * Two's live search widget, can never get past this locally in a
- * hermetic CI run. Scoped to #notifications (PS's flash-message
- * container) with .first(): a bare `.alert-danger` locator also matches
- * PS core's per-field "address incomplete" validation markup elsewhere on
- * this same page and trips Playwright's strict-mode multi-match error.
+ * TWO-24755 removed PS_TWO_USE_ACCOUNT_TYPE, which used to gate off
+ * order-intent's client-side submit-prevention by default. That toggle
+ * being gone means there are now genuinely TWO valid places an unresolved
+ * company (as here: a company name typed into the plain text field,
+ * never through Two's live search widget, so no organization number
+ * resolves) can surface its rejection, and this test's own helper
+ * (selectTwoPaymentAndPlaceOrder above) doesn't wait for the order-intent
+ * AJAX check to settle before clicking submit - so which one fires is a
+ * genuine race, confirmed by CI: the same commit passed on PS 8 via one
+ * path and failed on PS 9 via the other, in a single run:
  *
- * Matched on the `.alert-danger` class rather than a specific tag name:
- * PS 8's classic theme wraps this flash message in `<article
- * class="alert-danger">`, but PS 9's Bootstrap-5 theme rewrite renders the
- * identical alert as a plain `<div class="alert alert-danger
- * alert-dismissible" role="alert">` (confirmed via the PS 9 CI run's trace
- * DOM snapshot — same copy, same #notifications container, different
- * wrapper element). Scoping to #notifications already prevents collisions
- * with the other per-field alert-danger markup elsewhere on the page, so
- * the tag qualifier was never load-bearing for uniqueness — only for
- * (accidentally) pinning to PS 8's markup.
+ *  1. Client-side: TwoCheckoutManager.js's handleOrderIntentResult ->
+ *     showOrderIntentError, which runs as soon as Two is selected and
+ *     writes this same guidance into `.two-payment-info` before the
+ *     buyer ever reaches "place order" - if this AJAX call resolves
+ *     before the click, submission never leaves the browser.
+ *  2. Server-side: if the click wins the race, submission reaches
+ *     controllers/front/payment.php's own (unchanged-by-this-PR)
+ *     pre-flight guard, which redirects back to the same /order checkout
+ *     page and flashes the identical copy via PS's `#notifications` area
+ *     instead.
+ *
+ * Both are a correct "declined gracefully" outcome - a production buyer
+ * reads the payment step for more than a few milliseconds before
+ * clicking, so the client-side path wins in practice; the server-side
+ * path is what exercises payment.php's guard as defence-in-depth. Assert
+ * on the guidance text itself, wherever it lands, rather than betting on
+ * one specific race outcome.
  */
 export async function expectCompanyRequiredRejection(page: Page) {
-  await expect(page.locator("#notifications .alert-danger").first()).toContainText(
-    /select your company/i,
-    { timeout: LONG_TIMEOUT }
-  );
+  await expect(page.getByText(/select your company/i).first()).toBeVisible({
+    timeout: LONG_TIMEOUT
+  });
 }

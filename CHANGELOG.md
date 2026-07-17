@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The full rate table is fetched server-side with the merchant API key (never from browser JS), cached in module configuration with a 6h TTL refreshed from the checkout media hook, and fetched on demand when a not-yet-cached currency reaches a conversion; the response's `as_of` staleness floor is retained alongside the rates
   - Failure posture: a failed refresh serves the last-known-good table and retries after a short backoff; gate conversions fail closed only when no table was ever fetched, display conversions fail soft
   - Fixed surcharge amounts and caps (configured in the shop default currency) are converted into the quote currency before the pricing call, replacing the previous single-currency pinning; an unconvertible figure omits the fee quote instead of sending a wrong-currency amount
+- **Sole trader checkout** (TWO-24755, WooCommerce/Magento parity)
+  - The payment step shows a Business / Sole trader toggle for buyers in countries where Two's registry supports sole traders (`GET /registry/v1/supported-company-types/<ISO>`, currently the UK and US), gated by a new "Enable sole trader checkout" admin toggle (default off)
+  - Choosing Sole Trader mints delegation + autofill tokens server-side with the merchant API key and opens Two's hosted signup popup; on completion the buyer's company data autofills from `GET /autofill/v1/buyer/current` (case-insensitive email match) and persists through the existing company-save path, so order-intent and payment run unchanged
+  - Module version bumped to `2.6.1`
 - **Buyer surcharge shown as a real PrestaShop cart line** (TWO-24739 parity)
   - Selecting Two at checkout now adds the payment-terms fee as a hidden virtual product line, so the fee appears in PrestaShop's own order summary, cart, order and invoice totals - previously it existed only on the Two-side invoice
   - The line's net amount comes from the same live fee quote as the Two order payload (single computation path); its tax applies the merchant-selected tax rules group (see TWO-25071 below)
@@ -44,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Customer downloads are protected by the same secure-key ownership guard as the cancel/confirmation callbacks (guest checkout included); admin downloads go through a permission-gated admin controller
 
 ### Changed
+- **Removed the Personal/Business/Sole-trader account-type selector on the address form** (TWO-24755 rework)
+  - The address form is now plain B2B: the company field is always present, with no `PS_TWO_USE_ACCOUNT_TYPE`-gated selector - matches the Magento and WooCommerce plugins' current structure
+  - The order-intent security gate no longer checks an account type; a company name plus a verified organization number is the business guard (registered businesses and enrolled sole traders both arrive with that pair)
+  - The upgrade script removes the now-unused `PS_TWO_USE_ACCOUNT_TYPE` configuration on existing installs (no live merchants are on this plugin yet)
 - **Surcharge tax now uses the merchant's own tax rules group** (TWO-25071)
   - The flat "Surcharge Tax Rate (%)" field is replaced by a "Surcharge Tax Rules Group" dropdown - the same tax rules groups assigned to products; an unsaved config pre-selects "No tax" so taxing the fee is always an explicit merchant choice
   - A deactivated tax rules group that is still the configured selection stays in the dropdown (flagged "(inactive)") so an unrelated settings save can never silently reset the surcharge tax to "No tax"

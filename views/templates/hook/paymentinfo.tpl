@@ -11,7 +11,17 @@
         <span class="two-result-icon"></span>
         <span class="two-result-text"></span>
     </div>
-    
+
+    {* Sole trader flow (TWO-24755) - TwoSoleTrader.js renders the
+       Business / Sole trader toggle into .two-sole-trader__toggle when the
+       billing country supports sole traders and the merchant enabled it. *}
+    <div class="two-sole-trader" style="display: none;">
+        <div class="two-sole-trader__toggle"></div>
+        <a href="#" class="two-sole-trader__prompt" style="display: none;">{l s='Click here to log in or sign up as a sole trader with Two.' mod='twopayment'}</a>
+        <span class="two-sole-trader__status" style="display: none;"></span>
+        <span class="two-sole-trader__error" style="display: none;">{l s='Something went wrong setting up sole trader checkout. Please try again.' mod='twopayment'}</span>
+    </div>
+
     {* Header Section *}
     <div class="two-header">
         <div class="two-logo-container">
