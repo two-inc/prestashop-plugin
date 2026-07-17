@@ -12,7 +12,17 @@ export async function completeGuestStep(page: Page, email: string) {
   await guest.locator("#field-firstname").fill("Test");
   await guest.locator("#field-lastname").fill("Buyer");
   await guest.locator("#field-email").fill(email);
-  await guest.locator('input[name="password"]').fill("TwoE2eTestPassw0rd!");
+  // PS 9 only renders/reveals #field-password when the "Create an account
+  // (optional)" checkbox above it is ticked — for a plain guest checkout
+  // (this suite never ticks it) the field exists in the DOM but is hidden,
+  // so an unconditional .fill() times out waiting for visibility. PS 8
+  // shows this field unconditionally for guest checkout, so still fill it
+  // there. Mirrors the visibility-gated pattern already used for the
+  // optional state <select> in completeAddressStep below.
+  const password = guest.locator('input[name="password"]');
+  if ((await password.count()) > 0 && (await password.isVisible())) {
+    await password.fill("TwoE2eTestPassw0rd!");
+  }
   // Both are required checkboxes on the PS demo fixture (data privacy +
   // GDPR consent) — the form silently no-ops on submit without them.
   await guest.locator('input[name="customer_privacy"]').check();
