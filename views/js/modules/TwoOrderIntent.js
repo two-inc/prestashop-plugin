@@ -93,8 +93,7 @@ class TwoOrderIntent {
             const formData = {
                 ajax: 1,
                 action: 'checkOrderIntent',
-                token: this.config.ajaxToken,
-                account_type: 'business'
+                token: this.config.ajaxToken
             };
             const companyField = document.querySelector("input[name='company']");
             const companyIdField = document.querySelector("input[name='companyid']");
@@ -364,7 +363,18 @@ class TwoOrderIntent {
             return defaultMessage;
         }
         const error = ('' + errorString).toLowerCase();
-        
+
+        // The backend (orderintent.php's no_company/incomplete_company
+        // branches) already sends a complete, specific instruction telling
+        // the buyer exactly what to fix - pass it through unchanged rather
+        // than letting the keyword matching below fall through to the
+        // generic defaultMessage, which would misleadingly tell them to
+        // pick a *different* payment method instead of fixing the company
+        // field that's actually blocking them.
+        if (error.includes('select your company') || error.includes('search for your company')) {
+            return errorString;
+        }
+
         // Phone number validation errors (priority - specific error type)
         if (error.includes('invalid phone number') || 
             (error.includes('phone_number') && error.includes('value_error'))) {
@@ -442,7 +452,20 @@ class TwoOrderIntent {
             $twoPaymentOption.find('.payment-option-content, .payment-form, .additional-information').append($messageContainer);
         }
         let messageText = result.message;
-        if (this.lastCompany && typeof this.lastCompany === 'string' && this.lastCompany.trim().length > 0) {
+        // Only template in the company name for a real decision FROM Two's
+        // API (processResult() always sets rawResponse). handleError()'s
+        // results - the local no_company/incomplete_company guard, or a
+        // network failure - never set it, and already carry a specific,
+        // actionable message (e.g. "search for your company name and
+        // select it from the results"); templating those into a generic
+        // "cannot be approved for <company>" here would silently discard
+        // that specific guidance.
+        if (
+            result.rawResponse &&
+            this.lastCompany &&
+            typeof this.lastCompany === 'string' &&
+            this.lastCompany.trim().length > 0
+        ) {
             if (result.approved) {
                 const t = this.t('invoice_likely_accepted_for', 'Your invoice with Two is likely to be accepted for %s');
                 messageText = t.replace('%s', this.lastCompany);
@@ -506,11 +529,21 @@ class TwoOrderIntent {
         });
         $twoPaymentOption.addClass('pulse-highlight');
         setTimeout(() => { $twoPaymentOption.removeClass('pulse-highlight'); }, 2000);
-        if (window.prestashop && window.prestashop.notification) {
-            window.prestashop.notification.showNotification(message, 'warning');
-        } else {
-            alert(message);
+
+        // Theme-independent nudge: reuse the same inline message element
+        // updateUI() already keeps in the Two payment option (present on
+        // every PS theme, unlike window.prestashop.notification - a PS9
+        // Bootstrap-5 API absent on PS 8's classic theme). Previously this
+        // fell back to a blocking native alert() on themes without that
+        // API, which PS 8's e2e run confirmed actually fires - a jarring
+        // native dialog Playwright silently auto-dismisses, so the
+        // message never even reaches the DOM there.
+        let $messageContainer = $twoPaymentOption.find('.two-order-intent-message');
+        if ($messageContainer.length === 0) {
+            $messageContainer = $('<div class="two-order-intent-message"></div>');
+            $twoPaymentOption.find('.payment-option-content, .payment-form, .additional-information').append($messageContainer);
         }
+        $messageContainer.removeClass('approved loading').addClass('declined').text(message);
     }
 
     startMonitoring() {
