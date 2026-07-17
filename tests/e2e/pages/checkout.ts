@@ -93,42 +93,50 @@ export function twoPaymentOption(page: Page): Locator {
 export async function selectTwoPaymentAndPlaceOrder(page: Page) {
   const payment = page.locator("#checkout-payment-step");
   await twoPaymentOption(page).check({ force: true });
+  // Selecting Two kicks off an async order-intent AJAX check (see
+  // expectCompanyRequiredRejection's docblock below) that the real
+  // checkout-payment-step UI depends on to decide whether to allow
+  // submission. A real buyer takes at least a few seconds reading the
+  // payment step before clicking submit, giving that check time to
+  // settle; waiting here mirrors that instead of racing it.
+  await page.waitForLoadState("networkidle");
   await payment.locator('input[name="conditions_to_approve[terms-and-conditions]"]').check();
   await payment.locator("#payment-confirmation button[type=submit]").click();
   await page.waitForLoadState("networkidle");
 }
 
 /**
- * The client-side order-intent check (views/js/modules/
- * TwoCheckoutManager.js's handleOrderIntentResult -> showOrderIntentError)
- * runs as soon as Two is selected as the payment method, well before the
- * buyer ever reaches "place order" - an unresolved company (as here: a
- * company name typed into the plain text field, never through Two's live
- * search widget, so no organization number resolves) surfaces this exact
- * guidance into `.two-payment-info`, the theme-independent container the
- * paymentinfo.tpl hook template always renders alongside the Two payment
- * option on every PS version.
+ * TWO-24755 removed PS_TWO_USE_ACCOUNT_TYPE, which used to gate off
+ * order-intent's client-side submit-prevention by default. That toggle
+ * being gone means there are now genuinely TWO valid places an unresolved
+ * company (as here: a company name typed into the plain text field,
+ * never through Two's live search widget, so no organization number
+ * resolves) can surface its rejection, and this test's own helper
+ * (selectTwoPaymentAndPlaceOrder above) doesn't wait for the order-intent
+ * AJAX check to settle before clicking submit - so which one fires is a
+ * genuine race, confirmed by CI: the same commit passed on PS 8 via one
+ * path and failed on PS 9 via the other, in a single run:
  *
- * This is NOT the old assumption (fixed as part of TWO-24755's backport):
- * that assumption was that an unverified company falls through silently
- * to controllers/front/payment.php's own pre-flight guard, flashed via
- * PS's `#notifications` area, only at submit time. That's no longer
- * reachable by default - TWO-24755 removed the PS_TWO_USE_ACCOUNT_TYPE
- * toggle that used to gate order-intent's client-side submit-prevention
- * off, so the decline is now always caught client-side, pre-submit,
- * before payment.php is ever hit. `#notifications` was also never a
- * reliable target for that path in the first place: the PS 8 CI run's
- * trace showed it falling back to a native `alert()` dialog (via
- * TwoOrderIntent.js's showOrderPreventionMessage, since
- * window.prestashop.notification doesn't exist on PS 8's classic theme),
- * which Playwright silently auto-dismisses - the message never reached
- * the DOM there at all. That alert() fallback has been fixed to reuse the
- * same theme-independent container instead, but `.two-payment-info`
- * remains the earlier, more reliable signal since it never depended on
- * submit-time timing to begin with.
+ *  1. Client-side: TwoCheckoutManager.js's handleOrderIntentResult ->
+ *     showOrderIntentError, which runs as soon as Two is selected and
+ *     writes this same guidance into `.two-payment-info` before the
+ *     buyer ever reaches "place order" - if this AJAX call resolves
+ *     before the click, submission never leaves the browser.
+ *  2. Server-side: if the click wins the race, submission reaches
+ *     controllers/front/payment.php's own (unchanged-by-this-PR)
+ *     pre-flight guard, which redirects back to the same /order checkout
+ *     page and flashes the identical copy via PS's `#notifications` area
+ *     instead.
+ *
+ * Both are a correct "declined gracefully" outcome - a production buyer
+ * reads the payment step for more than a few milliseconds before
+ * clicking, so the client-side path wins in practice; the server-side
+ * path is what exercises payment.php's guard as defence-in-depth. Assert
+ * on the guidance text itself, wherever it lands, rather than betting on
+ * one specific race outcome.
  */
 export async function expectCompanyRequiredRejection(page: Page) {
-  await expect(page.locator(".two-payment-info").first()).toContainText(/select your company/i, {
+  await expect(page.getByText(/select your company/i).first()).toBeVisible({
     timeout: LONG_TIMEOUT
   });
 }
