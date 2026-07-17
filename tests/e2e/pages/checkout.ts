@@ -99,30 +99,36 @@ export async function selectTwoPaymentAndPlaceOrder(page: Page) {
 }
 
 /**
- * The pre-flight company/organization-number guard in
- * controllers/front/payment.php rejects with this exact copy before any
- * network call is made (see completeAddressStep's docblock above for the
- * full trace) — a company filled via the plain text field, never through
- * Two's live search widget, can never get past this locally in a
- * hermetic CI run. Scoped to #notifications (PS's flash-message
- * container) with .first(): a bare `.alert-danger` locator also matches
- * PS core's per-field "address incomplete" validation markup elsewhere on
- * this same page and trips Playwright's strict-mode multi-match error.
+ * The client-side order-intent check (views/js/modules/
+ * TwoCheckoutManager.js's handleOrderIntentResult -> showOrderIntentError)
+ * runs as soon as Two is selected as the payment method, well before the
+ * buyer ever reaches "place order" - an unresolved company (as here: a
+ * company name typed into the plain text field, never through Two's live
+ * search widget, so no organization number resolves) surfaces this exact
+ * guidance into `.two-payment-info`, the theme-independent container the
+ * paymentinfo.tpl hook template always renders alongside the Two payment
+ * option on every PS version.
  *
- * Matched on the `.alert-danger` class rather than a specific tag name:
- * PS 8's classic theme wraps this flash message in `<article
- * class="alert-danger">`, but PS 9's Bootstrap-5 theme rewrite renders the
- * identical alert as a plain `<div class="alert alert-danger
- * alert-dismissible" role="alert">` (confirmed via the PS 9 CI run's trace
- * DOM snapshot — same copy, same #notifications container, different
- * wrapper element). Scoping to #notifications already prevents collisions
- * with the other per-field alert-danger markup elsewhere on the page, so
- * the tag qualifier was never load-bearing for uniqueness — only for
- * (accidentally) pinning to PS 8's markup.
+ * This is NOT the old assumption (fixed as part of TWO-24755's backport):
+ * that assumption was that an unverified company falls through silently
+ * to controllers/front/payment.php's own pre-flight guard, flashed via
+ * PS's `#notifications` area, only at submit time. That's no longer
+ * reachable by default - TWO-24755 removed the PS_TWO_USE_ACCOUNT_TYPE
+ * toggle that used to gate order-intent's client-side submit-prevention
+ * off, so the decline is now always caught client-side, pre-submit,
+ * before payment.php is ever hit. `#notifications` was also never a
+ * reliable target for that path in the first place: the PS 8 CI run's
+ * trace showed it falling back to a native `alert()` dialog (via
+ * TwoOrderIntent.js's showOrderPreventionMessage, since
+ * window.prestashop.notification doesn't exist on PS 8's classic theme),
+ * which Playwright silently auto-dismisses - the message never reached
+ * the DOM there at all. That alert() fallback has been fixed to reuse the
+ * same theme-independent container instead, but `.two-payment-info`
+ * remains the earlier, more reliable signal since it never depended on
+ * submit-time timing to begin with.
  */
 export async function expectCompanyRequiredRejection(page: Page) {
-  await expect(page.locator("#notifications .alert-danger").first()).toContainText(
-    /select your company/i,
-    { timeout: LONG_TIMEOUT }
-  );
+  await expect(page.locator(".two-payment-info").first()).toContainText(/select your company/i, {
+    timeout: LONG_TIMEOUT
+  });
 }
