@@ -23,6 +23,22 @@ set -euo pipefail
 PS_IMAGE="${PS_IMAGE:-prestashop/prestashop:8-apache}"
 PS_DEV_MODE="${PS_DEV_MODE:-1}"
 DB_IMAGE="mariadb:10.11"
+# Optional (TWO-25110): publish the storefront to a host port so a
+# browser-driven caller (Playwright, running on the runner host rather
+# than via `docker exec`) can reach it. Unset by default so the install/
+# upgrade-smoke jobs (docker-exec-only) get the exact same `docker run`
+# invocation as before this was added.
+PS_HOST_PORT="${PS_HOST_PORT:-}"
+# Optional (TWO-25110): forwarded straight to the module's existing
+# TWO_API_BASE_URL dev-mode override (twopayment.php getDevEnvOverride,
+# gated on _PS_MODE_DEV_ i.e. PS_DEV_MODE=1). Unset by default, matching
+# every other job's behaviour (module falls back to the real
+# api.sandbox.two.inc host). The e2e job points this at a local port
+# nothing listens on so the module's checkout-media priming calls
+# (merchant terms/FX-rate refresh, fired on every checkout page view)
+# fail fast instead of making live calls to Two's real sandbox from
+# public CI with a throwaway key.
+TWO_API_BASE_URL="${TWO_API_BASE_URL:-}"
 
 # Docker Hub intermittently 429s GitHub-hosted runners; every other network
 # op in this harness is retry-wrapped (curl --retry, ls-remote fail-loud) —
@@ -63,14 +79,27 @@ until [ "$(docker inspect -f '{{.State.Health.Status}}' "psdb-$SFX")" = "healthy
   sleep 2
 done
 
-# PS_DOMAIN=localhost so in-container curls to http://localhost/ hit the
-# canonical shop host — a mismatched Host header trips a canonical-domain
-# 301 that a follow-redirects curl -f would treat as success having
-# rendered nothing (gotcha inherited from the WooCommerce upgrade-smoke).
-docker run --detach --name "ps-$SFX" --network "psnet-$SFX" \
+# PS_DOMAIN=localhost (optionally :$PS_HOST_PORT) so in-container curls to
+# http://localhost/ hit the canonical shop host — a mismatched Host header
+# trips a canonical-domain 301 that a follow-redirects curl -f would treat
+# as success having rendered nothing (gotcha inherited from the
+# WooCommerce upgrade-smoke).
+PS_DOMAIN_VALUE="localhost"
+PORT_ARGS=()
+if [ -n "$PS_HOST_PORT" ]; then
+  PS_DOMAIN_VALUE="localhost:${PS_HOST_PORT}"
+  PORT_ARGS=(-p "127.0.0.1:${PS_HOST_PORT}:80")
+fi
+
+ENV_ARGS=()
+if [ -n "$TWO_API_BASE_URL" ]; then
+  ENV_ARGS=(-e "TWO_API_BASE_URL=$TWO_API_BASE_URL")
+fi
+
+docker run --detach --name "ps-$SFX" --network "psnet-$SFX" "${PORT_ARGS[@]}" "${ENV_ARGS[@]}" \
   -e DB_SERVER="psdb-$SFX" -e DB_NAME=prestashop \
   -e DB_USER=root -e DB_PASSWD=admin \
-  -e PS_DOMAIN=localhost -e PS_INSTALL_AUTO=1 -e PS_DEV_MODE="$PS_DEV_MODE" \
+  -e PS_DOMAIN="$PS_DOMAIN_VALUE" -e PS_INSTALL_AUTO=1 -e PS_DEV_MODE="$PS_DEV_MODE" \
   -e PS_LANGUAGE=en -e PS_COUNTRY=NO -e PS_ALL_LANGUAGES=0 \
   -e PS_DEMO_MODE=0 -e PS_FOLDER_ADMIN=admin-dev \
   -e ADMIN_MAIL=exampleuser@two.inc -e ADMIN_PASSWD=examplepassword123 \
@@ -98,7 +127,7 @@ docker exec "ps-$SFX" bash -c \
 # Storefront must render before any module work starts. Explicit status-code
 # check, not `curl -f`: -f only fails on 4xx/5xx, so a canonical-domain 301
 # or maintenance 302 would exit 0 having rendered nothing.
-code=$(docker exec "ps-$SFX" curl -s -o /dev/null -w '%{http_code}' http://localhost/)
+code=$(docker exec "ps-$SFX" curl -s -o /dev/null -w '%{http_code}' -H "Host: $PS_DOMAIN_VALUE" http://localhost/)
 if [ "$code" != "200" ]; then
   echo "::error::storefront did not return 200 (got '$code')"
   exit 1

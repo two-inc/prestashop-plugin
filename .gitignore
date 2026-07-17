@@ -65,3 +65,7 @@ Thumbs.db
 .worktrees/
 .review/
 .php-cs-fixer.cache
+
+# Playwright e2e (TWO-25110)
+tests/e2e/test-results/
+tests/e2e/playwright-report/
