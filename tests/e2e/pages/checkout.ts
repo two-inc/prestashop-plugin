@@ -47,6 +47,19 @@ export async function completeGuestStep(page: Page, email: string) {
  */
 export async function completeAddressStep(page: Page, company: string) {
   const addr = page.locator("#checkout-addresses-step");
+  // PS 9's demo fixture defaults the address country to Norway, whose
+  // postcode rule (NNNN) rejects the "10001" filled below — the step then
+  // silently re-renders with a validation alert instead of advancing, and
+  // completeDeliveryStep times out one step later (confirmed via the PS 9
+  // CI run's accessibility snapshot: 'Invalid postcode - should look like
+  // "NNNN"', country combobox stuck on Norway). PS 8's fixture defaults to
+  // a country that accepts this postcode, which is why it passes there.
+  // Pin the country explicitly so the postcode below is valid on both.
+  // Selecting a country makes PS re-render the address form via AJAX
+  // (country-specific fields like the US state <select> appear), so do it
+  // FIRST and let the reload settle before filling anything.
+  await addr.locator('select[name="id_country"]').selectOption({ label: "United States" });
+  await page.waitForLoadState("networkidle");
   await addr.locator('input[name="firstname"]').fill("Test");
   await addr.locator('input[name="lastname"]').fill("Buyer");
   await addr.locator('input[name="company"]').fill(company);
