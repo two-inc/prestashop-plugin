@@ -50,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Tax rate precision raised to PrestaShop-native 6dp (rates still capped at 2 decimals of percent per e-invoicing rules); per-line validation now validates the emitted amounts and also asserts `gross == net + tax` exactly
 
 ### Removed
+- **Dead "Activate company org.id auto-complete" admin toggle removed** (TWO-25190, umbrella TWO-24739)
+  - `PS_TWO_ENABLE_COMPANY_ID` was a rendered switch on the advanced-settings page whose only consumer was the `company_id_search` entry in the `Media::addJsDef()` `twopayment` payload - and no JavaScript ever read that entry. Checkout company lookup is driven solely by `company_name_search` (`views/js/twopayment.js`), which is untouched, so the switch advertised a setting that did nothing whichever way a merchant set it
+  - The 2.6.5 upgrade script deletes the stored row on existing installs (install seeded it to `1`), and uninstall clears it for shops that never ran the upgrade
+  - Module version bumped to `2.6.5`
+
 - **Dead `PS_TWO_ENABLE_B2B_B2C` configuration key removed** (TWO-24739)
   - The key was never a rendered admin field and was never read for a behavioural decision. Its only two references were the advanced-settings form's value hydration and a matching `Configuration::updateValue()` in the save handler, so saving advanced settings wrote a blank value into the row on every submit while nothing ever consulted it. Two is B2B-only - there is no B2B/B2C mode to switch
   - The 2.6.4 upgrade script deletes the stored row on existing installs (any shop whose merchant has ever saved advanced settings holds one), and uninstall clears it for shops that never ran the upgrade
