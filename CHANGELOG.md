@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **"Two: Order Fulfilled - Trigger Statuses" multi-select now renders its saved selection** (TWO-24769)
+  - PrestaShop core's `HelperForm::generate()` rewrites a multi-select field's name in place (`$params['name'] .= '[]'`) and the admin form template then resolves the pre-selection with `$fields_value[$input.name]`, i.e. under the `[]`-suffixed key - verified identical in PS 1.7.6.5, 8.x and 9.x. The module populated only the plain key, so every option rendered unselected even though the stored value was correct (display-only; fulfillment triggering reads the configuration directly and was never affected)
+  - The pre-selection IDs are normalised to strings, matching the `id_order_state` the option values are built from, so the comparison no longer relies on PrestaShop's loose `==` in the template
+  - The custom-order-state recovery path (`ensureCustomStatesExist()`, which fires when Two's own order states are missing) wrote `PS_TWO_OS_FULFILLED_MAP` as a bare status ID rather than the JSON array every other writer uses - three divergent storage formats for one key. It now writes the canonical JSON array, and the 2.6.2 upgrade script normalises any value a store is already holding in the legacy format
+  - Module version bumped to `2.6.2`
+
 ### Changed
 - **Invoice upload is now gated on the merchant record, not an admin toggle** (TWO-25111, per decision TWO-25106 Option A)
   - The plugin-side invoice upload (own-invoice merchants) now triggers only when the `invoice_distributed_by_merchant` flag on the Two merchant record (`GET /v1/merchant`) is true - the same signal checkout-api itself enforces (TWO-24761), and the same gating model Magento (TWO-24758) and WooCommerce (TWO-24757) use

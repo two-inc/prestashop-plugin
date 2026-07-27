@@ -62,6 +62,8 @@ namespace {
         public static array $dbExecuteSResponses = [];
         public static array $dbLastExecuteS = [];
         public static array $orderCarriers = [];
+        /** @var array<int,array{id_order_state:string,name:string}> Override for OrderState::getOrderStates() */
+        public static array $orderStates = [];
         public static array $carts = [];
         /** @var array<string,int> Registered admin tab ids by class name */
         public static array $tabIds = ['AdminTwopaymentInvoice' => 1];
@@ -173,6 +175,7 @@ namespace {
             self::$dbLocks = [];
             self::$surchargeSyncSeqs = [];
             self::$orderDetails = [];
+            self::$orderStates = [];
             self::$dbExecuted = [];
             self::$dbTriggers = [];
             self::$orders = [];
@@ -1449,11 +1452,13 @@ namespace {
         }
     }
 
+    #[\AllowDynamicProperties]
     class OrderState
     {
         public bool $loaded = true;
         public int $id = 1;
-        public $name = '';
+        /** @var string|array<int,string> String once loaded by id; array<id_lang,string> while being built. */
+        public $name = [];
         public int $invoice = 0;
         public int $delivery = 0;
         public int $shipped = 0;
@@ -1493,7 +1498,32 @@ namespace {
 
         public function add(): bool
         {
+            // Core assigns a fresh auto-increment id on insert. Returning a
+            // distinct id per insert matters for createTwoOrderState(), which
+            // creates six states in one pass and stores each id in configuration.
+            $this->id = StubStore::$nextId++;
+
             return true;
+        }
+
+        /**
+         * Mirrors OrderStateCore::getOrderStates(): id_order_state comes back from
+         * the database as a string, which matters for pre-selection comparisons.
+         *
+         * @return array<int,array{id_order_state:string,name:string}>
+         */
+        public static function getOrderStates($idLang = null): array
+        {
+            if (!empty(StubStore::$orderStates)) {
+                return StubStore::$orderStates;
+            }
+
+            return [
+                ['id_order_state' => '2', 'name' => 'Payment accepted'],
+                ['id_order_state' => '3', 'name' => 'Processing in progress'],
+                ['id_order_state' => '4', 'name' => 'Shipped'],
+                ['id_order_state' => '5', 'name' => 'Delivered'],
+            ];
         }
     }
 

@@ -184,7 +184,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.6.1';
+        $this->version = '2.6.2';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -225,7 +225,10 @@ class Twopayment extends PaymentModule
             if (!Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION_MAP')) {
                 Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', Configuration::get('PS_OS_PREPARATION'));
                 Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', Configuration::get('PS_OS_PREPARATION'));
-                Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', Configuration::get('PS_OS_SHIPPING'));
+                // JSON array, matching install() and the admin form save path - this
+                // recovery path used to write a bare status ID, leaving three
+                // divergent storage formats for one configuration key.
+                Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', json_encode(array((int)Configuration::get('PS_OS_SHIPPING'))));
                 Configuration::updateValue('PS_TWO_OS_PAYMENT_ERROR_MAP', Configuration::get('PS_OS_ERROR'));
                 Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', Configuration::get('PS_OS_CANCELED'));
                 Configuration::updateValue('PS_TWO_OS_REFUNDED_MAP', Configuration::get('PS_OS_REFUND'));
@@ -1903,20 +1906,29 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_OS_AWAITING_VERIFICATION_MAP'] = Tools::getValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION_MAP'));
         $fields_values['PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'] = Tools::getValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'));
         
-        // Handle multi-select for fulfillment statuses
+        // Handle multi-select for fulfillment statuses.
+        //
+        // PrestaShop core's HelperForm::generate() rewrites a multi-select field's
+        // name in place ($params['name'] .= '[]', classes/helper/HelperForm.php) and
+        // the form template then looks the pre-selection up under that rewritten
+        // name ($fields_value[$input.name] in
+        // admin/themes/default/template/helpers/form/form.tpl). That is the same in
+        // PS 1.7.6.x, 8.x and 9.x, so the '[]'-suffixed key is the one that decides
+        // which options render as selected; the plain key is kept populated for any
+        // reader that addresses the field by its declared name.
+        //
+        // The IDs are normalised to strings because the template compares each
+        // stored value against the option's id_order_state, which comes back from
+        // the database as a string; a strict comparison in a future PS release
+        // would otherwise silently drop every pre-selection.
         $fulfilled_map = Configuration::get('PS_TWO_OS_FULFILLED_MAP');
-        if ($fulfilled_map) {
-            // Decode JSON array or split comma-separated values
-            $fulfilled_ids = json_decode($fulfilled_map, true);
-            if (!is_array($fulfilled_ids)) {
-                // Backward compatibility: if it's a single ID, convert to array
-                $fulfilled_ids = array($fulfilled_map);
-            }
-            $fulfilled_ids_value = $fulfilled_ids;
-        } else {
-            // Default to Shipped status
-            $fulfilled_ids_value = array(Configuration::get('PS_OS_SHIPPING'));
+        $fulfilled_ids = $fulfilled_map ? json_decode($fulfilled_map, true) : null;
+        if (!is_array($fulfilled_ids)) {
+            // Backward compatibility: a single bare status ID (the pre-2.1.2 format,
+            // and what the custom-state recovery path wrote before 2.6.2).
+            $fulfilled_ids = $fulfilled_map ? array($fulfilled_map) : array(Configuration::get('PS_OS_SHIPPING'));
         }
+        $fulfilled_ids_value = array_values(array_map('strval', array_filter(array_map('intval', $fulfilled_ids))));
         $fields_values['PS_TWO_OS_FULFILLED_MAP'] = $fulfilled_ids_value;
         $fields_values['PS_TWO_OS_FULFILLED_MAP[]'] = $fulfilled_ids_value;
         
