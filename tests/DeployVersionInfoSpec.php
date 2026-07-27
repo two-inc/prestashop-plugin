@@ -20,7 +20,15 @@ final class DeployVersionInfoSpec
         self::testMissingRefAndPackedRefsReturnsNull();
         self::testSidecarFileTakesPrecedenceOverGitDir();
         self::testInvalidSidecarFallsBackToGitDir();
+        self::testGitlinkFileReturnsShortSha();
+        self::testEmptySidecarFallsBackToGitlinkFile();
+        self::testGarbageSidecarFallsBackToGitlinkFile();
+        self::testNeitherSidecarNorGitReturnsNull();
+        self::testGitlinkFileWithoutShaReturnsNull();
         self::testDeployedAtLabelMatchesModuleFileMtime();
+        self::testClientVersionHasNoTrailingPlusWithoutSha();
+        self::testClientVersionAppendsShaWhenResolved();
+        self::testClientParamsAreUrlEncodedWithPercent2B();
     }
 
     private static function callCommitHash(?string $gitDir, ?string $sidecarFile = null): ?string
@@ -158,6 +166,101 @@ final class DeployVersionInfoSpec
         self::removeDir(dirname($git));
     }
 
+    private static function makeTempModuleDir(): string
+    {
+        $dir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'two-deploy-spec-' . uniqid('', true);
+        mkdir($dir, 0777, true);
+
+        return $dir;
+    }
+
+    private static function testGitlinkFileReturnsShortSha(): void
+    {
+        // Git-synced staging shops materialise the module as a LINKED WORKTREE:
+        // `.git` is a file containing `gitdir: ../../.git/worktrees/<sha>`.
+        $dir = self::makeTempModuleDir();
+        $gitlink = $dir . '/.git';
+        file_put_contents($gitlink, "gitdir: ../../.git/worktrees/fbdc80b92070eded9a2acbef222da0d55ac4af48\n");
+
+        TinyAssert::same('fbdc80b', self::callCommitHash($gitlink));
+        self::removeDir($dir);
+    }
+
+    private static function testEmptySidecarFallsBackToGitlinkFile(): void
+    {
+        // The staging sidecar is currently written as a 0-byte file by broken deploy
+        // infra; that must NOT short-circuit into an empty/absent hash.
+        $dir = self::makeTempModuleDir();
+        $gitlink = $dir . '/.git';
+        file_put_contents($gitlink, "gitdir: ../../.git/worktrees/fbdc80b92070eded9a2acbef222da0d55ac4af48\n");
+        $sidecar = $dir . '/.two-deployed-commit';
+        file_put_contents($sidecar, '');
+
+        TinyAssert::same('fbdc80b', self::callCommitHash($gitlink, $sidecar));
+        self::removeDir($dir);
+    }
+
+    private static function testGarbageSidecarFallsBackToGitlinkFile(): void
+    {
+        $dir = self::makeTempModuleDir();
+        $gitlink = $dir . '/.git';
+        file_put_contents($gitlink, "gitdir: ../../.git/worktrees/fbdc80b92070eded9a2acbef222da0d55ac4af48\n");
+        $sidecar = $dir . '/.two-deployed-commit';
+        file_put_contents($sidecar, "<html>404 not found</html>\n");
+
+        TinyAssert::same('fbdc80b', self::callCommitHash($gitlink, $sidecar));
+        self::removeDir($dir);
+    }
+
+    private static function testNeitherSidecarNorGitReturnsNull(): void
+    {
+        $dir = self::makeTempModuleDir();
+
+        TinyAssert::same(null, self::callCommitHash($dir . '/.git', $dir . '/.two-deployed-commit'));
+        self::removeDir($dir);
+    }
+
+    private static function testGitlinkFileWithoutShaReturnsNull(): void
+    {
+        // A gitlink pointing at a plain (non-worktree) gitdir carries no sha.
+        $dir = self::makeTempModuleDir();
+        $gitlink = $dir . '/.git';
+        file_put_contents($gitlink, "gitdir: /srv/repos/prestashop-plugin/.git\n");
+
+        TinyAssert::same(null, self::callCommitHash($gitlink));
+        self::removeDir($dir);
+    }
+
+    private static function testClientVersionHasNoTrailingPlusWithoutSha(): void
+    {
+        $module = new TwopaymentClientVersionNoShaHarness();
+        TinyAssert::same('2.4.0', $module->getTwoClientVersion());
+        TinyAssert::same(
+            array('client' => 'PS', 'client_v' => '2.4.0'),
+            $module->getTwoClientParams()
+        );
+    }
+
+    private static function testClientVersionAppendsShaWhenResolved(): void
+    {
+        $module = new TwopaymentClientVersionWithShaHarness();
+        TinyAssert::same('2.4.0+fbdc80b', $module->getTwoClientVersion());
+    }
+
+    private static function testClientParamsAreUrlEncodedWithPercent2B(): void
+    {
+        // `+` is a literal SPACE in an application/x-www-form-urlencoded query value,
+        // so the build MUST percent-encode it as %2B or the API sees "2.4.0 fbdc80b".
+        $module = new TwopaymentClientVersionWithShaHarness();
+        $query = http_build_query($module->getTwoClientParams());
+
+        TinyAssert::same('client=PS&client_v=2.4.0%2Bfbdc80b', $query);
+
+        $parsed = [];
+        parse_str($query, $parsed);
+        TinyAssert::same('2.4.0+fbdc80b', $parsed['client_v']);
+    }
+
     private static function testDeployedAtLabelMatchesModuleFileMtime(): void
     {
         $module = new TwopaymentTestHarness();
@@ -166,5 +269,27 @@ final class DeployVersionInfoSpec
 
         $mtime = filemtime(dirname(__DIR__) . '/twopayment.php');
         TinyAssert::same(date('Y-m-d H:i:s', $mtime), $label);
+    }
+}
+
+/**
+ * Harness where no deployed commit can be resolved (no sidecar, no .git).
+ */
+final class TwopaymentClientVersionNoShaHarness extends TwopaymentTestHarness
+{
+    protected function getTwoDeployedCommitHash($git_dir = null, $sidecar_file = null)
+    {
+        return null;
+    }
+}
+
+/**
+ * Harness where the deployed commit resolves to a known short sha.
+ */
+final class TwopaymentClientVersionWithShaHarness extends TwopaymentTestHarness
+{
+    protected function getTwoDeployedCommitHash($git_dir = null, $sidecar_file = null)
+    {
+        return 'fbdc80b';
     }
 }
