@@ -61,6 +61,15 @@ namespace {
          * @var array<int,array|false>
          */
         public static array $cartDeliveryOptions = [];
+        /**
+         * Cart ids whose delivery-option lookup must RAISE instead of
+         * returning. Core's getDeliveryOption()/getDeliveryOptionList() walk
+         * ObjectModel constructors, Db::executeS and third-party carrier
+         * modules, any of which can throw; the value is the message.
+         *
+         * @var array<int,string>
+         */
+        public static array $cartDeliveryOptionListThrows = [];
         public static array $moduleCurrencies = [];
         public static array $productCategories = [];
         public static array $images = [];
@@ -167,6 +176,7 @@ namespace {
             self::$cartRules = [];
             self::$cartDeliveryOptionLists = [];
             self::$cartDeliveryOptions = [];
+            self::$cartDeliveryOptionListThrows = [];
             self::$orderCarriers = [];
             self::$carts = [];
             self::$tabIds = ['AdminTwopaymentInvoice' => 1];
@@ -971,6 +981,13 @@ namespace {
         public int $max_delivery_days = 0;
         public int $min_delivery_days = 0;
         private int $taxRulesGroupId = 0;
+        /**
+         * Core's getIdTaxRulesGroup() is a Db::getValue() on
+         * carrier_tax_rules_group_shop behind a Context->shop lookup, so it can
+         * raise rather than return. Set 'tax_rules_group_throws' on the fixture
+         * to drive that.
+         */
+        private string $taxRulesGroupThrows = '';
 
         public function __construct($idCarrier = null, $idLang = null)
         {
@@ -984,11 +1001,16 @@ namespace {
                 $this->max_delivery_days = (int) ($data['max_delivery_days'] ?? 0);
                 $this->min_delivery_days = (int) ($data['min_delivery_days'] ?? 0);
                 $this->taxRulesGroupId = (int) ($data['tax_rules_group_id'] ?? 0);
+                $this->taxRulesGroupThrows = (string) ($data['tax_rules_group_throws'] ?? '');
             }
         }
 
         public function getIdTaxRulesGroup(): int
         {
+            if ($this->taxRulesGroupThrows !== '') {
+                throw new PrestaShopDatabaseException($this->taxRulesGroupThrows);
+            }
+
             return $this->taxRulesGroupId;
         }
     }
@@ -1360,6 +1382,10 @@ namespace {
 
         public function getDeliveryOptionList($defaultCountry = null, $flush = false): array
         {
+            if (isset(StubStore::$cartDeliveryOptionListThrows[$this->id])) {
+                throw new PrestaShopDatabaseException(StubStore::$cartDeliveryOptionListThrows[$this->id]);
+            }
+
             return StubStore::$cartDeliveryOptionLists[$this->id] ?? [];
         }
 
@@ -1373,6 +1399,12 @@ namespace {
          */
         public function getDeliveryOption($defaultCountry = null, $dontAutoSelectOptions = false, $useCache = true)
         {
+            // Core-faithful: getDeliveryOption() calls getDeliveryOptionList()
+            // first, so a raise from the list build surfaces here too.
+            if (isset(StubStore::$cartDeliveryOptionListThrows[$this->id])) {
+                throw new PrestaShopDatabaseException(StubStore::$cartDeliveryOptionListThrows[$this->id]);
+            }
+
             if (array_key_exists($this->id, StubStore::$cartDeliveryOptions)) {
                 return StubStore::$cartDeliveryOptions[$this->id];
             }

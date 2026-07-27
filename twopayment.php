@@ -4445,7 +4445,22 @@ class Twopayment extends PaymentModule
                         $items[] = $this->buildTwoChargeLineFromSegment($shipping_line_template, $segment);
                     }
                 } else {
+                    // The resolver either returns a non-empty map or throws, so
+                    // this is belt-and-braces — but the failure mode it guards
+                    // is silent: `reset([])` is `false`, and `false['rate']` is
+                    // a PHP warning that evaluates to null, i.e. a 0% shipping
+                    // VAT rate relayed on a taxed shipping line. Refuse instead.
                     $shipping_rate_class = reset($shipping_rate_classes);
+                    if (!is_array($shipping_rate_class) || !isset($shipping_rate_class['rate'])) {
+                        throw $this->buildTwoShippingRateUnresolvableException(
+                            $cart,
+                            $shipping_gross,
+                            (int) $cart->id_address_delivery,
+                            '',
+                            (int) $cart->id_carrier,
+                            'the declared shipping tax rate resolver produced no usable rate class'
+                        );
+                    }
                     $shipping_tax_rate_decimal = (float) $shipping_rate_class['rate'];
                     $this->assertTwoDeclaredRateReconcilesWithAmounts(
                         'shipping (' . $shipping_name . ')',
@@ -5839,14 +5854,45 @@ class Twopayment extends PaymentModule
      */
     private function resolveTwoCartShippingRateClasses($cart, $shipping_gross, $fallback_carrier = null)
     {
-        $selected_options = $cart->getDeliveryOption(null, false, false);
-        $option_list = $cart->getDeliveryOptionList();
+        // NEITHER CORE CALL IS EXCEPTION-FREE. Both run
+        // Cart::getPackageList() and, per candidate carrier,
+        // Cart::getPackageShippingCost() - which instantiates ObjectModels
+        // (Address, Country, Carrier; ObjectModel::__construct and its
+        // EntityMapper hit the database and throw PrestaShopException), reads
+        // cart rules over Db::executeS, and for an external/module-priced
+        // carrier calls straight into third-party module code via
+        // getPackageShippingCostFromModule(). A raise from any of those is a
+        // 500 on the checkout page today, bypassing both the fallback and the
+        // loud refusal designed below. Treat it as exactly what it is - the
+        // delivery option is unreadable - and let the same fallback/refusal
+        // decision run. Throwable, not Exception: a broken carrier module
+        // raises TypeError/Error just as easily.
+        $selected_options = [];
+        $option_list = [];
+        $lookup_failure = '';
+        try {
+            $selected_options = $cart->getDeliveryOption(null, false, false);
+            $option_list = $cart->getDeliveryOptionList();
+        } catch (Throwable $e) {
+            $lookup_failure = get_class($e) . ': ' . $e->getMessage();
+            $selected_options = [];
+            $option_list = [];
+            PrestaShopLogger::addLog(
+                'TwoPayment: Cart ' . (int) $cart->id . ' delivery-option lookup raised while resolving the ' .
+                'declared shipping tax rate (' . $lookup_failure . ').',
+                3
+            );
+        }
 
         $classes = [];
         $diagnostics = [];
 
         if (is_array($selected_options) && is_array($option_list)) {
             foreach ($selected_options as $id_address => $option_key) {
+                // Core's auto-select assigns `key($options)`, which is NULL for
+                // an address whose option set is empty; a non-scalar key would
+                // fatal on array access. Normalise before indexing.
+                $option_key = is_scalar($option_key) ? (string) $option_key : '';
                 if (
                     !isset($option_list[$id_address][$option_key]['carrier_list'])
                     || !is_array($option_list[$id_address][$option_key]['carrier_list'])
@@ -5865,11 +5911,27 @@ class Twopayment extends PaymentModule
                     ) {
                         // PrestaShop's no-available-carrier sentinel: when a
                         // product has no carrier that can deliver it,
-                        // Cart::getPackageList() sets carrier_list = [0 => 0],
-                        // so there is no carrier row and no declared tax-rules
+                        // Cart::getPackageList() sets carrier_list = [0 => 0]
+                        // (1.7.6.0 Cart.php:2439, 8.1.7:2680, 9.0.0:2462), so
+                        // there is no carrier row and no declared tax-rules
                         // group — while getPackageShippingCost() can still
                         // return a non-zero price from its own internal
                         // PS_CARRIER_DEFAULT / cheapest-in-range fallback.
+                        //
+                        // What actually arrives here is NOT the literal
+                        // [0 => 0] (TWO-25180): getDeliveryOptionList()
+                        // discards the whole option list on that sentinel
+                        // before returning — unconditionally on 8.x/9.x
+                        // (8.1.7:2909, 9.0.0:2674) and, on 1.7.6.0, only for a
+                        // single-package cart (1.7.6.0:2647). The surviving
+                        // 1.7 multi-package case falls through the loop, so
+                        // carrier id 0 reaches the caller as a normal
+                        // aggregated entry whose 'instance' is an UNLOADED
+                        // `new Carrier(0)`. Every version also rewrites
+                        // 'instance' for every entry in the final pass
+                        // (1.7.6.0:2858, 8.1.7:3129, 9.0.0:2894), so a carrier
+                        // row deleted mid-checkout lands here the same way.
+                        // Both are this branch.
                         // Inferring a rate from that price is exactly what must
                         // not happen, and silently sending 0% would misreport
                         // the merchant's VAT. Refuse the order instead — also
@@ -5885,8 +5947,27 @@ class Twopayment extends PaymentModule
                         );
                     }
 
-                    $group_id = (int) $instance->getIdTaxRulesGroup();
-                    $rate = $this->getTwoConfiguredTaxRateDecimalForGroup($group_id, $cart);
+                    // Carrier::getIdTaxRulesGroup() is a database read
+                    // (carrier_tax_rules_group_shop) behind a Context lookup,
+                    // and the group resolver instantiates an Address; either
+                    // can raise. A carrier that priced this shipping but whose
+                    // declared group cannot be read is precisely the case
+                    // where no rate may be invented — refuse, naming the
+                    // cause, rather than 500 or fall through to 0%.
+                    try {
+                        $group_id = (int) $instance->getIdTaxRulesGroup();
+                        $rate = $this->getTwoConfiguredTaxRateDecimalForGroup($group_id, $cart);
+                    } catch (Throwable $e) {
+                        throw $this->buildTwoShippingRateUnresolvableException(
+                            $cart,
+                            $shipping_gross,
+                            (int) $id_address,
+                            (string) $option_key,
+                            $id_carrier,
+                            'the declared tax-rules group of carrier ' . $id_carrier . ' could not be read (' .
+                            get_class($e) . ': ' . $e->getMessage() . ')'
+                        );
+                    }
                     $rate_key = $this->formatTwoTaxRate($rate);
                     if (!isset($classes[$rate_key])) {
                         $classes[$rate_key] = ['rate' => $rate, 'net_weight' => 0.0];
@@ -5894,7 +5975,9 @@ class Twopayment extends PaymentModule
                     // Per-carrier nets are already in carrier_list and sum to
                     // the option's own total_price_without_tax, so they are the
                     // correct weights for splitting a mixed-rate option.
-                    $classes[$rate_key]['net_weight'] += isset($data['price_without_tax'])
+                    $carrier_net_is_usable = isset($data['price_without_tax'])
+                        && is_numeric($data['price_without_tax']);
+                    $classes[$rate_key]['net_weight'] += $carrier_net_is_usable
                         ? max(0.0, round((float) $data['price_without_tax'], 2))
                         : 0.0;
                     $diagnostics[] = 'carrier=' . $id_carrier . ' tax_rules_group=' . $group_id .
@@ -5904,20 +5987,51 @@ class Twopayment extends PaymentModule
         }
 
         if (empty($classes)) {
-            // The delivery option could not be read at all (no option list, or
-            // a shape this version of core does not expose). A cart whose
-            // `id_carrier` loads still has a merchant-declared group on that
-            // carrier row, which is a declared rate and not an approximation,
-            // so relay it — this is the pre-TWO-25161 behaviour, kept as the
-            // fallback rather than as the primary path.
+            // The delivery option could not be read at all: no option list (the
+            // shape core returns for the no-available-carrier sentinel), an
+            // empty carrier list for the selected key, or a raise from the
+            // lookup itself. A cart whose `id_carrier` loads still has a
+            // merchant-declared group on that carrier row, which is a declared
+            // rate and not an approximation, so relay it — this is the
+            // pre-TWO-25161 behaviour, kept as the fallback rather than as the
+            // primary path.
+            //
+            // It is also the only fallback that is coherent WITH the amounts:
+            // when the option list is unreadable, Cart::getTotalShippingCost()
+            // has nothing to sum, so ONLY_SHIPPING is 0 and the amounts on the
+            // line came from the caller's getPackageShippingCost($cart->
+            // id_carrier) fallback — i.e. from this very carrier, taxed by this
+            // very group (core: `$carrier_tax = $carrier->getTaxesRate(
+            // $address)`, Cart.php 1.7.6.0:3525 / 8.1.7:3790 / 9.0.0:3532).
+            // There is no shop-level shipping tax-rules group to fall back to
+            // instead: core defines only PS_ECOTAX_TAX_RULES_GROUP(_ID) and
+            // PS_GIFT_WRAPPING_TAX_RULES_GROUP, and keeps the shipping group
+            // per carrier in `carrier_tax_rules_group_shop`. Inferring one
+            // (Carrier::getIdTaxRulesGroupMostUsed(), PS_CARRIER_DEFAULT, or a
+            // rate derived from the amounts) is the one thing this design
+            // forbids, so where no declared group is reachable the fallback
+            // IS the loud refusal below.
             if (is_object($fallback_carrier) && Validate::isLoadedObject($fallback_carrier)) {
-                $fallback_group_id = method_exists($fallback_carrier, 'getIdTaxRulesGroup')
-                    ? (int) $fallback_carrier->getIdTaxRulesGroup()
-                    : 0;
-                $fallback_rate = $this->getTwoCarrierConfiguredTaxRateDecimal($fallback_carrier, $cart);
+                try {
+                    $fallback_group_id = method_exists($fallback_carrier, 'getIdTaxRulesGroup')
+                        ? (int) $fallback_carrier->getIdTaxRulesGroup()
+                        : 0;
+                    $fallback_rate = $this->getTwoCarrierConfiguredTaxRateDecimal($fallback_carrier, $cart);
+                } catch (Throwable $e) {
+                    throw $this->buildTwoShippingRateUnresolvableException(
+                        $cart,
+                        $shipping_gross,
+                        0,
+                        '',
+                        (int) $cart->id_carrier,
+                        'the declared tax-rules group of the cart\'s own carrier ' . (int) $cart->id_carrier .
+                        ' could not be read either (' . get_class($e) . ': ' . $e->getMessage() . ')'
+                    );
+                }
                 PrestaShopLogger::addLog(
                     'TwoPayment: Cart ' . (int) $cart->id . ' exposed no readable delivery-option carrier ' .
-                    'list; relaying the declared shipping tax rate from its own carrier ' .
+                    'list' . ($lookup_failure === '' ? '' : ' (' . $lookup_failure . ')') .
+                    '; relaying the declared shipping tax rate from its own carrier ' .
                     (int) $cart->id_carrier . ' (tax_rules_group=' . $fallback_group_id . ', rate=' .
                     round($fallback_rate * 100, 2) . '%).',
                     1
@@ -5931,7 +6045,18 @@ class Twopayment extends PaymentModule
                 ];
             }
 
-            throw $this->buildTwoShippingRateUnresolvableException($cart, $shipping_gross, 0, '', 0);
+            throw $this->buildTwoShippingRateUnresolvableException(
+                $cart,
+                $shipping_gross,
+                0,
+                '',
+                0,
+                $lookup_failure === ''
+                    ? 'PrestaShop exposes no readable delivery-option carrier list for this cart and its own '
+                        . 'carrier does not load either'
+                    : 'the cart\'s delivery-option lookup failed (' . $lookup_failure .
+                        ') and its own carrier does not load either'
+            );
         }
 
         // Diagnostic (TWO-25161): this chain was verified against PrestaShop
@@ -5960,6 +6085,8 @@ class Twopayment extends PaymentModule
      * @param int $id_address Delivery address whose option failed, 0 if none resolved
      * @param string $option_key Selected delivery-option key ('0,' for the sentinel)
      * @param int $id_carrier Offending carrier id (0 for the sentinel)
+     * @param string $reason Why no declared group is reachable; defaults to the
+     *                       no-available-carrier sentinel this gate was added for
      * @return TwoCheckoutAmountException
      */
     private function buildTwoShippingRateUnresolvableException(
@@ -5967,8 +6094,13 @@ class Twopayment extends PaymentModule
         $shipping_gross,
         $id_address,
         $option_key,
-        $id_carrier
+        $id_carrier,
+        $reason = ''
     ) {
+        if ($reason === '') {
+            $reason = 'PrestaShop reports no available carrier (carrier_list = [0 => 0]) for this cart';
+        }
+
         $detail = 'cart ' . (int) $cart->id . ', id_carrier=' . (int) $cart->id_carrier .
             ', shipping=' . $this->getTwoRoundAmount($shipping_gross) .
             ', delivery address=' . (int) $id_address .
@@ -5977,10 +6109,8 @@ class Twopayment extends PaymentModule
 
         PrestaShopLogger::addLog(
             'TwoPayment: No deliverable carrier for the cart shipping cost, so no declared shipping ' .
-            'tax rate exists to relay (' . $detail . '). PrestaShop reports no available carrier for at ' .
-            'least one product (carrier_list = [0 => 0]) while still pricing the shipping through its ' .
-            'internal default-carrier fallback. Configure a carrier that covers this delivery address ' .
-            'and the cart contents.',
+            'tax rate exists to relay (' . $detail . '): ' . $reason . ', while the shipping is still ' .
+            'priced. Configure a carrier that covers this delivery address and the cart contents.',
             3
         );
 
@@ -5988,9 +6118,8 @@ class Twopayment extends PaymentModule
         // amounts and identifiers, and naming the condition on the checkout
         // page is the whole point of the loud refusal (TWO-25161).
         return new TwoCheckoutAmountException(
-            'No deliverable carrier for the cart shipping cost: PrestaShop reports no available carrier ' .
-            '(carrier_list = [0 => 0]) for this cart, so there is no declared shipping tax-rules group ' .
-            'to relay (' . $detail . ')'
+            'No deliverable carrier for the cart shipping cost: ' . $reason . ', so there is no declared ' .
+            'shipping tax-rules group to relay (' . $detail . ')'
         );
     }
 
