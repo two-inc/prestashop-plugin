@@ -182,8 +182,6 @@ class Twopayment extends PaymentModule
     /** @var string|false */
     public $enable_company_name;
     /** @var string|false */
-    public $enable_company_id;
-    /** @var string|false */
     public $enable_department;
     /** @var string|false */
     public $enable_project;
@@ -196,7 +194,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.6.4';
+        $this->version = '2.6.5';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -209,7 +207,6 @@ class Twopayment extends PaymentModule
         $this->merchant_short_name = Configuration::get('PS_TWO_MERCHANT_SHORT_NAME');
         $this->api_key = Configuration::get('PS_TWO_MERCHANT_API_KEY');
         $this->enable_company_name = Configuration::get('PS_TWO_ENABLE_COMPANY_NAME');
-        $this->enable_company_id = Configuration::get('PS_TWO_ENABLE_COMPANY_ID');
         $this->enable_department = Configuration::get('PS_TWO_ENABLE_DEPARTMENT');
         $this->enable_project = Configuration::get('PS_TWO_ENABLE_PROJECT');
         // Order intent pre-check is mandatory for all checkouts.
@@ -377,7 +374,6 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 0);
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', 0); // Default: SSL verification enabled (secure)
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', 1);
-        Configuration::updateValue('PS_TWO_ENABLE_COMPANY_ID', 1);
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', 1);
         Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', 'STANDARD'); // Default: Standard payment terms (not EOM)
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1); // Default: 30 days enabled
@@ -610,6 +606,10 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_API_KEY_VERIFIED');
         Configuration::deleteByName('PS_TWO_DISABLE_SSL_VERIFY');
         Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_NAME');
+        // Retired admin toggle (TWO-25190) - the org.id auto-complete switch
+        // was rendered and stored but no JavaScript ever read the
+        // `company_id_search` variable it fed. upgrade-2.6.5 deletes the row;
+        // this covers uninstall-without-upgrade.
         Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_ID');
         Configuration::deleteByName('PS_TWO_ENABLE_DEPARTMENT');
         Configuration::deleteByName('PS_TWO_ENABLE_PROJECT');
@@ -1380,26 +1380,6 @@ class Twopayment extends PaymentModule
                     ),
                     array(
                         'type' => 'switch',
-                        'label' => $this->l('Activate company org.id auto-complete'),
-                        'name' => 'PS_TWO_ENABLE_COMPANY_ID',
-                        'is_bool' => true,
-                        'desc' => $this->l('If you choose YES then customers to use search api to fins their company id (number) automatically.'),
-                        'required' => true,
-                        'values' => array(
-                            array(
-                                'id' => 'PS_TWO_ENABLE_COMPANY_ID_ON',
-                                'value' => 1,
-                                'label' => $this->l('Yes')
-                            ),
-                            array(
-                                'id' => 'PS_TWO_ENABLE_COMPANY_ID_OFF',
-                                'value' => 0,
-                                'label' => $this->l('No')
-                            ),
-                        ),
-                    ),
-                    array(
-                        'type' => 'switch',
                         'label' => $this->l('Automatically fulfill orders with Two'),
                         'name' => 'PS_TWO_FINALIZE_PURCHASE',
                         'is_bool' => true,
@@ -1472,7 +1452,6 @@ class Twopayment extends PaymentModule
     {
         $fields_values = array();
         $fields_values['PS_TWO_ENABLE_COMPANY_NAME'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME', Configuration::get('PS_TWO_ENABLE_COMPANY_NAME'));
-        $fields_values['PS_TWO_ENABLE_COMPANY_ID'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_ID', Configuration::get('PS_TWO_ENABLE_COMPANY_ID'));
         $fields_values['PS_TWO_FINALIZE_PURCHASE'] = Tools::getValue('PS_TWO_FINALIZE_PURCHASE', Configuration::get('PS_TWO_FINALIZE_PURCHASE'));
         $fields_values['PS_TWO_ENABLE_TAX_SUBTOTALS'] = Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
@@ -1486,7 +1465,6 @@ class Twopayment extends PaymentModule
     protected function saveTwoOtherFormValues()
     {
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME'));
-        Configuration::updateValue('PS_TWO_ENABLE_COMPANY_ID', Tools::getValue('PS_TWO_ENABLE_COMPANY_ID'));
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', Tools::getValue('PS_TWO_FINALIZE_PURCHASE'));
         Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', (int) Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
@@ -2982,7 +2960,6 @@ class Twopayment extends PaymentModule
                 'search_empty_text' => $this->l('No result found'),
                 'checkout_host' => $this->getTwoCheckoutHostUrl(),
                 'company_name_search' => $this->enable_company_name,
-                'company_id_search' => $this->enable_company_id,
                 'enable_department' => $this->enable_department,
                 'enable_project' => $this->enable_project,
                 'enable_order_intent' => $this->enable_order_intent,
