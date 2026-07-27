@@ -162,6 +162,8 @@ class Twopayment extends PaymentModule
     protected $errors = array();
     protected $verifiedMerchantId = null;
     protected $verifiedMerchantShortName = null;
+    /** @var string|null Memoised `client_v` value (version + optional +<sha7>) */
+    protected $two_client_version_cache = null;
 
     // Module metadata fields ModuleCore does not declare on all supported
     // PrestaShop versions ($bootstrap was only added to ModuleCore in PS 8;
@@ -1622,7 +1624,7 @@ class Twopayment extends PaymentModule
      *
      * @return string|null
      */
-    private function getTwoDeployedCommitHash($git_dir = null, $sidecar_file = null)
+    protected function getTwoDeployedCommitHash($git_dir = null, $sidecar_file = null)
     {
         if ($sidecar_file === null) {
             $sidecar_file = __DIR__ . '/.two-deployed-commit';
@@ -1637,6 +1639,23 @@ class Twopayment extends PaymentModule
         if ($git_dir === null) {
             $git_dir = __DIR__ . '/.git';
         }
+
+        // Git-synced staging shops materialise the module as a linked worktree, so
+        // `.git` is a gitlink FILE, not a directory:
+        //   gitdir: ../../.git/worktrees/<40-hex-sha>
+        // The last path segment is the commit the sync loop checked out.
+        if (is_file($git_dir)) {
+            if (!is_readable($git_dir)) {
+                return null;
+            }
+            $gitlink_contents = (string) @file_get_contents($git_dir);
+            if (preg_match('#gitdir:\s*.*/([0-9a-f]{7,40})\s*$#i', $gitlink_contents, $gitlink_match)) {
+                return substr($gitlink_match[1], 0, 7);
+            }
+
+            return null;
+        }
+
         if (!is_dir($git_dir) || !is_readable($git_dir)) {
             return null;
         }
@@ -6793,7 +6812,7 @@ class Twopayment extends PaymentModule
     private function verifyTwoApiKey($apiKey, $environment)
     {
         $base = $this->getTwoCheckoutHostUrlForEnvironment($environment);
-        $url = $base . '/v1/merchant/verify_api_key?client=PS&client_v=' . $this->version;
+        $url = $base . '/v1/merchant/verify_api_key?' . http_build_query($this->getTwoClientParams());
         $headers = [
             'Content-Type: application/json; charset=utf-8',
             'X-API-Key:' . $apiKey,
@@ -6908,7 +6927,7 @@ class Twopayment extends PaymentModule
     {
         $url = $this->getTwoCheckoutHostUrl() . '/v1/invoice/' . urlencode($two_order_id) . '/pdf';
         $query = array_merge(
-            array('client' => 'PS', 'client_v' => $this->version),
+            $this->getTwoClientParams(),
             is_array($params) ? $params : array()
         );
         $url .= '?' . http_build_query($query);
@@ -10206,7 +10225,7 @@ class Twopayment extends PaymentModule
         $request_timeout = $timeout !== null ? max(1, (int)$timeout) : self::API_TIMEOUT_LONG;
         if ($method == "POST" || $method == "PUT") {
             $url = sprintf('%s%s', $this->getTwoCheckoutHostUrl(), $endpoint);
-            $url = $url . '?client=PS&client_v=' . $this->version;
+            $url = $url . '?' . http_build_query($this->getTwoClientParams());
             $params = empty($payload) ? '' : json_encode($payload);
             $headers = $this->getTwoRequestHeaders($endpoint, $additional_headers);
             
@@ -10259,7 +10278,7 @@ class Twopayment extends PaymentModule
             ], is_array($response_data) ? $response_data : []);
         } else {
             $url = sprintf('%s%s', $this->getTwoCheckoutHostUrl(), $endpoint);
-            $url = $url . '?client=PS&client_v=' . $this->version;
+            $url = $url . '?' . http_build_query($this->getTwoClientParams());
             $headers = $this->getTwoRequestHeaders($endpoint, $additional_headers);
             $ch = curl_init();
             curl_setopt($ch, CURLOPT_URL, $url);
@@ -10317,6 +10336,42 @@ class Twopayment extends PaymentModule
      * @param array $additional_headers
      * @return array
      */
+    /**
+     * Client version string reported to the Two API as `client_v`.
+     *
+     * Semver from $this->version, suffixed with `+<short-sha>` when the deployed
+     * commit can be resolved (sidecar file or .git gitlink/directory). Never emits
+     * a bare trailing `+`.
+     *
+     * NOTE: callers MUST url-encode this — `+` decodes to a space in a query string.
+     * Use getTwoClientParams() with http_build_query() rather than concatenating.
+     *
+     * @return string
+     */
+    public function getTwoClientVersion()
+    {
+        if ($this->two_client_version_cache === null) {
+            $client_version = (string) $this->version;
+            $sha = $this->getTwoDeployedCommitHash();
+            if (is_string($sha) && $sha !== '') {
+                $client_version .= '+' . $sha;
+            }
+            $this->two_client_version_cache = $client_version;
+        }
+
+        return $this->two_client_version_cache;
+    }
+
+    /**
+     * Standard client identification query params for Two API calls.
+     *
+     * @return array<string, string>
+     */
+    public function getTwoClientParams()
+    {
+        return array('client' => 'PS', 'client_v' => $this->getTwoClientVersion());
+    }
+
     public function getTwoRequestHeaders($endpoint, $additional_headers = [])
     {
         $headers = [
