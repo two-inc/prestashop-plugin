@@ -50,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Tax rate precision raised to PrestaShop-native 6dp (rates still capped at 2 decimals of percent per e-invoicing rules); per-line validation now validates the emitted amounts and also asserts `gross == net + tax` exactly
 
 ### Removed
+- **Dead `PS_TWO_ENABLE_B2B_B2C` configuration key removed** (TWO-24739)
+  - The key was never a rendered admin field and was never read for a behavioural decision. Its only two references were the advanced-settings form's value hydration and a matching `Configuration::updateValue()` in the save handler, so saving advanced settings wrote a blank value into the row on every submit while nothing ever consulted it. Two is B2B-only - there is no B2B/B2C mode to switch
+  - The 2.6.4 upgrade script deletes the stored row on existing installs (any shop whose merchant has ever saved advanced settings holds one), and uninstall clears it for shops that never ran the upgrade
+  - Module version bumped to `2.6.4`
+
 - **`PS_TWO_ENABLE_SOLE_TRADER` admin setting retired - sole trader is gated on country only** (TWO-25166, umbrella TWO-25163)
   - The "Enable sole trader checkout" switch is removed from the module configuration page. Whether a buyer can check out as a sole trader is Two's registry answer for their billing country (`GET /registry/v1/supported-company-types/<ISO>`, TWO-24753 - the UK and US currently), never a merchant preference; this matches Magento's toggle-less behaviour, the cross-plugin target state
   - `TwoSoleTrader::isEnabled()` is gone and `isAvailable()` now consults the registry alone. The registry country check was already the barrier the order-intent controller enforced before minting delegated-authority tokens, so removing the toggle does not widen access to that endpoint - the country gate is unchanged and still fails closed on a cart with no invoice address
