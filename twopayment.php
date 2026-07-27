@@ -968,6 +968,13 @@ class Twopayment extends PaymentModule
                 // Merchant identity changed: drop the cached term list so
                 // serve-stale never bridges the old merchant's terms (TWO-24813).
                 $this->invalidateMerchantAvailableTerms();
+                // Same for the FX refresh clock (TWO-25184): the rates
+                // themselves are merchant-independent, so the last-known-good
+                // TABLE stays (it is the gate's only fallback), but the new
+                // identity may be a different environment - and a clock still
+                // inside its 6h TTL would suppress the warm-up fetch that
+                // follows this save for up to six hours.
+                Configuration::updateValue(self::CONFIG_FX_RATES_TS, 0);
             }
             Configuration::updateValue('PS_TWO_MERCHANT_ID', $this->verifiedMerchantId);
             Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 1);
@@ -975,6 +982,16 @@ class Twopayment extends PaymentModule
             // Ensure flag not stale when verification fails/non-run
             Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 0);
         }
+
+        // Warm the FX cache (TWO-25184). The API key has just been written,
+        // so this is the earliest moment a refdata fetch can authenticate,
+        // and the module has no scheduler of its own: without this the FIRST
+        // shopper to reach checkout pays the fetch inline, and every
+        // conversion in that request fails closed if it fails, because no
+        // table has ever been stored. refreshTwoFxRates is TTL/backoff-gated
+        // and bumps its clock before the wire call, so repeated saves cannot
+        // hammer the endpoint; it also no-ops without an API key.
+        $this->refreshTwoFxRates();
 
         $this->output .= $this->displayConfirmation($this->l('General settings are updated.'));
     }
