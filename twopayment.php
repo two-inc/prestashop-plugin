@@ -3227,7 +3227,16 @@ class Twopayment extends PaymentModule
                     ', Tolerance=' . $this->getTwoRoundAmount(self::ORDER_RECONCILIATION_TOLERANCE),
                     3
                 );
-                throw new Exception('Order totals do not reconcile with cart totals');
+                // Carry the numbers in the exception, not just the log: this
+                // message is what the buyer-facing decline path renders, and an
+                // opaque rejection here is what made TWO-25161 take two weeks
+                // of email to diagnose.
+                throw new Exception(
+                    'Order totals do not reconcile with cart totals: cart total ' .
+                    $this->getTwoRoundAmount(round((float)$cart->getOrderTotal(true, Cart::BOTH), 2)) .
+                    ' vs order lines ' . $this->getTwoRoundAmount($lineTotals['gross']) .
+                    ' (difference ' . $this->getTwoRoundAmount($max_reconciliation_diff_cents / 100) . ')'
+                );
             }
 
             PrestaShopLogger::addLog(
@@ -3605,7 +3614,13 @@ class Twopayment extends PaymentModule
             $exceptionMessage = (string)$e->getMessage();
             if (stripos($exceptionMessage, 'reconcile') !== false) {
                 $result['status'] = 'reconciliation_mismatch';
-                $result['message'] = $this->l('Unable to process your order with Two payment. Please review your cart and try again.');
+                // Specific, not generic: name the actual failure and quote the
+                // amounts, so a merchant-side cart/shipping misconfiguration is
+                // diagnosable from the checkout page instead of only from the
+                // shop log (TWO-25161).
+                $result['message'] = $this->l('Two could not accept this order because the cart total does not match the total of the order lines.')
+                    . ' ' . $exceptionMessage . '. '
+                    . $this->l('This is usually a shipping or discount amount the cart has not applied yet. Please refresh your cart and try again, or contact the store.');
             } else {
                 $result['status'] = 'payload_error';
             }
@@ -4302,46 +4317,54 @@ class Twopayment extends PaymentModule
             }
         }
 
-        // Add shipping as a line item if applicable
-        // BEST PRACTICE: Use getPackageShippingCost() to get actual carrier cost BEFORE free shipping rules
-        // This fixes the issue where getOrderTotal(ONLY_SHIPPING) returns 0 when free shipping cart rules are active
-        $shipping_cost_with_tax = 0;
-        $shipping_cost_without_tax = 0;
-        
-        if (Validate::isLoadedObject($carrier)) {
-            // Method 1: Get package shipping cost directly from carrier (ignores free shipping rules)
+        // SHIPPING AMOUNT SOURCING (TWO-25161): the CART is the authority, not
+        // the Carrier object. Cart::getOrderTotal(..., Cart::ONLY_SHIPPING) is
+        // the very figure PrestaShop folded into Cart::BOTH, so it is the only
+        // shipping amount that can reconcile with the cart total - and it
+        // resolves without a loadable Carrier. Merchants who price shipping
+        // through symbolic "logistics carriers" leave id_carrier = 0 on a cart
+        // that nonetheless carries a real shipping cost; keying the shipping
+        // line off `new Carrier($cart->id_carrier)` silently dropped that cost
+        // and the reconciliation gate then rejected the whole order.
+        //
+        // getPackageShippingCost() survives only as a fallback for the case it
+        // was originally added for: a shop where a free-shipping cart rule
+        // zeroes ONLY_SHIPPING while the same amount reappears as a shipping
+        // discount, so the payload needs the pre-discount carrier price to stay
+        // coherent. That fallback is inherently carrier-bound and stays gated
+        // on a loadable carrier.
+        $shipping_gross = round((float)$cart->getOrderTotal(true, Cart::ONLY_SHIPPING), 2);
+        $shipping_net = round((float)$cart->getOrderTotal(false, Cart::ONLY_SHIPPING), 2);
+
+        if ($shipping_gross <= 0 && Validate::isLoadedObject($carrier)) {
             // Parameters: id_carrier, use_tax, country, product_list, id_zone
-            $shipping_cost_with_tax = $cart->getPackageShippingCost((int)$cart->id_carrier, true, null, null, null);
-            $shipping_cost_without_tax = $cart->getPackageShippingCost((int)$cart->id_carrier, false, null, null, null);
-            
-            // Fallback: If getPackageShippingCost returns 0 or false, try getOrderTotal
-            // This handles edge cases where carrier pricing might be complex
-            if ($shipping_cost_with_tax <= 0) {
-                $shipping_cost_with_tax = (float)$cart->getOrderTotal(true, Cart::ONLY_SHIPPING);
-                $shipping_cost_without_tax = (float)$cart->getOrderTotal(false, Cart::ONLY_SHIPPING);
+            $package_gross = (float)$cart->getPackageShippingCost((int)$cart->id_carrier, true, null, null, null);
+            $package_net = (float)$cart->getPackageShippingCost((int)$cart->id_carrier, false, null, null, null);
+            if ($package_gross > 0) {
+                $shipping_gross = round($package_gross, 2);
+                $shipping_net = round($package_net, 2);
             }
         }
-        
-        if (Validate::isLoadedObject($carrier) && $shipping_cost_with_tax > 0) {
+
+        if ($shipping_gross > 0) {
             // Keep shipping monetary values canonical to PrestaShop totals.
-            $shipping_net = round((float)$shipping_cost_without_tax, 2);
-            $shipping_gross = round((float)$shipping_cost_with_tax, 2);
             $shipping_tax_amount = round($shipping_gross - $shipping_net, 2);
 
-            $shipping_name = $carrier->name ? $carrier->name : $this->l('Shipping');
+            $carrier_is_loaded = Validate::isLoadedObject($carrier);
+            $shipping_name = ($carrier_is_loaded && $carrier->name) ? $carrier->name : $this->l('Shipping');
             $shipping_delay = '';
-            if ($carrier->delay && is_array($carrier->delay)) {
-                $shipping_delay = isset($carrier->delay[$cart->id_lang]) ? 
-                    $carrier->delay[$cart->id_lang] : 
+            if ($carrier_is_loaded && $carrier->delay && is_array($carrier->delay)) {
+                $shipping_delay = isset($carrier->delay[$cart->id_lang]) ?
+                    $carrier->delay[$cart->id_lang] :
                     reset($carrier->delay);
-            } elseif ($carrier->delay) {
+            } elseif ($carrier_is_loaded && $carrier->delay) {
                 $shipping_delay = $carrier->delay;
             }
-            
+
             $shipping_description = $shipping_delay ? $shipping_delay : $this->l('Shipping cost for order');
-            if ($carrier->shipping_method == Carrier::SHIPPING_METHOD_WEIGHT) {
+            if ($carrier_is_loaded && $carrier->shipping_method == Carrier::SHIPPING_METHOD_WEIGHT) {
                 $shipping_description .= ' ' . sprintf($this->l('(by weight)'));
-            } elseif ($carrier->shipping_method == Carrier::SHIPPING_METHOD_PRICE) {
+            } elseif ($carrier_is_loaded && $carrier->shipping_method == Carrier::SHIPPING_METHOD_PRICE) {
                 $shipping_description .= ' ' . sprintf($this->l('(by price)'));
             }
 
@@ -4369,7 +4392,17 @@ class Twopayment extends PaymentModule
                 // DECLARED-RATE RELAY: the shipping rate is the carrier's own
                 // tax-rules group resolved at the cart's tax address — never
                 // derived from tax/net, never snapped.
-                $shipping_tax_rate_decimal = $this->getTwoCarrierConfiguredTaxRateDecimal($carrier, $cart);
+                //
+                // With no resolvable carrier there is no tax-rules group to
+                // relay (PrestaShop has no shop-level shipping tax group), so
+                // the rate is taken from the shipping tax PrestaShop itself
+                // applied to this cart. That is still the merchant's own
+                // declaration - the amounts come from whatever priced the
+                // shipping - and the assertion below keeps the line internally
+                // consistent either way.
+                $shipping_tax_rate_decimal = $carrier_is_loaded
+                    ? $this->getTwoCarrierConfiguredTaxRateDecimal($carrier, $cart)
+                    : $this->getTwoCartShippingImpliedTaxRateDecimal($cart, $shipping_net, $shipping_tax_amount);
                 $this->assertTwoDeclaredRateReconcilesWithAmounts(
                     'shipping (' . $shipping_name . ')',
                     $shipping_net,
@@ -5691,6 +5724,58 @@ class Twopayment extends PaymentModule
         // RATE source uses the same PS_TAX_ADDRESS_TYPE address PrestaShop's
         // getPackageShippingCost() used for the shipping AMOUNTS.
         return $this->getTwoConfiguredTaxRateDecimalForGroup((int) $carrier->getIdTaxRulesGroup(), $cart);
+    }
+
+    /**
+     * Shipping tax rate for a cart with NO resolvable carrier (TWO-25161).
+     *
+     * PrestaShop attaches the shipping tax-rules group to the carrier row and
+     * nowhere else, so a cart whose shipping is priced outside the carrier
+     * table (symbolic "logistics carriers", id_carrier = 0) has no declared
+     * group to relay. What it does have is the shipping tax PrestaShop itself
+     * put in the cart totals, and that is the number the buyer is being
+     * charged. Mirroring it keeps the emitted line internally consistent and
+     * the payload reconciled with the cart; the caller still runs the
+     * declared-rate assertion, which fails loud on a contradictory pair (e.g.
+     * zero net carrying tax).
+     *
+     * This is deliberately narrow: it applies ONLY when no carrier could be
+     * loaded. A loaded carrier always relays its configured group, never a
+     * rate derived from amounts.
+     *
+     * The ratio is taken from the UNROUNDED cart totals: a shop charging a
+     * clean 21% on 29.00 gross reports 23.9669 net, which yields exactly 0.21,
+     * whereas the 2dp-rounded pair (23.97 / 5.03) would imply 20.98%.
+     *
+     * @param Cart $cart
+     * @param float $shipping_net Emitted 2dp shipping net
+     * @param float $shipping_tax Emitted 2dp shipping tax
+     * @return float Decimal rate normalised to 2dp-of-percent
+     */
+    private function getTwoCartShippingImpliedTaxRateDecimal($cart, $shipping_net, $shipping_tax)
+    {
+        $shipping_net = round((float) $shipping_net, 2);
+        $shipping_tax = round((float) $shipping_tax, 2);
+        if ($shipping_net <= 0 || $shipping_tax <= 0) {
+            return 0.0;
+        }
+
+        $raw_net = (float) $cart->getOrderTotal(false, Cart::ONLY_SHIPPING);
+        $raw_gross = (float) $cart->getOrderTotal(true, Cart::ONLY_SHIPPING);
+        $ratio = ($raw_net > 0 && $raw_gross > $raw_net)
+            ? (($raw_gross - $raw_net) / $raw_net)
+            : ($shipping_tax / $shipping_net);
+
+        $rate = $this->normalizeTwoTaxRateToPercentPrecision($ratio);
+        PrestaShopLogger::addLog(
+            'TwoPayment: Cart ' . (int) $cart->id . ' has no resolvable carrier (id_carrier=' .
+            (int) $cart->id_carrier . '); shipping tax rate mirrored from the cart\'s own shipping totals at ' .
+            round($rate * 100, 2) . '% (net=' . $this->getTwoRoundAmount($shipping_net) .
+            ', tax=' . $this->getTwoRoundAmount($shipping_tax) . ').',
+            2
+        );
+
+        return $rate;
     }
 
     /**
