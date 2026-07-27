@@ -43,6 +43,7 @@ jobs:
           php -l tests/CheckoutLatencySpec.php
           php -l tests/ShippingCostSourcingSpec.php
           php -l tests/FulfilledStatusMappingSpec.php
+          php -l tests/DeployVersionInfoSpec.php
           php -l tests/run.php
 
       - name: Run offline test suite
