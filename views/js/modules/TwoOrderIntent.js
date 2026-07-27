@@ -71,7 +71,8 @@ class TwoOrderIntent {
                 // Backend returns status codes: 'no_company', 'incomplete_company' if needed
                 return this.fetchOrderIntentPayload(formData);
             })
-            .then(payload => {
+            .then(built => {
+                const payload = built ? built.payload : null;
                 const payloadCompany = (
                     payload &&
                     payload.buyer &&
@@ -80,6 +81,21 @@ class TwoOrderIntent {
                 ) ? String(payload.buyer.company.company_name).trim() : '';
                 if (payloadCompany) {
                     this.lastCompany = payloadCompany;
+                }
+                // TWO-24799: the server recognised this exact decision snapshot
+                // and returned the decision it already has, so skip the 2.5-3s
+                // /v1/order_intent round trip. The server only does this when
+                // every decision input (cart, addresses, country, company,
+                // amounts) is byte-identical to the checked snapshot; anything
+                // the buyer edits produces a different hash and no decision,
+                // and the authoritative re-check still runs at payment submit.
+                if (built && built.intentDecision) {
+                    return {
+                        success: true,
+                        approved: !!built.intentDecision.approved,
+                        message: '',
+                        rawResponse: { approved: !!built.intentDecision.approved, deduped: true }
+                    };
                 }
                 return this.callTwoOrderIntent(payload);
             })
@@ -281,7 +297,12 @@ class TwoOrderIntent {
                 timeout: 15000,
                 success: (response) => {
                     if (response && response.success && response.payload) {
-                        resolve(response.payload);
+                        // TWO-24799: intent_decision is present only when the
+                        // server matched an unchanged decision snapshot.
+                        resolve({
+                            payload: response.payload,
+                            intentDecision: response.intent_decision || null
+                        });
                     } else if (response && response.error) {
                         reject(new Error(response.error));
                     } else {
