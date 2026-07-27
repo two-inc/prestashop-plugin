@@ -31,6 +31,7 @@ jobs:
           php -l controllers/front/invoice.php
           php -l controllers/admin/AdminTwopaymentInvoiceController.php
           php -l classes/TwoInvoiceRetrievalService.php
+          php -l classes/TwoCheckoutAmountException.php
           php -l tests/bootstrap.php
           php -l tests/TwoInvoiceRetrievalSpec.php
           php -l tests/CustomerAddressFormatterOverrideSpec.php

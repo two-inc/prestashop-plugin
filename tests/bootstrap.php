@@ -228,6 +228,17 @@ namespace {
     }
 
     /**
+     * Core's DB failure type. Present here because the payload-build path walks
+     * core (TaxManagerFactory, Address, Carrier, DB reads), so it is the shape
+     * of "an exception the plugin did NOT raise" reaching the payment
+     * controller's catch — and its message carries SQL text that must never be
+     * relayed to a buyer (TWO-25161).
+     */
+    class PrestaShopDatabaseException extends PrestaShopException
+    {
+    }
+
+    /**
      * Thrown by the front-controller stubs wherever real PrestaShop would
      * redirect-and-exit, so controller specs observe the redirect instead of
      * falling through code the real flow never reaches.
