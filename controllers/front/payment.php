@@ -170,21 +170,31 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             $cart_snapshot_hash = $this->module->calculateTwoCheckoutSnapshotHash($cart, $paymentdata);
             $idempotency_key = $this->module->buildTwoOrderCreateIdempotencyKey($cart, $cart_snapshot_hash);
         } catch (Exception $e) {
-            // Surface WHY the payload could not be built. Every exception on
-            // this path is a deterministic, plugin-generated diagnostic about
-            // the cart's own amounts (no credentials, no provider internals),
-            // and withholding it is what left the buyer staring at a spinner
-            // with a generic message in TWO-25161.
+            // Surface WHY the payload could not be built - but only when the
+            // plugin itself raised the failure as a buyer-actionable amount
+            // diagnostic (TwoCheckoutAmountException). Withholding that detail
+            // is what left the buyer staring at a spinner with a generic
+            // message in TWO-25161, and since TWO-24768 the same string also
+            // goes into the AJAX JSON body.
+            //
+            // Payload building walks PrestaShop core (TaxManagerFactory,
+            // Address, Carrier, DB reads), so an arbitrary exception can reach
+            // here: a PrestaShopDatabaseException would put SQL text and
+            // table/column names on a public storefront. Those get the generic
+            // message, with the real exception class and message logged at
+            // severity 4 so nothing is lost for diagnosis.
+            $isBuyerActionable = $e instanceof TwoCheckoutAmountException;
             $message = $this->module->l('Two could not build this order from your cart.');
-            $detail = trim((string)$e->getMessage());
+            $detail = $isBuyerActionable ? trim((string)$e->getMessage()) : '';
             if ($detail !== '') {
                 $message .= ' ' . sprintf($this->module->l('Details: %s.'), $detail);
             }
             $message .= ' ' . $this->module->l('Please review your cart and try again, or contact the store.');
             $this->failCheckout(
                 $message,
-                'TwoPayment: Failed building order payload for cart ' . $cart->id . ' - ' . $e->getMessage(),
-                3
+                'TwoPayment: Failed building order payload for cart ' . $cart->id . ' - [' .
+                get_class($e) . '] ' . $e->getMessage(),
+                $isBuyerActionable ? 3 : 4
             );
             return;
         }

@@ -31,6 +31,96 @@ final class AjaxCheckoutFailureSpec
         self::testFailurePayloadFallsBackWhenMessageIsEmpty();
         self::testProviderRejectionReachesAjaxCallerAsJsonError();
         self::testProviderRejectionStillRedirectsBrowserNavigation();
+        self::testNonPluginExceptionIsNotRelayedToTheBuyer();
+        self::testPluginAmountDiagnosticStillReachesTheBuyer();
+    }
+
+    /* ---- payload-build failures: what the buyer is allowed to see ---- */
+
+    /**
+     * TWO-25161 information disclosure: payload building walks PrestaShop core,
+     * so a core exception can reach the controller's catch. Its message must
+     * NOT be relayed - a PrestaShopDatabaseException carries SQL text and
+     * table/column names, and since TWO-24768 the same string is also written
+     * into the AJAX JSON body. The buyer gets the generic message; the real
+     * exception class and message are logged.
+     */
+    private static function testNonPluginExceptionIsNotRelayedToTheBuyer(): void
+    {
+        $sql = 'Unknown column \'tax_rules_group\' in \'field list\'<br />' .
+            'SELECT * FROM ps_carrier_tax_rules_group_shop WHERE id_carrier = 7';
+        $controller = self::makeController(new PrestaShopDatabaseException($sql));
+        $_SERVER['HTTP_X_REQUESTED_WITH'] = 'XMLHttpRequest';
+
+        try {
+            self::runPostProcess($controller);
+        } finally {
+            unset($_SERVER['HTTP_X_REQUESTED_WITH']);
+        }
+
+        TinyAssert::count(1, $controller->emitted);
+        $payload = $controller->emitted[0];
+        TinyAssert::same(
+            'Two could not build this order from your cart. ' .
+            'Please review your cart and try again, or contact the store.',
+            $payload['message'],
+            'a core exception must yield the generic buyer message, with no detail appended'
+        );
+        TinyAssert::false(
+            strpos($payload['message'], 'ps_carrier_tax_rules_group_shop') !== false,
+            'SQL text must never reach the buyer'
+        );
+
+        // Diagnosability is not lost: the real exception is in the shop log,
+        // with its class named.
+        TinyAssert::true(
+            self::loggedContains('[PrestaShopDatabaseException]'),
+            'the real exception class must be logged'
+        );
+        TinyAssert::true(
+            self::loggedContains('ps_carrier_tax_rules_group_shop'),
+            'the real exception message must be logged'
+        );
+    }
+
+    /**
+     * No regression on the deliberate part of TWO-25161: an amount diagnostic
+     * the plugin itself raised still reaches the buyer with its numbers intact.
+     * That detail is what makes a merchant-side cart/shipping misconfiguration
+     * diagnosable from the checkout page.
+     */
+    private static function testPluginAmountDiagnosticStillReachesTheBuyer(): void
+    {
+        $diagnostic = 'Order totals do not reconcile with cart totals: cart total 150.00 ' .
+            'vs order lines 121.00 (difference 29.00)';
+        $controller = self::makeController(new TwoCheckoutAmountException($diagnostic));
+        $_SERVER['HTTP_X_REQUESTED_WITH'] = 'XMLHttpRequest';
+
+        try {
+            self::runPostProcess($controller);
+        } finally {
+            unset($_SERVER['HTTP_X_REQUESTED_WITH']);
+        }
+
+        TinyAssert::count(1, $controller->emitted);
+        TinyAssert::same(
+            'Two could not build this order from your cart. Details: ' . $diagnostic . '. ' .
+            'Please review your cart and try again, or contact the store.',
+            $controller->emitted[0]['message'],
+            'a plugin-raised amount diagnostic must keep reaching the buyer'
+        );
+    }
+
+    /** Did any log line mention this fragment? */
+    private static function loggedContains(string $needle): bool
+    {
+        foreach (PrestaShopLogger::$logs as $entry) {
+            if (strpos((string) $entry['message'], $needle) !== false) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /* ---- request-shape detection ---- */
@@ -162,7 +252,10 @@ final class AjaxCheckoutFailureSpec
         return null;
     }
 
-    private static function makeController()
+    /**
+     * @param Exception|null $payloadException Thrown by getTwoNewOrderData() when set
+     */
+    private static function makeController($payloadException = null)
     {
         StubStore::reset();
         PrestaShopLogger::reset();
@@ -213,18 +306,30 @@ final class AjaxCheckoutFailureSpec
                 throw new StubJsonFailureEmitted('json failure emitted');
             }
         };
-        $controller->module = self::makeModule();
+        $controller->module = self::makeModule($payloadException);
 
         return $controller;
     }
 
     /**
      * Module double: everything the controller needs up to the provider call
-     * is canned, and /v1/order answers 401 (no usable API key).
+     * is canned, and /v1/order answers 401 (no usable API key). Passing an
+     * exception makes the payload build itself fail instead.
+     *
+     * @param Exception|null $payloadException
      */
-    private static function makeModule(): Twopayment
+    private static function makeModule($payloadException = null): Twopayment
     {
-        return new class extends TwopaymentTestHarness {
+        return new class($payloadException) extends TwopaymentTestHarness {
+            /** @var Exception|null */
+            private $payloadException;
+
+            public function __construct($payloadException = null)
+            {
+                parent::__construct();
+                $this->payloadException = $payloadException;
+            }
+
             public function isCartCurrencySupportedByTwo($cart)
             {
                 return true;
@@ -257,6 +362,10 @@ final class AjaxCheckoutFailureSpec
 
             public function getTwoNewOrderData($merchant_order_id, $cart, $merchant_urls = null, $syncSurchargeCartLine = true)
             {
+                if ($this->payloadException !== null) {
+                    throw $this->payloadException;
+                }
+
                 return ['gross_amount' => '100.00'];
             }
 

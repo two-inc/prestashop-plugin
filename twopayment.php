@@ -13,6 +13,7 @@ if (!defined('_PS_VERSION_')) {
 
 require_once dirname(__FILE__) . '/classes/TwoSurchargeCalculator.php';
 require_once dirname(__FILE__) . '/classes/TwoSoleTrader.php';
+require_once dirname(__FILE__) . '/classes/TwoCheckoutAmountException.php';
 
 class Twopayment extends PaymentModule
 {
@@ -3253,8 +3254,9 @@ class Twopayment extends PaymentModule
                 // Carry the numbers in the exception, not just the log: this
                 // message is what the buyer-facing decline path renders, and an
                 // opaque rejection here is what made TWO-25161 take two weeks
-                // of email to diagnose.
-                throw new Exception(
+                // of email to diagnose. TwoCheckoutAmountException is what
+                // authorises that relay — see the class docblock.
+                throw new TwoCheckoutAmountException(
                     'Order totals do not reconcile with cart totals: cart total ' .
                     $this->getTwoRoundAmount(round((float)$cart->getOrderTotal(true, Cart::BOTH), 2)) .
                     ' vs order lines ' . $this->getTwoRoundAmount($lineTotals['gross']) .
@@ -3285,7 +3287,7 @@ class Twopayment extends PaymentModule
                 $this->getTwoRoundAmount($subtotalsTotals['gross']) . ')',
                 3
             );
-            throw new Exception('Tax subtotals do not reconcile with line items');
+            throw new TwoCheckoutAmountException('Tax subtotals do not reconcile with line items');
         }
 
         // Offset pricing fee (buyer surcharge) — appended AFTER product-line
@@ -4738,7 +4740,7 @@ class Twopayment extends PaymentModule
      * @param float $tax_amount Emitted 2dp tax amount
      * @param float $rate_decimal Declared decimal rate (e.g. 0.21)
      * @return void
-     * @throws Exception
+     * @throws TwoCheckoutAmountException
      */
     private function assertTwoDeclaredRateReconcilesWithAmounts($label, $net_amount, $tax_amount, $rate_decimal)
     {
@@ -4758,7 +4760,7 @@ class Twopayment extends PaymentModule
             '. Check the tax rules configured for this line (tax rules group, address-specific rules).',
             3
         );
-        throw new Exception(
+        throw new TwoCheckoutAmountException(
             'Declared tax rate diverges from applied tax amounts for ' . $label
         );
     }
@@ -5845,7 +5847,7 @@ class Twopayment extends PaymentModule
      * @param Cart $cart
      * @param float $shipping_gross Authoritative 2dp shipping gross, for the failure message
      * @return array<string,array{rate:float,net_weight:float}> Keyed by formatted rate
-     * @throws Exception When no carrier with a declared tax-rules group can be resolved
+     * @throws TwoCheckoutAmountException When no carrier with a declared tax-rules group can be resolved
      */
     private function resolveTwoCartShippingRateClasses($cart, $shipping_gross)
     {
@@ -5940,7 +5942,7 @@ class Twopayment extends PaymentModule
      * @param int $id_address Delivery address whose option failed, 0 if none resolved
      * @param string $option_key Selected delivery-option key ('0,' for the sentinel)
      * @param int $id_carrier Offending carrier id (0 for the sentinel)
-     * @return Exception
+     * @return TwoCheckoutAmountException
      */
     private function buildTwoShippingRateUnresolvableException(
         $cart,
@@ -5964,7 +5966,10 @@ class Twopayment extends PaymentModule
             3
         );
 
-        return new Exception(
+        // Buyer-facing by type: the detail is nothing but the cart's own
+        // amounts and identifiers, and naming the condition on the checkout
+        // page is the whole point of the loud refusal (TWO-25161).
+        return new TwoCheckoutAmountException(
             'No deliverable carrier for the cart shipping cost: PrestaShop reports no available carrier ' .
             '(carrier_list = [0 => 0]) for this cart, so there is no declared shipping tax-rules group ' .
             'to relay (' . $detail . ')'
