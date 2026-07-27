@@ -43,6 +43,24 @@ namespace {
         public static array $cartTotals = [];
         public static array $cartShipping = [];
         public static array $cartRules = [];
+        /**
+         * Cart::getDeliveryOptionList() fixtures by cart id, core-shaped:
+         *   [id_address => [option_key => ['carrier_list' => [id_carrier => [
+         *       'price_with_tax' => float, 'price_without_tax' => float,
+         *       'instance' => Carrier,
+         *   ]]]]]
+         * The no-available-carrier sentinel is carrier_list = [0 => 0].
+         *
+         * @var array<int,array>
+         */
+        public static array $cartDeliveryOptionLists = [];
+        /**
+         * Cart::getDeliveryOption() overrides by cart id. Unset means the stub
+         * auto-selects the first option per address, like core does.
+         *
+         * @var array<int,array|false>
+         */
+        public static array $cartDeliveryOptions = [];
         public static array $moduleCurrencies = [];
         public static array $productCategories = [];
         public static array $images = [];
@@ -62,6 +80,8 @@ namespace {
         public static array $dbExecuteSResponses = [];
         public static array $dbLastExecuteS = [];
         public static array $orderCarriers = [];
+        /** @var array<int,array{id_order_state:string,name:string}> Override for OrderState::getOrderStates() */
+        public static array $orderStates = [];
         public static array $carts = [];
         /** @var array<string,int> Registered admin tab ids by class name */
         public static array $tabIds = ['AdminTwopaymentInvoice' => 1];
@@ -145,6 +165,8 @@ namespace {
             self::$cartTotals = [];
             self::$cartShipping = [];
             self::$cartRules = [];
+            self::$cartDeliveryOptionLists = [];
+            self::$cartDeliveryOptions = [];
             self::$orderCarriers = [];
             self::$carts = [];
             self::$tabIds = ['AdminTwopaymentInvoice' => 1];
@@ -173,6 +195,7 @@ namespace {
             self::$dbLocks = [];
             self::$surchargeSyncSeqs = [];
             self::$orderDetails = [];
+            self::$orderStates = [];
             self::$dbExecuted = [];
             self::$dbTriggers = [];
             self::$orders = [];
@@ -201,6 +224,17 @@ namespace {
     }
 
     class PrestaShopException extends Exception
+    {
+    }
+
+    /**
+     * Core's DB failure type. Present here because the payload-build path walks
+     * core (TaxManagerFactory, Address, Carrier, DB reads), so it is the shape
+     * of "an exception the plugin did NOT raise" reaching the payment
+     * controller's catch — and its message carries SQL text that must never be
+     * relayed to a buyer (TWO-25161).
+     */
+    class PrestaShopDatabaseException extends PrestaShopException
     {
     }
 
@@ -255,6 +289,12 @@ namespace {
         public static function isEnabled($name): bool
         {
             return (string) $name === 'twopayment';
+        }
+
+        /** @return array<int,array{name:string}> */
+        public static function getPaymentModules(): array
+        {
+            return [['name' => 'twopayment']];
         }
     }
     }
@@ -1313,6 +1353,36 @@ namespace {
             return StubStore::$cartRules[$this->id] ?? [];
         }
 
+        public function getDeliveryOptionList($defaultCountry = null, $flush = false): array
+        {
+            return StubStore::$cartDeliveryOptionLists[$this->id] ?? [];
+        }
+
+        /**
+         * Core-faithful enough for the plugin's use: an explicit fixture wins,
+         * otherwise auto-select the first option for each address, which is
+         * what core falls back to when nothing is selected or the selection no
+         * longer validates.
+         *
+         * @return array<int,string>|false
+         */
+        public function getDeliveryOption($defaultCountry = null, $dontAutoSelectOptions = false, $useCache = true)
+        {
+            if (array_key_exists($this->id, StubStore::$cartDeliveryOptions)) {
+                return StubStore::$cartDeliveryOptions[$this->id];
+            }
+
+            $selected = [];
+            foreach (StubStore::$cartDeliveryOptionLists[$this->id] ?? [] as $idAddress => $options) {
+                $keys = array_keys((array) $options);
+                if ($keys !== []) {
+                    $selected[(int) $idAddress] = (string) $keys[0];
+                }
+            }
+
+            return $selected;
+        }
+
         public function getAverageProductsTaxRate(): float
         {
             return (float) (StubStore::$cartTotals[$this->id]['average_products_tax_rate'] ?? 0.0);
@@ -1449,11 +1519,13 @@ namespace {
         }
     }
 
+    #[\AllowDynamicProperties]
     class OrderState
     {
         public bool $loaded = true;
         public int $id = 1;
-        public $name = '';
+        /** @var string|array<int,string> String once loaded by id; array<id_lang,string> while being built. */
+        public $name = [];
         public int $invoice = 0;
         public int $delivery = 0;
         public int $shipped = 0;
@@ -1493,7 +1565,32 @@ namespace {
 
         public function add(): bool
         {
+            // Core assigns a fresh auto-increment id on insert. Returning a
+            // distinct id per insert matters for createTwoOrderState(), which
+            // creates six states in one pass and stores each id in configuration.
+            $this->id = StubStore::$nextId++;
+
             return true;
+        }
+
+        /**
+         * Mirrors OrderStateCore::getOrderStates(): id_order_state comes back from
+         * the database as a string, which matters for pre-selection comparisons.
+         *
+         * @return array<int,array{id_order_state:string,name:string}>
+         */
+        public static function getOrderStates($idLang = null): array
+        {
+            if (!empty(StubStore::$orderStates)) {
+                return StubStore::$orderStates;
+            }
+
+            return [
+                ['id_order_state' => '2', 'name' => 'Payment accepted'],
+                ['id_order_state' => '3', 'name' => 'Processing in progress'],
+                ['id_order_state' => '4', 'name' => 'Shipped'],
+                ['id_order_state' => '5', 'name' => 'Delivered'],
+            ];
         }
     }
 

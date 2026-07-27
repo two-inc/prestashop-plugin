@@ -13,6 +13,7 @@ if (!defined('_PS_VERSION_')) {
 
 require_once dirname(__FILE__) . '/classes/TwoSurchargeCalculator.php';
 require_once dirname(__FILE__) . '/classes/TwoSoleTrader.php';
+require_once dirname(__FILE__) . '/classes/TwoCheckoutAmountException.php';
 
 class Twopayment extends PaymentModule
 {
@@ -136,6 +137,17 @@ class Twopayment extends PaymentModule
     const COOKIE_EXPIRY_ONE_HOUR = 3600; // 1 hour
     const ATTEMPT_RETENTION_DAYS = 90; // Keep attempt telemetry for 90 days
     const ATTEMPT_CLEANUP_INTERVAL_SECONDS = 86400; // Run cleanup at most once per day
+    // TWO-24799: how long a UX-only order-intent decision stays reusable for an
+    // unchanged decision snapshot. Deliberately short - this only suppresses the
+    // repeat /v1/order_intent round trip behind an identical snapshot hash, and
+    // the authoritative check at payment submit
+    // (checkTwoOrderIntentApprovalAtPayment) is never served from this cache.
+    const ORDER_INTENT_DECISION_CACHE_TTL = 300; // 5 minutes
+    // TWO-24799: how long an unverifiable org number stays remembered as a miss.
+    // The success path is already cached indefinitely (for the cookie's lifetime)
+    // by the two_company_* company cookie, so only the miss needs its own TTL -
+    // short enough that a provider blip self-heals inside one checkout session.
+    const COMPANY_VERIFY_MISS_CACHE_TTL = 300; // 5 minutes
     // Cross-request cache for the buyer fee-share quote (POST /v1/pricing/order/fee).
     // fetchTwoTermFee() already request-scopes the quote via $this->twoFeeCache, but
     // that array is rebuilt from scratch on every HTTP request (e.g. each order-intent
@@ -184,7 +196,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.6.1';
+        $this->version = '2.6.2';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -225,7 +237,10 @@ class Twopayment extends PaymentModule
             if (!Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION_MAP')) {
                 Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', Configuration::get('PS_OS_PREPARATION'));
                 Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', Configuration::get('PS_OS_PREPARATION'));
-                Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', Configuration::get('PS_OS_SHIPPING'));
+                // JSON array, matching install() and the admin form save path - this
+                // recovery path used to write a bare status ID, leaving three
+                // divergent storage formats for one configuration key.
+                Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', json_encode(array((int)Configuration::get('PS_OS_SHIPPING'))));
                 Configuration::updateValue('PS_TWO_OS_PAYMENT_ERROR_MAP', Configuration::get('PS_OS_ERROR'));
                 Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', Configuration::get('PS_OS_CANCELED'));
                 Configuration::updateValue('PS_TWO_OS_REFUNDED_MAP', Configuration::get('PS_OS_REFUND'));
@@ -1903,20 +1918,29 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_OS_AWAITING_VERIFICATION_MAP'] = Tools::getValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION_MAP'));
         $fields_values['PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'] = Tools::getValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'));
         
-        // Handle multi-select for fulfillment statuses
+        // Handle multi-select for fulfillment statuses.
+        //
+        // PrestaShop core's HelperForm::generate() rewrites a multi-select field's
+        // name in place ($params['name'] .= '[]', classes/helper/HelperForm.php) and
+        // the form template then looks the pre-selection up under that rewritten
+        // name ($fields_value[$input.name] in
+        // admin/themes/default/template/helpers/form/form.tpl). That is the same in
+        // PS 1.7.6.x, 8.x and 9.x, so the '[]'-suffixed key is the one that decides
+        // which options render as selected; the plain key is kept populated for any
+        // reader that addresses the field by its declared name.
+        //
+        // The IDs are normalised to strings because the template compares each
+        // stored value against the option's id_order_state, which comes back from
+        // the database as a string; a strict comparison in a future PS release
+        // would otherwise silently drop every pre-selection.
         $fulfilled_map = Configuration::get('PS_TWO_OS_FULFILLED_MAP');
-        if ($fulfilled_map) {
-            // Decode JSON array or split comma-separated values
-            $fulfilled_ids = json_decode($fulfilled_map, true);
-            if (!is_array($fulfilled_ids)) {
-                // Backward compatibility: if it's a single ID, convert to array
-                $fulfilled_ids = array($fulfilled_map);
-            }
-            $fulfilled_ids_value = $fulfilled_ids;
-        } else {
-            // Default to Shipped status
-            $fulfilled_ids_value = array(Configuration::get('PS_OS_SHIPPING'));
+        $fulfilled_ids = $fulfilled_map ? json_decode($fulfilled_map, true) : null;
+        if (!is_array($fulfilled_ids)) {
+            // Backward compatibility: a single bare status ID (the pre-2.1.2 format,
+            // and what the custom-state recovery path wrote before 2.6.2).
+            $fulfilled_ids = $fulfilled_map ? array($fulfilled_map) : array(Configuration::get('PS_OS_SHIPPING'));
         }
+        $fulfilled_ids_value = array_values(array_map('strval', array_filter(array_map('intval', $fulfilled_ids))));
         $fields_values['PS_TWO_OS_FULFILLED_MAP'] = $fulfilled_ids_value;
         $fields_values['PS_TWO_OS_FULFILLED_MAP[]'] = $fulfilled_ids_value;
         
@@ -3227,7 +3251,17 @@ class Twopayment extends PaymentModule
                     ', Tolerance=' . $this->getTwoRoundAmount(self::ORDER_RECONCILIATION_TOLERANCE),
                     3
                 );
-                throw new Exception('Order totals do not reconcile with cart totals');
+                // Carry the numbers in the exception, not just the log: this
+                // message is what the buyer-facing decline path renders, and an
+                // opaque rejection here is what made TWO-25161 take two weeks
+                // of email to diagnose. TwoCheckoutAmountException is what
+                // authorises that relay — see the class docblock.
+                throw new TwoCheckoutAmountException(
+                    'Order totals do not reconcile with cart totals: cart total ' .
+                    $this->getTwoRoundAmount(round((float)$cart->getOrderTotal(true, Cart::BOTH), 2)) .
+                    ' vs order lines ' . $this->getTwoRoundAmount($lineTotals['gross']) .
+                    ' (difference ' . $this->getTwoRoundAmount($max_reconciliation_diff_cents / 100) . ')'
+                );
             }
 
             PrestaShopLogger::addLog(
@@ -3253,7 +3287,7 @@ class Twopayment extends PaymentModule
                 $this->getTwoRoundAmount($subtotalsTotals['gross']) . ')',
                 3
             );
-            throw new Exception('Tax subtotals do not reconcile with line items');
+            throw new TwoCheckoutAmountException('Tax subtotals do not reconcile with line items');
         }
 
         // Offset pricing fee (buyer surcharge) — appended AFTER product-line
@@ -3605,7 +3639,13 @@ class Twopayment extends PaymentModule
             $exceptionMessage = (string)$e->getMessage();
             if (stripos($exceptionMessage, 'reconcile') !== false) {
                 $result['status'] = 'reconciliation_mismatch';
-                $result['message'] = $this->l('Unable to process your order with Two payment. Please review your cart and try again.');
+                // Specific, not generic: name the actual failure and quote the
+                // amounts, so a merchant-side cart/shipping misconfiguration is
+                // diagnosable from the checkout page instead of only from the
+                // shop log (TWO-25161).
+                $result['message'] = $this->l('Two could not accept this order because the cart total does not match the total of the order lines.')
+                    . ' ' . $exceptionMessage . '. '
+                    . $this->l('This is usually a shipping or discount amount the cart has not applied yet. Please refresh your cart and try again, or contact the store.');
             } else {
                 $result['status'] = 'payload_error';
             }
@@ -4302,46 +4342,54 @@ class Twopayment extends PaymentModule
             }
         }
 
-        // Add shipping as a line item if applicable
-        // BEST PRACTICE: Use getPackageShippingCost() to get actual carrier cost BEFORE free shipping rules
-        // This fixes the issue where getOrderTotal(ONLY_SHIPPING) returns 0 when free shipping cart rules are active
-        $shipping_cost_with_tax = 0;
-        $shipping_cost_without_tax = 0;
-        
-        if (Validate::isLoadedObject($carrier)) {
-            // Method 1: Get package shipping cost directly from carrier (ignores free shipping rules)
+        // SHIPPING AMOUNT SOURCING (TWO-25161): the CART is the authority, not
+        // the Carrier object. Cart::getOrderTotal(..., Cart::ONLY_SHIPPING) is
+        // the very figure PrestaShop folded into Cart::BOTH, so it is the only
+        // shipping amount that can reconcile with the cart total - and it
+        // resolves without a loadable Carrier. Merchants who price shipping
+        // through symbolic "logistics carriers" leave id_carrier = 0 on a cart
+        // that nonetheless carries a real shipping cost; keying the shipping
+        // line off `new Carrier($cart->id_carrier)` silently dropped that cost
+        // and the reconciliation gate then rejected the whole order.
+        //
+        // getPackageShippingCost() survives only as a fallback for the case it
+        // was originally added for: a shop where a free-shipping cart rule
+        // zeroes ONLY_SHIPPING while the same amount reappears as a shipping
+        // discount, so the payload needs the pre-discount carrier price to stay
+        // coherent. That fallback is inherently carrier-bound and stays gated
+        // on a loadable carrier.
+        $shipping_gross = round((float)$cart->getOrderTotal(true, Cart::ONLY_SHIPPING), 2);
+        $shipping_net = round((float)$cart->getOrderTotal(false, Cart::ONLY_SHIPPING), 2);
+
+        if ($shipping_gross <= 0 && Validate::isLoadedObject($carrier)) {
             // Parameters: id_carrier, use_tax, country, product_list, id_zone
-            $shipping_cost_with_tax = $cart->getPackageShippingCost((int)$cart->id_carrier, true, null, null, null);
-            $shipping_cost_without_tax = $cart->getPackageShippingCost((int)$cart->id_carrier, false, null, null, null);
-            
-            // Fallback: If getPackageShippingCost returns 0 or false, try getOrderTotal
-            // This handles edge cases where carrier pricing might be complex
-            if ($shipping_cost_with_tax <= 0) {
-                $shipping_cost_with_tax = (float)$cart->getOrderTotal(true, Cart::ONLY_SHIPPING);
-                $shipping_cost_without_tax = (float)$cart->getOrderTotal(false, Cart::ONLY_SHIPPING);
+            $package_gross = (float)$cart->getPackageShippingCost((int)$cart->id_carrier, true, null, null, null);
+            $package_net = (float)$cart->getPackageShippingCost((int)$cart->id_carrier, false, null, null, null);
+            if ($package_gross > 0) {
+                $shipping_gross = round($package_gross, 2);
+                $shipping_net = round($package_net, 2);
             }
         }
-        
-        if (Validate::isLoadedObject($carrier) && $shipping_cost_with_tax > 0) {
+
+        if ($shipping_gross > 0) {
             // Keep shipping monetary values canonical to PrestaShop totals.
-            $shipping_net = round((float)$shipping_cost_without_tax, 2);
-            $shipping_gross = round((float)$shipping_cost_with_tax, 2);
             $shipping_tax_amount = round($shipping_gross - $shipping_net, 2);
 
-            $shipping_name = $carrier->name ? $carrier->name : $this->l('Shipping');
+            $carrier_is_loaded = Validate::isLoadedObject($carrier);
+            $shipping_name = ($carrier_is_loaded && $carrier->name) ? $carrier->name : $this->l('Shipping');
             $shipping_delay = '';
-            if ($carrier->delay && is_array($carrier->delay)) {
-                $shipping_delay = isset($carrier->delay[$cart->id_lang]) ? 
-                    $carrier->delay[$cart->id_lang] : 
+            if ($carrier_is_loaded && $carrier->delay && is_array($carrier->delay)) {
+                $shipping_delay = isset($carrier->delay[$cart->id_lang]) ?
+                    $carrier->delay[$cart->id_lang] :
                     reset($carrier->delay);
-            } elseif ($carrier->delay) {
+            } elseif ($carrier_is_loaded && $carrier->delay) {
                 $shipping_delay = $carrier->delay;
             }
-            
+
             $shipping_description = $shipping_delay ? $shipping_delay : $this->l('Shipping cost for order');
-            if ($carrier->shipping_method == Carrier::SHIPPING_METHOD_WEIGHT) {
+            if ($carrier_is_loaded && $carrier->shipping_method == Carrier::SHIPPING_METHOD_WEIGHT) {
                 $shipping_description .= ' ' . sprintf($this->l('(by weight)'));
-            } elseif ($carrier->shipping_method == Carrier::SHIPPING_METHOD_PRICE) {
+            } elseif ($carrier_is_loaded && $carrier->shipping_method == Carrier::SHIPPING_METHOD_PRICE) {
                 $shipping_description .= ' ' . sprintf($this->l('(by price)'));
             }
 
@@ -4366,22 +4414,62 @@ class Twopayment extends PaymentModule
                     $items[] = $this->buildTwoChargeLineFromSegment($shipping_line_template, $segment);
                 }
             } else {
-                // DECLARED-RATE RELAY: the shipping rate is the carrier's own
-                // tax-rules group resolved at the cart's tax address — never
-                // derived from tax/net, never snapped.
-                $shipping_tax_rate_decimal = $this->getTwoCarrierConfiguredTaxRateDecimal($carrier, $cart);
-                $this->assertTwoDeclaredRateReconcilesWithAmounts(
-                    'shipping (' . $shipping_name . ')',
-                    $shipping_net,
-                    $shipping_tax_amount,
-                    $shipping_tax_rate_decimal
+                // DECLARED-RATE RELAY: the shipping rate is always a tax-rules
+                // group the merchant declared on a carrier, resolved at the
+                // cart's tax address — never derived from tax/net, never
+                // snapped, never blended. A rate computed from the shipping
+                // amounts is NOT an option: 2dp-rounded figures cannot tell a
+                // clean 21% from 20.98%, and the relayed rate is asserted
+                // against the amounts again at invoicing time.
+                //
+                // The question that decides one line or several is how many
+                // tax-rules groups the SELECTED DELIVERY OPTION spans — NOT
+                // whether `$cart->id_carrier` happens to load. Core's
+                // Cart::setDeliveryOption() only recomputes `id_carrier` when
+                // the cart has a single delivery option, so a ship-to-multiple-
+                // addresses cart keeps a stale non-zero `id_carrier`. Gating the
+                // split on carrier loadability applied that one carrier's group
+                // to a shipping total spanning several, and the resulting blend
+                // hid inside the 2-cent reconciliation tolerance instead of
+                // failing — the exact class of silent approximation this change
+                // exists to remove. `id_carrier` now only supplies the line's
+                // name, delay text and by-weight/by-price suffix (above).
+                $shipping_rate_classes = $this->resolveTwoCartShippingRateClasses(
+                    $cart,
+                    $shipping_gross,
+                    $carrier_is_loaded ? $carrier : null
                 );
-                $items[] = $this->buildTwoChargeLineFromSegment($shipping_line_template, [
-                    'net' => $shipping_net,
-                    'tax' => $shipping_tax_amount,
-                    'gross' => $shipping_gross,
-                    'rate' => $shipping_tax_rate_decimal,
-                ]);
+
+                if (count($shipping_rate_classes) > 1) {
+                    // MIXED DECLARED RATES: the delivery option spans carriers
+                    // whose tax-rules groups resolve differently. Emit one
+                    // SHIPPING_FEE line per rate, weighted by the per-carrier
+                    // nets the cart already holds — never one carrier's rate
+                    // applied to all of them.
+                    foreach ($this->splitTwoChargeAcrossRateClasses(
+                        $shipping_net,
+                        $shipping_tax_amount,
+                        $shipping_rate_classes,
+                        'shipping'
+                    ) as $segment) {
+                        $items[] = $this->buildTwoChargeLineFromSegment($shipping_line_template, $segment);
+                    }
+                } else {
+                    $shipping_rate_class = reset($shipping_rate_classes);
+                    $shipping_tax_rate_decimal = (float) $shipping_rate_class['rate'];
+                    $this->assertTwoDeclaredRateReconcilesWithAmounts(
+                        'shipping (' . $shipping_name . ')',
+                        $shipping_net,
+                        $shipping_tax_amount,
+                        $shipping_tax_rate_decimal
+                    );
+                    $items[] = $this->buildTwoChargeLineFromSegment($shipping_line_template, [
+                        'net' => $shipping_net,
+                        'tax' => $shipping_tax_amount,
+                        'gross' => $shipping_gross,
+                        'rate' => $shipping_tax_rate_decimal,
+                    ]);
+                }
             }
         }
 
@@ -4526,6 +4614,34 @@ class Twopayment extends PaymentModule
             throw new Exception('Cannot attribute ' . $label . ' tax under PS_ATCP_SHIPWRAP: no product rate classes');
         }
 
+        return $this->splitTwoChargeAcrossRateClasses($charge_net, $charge_tax, $classes, $label);
+    }
+
+    /**
+     * Split a charge across an already-resolved set of canonical rate classes,
+     * reconciling the rounded sub-lines to the PrestaShop-authoritative totals
+     * cent-exactly (largest-remainder on net, bounded per-line nudge on tax).
+     * Fails loud when no rate-consistent distribution can hit the target.
+     *
+     * Shared by the PS_ATCP_SHIPWRAP product-rate-class split and the
+     * mixed-declared-rate shipping split (TWO-25161): both need one line per
+     * canonical rate whose amounts still sum to the cart's own totals.
+     *
+     * @param float $charge_net PrestaShop-authoritative net for the charge
+     * @param float $charge_tax PrestaShop-authoritative tax for the charge
+     * @param array<string,array{rate:float,net_weight:float}> $classes Keyed by formatted rate
+     * @param string $label For error messages ('shipping', 'gift wrapping')
+     * @return array<int,array{net:float,tax:float,gross:float,rate:float}>
+     * @throws Exception
+     */
+    private function splitTwoChargeAcrossRateClasses($charge_net, $charge_tax, $classes, $label)
+    {
+        $charge_net = round(max(0, (float) $charge_net), 2);
+        $charge_tax = round((float) $charge_tax, 2);
+        if (empty($classes) || ($charge_net <= 0 && $charge_tax <= 0)) {
+            return [];
+        }
+
         $net_weights = [];
         foreach ($classes as $key => $class) {
             $net_weights[$key] = (float) $class['net_weight'];
@@ -4612,7 +4728,7 @@ class Twopayment extends PaymentModule
      * @param float $tax_amount Emitted 2dp tax amount
      * @param float $rate_decimal Declared decimal rate (e.g. 0.21)
      * @return void
-     * @throws Exception
+     * @throws TwoCheckoutAmountException
      */
     private function assertTwoDeclaredRateReconcilesWithAmounts($label, $net_amount, $tax_amount, $rate_decimal)
     {
@@ -4632,7 +4748,7 @@ class Twopayment extends PaymentModule
             '. Check the tax rules configured for this line (tax rules group, address-specific rules).',
             3
         );
-        throw new Exception(
+        throw new TwoCheckoutAmountException(
             'Declared tax rate diverges from applied tax amounts for ' . $label
         );
     }
@@ -5691,6 +5807,201 @@ class Twopayment extends PaymentModule
         // RATE source uses the same PS_TAX_ADDRESS_TYPE address PrestaShop's
         // getPackageShippingCost() used for the shipping AMOUNTS.
         return $this->getTwoConfiguredTaxRateDecimalForGroup((int) $carrier->getIdTaxRulesGroup(), $cart);
+    }
+
+    /**
+     * Declared shipping tax rate classes for a cart, resolved from the cart's
+     * own selected delivery option (TWO-25161).
+     *
+     * The delivery option is the authority here, not `$cart->id_carrier`: core
+     * only recomputes `id_carrier` when the cart has a single delivery option,
+     * so a ship-to-multiple-addresses cart carries a stale non-zero
+     * `id_carrier` while its shipping total spans several tax-rules groups. The
+     * caller therefore always asks this resolver, and passes the loaded carrier
+     * (when there is one) only as the fallback for a cart whose delivery option
+     * cannot be read at all.
+     *
+     * PrestaShop keeps the shipping tax-rules group on the carrier row and
+     * nowhere else — there is no shop-level shipping tax group — but the
+     * carriers that priced the shipping stay enumerable from the cart even when
+     * `id_carrier` is 0. `Cart::getOrderTotal(*, ONLY_SHIPPING)` nulls a
+     * non-positive `id_carrier` and routes to `Cart::getTotalShippingCost()`,
+     * which sums the delivery-option entry selected by
+     * `Cart::getDeliveryOption()` out of `Cart::getDeliveryOptionList()`. Each
+     * entry's `carrier_list` is keyed by REAL carrier IDs and carries a loaded
+     * `Carrier` under 'instance', whose declared tax-rules group is the very
+     * group core taxed the shipping with (`$carrier->getTaxesRate($address)`).
+     * So the rate relayed here is the merchant's own declaration, resolved
+     * through the shared group resolver, and is never computed from amounts.
+     *
+     * Deriving the rate from tax/net was rejected on rounding grounds: at 2dp a
+     * clean 21% and 20.98% are indistinguishable, and checkout-api asserts the
+     * relayed rate against the amounts again during invoice validation, so a
+     * derived rate surfaces later as a bad invoice rather than a loud failure
+     * here.
+     *
+     * @param Cart $cart
+     * @param float $shipping_gross Authoritative 2dp shipping gross, for the failure message
+     * @param Carrier|null $fallback_carrier Cart's loaded carrier, used only when the
+     *                                       delivery option yields no carrier at all
+     * @return array<string,array{rate:float,net_weight:float}> Keyed by formatted rate
+     * @throws TwoCheckoutAmountException When no carrier with a declared tax-rules group can be resolved
+     */
+    private function resolveTwoCartShippingRateClasses($cart, $shipping_gross, $fallback_carrier = null)
+    {
+        $selected_options = $cart->getDeliveryOption(null, false, false);
+        $option_list = $cart->getDeliveryOptionList();
+
+        $classes = [];
+        $diagnostics = [];
+
+        if (is_array($selected_options) && is_array($option_list)) {
+            foreach ($selected_options as $id_address => $option_key) {
+                if (
+                    !isset($option_list[$id_address][$option_key]['carrier_list'])
+                    || !is_array($option_list[$id_address][$option_key]['carrier_list'])
+                ) {
+                    continue;
+                }
+
+                foreach ($option_list[$id_address][$option_key]['carrier_list'] as $id_carrier => $data) {
+                    $id_carrier = (int) $id_carrier;
+                    $instance = (is_array($data) && isset($data['instance'])) ? $data['instance'] : null;
+                    if (
+                        $id_carrier <= 0
+                        || !is_object($instance)
+                        || !Validate::isLoadedObject($instance)
+                        || !method_exists($instance, 'getIdTaxRulesGroup')
+                    ) {
+                        // PrestaShop's no-available-carrier sentinel: when a
+                        // product has no carrier that can deliver it,
+                        // Cart::getPackageList() sets carrier_list = [0 => 0],
+                        // so there is no carrier row and no declared tax-rules
+                        // group — while getPackageShippingCost() can still
+                        // return a non-zero price from its own internal
+                        // PS_CARRIER_DEFAULT / cheapest-in-range fallback.
+                        // Inferring a rate from that price is exactly what must
+                        // not happen, and silently sending 0% would misreport
+                        // the merchant's VAT. Refuse the order instead — also
+                        // when `$cart->id_carrier` happens to load, because a
+                        // stale carrier's group is not the group core taxed
+                        // this option's shipping with.
+                        throw $this->buildTwoShippingRateUnresolvableException(
+                            $cart,
+                            $shipping_gross,
+                            (int) $id_address,
+                            (string) $option_key,
+                            $id_carrier
+                        );
+                    }
+
+                    $group_id = (int) $instance->getIdTaxRulesGroup();
+                    $rate = $this->getTwoConfiguredTaxRateDecimalForGroup($group_id, $cart);
+                    $rate_key = $this->formatTwoTaxRate($rate);
+                    if (!isset($classes[$rate_key])) {
+                        $classes[$rate_key] = ['rate' => $rate, 'net_weight' => 0.0];
+                    }
+                    // Per-carrier nets are already in carrier_list and sum to
+                    // the option's own total_price_without_tax, so they are the
+                    // correct weights for splitting a mixed-rate option.
+                    $classes[$rate_key]['net_weight'] += isset($data['price_without_tax'])
+                        ? max(0.0, round((float) $data['price_without_tax'], 2))
+                        : 0.0;
+                    $diagnostics[] = 'carrier=' . $id_carrier . ' tax_rules_group=' . $group_id .
+                        ' rate=' . round($rate * 100, 2) . '%';
+                }
+            }
+        }
+
+        if (empty($classes)) {
+            // The delivery option could not be read at all (no option list, or
+            // a shape this version of core does not expose). A cart whose
+            // `id_carrier` loads still has a merchant-declared group on that
+            // carrier row, which is a declared rate and not an approximation,
+            // so relay it — this is the pre-TWO-25161 behaviour, kept as the
+            // fallback rather than as the primary path.
+            if (is_object($fallback_carrier) && Validate::isLoadedObject($fallback_carrier)) {
+                $fallback_group_id = method_exists($fallback_carrier, 'getIdTaxRulesGroup')
+                    ? (int) $fallback_carrier->getIdTaxRulesGroup()
+                    : 0;
+                $fallback_rate = $this->getTwoCarrierConfiguredTaxRateDecimal($fallback_carrier, $cart);
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Cart ' . (int) $cart->id . ' exposed no readable delivery-option carrier ' .
+                    'list; relaying the declared shipping tax rate from its own carrier ' .
+                    (int) $cart->id_carrier . ' (tax_rules_group=' . $fallback_group_id . ', rate=' .
+                    round($fallback_rate * 100, 2) . '%).',
+                    1
+                );
+
+                return [
+                    $this->formatTwoTaxRate($fallback_rate) => [
+                        'rate' => $fallback_rate,
+                        'net_weight' => max(0.0, (float) $shipping_gross),
+                    ],
+                ];
+            }
+
+            throw $this->buildTwoShippingRateUnresolvableException($cart, $shipping_gross, 0, '', 0);
+        }
+
+        // Diagnostic (TWO-25161): this chain was verified against PrestaShop
+        // core sources, never executed against a real merchant's carrier table.
+        // Logging the resolved carrier and tax-rules-group IDs is how the case
+        // a live cart actually hits gets confirmed in the field.
+        PrestaShopLogger::addLog(
+            'TwoPayment: Cart ' . (int) $cart->id . ' (id_carrier=' . (int) $cart->id_carrier .
+            ') resolved ' . count($classes) . ' declared shipping tax rate(s) from its delivery-option ' .
+            'carrier list: ' . implode('; ', $diagnostics) . '.',
+            1
+        );
+
+        return $classes;
+    }
+
+    /**
+     * Build the loud rejection for a cart whose shipping cost has no declared
+     * tax rate behind it (TWO-25161).
+     *
+     * Returned rather than thrown so the call sites read as `throw $this->...`
+     * and static analysis keeps seeing them as terminal.
+     *
+     * @param Cart $cart
+     * @param float $shipping_gross
+     * @param int $id_address Delivery address whose option failed, 0 if none resolved
+     * @param string $option_key Selected delivery-option key ('0,' for the sentinel)
+     * @param int $id_carrier Offending carrier id (0 for the sentinel)
+     * @return TwoCheckoutAmountException
+     */
+    private function buildTwoShippingRateUnresolvableException(
+        $cart,
+        $shipping_gross,
+        $id_address,
+        $option_key,
+        $id_carrier
+    ) {
+        $detail = 'cart ' . (int) $cart->id . ', id_carrier=' . (int) $cart->id_carrier .
+            ', shipping=' . $this->getTwoRoundAmount($shipping_gross) .
+            ', delivery address=' . (int) $id_address .
+            ', delivery option key=' . ($option_key === '' ? '(none)' : $option_key) .
+            ', carrier in list=' . (int) $id_carrier;
+
+        PrestaShopLogger::addLog(
+            'TwoPayment: No deliverable carrier for the cart shipping cost, so no declared shipping ' .
+            'tax rate exists to relay (' . $detail . '). PrestaShop reports no available carrier for at ' .
+            'least one product (carrier_list = [0 => 0]) while still pricing the shipping through its ' .
+            'internal default-carrier fallback. Configure a carrier that covers this delivery address ' .
+            'and the cart contents.',
+            3
+        );
+
+        // Buyer-facing by type: the detail is nothing but the cart's own
+        // amounts and identifiers, and naming the condition on the checkout
+        // page is the whole point of the loud refusal (TWO-25161).
+        return new TwoCheckoutAmountException(
+            'No deliverable carrier for the cart shipping cost: PrestaShop reports no available carrier ' .
+            '(carrier_list = [0 => 0]) for this cart, so there is no declared shipping tax-rules group ' .
+            'to relay (' . $detail . ')'
+        );
     }
 
     /**
@@ -10484,6 +10795,285 @@ class Twopayment extends PaymentModule
     {
         $snapshot = $this->buildTwoCheckoutSnapshot($cart, $paymentdata);
         return hash('sha256', json_encode($snapshot, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    }
+
+    /**
+     * Calculate the decision snapshot hash for a UX-only order-intent check
+     * (TWO-24799).
+     *
+     * Composed from - never a replacement for - the cart snapshot hash used by
+     * order-create idempotency. That hash covers the cart, currency, address
+     * IDs and every line item, but it deliberately says nothing about WHO is
+     * buying, and the buyer's company is the primary input Two decides on. A
+     * buyer who re-runs company search and picks a different company against
+     * the same saved address would otherwise produce an identical hash, so the
+     * buyer identity is mixed in explicitly here.
+     *
+     * @param Cart $cart
+     * @param array $paymentdata Order-intent payload as built by getTwoIntentOrderData()
+     * @return string
+     */
+    public function calculateTwoOrderIntentSnapshotHash($cart, $paymentdata)
+    {
+        $company = array();
+        if (isset($paymentdata['buyer']['company']) && is_array($paymentdata['buyer']['company'])) {
+            $company = $paymentdata['buyer']['company'];
+        }
+
+        $identity = array(
+            'company_name' => isset($company['company_name']) ? trim((string)$company['company_name']) : '',
+            'organization_number' => isset($company['organization_number']) ? trim((string)$company['organization_number']) : '',
+            'country_prefix' => isset($company['country_prefix']) ? strtoupper(trim((string)$company['country_prefix'])) : '',
+            // Country lives on the address blocks too, and a country switch MUST
+            // bust this hash (TWO-24867 tracks country-switch staleness as a bug
+            // class here), so both are folded in rather than trusted separately.
+            'billing_country' => isset($paymentdata['billing_address']['country'])
+                ? strtoupper(trim((string)$paymentdata['billing_address']['country']))
+                : '',
+            'shipping_country' => isset($paymentdata['shipping_address']['country'])
+                ? strtoupper(trim((string)$paymentdata['shipping_address']['country']))
+                : '',
+            'invoice_type' => isset($paymentdata['invoice_type']) ? (string)$paymentdata['invoice_type'] : '',
+        );
+
+        $seed = 'order_intent|'
+            . $this->calculateTwoCheckoutSnapshotHash($cart, $paymentdata) . '|'
+            . json_encode($identity, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        return hash('sha256', $seed);
+    }
+
+    /**
+     * Record the snapshot hash the browser is about to run an intent check for,
+     * so the decision it reports back can be bound to the right snapshot
+     * (TWO-24799).
+     *
+     * The browser makes the /v1/order_intent call today, so it - not the server
+     * - learns the outcome. Rather than trusting a client-supplied hash, the
+     * server remembers the hash it just computed and binds the reported
+     * decision to that. When TWO-25162 moves the call behind the plugin backend
+     * the server will know the outcome first-hand and can write the decision
+     * directly; the cache read/write pair below is unchanged by that.
+     *
+     * @param string $snapshot_hash
+     * @return void
+     */
+    public function markTwoPendingOrderIntentSnapshot($snapshot_hash)
+    {
+        $snapshot_hash = trim((string)$snapshot_hash);
+        if (Tools::isEmpty($snapshot_hash)) {
+            return;
+        }
+
+        $this->context->cookie->two_order_intent_pending_hash = $snapshot_hash;
+        $this->context->cookie->setExpire(time() + self::COOKIE_EXPIRY_ONE_HOUR);
+    }
+
+    /**
+     * Bind the decision the browser reported to the pending snapshot hash
+     * (TWO-24799).
+     *
+     * @param bool $approved
+     * @return string The snapshot hash the decision was stored against, '' when none was pending
+     */
+    public function storeTwoOrderIntentDecisionForPendingSnapshot($approved)
+    {
+        $snapshot_hash = isset($this->context->cookie->two_order_intent_pending_hash)
+            ? trim((string)$this->context->cookie->two_order_intent_pending_hash)
+            : '';
+        if (Tools::isEmpty($snapshot_hash)) {
+            return '';
+        }
+
+        $this->context->cookie->two_order_intent_decision = json_encode(array(
+            'hash' => $snapshot_hash,
+            'approved' => (bool)$approved ? 1 : 0,
+            'at' => time(),
+        ));
+        $this->context->cookie->setExpire(time() + self::COOKIE_EXPIRY_ONE_HOUR);
+
+        return $snapshot_hash;
+    }
+
+    /**
+     * Read back a still-valid intent decision for a snapshot hash (TWO-24799).
+     *
+     * Returns null - never a stale decision - whenever the snapshot differs, the
+     * entry has aged past ORDER_INTENT_DECISION_CACHE_TTL, or the stored value
+     * is unreadable. Any cart, address, country or company change produces a
+     * different hash, so this cannot survive the buyer editing their order.
+     *
+     * @param string $snapshot_hash
+     * @return array{approved:bool,timestamp:int}|null
+     */
+    public function getTwoCachedOrderIntentDecision($snapshot_hash)
+    {
+        $snapshot_hash = trim((string)$snapshot_hash);
+        if (Tools::isEmpty($snapshot_hash)) {
+            return null;
+        }
+
+        $encoded = isset($this->context->cookie->two_order_intent_decision)
+            ? (string)$this->context->cookie->two_order_intent_decision
+            : '';
+        if (Tools::isEmpty($encoded)) {
+            return null;
+        }
+
+        $decoded = json_decode($encoded, true);
+        if (!is_array($decoded) || !isset($decoded['hash'], $decoded['approved'], $decoded['at'])) {
+            return null;
+        }
+
+        if (!hash_equals((string)$decoded['hash'], $snapshot_hash)) {
+            return null;
+        }
+
+        $age = time() - (int)$decoded['at'];
+        if ($age < 0 || $age > self::ORDER_INTENT_DECISION_CACHE_TTL) {
+            return null;
+        }
+
+        return array(
+            'approved' => (bool)(int)$decoded['approved'],
+            'timestamp' => (int)$decoded['at'],
+        );
+    }
+
+    /**
+     * Drop any cached intent decision (TWO-24799).
+     *
+     * @return void
+     */
+    public function clearTwoCachedOrderIntentDecision()
+    {
+        unset($this->context->cookie->two_order_intent_decision);
+        unset($this->context->cookie->two_order_intent_pending_hash);
+    }
+
+    /**
+     * Verify an org number found on a saved address, memoising BOTH outcomes for
+     * the checkout session (TWO-24799).
+     *
+     * The success path was already cached: verifyCompanyByOrgNumber()'s caller
+     * writes the resolved company into the two_company_* cookie, so a verified
+     * org number costs one lookup per session. The MISS path was not cached at
+     * all, so an address carrying an org number Two cannot resolve (a typo, a
+     * deregistered company, or a provider hiccup) paid a fresh blocking
+     * /companies/v2/company round trip on every single checkout update, at the
+     * 30s API_TIMEOUT_SHORT budget, forever returning the same null.
+     *
+     * The miss marker is keyed on org number + country + address ID, so editing
+     * any of the three re-verifies immediately instead of inheriting the miss.
+     *
+     * @param string $orgNumber
+     * @param string $countryIso
+     * @param int $addressId
+     * @return array{name:string,organization_number:string}|null
+     */
+    public function getTwoVerifiedCompanyForOrgNumber($orgNumber, $countryIso, $addressId)
+    {
+        $key = $this->buildTwoCompanyVerifyCacheKey($orgNumber, $countryIso, $addressId);
+
+        if ($key !== '' && $this->hasTwoCompanyVerifyMiss($key)) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Skipped org-number verification - cached miss for country=' .
+                strtoupper(trim((string)$countryIso)) . ', address=' . (int)$addressId,
+                1
+            );
+            return null;
+        }
+
+        $verified = $this->verifyCompanyByOrgNumber($orgNumber, $countryIso);
+
+        if ($verified && !empty($verified['organization_number'])) {
+            // Success: forget any stale miss so a later re-check is not blocked.
+            $this->clearTwoCompanyVerifyMiss();
+            return $verified;
+        }
+
+        if ($key !== '') {
+            $this->recordTwoCompanyVerifyMiss($key);
+        }
+
+        return null;
+    }
+
+    /**
+     * Cache key for an org-number verification attempt (TWO-24799).
+     *
+     * @param string $orgNumber
+     * @param string $countryIso
+     * @param int $addressId
+     * @return string '' when the inputs cannot form a usable key
+     */
+    private function buildTwoCompanyVerifyCacheKey($orgNumber, $countryIso, $addressId)
+    {
+        $orgNumber = strtoupper(preg_replace('/[\s\-]/', '', trim((string)$orgNumber)));
+        $countryIso = strtoupper(trim((string)$countryIso));
+        if (Tools::isEmpty($orgNumber) || Tools::isEmpty($countryIso)) {
+            return '';
+        }
+
+        return hash('sha256', 'company_verify|' . $orgNumber . '|' . $countryIso . '|' . (int)$addressId);
+    }
+
+    /**
+     * Whether this exact verification attempt is a remembered, unexpired miss.
+     *
+     * @param string $key
+     * @return bool
+     */
+    private function hasTwoCompanyVerifyMiss($key)
+    {
+        $encoded = isset($this->context->cookie->two_company_verify_miss)
+            ? (string)$this->context->cookie->two_company_verify_miss
+            : '';
+        if (Tools::isEmpty($encoded)) {
+            return false;
+        }
+
+        $decoded = json_decode($encoded, true);
+        if (!is_array($decoded) || !isset($decoded['key'], $decoded['at'])) {
+            return false;
+        }
+
+        if (!hash_equals((string)$decoded['key'], (string)$key)) {
+            return false;
+        }
+
+        $age = time() - (int)$decoded['at'];
+
+        return $age >= 0 && $age <= self::COMPANY_VERIFY_MISS_CACHE_TTL;
+    }
+
+    /**
+     * Remember an org number that Two could not resolve.
+     *
+     * Single-slot by design: the buyer has one billing address in play at a
+     * time, so one marker keeps the cookie bounded while still covering the
+     * repeat-update case this exists for.
+     *
+     * @param string $key
+     * @return void
+     */
+    private function recordTwoCompanyVerifyMiss($key)
+    {
+        $this->context->cookie->two_company_verify_miss = json_encode(array(
+            'key' => (string)$key,
+            'at' => time(),
+        ));
+        $this->context->cookie->setExpire(time() + self::COOKIE_EXPIRY_ONE_HOUR);
+    }
+
+    /**
+     * Forget the remembered verification miss (TWO-24799).
+     *
+     * @return void
+     */
+    public function clearTwoCompanyVerifyMiss()
+    {
+        unset($this->context->cookie->two_company_verify_miss);
     }
 
     /**
