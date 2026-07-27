@@ -3,9 +3,10 @@
  * (TWO-24755).
  *
  * Renders a Business / Sole trader toggle on the payment step - the same
- * model as the Magento and WooCommerce plugins - shown only where Two's
- * registry says the billing country supports sole traders AND the
- * merchant has enabled the feature. There is no account-type selector on
+ * model as the Magento and WooCommerce plugins - shown wherever Two's
+ * registry says the billing country supports sole traders. That country
+ * answer is the only gate; there is no merchant opt-in toggle
+ * (TWO-25166). There is no account-type selector on
  * the address form; the buyer always enters company details (B2B), and
  * sole traders enrol from this toggle.
  *
@@ -22,7 +23,6 @@
 class TwoSoleTrader {
     constructor(config) {
         this.config = {
-            enabled: false,
             checkoutHost: '',
             orderIntentUrl: '',
             ajaxToken: '',
@@ -51,9 +51,7 @@ class TwoSoleTrader {
         this.nextRetryAt = 0;
         this.retryCooldownMs = 5000;
 
-        if (this.config.enabled) {
-            this.init();
-        }
+        this.init();
     }
 
     init() {

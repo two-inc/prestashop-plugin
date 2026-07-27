@@ -466,6 +466,11 @@ namespace {
             return true;
         }
 
+        public static function hasKey($key, $idLang = null, $idShopGroup = null, $idShop = null): bool
+        {
+            return array_key_exists($key, StubStore::$configuration);
+        }
+
         public static function deleteByName($key): bool
         {
             unset(StubStore::$configuration[$key]);
