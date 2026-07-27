@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The pre-selection IDs are normalised to strings, matching the `id_order_state` the option values are built from, so the comparison no longer relies on PrestaShop's loose `==` in the template
   - The custom-order-state recovery path (`ensureCustomStatesExist()`, which fires when Two's own order states are missing) wrote `PS_TWO_OS_FULFILLED_MAP` as a bare status ID rather than the JSON array every other writer uses - three divergent storage formats for one key. It now writes the canonical JSON array, and the 2.6.2 upgrade script normalises any value a store is already holding in the legacy format
   - Module version bumped to `2.6.2`
+- **Shipping amount and shipping VAT rate now come from the cart, not from a loadable carrier** (TWO-25161)
+  - The shipping line's amount is sourced from the cart's own shipping total rather than being gated on constructing a `Carrier` object. Carts with no resolvable carrier previously dropped the shipping amount from the Two payload entirely - the order's totals no longer reconciled with the shop's - and now reconcile
+  - The shipping VAT rate is the platform-declared rate resolved from the cart's carrier list, never derived from `tax / net`, consistent with the line-item rate relay (TWO-24880)
+  - When the selected delivery option spans several tax-rules groups, the shipping charge is split into one line per declared rate instead of emitting a single blended rate
+- **Checkout-path latency: 12 buyer-blocking round trips reduced to 5** (TWO-24799)
+  - Company lookups that Two cannot resolve are now negatively cached (short TTL, keyed on org number + country + address ID), so a saved address carrying an unresolvable org number no longer re-pays the verification round trip on every checkout update
+  - Order-intent calls are deduped against a session-scoped decision snapshot, so a checkout update that moves no decision input reuses the previous decision instead of re-running the intent call
+  - Measured over a six-step checkout session
 
 ### Changed
 - **Invoice upload is now gated on the merchant record, not an admin toggle** (TWO-25111, per decision TWO-25106 Option A)
