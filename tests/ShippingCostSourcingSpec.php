@@ -87,8 +87,8 @@ final class ShippingCostSourcingSpec
     {
         StubStore::$customers[$cartId] = [
             'email' => 'buyer@example.com',
-            'firstname' => 'Javier',
-            'lastname' => 'Moreno',
+            'firstname' => 'Pia',
+            'lastname' => 'Sol',
             'secure_key' => 'secure-key-' . $cartId,
             'loaded' => true,
         ];
