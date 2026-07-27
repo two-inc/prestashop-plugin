@@ -51,6 +51,32 @@ echo "Creating temporary package directory..."
 mkdir -p "${TEMP_DIR}/${MODULE_NAME}"
 cd "${MODULE_DIR}"
 
+# Stamp the deployed commit into a sidecar file INSIDE the module source dir so
+# it is picked up by the copy below and ships inside the packaged module.
+# getTwoDeployedCommitHash() reads this first (no .git in the artifact).
+SIDECAR_FILE="${MODULE_DIR}/.two-deployed-commit"
+SIDECAR_PREEXISTING=0
+if [ -f "${SIDECAR_FILE}" ]; then
+    SIDECAR_PREEXISTING=1
+fi
+if COMMIT_SHA=$(git -C "${MODULE_DIR}" rev-parse --short HEAD 2>/dev/null) && [ -n "${COMMIT_SHA}" ]; then
+    printf '%s\n' "${COMMIT_SHA}" > "${SIDECAR_FILE}"
+    echo "✓ Stamped deployed commit: ${COMMIT_SHA}"
+else
+    echo "ERROR: Unable to resolve git commit for .two-deployed-commit stamp"
+    exit 1
+fi
+
+# Remove the stamp again on exit unless it was already tracked in the source tree,
+# so packaging never leaves the working tree dirty.
+cleanup_sidecar() {
+    if [ "${SIDECAR_PREEXISTING}" -eq 0 ]; then
+        rm -f "${SIDECAR_FILE}"
+    fi
+    rm -rf "${TEMP_DIR}"
+}
+trap cleanup_sidecar EXIT
+
 # Copy files, excluding unnecessary ones
 echo "Copying module files (excluding dev files)..."
 
@@ -111,6 +137,15 @@ echo ""
 
 # Remove any .DS_Store files that might have been copied
 find "${TEMP_DIR}" -name ".DS_Store" -delete 2>/dev/null || true
+
+# Fail loudly if the commit stamp did not make it into the built artifact -
+# a silently missing sidecar means the shop reports no commit hash at all.
+if [ ! -s "${TEMP_DIR}/${MODULE_NAME}/.two-deployed-commit" ]; then
+    echo "ERROR: .two-deployed-commit missing (or empty) in the packaged module."
+    echo "       Check the copy exclude-lists in this script."
+    exit 1
+fi
+echo "✓ Commit stamp present in artifact: $(cat "${TEMP_DIR}/${MODULE_NAME}/.two-deployed-commit")"
 
 # Create ZIP file
 echo "Creating ZIP archive..."
