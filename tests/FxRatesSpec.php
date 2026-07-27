@@ -38,6 +38,149 @@ final class FxRatesSpec
         self::testGateJudgesCrossCurrencyBasketOnEndpointRate();
         self::testFixedSurchargeAndCapConvertedIntoQuoteCurrency();
         self::testUnconvertibleFixedSurchargeOmitsQuote();
+        self::testSettingsSaveWarmsColdCache();
+        self::testSettingsSaveWarmRespectsFailureBackoffAndMissingKey();
+        self::testMerchantIdentityChangeClearsFxClockSoWarmFetchRuns();
+    }
+
+    /**
+     * Settings-save harness: the same stubbed-wire module as fxModule, plus
+     * an entry point for the protected general-form save and an injectable
+     * verified merchant id (what the real save gets from API-key
+     * verification).
+     */
+    private static function saveModule($fxResponse, ?string $verifiedMerchantId = null): object
+    {
+        $module = new class (['/refdata/v1/fx-rates' => $fxResponse]) extends TwopaymentTestHarness {
+            public int $fxFetchCount = 0;
+            private array $responsesByEndpoint;
+
+            public function __construct(array $responsesByEndpoint)
+            {
+                parent::__construct();
+                $this->responsesByEndpoint = $responsesByEndpoint;
+            }
+
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+            {
+                if ($endpoint === '/refdata/v1/fx-rates') {
+                    $this->fxFetchCount++;
+                }
+                $response = $this->responsesByEndpoint[$endpoint] ?? ['http_status' => 500];
+                return is_callable($response) ? $response($payload) : $response;
+            }
+
+            public function setVerifiedMerchantIdForTest(?string $id): void
+            {
+                $this->verifiedMerchantId = $id;
+            }
+
+            public function saveGeneralForTest(): void
+            {
+                $this->saveTwoGeneralFormValues();
+            }
+        };
+        $module->setVerifiedMerchantIdForTest($verifiedMerchantId);
+        return $module;
+    }
+
+    /** POST values a minimal valid general-form save needs. */
+    private static function generalFormPost(string $apiKey = 'test-api-key'): void
+    {
+        Tools::setTestValue('PS_TWO_ENVIRONMENT', 'development');
+        Tools::setTestValue('PS_TWO_TITLE_1', 'Two title');
+        Tools::setTestValue('PS_TWO_SUB_TITLE_1', 'Two subtitle');
+        Tools::setTestValue('PS_TWO_MERCHANT_SHORT_NAME', 'merchant');
+        Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', $apiKey);
+    }
+
+    /**
+     * TWO-25184: the module has no scheduler, so a fresh install's cache
+     * stayed empty until the FIRST shopper reached checkout and paid the
+     * fetch inline (or failed closed when it failed). Saving the settings -
+     * the moment the API key first exists - must warm it instead.
+     */
+    private static function testSettingsSaveWarmsColdCache(): void
+    {
+        self::reset();
+        Configuration::updateValue(Twopayment::CONFIG_FX_RATES, '');
+        Configuration::updateValue(Twopayment::CONFIG_FX_RATES_TS, 0);
+        $module = self::saveModule(self::ratesResponse());
+        self::generalFormPost();
+
+        $module->saveGeneralForTest();
+
+        TinyAssert::same(1, $module->fxFetchCount, 'a settings save on a cold cache must warm it');
+        TinyAssert::same('2026-07-14', $module->getTwoFxRatesTable()['as_of']);
+        // Warm, so a checkout conversion is served from cache - no inline
+        // fetch on the hot path.
+        TinyAssert::same(100.0, $module->convertTwoAmountBetweenCurrencies(10.0, 'EUR', 'NOK'));
+        TinyAssert::same(1, $module->fxFetchCount);
+    }
+
+    private static function testSettingsSaveWarmRespectsFailureBackoffAndMissingKey(): void
+    {
+        self::reset();
+        Configuration::updateValue(Twopayment::CONFIG_FX_RATES, '');
+        Configuration::updateValue(Twopayment::CONFIG_FX_RATES_TS, 0);
+        $module = self::saveModule(['http_status' => 500]);
+        self::generalFormPost();
+
+        // A merchant re-saving a form against a dead endpoint must not turn
+        // the save button into an unthrottled fetch trigger: the failure
+        // backoff absorbs the repeat.
+        $module->saveGeneralForTest();
+        TinyAssert::same(1, $module->fxFetchCount);
+        $module->saveGeneralForTest();
+        TinyAssert::same(1, $module->fxFetchCount, 'FX_RATES_RETRY_BACKOFF must absorb a repeated save');
+
+        // No API key: nothing to authenticate a fetch with, so no wire call
+        // at all (the endpoint is merchant-API-key authenticated).
+        self::reset();
+        Configuration::updateValue(Twopayment::CONFIG_FX_RATES, '');
+        Configuration::updateValue(Twopayment::CONFIG_FX_RATES_TS, 0);
+        $keyless = self::saveModule(self::ratesResponse());
+        self::generalFormPost('');
+        $keyless->saveGeneralForTest();
+        TinyAssert::same(0, $keyless->fxFetchCount, 'a keyless save must not touch the wire');
+    }
+
+    private static function testMerchantIdentityChangeClearsFxClockSoWarmFetchRuns(): void
+    {
+        self::reset();
+        // A table fetched minutes ago under the OLD merchant identity: its
+        // clock is well inside the 6h TTL and would suppress the warm-up
+        // fetch for hours after the key swap.
+        Configuration::updateValue(Twopayment::CONFIG_FX_RATES, json_encode([
+            'base' => 'EUR',
+            'as_of' => '2026-07-01',
+            'rates' => ['EUR' => 1.0, 'NOK' => 0.2],
+        ]));
+        Configuration::updateValue(Twopayment::CONFIG_FX_RATES_TS, time());
+        Configuration::updateValue('PS_TWO_MERCHANT_ID', 'm-old');
+
+        $module = self::saveModule(self::ratesResponse(), 'm-new');
+        self::generalFormPost('new-api-key');
+        $module->saveGeneralForTest();
+
+        TinyAssert::same(1, $module->fxFetchCount, 'an identity change must not leave the warm fetch TTL-suppressed');
+        // Fresh rate replaced the pre-swap one (0.2 -> 0.1).
+        TinyAssert::same(100.0, $module->convertTwoAmountBetweenCurrencies(10.0, 'EUR', 'NOK'));
+
+        // Unchanged identity: the clock is untouched, so the TTL still holds
+        // the fetch off - a save is not a cache-buster.
+        self::reset();
+        Configuration::updateValue(Twopayment::CONFIG_FX_RATES, json_encode([
+            'base' => 'EUR',
+            'as_of' => '2026-07-01',
+            'rates' => ['EUR' => 1.0, 'NOK' => 0.2],
+        ]));
+        Configuration::updateValue(Twopayment::CONFIG_FX_RATES_TS, time());
+        Configuration::updateValue('PS_TWO_MERCHANT_ID', 'm-same');
+        $same = self::saveModule(self::ratesResponse(), 'm-same');
+        self::generalFormPost();
+        $same->saveGeneralForTest();
+        TinyAssert::same(0, $same->fxFetchCount, 'a save within the TTL must not refetch');
     }
 
     /**
