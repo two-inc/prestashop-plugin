@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Company search now bounds its result set** (TWO-25192)
+  - The request to `GET /companies/v2/company` sent only `q` and `country`, so the API's own default page size decided how many rows came back. A common company name in a large country returned an unbounded list into the autocomplete dropdown
+  - The request now carries `limit` (50, matching the Magento and WooCommerce plugins) and `offset` (always 0). As on both of those platforms there is no load-more or next-page control - the first page is the whole result set - so the dropdown is capped rather than paged, and the existing scroll containers handle the rest
+  - The limit is overridable through the module's JS config (`companySearchLimit`); the default lives on `TwoCompanySearch.DEFAULT_COMPANY_SEARCH_LIMIT`
 - **Checkout failures now reach AJAX checkout front-ends instead of vanishing** (TWO-24768)
   - The payment controller's only failure signal was a 302 back to the order page with the message flashed into the session. A checkout that posts the payment form over XHR rather than navigating (PrestaShop's own checkout module does) follows that redirect, receives the order page HTML with HTTP 200, cannot distinguish it from success, and leaves the buyer on a checkout that never moves
   - AJAX callers (identified by `X-Requested-With: XMLHttpRequest`, or an `Accept` that asks for JSON and does not accept HTML) now receive `HTTP 400` with a JSON body carrying `error`, `message` and `redirect_url`. Ordinary browser form posts keep the existing redirect-with-notification behaviour unchanged

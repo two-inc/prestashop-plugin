@@ -3,11 +3,21 @@
  * Handles company autocomplete, organization number persistence, and address saving
  */
 class TwoCompanySearch {
+    static DEFAULT_COMPANY_SEARCH_LIMIT = 50;
+
     constructor(config) {
         this.config = {
             companyFieldSelector: "input[name='company']",
             checkoutHost: '',
             saveCompanyUrl: '',
+            // Page size for GET /companies/v2/company. Matches the Magento
+            // (`companySearchLimit` in Model/Ui/ConfigProvider.php) and
+            // WooCommerce (`twoincSearchLimit` in assets/js/twoinc.js)
+            // plugins. Without it the API's own default decides how many
+            // rows come back, so a common name in a large country gives the
+            // buyer an unbounded list. Like both of those plugins there is
+            // no load-more UI - the first page is the whole result set.
+            companySearchLimit: TwoCompanySearch.DEFAULT_COMPANY_SEARCH_LIMIT,
             ...config
         };
         
@@ -371,8 +381,15 @@ class TwoCompanySearch {
         // Get country ISO from the selected option if available; otherwise omit
         const country = this.getCurrentCountry();
 
-        // Build URL with correct API parameters
-        const params = new URLSearchParams({ q: term });
+        // Build URL with correct API parameters. `limit`/`offset` mirror the
+        // Magento and WooCommerce plugins: bound the response to one page so
+        // a common name in a large country can't return an unbounded list.
+        // Offset is always 0 - there is no load-more/next-page UI here, same
+        // as select2's `pagination: { more: false }` on the other two
+        // platforms.
+        const limit = Number(this.config.companySearchLimit)
+            || TwoCompanySearch.DEFAULT_COMPANY_SEARCH_LIMIT;
+        const params = new URLSearchParams({ q: term, limit: limit, offset: 0 });
         if (country) params.set('country', country);
         // Direct Two API call from frontend as required
         const searchUrl = `${this.config.checkoutHost}/companies/v2/company?${params}`;
