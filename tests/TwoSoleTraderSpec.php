@@ -3,9 +3,10 @@
 declare(strict_types=1);
 
 /**
- * Unit spec for the sole-trader business logic (TWO-24755, toggle rework):
- * the merchant toggle is the sole merchant-side gate (no account-type
- * mode dependency - that selector feature has been removed), registry-only
+ * Unit spec for the sole-trader business logic (TWO-24755; toggle removal
+ * TWO-25166): the registry's country answer is the ONLY gate - no merchant
+ * configuration and no account-type mode are consulted (both features have
+ * been removed), registry-only
  * response semantics (empty list = business-only checkout), fail-soft vs
  * fail-closed registry/token handling, the cookie cache's single-slot/TTL
  * behaviour, and that the address form carries no account_type field.
@@ -39,9 +40,10 @@ final class TwoSoleTraderSpec
     public static function runAll(): void
     {
         $tests = [
-            'testIsEnabledFollowsToggleOnly',
-            'testAvailableWhenRegistryAndToggleAgree',
-            'testHiddenWhenToggleOff',
+            'testAvailableInRegistryCapableCountryWithNoConfig',
+            'testRetiredToggleValueHasNoEffect',
+            'testUpgradeDeletesRetiredToggle',
+            'testAvailableWhenRegistryAllowsCountry',
             'testHiddenWhenRegistryOmitsIt',
             'testRegistryErrorFallsBackToNoSoleTrader',
             'testRegistryRejectsMalformedCountry',
@@ -87,23 +89,69 @@ final class TwoSoleTraderSpec
     }
 
     /**
-     * The toggle is the ONLY merchant-side gate now - there is no
-     * account-type mode to also satisfy (that selector feature is
-     * removed; TWO-24755 rework).
+     * The registry's country answer is the ONLY gate (TWO-25166): no
+     * merchant configuration is consulted at all, so a store with no
+     * sole-trader config row whatsoever offers the flow in a
+     * registry-capable country.
      */
-    private static function testIsEnabledFollowsToggleOnly(): void
-    {
-        Configuration::updateValue('PS_TWO_ENABLE_SOLE_TRADER', 1);
-        TinyAssert::true(TwoSoleTrader::isEnabled());
-
-        Configuration::updateValue('PS_TWO_ENABLE_SOLE_TRADER', 0);
-        TinyAssert::false(TwoSoleTrader::isEnabled());
-    }
-
-    private static function testAvailableWhenRegistryAndToggleAgree(): void
+    private static function testAvailableInRegistryCapableCountryWithNoConfig(): void
     {
         $module = self::harness(
-            ['PS_TWO_ENABLE_SOLE_TRADER' => 1],
+            [],
+            ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
+        );
+        TinyAssert::false(
+            Configuration::hasKey('PS_TWO_ENABLE_SOLE_TRADER'),
+            'This test must exercise a store with no sole-trader configuration row at all'
+        );
+        TinyAssert::true(TwoSoleTrader::isAvailable($module, 'GB'));
+    }
+
+    /**
+     * The retired merchant toggle is dead weight: a stored 0 - which is
+     * exactly what install() and upgrade-2.6.1 wrote, and why the feature
+     * was invisible on both PrestaShop staging shops - must no longer
+     * suppress the flow.
+     */
+    private static function testRetiredToggleValueHasNoEffect(): void
+    {
+        $module = self::harness(
+            ['PS_TWO_ENABLE_SOLE_TRADER' => 0],
+            ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
+        );
+        TinyAssert::true(
+            TwoSoleTrader::isAvailable($module, 'GB'),
+            'A leftover PS_TWO_ENABLE_SOLE_TRADER=0 row must not gate sole trader checkout'
+        );
+        TinyAssert::false(
+            method_exists('TwoSoleTrader', 'isEnabled'),
+            'TwoSoleTrader::isEnabled() is retired - the country answer is the only gate'
+        );
+    }
+
+    /**
+     * The 2.6.3 upgrade deletes the retired configuration row rather than
+     * leaving a dead value a future reader could mistake for live config.
+     */
+    private static function testUpgradeDeletesRetiredToggle(): void
+    {
+        require_once dirname(__DIR__) . '/upgrade/upgrade-2.6.3.php';
+
+        Configuration::updateValue('PS_TWO_ENABLE_SOLE_TRADER', 0);
+        TinyAssert::true(upgrade_module_2_6_3(new TwopaymentTestHarness()));
+        TinyAssert::false(
+            Configuration::hasKey('PS_TWO_ENABLE_SOLE_TRADER'),
+            'upgrade-2.6.3 must delete the retired PS_TWO_ENABLE_SOLE_TRADER row'
+        );
+
+        // Idempotent on a store that never had the row
+        TinyAssert::true(upgrade_module_2_6_3(new TwopaymentTestHarness()));
+    }
+
+    private static function testAvailableWhenRegistryAllowsCountry(): void
+    {
+        $module = self::harness(
+            [],
             ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
         );
         TinyAssert::true(TwoSoleTrader::isAvailable($module, 'GB'));
@@ -112,21 +160,12 @@ final class TwoSoleTraderSpec
         TinyAssert::true(TwoSoleTrader::isAvailable($module, 'gb'));
     }
 
-    private static function testHiddenWhenToggleOff(): void
-    {
-        $module = self::harness(
-            ['PS_TWO_ENABLE_SOLE_TRADER' => 0],
-            ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
-        );
-        TinyAssert::false(TwoSoleTrader::isAvailable($module, 'GB'));
-    }
-
     private static function testHiddenWhenRegistryOmitsIt(): void
     {
         // Registered businesses need no registry enrollment, so the endpoint
         // deliberately omits them: an empty list means business-only checkout.
         $module = self::harness(
-            ['PS_TWO_ENABLE_SOLE_TRADER' => 1],
+            [],
             ['/registry/v1/supported-company-types/' => self::registryOk([])]
         );
         TinyAssert::false(TwoSoleTrader::isAvailable($module, 'NO'));
@@ -135,13 +174,12 @@ final class TwoSoleTraderSpec
     private static function testRegistryErrorFallsBackToNoSoleTrader(): void
     {
         // Network error (transport returns false)
-        $module = self::harness(['PS_TWO_ENABLE_SOLE_TRADER' => 1], []);
+        $module = self::harness([], []);
         TinyAssert::same([], TwoSoleTrader::getSupportedCompanyTypes($module, 'GB'));
 
         // Non-200
         TwoSoleTrader::resetCache();
         StubStore::reset();
-        Configuration::updateValue('PS_TWO_ENABLE_SOLE_TRADER', 1);
         $module->cannedResponses = [
             '/registry/v1/supported-company-types/' => ['http_status' => 404],
         ];
@@ -150,7 +188,6 @@ final class TwoSoleTraderSpec
         // 200 with malformed body
         TwoSoleTrader::resetCache();
         StubStore::reset();
-        Configuration::updateValue('PS_TWO_ENABLE_SOLE_TRADER', 1);
         $module->cannedResponses = [
             '/registry/v1/supported-company-types/' => ['http_status' => 200, 'data' => 'junk'],
         ];
@@ -160,7 +197,7 @@ final class TwoSoleTraderSpec
     private static function testRegistryRejectsMalformedCountry(): void
     {
         $module = self::harness(
-            ['PS_TWO_ENABLE_SOLE_TRADER' => 1],
+            [],
             ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
         );
         // Never hits the API for junk country input
@@ -173,7 +210,7 @@ final class TwoSoleTraderSpec
     private static function testRegistryResponseCachedPerRequest(): void
     {
         $module = self::harness(
-            ['PS_TWO_ENABLE_SOLE_TRADER' => 1],
+            [],
             ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
         );
         TwoSoleTrader::getSupportedCompanyTypes($module, 'GB');
@@ -195,7 +232,7 @@ final class TwoSoleTraderSpec
     private static function testCookieCacheIsSingleSlotAndOverwritesOnCountryChange(): void
     {
         $module = self::harness(
-            ['PS_TWO_ENABLE_SOLE_TRADER' => 1],
+            [],
             [
                 '/registry/v1/supported-company-types/GB' => self::registryOk(['SOLE_TRADER']),
                 '/registry/v1/supported-company-types/US' => self::registryOk([]),
@@ -222,7 +259,7 @@ final class TwoSoleTraderSpec
     private static function testCookieCacheExpiresAfterTtl(): void
     {
         $module = self::harness(
-            ['PS_TWO_ENABLE_SOLE_TRADER' => 1],
+            [],
             ['/registry/v1/supported-company-types/GB' => self::registryOk(['SOLE_TRADER'])]
         );
         $cookie = Context::getContext()->cookie;
@@ -245,7 +282,7 @@ final class TwoSoleTraderSpec
      */
     private static function testFetchErrorIsNotCached(): void
     {
-        $module = self::harness(['PS_TWO_ENABLE_SOLE_TRADER' => 1], []);
+        $module = self::harness([], []);
         // No canned response for GB => setTwoPaymentRequest returns false => fetch error
         $types = TwoSoleTrader::getSupportedCompanyTypes($module, 'GB');
         TinyAssert::same([], $types);
@@ -261,7 +298,7 @@ final class TwoSoleTraderSpec
 
     private static function testTokenMintReadsHeaderAndFailsClosed(): void
     {
-        $module = self::harness(['PS_TWO_ENABLE_SOLE_TRADER' => 1], []);
+        $module = self::harness([], []);
 
         // Happy path: both mints return the token header (case handled by
         // the transport, which lower-cases header names)
@@ -327,7 +364,7 @@ final class TwoSoleTraderSpec
 
     /**
      * The address form carries no account_type field regardless of
-     * sole-trader toggle/registry state - that selector feature has been
+     * sole-trader registry state - that selector feature has been
      * removed entirely (TWO-24755 rework). Sole traders enrol via the
      * payment-step toggle, not the address form.
      */
@@ -344,8 +381,6 @@ final class TwoSoleTraderSpec
                 return (string) $message;
             }
         };
-
-        Configuration::updateValue('PS_TWO_ENABLE_SOLE_TRADER', 1);
 
         $country = new Country();
         $format = (new CustomerAddressFormatter($country, $translator, []))->getFormat();

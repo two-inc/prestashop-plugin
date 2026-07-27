@@ -196,7 +196,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.6.2';
+        $this->version = '2.6.3';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -379,7 +379,6 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', 1);
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_ID', 1);
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', 1);
-        Configuration::updateValue('PS_TWO_ENABLE_SOLE_TRADER', 0); // Default: off; merchant opts in (TWO-24755)
         Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', 'STANDARD'); // Default: Standard payment terms (not EOM)
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1); // Default: 30 days enabled
         Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1); // Enabled by default; can be disabled for compatibility
@@ -616,6 +615,10 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_ENABLE_PROJECT');
         Configuration::deleteByName('PS_TWO_ENABLE_TAX_SUBTOTALS');
         Configuration::deleteByName('PS_TWO_FINALIZE_PURCHASE');
+        // Retired admin toggle (TWO-25166) - sole trader is gated on the
+        // registry's country answer alone now. Shops upgraded from <=2.6.2
+        // may still carry the row; upgrade-2.6.3 deletes it, this covers
+        // uninstall-without-upgrade.
         Configuration::deleteByName('PS_TWO_ENABLE_SOLE_TRADER');
         Configuration::deleteByName('PS_TWO_DEBUG_MODE');
         Configuration::deleteByName(self::CONFIG_MERCHANT_INVOICE_DISTRIBUTED);
@@ -1336,26 +1339,6 @@ class Twopayment extends PaymentModule
                 'input' => array(
                     array(
                         'type' => 'switch',
-                        'label' => $this->l('Enable sole trader checkout'),
-                        'name' => 'PS_TWO_ENABLE_SOLE_TRADER',
-                        'is_bool' => true,
-                        'desc' => $this->l('Shows a Business / Sole trader toggle on the payment step for buyers in countries where Two supports sole traders (currently the UK and US).'),
-                        'required' => true,
-                        'values' => array(
-                            array(
-                                'id' => 'PS_TWO_ENABLE_SOLE_TRADER_ON',
-                                'value' => 1,
-                                'label' => $this->l('Yes')
-                            ),
-                            array(
-                                'id' => 'PS_TWO_ENABLE_SOLE_TRADER_OFF',
-                                'value' => 0,
-                                'label' => $this->l('No')
-                            ),
-                        ),
-                    ),
-                    array(
-                        'type' => 'switch',
                         'label' => $this->l('Activate company name auto-complete'),
                         'name' => 'PS_TWO_ENABLE_COMPANY_NAME',
                         'is_bool' => true,
@@ -1467,7 +1450,6 @@ class Twopayment extends PaymentModule
     protected function getTwoOtherFormValues()
     {
         $fields_values = array();
-        $fields_values['PS_TWO_ENABLE_SOLE_TRADER'] = Tools::getValue('PS_TWO_ENABLE_SOLE_TRADER', Configuration::get('PS_TWO_ENABLE_SOLE_TRADER'));
         $fields_values['PS_TWO_ENABLE_COMPANY_NAME'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME', Configuration::get('PS_TWO_ENABLE_COMPANY_NAME'));
         $fields_values['PS_TWO_ENABLE_COMPANY_ID'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_ID', Configuration::get('PS_TWO_ENABLE_COMPANY_ID'));
         $fields_values['PS_TWO_FINALIZE_PURCHASE'] = Tools::getValue('PS_TWO_FINALIZE_PURCHASE', Configuration::get('PS_TWO_FINALIZE_PURCHASE'));
@@ -1483,7 +1465,6 @@ class Twopayment extends PaymentModule
 
     protected function saveTwoOtherFormValues()
     {
-        Configuration::updateValue('PS_TWO_ENABLE_SOLE_TRADER', Tools::getValue('PS_TWO_ENABLE_SOLE_TRADER'));
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME'));
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_ID', Tools::getValue('PS_TWO_ENABLE_COMPANY_ID'));
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', Tools::getValue('PS_TWO_FINALIZE_PURCHASE'));
@@ -2986,14 +2967,6 @@ class Twopayment extends PaymentModule
                 'enable_department' => $this->enable_department,
                 'enable_project' => $this->enable_project,
                 'enable_order_intent' => $this->enable_order_intent,
-                'sole_trader' => array(
-                    // Only the feature flag - the availability check runs
-                    // live per billing country via soleTraderAvailability,
-                    // and the signup URL / resolved invoice country come
-                    // from soleTraderTokens (see classes/TwoSoleTrader.php
-                    // and controllers/front/orderintent.php).
-                    'enabled' => TwoSoleTrader::isEnabled() ? 1 : 0,
-                ),
                 'shop_country' => (string) Context::getContext()->country->iso_code,
                 'order_intent_url' => $this->context->link->getModuleLink($this->name, 'orderintent'),
                 'ajax_token' => Tools::getToken(false),

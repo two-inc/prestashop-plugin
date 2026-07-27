@@ -120,16 +120,16 @@
             // Store global reference for modules
             window.TwoCheckoutManager_Instance = checkoutManager;
 
-            // Sole trader flow (TWO-24755) - separate presentation module,
-            // active only when the merchant enabled it.
+            // Sole trader flow (TWO-24755) - separate presentation module.
+            // Always constructed; whether the toggle actually renders is
+            // decided per billing country by the server-side registry
+            // answer via soleTraderAvailability (TWO-25166 removed the
+            // merchant opt-in toggle that used to gate this too).
             if (
                 typeof TwoSoleTrader !== 'undefined' &&
-                twopayment.sole_trader &&
-                String(twopayment.sole_trader.enabled) === '1' &&
                 !window.TwoSoleTrader_Instance
             ) {
                 window.TwoSoleTrader_Instance = new TwoSoleTrader({
-                    enabled: true,
                     checkoutHost: twopayment.checkout_host,
                     orderIntentUrl: twopayment.order_intent_url,
                     ajaxToken: twopayment.ajax_token,
