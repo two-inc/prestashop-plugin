@@ -43,6 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Tax rate precision raised to PrestaShop-native 6dp (rates still capped at 2 decimals of percent per e-invoicing rules); per-line validation now validates the emitted amounts and also asserts `gross == net + tax` exactly
 
 ### Removed
+- **`PS_TWO_ENABLE_SOLE_TRADER` admin setting retired - sole trader is gated on country only** (TWO-25166, umbrella TWO-25163)
+  - The "Enable sole trader checkout" switch is removed from the module configuration page. Whether a buyer can check out as a sole trader is Two's registry answer for their billing country (`GET /registry/v1/supported-company-types/<ISO>`, TWO-24753 - the UK and US currently), never a merchant preference; this matches Magento's toggle-less behaviour, the cross-plugin target state
+  - `TwoSoleTrader::isEnabled()` is gone and `isAvailable()` now consults the registry alone. The registry country check was already the barrier the order-intent controller enforced before minting delegated-authority tokens, so removing the toggle does not widen access to that endpoint - the country gate is unchanged and still fails closed on a cart with no invoice address
+  - Both PrestaShop staging shops had the feature invisible because `install()` and the 2.6.1 upgrade both wrote an explicit `0` default; the 2.6.3 upgrade script deletes the stored row, and uninstall still clears it for shops that never ran the upgrade
+  - Module version bumped to `2.6.3`
+
 - **`PS_TWO_USE_OWN_INVOICES` admin setting retired** (TWO-25111)
   - The "Upload Own Invoices to Two" switch is removed from the module configuration page; the upgrade script deletes the configuration row and any leftover value has zero effect (covered by unit test)
   - Merchants who had the toggle enabled were server-side whitelisted, and all previously-whitelisted merchants already carry `invoice_distributed_by_merchant = true` (TWO-24761), so no merchant loses the feature on upgrade
@@ -54,7 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Failure posture: a failed refresh serves the last-known-good table and retries after a short backoff; gate conversions fail closed only when no table was ever fetched, display conversions fail soft
   - Fixed surcharge amounts and caps (configured in the shop default currency) are converted into the quote currency before the pricing call, replacing the previous single-currency pinning; an unconvertible figure omits the fee quote instead of sending a wrong-currency amount
 - **Sole trader checkout** (TWO-24755, WooCommerce/Magento parity)
-  - The payment step shows a Business / Sole trader toggle for buyers in countries where Two's registry supports sole traders (`GET /registry/v1/supported-company-types/<ISO>`, currently the UK and US), gated by a new "Enable sole trader checkout" admin toggle (default off)
+  - The payment step shows a Business / Sole trader toggle for buyers in countries where Two's registry supports sole traders (`GET /registry/v1/supported-company-types/<ISO>`, currently the UK and US). That country answer is the only gate - there is no merchant admin toggle (TWO-25166)
   - Choosing Sole Trader mints delegation + autofill tokens server-side with the merchant API key and opens Two's hosted signup popup; on completion the buyer's company data autofills from `GET /autofill/v1/buyer/current` (case-insensitive email match) and persists through the existing company-save path, so order-intent and payment run unchanged
   - Module version bumped to `2.6.1`
 - **Buyer surcharge shown as a real PrestaShop cart line** (TWO-24739 parity)
