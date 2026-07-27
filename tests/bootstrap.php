@@ -43,6 +43,24 @@ namespace {
         public static array $cartTotals = [];
         public static array $cartShipping = [];
         public static array $cartRules = [];
+        /**
+         * Cart::getDeliveryOptionList() fixtures by cart id, core-shaped:
+         *   [id_address => [option_key => ['carrier_list' => [id_carrier => [
+         *       'price_with_tax' => float, 'price_without_tax' => float,
+         *       'instance' => Carrier,
+         *   ]]]]]
+         * The no-available-carrier sentinel is carrier_list = [0 => 0].
+         *
+         * @var array<int,array>
+         */
+        public static array $cartDeliveryOptionLists = [];
+        /**
+         * Cart::getDeliveryOption() overrides by cart id. Unset means the stub
+         * auto-selects the first option per address, like core does.
+         *
+         * @var array<int,array|false>
+         */
+        public static array $cartDeliveryOptions = [];
         public static array $moduleCurrencies = [];
         public static array $productCategories = [];
         public static array $images = [];
@@ -145,6 +163,8 @@ namespace {
             self::$cartTotals = [];
             self::$cartShipping = [];
             self::$cartRules = [];
+            self::$cartDeliveryOptionLists = [];
+            self::$cartDeliveryOptions = [];
             self::$orderCarriers = [];
             self::$carts = [];
             self::$tabIds = ['AdminTwopaymentInvoice' => 1];
@@ -1311,6 +1331,36 @@ namespace {
         public function getCartRules(): array
         {
             return StubStore::$cartRules[$this->id] ?? [];
+        }
+
+        public function getDeliveryOptionList($defaultCountry = null, $flush = false): array
+        {
+            return StubStore::$cartDeliveryOptionLists[$this->id] ?? [];
+        }
+
+        /**
+         * Core-faithful enough for the plugin's use: an explicit fixture wins,
+         * otherwise auto-select the first option for each address, which is
+         * what core falls back to when nothing is selected or the selection no
+         * longer validates.
+         *
+         * @return array<int,string>|false
+         */
+        public function getDeliveryOption($defaultCountry = null, $dontAutoSelectOptions = false, $useCache = true)
+        {
+            if (array_key_exists($this->id, StubStore::$cartDeliveryOptions)) {
+                return StubStore::$cartDeliveryOptions[$this->id];
+            }
+
+            $selected = [];
+            foreach (StubStore::$cartDeliveryOptionLists[$this->id] ?? [] as $idAddress => $options) {
+                $keys = array_keys((array) $options);
+                if ($keys !== []) {
+                    $selected[(int) $idAddress] = (string) $keys[0];
+                }
+            }
+
+            return $selected;
         }
 
         public function getAverageProductsTaxRate(): float
