@@ -256,6 +256,12 @@ namespace {
         {
             return (string) $name === 'twopayment';
         }
+
+        /** @return array<int,array{name:string}> */
+        public static function getPaymentModules(): array
+        {
+            return [['name' => 'twopayment']];
+        }
     }
     }
 
