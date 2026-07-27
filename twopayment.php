@@ -136,6 +136,17 @@ class Twopayment extends PaymentModule
     const COOKIE_EXPIRY_ONE_HOUR = 3600; // 1 hour
     const ATTEMPT_RETENTION_DAYS = 90; // Keep attempt telemetry for 90 days
     const ATTEMPT_CLEANUP_INTERVAL_SECONDS = 86400; // Run cleanup at most once per day
+    // TWO-24799: how long a UX-only order-intent decision stays reusable for an
+    // unchanged decision snapshot. Deliberately short - this only suppresses the
+    // repeat /v1/order_intent round trip behind an identical snapshot hash, and
+    // the authoritative check at payment submit
+    // (checkTwoOrderIntentApprovalAtPayment) is never served from this cache.
+    const ORDER_INTENT_DECISION_CACHE_TTL = 300; // 5 minutes
+    // TWO-24799: how long an unverifiable org number stays remembered as a miss.
+    // The success path is already cached indefinitely (for the cookie's lifetime)
+    // by the two_company_* company cookie, so only the miss needs its own TTL -
+    // short enough that a provider blip self-heals inside one checkout session.
+    const COMPANY_VERIFY_MISS_CACHE_TTL = 300; // 5 minutes
     // Cross-request cache for the buyer fee-share quote (POST /v1/pricing/order/fee).
     // fetchTwoTermFee() already request-scopes the quote via $this->twoFeeCache, but
     // that array is rebuilt from scratch on every HTTP request (e.g. each order-intent
@@ -10739,6 +10750,285 @@ class Twopayment extends PaymentModule
     {
         $snapshot = $this->buildTwoCheckoutSnapshot($cart, $paymentdata);
         return hash('sha256', json_encode($snapshot, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    }
+
+    /**
+     * Calculate the decision snapshot hash for a UX-only order-intent check
+     * (TWO-24799).
+     *
+     * Composed from - never a replacement for - the cart snapshot hash used by
+     * order-create idempotency. That hash covers the cart, currency, address
+     * IDs and every line item, but it deliberately says nothing about WHO is
+     * buying, and the buyer's company is the primary input Two decides on. A
+     * buyer who re-runs company search and picks a different company against
+     * the same saved address would otherwise produce an identical hash, so the
+     * buyer identity is mixed in explicitly here.
+     *
+     * @param Cart $cart
+     * @param array $paymentdata Order-intent payload as built by getTwoIntentOrderData()
+     * @return string
+     */
+    public function calculateTwoOrderIntentSnapshotHash($cart, $paymentdata)
+    {
+        $company = array();
+        if (isset($paymentdata['buyer']['company']) && is_array($paymentdata['buyer']['company'])) {
+            $company = $paymentdata['buyer']['company'];
+        }
+
+        $identity = array(
+            'company_name' => isset($company['company_name']) ? trim((string)$company['company_name']) : '',
+            'organization_number' => isset($company['organization_number']) ? trim((string)$company['organization_number']) : '',
+            'country_prefix' => isset($company['country_prefix']) ? strtoupper(trim((string)$company['country_prefix'])) : '',
+            // Country lives on the address blocks too, and a country switch MUST
+            // bust this hash (TWO-24867 tracks country-switch staleness as a bug
+            // class here), so both are folded in rather than trusted separately.
+            'billing_country' => isset($paymentdata['billing_address']['country'])
+                ? strtoupper(trim((string)$paymentdata['billing_address']['country']))
+                : '',
+            'shipping_country' => isset($paymentdata['shipping_address']['country'])
+                ? strtoupper(trim((string)$paymentdata['shipping_address']['country']))
+                : '',
+            'invoice_type' => isset($paymentdata['invoice_type']) ? (string)$paymentdata['invoice_type'] : '',
+        );
+
+        $seed = 'order_intent|'
+            . $this->calculateTwoCheckoutSnapshotHash($cart, $paymentdata) . '|'
+            . json_encode($identity, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        return hash('sha256', $seed);
+    }
+
+    /**
+     * Record the snapshot hash the browser is about to run an intent check for,
+     * so the decision it reports back can be bound to the right snapshot
+     * (TWO-24799).
+     *
+     * The browser makes the /v1/order_intent call today, so it - not the server
+     * - learns the outcome. Rather than trusting a client-supplied hash, the
+     * server remembers the hash it just computed and binds the reported
+     * decision to that. When TWO-25162 moves the call behind the plugin backend
+     * the server will know the outcome first-hand and can write the decision
+     * directly; the cache read/write pair below is unchanged by that.
+     *
+     * @param string $snapshot_hash
+     * @return void
+     */
+    public function markTwoPendingOrderIntentSnapshot($snapshot_hash)
+    {
+        $snapshot_hash = trim((string)$snapshot_hash);
+        if (Tools::isEmpty($snapshot_hash)) {
+            return;
+        }
+
+        $this->context->cookie->two_order_intent_pending_hash = $snapshot_hash;
+        $this->context->cookie->setExpire(time() + self::COOKIE_EXPIRY_ONE_HOUR);
+    }
+
+    /**
+     * Bind the decision the browser reported to the pending snapshot hash
+     * (TWO-24799).
+     *
+     * @param bool $approved
+     * @return string The snapshot hash the decision was stored against, '' when none was pending
+     */
+    public function storeTwoOrderIntentDecisionForPendingSnapshot($approved)
+    {
+        $snapshot_hash = isset($this->context->cookie->two_order_intent_pending_hash)
+            ? trim((string)$this->context->cookie->two_order_intent_pending_hash)
+            : '';
+        if (Tools::isEmpty($snapshot_hash)) {
+            return '';
+        }
+
+        $this->context->cookie->two_order_intent_decision = json_encode(array(
+            'hash' => $snapshot_hash,
+            'approved' => (bool)$approved ? 1 : 0,
+            'at' => time(),
+        ));
+        $this->context->cookie->setExpire(time() + self::COOKIE_EXPIRY_ONE_HOUR);
+
+        return $snapshot_hash;
+    }
+
+    /**
+     * Read back a still-valid intent decision for a snapshot hash (TWO-24799).
+     *
+     * Returns null - never a stale decision - whenever the snapshot differs, the
+     * entry has aged past ORDER_INTENT_DECISION_CACHE_TTL, or the stored value
+     * is unreadable. Any cart, address, country or company change produces a
+     * different hash, so this cannot survive the buyer editing their order.
+     *
+     * @param string $snapshot_hash
+     * @return array{approved:bool,timestamp:int}|null
+     */
+    public function getTwoCachedOrderIntentDecision($snapshot_hash)
+    {
+        $snapshot_hash = trim((string)$snapshot_hash);
+        if (Tools::isEmpty($snapshot_hash)) {
+            return null;
+        }
+
+        $encoded = isset($this->context->cookie->two_order_intent_decision)
+            ? (string)$this->context->cookie->two_order_intent_decision
+            : '';
+        if (Tools::isEmpty($encoded)) {
+            return null;
+        }
+
+        $decoded = json_decode($encoded, true);
+        if (!is_array($decoded) || !isset($decoded['hash'], $decoded['approved'], $decoded['at'])) {
+            return null;
+        }
+
+        if (!hash_equals((string)$decoded['hash'], $snapshot_hash)) {
+            return null;
+        }
+
+        $age = time() - (int)$decoded['at'];
+        if ($age < 0 || $age > self::ORDER_INTENT_DECISION_CACHE_TTL) {
+            return null;
+        }
+
+        return array(
+            'approved' => (bool)(int)$decoded['approved'],
+            'timestamp' => (int)$decoded['at'],
+        );
+    }
+
+    /**
+     * Drop any cached intent decision (TWO-24799).
+     *
+     * @return void
+     */
+    public function clearTwoCachedOrderIntentDecision()
+    {
+        unset($this->context->cookie->two_order_intent_decision);
+        unset($this->context->cookie->two_order_intent_pending_hash);
+    }
+
+    /**
+     * Verify an org number found on a saved address, memoising BOTH outcomes for
+     * the checkout session (TWO-24799).
+     *
+     * The success path was already cached: verifyCompanyByOrgNumber()'s caller
+     * writes the resolved company into the two_company_* cookie, so a verified
+     * org number costs one lookup per session. The MISS path was not cached at
+     * all, so an address carrying an org number Two cannot resolve (a typo, a
+     * deregistered company, or a provider hiccup) paid a fresh blocking
+     * /companies/v2/company round trip on every single checkout update, at the
+     * 30s API_TIMEOUT_SHORT budget, forever returning the same null.
+     *
+     * The miss marker is keyed on org number + country + address ID, so editing
+     * any of the three re-verifies immediately instead of inheriting the miss.
+     *
+     * @param string $orgNumber
+     * @param string $countryIso
+     * @param int $addressId
+     * @return array{name:string,organization_number:string}|null
+     */
+    public function getTwoVerifiedCompanyForOrgNumber($orgNumber, $countryIso, $addressId)
+    {
+        $key = $this->buildTwoCompanyVerifyCacheKey($orgNumber, $countryIso, $addressId);
+
+        if ($key !== '' && $this->hasTwoCompanyVerifyMiss($key)) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Skipped org-number verification - cached miss for country=' .
+                strtoupper(trim((string)$countryIso)) . ', address=' . (int)$addressId,
+                1
+            );
+            return null;
+        }
+
+        $verified = $this->verifyCompanyByOrgNumber($orgNumber, $countryIso);
+
+        if ($verified && !empty($verified['organization_number'])) {
+            // Success: forget any stale miss so a later re-check is not blocked.
+            $this->clearTwoCompanyVerifyMiss();
+            return $verified;
+        }
+
+        if ($key !== '') {
+            $this->recordTwoCompanyVerifyMiss($key);
+        }
+
+        return null;
+    }
+
+    /**
+     * Cache key for an org-number verification attempt (TWO-24799).
+     *
+     * @param string $orgNumber
+     * @param string $countryIso
+     * @param int $addressId
+     * @return string '' when the inputs cannot form a usable key
+     */
+    private function buildTwoCompanyVerifyCacheKey($orgNumber, $countryIso, $addressId)
+    {
+        $orgNumber = strtoupper(preg_replace('/[\s\-]/', '', trim((string)$orgNumber)));
+        $countryIso = strtoupper(trim((string)$countryIso));
+        if (Tools::isEmpty($orgNumber) || Tools::isEmpty($countryIso)) {
+            return '';
+        }
+
+        return hash('sha256', 'company_verify|' . $orgNumber . '|' . $countryIso . '|' . (int)$addressId);
+    }
+
+    /**
+     * Whether this exact verification attempt is a remembered, unexpired miss.
+     *
+     * @param string $key
+     * @return bool
+     */
+    private function hasTwoCompanyVerifyMiss($key)
+    {
+        $encoded = isset($this->context->cookie->two_company_verify_miss)
+            ? (string)$this->context->cookie->two_company_verify_miss
+            : '';
+        if (Tools::isEmpty($encoded)) {
+            return false;
+        }
+
+        $decoded = json_decode($encoded, true);
+        if (!is_array($decoded) || !isset($decoded['key'], $decoded['at'])) {
+            return false;
+        }
+
+        if (!hash_equals((string)$decoded['key'], (string)$key)) {
+            return false;
+        }
+
+        $age = time() - (int)$decoded['at'];
+
+        return $age >= 0 && $age <= self::COMPANY_VERIFY_MISS_CACHE_TTL;
+    }
+
+    /**
+     * Remember an org number that Two could not resolve.
+     *
+     * Single-slot by design: the buyer has one billing address in play at a
+     * time, so one marker keeps the cookie bounded while still covering the
+     * repeat-update case this exists for.
+     *
+     * @param string $key
+     * @return void
+     */
+    private function recordTwoCompanyVerifyMiss($key)
+    {
+        $this->context->cookie->two_company_verify_miss = json_encode(array(
+            'key' => (string)$key,
+            'at' => time(),
+        ));
+        $this->context->cookie->setExpire(time() + self::COOKIE_EXPIRY_ONE_HOUR);
+    }
+
+    /**
+     * Forget the remembered verification miss (TWO-24799).
+     *
+     * @return void
+     */
+    public function clearTwoCompanyVerifyMiss()
+    {
+        unset($this->context->cookie->two_company_verify_miss);
     }
 
     /**

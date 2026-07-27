@@ -5530,6 +5530,7 @@ require __DIR__ . '/FxRatesSpec.php';
 require __DIR__ . '/TwoSoleTraderSpec.php';
 require __DIR__ . '/ShippingCostSourcingSpec.php';
 require __DIR__ . '/AjaxCheckoutFailureSpec.php';
+require __DIR__ . '/CheckoutLatencySpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
@@ -5550,6 +5551,7 @@ $tests = [
     'TwoSoleTraderSpec::runAll' => [TwoSoleTraderSpec::class, 'runAll'],
     'ShippingCostSourcingSpec::runAll' => [ShippingCostSourcingSpec::class, 'runAll'],
     'AjaxCheckoutFailureSpec::runAll' => [AjaxCheckoutFailureSpec::class, 'runAll'],
+    'CheckoutLatencySpec::runAll' => [CheckoutLatencySpec::class, 'runAll'],
 ];
 
 $failed = 0;
