@@ -40,6 +40,8 @@ jobs:
           php -l tests/FxRatesSpec.php
           php -l tests/AjaxCheckoutFailureSpec.php
           php -l tests/CheckoutLatencySpec.php
+          php -l tests/ShippingCostSourcingSpec.php
+          php -l tests/FulfilledStatusMappingSpec.php
           php -l tests/run.php
 
       - name: Run offline test suite
