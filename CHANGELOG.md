@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Checkout failures now reach AJAX checkout front-ends instead of vanishing** (TWO-24768)
+  - The payment controller's only failure signal was a 302 back to the order page with the message flashed into the session. A checkout that posts the payment form over XHR rather than navigating (PrestaShop's own checkout module does) follows that redirect, receives the order page HTML with HTTP 200, cannot distinguish it from success, and leaves the buyer on a checkout that never moves
+  - AJAX callers (identified by `X-Requested-With: XMLHttpRequest`, or an `Accept` that asks for JSON and does not accept HTML) now receive `HTTP 400` with a JSON body carrying `error`, `message` and `redirect_url`. Ordinary browser form posts keep the existing redirect-with-notification behaviour unchanged
+  - Every failure exit in the payment controller now goes through the single `failCheckout()` boundary. Five of them - including the provider-rejection path that produced the reported silent hang - previously redirected inline and so bypassed it entirely
+  - Failures that deliberately carry no buyer-facing text (internal errors logged for the merchant) now emit a generic message to AJAX callers rather than an empty string, so the caller always has something to render
+
 ### Changed
 - **Invoice upload is now gated on the merchant record, not an admin toggle** (TWO-25111, per decision TWO-25106 Option A)
   - The plugin-side invoice upload (own-invoice merchants) now triggers only when the `invoice_distributed_by_merchant` flag on the Two merchant record (`GET /v1/merchant`) is true - the same signal checkout-api itself enforces (TWO-24761), and the same gating model Magento (TWO-24758) and WooCommerce (TWO-24757) use
