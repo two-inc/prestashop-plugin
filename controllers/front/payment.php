@@ -170,10 +170,31 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             $cart_snapshot_hash = $this->module->calculateTwoCheckoutSnapshotHash($cart, $paymentdata);
             $idempotency_key = $this->module->buildTwoOrderCreateIdempotencyKey($cart, $cart_snapshot_hash);
         } catch (Exception $e) {
+            // Surface WHY the payload could not be built - but only when the
+            // plugin itself raised the failure as a buyer-actionable amount
+            // diagnostic (TwoCheckoutAmountException). Withholding that detail
+            // is what left the buyer staring at a spinner with a generic
+            // message in TWO-25161, and since TWO-24768 the same string also
+            // goes into the AJAX JSON body.
+            //
+            // Payload building walks PrestaShop core (TaxManagerFactory,
+            // Address, Carrier, DB reads), so an arbitrary exception can reach
+            // here: a PrestaShopDatabaseException would put SQL text and
+            // table/column names on a public storefront. Those get the generic
+            // message, with the real exception class and message logged at
+            // severity 4 so nothing is lost for diagnosis.
+            $isBuyerActionable = $e instanceof TwoCheckoutAmountException;
+            $message = $this->module->l('Two could not build this order from your cart.');
+            $detail = $isBuyerActionable ? trim((string)$e->getMessage()) : '';
+            if ($detail !== '') {
+                $message .= ' ' . sprintf($this->module->l('Details: %s.'), $detail);
+            }
+            $message .= ' ' . $this->module->l('Please review your cart and try again, or contact the store.');
             $this->failCheckout(
-                $this->module->l('Unable to process your order with Two payment. Please review your cart and try again.'),
-                'TwoPayment: Failed building order payload for cart ' . $cart->id . ' - ' . $e->getMessage(),
-                3
+                $message,
+                'TwoPayment: Failed building order payload for cart ' . $cart->id . ' - [' .
+                get_class($e) . '] ' . $e->getMessage(),
+                $isBuyerActionable ? 3 : 4
             );
             return;
         }
@@ -248,8 +269,8 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                 }
             }
 
-            $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
+            $this->failCheckout($message);
+            return;
         }
 
         if (isset($response['id']) && $response['id']) {
@@ -311,8 +332,8 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                     // Best effort cleanup when local attempt persistence fails.
                     $this->module->cancelTwoOrderBestEffort((string)$response['id'], 'attempt_persist_failed');
                 }
-                $this->errors[] = $this->module->l('Temporary checkout issue. Please try again.');
-                $this->redirectWithNotifications('index.php?controller=order');
+                $this->failCheckout($this->module->l('Temporary checkout issue. Please try again.'));
+                return;
             }
 
             // Fraud Verification Skip (Must be enabled by Two on request)
@@ -365,9 +386,10 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                     );
                     
                     // Generic error message - don't expose fraud verification skip details to customer
-                    $message = $this->module->l('Unable to process your payment at this time. Please contact the store owner for assistance.');
-                    $this->errors[] = $message;
-                    $this->redirectWithNotifications('index.php?controller=order');
+                    $this->failCheckout(
+                        $this->module->l('Unable to process your payment at this time. Please contact the store owner for assistance.')
+                    );
+                    return;
                 }
             } else {
                 // Standard flow - redirect to Two's payment_url for verification
@@ -391,8 +413,8 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                             $cancelled ? 2 : 3
                         );
                     }
-                    $this->errors[] = $this->module->l('Unable to redirect to payment provider. Please try again.');
-                    $this->redirectWithNotifications('index.php?controller=order');
+                    $this->failCheckout($this->module->l('Unable to redirect to payment provider. Please try again.'));
+                    return;
                 }
 
                 Tools::redirect($response['payment_url']);
@@ -402,14 +424,25 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                 'TwoPayment: Two API created response without id for cart ' . $cart->id . ', attempt ' . $attempt_token,
                 3
             );
-            $message = $this->module->l('Something went wrong please contact store owner.');
-            $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
+            $this->failCheckout($this->module->l('Something went wrong please contact store owner.'));
+            return;
         }
     }
 
     /**
-     * Redirect checkout flow back to order page with optional user-facing error.
+     * Report a checkout failure to whoever submitted the payment form.
+     *
+     * A browser navigation gets what it has always got: a 302 back to the
+     * order page with the message flashed into the session notifications.
+     *
+     * An AJAX caller cannot use that. It follows the 302 transparently,
+     * receives the order page's HTML with HTTP 200, has no way to tell that
+     * from a success, and leaves the buyer staring at a checkout that never
+     * moves - the message is rendered into a page nobody ever displays.
+     * Checkout front-ends that post the payment form over XHR instead of
+     * navigating (PrestaShop's own checkout module among them) hit exactly
+     * this. For those callers, answer with a machine-readable JSON error and
+     * a non-2xx status so the failure is impossible to mistake for success.
      *
      * @param string $message
      * @param string $logMessage
@@ -421,12 +454,93 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
         if (!Tools::isEmpty($logMessage)) {
             PrestaShopLogger::addLog($logMessage, (int)$severity);
         }
-        if (!Tools::isEmpty($message)) {
-            $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
+
+        $redirectUrl = 'index.php?controller=order';
+
+        if (self::isTwoAjaxCheckoutRequest($_SERVER)) {
+            $this->emitTwoCheckoutJsonFailure(self::buildTwoCheckoutFailurePayload(
+                $message,
+                // Several internal failures deliberately carry no buyer-facing
+                // text (the detail belongs in the log, not on the storefront).
+                // An AJAX caller still needs something to render, or the fix
+                // reproduces the silent hang one layer up.
+                $this->module->l('Unable to process your order with Two payment. Please choose another payment method or contact the store.'),
+                $redirectUrl
+            ));
             return;
         }
-        Tools::redirect('index.php?controller=order');
+
+        if (!Tools::isEmpty($message)) {
+            $this->errors[] = $message;
+            $this->redirectWithNotifications($redirectUrl);
+            return;
+        }
+        Tools::redirect($redirectUrl);
+    }
+
+    /**
+     * Whether the payment form was submitted by an AJAX caller rather than by
+     * a top-level browser navigation.
+     *
+     * XMLHttpRequest-based checkouts (jQuery, and PrestaShop's own checkout
+     * JS) announce themselves with X-Requested-With. fetch() callers do not,
+     * so also treat a request that asks for JSON and does not accept HTML as
+     * AJAX - a page navigation always accepts HTML.
+     *
+     * @param array $server Request server variables ($_SERVER shape).
+     * @return bool
+     */
+    public static function isTwoAjaxCheckoutRequest(array $server)
+    {
+        $requestedWith = isset($server['HTTP_X_REQUESTED_WITH'])
+            ? strtolower(trim((string)$server['HTTP_X_REQUESTED_WITH']))
+            : '';
+        if ($requestedWith === 'xmlhttprequest') {
+            return true;
+        }
+
+        $accept = isset($server['HTTP_ACCEPT']) ? strtolower((string)$server['HTTP_ACCEPT']) : '';
+        return strpos($accept, 'application/json') !== false
+            && strpos($accept, 'text/html') === false;
+    }
+
+    /**
+     * Build the JSON body handed to an AJAX caller when checkout fails.
+     *
+     * @param string $message Buyer-facing message, may be empty.
+     * @param string $fallbackMessage Used when $message carries no text.
+     * @param string $redirectUrl Where a caller that prefers to navigate should go.
+     * @return array
+     */
+    public static function buildTwoCheckoutFailurePayload($message, $fallbackMessage, $redirectUrl)
+    {
+        $text = trim((string)$message);
+        if ($text === '') {
+            $text = trim((string)$fallbackMessage);
+        }
+
+        return array(
+            'error' => true,
+            'message' => $text,
+            'redirect_url' => (string)$redirectUrl,
+        );
+    }
+
+    /**
+     * Write the JSON failure body and stop. Isolated so tests can observe the
+     * payload without the process-terminating side effects.
+     *
+     * @param array $payload
+     * @return void
+     */
+    protected function emitTwoCheckoutJsonFailure(array $payload)
+    {
+        if (!headers_sent()) {
+            header('Content-Type: application/json');
+            http_response_code(Twopayment::HTTP_STATUS_BAD_REQUEST);
+        }
+        echo json_encode($payload);
+        exit;
     }
 
 }

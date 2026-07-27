@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Checkout failures now reach AJAX checkout front-ends instead of vanishing** (TWO-24768)
+  - The payment controller's only failure signal was a 302 back to the order page with the message flashed into the session. A checkout that posts the payment form over XHR rather than navigating (PrestaShop's own checkout module does) follows that redirect, receives the order page HTML with HTTP 200, cannot distinguish it from success, and leaves the buyer on a checkout that never moves
+  - AJAX callers (identified by `X-Requested-With: XMLHttpRequest`, or an `Accept` that asks for JSON and does not accept HTML) now receive `HTTP 400` with a JSON body carrying `error`, `message` and `redirect_url`. Ordinary browser form posts keep the existing redirect-with-notification behaviour unchanged
+  - Every failure exit in the payment controller now goes through the single `failCheckout()` boundary. Five of them - including the provider-rejection path that produced the reported silent hang - previously redirected inline and so bypassed it entirely
+  - Failures that deliberately carry no buyer-facing text (internal errors logged for the merchant) now emit a generic message to AJAX callers rather than an empty string, so the caller always has something to render
+- **"Two: Order Fulfilled - Trigger Statuses" multi-select now renders its saved selection** (TWO-24769)
+  - PrestaShop core's `HelperForm::generate()` rewrites a multi-select field's name in place (`$params['name'] .= '[]'`) and the admin form template then resolves the pre-selection with `$fields_value[$input.name]`, i.e. under the `[]`-suffixed key - verified identical in PS 1.7.6.5, 8.x and 9.x. The module populated only the plain key, so every option rendered unselected even though the stored value was correct (display-only; fulfillment triggering reads the configuration directly and was never affected)
+  - The pre-selection IDs are normalised to strings, matching the `id_order_state` the option values are built from, so the comparison no longer relies on PrestaShop's loose `==` in the template
+  - The custom-order-state recovery path (`ensureCustomStatesExist()`, which fires when Two's own order states are missing) wrote `PS_TWO_OS_FULFILLED_MAP` as a bare status ID rather than the JSON array every other writer uses - three divergent storage formats for one key. It now writes the canonical JSON array, and the 2.6.2 upgrade script normalises any value a store is already holding in the legacy format
+  - Module version bumped to `2.6.2`
+- **Shipping amount and shipping VAT rate now come from the cart, not from a loadable carrier** (TWO-25161)
+  - The shipping line's amount is sourced from the cart's own shipping total rather than being gated on constructing a `Carrier` object. Carts with no resolvable carrier previously dropped the shipping amount from the Two payload entirely - the order's totals no longer reconciled with the shop's - and now reconcile
+  - The shipping VAT rate is the platform-declared rate resolved from the cart's carrier list, never derived from `tax / net`, consistent with the line-item rate relay (TWO-24880)
+  - When the selected delivery option spans several tax-rules groups, the shipping charge is split into one line per declared rate instead of emitting a single blended rate
+- **Checkout-path latency: 12 buyer-blocking round trips reduced to 5** (TWO-24799)
+  - Company lookups that Two cannot resolve are now negatively cached (short TTL, keyed on org number + country + address ID), so a saved address carrying an unresolvable org number no longer re-pays the verification round trip on every checkout update
+  - Order-intent calls are deduped against a session-scoped decision snapshot, so a checkout update that moves no decision input reuses the previous decision instead of re-running the intent call
+  - Measured over a six-step checkout session
+
 ### Changed
 - **Invoice upload is now gated on the merchant record, not an admin toggle** (TWO-25111, per decision TWO-25106 Option A)
   - The plugin-side invoice upload (own-invoice merchants) now triggers only when the `invoice_distributed_by_merchant` flag on the Two merchant record (`GET /v1/merchant`) is true - the same signal checkout-api itself enforces (TWO-24761), and the same gating model Magento (TWO-24758) and WooCommerce (TWO-24757) use

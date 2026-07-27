@@ -5528,6 +5528,10 @@ require __DIR__ . '/MinimumOrderGateSpec.php';
 require __DIR__ . '/InvoiceUploadGateSpec.php';
 require __DIR__ . '/FxRatesSpec.php';
 require __DIR__ . '/TwoSoleTraderSpec.php';
+require __DIR__ . '/ShippingCostSourcingSpec.php';
+require __DIR__ . '/AjaxCheckoutFailureSpec.php';
+require __DIR__ . '/CheckoutLatencySpec.php';
+require __DIR__ . '/FulfilledStatusMappingSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
@@ -5546,6 +5550,10 @@ $tests = [
     'InvoiceUploadGateSpec::runAll' => [InvoiceUploadGateSpec::class, 'runAll'],
     'FxRatesSpec::runAll' => [FxRatesSpec::class, 'runAll'],
     'TwoSoleTraderSpec::runAll' => [TwoSoleTraderSpec::class, 'runAll'],
+    'ShippingCostSourcingSpec::runAll' => [ShippingCostSourcingSpec::class, 'runAll'],
+    'AjaxCheckoutFailureSpec::runAll' => [AjaxCheckoutFailureSpec::class, 'runAll'],
+    'CheckoutLatencySpec::runAll' => [CheckoutLatencySpec::class, 'runAll'],
+    'FulfilledStatusMappingSpec::runAll' => [FulfilledStatusMappingSpec::class, 'runAll'],
 ];
 
 $failed = 0;

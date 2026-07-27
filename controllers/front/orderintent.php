@@ -417,11 +417,44 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             // Get order intent data
             $paymentdata = $this->module->getTwoIntentOrderData($cart, $customer, $currency, $address);
 
-            // Return payload only (frontend will call Two API directly)
-            $this->sendJsonResponse(json_encode([
+            // TWO-24799: snapshot-dedupe the UX-only intent check. Every
+            // checkout update (payment-option toggle, surcharge cart-line
+            // refresh, payment form re-render) re-runs this handler and the
+            // browser then pays a 2.5-3s /v1/order_intent round trip, even when
+            // none of the decision inputs moved. Hand the browser back the
+            // decision it already got for this exact snapshot so it can skip
+            // that call. Any cart, address, country or company change yields a
+            // different hash and the call happens for real.
+            //
+            // This is a UX cache only: the authoritative gate remains
+            // Twopayment::checkTwoOrderIntentApprovalAtPayment() at payment
+            // submit, which always calls the provider and is never served from
+            // here.
+            $snapshotHash = $this->module->calculateTwoOrderIntentSnapshotHash($cart, $paymentdata);
+            $cachedDecision = $this->module->getTwoCachedOrderIntentDecision($snapshotHash);
+            $this->module->markTwoPendingOrderIntentSnapshot($snapshotHash);
+
+            $response = [
                 'success' => true,
-                'payload' => $paymentdata
-            ]));
+                'payload' => $paymentdata,
+            ];
+
+            if ($cachedDecision !== null) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Reused cached order intent decision for unchanged snapshot (approved=' .
+                    ($cachedDecision['approved'] ? '1' : '0') . ')',
+                    1
+                );
+                $response['intent_decision'] = [
+                    'approved' => (bool) $cachedDecision['approved'],
+                    'timestamp' => (int) $cachedDecision['timestamp'],
+                ];
+            }
+
+            $this->context->cookie->write();
+
+            // Return payload only (frontend will call Two API directly)
+            $this->sendJsonResponse(json_encode($response));
             return;
         } catch (Exception $e) {
             // Log exception for debugging
@@ -464,7 +497,13 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         // Store in PrestaShop cookie (session-based) for server-side validation
         $this->context->cookie->two_order_intent_approved = $approved ? '1' : '0';
         $this->context->cookie->two_order_intent_timestamp = (string)$timestamp;
-        
+
+        // TWO-24799: bind the reported decision to the snapshot hash the server
+        // computed when it handed this browser the payload, so the next
+        // checkout update with identical decision inputs can skip the provider
+        // round trip. The hash is never taken from the request.
+        $this->module->storeTwoOrderIntentDecisionForPendingSnapshot($approved);
+
         // Write cookie to ensure it's saved
         $this->context->cookie->write();
 
@@ -494,6 +533,10 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         // Clear order intent result from cookie
         unset($this->context->cookie->two_order_intent_approved);
         unset($this->context->cookie->two_order_intent_timestamp);
+        // TWO-24799: the buyer switching away from Two is an explicit reset, so
+        // the deduped decision goes with it - a later switch back re-checks for
+        // real rather than reviving a decision the buyer never sees confirmed.
+        $this->module->clearTwoCachedOrderIntentDecision();
         $this->context->cookie->write();
 
         PrestaShopLogger::addLog('TwoPayment: Order intent result cleared from session', 1);
@@ -674,7 +717,16 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
                         1
                     );
                     
-                    $verifiedCompany = $this->module->verifyCompanyByOrgNumber($existingOrgNumber, $countryIso);
+                    // TWO-24799: memoises both outcomes for the session. The
+                    // success path was already cached below via the
+                    // two_company_* cookie; this also stops an unresolvable org
+                    // number re-paying a blocking company lookup on every
+                    // checkout update.
+                    $verifiedCompany = $this->module->getTwoVerifiedCompanyForOrgNumber(
+                        $existingOrgNumber,
+                        $countryIso,
+                        $selectedAddressId
+                    );
                     
                     if ($verifiedCompany && !empty($verifiedCompany['organization_number'])) {
                         // SUCCESS! We have verified company data from existing address
