@@ -4413,51 +4413,39 @@ class Twopayment extends PaymentModule
                 ) as $segment) {
                     $items[] = $this->buildTwoChargeLineFromSegment($shipping_line_template, $segment);
                 }
-            } elseif ($carrier_is_loaded) {
-                // DECLARED-RATE RELAY: the shipping rate is the carrier's own
-                // tax-rules group resolved at the cart's tax address — never
-                // derived from tax/net, never snapped.
-                $shipping_tax_rate_decimal = $this->getTwoCarrierConfiguredTaxRateDecimal($carrier, $cart);
-                // Diagnostic (TWO-25161): which carrier and which tax-rules
-                // group actually supplied the rate. The carrier-list chain was
-                // verified against core sources, never executed against a real
-                // merchant's carrier table, so the resolved IDs are logged on
-                // every shipping line to confirm the case a live cart hits.
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Cart ' . (int) $cart->id . ' relayed the declared shipping tax rate from ' .
-                    'carrier ' . (int) $cart->id_carrier . ' (tax_rules_group=' .
-                    (int) $carrier->getIdTaxRulesGroup() . ', rate=' .
-                    round($shipping_tax_rate_decimal * 100, 2) . '%).',
-                    1
-                );
-                $this->assertTwoDeclaredRateReconcilesWithAmounts(
-                    'shipping (' . $shipping_name . ')',
-                    $shipping_net,
-                    $shipping_tax_amount,
-                    $shipping_tax_rate_decimal
-                );
-                $items[] = $this->buildTwoChargeLineFromSegment($shipping_line_template, [
-                    'net' => $shipping_net,
-                    'tax' => $shipping_tax_amount,
-                    'gross' => $shipping_gross,
-                    'rate' => $shipping_tax_rate_decimal,
-                ]);
             } else {
-                // No loadable `id_carrier`, but the carriers that priced the
-                // shipping are still enumerable from the cart's own delivery
-                // option, and each one declares a tax-rules group. Relay that.
-                // A rate computed from the shipping amounts is NOT an option:
-                // 2dp-rounded figures cannot tell a clean 21% from 20.98%, and
-                // the relayed rate is asserted against the amounts again at
-                // invoicing time.
-                $shipping_rate_classes = $this->resolveTwoCartShippingRateClasses($cart, $shipping_gross);
+                // DECLARED-RATE RELAY: the shipping rate is always a tax-rules
+                // group the merchant declared on a carrier, resolved at the
+                // cart's tax address — never derived from tax/net, never
+                // snapped, never blended. A rate computed from the shipping
+                // amounts is NOT an option: 2dp-rounded figures cannot tell a
+                // clean 21% from 20.98%, and the relayed rate is asserted
+                // against the amounts again at invoicing time.
+                //
+                // The question that decides one line or several is how many
+                // tax-rules groups the SELECTED DELIVERY OPTION spans — NOT
+                // whether `$cart->id_carrier` happens to load. Core's
+                // Cart::setDeliveryOption() only recomputes `id_carrier` when
+                // the cart has a single delivery option, so a ship-to-multiple-
+                // addresses cart keeps a stale non-zero `id_carrier`. Gating the
+                // split on carrier loadability applied that one carrier's group
+                // to a shipping total spanning several, and the resulting blend
+                // hid inside the 2-cent reconciliation tolerance instead of
+                // failing — the exact class of silent approximation this change
+                // exists to remove. `id_carrier` now only supplies the line's
+                // name, delay text and by-weight/by-price suffix (above).
+                $shipping_rate_classes = $this->resolveTwoCartShippingRateClasses(
+                    $cart,
+                    $shipping_gross,
+                    $carrier_is_loaded ? $carrier : null
+                );
 
                 if (count($shipping_rate_classes) > 1) {
-                    // MIXED DECLARED RATES: the selected delivery option spans
-                    // carriers whose tax-rules groups resolve differently. Emit
-                    // one SHIPPING_FEE line per rate, weighted by the
-                    // per-carrier nets the cart already holds — never a blended
-                    // rate, never one carrier's rate applied to all of them.
+                    // MIXED DECLARED RATES: the delivery option spans carriers
+                    // whose tax-rules groups resolve differently. Emit one
+                    // SHIPPING_FEE line per rate, weighted by the per-carrier
+                    // nets the cart already holds — never one carrier's rate
+                    // applied to all of them.
                     foreach ($this->splitTwoChargeAcrossRateClasses(
                         $shipping_net,
                         $shipping_tax_amount,
@@ -5822,8 +5810,16 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Declared shipping tax rate classes for a cart with no loadable
-     * `id_carrier` (TWO-25161).
+     * Declared shipping tax rate classes for a cart, resolved from the cart's
+     * own selected delivery option (TWO-25161).
+     *
+     * The delivery option is the authority here, not `$cart->id_carrier`: core
+     * only recomputes `id_carrier` when the cart has a single delivery option,
+     * so a ship-to-multiple-addresses cart carries a stale non-zero
+     * `id_carrier` while its shipping total spans several tax-rules groups. The
+     * caller therefore always asks this resolver, and passes the loaded carrier
+     * (when there is one) only as the fallback for a cart whose delivery option
+     * cannot be read at all.
      *
      * PrestaShop keeps the shipping tax-rules group on the carrier row and
      * nowhere else — there is no shop-level shipping tax group — but the
@@ -5846,10 +5842,12 @@ class Twopayment extends PaymentModule
      *
      * @param Cart $cart
      * @param float $shipping_gross Authoritative 2dp shipping gross, for the failure message
+     * @param Carrier|null $fallback_carrier Cart's loaded carrier, used only when the
+     *                                       delivery option yields no carrier at all
      * @return array<string,array{rate:float,net_weight:float}> Keyed by formatted rate
      * @throws TwoCheckoutAmountException When no carrier with a declared tax-rules group can be resolved
      */
-    private function resolveTwoCartShippingRateClasses($cart, $shipping_gross)
+    private function resolveTwoCartShippingRateClasses($cart, $shipping_gross, $fallback_carrier = null)
     {
         $selected_options = $cart->getDeliveryOption(null, false, false);
         $option_list = $cart->getDeliveryOptionList();
@@ -5884,7 +5882,10 @@ class Twopayment extends PaymentModule
                         // PS_CARRIER_DEFAULT / cheapest-in-range fallback.
                         // Inferring a rate from that price is exactly what must
                         // not happen, and silently sending 0% would misreport
-                        // the merchant's VAT. Refuse the order instead.
+                        // the merchant's VAT. Refuse the order instead — also
+                        // when `$cart->id_carrier` happens to load, because a
+                        // stale carrier's group is not the group core taxed
+                        // this option's shipping with.
                         throw $this->buildTwoShippingRateUnresolvableException(
                             $cart,
                             $shipping_gross,
@@ -5913,6 +5914,33 @@ class Twopayment extends PaymentModule
         }
 
         if (empty($classes)) {
+            // The delivery option could not be read at all (no option list, or
+            // a shape this version of core does not expose). A cart whose
+            // `id_carrier` loads still has a merchant-declared group on that
+            // carrier row, which is a declared rate and not an approximation,
+            // so relay it — this is the pre-TWO-25161 behaviour, kept as the
+            // fallback rather than as the primary path.
+            if (is_object($fallback_carrier) && Validate::isLoadedObject($fallback_carrier)) {
+                $fallback_group_id = method_exists($fallback_carrier, 'getIdTaxRulesGroup')
+                    ? (int) $fallback_carrier->getIdTaxRulesGroup()
+                    : 0;
+                $fallback_rate = $this->getTwoCarrierConfiguredTaxRateDecimal($fallback_carrier, $cart);
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Cart ' . (int) $cart->id . ' exposed no readable delivery-option carrier ' .
+                    'list; relaying the declared shipping tax rate from its own carrier ' .
+                    (int) $cart->id_carrier . ' (tax_rules_group=' . $fallback_group_id . ', rate=' .
+                    round($fallback_rate * 100, 2) . '%).',
+                    1
+                );
+
+                return [
+                    $this->formatTwoTaxRate($fallback_rate) => [
+                        'rate' => $fallback_rate,
+                        'net_weight' => max(0.0, (float) $shipping_gross),
+                    ],
+                ];
+            }
+
             throw $this->buildTwoShippingRateUnresolvableException($cart, $shipping_gross, 0, '', 0);
         }
 

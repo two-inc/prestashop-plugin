@@ -32,6 +32,7 @@ final class ShippingCostSourcingSpec
         self::testFreeShippingCarrierlessCartStillBuilds();
         self::testUnloadableCarrierRefusesRatherThanGuessTheRate();
         self::testMixedDeclaredRatesSplitIntoOneLinePerRate();
+        self::testStaleIdCarrierOnMultiAddressCartStillSplitsPerRate();
     }
 
     /**
@@ -62,6 +63,20 @@ final class ShippingCostSourcingSpec
         StubStore::$cartDeliveryOptionLists[$cartId] = [
             $addressId => [$optionKey => ['carrier_list' => $carrierList]],
         ];
+    }
+
+    /**
+     * Same fixture, merged in rather than replacing: a ship-to-multiple-
+     * addresses cart has one delivery-option entry per address, which is the
+     * shape core hands back and the shape `id_carrier` cannot represent.
+     *
+     * @param array<int,array{net:float,gross:float,group:int}> $carriers By carrier id
+     */
+    private static function seedDeliveryOptionForAddress(int $cartId, int $addressId, array $carriers): void
+    {
+        $existing = StubStore::$cartDeliveryOptionLists[$cartId] ?? [];
+        self::seedDeliveryOption($cartId, $addressId, $carriers);
+        StubStore::$cartDeliveryOptionLists[$cartId] = $existing + StubStore::$cartDeliveryOptionLists[$cartId];
     }
 
     /** Did any log line mention this fragment? */
@@ -366,6 +381,120 @@ final class ShippingCostSourcingSpec
         );
 
         TinyAssert::same('150.70', (string)$payload['gross_amount']);
+        TinyAssert::same('126.00', (string)$payload['net_amount']);
+    }
+
+    /**
+     * (f) The stale-`id_carrier` case: core's Cart::setDeliveryOption() only
+     * recomputes `id_carrier` when the cart has a SINGLE delivery option, so a
+     * ship-to-multiple-addresses cart keeps a non-zero, loadable `id_carrier`
+     * while its shipping total spans several tax-rules groups.
+     *
+     * Gating the per-rate split on carrier loadability applied that one
+     * carrier's declared group to the whole shipping total, and - the reason
+     * this is not a cosmetic edge case - the resulting blend lands INSIDE the
+     * 2-cent reconciliation tolerance, so it passed silently and put a wrong
+     * declared rate on a real invoice. Here: 25.00 at 21% plus 1.00 at 20% is
+     * 5.45 tax, while 26.00 at a flat 21% implies 5.46 - one cent of divergence,
+     * well inside TAX_FORMULA_TOLERANCE.
+     *
+     * The decision must come from how many groups the delivery option spans,
+     * never from whether `id_carrier` loads.
+     */
+    private static function testStaleIdCarrierOnMultiAddressCartStillSplitsPerRate(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        self::seedCommonFixtures(9106, 9116);
+        $cart = new Cart(9106);
+        $cart->id_customer = 9106;
+        $cart->id_currency = 978;
+        $cart->id_address_invoice = 9116;
+        $cart->id_address_delivery = 9116;
+        $cart->id_lang = 1;
+        self::seedProductLine($cart, 9126);
+
+        StubStore::$taxRuleRates[7301] = 21.0;
+        StubStore::$taxRuleRates[7302] = 20.0;
+        // Two packages, one per delivery address, each with its own carrier and
+        // its own declared tax-rules group.
+        self::seedDeliveryOption(9106, 9116, [
+            7021 => ['net' => 25.00, 'gross' => 30.25, 'group' => 7301],
+        ]);
+        self::seedDeliveryOptionForAddress(9106, 9117, [
+            7022 => ['net' => 1.00, 'gross' => 1.20, 'group' => 7302],
+        ]);
+
+        // The stale value core left behind: carrier 7021 loads, and its 21% is
+        // the rate the old gate would have applied to all 26.00.
+        $cart->id_carrier = 7021;
+
+        // Shipping 31.45 gross / 26.00 net (5.25 + 0.20 tax).
+        StubStore::$cartTotals[9106] = [
+            true => [
+                Cart::ONLY_DISCOUNTS => 0.00,
+                Cart::ONLY_SHIPPING => 31.45,
+                Cart::BOTH => 152.45,
+            ],
+            false => [
+                Cart::ONLY_DISCOUNTS => 0.00,
+                Cart::ONLY_SHIPPING => 26.00,
+                Cart::BOTH => 126.00,
+            ],
+        ];
+
+        $payload = $module->getTwoNewOrderData('merchant-attempt-9106', $cart, self::merchantUrls());
+
+        $shippingLines = [];
+        foreach ($payload['line_items'] as $line) {
+            if ((string)($line['type'] ?? '') === 'SHIPPING_FEE') {
+                $shippingLines[] = $line;
+            }
+        }
+
+        TinyAssert::count(
+            2,
+            $shippingLines,
+            'A stale id_carrier must not collapse a multi-group delivery option into one rate'
+        );
+
+        $byRate = [];
+        $grossSum = 0.0;
+        $netSum = 0.0;
+        $taxSum = 0.0;
+        foreach ($shippingLines as $line) {
+            $byRate[(string)$line['tax_rate']] = $line;
+            $grossSum += (float)$line['gross_amount'];
+            $netSum += (float)$line['net_amount'];
+            $taxSum += (float)$line['tax_amount'];
+        }
+
+        TinyAssert::true(isset($byRate['0.21']), 'The 21% package keeps its own declared rate');
+        TinyAssert::true(isset($byRate['0.2']), 'The 20% package keeps its own declared rate');
+        TinyAssert::same('25.00', (string)$byRate['0.21']['net_amount']);
+        TinyAssert::same('5.25', (string)$byRate['0.21']['tax_amount']);
+        TinyAssert::same('1.00', (string)$byRate['0.2']['net_amount']);
+        TinyAssert::same('0.20', (string)$byRate['0.2']['tax_amount']);
+
+        // Cent-exact against PrestaShop's own shipping totals, so nothing hides
+        // in the reconciliation tolerance.
+        TinyAssert::same('31.45', number_format($grossSum, 2, '.', ''));
+        TinyAssert::same('26.00', number_format($netSum, 2, '.', ''));
+        TinyAssert::same('5.45', number_format($taxSum, 2, '.', ''));
+
+        // Both carriers were resolved from the delivery option even though
+        // id_carrier pointed at one of them.
+        TinyAssert::true(
+            self::loggedContains('carrier=7021 tax_rules_group=7301 rate=21%'),
+            'The delivery option carrier list must be walked, not id_carrier'
+        );
+        TinyAssert::true(
+            self::loggedContains('carrier=7022 tax_rules_group=7302 rate=20%'),
+            'The second package carrier must be resolved too'
+        );
+
+        TinyAssert::same('152.45', (string)$payload['gross_amount']);
         TinyAssert::same('126.00', (string)$payload['net_amount']);
     }
 
