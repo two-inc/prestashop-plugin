@@ -10,11 +10,13 @@
  * Matches the Magento/WooCommerce plugins' model: there is NO account-type
  * selector on the address form (B2B checkout - the company field is
  * always present). Instead the payment step shows a Business / Sole
- * trader TOGGLE, gated by two layers that both must pass:
- *  - country-level legal truth from the registry endpoint
- *    GET /registry/v1/supported-company-types/<ISO> (TWO-24753) - GB/US
- *    currently, NO/SE not, and
- *  - the merchant's PS_TWO_ENABLE_SOLE_TRADER admin toggle (default off).
+ * trader TOGGLE, gated on ONE thing only: country-level legal truth from
+ * the registry endpoint GET /registry/v1/supported-company-types/<ISO>
+ * (TWO-24753) - GB/US currently, NO/SE not. There is deliberately no
+ * merchant admin toggle (the former PS_TWO_ENABLE_SOLE_TRADER was removed
+ * in TWO-25166): whether a buyer in a country can be a sole trader is
+ * Two's registry answer, not a merchant preference, and Magento's
+ * toggle-less behaviour is the cross-plugin target state (TWO-25163).
  *
  * Picking Sole Trader mints two delegated-authority tokens server-side
  * with the merchant API key, the buyer registers or logs in through
@@ -76,19 +78,11 @@ class TwoSoleTrader
     );
 
     /**
-     * Whether the merchant has opted into sole trader checkout at all.
-     * The toggle is the ONLY gate on the merchant side - there is no
-     * account-type mode to also satisfy (that selector feature has been
-     * removed; TWO-24755 rework).
-     */
-    public static function isEnabled()
-    {
-        return (int) Configuration::get('PS_TWO_ENABLE_SOLE_TRADER') === 1;
-    }
-
-    /**
      * Whether the Sole Trader toggle should be offered for a billing
-     * country: merchant toggle on AND the country legally supports it.
+     * country. The registry's answer for that country is the ONLY gate -
+     * and it is also the security barrier the order-intent controller
+     * relies on before minting delegated-authority tokens, so it must
+     * stay the single source of truth here (TWO-25166).
      *
      * @param Twopayment $module
      * @param string $countryIso
@@ -97,8 +91,7 @@ class TwoSoleTrader
      */
     public static function isAvailable($module, $countryIso)
     {
-        return self::isEnabled()
-            && in_array(self::SOLE_TRADER, self::getSupportedCompanyTypes($module, $countryIso), true);
+        return in_array(self::SOLE_TRADER, self::getSupportedCompanyTypes($module, $countryIso), true);
     }
 
     /**
