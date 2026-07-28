@@ -381,19 +381,24 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         // ENHANCED VALIDATION: Provide clear status codes for different company data scenarios
         // This allows frontend to show specific guidance to users
         
-        // Case 1: No company name at all - user hasn't entered company details
-        if (empty($companyName)) {
-            PrestaShopLogger::addLog('TwoPayment: No company name provided - prompting user', 2);
-            $this->sendJsonResponse(json_encode([
-                'success' => false,
-                'status' => 'no_company',
-                'error' => $this->module->l('To pay with Two, go back to your billing address and enter your company name in the Company field.')
-            ]));
-            return;
-        }
-        
-        // Case 2: Has company name but no org number - common with existing addresses
+        // An org number is the business identity Two resolves against the
+        // company registry, and it resolves the company NAME from that registry
+        // too - overwriting whatever the plugin sent. So an org number without a
+        // local company name is a complete, usable identity and must not be
+        // blocked here (TWO-25206); the payload path has always sent it that way.
         if (empty($companyId)) {
+            // Case 1: No company name and no org number - user hasn't entered company details
+            if (empty($companyName)) {
+                PrestaShopLogger::addLog('TwoPayment: No company name provided - prompting user', 2);
+                $this->sendJsonResponse(json_encode([
+                    'success' => false,
+                    'status' => 'no_company',
+                    'error' => $this->module->l('To pay with Two, go back to your billing address and enter your company name in the Company field.')
+                ]));
+                return;
+            }
+
+            // Case 2: Has company name but no org number - common with existing addresses
             PrestaShopLogger::addLog('TwoPayment: Company name exists but no org number - prompting user to search', 2);
             $this->sendJsonResponse(json_encode([
                 'success' => false,
@@ -403,11 +408,12 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             return;
         }
 
-        // A company name plus a verified org number is the business guard
-        // (TWO-24755): registered businesses search/select their company,
-        // and enrolled sole traders carry the synthetic org number their
-        // Two registration minted, so both arrive here as a valid
-        // business - there is no account-type selector to also check.
+        // An org number is the business guard (TWO-24755): registered
+        // businesses search/select their company, and enrolled sole traders
+        // carry the synthetic org number their Two registration minted, so both
+        // arrive here as a valid business - there is no account-type selector to
+        // also check. Whether the org number is real is Two's call, made on the
+        // order-intent request itself (TWO-25206).
 
         try {
             // Set address with validated form data for API call (form-first approach)
@@ -629,14 +635,14 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
     }
 
     /**
-     * Get company data using PrestaShop-native fallback chain with smart auto-resolution
-     * Priority: Form data → Session → Address fields (with org number verification via Two API)
-     * 
-     * CRITICAL FIX: When a logged-in user uses an existing address, we check for organization
-     * numbers stored in address fields (dni, vat_number) and verify them via Two's API.
-     * This is MORE RELIABLE than searching by company name because org numbers give exact matches.
-     * 
-     * Example: https://api.two.inc/companies/v2/company?q=A81304487&country=ES returns exact match
+     * Get company data using PrestaShop-native fallback chain
+     * Priority: Form data → Session → Address fields → Partial session → Partial form
+     *
+     * When a logged-in user checks out against an existing address, an organization
+     * number stored in that address (dni, vat_number, companyid) is taken as-is and
+     * handed to Two, which validates its format and resolves it against the company
+     * registry on the order-intent request (TWO-25206). This module makes no company
+     * lookup of its own on this path.
      */
     private function getCompanyDataWithFallbacks()
     {
@@ -698,68 +704,53 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             ];
         }
         
-        // Priority 3: Customer's address with ORG NUMBER VERIFICATION via Two API
-        // This is the KEY FIX - we look for org numbers in address fields and verify them
+        // Priority 3: Org number stored on the customer's saved address, used AS-IS.
+        //
+        // TWO-25206: the plugin used to pre-verify this org number against
+        // /companies/v2/company before letting it through. That call was
+        // redundant and could block buyers Two accepts:
+        //  - Two verifies the org number synchronously on the very same
+        //    /v1/order_intent request this handler builds the payload for -
+        //    per-country format and checksum validation, then an exact
+        //    by-org-number registry lookup - and rejects the intent with
+        //    COMPANY_NOT_FOUND when it does not resolve.
+        //  - Two also overwrites the company name from the registry, so any
+        //    name resolved here was discarded and re-derived anyway.
+        //  - The pre-check used the FUZZY search endpoint while order intent
+        //    uses the exact one, so a resolvable company could fail the
+        //    pre-check and hard-block the buyer; a slow provider was
+        //    indistinguishable from "company does not exist"; and a single
+        //    fuzzy hit was accepted even when its org number differed from the
+        //    one searched, caching another company as the buyer's identity.
+        //
+        // The payload path (Twopayment::getCompanyDataWithFallbacks()) has
+        // always sent this org number unverified, so the pre-check never
+        // guarded the payload - only its own prompt.
         $address = new Address($selectedAddressId);
         if (Validate::isLoadedObject($address)) {
             $countryIso = Country::getIsoById($address->id_country);
-            
+
             if ($countryIso && is_string($countryIso)) {
-                // STEP 1: Try to extract organization number from address fields
-                // This checks dni, vat_number, companyid fields
+                // Look for an organization number in dni, vat_number, companyid.
                 $existingOrgNumber = $this->module->extractOrgNumberFromAddress($address, $countryIso);
-                
+
                 if (!empty($existingOrgNumber)) {
-                    // STEP 2: Verify the org number via Two's API to get company name
-                    // This gives us an EXACT match - no vagueness like name-based search
                     PrestaShopLogger::addLog(
-                        'TwoPayment: Found org number in address (' . $existingOrgNumber . '), verifying via Two API',
+                        'TwoPayment: Using org number from address for ' . $countryIso .
+                        ' unverified - Two verifies it on order intent',
                         1
                     );
-                    
-                    // TWO-24799: memoises both outcomes for the session. The
-                    // success path was already cached below via the
-                    // two_company_* cookie; this also stops an unresolvable org
-                    // number re-paying a blocking company lookup on every
-                    // checkout update.
-                    $verifiedCompany = $this->module->getTwoVerifiedCompanyForOrgNumber(
-                        $existingOrgNumber,
-                        $countryIso,
-                        $selectedAddressId
-                    );
-                    
-                    if ($verifiedCompany && !empty($verifiedCompany['organization_number'])) {
-                        // SUCCESS! We have verified company data from existing address
-                        $resolvedCompany = $verifiedCompany['name'];
-                        $resolvedOrgNumber = $verifiedCompany['organization_number'];
-                        
-                        // Cache in session for future requests
-                        $this->context->cookie->two_company_name = $resolvedCompany;
-                        $this->context->cookie->two_company_id = $resolvedOrgNumber;
-                        $this->context->cookie->two_company_country = $countryIso;
-                        $this->context->cookie->setExpire(time() + Twopayment::COOKIE_EXPIRY_ONE_HOUR);
-                        
-                        PrestaShopLogger::addLog(
-                            'TwoPayment: ✓ Company VERIFIED from address org number - ' . 
-                            $existingOrgNumber . ' => ' . $resolvedCompany . ' (cached in session)',
-                            1
-                        );
-                        
-                        return [
-                            'company' => $resolvedCompany,
-                            'companyid' => $resolvedOrgNumber
-                        ];
-                    } else {
-                        // Org number couldn't be verified - might be invalid or Two API issue
-                        PrestaShopLogger::addLog(
-                            'TwoPayment: Org number from address could not be verified: ' . $existingOrgNumber . 
-                            ' in ' . $countryIso . ' - user will need to search manually',
-                            2
-                        );
-                    }
+
+                    // Deliberately NOT cached in the two_company_* cookie: that
+                    // cookie holds company data verified by the company search,
+                    // and this org number has not been verified by anything yet.
+                    return [
+                        'company' => trim((string) $address->company),
+                        'companyid' => $existingOrgNumber
+                    ];
                 }
-                
-                // FALLBACK: Address has company name but no verifiable org number
+
+                // FALLBACK: Address has company name but no org number in any field
                 // User will need to use company search to select their company
                 if (!empty($address->company)) {
                     PrestaShopLogger::addLog(
