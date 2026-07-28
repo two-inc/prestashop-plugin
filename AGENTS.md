@@ -31,6 +31,10 @@ make test      # php tests/run.php
 make phpstan   # static analysis
 ```
 
+If you touched shipping-tax resolution, also run the real-engine probes:
+`make carrierless-shop && make test-integration` (undo with `make carrierless-off`).
+CI runs them on PrestaShop 8 and 9.
+
 Lint each PHP file you edited:
 
 ```bash

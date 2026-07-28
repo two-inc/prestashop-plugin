@@ -122,8 +122,9 @@ Always run the order-builder test suite after tax/amount edits.
 Run from module root:
 
 ```bash
-make test      # php tests/run.php in the CI container
-make phpstan   # the static-analysis gate CI runs
+make test              # php tests/run.php in the CI container
+make phpstan           # the static-analysis gate CI runs
+make test-integration  # real-engine probes; needs `make carrierless-shop` first
 ```
 
 Lint any PHP file you touched (`php -l path/to/file.php`).

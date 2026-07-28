@@ -396,6 +396,7 @@ make install    # boot a local PrestaShop with the module installed
 make test       # the unit harness CI runs (php tests/run.php)
 make phpstan    # the static-analysis gate CI runs
 make format     # php-cs-fixer (PSR-12)
+make test-integration  # real-engine probes (see tests/integration/README.md)
 ```
 
 ## API Integration
