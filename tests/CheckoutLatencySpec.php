@@ -3,17 +3,13 @@
 declare(strict_types=1);
 
 /**
- * TWO-24799 - checkout-path latency: the nested company lookup and the
- * order-intent snapshot dedupe. Contract under test:
+ * TWO-24799 - checkout-path latency: the order-intent snapshot dedupe.
+ * Contract under test:
  *
- *  - Nested company lookup. An org number found on a saved address is verified
- *    against /companies/v2/company on the buyer-blocking path. The SUCCESS path
- *    was already memoised (the caller writes the resolved company into the
- *    two_company_* cookie); the MISS path was not, so an unresolvable org number
- *    re-paid that blocking round trip on every checkout update, forever
- *    returning the same null. getTwoVerifiedCompanyForOrgNumber() memoises both,
- *    keyed on org number + country + address ID so editing any of the three
- *    re-verifies instead of inheriting the miss.
+ *  - Nested company lookup. Removed outright by TWO-25206 rather than kept
+ *    memoised: the lookup duplicated one Two already makes on the same
+ *    order-intent request. Its specs moved to OrgNumberPreVerificationSpec,
+ *    which asserts the removal and the unverified pass-through that replaced it.
  *
  *  - Order-intent snapshot dedupe. Every checkout update re-runs the intent
  *    handler and the browser then pays a 2.5-3s /v1/order_intent round trip even
@@ -36,15 +32,6 @@ final class CheckoutLatencySpec
 {
     public static function runAll(): void
     {
-        // Nested company lookup
-        self::testRepeatedUnverifiableOrgNumberIsLookedUpOnlyOnce();
-        self::testVerifiedOrgNumberIsLookedUpOnlyOnce();
-        self::testCountryChangeBustsTheVerificationMiss();
-        self::testOrgNumberChangeBustsTheVerificationMiss();
-        self::testAddressSwitchBustsTheVerificationMiss();
-        self::testVerificationMissExpiresAfterTtl();
-        self::testSuccessfulVerificationForgetsAnEarlierMiss();
-
         // Order-intent snapshot dedupe
         self::testUnchangedSnapshotIsServedFromCache();
         self::testCachedDecisionPreservesDeclineAsWellAsApproval();
@@ -67,148 +54,6 @@ final class CheckoutLatencySpec
         Tools::resetTestValues();
         PrestaShopLogger::reset();
         Context::getContext()->cookie = new Cookie();
-    }
-
-    // -----------------------------------------------------------------
-    // Nested company lookup
-    // -----------------------------------------------------------------
-
-    /**
-     * Module that counts /companies/v2/company round trips instead of making
-     * them. $resolvable maps "ORGNUMBER|COUNTRY" to a verified company.
-     */
-    private static function countingModule(array $resolvable = []): TwopaymentTestHarness
-    {
-        return new class($resolvable) extends TwopaymentTestHarness {
-            public int $companyLookups = 0;
-            /** @var array<string,array{name:string,organization_number:string}> */
-            private array $resolvable;
-
-            public function __construct(array $resolvable)
-            {
-                parent::__construct();
-                $this->resolvable = $resolvable;
-            }
-
-            public function verifyCompanyByOrgNumber($orgNumber, $countryIso)
-            {
-                ++$this->companyLookups;
-                $key = strtoupper(trim((string) $orgNumber)) . '|' . strtoupper(trim((string) $countryIso));
-
-                return $this->resolvable[$key] ?? null;
-            }
-        };
-    }
-
-    /**
-     * The measured regression: six checkout updates against an address whose org
-     * number Two cannot resolve used to cost six blocking lookups. One now.
-     */
-    private static function testRepeatedUnverifiableOrgNumberIsLookedUpOnlyOnce(): void
-    {
-        self::reset();
-        $module = self::countingModule();
-
-        for ($i = 0; $i < 6; ++$i) {
-            $result = $module->getTwoVerifiedCompanyForOrgNumber('B12345678', 'ES', 1901);
-            TinyAssert::same(null, $result, 'An unresolvable org number must keep resolving to null');
-        }
-
-        TinyAssert::same(1, $module->companyLookups, 'Six identical checkout updates must cost one company lookup');
-    }
-
-    private static function testVerifiedOrgNumberIsLookedUpOnlyOnce(): void
-    {
-        self::reset();
-        $module = self::countingModule([
-            'B12345678|ES' => ['name' => 'ACME S.L.', 'organization_number' => 'B12345678'],
-        ]);
-
-        // The success path is memoised by the caller's two_company_* cookie, so
-        // assert the resolved value is stable rather than re-deriving it here.
-        for ($i = 0; $i < 4; ++$i) {
-            $result = $module->getTwoVerifiedCompanyForOrgNumber('B12345678', 'ES', 1901);
-            TinyAssert::same('ACME S.L.', $result['name']);
-        }
-
-        TinyAssert::same(4, $module->companyLookups, 'A verified org number is cached by the caller, not by the miss marker');
-    }
-
-    private static function testCountryChangeBustsTheVerificationMiss(): void
-    {
-        self::reset();
-        $module = self::countingModule();
-
-        $module->getTwoVerifiedCompanyForOrgNumber('B12345678', 'ES', 1901);
-        TinyAssert::same(1, $module->companyLookups);
-
-        // Country switch: must NOT inherit the ES miss (TWO-24867 bug class).
-        $module->getTwoVerifiedCompanyForOrgNumber('B12345678', 'GB', 1901);
-        TinyAssert::same(2, $module->companyLookups, 'A country switch must re-verify the org number');
-    }
-
-    private static function testOrgNumberChangeBustsTheVerificationMiss(): void
-    {
-        self::reset();
-        $module = self::countingModule();
-
-        $module->getTwoVerifiedCompanyForOrgNumber('B12345678', 'ES', 1901);
-        $module->getTwoVerifiedCompanyForOrgNumber('B87654321', 'ES', 1901);
-
-        TinyAssert::same(2, $module->companyLookups, 'A corrected org number must re-verify');
-    }
-
-    private static function testAddressSwitchBustsTheVerificationMiss(): void
-    {
-        self::reset();
-        $module = self::countingModule();
-
-        $module->getTwoVerifiedCompanyForOrgNumber('B12345678', 'ES', 1901);
-        $module->getTwoVerifiedCompanyForOrgNumber('B12345678', 'ES', 1902);
-
-        TinyAssert::same(2, $module->companyLookups, 'Switching billing address must re-verify');
-    }
-
-    /**
-     * The miss is a latency guard, not a verdict: a provider hiccup must
-     * self-heal inside the same checkout session.
-     */
-    private static function testVerificationMissExpiresAfterTtl(): void
-    {
-        self::reset();
-        $module = self::countingModule();
-
-        $module->getTwoVerifiedCompanyForOrgNumber('B12345678', 'ES', 1901);
-        TinyAssert::same(1, $module->companyLookups);
-
-        // Age the marker past its TTL.
-        $encoded = (string) Context::getContext()->cookie->two_company_verify_miss;
-        $decoded = json_decode($encoded, true);
-        $decoded['at'] = time() - (Twopayment::COMPANY_VERIFY_MISS_CACHE_TTL + 1);
-        Context::getContext()->cookie->two_company_verify_miss = json_encode($decoded);
-
-        $module->getTwoVerifiedCompanyForOrgNumber('B12345678', 'ES', 1901);
-        TinyAssert::same(2, $module->companyLookups, 'An expired miss must re-verify');
-    }
-
-    private static function testSuccessfulVerificationForgetsAnEarlierMiss(): void
-    {
-        self::reset();
-        $module = self::countingModule();
-
-        $module->getTwoVerifiedCompanyForOrgNumber('B12345678', 'ES', 1901);
-        TinyAssert::true(!Tools::isEmpty((string) Context::getContext()->cookie->two_company_verify_miss));
-
-        // A different, resolvable org number on the same address.
-        $resolving = self::countingModule([
-            'B87654321|ES' => ['name' => 'ACME S.L.', 'organization_number' => 'B87654321'],
-        ]);
-        $resolving->getTwoVerifiedCompanyForOrgNumber('B87654321', 'ES', 1901);
-
-        TinyAssert::true(
-            Tools::isEmpty((string) (Context::getContext()->cookie->two_company_verify_miss ?? '')),
-            'A successful verification must clear the stale miss marker'
-        );
     }
 
     // -----------------------------------------------------------------
