@@ -27,9 +27,9 @@
  * organization number (TWO:ST…) their registration minted carries the
  * semantics, and the backend derives the company type from it
  * (TWO-24749 spike). There is no account-type security gate on the
- * order-intent path either - a company name plus a verified org number
- * is the business guard, and both a registered business and an enrolled
- * sole trader arrive with that pair.
+ * order-intent path either - an org number is the business guard, and
+ * both a registered business and an enrolled sole trader arrive with
+ * one.
  */
 
 if (!defined('_PS_VERSION_')) {
