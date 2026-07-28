@@ -97,6 +97,44 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 | Invoice Upload | Auto-upload invoices to Two | Disabled |
 | SSL Verification | Verify SSL certificates | Enabled |
 | Debug Mode | Enable detailed diagnostic logging | Disabled |
+| Default shipping tax code | Tax rules group assumed for shipping when the carrier's rate cannot be resolved. Hidden unless activated — see below | Not set |
+
+### Default shipping tax code (hidden setting)
+
+**Who needs this:** only shops that price shipping outside PrestaShop's carrier table.
+
+PrestaShop declares shipping VAT per carrier, in `carrier_tax_rules_group_shop`, and nowhere else — there is no shop-level shipping tax rules group. The module relays that declaration; it never derives a VAT rate from the amounts. A shop whose shipping is priced by custom logistics leaves `id_carrier = 0`, PrestaShop then hands the module an empty delivery-option list, and with no carrier there is no declared rate to relay — so the order is refused rather than shipped with a guessed rate.
+
+The **Default shipping tax code** setting lets such a merchant make that declaration on the module instead. It is assumed **for shipping only, and only when the carrier's tax rate cannot be resolved for the order**. When a carrier does declare a tax rules group, the carrier always wins.
+
+Resolution order:
+
+1. The tax rules group declared by the carrier(s) in the cart's selected delivery option
+2. **Default shipping tax code**, if set
+3. Refuse the order (the pre-existing behaviour), if neither
+
+The setting has **no default value**. An install that never sets it behaves exactly as it did before the setting existed.
+
+**Activating the field.** The field is hidden on every install unless the shop opts in. Add this single line to `config/defines_custom.inc.php` (create the file if it does not exist — PrestaShop's `config/defines.inc.php` loads it automatically on every request, and it is preserved across PrestaShop upgrades):
+
+```php
+define('_TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_', true);
+```
+
+A complete minimal file:
+
+```php
+<?php
+define('_TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_', true);
+```
+
+Then go to **Module Configuration → Advanced Settings**, pick a tax rules group in **Default shipping tax code**, and save.
+
+Notes:
+
+- The constant controls **visibility of the field only**. A value already saved keeps being honoured if the constant is later removed (a server migration must not silently start declining orders), and saving Advanced Settings while the field is hidden never overwrites the stored selection.
+- Selecting a group that is later deleted is treated as "not set" — the order is refused, not relayed at 0%.
+- Every order that actually uses the fallback writes a warning to the shop log naming the group, its id and the resolved rate, e.g. `assuming the configured Default shipping tax code "IVA 21%" (tax_rules_group=12, rate=21%)`. If you never see that line, the fallback is not being used.
 
 ## Payment Terms: Standard vs End-of-Month (EOM)
 
