@@ -124,6 +124,32 @@ class Twopayment extends PaymentModule
     // selection (any explicit save - including "No tax" - clears it).
     const CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE = 'PS_TWO_SURCHARGE_TAX_MIGRATION_NOTICE';
 
+    // Merchant-declared TaxRulesGroup assumed for SHIPPING when, and only
+    // when, the carrier's own declared group cannot be resolved for the order
+    // (TWO-25200). PrestaShop keeps the shipping tax declaration on the
+    // carrier row (`carrier_tax_rules_group_shop`) and nowhere else, so a
+    // merchant who prices shipping outside the carrier table (custom
+    // logistics, `id_carrier = 0`) has no carrier row to declare it on. This
+    // is that declaration, moved onto the module - still the merchant's own,
+    // never inferred from amounts. Unset (the shipped state) keeps the loud
+    // refusal; '0' is core's first-class "No tax" sentinel and is only ever
+    // stored when the merchant selected it.
+    const CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP = 'PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP';
+    // Per-install activation constant for the field above. Set in
+    // `config/defines_custom.inc.php` - PrestaShop core's sanctioned override
+    // file, required by `config/defines.inc.php` on every request (front,
+    // back office and CLI) before any module loads, preserved across core
+    // upgrades, and editable over plain FTP on shared hosting:
+    //
+    //     define('_TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_', true);
+    //
+    // It gates VISIBILITY of the admin field only. A value already stored by
+    // a merchant keeps working if the constant later disappears (a host
+    // migration must not silently start declining that merchant's orders),
+    // and the save path never writes the key while the field is hidden, so
+    // the stored selection survives the field being switched off and on.
+    const FLAG_DEFAULT_SHIPPING_TAX_CODE = '_TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_';
+
     // Constants for delivery dates
     const DEFAULT_DELIVERY_DAYS_OFFSET = 7; // Default expected delivery date offset
     
@@ -191,7 +217,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.6.7';
+        $this->version = '2.6.8';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -641,6 +667,9 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_SURCHARGE_TAX_RATE');
         Configuration::deleteByName('PS_TWO_SURCHARGE_TAX_SETUP');
         Configuration::deleteByName(self::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE);
+        // Like the surcharge group above: the merchant's own TaxRulesGroup is
+        // NOT module-owned, so only the reference goes.
+        Configuration::deleteByName(self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP);
         return true;
     }
 
@@ -1464,6 +1493,24 @@ class Twopayment extends PaymentModule
             ),
         );
 
+        // Hidden unless the install opts in (TWO-25200). Ordinary shops
+        // declare shipping VAT on their carriers and must not be offered a
+        // second place to do it; the field exists for merchants who price
+        // shipping outside the carrier table entirely.
+        if ($this->isTwoDefaultShippingTaxCodeFieldEnabled()) {
+            $fields_form['form']['input'][] = array(
+                'type' => 'select',
+                'label' => $this->l('Default shipping tax code'),
+                'name' => self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP,
+                'desc' => $this->l('Tax rules group ASSUMED FOR SHIPPING ONLY when the carrier\'s tax rate cannot be resolved for the order - for example when shipping is priced outside PrestaShop\'s carrier table, so no carrier declares a tax rules group. It is never used when a carrier does declare one: the carrier\'s own group always wins. Leave unset to keep refusing such orders rather than assuming a rate.'),
+                'options' => array(
+                    'query' => $this->getTwoDefaultShippingTaxRulesGroupOptions(),
+                    'id' => 'id',
+                    'name' => 'name',
+                ),
+            );
+        }
+
         return $fields_form;
     }
 
@@ -1488,6 +1535,60 @@ class Twopayment extends PaymentModule
         return ((int) $value) === 1 ? '1' : '0';
     }
 
+    /**
+     * Dropdown options for the default shipping tax code. Same construction
+     * as getTwoSurchargeTaxRulesGroupOptions() - string ids so PHP 7's loose
+     * `'' == 0` cannot conflate the unselected placeholder with "No tax", and
+     * a currently-configured group that has been deactivated is always kept
+     * in the list (suffixed "(inactive)") so an unrelated save cannot silently
+     * drop the merchant's selection to the first option.
+     *
+     * @return array<int,array{id:string,name:string}>
+     */
+    protected function getTwoDefaultShippingTaxRulesGroupOptions()
+    {
+        $options = array(
+            array('id' => '', 'name' => $this->l('-- Not set: refuse the order instead --')),
+            array('id' => '0', 'name' => $this->l('No tax')),
+        );
+        $seen = array(0 => true);
+        foreach ((array) TaxRulesGroup::getTaxRulesGroups(true) as $group) {
+            if (!isset($group['id_tax_rules_group'])) {
+                continue;
+            }
+            $id = (int) $group['id_tax_rules_group'];
+            $options[] = array('id' => (string) $id, 'name' => (string) $group['name']);
+            $seen[$id] = true;
+        }
+
+        $configured = $this->getTwoDefaultShippingTaxRulesGroupId();
+        if ($configured !== null && $configured > 0 && !isset($seen[$configured])) {
+            $group = new TaxRulesGroup($configured);
+            if (Validate::isLoadedObject($group)) {
+                $options[] = array(
+                    'id' => (string) $configured,
+                    'name' => (string) $group->name . ' (' . $this->l('inactive') . ')',
+                );
+            }
+        }
+
+        return $options;
+    }
+
+    /**
+     * Pre-selection for the default shipping tax code dropdown: the stored
+     * selection, else '' (unselected). Never auto-defaults - not to "No tax"
+     * either, which is a tax treatment rather than the absence of one.
+     *
+     * @return string
+     */
+    protected function getTwoDefaultShippingTaxRulesGroupFormDefault()
+    {
+        $configured = $this->getTwoDefaultShippingTaxRulesGroupId();
+
+        return $configured === null ? '' : (string) $configured;
+    }
+
     protected function getTwoOtherFormValues()
     {
         $fields_values = array();
@@ -1499,11 +1600,36 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_FINALIZE_PURCHASE'] = Tools::getValue('PS_TWO_FINALIZE_PURCHASE', Configuration::get('PS_TWO_FINALIZE_PURCHASE'));
         $fields_values['PS_TWO_ENABLE_TAX_SUBTOTALS'] = Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
+        if ($this->isTwoDefaultShippingTaxCodeFieldEnabled()) {
+            // Kept a STRING: an (int) cast would turn the unselected state
+            // into 0 and silently pre-select "No tax".
+            $fields_values[self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP] = (string) Tools::getValue(
+                self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP,
+                $this->getTwoDefaultShippingTaxRulesGroupFormDefault()
+            );
+        }
         return $fields_values;
     }
 
     protected function validTwoOtherFormValues()
     {
+        if (!$this->isTwoDefaultShippingTaxCodeFieldEnabled()) {
+            return;
+        }
+        $raw = Tools::getValue(self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP, false);
+        if ($raw === false) {
+            return;
+        }
+        $trimmed = is_string($raw) ? trim($raw) : '';
+        if ($trimmed === '') {
+            // Unselected is a legitimate, and the shipped, state: it means
+            // "keep refusing". Nothing to validate.
+            return;
+        }
+        $group_id = ctype_digit($trimmed) ? (int) $trimmed : -1;
+        if ($group_id < 0 || ($group_id > 0 && !Validate::isLoadedObject(new TaxRulesGroup($group_id)))) {
+            $this->errors[] = $this->l('Default shipping tax code must be "No tax" or one of the shop\'s existing tax rules groups.');
+        }
     }
 
     protected function saveTwoOtherFormValues()
@@ -1513,6 +1639,27 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', Tools::getValue('PS_TWO_FINALIZE_PURCHASE'));
         Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', (int) Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
+
+        // Write the default shipping tax code ONLY when the field was
+        // actually rendered AND actually submitted. A form that never showed
+        // the field posts nothing for it, and blindly writing Tools::getValue
+        // with a '' default there would wipe a stored declaration on the next
+        // unrelated advanced-settings save - exactly the failure mode the
+        // payment-terms checkbox loop was fixed for under TWO-24813.
+        if ($this->isTwoDefaultShippingTaxCodeFieldEnabled()) {
+            $raw = Tools::getValue(self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP, false);
+            if ($raw !== false) {
+                $trimmed = is_string($raw) ? trim($raw) : '';
+                $value = '';
+                if ($trimmed !== '' && ctype_digit($trimmed)) {
+                    $group_id = (int) $trimmed;
+                    if ($group_id === 0 || Validate::isLoadedObject(new TaxRulesGroup($group_id))) {
+                        $value = (string) $group_id;
+                    }
+                }
+                Configuration::updateValue(self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP, $value);
+            }
+        }
 
         $this->output .= $this->displayConfirmation($this->l('Advanced settings are updated.'));
     }
@@ -5937,6 +6084,174 @@ class Twopayment extends PaymentModule
      */
     private function resolveTwoCartShippingRateClasses($cart, $shipping_gross, $fallback_carrier = null)
     {
+        try {
+            return $this->resolveTwoCartShippingRateClassesFromCarriers(
+                $cart,
+                $shipping_gross,
+                $fallback_carrier
+            );
+        } catch (TwoCheckoutAmountException $e) {
+            // Resolution order (TWO-25200): carrier's declared group first -
+            // it is the only source that is per-option and per-address - then
+            // the merchant's module-level default shipping tax code, then the
+            // loud refusal. The default is consulted ONLY here, on the path
+            // where no carrier group was resolvable at all, so a shop with a
+            // working carrier table never sees it.
+            $default_classes = $this->resolveTwoDefaultShippingRateClasses($cart, $shipping_gross, $e->getMessage());
+            if ($default_classes !== null) {
+                return $default_classes;
+            }
+
+            throw $e;
+        }
+    }
+
+    /**
+     * The merchant's declared default shipping tax code, expressed as the
+     * single rate class the whole shipping charge belongs to (TWO-25200).
+     *
+     * Returns NULL - never a rate - when no default is configured, which is
+     * the shipped state and leaves the caller's loud refusal untouched. The
+     * whole shipping gross goes into one class: the default is a declaration
+     * about shipping as such, and the carrier-level split it replaces was
+     * unavailable by definition on this path.
+     *
+     * @param Cart $cart
+     * @param float $shipping_gross Authoritative 2dp shipping gross
+     * @param string $carrier_failure Why the carrier path could not resolve, for the log
+     * @return array<string,array{rate:float,net_weight:float}>|null
+     */
+    private function resolveTwoDefaultShippingRateClasses($cart, $shipping_gross, $carrier_failure = '')
+    {
+        $group_id = $this->getTwoDefaultShippingTaxRulesGroupId();
+        if ($group_id === null) {
+            return null;
+        }
+
+        try {
+            $rate = $this->getTwoConfiguredTaxRateDecimalForGroup($group_id, $cart);
+        } catch (Throwable $e) {
+            // A configured-but-unresolvable default is not a rate either.
+            // Returning null hands the caller back its loud refusal rather
+            // than relaying a silent 0%.
+            PrestaShopLogger::addLog(
+                'TwoPayment: Cart ' . (int) $cart->id . ' could not resolve the configured default shipping ' .
+                'tax code (tax_rules_group=' . $group_id . ') either (' . get_class($e) . ': ' .
+                $e->getMessage() . '); refusing rather than relaying a guessed rate.',
+                3
+            );
+
+            return null;
+        }
+
+        // Severity 2 (warning), matching the file's other "this worked, but
+        // not on the normal path" logs: the shop IS on the fallback, and that
+        // must be visible in the log without reading the code.
+        PrestaShopLogger::addLog(
+            'TwoPayment: Cart ' . (int) $cart->id . ' (id_carrier=' . (int) $cart->id_carrier . ') has no ' .
+            'resolvable carrier shipping tax rate (' . ($carrier_failure === '' ? 'unknown cause' : $carrier_failure) .
+            '); assuming the configured Default shipping tax code "' .
+            $this->getTwoDefaultShippingTaxRulesGroupLabel($group_id) . '" (tax_rules_group=' . $group_id .
+            ', rate=' . round($rate * 100, 2) . '%) for the whole shipping charge of ' .
+            $this->getTwoRoundAmount($shipping_gross) . '.',
+            2
+        );
+
+        return [
+            $this->formatTwoTaxRate($rate) => [
+                'rate' => $rate,
+                'net_weight' => max(0.0, (float) $shipping_gross),
+            ],
+        ];
+    }
+
+    /**
+     * Human-readable name of a tax rules group for log messages. Falls back
+     * to core's "No tax" sentinel label and, for a group that no longer
+     * loads, to a bare marker - a log line must never raise.
+     *
+     * @param int $group_id
+     * @return string
+     */
+    private function getTwoDefaultShippingTaxRulesGroupLabel($group_id)
+    {
+        $group_id = (int) $group_id;
+        if ($group_id === 0) {
+            return 'No tax';
+        }
+        $group = new TaxRulesGroup($group_id);
+
+        return Validate::isLoadedObject($group) ? (string) $group->name : '(deleted group)';
+    }
+
+    /**
+     * The merchant's stored default shipping tax rules group.
+     *
+     * NOT gated on FLAG_DEFAULT_SHIPPING_TAX_CODE: the constant controls
+     * whether the admin field is rendered, not whether a declaration the
+     * merchant already made is honoured. Losing the constant (host migration,
+     * restored config directory) must not silently start declining that
+     * merchant's carrier-less orders.
+     *
+     * @return int|null Group id (0 = "No tax"), or null when unset/invalid -
+     *                  null being the shipped state and the loud-refusal path
+     */
+    private function getTwoDefaultShippingTaxRulesGroupId()
+    {
+        $stored = Configuration::get(self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP);
+        if ($stored === false || $stored === null) {
+            return null;
+        }
+        $stored = trim((string) $stored);
+        // ctype_digit: a whole non-negative integer only. '', '-1' and '0.5'
+        // are "not configured", never truncated into a selection the merchant
+        // did not make.
+        if ($stored === '' || !ctype_digit($stored)) {
+            return null;
+        }
+        $group_id = (int) $stored;
+        if ($group_id > 0 && !Validate::isLoadedObject(new TaxRulesGroup($group_id))) {
+            // The merchant deleted the group after selecting it. That is not
+            // a declaration any more - refuse loudly instead of relaying 0%.
+            PrestaShopLogger::addLog(
+                'TwoPayment: The configured Default shipping tax code refers to tax rules group ' .
+                $group_id . ', which no longer exists; treating shipping tax as unresolvable.',
+                3
+            );
+
+            return null;
+        }
+
+        return $group_id;
+    }
+
+    /**
+     * Is the Default shipping tax code admin field switched on for this
+     * install? See FLAG_DEFAULT_SHIPPING_TAX_CODE for the activation line.
+     *
+     * @return bool
+     */
+    protected function isTwoDefaultShippingTaxCodeFieldEnabled()
+    {
+        return defined(self::FLAG_DEFAULT_SHIPPING_TAX_CODE)
+            && (bool) constant(self::FLAG_DEFAULT_SHIPPING_TAX_CODE);
+    }
+
+    /**
+     * Carrier-sourced shipping rate classes - the primary and, on a shop with
+     * a working carrier table, the only path. See
+     * resolveTwoCartShippingRateClasses() for the doc block; this is its
+     * body, split out so the default-shipping-tax-code fallback (TWO-25200)
+     * has exactly one place to sit.
+     *
+     * @param Cart $cart
+     * @param float $shipping_gross
+     * @param Carrier|null $fallback_carrier
+     * @return array<string,array{rate:float,net_weight:float}>
+     * @throws TwoCheckoutAmountException
+     */
+    private function resolveTwoCartShippingRateClassesFromCarriers($cart, $shipping_gross, $fallback_carrier = null)
+    {
         // NEITHER CORE CALL IS EXCEPTION-FREE. Both run
         // Cart::getPackageList() and, per candidate carrier,
         // Cart::getPackageShippingCost() - which instantiates ObjectModels
@@ -6092,8 +6407,11 @@ class Twopayment extends PaymentModule
             // per carrier in `carrier_tax_rules_group_shop`. Inferring one
             // (Carrier::getIdTaxRulesGroupMostUsed(), PS_CARRIER_DEFAULT, or a
             // rate derived from the amounts) is the one thing this design
-            // forbids, so where no declared group is reachable the fallback
-            // IS the loud refusal below.
+            // forbids, so where no declared group is reachable the only
+            // remaining source is another MERCHANT DECLARATION - the optional
+            // Default shipping tax code (TWO-25200), which the caller applies
+            // when the refusal below is raised - and failing that, the
+            // refusal itself.
             if (is_object($fallback_carrier) && Validate::isLoadedObject($fallback_carrier)) {
                 try {
                     $fallback_group_id = method_exists($fallback_carrier, 'getIdTaxRulesGroup')
@@ -6190,11 +6508,20 @@ class Twopayment extends PaymentModule
             ', delivery option key=' . ($option_key === '' ? '(none)' : $option_key) .
             ', carrier in list=' . (int) $id_carrier;
 
+        // A configured Default shipping tax code (TWO-25200) turns this into
+        // a "not on the normal path" event rather than a failure: the caller
+        // catches the exception and relays that declaration instead. Logging
+        // it at error severity anyway would put a permanent red line in every
+        // such merchant's log for the designed behaviour.
+        $default_configured = $this->getTwoDefaultShippingTaxRulesGroupId() !== null;
+
         PrestaShopLogger::addLog(
             'TwoPayment: No deliverable carrier for the cart shipping cost, so no declared shipping ' .
             'tax rate exists to relay (' . $detail . '): ' . $reason . ', while the shipping is still ' .
-            'priced. Configure a carrier that covers this delivery address and the cart contents.',
-            3
+            'priced. ' . ($default_configured
+                ? 'Falling back to the configured Default shipping tax code.'
+                : 'Configure a carrier that covers this delivery address and the cart contents.'),
+            $default_configured ? 2 : 3
         );
 
         // Buyer-facing by type: the detail is nothing but the cart's own
