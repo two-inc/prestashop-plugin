@@ -461,6 +461,11 @@ namespace {
 
             return true;
         }
+
+        public static function isEmail($email): bool
+        {
+            return is_string($email) && filter_var($email, FILTER_VALIDATE_EMAIL) !== false;
+        }
     }
 
     class Configuration
