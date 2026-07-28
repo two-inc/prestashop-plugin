@@ -4,10 +4,53 @@
  * @license Two Commercial License
  */
 
-/* Legacy autocomplete loader (commented out) */
-/* .js-address-form .ui-autocomplete-loading {
-  background: white url("../img/loader.gif") right center no-repeat;
-}*/
+/**
+ * In-field company-search spinner.
+ *
+ * Restored from the commented-out legacy rule. Two changes from that version:
+ * it is scoped to the company field itself (`.two-company-search-input`, added
+ * by TwoCompanySearch.setupAutocomplete) rather than to every autocomplete in
+ * `.js-address-form`, and it sets only background-image/position rather than the
+ * `background` shorthand, so it no longer forces a white background over
+ * whatever the merchant's theme gives the input.
+ *
+ * `ui-autocomplete-loading` is applied by jQuery UI on the live path;
+ * `two-company-search-loading` is applied by hand on the custom fallback path,
+ * where jQuery UI is absent.
+ */
+/* Reserved unconditionally, not only while loading: toggling the padding with
+   the spinner reflowed the field's text in and out on every keystroke. */
+.two-company-search-input {
+    padding-right: 32px;
+}
+
+.two-company-search-input.ui-autocomplete-loading,
+.two-company-search-input.two-company-search-loading {
+    background-image: url("../img/loader.gif");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    /* loader.gif is 16x16; pinned so a themed input cannot scale it. */
+    background-size: 16px 16px;
+}
+
+/* "Search unavailable" row - a message, not a selectable company. */
+.two-autocomplete-unavailable {
+    color: #888;
+    cursor: default;
+}
+
+.ui-autocomplete .two-autocomplete-unavailable.ui-menu-item > div {
+    color: #888;
+    cursor: default;
+}
+
+/* Never let the unavailable row take jQuery UI's hover/active highlight. */
+.ui-autocomplete .two-autocomplete-unavailable.ui-menu-item > div.ui-state-active {
+    background: none;
+    border: none;
+    color: #888;
+    margin: 0;
+}
 
 /* Remove custom styling that modifies core radio/checkbox visuals for consistency */
 .two-payment-option .custom-radio  {
