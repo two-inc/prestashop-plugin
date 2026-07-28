@@ -143,11 +143,6 @@ class Twopayment extends PaymentModule
     // the authoritative check at payment submit
     // (checkTwoOrderIntentApprovalAtPayment) is never served from this cache.
     const ORDER_INTENT_DECISION_CACHE_TTL = 300; // 5 minutes
-    // TWO-24799: how long an unverifiable org number stays remembered as a miss.
-    // The success path is already cached indefinitely (for the cookie's lifetime)
-    // by the two_company_* company cookie, so only the miss needs its own TTL -
-    // short enough that a provider blip self-heals inside one checkout session.
-    const COMPANY_VERIFY_MISS_CACHE_TTL = 300; // 5 minutes
     // Cross-request cache for the buyer fee-share quote (POST /v1/pricing/order/fee).
     // fetchTwoTermFee() already request-scopes the quote via $this->twoFeeCache, but
     // that array is rebuilt from scratch on every HTTP request (e.g. each order-intent
@@ -196,7 +191,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.6.6';
+        $this->version = '2.6.7';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -11179,131 +11174,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Verify an org number found on a saved address, memoising BOTH outcomes for
-     * the checkout session (TWO-24799).
-     *
-     * The success path was already cached: verifyCompanyByOrgNumber()'s caller
-     * writes the resolved company into the two_company_* cookie, so a verified
-     * org number costs one lookup per session. The MISS path was not cached at
-     * all, so an address carrying an org number Two cannot resolve (a typo, a
-     * deregistered company, or a provider hiccup) paid a fresh blocking
-     * /companies/v2/company round trip on every single checkout update, at the
-     * 30s API_TIMEOUT_SHORT budget, forever returning the same null.
-     *
-     * The miss marker is keyed on org number + country + address ID, so editing
-     * any of the three re-verifies immediately instead of inheriting the miss.
-     *
-     * @param string $orgNumber
-     * @param string $countryIso
-     * @param int $addressId
-     * @return array{name:string,organization_number:string}|null
-     */
-    public function getTwoVerifiedCompanyForOrgNumber($orgNumber, $countryIso, $addressId)
-    {
-        $key = $this->buildTwoCompanyVerifyCacheKey($orgNumber, $countryIso, $addressId);
-
-        if ($key !== '' && $this->hasTwoCompanyVerifyMiss($key)) {
-            PrestaShopLogger::addLog(
-                'TwoPayment: Skipped org-number verification - cached miss for country=' .
-                strtoupper(trim((string)$countryIso)) . ', address=' . (int)$addressId,
-                1
-            );
-            return null;
-        }
-
-        $verified = $this->verifyCompanyByOrgNumber($orgNumber, $countryIso);
-
-        if ($verified && !empty($verified['organization_number'])) {
-            // Success: forget any stale miss so a later re-check is not blocked.
-            $this->clearTwoCompanyVerifyMiss();
-            return $verified;
-        }
-
-        if ($key !== '') {
-            $this->recordTwoCompanyVerifyMiss($key);
-        }
-
-        return null;
-    }
-
-    /**
-     * Cache key for an org-number verification attempt (TWO-24799).
-     *
-     * @param string $orgNumber
-     * @param string $countryIso
-     * @param int $addressId
-     * @return string '' when the inputs cannot form a usable key
-     */
-    private function buildTwoCompanyVerifyCacheKey($orgNumber, $countryIso, $addressId)
-    {
-        $orgNumber = strtoupper(preg_replace('/[\s\-]/', '', trim((string)$orgNumber)));
-        $countryIso = strtoupper(trim((string)$countryIso));
-        if (Tools::isEmpty($orgNumber) || Tools::isEmpty($countryIso)) {
-            return '';
-        }
-
-        return hash('sha256', 'company_verify|' . $orgNumber . '|' . $countryIso . '|' . (int)$addressId);
-    }
-
-    /**
-     * Whether this exact verification attempt is a remembered, unexpired miss.
-     *
-     * @param string $key
-     * @return bool
-     */
-    private function hasTwoCompanyVerifyMiss($key)
-    {
-        $encoded = isset($this->context->cookie->two_company_verify_miss)
-            ? (string)$this->context->cookie->two_company_verify_miss
-            : '';
-        if (Tools::isEmpty($encoded)) {
-            return false;
-        }
-
-        $decoded = json_decode($encoded, true);
-        if (!is_array($decoded) || !isset($decoded['key'], $decoded['at'])) {
-            return false;
-        }
-
-        if (!hash_equals((string)$decoded['key'], (string)$key)) {
-            return false;
-        }
-
-        $age = time() - (int)$decoded['at'];
-
-        return $age >= 0 && $age <= self::COMPANY_VERIFY_MISS_CACHE_TTL;
-    }
-
-    /**
-     * Remember an org number that Two could not resolve.
-     *
-     * Single-slot by design: the buyer has one billing address in play at a
-     * time, so one marker keeps the cookie bounded while still covering the
-     * repeat-update case this exists for.
-     *
-     * @param string $key
-     * @return void
-     */
-    private function recordTwoCompanyVerifyMiss($key)
-    {
-        $this->context->cookie->two_company_verify_miss = json_encode(array(
-            'key' => (string)$key,
-            'at' => time(),
-        ));
-        $this->context->cookie->setExpire(time() + self::COOKIE_EXPIRY_ONE_HOUR);
-    }
-
-    /**
-     * Forget the remembered verification miss (TWO-24799).
-     *
-     * @return void
-     */
-    public function clearTwoCompanyVerifyMiss()
-    {
-        unset($this->context->cookie->two_company_verify_miss);
-    }
-
-    /**
      * Build normalized checkout snapshot with stable ordering.
      *
      * @param Cart $cart
@@ -12616,131 +12486,6 @@ class Twopayment extends PaymentModule
     }
     
     /**
-     * Verify and resolve company data using organization number via Two's company search API
-     * 
-     * CRITICAL: This enables smart UX for logged-in users with existing addresses.
-     * Instead of searching by company name, we search by organization 
-     * number which gives an EXACT match.
-     * 
-     * Two's API supports searching by org number: /companies/v2/company?q={org_number}&country={iso}
-     * Example: https://api.two.inc/companies/v2/company?q=A81304487&country=ES
-     * 
-     * @param string $orgNumber The organization number to search for (CIF, NIF, company number, etc.)
-     * @param string $countryIso Two-letter country ISO code (e.g., 'GB', 'NO', 'SE', 'ES')
-     * @return array|null Returns ['name' => string, 'organization_number' => string] on success, null on failure
-     */
-    public function verifyCompanyByOrgNumber($orgNumber, $countryIso)
-    {
-        if (empty($orgNumber) || empty($countryIso)) {
-            return null;
-        }
-        
-        // Normalize inputs
-        $orgNumber = trim($orgNumber);
-        $countryIso = strtoupper(trim($countryIso));
-        
-        // Build the search URL - search by organization number for exact match
-        // This is the key insight: Two's API accepts org numbers in the 'q' parameter
-        $searchUrl = $this->getTwoCheckoutHostUrl() . '/companies/v2/company';
-        $searchUrl .= '?' . http_build_query([
-            'q' => $orgNumber,
-            'country' => $countryIso
-        ]);
-        
-        PrestaShopLogger::addLog(
-            'TwoPayment: Verifying company by org number: ' . $orgNumber . ' in ' . $countryIso,
-            1
-        );
-        
-        // Make the request (no API key required for company search)
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $searchUrl);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, self::API_TIMEOUT_SHORT);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            'Accept: application/json'
-        ]);
-        
-        // Configure SSL verification
-        $this->configureSslVerification($ch);
-        
-        $response_body = curl_exec($ch);
-        $http_status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $curl_error = curl_error($ch);
-        curl_close($ch);
-        
-        // Handle errors
-        if ($response_body === false || !empty($curl_error) || $http_status !== 200) {
-            PrestaShopLogger::addLog(
-                'TwoPayment: Company verification failed - HTTP ' . $http_status . 
-                ', Error: ' . ($curl_error ?: 'Unknown') . 
-                ', OrgNumber: ' . $orgNumber . ', Country: ' . $countryIso,
-                2
-            );
-            return null;
-        }
-        
-        $response = json_decode($response_body, true);
-        
-        if (!isset($response['items']) || !is_array($response['items']) || empty($response['items'])) {
-            PrestaShopLogger::addLog(
-                'TwoPayment: Company verification - no results for org number: ' . $orgNumber . ' in ' . $countryIso,
-                1
-            );
-            return null;
-        }
-        
-        $companies = $response['items'];
-        
-        // When searching by org number, we expect an exact match
-        // The API should return the company with matching organization number
-        foreach ($companies as $company) {
-            $foundOrgNumber = $this->extractOrganizationNumber($company);
-            
-            // Normalize both for comparison (remove spaces, dashes, make uppercase)
-            $normalizedSearch = strtoupper(preg_replace('/[\s\-]/', '', $orgNumber));
-            $normalizedFound = strtoupper(preg_replace('/[\s\-]/', '', $foundOrgNumber));
-            
-            if ($normalizedSearch === $normalizedFound) {
-                PrestaShopLogger::addLog(
-                    'TwoPayment: ✓ Company verified by org number - ' . $orgNumber . 
-                    ' => ' . $company['name'] . ' in ' . $countryIso,
-                    1
-                );
-                return [
-                    'name' => $company['name'],
-                    'organization_number' => $foundOrgNumber
-                ];
-            }
-        }
-        
-        // If no exact org number match, but we got a single result, it might be valid
-        // (API might have found it via partial match)
-        if (count($companies) === 1) {
-            $company = $companies[0];
-            $foundOrgNumber = $this->extractOrganizationNumber($company);
-            if (!empty($foundOrgNumber)) {
-                PrestaShopLogger::addLog(
-                    'TwoPayment: ✓ Company resolved (single result) - searched: ' . $orgNumber . 
-                    ' => ' . $company['name'] . ' (' . $foundOrgNumber . ') in ' . $countryIso,
-                    1
-                );
-                return [
-                    'name' => $company['name'],
-                    'organization_number' => $foundOrgNumber
-                ];
-            }
-        }
-        
-        PrestaShopLogger::addLog(
-            'TwoPayment: Company verification - org number not matched: ' . $orgNumber . 
-            ' in ' . $countryIso . ' (found ' . count($companies) . ' companies)',
-            2
-        );
-        return null;
-    }
-    
-    /**
      * Extract organization number from address fields
      * Checks various PrestaShop address fields where org numbers might be stored
      * 
@@ -12795,37 +12540,6 @@ class Twopayment extends PaymentModule
                 1
             );
             return trim($address->companyid);
-        }
-        
-        return '';
-    }
-    
-    /**
-     * Extract organization number from Two company search result
-     * Handles various field naming conventions across different countries
-     * 
-     * @param array $company Company data from Two API
-     * @return string Organization number or empty string
-     */
-    private function extractOrganizationNumber($company)
-    {
-        // Primary: national_identifier object (most countries)
-        if (isset($company['national_identifier']) && is_array($company['national_identifier'])) {
-            $ni = $company['national_identifier'];
-            $orgNumber = $ni['id'] ?? $ni['value'] ?? $ni['organisationNumber'] ?? 
-                        $ni['organizationNumber'] ?? $ni['registration_number'] ?? 
-                        $ni['company_number'] ?? '';
-            if (!empty($orgNumber)) {
-                return trim($orgNumber);
-            }
-        }
-        
-        // Fallback: Direct fields (commonly used in GB)
-        $directFields = ['registration_number', 'company_number', 'organization_number', 'organisation_number'];
-        foreach ($directFields as $field) {
-            if (isset($company[$field]) && !empty($company[$field])) {
-                return trim($company[$field]);
-            }
         }
         
         return '';
