@@ -1,4 +1,5 @@
-# tag/push deliberately off (mirrors magento-abn-plugin's bumpver.toml fix) —
+# tag/push deliberately off (mirrors the same bumpver.toml fix in the sibling
+# Magento overlay repo) —
 # a human runs `git push --follow-tags` explicitly when actually cutting a
 # release. Without this, `make patch/minor/major` on any branch would push a
 # version-bump commit + tag straight to origin.
