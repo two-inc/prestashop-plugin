@@ -1592,9 +1592,16 @@ class Twopayment extends PaymentModule
 
     /**
      * Best-effort short commit hash of the deployed module code.
-     * Checks a flat sidecar file first (written at deploy time by the git-sync
-     * materialise loop, where .git is a worktree gitlink file this method can't
-     * read), then falls back to a co-located .git directory (local dev).
+     *
+     * Resolution order — live state first, build-time stamp last (TWO-25194):
+     *   1. `.git` gitlink FILE (git-synced shops: reflects what is checked out RIGHT NOW)
+     *   2. `.git` DIRECTORY (local dev checkout)
+     *   3. `.two-deployed-commit` sidecar (frozen at package-release.sh build time,
+     *      so it goes stale if an artifact tree is later checked out over, and an
+     *      interrupted release run can leave one behind in the working tree)
+     *
+     * Each source falls THROUGH to the next when it cannot produce a valid sha;
+     * null is only returned when all three fail.
      * Plain file reads only — no exec. Returns null (never throws/fatals) if unavailable.
      *
      * @param string|null $git_dir Overridable for tests; defaults to this module's .git
@@ -1604,9 +1611,31 @@ class Twopayment extends PaymentModule
      */
     protected function getTwoDeployedCommitHash($git_dir = null, $sidecar_file = null)
     {
+        if ($git_dir === null) {
+            $git_dir = __DIR__ . '/.git';
+        }
         if ($sidecar_file === null) {
             $sidecar_file = __DIR__ . '/.two-deployed-commit';
         }
+
+        // 1. Git-synced staging shops materialise the module as a linked worktree, so
+        // `.git` is a gitlink FILE, not a directory:
+        //   gitdir: ../../.git/worktrees/<40-hex-sha>
+        // The last path segment is the commit the sync loop checked out.
+        if (is_file($git_dir) && is_readable($git_dir)) {
+            $gitlink_contents = (string) @file_get_contents($git_dir);
+            if (preg_match('#gitdir:\s*.*/([0-9a-f]{7,40})\s*$#i', $gitlink_contents, $gitlink_match)) {
+                return substr($gitlink_match[1], 0, 7);
+            }
+        }
+
+        // 2. Plain `.git` directory (local dev checkout).
+        $git_dir_sha = $this->readShaFromGitDirectory($git_dir);
+        if ($git_dir_sha !== null) {
+            return $git_dir_sha;
+        }
+
+        // 3. Deploy-time sidecar stamp, last because it is frozen at build time.
         if (is_file($sidecar_file) && is_readable($sidecar_file)) {
             $sidecar_contents = trim((string) @file_get_contents($sidecar_file));
             if ($sidecar_contents !== '' && preg_match('/^[0-9a-f]{7,40}$/i', $sidecar_contents)) {
@@ -1614,26 +1643,19 @@ class Twopayment extends PaymentModule
             }
         }
 
-        if ($git_dir === null) {
-            $git_dir = __DIR__ . '/.git';
-        }
+        return null;
+    }
 
-        // Git-synced staging shops materialise the module as a linked worktree, so
-        // `.git` is a gitlink FILE, not a directory:
-        //   gitdir: ../../.git/worktrees/<40-hex-sha>
-        // The last path segment is the commit the sync loop checked out.
-        if (is_file($git_dir)) {
-            if (!is_readable($git_dir)) {
-                return null;
-            }
-            $gitlink_contents = (string) @file_get_contents($git_dir);
-            if (preg_match('#gitdir:\s*.*/([0-9a-f]{7,40})\s*$#i', $gitlink_contents, $gitlink_match)) {
-                return substr($gitlink_match[1], 0, 7);
-            }
-
-            return null;
-        }
-
+    /**
+     * Resolve the short HEAD sha from a plain `.git` DIRECTORY.
+     * Plain file reads only — no exec. Returns null when it cannot be resolved.
+     *
+     * @param string $git_dir
+     *
+     * @return string|null
+     */
+    private function readShaFromGitDirectory($git_dir)
+    {
         if (!is_dir($git_dir) || !is_readable($git_dir)) {
             return null;
         }
