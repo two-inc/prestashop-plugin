@@ -47,6 +47,7 @@ jobs:
           php -l tests/AddressLookupConfigSpec.php
           php -l tests/IntentApprovedNoticeSpec.php
           php -l tests/DeployVersionInfoSpec.php
+          php -l tests/UpgradeScriptVersionSpec.php
           php -l tests/run.php
           # Integration probes + their harness. They only run inside a
           # PrestaShop container (.github/workflows/integration.yml), so this
