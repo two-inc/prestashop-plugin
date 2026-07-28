@@ -16,24 +16,28 @@ Build and maintain a robust B2B payment module where Two provider behavior and P
 2. Apply rejection/rollback protections globally (not by country-specific exception).
 3. Preserve provider-first flow and retry idempotency.
 4. Do not weaken server-side validation in favor of frontend checks.
-5. Keep tax/amount formulas consistent with existing test expectations.
+5. Keep tax/amount formulas consistent with existing test expectations. Relay the
+   merchant's declared tax rate; never derive one from the amounts — see
+   `.ai/vat-rate-sourcing.md`.
 6. Never expose secrets in logs or code.
 7. Never default to insecure transport behavior.
 
 ## Required Verification Before Claiming Done
 
-Run from module root:
+Run from module root — these are the same gates CI runs:
 
 ```bash
-php -l twopayment.php
-php tests/run.php
+make test      # php tests/run.php
+make phpstan   # static analysis
 ```
 
-If you edited additional PHP files, lint each one:
+Lint each PHP file you edited:
 
 ```bash
 php -l path/to/file.php
 ```
+
+`make help` lists the rest (local stack, formatter, version bump).
 
 ## i18n Requirements
 

@@ -7,8 +7,7 @@ AI agent operating manual for the `twopayment` module.
 | Item | Value |
 | --- | --- |
 | Module | `twopayment` |
-| Version | `2.4.0` |
-| PrestaShop support | `1.7.6` to `9.x` |
+| PrestaShop support | `1.7.6` to `9.x` (`ps_versions_compliancy` in `twopayment.php`) |
 | Core model | Provider-first checkout (Two first, PrestaShop order second) |
 | Main file | `twopayment.php` |
 
@@ -87,7 +86,10 @@ Reliable B2B invoice checkout via Two, with:
 - `views/templates/hook/displayAdminOrderTabContent.tpl`
 
 ### Tests
-- `tests/run.php` (self-contained runner; specs: OrderBuilderSpec inline, `tests/TrackingNumberSpec.php`, `tests/CustomerAddressFormatterOverrideSpec.php`)
+- `tests/run.php` — self-contained runner (inline order-builder specs plus an explicit
+  `require` per `tests/*Spec.php`; a new spec file must be added to that list)
+- `tests/e2e/` — Playwright checkout suite
+- See `tests/README.md`
 
 ### Upgrades
 - `upgrade/upgrade-*.php`
@@ -103,11 +105,15 @@ When adding/changing user-facing strings:
 
 ## 7) Tax and Amount Safety
 
+**Read [.ai/vat-rate-sourcing.md](.ai/vat-rate-sourcing.md) before touching any payload
+builder.** It is the authoritative account of how rates are sourced and where the payload
+fails loud. The one rule that governs everything else: the plugin relays the merchant's
+declared tax rate and never derives one from the amounts.
+
 Before changing payload builders:
 - Verify line-item formulas and rounding behavior.
-- Ensure product-level, shipping, and discount lines reconcile to order totals.
+- Ensure product-level, shipping, wrapping, ecotax and discount lines reconcile to order totals.
 - Validate behavior for mixed rates and tax-exempt contexts.
-- Keep fallback tax-derivation logic deterministic.
 
 Always run the order-builder test suite after tax/amount edits.
 
@@ -116,13 +122,11 @@ Always run the order-builder test suite after tax/amount edits.
 Run from module root:
 
 ```bash
-php -l twopayment.php
-php -l controllers/front/payment.php
-php -l controllers/front/orderintent.php
-php tests/run.php
+make test      # php tests/run.php in the CI container
+make phpstan   # the static-analysis gate CI runs
 ```
 
-For broader edits, lint any touched PHP files and re-run tests.
+Lint any PHP file you touched (`php -l path/to/file.php`).
 
 ## 9) Logging and Debugging
 
@@ -155,7 +159,5 @@ Before release/tag:
 - Preserve backward compatibility unless explicitly changing behavior.
 - Document any behavior-changing decision in `CHANGELOG.md` and relevant docs.
 - If a rule here conflicts with code behavior, update this file in the same change.
-
-## Revision Notes
-
-- 2026-02-26: Rewritten for v2.4.0 architecture and provider-first safeguards.
+- Document only current behaviour here. History belongs in `CHANGELOG.md`; dated
+  engineering notes belong in `.ai/decisions.md` / `.ai/learnings.md`.
