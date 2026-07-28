@@ -44,6 +44,7 @@ jobs:
           php -l tests/ShippingCostSourcingSpec.php
           php -l tests/FulfilledStatusMappingSpec.php
           php -l tests/AddressLookupConfigSpec.php
+          php -l tests/IntentApprovedNoticeSpec.php
           php -l tests/DeployVersionInfoSpec.php
           php -l tests/run.php
 

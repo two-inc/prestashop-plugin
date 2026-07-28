@@ -2999,9 +2999,9 @@ class Twopayment extends PaymentModule
             'invalid_response_from_server' => $this->l('Invalid response from server'),
             'choose_payment_terms' => $this->l('Choose the Buy Now, Pay Later option that works best for you'),
             'payment_period_starts' => $this->l('Your payment period starts when your order is fulfilled'),
-            'invoice_likely_accepted_for' => $this->l('Your invoice with Two is likely to be accepted for %s'),
+            'invoice_likely_accepted_for' => $this->l('Your invoice with Two is likely to be accepted for %s, subject to additional checks.'),
             'invoice_cannot_be_approved_for' => $this->l('Your invoice with Two cannot be approved at this time for %s'),
-            'invoice_likely_accepted' => $this->l('Your invoice with Two is likely to be accepted'),
+            'invoice_likely_accepted' => $this->l('Your invoice with Two is likely to be accepted, subject to additional checks.'),
             'invoice_cannot_be_approved' => $this->l('Your invoice with Two cannot be approved at this time'),
             'invalid_phone_number' => $this->l('The phone number in your billing address appears to be invalid. Please go back and ensure you have entered a valid phone number for your country.'),
             'company_name_required' => $this->l('To pay with Two, go back to your billing address and enter your company name in the Company field.'),
@@ -3064,6 +3064,22 @@ class Twopayment extends PaymentModule
                 // real PrestaShop cart line on payment-option selection.
                 'surcharge_cart_line' => !empty($this->getTwoSurchargeSettings()['enabled']),
                 'payment_term_type' => Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'),
+                // Per-brand order-intent APPROVED notice, TWO-25218. TWO KEYS,
+                // deliberately separate: one boolean decides on/off, one string
+                // overrides the wording. They are not collapsed back into a
+                // single key - the previous single-key design expressed "off"
+                // as the absence of copy, so an unfinished string and an
+                // intentional off switch were indistinguishable.
+                //
+                // A real PHP bool, so addJsDef emits a real JS boolean and the
+                // consumers can gate on `typeof === 'boolean'` rather than on
+                // the falsiness of a copy string.
+                'intent_approved_notice_enabled' => $this->isIntentApprovedNoticeEnabled(),
+                // Copy override only, and a sibling of 'i18n' rather than a key
+                // inside it because a non-empty value is used verbatim rather
+                // than translated. Empty/absent is inert here: it means default
+                // copy, never off.
+                'intent_approved_notice' => $this->getIntentApprovedNotice(),
                 'i18n' => $i18n,
                 'phone_i18n' => array(
                     'invalid_number' => $this->l('Invalid phone number'),
@@ -7950,6 +7966,119 @@ class Twopayment extends PaymentModule
         }
 
         return array_key_exists($key, $brand) ? $brand[$key] : null;
+    }
+
+    /**
+     * Resolve the per-brand order-intent APPROVED notice ON/OFF switch
+     * (brands/two.php 'intent_approved_notice_enabled', TWO-25218) into the
+     * boolean the checkout JS receives.
+     *
+     * A malformed declaration is reported and then treated as enabled - see
+     * normalizeIntentApprovedNoticeEnabled() for why that is a log and not a
+     * throw.
+     *
+     * @return bool
+     */
+    public function isIntentApprovedNoticeEnabled()
+    {
+        $error = null;
+        $enabled = self::normalizeIntentApprovedNoticeEnabled(
+            $this->getTwoBrandConfig('intent_approved_notice_enabled'),
+            $error
+        );
+
+        if ($error !== null) {
+            PrestaShopLogger::addLog($error, 3);
+        }
+
+        return $enabled;
+    }
+
+    /**
+     * Normalize a brand 'intent_approved_notice_enabled' value into a bool.
+     * Pure and static so it is testable without touching the `static` brand-file
+     * cache inside getTwoBrandConfig() - same reason
+     * normalizeIntentApprovedNotice() is split out this way.
+     *
+     *   true / false => that boolean. The switch is an explicit bool ONLY.
+     *   null         => true. getTwoBrandConfig() returns null both for an
+     *       absent key and for an explicit null, so the two are one input here;
+     *       both mean the documented default, notice ON. Absent-means-ON is
+     *       what keeps a third-party overlay that declares nothing on ON.
+     *   anything else ('' , 0, 'yes', array, ...) => true, and $error is set to
+     *       a message naming the key, the offending value's type and the brand
+     *       code, for the caller to log.
+     *
+     * Deliberately NOT a throw. This resolves while rendering a buyer-facing
+     * checkout, and a white screen is a worse failure than a notice that stays
+     * on. Erring to ON is also the fail-safe direction: a brand that wanted it
+     * off gets a visible, reported wrong state and nobody loses a sale.
+     *
+     * @param mixed $configured
+     * @param string|null $error Out-param: null when the value was valid.
+     * @param string $brandCode
+     * @return bool
+     */
+    public static function normalizeIntentApprovedNoticeEnabled($configured, &$error = null, $brandCode = 'two')
+    {
+        $error = null;
+
+        if ($configured === null) {
+            return true;
+        }
+
+        if (is_bool($configured)) {
+            return $configured;
+        }
+
+        $error = sprintf(
+            'TwoPayment: brand "%s" declares intent_approved_notice_enabled as %s, but only a boolean is accepted.'
+                . ' Falling back to the documented default (notice enabled). Fix brands/%s.php.',
+            $brandCode,
+            gettype($configured),
+            $brandCode
+        );
+
+        return true;
+    }
+
+    /**
+     * Resolve the per-brand order-intent APPROVED notice COPY OVERRIDE
+     * (brands/two.php 'intent_approved_notice', TWO-25218) into the value the
+     * checkout JS receives. This key no longer carries the on/off meaning it
+     * had under TWO-25213 - see isIntentApprovedNoticeEnabled() for that.
+     *
+     * @return string|null
+     */
+    public function getIntentApprovedNotice()
+    {
+        return self::normalizeIntentApprovedNotice($this->getTwoBrandConfig('intent_approved_notice'));
+    }
+
+    /**
+     * Normalize a brand 'intent_approved_notice' COPY value:
+     *
+     *   null (key absent, or any non-string) => null: platform default
+     *       translated copy.
+     *   '' or whitespace-only                => null: INERT. Under TWO-25213
+     *       this suppressed the notice; it no longer does, and nothing about
+     *       this key can turn the notice off. An overlay that still carries an
+     *       empty string from the old contract resolves to the default copy
+     *       with the notice ON - wrong for that brand, but not broken, and
+     *       fixed by declaring intent_approved_notice_enabled => false.
+     *   non-empty string                     => that string, used verbatim by
+     *       the JS as the company-variant template (%s = company name).
+     *
+     * @param mixed $configured
+     * @return string|null
+     */
+    public static function normalizeIntentApprovedNotice($configured)
+    {
+        if (!is_string($configured) || trim($configured) === '') {
+            return null;
+        }
+
+        return $configured;
     }
 
     /**
