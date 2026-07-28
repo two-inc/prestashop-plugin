@@ -1,6 +1,7 @@
 # Two Payment Integration Matrix (PrestaShop Real Engine)
 
-This folder documents the real-engine integration matrix required for order build parity validation across PrestaShop versions.
+This folder holds the real-engine integration probes for order-build parity across
+PrestaShop versions, plus the still-unbuilt scenario matrix below them.
 
 ## Implemented probes
 
@@ -8,7 +9,7 @@ These run in CI on every pull request — `.github/workflows/integration.yml`, P
 
 | Probe | What it pins down |
 | --- | --- |
-| `default-shipping-tax-code.php` | The optional **Default shipping tax code** (TWO-25200) on a cart whose shipping is priced but whose delivery option belongs to no carrier. Asserts the real order-intent `SHIPPING_FEE` line (`gross_amount` / `net_amount` / `tax_amount` / `tax_rate` / `tax_class_name`) and the log severity, across four states: unset → refuse at severity 3; group declared → that group's rate relayed at severity 2; core's "No tax" sentinel → 0%; a since-deleted group → refuse at severity 3. |
+| `default-shipping-tax-code.php` | The optional **Default shipping tax code** on a cart whose shipping is priced but whose delivery option belongs to no carrier. Asserts the real order-intent `SHIPPING_FEE` line (`gross_amount` / `net_amount` / `tax_amount` / `tax_rate` / `tax_class_name`) and the log severity, across four states: unset → refuse at severity 3; group declared → that group's rate relayed at severity 2; core's "No tax" sentinel → 0%; a since-deleted group → refuse at severity 3. |
 
 ### Why a probe and not another unit spec
 
@@ -22,9 +23,10 @@ Drop a `*.php` file directly under `tests/integration/`; `run-integration-probes
 
 ## Target versions
 
-- PrestaShop `1.7.8`
 - PrestaShop `8.x`
 - PrestaShop `9.x`
+- PrestaShop `1.7.8` — the module's declared floor, but Docker Hub has dropped all
+  `prestashop/prestashop` 1.7 tags, so there is no CI image to boot for that line.
 
 ## Mandatory scenarios
 
