@@ -115,7 +115,7 @@ Resolution order:
 
 The setting has **no default value**. An install that never sets it behaves exactly as it did before the setting existed.
 
-**Activating the field.** The field is hidden on every install unless the shop opts in. Add this single line to `config/defines_custom.inc.php` (create the file if it does not exist — PrestaShop's `config/defines.inc.php` loads it automatically on every request, and it is preserved across PrestaShop upgrades):
+**Activating the field.** The field is hidden on every install unless the shop opts in. Add this single line to `config/defines_custom.inc.php` (create the file if it does not exist — PrestaShop's `config/config.inc.php` includes it automatically on every request, and it is preserved across PrestaShop upgrades):
 
 ```php
 define('_TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_', true);
