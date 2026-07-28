@@ -3004,9 +3004,9 @@ class Twopayment extends PaymentModule
             'invalid_response_from_server' => $this->l('Invalid response from server'),
             'choose_payment_terms' => $this->l('Choose the Buy Now, Pay Later option that works best for you'),
             'payment_period_starts' => $this->l('Your payment period starts when your order is fulfilled'),
-            'invoice_likely_accepted_for' => $this->l('Your invoice with Two is likely to be accepted for %s'),
+            'invoice_likely_accepted_for' => $this->l('Your invoice with Two is likely to be accepted for %s, subject to additional checks.'),
             'invoice_cannot_be_approved_for' => $this->l('Your invoice with Two cannot be approved at this time for %s'),
-            'invoice_likely_accepted' => $this->l('Your invoice with Two is likely to be accepted'),
+            'invoice_likely_accepted' => $this->l('Your invoice with Two is likely to be accepted, subject to additional checks.'),
             'invoice_cannot_be_approved' => $this->l('Your invoice with Two cannot be approved at this time'),
             'invalid_phone_number' => $this->l('The phone number in your billing address appears to be invalid. Please go back and ensure you have entered a valid phone number for your country.'),
             'company_name_required' => $this->l('To pay with Two, go back to your billing address and enter your company name in the Company field.'),
@@ -3069,6 +3069,12 @@ class Twopayment extends PaymentModule
                 // real PrestaShop cart line on payment-option selection.
                 'surcharge_cart_line' => !empty($this->getTwoSurchargeSettings()['enabled']),
                 'payment_term_type' => Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'),
+                // Per-brand order-intent APPROVED notice switch (TWO-25213).
+                // Sibling of 'i18n' rather than a key inside it: a non-empty
+                // value is used verbatim, not translated, and '' has to stay
+                // distinguishable from absent (the i18n accessor treats every
+                // falsy value as "fall back to the default").
+                'intent_approved_notice' => $this->getIntentApprovedNotice(),
                 'i18n' => $i18n,
                 'phone_i18n' => array(
                     'invalid_number' => $this->l('Invalid phone number'),
@@ -7955,6 +7961,44 @@ class Twopayment extends PaymentModule
         }
 
         return array_key_exists($key, $brand) ? $brand[$key] : null;
+    }
+
+    /**
+     * Resolve the per-brand order-intent APPROVED notice switch
+     * (brands/two.php 'intent_approved_notice', TWO-25213) into the value the
+     * checkout JS receives. See normalizeIntentApprovedNotice() for the three
+     * states.
+     *
+     * @return string|null
+     */
+    public function getIntentApprovedNotice()
+    {
+        return self::normalizeIntentApprovedNotice($this->getTwoBrandConfig('intent_approved_notice'));
+    }
+
+    /**
+     * Normalize a brand 'intent_approved_notice' value:
+     *
+     *   null (key absent, or any non-string) => null: platform default
+     *       translated copy, notice ON. Absent must always mean ON.
+     *   ''                                   => '': notice suppressed
+     *       entirely; the checkout JS renders no element at all.
+     *   non-empty string                     => that string, used verbatim by
+     *       the JS as the company-variant template (%s = company name).
+     *
+     * Whitespace-only is treated as '' (suppressed) so an overlay cannot
+     * accidentally ship a blank notice.
+     *
+     * @param mixed $configured
+     * @return string|null
+     */
+    public static function normalizeIntentApprovedNotice($configured)
+    {
+        if (!is_string($configured)) {
+            return null;
+        }
+
+        return trim($configured) === '' ? '' : $configured;
     }
 
     /**

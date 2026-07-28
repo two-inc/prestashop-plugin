@@ -24,4 +24,18 @@ return array(
     // Buyer-facing label for the offset-pricing fee line; null falls back to
     // the translated default in Twopayment::getTwoSurchargeLineLabel().
     'fee_line_label' => null,
+    // Per-brand switch for the order-intent APPROVED notice shown inline in
+    // the Two payment option at checkout (TWO-25213). Three states, resolved
+    // by Twopayment::getIntentApprovedNotice():
+    //
+    //   null (or key absent) - platform default translated copy, notice ON.
+    //                          This is the Two default.
+    //   ''                   - notice suppressed entirely: no element is
+    //                          rendered, not even an empty wrapper.
+    //   non-empty string     - used verbatim as the company-variant template,
+    //                          where %s is the buyer's company name.
+    //
+    // Only the APPROVED notice is switched; declined and error messages are
+    // functional and always render.
+    'intent_approved_notice' => null,
 );

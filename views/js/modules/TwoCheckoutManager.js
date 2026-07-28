@@ -49,6 +49,22 @@ class TwoCheckoutManager {
         return fallback;
     }
 
+    /**
+     * Per-brand order-intent APPROVED notice switch (TWO-25213). Same three
+     * states as TwoOrderIntent.approvedNoticeOverride() - null = platform
+     * default copy (notice ON), '' = suppressed entirely, non-empty = verbatim
+     * company-variant template. Read locally rather than through
+     * this.orderIntent so it is correct before that module is initialised, and
+     * so an absent key still means ON.
+     */
+    approvedNoticeOverride() {
+        const configured = window.twopayment ? window.twopayment.intent_approved_notice : null;
+        if (typeof configured !== 'string') {
+            return null;
+        }
+        return configured.trim() === '' ? '' : configured;
+    }
+
     escapeHtml(value) {
         return String(value === null || value === undefined ? '' : value)
             .replace(/&/g, '&amp;')
@@ -737,8 +753,12 @@ class TwoCheckoutManager {
         // Build company-aware message for display (translated)
         const companyName = this.getSelectedCompanyName();
         if (result.approved) {
+            const approvedNotice = this.approvedNoticeOverride();
             let approvedMsg = result.message || this.t('payment_approved_message', 'Payment approved! Choose your payment terms below.');
-            if (companyName && window.twopayment && window.twopayment.i18n && window.twopayment.i18n.invoice_likely_accepted_for) {
+            if (companyName && approvedNotice !== null && approvedNotice !== '') {
+                // Brand override replaces only the company variant.
+                approvedMsg = approvedNotice.replace('%s', companyName);
+            } else if (companyName && window.twopayment && window.twopayment.i18n && window.twopayment.i18n.invoice_likely_accepted_for) {
                 approvedMsg = window.twopayment.i18n.invoice_likely_accepted_for.replace('%s', companyName);
             }
             this.showOrderIntentApproval(approvedMsg);
@@ -882,7 +902,27 @@ class TwoCheckoutManager {
      * Show order intent approval message and payment terms (theme-independent)
      */
     showOrderIntentApproval(message) {
-        
+        // Notice switched off for this brand (TWO-25213): render no approval
+        // message and do not create a container for one. Everything else an
+        // approval does - clearing the loading state, revealing the payment
+        // terms selector - still has to happen.
+        if (this.approvedNoticeOverride() === '') {
+            const existing = document.querySelector('.two-payment-info') ||
+                document.querySelector('#two-order-intent-messages');
+            if (existing) {
+                const existingMessage = existing.querySelector('.two-payment-message');
+                if (existingMessage) {
+                    existingMessage.textContent = '';
+                }
+                existing.classList.remove('approved', 'declined', 'loading', 'show');
+                existing.style.display = 'none';
+            }
+            this.clearLoadingState();
+            this.hideLoadingOverlay();
+            this.showPaymentTerms();
+            return;
+        }
+
         const messageContainer = this.getOrCreateMessageContainer();
         
         // Update the payment info section with success message
