@@ -5532,6 +5532,7 @@ require __DIR__ . '/ShippingCostSourcingSpec.php';
 require __DIR__ . '/AjaxCheckoutFailureSpec.php';
 require __DIR__ . '/CheckoutLatencySpec.php';
 require __DIR__ . '/FulfilledStatusMappingSpec.php';
+require __DIR__ . '/AddressLookupConfigSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
@@ -5554,6 +5555,7 @@ $tests = [
     'AjaxCheckoutFailureSpec::runAll' => [AjaxCheckoutFailureSpec::class, 'runAll'],
     'CheckoutLatencySpec::runAll' => [CheckoutLatencySpec::class, 'runAll'],
     'FulfilledStatusMappingSpec::runAll' => [FulfilledStatusMappingSpec::class, 'runAll'],
+    'AddressLookupConfigSpec::runAll' => [AddressLookupConfigSpec::class, 'runAll'],
 ];
 
 $failed = 0;

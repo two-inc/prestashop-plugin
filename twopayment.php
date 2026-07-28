@@ -196,7 +196,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.6.5';
+        $this->version = '2.6.6';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -376,6 +376,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 0);
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', 0); // Default: SSL verification enabled (secure)
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', 1);
+        Configuration::updateValue('PS_TWO_ADDRESS_LOOKUP', 1); // Default: address lookup fills the address step, matching every other plugin
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', 1);
         Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', 'STANDARD'); // Default: Standard payment terms (not EOM)
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1); // Default: 30 days enabled
@@ -608,6 +609,7 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_API_KEY_VERIFIED');
         Configuration::deleteByName('PS_TWO_DISABLE_SSL_VERIFY');
         Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_NAME');
+        Configuration::deleteByName('PS_TWO_ADDRESS_LOOKUP');
         // Retired admin toggle (TWO-25190) - the org.id auto-complete switch
         // was rendered and stored but no JavaScript ever read the
         // `company_id_search` variable it fed. upgrade-2.6.5 deletes the row;
@@ -1382,6 +1384,26 @@ class Twopayment extends PaymentModule
                     ),
                     array(
                         'type' => 'switch',
+                        'label' => $this->l('Auto-fill the address from the selected company'),
+                        'name' => 'PS_TWO_ADDRESS_LOOKUP',
+                        'is_bool' => true,
+                        'desc' => $this->l('Governs the company address lookup on the checkout ADDRESS step only. When enabled, picking a company from the company search overwrites the address fields (street, postcode, city) and the organisation-number fields (DNI / VAT number) with the registry data for that company - including on a re-search, where picking a different company replaces the previous company\'s values. When disabled, the company search still works and still records the company name and organisation number, but nothing is written into the address or identifier fields and the customer fills them in themselves. This does not turn the company search itself off - use "Activate company name auto-complete" for that.'),
+                        'required' => true,
+                        'values' => array(
+                            array(
+                                'id' => 'PS_TWO_ADDRESS_LOOKUP_ON',
+                                'value' => 1,
+                                'label' => $this->l('Yes')
+                            ),
+                            array(
+                                'id' => 'PS_TWO_ADDRESS_LOOKUP_OFF',
+                                'value' => 0,
+                                'label' => $this->l('No')
+                            ),
+                        ),
+                    ),
+                    array(
+                        'type' => 'switch',
                         'label' => $this->l('Automatically fulfill orders with Two'),
                         'name' => 'PS_TWO_FINALIZE_PURCHASE',
                         'is_bool' => true,
@@ -1450,10 +1472,35 @@ class Twopayment extends PaymentModule
         return $fields_form;
     }
 
+    /**
+     * Effective value of the address-lookup toggle (TWO-25203), as the '1'/'0'
+     * string the checkout JS compares against.
+     *
+     * An absent row means an install carrying the pre-toggle behaviour whose
+     * upgrade script has not run yet. That behaviour was always-on, so absent
+     * resolves to enabled - a missing row must never silently disable the fill.
+     *
+     * @return string
+     */
+    protected function getAddressLookupEnabled()
+    {
+        $value = Configuration::get('PS_TWO_ADDRESS_LOOKUP');
+
+        if ($value === false || $value === null || $value === '') {
+            return '1';
+        }
+
+        return ((int) $value) === 1 ? '1' : '0';
+    }
+
     protected function getTwoOtherFormValues()
     {
         $fields_values = array();
         $fields_values['PS_TWO_ENABLE_COMPANY_NAME'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME', Configuration::get('PS_TWO_ENABLE_COMPANY_NAME'));
+        // Read through the same default-on resolver the checkout uses, so an
+        // install whose upgrade script has not run yet renders the switch in
+        // the position it is actually behaving in.
+        $fields_values['PS_TWO_ADDRESS_LOOKUP'] = Tools::getValue('PS_TWO_ADDRESS_LOOKUP', $this->getAddressLookupEnabled());
         $fields_values['PS_TWO_FINALIZE_PURCHASE'] = Tools::getValue('PS_TWO_FINALIZE_PURCHASE', Configuration::get('PS_TWO_FINALIZE_PURCHASE'));
         $fields_values['PS_TWO_ENABLE_TAX_SUBTOTALS'] = Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
@@ -1467,6 +1514,7 @@ class Twopayment extends PaymentModule
     protected function saveTwoOtherFormValues()
     {
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME'));
+        Configuration::updateValue('PS_TWO_ADDRESS_LOOKUP', (int) Tools::getValue('PS_TWO_ADDRESS_LOOKUP', 1));
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', Tools::getValue('PS_TWO_FINALIZE_PURCHASE'));
         Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', (int) Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
@@ -2979,6 +3027,10 @@ class Twopayment extends PaymentModule
                 'search_empty_text' => $this->l('No result found'),
                 'checkout_host' => $this->getTwoCheckoutHostUrl(),
                 'company_name_search' => $this->enable_company_name,
+                // Separate from company_name_search: that gates the search
+                // widget itself, this gates only what a selection writes into
+                // the address step (TWO-25203).
+                'address_lookup' => $this->getAddressLookupEnabled(),
                 'enable_department' => $this->enable_department,
                 'enable_project' => $this->enable_project,
                 'enable_order_intent' => $this->enable_order_intent,

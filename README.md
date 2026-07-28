@@ -155,7 +155,7 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 - Module searches Two's Company API v2 (frontend call)
 - Customer selects a company from search results
 - Module stores organization number in hidden `companyid` field
-- Address fields auto-fill when available from Two's data
+- Address fields, DNI and VAT number auto-fill from Two's data when available, and a re-search overwrites them with the newly selected company's values. Merchant-configurable (Advanced Settings -> "Auto-fill the address from the selected company", enabled by default); with it off, the company search still records the company name and organisation number but writes nothing into the address step
 - Selection persists in cookie to survive checkout step changes
 
 #### 2. Payment Step
