@@ -83,4 +83,41 @@
             </div>
         </div>
     </div>
+
+    {* Optional buyer reference fields (ABN-472). These live HERE, in the
+       payment tile, and not in the billing address block: PrestaShop asks for
+       the shipping address first and only shows the billing block when the
+       buyer ticks "Billing address differs from shipping address", so a field
+       hosted there is invisible to most buyers. The invoice email in
+       particular has to be visible when billing and shipping match - that is
+       the case where the buyer should be prompted to consider a dedicated
+       invoicing address.
+
+       Each input is mirrored into a hidden twin inside the module's payment
+       form by TwoOptionalFields.js; the form is a sibling of this markup, so
+       these visible inputs are not themselves submitted. A field whose admin
+       switch is off is absent from $two_optional_fields, so it renders no
+       element at all rather than a hidden one. *}
+    {if isset($two_optional_fields) && $two_optional_fields|@count}
+        <div class="two-optional-fields" id="two-optional-fields">
+            {foreach from=$two_optional_fields item="field"}
+                <div class="two-optional-field two-optional-field--{$field.key|escape:'html':'UTF-8'}">
+                    <label class="two-optional-field__label" for="two-field-{$field.key|escape:'html':'UTF-8'}">
+                        {$field.label|escape:'html':'UTF-8'}
+                    </label>
+                    <input
+                        class="two-optional-field__input form-control"
+                        id="two-field-{$field.key|escape:'html':'UTF-8'}"
+                        type="{$field.type|escape:'html':'UTF-8'}"
+                        maxlength="{$field.max_length|escape:'html':'UTF-8'}"
+                        autocomplete="off"
+                        data-two-optional-field="{$field.key|escape:'html':'UTF-8'}"
+                        data-two-optional-target="{$field.input_name|escape:'html':'UTF-8'}"
+                        {if $field.placeholder} placeholder="{$field.placeholder|escape:'html':'UTF-8'}"{/if}
+                    />
+                    <span class="two-optional-field__error" style="display: none;"></span>
+                </div>
+            {/foreach}
+        </div>
+    {/if}
 </div>
