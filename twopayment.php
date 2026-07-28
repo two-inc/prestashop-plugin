@@ -3527,11 +3527,16 @@ class Twopayment extends PaymentModule
      */
     public function isOptionalCheckoutFieldEnabled($key)
     {
-        if (!isset(self::OPTIONAL_CHECKOUT_FIELDS[$key])) {
+        // array_key_exists rather than isset() on a class-constant subscript:
+        // the module supports PrestaShop back to 1.7.6, so it has to parse on
+        // the oldest PHP that floor allows, and passing the whole constant as
+        // an argument is unambiguously fine on all of them.
+        if (!array_key_exists($key, self::OPTIONAL_CHECKOUT_FIELDS)) {
             return false;
         }
+        $definition = self::OPTIONAL_CHECKOUT_FIELDS;
 
-        return (int) Configuration::get(self::OPTIONAL_CHECKOUT_FIELDS[$key]['config']) === 1;
+        return (int) Configuration::get($definition[$key]['config']) === 1;
     }
 
     /**
