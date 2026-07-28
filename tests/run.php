@@ -5535,6 +5535,12 @@ require __DIR__ . '/FulfilledStatusMappingSpec.php';
 require __DIR__ . '/AddressLookupConfigSpec.php';
 require __DIR__ . '/OrgNumberPreVerificationSpec.php';
 require __DIR__ . '/IntentApprovedNoticeSpec.php';
+// LAST, deliberately: DefaultShippingTaxCodeSpec defines
+// _TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_ partway through its own run, and a
+// PHP constant cannot be undefined again. ShippingCostSourcingSpec asserts the
+// unconditional carrier-less refusal and must not observe it. Keep this entry
+// at the bottom of both the require list and $tests.
+require __DIR__ . '/DefaultShippingTaxCodeSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
@@ -5560,6 +5566,8 @@ $tests = [
     'AddressLookupConfigSpec::runAll' => [AddressLookupConfigSpec::class, 'runAll'],
     'OrgNumberPreVerificationSpec::runAll' => [OrgNumberPreVerificationSpec::class, 'runAll'],
     'IntentApprovedNoticeSpec::runAll' => [IntentApprovedNoticeSpec::class, 'runAll'],
+    // Keep last - see the require above.
+    'DefaultShippingTaxCodeSpec::runAll' => [DefaultShippingTaxCodeSpec::class, 'runAll'],
 ];
 
 $failed = 0;
