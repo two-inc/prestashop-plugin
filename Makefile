@@ -37,13 +37,13 @@ TWO_ENVIRONMENT      ?= sandbox
 TWO_STORE_COUNTRY    ?= NO
 export TWO_STORE_COUNTRY
 
-.PHONY: help install configure run debug stop clean flush logs proxy archive test patch minor major format phpstan bumpver-patch bumpver-minor bumpver-major
+.PHONY: help install configure run debug stop clean flush logs proxy archive test test-integration carrierless-shop carrierless-off patch minor major format phpstan bumpver-patch bumpver-minor bumpver-major
 
 .DEFAULT_GOAL := help
 
 ## Show this help
 help:
-	@awk '/^## /{desc=substr($$0,4)} /^[a-zA-Z_-]+:/{if(desc){printf "  \033[36m%-16s\033[0m %s\n",$$1,desc; desc=""}}' $(MAKEFILE_LIST)
+	@awk '/^## /{desc=substr($$0,4)} /^[a-zA-Z_-]+:/{if(desc){printf "  \033[36m%-18s\033[0m %s\n",$$1,desc; desc=""}}' $(MAKEFILE_LIST)
 
 ## Create PrestaShop + MariaDB containers, install the Two module
 install: clean
@@ -146,6 +146,40 @@ logs:
 ## Run the unit test harness (same suite CI runs)
 test:
 	docker run --rm -v "$(CURDIR)":/app -w /app php:8.2-cli php tests/run.php
+
+# Carrier-less shipping (TWO-25200 / TWO-25217). A shop where shipping is
+# priced but no carrier declares a tax rules group for it — the shape the
+# optional "Default shipping tax code" setting exists for. Not part of
+# `install`: it is a deliberately unusual shop, not a default dev shop.
+#
+# What it does, all of it reversible with `make carrierless-off`:
+#   - installs tests/integration/fixtures/twocarrierlesstest, which injects a
+#     priced delivery option belonging to no carrier
+#   - creates a customer, a company address, a 25% tax rules group and a cart
+#     carrying that delivery selection (id_carrier = 0)
+#   - adds define('_TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_', true) to
+#     config/defines_custom.inc.php, which is what reveals the "Default
+#     shipping tax code" dropdown in the module's Advanced settings
+## Set up the local shop for carrier-less shipping + reveal the hidden "Default shipping tax code" field
+carrierless-shop:
+	PS_CONTAINER=$(CONTAINER) dev/ci/seed-carrierless-cart.sh
+	docker exec $(CONTAINER) bash /var/www/html/modules/$(MODULE_NAME)/dev/enable-default-shipping-tax-code
+	@echo ""
+	@echo "========================================="
+	@echo " Carrier-less shipping is set up."
+	@echo " Admin field:  $(URL)admin-dev -> Modules -> Two -> Configure -> Advanced settings"
+	@echo "               -> 'Default shipping tax code'"
+	@echo " Probe it:     make test-integration"
+	@echo " Undo:         make carrierless-off"
+	@echo "========================================="
+
+## Undo make carrierless-shop: hide the "Default shipping tax code" field again
+carrierless-off:
+	docker exec $(CONTAINER) bash /var/www/html/modules/$(MODULE_NAME)/dev/enable-default-shipping-tax-code --reset
+
+## Run the tests/integration probes against the running local shop (run make carrierless-shop first)
+test-integration:
+	PS_CONTAINER=$(CONTAINER) dev/ci/run-integration-probes.sh
 
 ## Format PHP module source with php-cs-fixer (PSR-12)
 format:
