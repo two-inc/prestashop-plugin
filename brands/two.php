@@ -38,8 +38,11 @@ return array(
     //                   resolves on a buyer-facing checkout render, and a white
     //                   screen is a worse failure than a notice that stays on.
     //
-    // Only the APPROVED notice is switched; declined and error messages are
-    // functional and always render.
+    // What is switched: the buyer-facing reassurance messaging around the
+    // order-intent pre-check - the APPROVED notice, and the loading overlay
+    // shown while the check runs (TWO-25224; it carries our own "Checking Two
+    // payment eligibility..." copy, so the two switch together). Declined and
+    // error messages are functional and always render.
     'intent_approved_notice_enabled' => true,
     // COPY OVERRIDE ONLY for that notice (TWO-25218), resolved by
     // Twopayment::getIntentApprovedNotice():
