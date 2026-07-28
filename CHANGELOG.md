@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Per-brand off switch for the order-intent approved notice** (TWO-25213, umbrella TWO-24739)
+  - New `intent_approved_notice` key in `brands/two.php`, resolved by `Twopayment::getIntentApprovedNotice()` and handed to the checkout JS as `window.twopayment.intent_approved_notice`. Three states: `null` (or the key absent) keeps the platform default translated copy with the notice **on** - the Two default; `''` suppresses the approved notice entirely, rendering no element at all, not even an empty wrapper; a non-empty string is used verbatim as the company-variant template, where `%s` is the buyer's company name
+  - Both approved-message render sites respect it: the inline `.two-order-intent-message` in `TwoOrderIntent` (`processResult()` and `updateUI()`) and `TwoCheckoutManager.showOrderIntentApproval()`
+  - Only the **approved** notice is switched. Declined and error messages are functional and always render, and order prevention on decline is untouched. An absent value always means on, so an older cached JS payload cannot silently hide the notice
+
 - **Merchant toggle for the checkout address lookup** (TWO-25203, umbrella TWO-24739)
   - The company address lookup on the checkout address step was unconditional: picking a company from the company search always overwrote the address fields (street, postcode, city) and the organisation-number fields (DNI, VAT number). The other plugins each let the merchant turn that off; this one did not
   - New `PS_TWO_ADDRESS_LOOKUP` switch on the advanced-settings page, **enabled by default**. With it off the company search still runs and still records the company name and organisation number - the Two flow needs those - but nothing is written into the address or identifier fields
@@ -48,6 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Measured over a six-step checkout session
 
 ### Changed
+- **Buyer-facing copy: the approved order-intent notice now says checks continue** (TWO-25213, umbrella TWO-24739)
+  - `Your invoice with Two is likely to be accepted for %s` becomes `Your invoice with Two is likely to be accepted for %s, subject to additional checks.`, and the no-company variant gains the same trailing caveat
+  - This lands all four plugins on one canonical pair of strings; the other platforms already carried the caveat. Declined copy is unchanged. Translators see the two changed source strings as new
 - **Invoice upload is now gated on the merchant record, not an admin toggle** (TWO-25111, per decision TWO-25106 Option A)
   - The plugin-side invoice upload (own-invoice merchants) now triggers only when the `invoice_distributed_by_merchant` flag on the Two merchant record (`GET /v1/merchant`) is true - the same signal checkout-api itself enforces (TWO-24761), and the same gating model Magento (TWO-24758) and WooCommerce (TWO-24757) use
   - The flag is cached by the existing TTL-gated merchant-record fetch (shared with `available_terms`/`due_in_days`); absent-from-response is treated as false, a failed fetch serves the last known value, and a merchant identity change fails closed

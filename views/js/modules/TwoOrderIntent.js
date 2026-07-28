@@ -25,6 +25,29 @@ class TwoOrderIntent {
         return fallback;
     }
 
+    /**
+     * Per-brand order-intent APPROVED notice switch (TWO-25213), read from the
+     * checkout JS payload (brands/two.php -> Twopayment::getIntentApprovedNotice).
+     *
+     *   null - platform default translated copy, notice ON
+     *   ''   - notice suppressed entirely, no element rendered
+     *   text - verbatim company-variant template, %s = company name
+     *
+     * Anything that is not a string reads as null, so an older cached payload
+     * with no such key means ON rather than off.
+     */
+    approvedNoticeOverride() {
+        const configured = window.twopayment ? window.twopayment.intent_approved_notice : null;
+        if (typeof configured !== 'string') {
+            return null;
+        }
+        return configured.trim() === '' ? '' : configured;
+    }
+
+    isApprovedNoticeSuppressed() {
+        return this.approvedNoticeOverride() === '';
+    }
+
     buildPublicApiBeforeSend() {
         return function (xhr) {
             const blockedHeaders = {
@@ -348,25 +371,39 @@ class TwoOrderIntent {
         if (!response || typeof response !== 'object') {
             return { success: false, approved: false, message: this.t('invalid_response_from_server', 'Invalid response from server') };
         }
+        const approvedNotice = this.approvedNoticeOverride();
+        const approvedSuppressed = approvedNotice === '';
         const result = {
             success: !!response.success,
             approved: !!response.approved,
             message: response.message || (response.approved
-                ? this.t('invoice_likely_accepted', 'Your invoice with Two is likely to be accepted')
+                ? this.t('invoice_likely_accepted', 'Your invoice with Two is likely to be accepted, subject to additional checks.')
                 : this.t('invoice_cannot_be_approved', 'Your invoice with Two cannot be approved at this time')),
             rawResponse: response.rawResponse || response
         };
+        // Approved notice switched off for this brand: carry no message at all
+        // so nothing is rendered. Declines keep their message - they are
+        // functional and drive setupOrderPrevention.
+        if (result.approved && approvedSuppressed) {
+            result.message = '';
+        }
         const companyField = document.querySelector("input[name='company']");
         if (!this.lastCompany || (companyField && companyField.value)) {
             this.lastCompany = companyField && companyField.value ? companyField.value : this.lastCompany;
         }
         // Inject company into message immediately to ensure UI gets the contextual string
         if (this.lastCompany && typeof this.lastCompany === 'string' && this.lastCompany.trim().length > 0) {
-            const approvedTemplate = this.t('invoice_likely_accepted_for', 'Your invoice with Two is likely to be accepted for %s');
-            const declinedTemplate = this.t('invoice_cannot_be_approved_for', 'Your invoice with Two cannot be approved at this time for %s');
-            result.message = result.approved
-                ? approvedTemplate.replace('%s', this.lastCompany)
-                : declinedTemplate.replace('%s', this.lastCompany);
+            if (!result.approved) {
+                const declinedTemplate = this.t('invoice_cannot_be_approved_for', 'Your invoice with Two cannot be approved at this time for %s');
+                result.message = declinedTemplate.replace('%s', this.lastCompany);
+            } else if (!approvedSuppressed) {
+                // A brand override replaces only the company variant; the
+                // no-company copy above stays the platform default.
+                const approvedTemplate = approvedNotice !== null
+                    ? approvedNotice
+                    : this.t('invoice_likely_accepted_for', 'Your invoice with Two is likely to be accepted for %s, subject to additional checks.');
+                result.message = approvedTemplate.replace('%s', this.lastCompany);
+            }
         }
         this.lastResult = result;
         this.updateUI(result);
@@ -467,6 +504,17 @@ class TwoOrderIntent {
             return $(element).find('[data-module-name="twopayment"]').length > 0;
         });
         if ($twoPaymentOption.length === 0) return;
+        const approvedNotice = this.approvedNoticeOverride();
+        // Notice switched off for this brand (TWO-25213): render no element at
+        // all - not even an empty wrapper - and drop any element left over
+        // from an earlier decline so a stale message cannot outlive an
+        // approval. The functional part of an approval still runs below.
+        if (result.approved && approvedNotice === '') {
+            $twoPaymentOption.find('.two-order-intent-message').remove();
+            $twoPaymentOption.removeClass('disabled');
+            $twoPaymentOption.find('input[type="radio"]').prop('disabled', false);
+            return;
+        }
         let $messageContainer = $twoPaymentOption.find('.two-order-intent-message');
         if ($messageContainer.length === 0) {
             $messageContainer = $('<div class="two-order-intent-message"></div>');
@@ -488,7 +536,9 @@ class TwoOrderIntent {
             this.lastCompany.trim().length > 0
         ) {
             if (result.approved) {
-                const t = this.t('invoice_likely_accepted_for', 'Your invoice with Two is likely to be accepted for %s');
+                const t = approvedNotice !== null
+                    ? approvedNotice
+                    : this.t('invoice_likely_accepted_for', 'Your invoice with Two is likely to be accepted for %s, subject to additional checks.');
                 messageText = t.replace('%s', this.lastCompany);
             } else {
                 const t = this.t('invoice_cannot_be_approved_for', 'Your invoice with Two cannot be approved at this time for %s');
