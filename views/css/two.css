@@ -1235,3 +1235,39 @@
     font-size: 13px;
     color: #b42318;
 }
+
+/* Optional buyer reference fields in the payment tile (ABN-472) */
+.two-optional-fields {
+    margin-top: 12px;
+    padding: 12px 16px;
+    background: #fafbfc;
+    border-radius: 6px;
+    border: 1px solid #f0f2f5;
+}
+
+.two-optional-field + .two-optional-field {
+    margin-top: 10px;
+}
+
+.two-optional-field__label {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.two-optional-field__input {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.two-optional-field--invalid .two-optional-field__input {
+    border-color: #b42318;
+}
+
+.two-optional-field__error {
+    display: block;
+    margin-top: 4px;
+    font-size: 13px;
+    color: #b42318;
+}
