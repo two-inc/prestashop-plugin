@@ -72,8 +72,9 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
    - Enable/disable company name field requirement
    - Enable/disable organization number field requirement
    - Enable/disable the optional buyer reference fields shown in the Two
-     payment section at checkout: department, project, purchase order number,
-     invoice email address (all enabled by default)
+     payment section at checkout, in this order: invoice email address,
+     purchase order number, project, department (all enabled by default on a
+     fresh install)
    - Enable/disable Order Intent check (Required for use)
    - Enable/disable account type selection
    - Enable automatic invoice upload to Two
@@ -90,10 +91,10 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 | Default Payment Term | Default term when multiple available | 30 days |
 | Company Name | Require company name field | Enabled |
 | Organization Number | Require organization number | Enabled |
-| Department Field | Show department field in the Two payment section | Enabled |
-| Project Field | Show project field in the Two payment section | Enabled |
-| Purchase order number Field | Show purchase order number field in the Two payment section | Enabled |
 | Invoice email Field | Show invoice email address field in the Two payment section | Enabled |
+| Purchase order number Field | Show purchase order number field in the Two payment section | Enabled |
+| Project Field | Show project field in the Two payment section | Enabled |
+| Department Field | Show department field in the Two payment section | Enabled |
 | Order Intent | Enable Order Intent check | Enabled |
 | Account Type | Show account type selector | Enabled |
 | Auto Fulfill Orders | Automatically fulfill orders with Two when status changes | Enabled |
@@ -104,11 +105,23 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 ### Optional buyer reference fields
 
 Four optional fields can be shown to the buyer, each with its own switch, all
-**enabled by default**: department, project, purchase order number and invoice
-email address. Their values are sent to Two with the order (`buyer_department`,
-`buyer_project`, `buyer_purchase_order_number`, and
-`invoice_details.invoice_emails` respectively); an empty field is simply not
-sent, and none of them is ever required.
+**enabled by default on a fresh install**. They appear in one standard order,
+used by both the admin switches and the checkout fields so the configuration
+pane reads like the thing it configures:
+
+1. Invoice email address — sent as `invoice_details.invoice_emails`
+2. Purchase order number — sent as `buyer_purchase_order_number`
+3. Project — sent as `buyer_project`
+4. Department — sent as `buyer_department`
+5. Order note — **PrestaShop core's field, not one of ours** (see below); sent
+   as `order_note`
+
+An empty field is simply not sent, and none of them is ever required.
+
+Because the order note is core's field on a different checkout step, it has no
+presence in the payment tile and no switch: it is fifth in the standard
+sequence, but there is nothing to sort it against there. Adding a plugin
+order-note field just to express the ordering would be the wrong fix.
 
 They render **inside the Two payment section at the payment step**, not in the
 billing address block. PrestaShop asks for the shipping address first and only
@@ -123,10 +136,16 @@ value is never read from the request even if the parameter is supplied by hand.
 
 **Order comments** are deliberately not a plugin field. PrestaShop core already
 offers one: the "If you would like to add a comment about your order" textarea
-(`delivery_message`) on the checkout **shipping** step, rendered by
-`checkout/_partials/steps/shipping.tpl` and stored by core against the order.
-Use that. Note that it reaches the merchant through PrestaShop only: the module
-sends an empty `order_note` to Two and does not relay core's comment.
+(`name="delivery_message"`) on the checkout **shipping** step, rendered by
+`checkout/_partials/steps/shipping.tpl` and stored by core one row per cart in
+the `message` table. Use that; do not add a plugin equivalent.
+
+The module **relays** that value to Two as `order_note` on both order creation
+and order update, capped at 1000 characters. It is read from the cart rather
+than from the buyer's submission, which is what lets the update payload carry it
+too — read from the request, an admin order edit would blank the note on Two's
+side. Core stores the comment htmlentities-encoded (`Tools::safeOutput`), so the
+relay decodes it back to plain text.
 
 ### Default shipping tax code (hidden setting)
 

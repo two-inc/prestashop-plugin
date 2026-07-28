@@ -103,7 +103,22 @@ class Twopayment extends PaymentModule
     // Required coverage: NOK, GBP, SEK, USD, DKK, EUR
     const TWO_SUPPORTED_CURRENCY_ISOS = ['NOK', 'GBP', 'SEK', 'USD', 'DKK', 'EUR'];
 
-    // Optional buyer reference fields, in render order. Single source of truth
+    // Optional buyer reference fields, in the STANDARD FIELD ORDER: invoice
+    // email, purchase order number, project, department. That order is
+    // deliberate and shared - the admin switches render in the same sequence as
+    // the checkout fields, so the pane reads like the thing it configures.
+    // Adding a field means putting it in the right place in BOTH this array and
+    // getTwoPaymentSettingsForm()'s input list, not appending to either.
+    //
+    // The order note is the fifth field in that standard sequence and is
+    // deliberately absent from here: it is PrestaShop core's own
+    // `delivery_message` textarea on the checkout SHIPPING step, not a field
+    // this module renders (ABN-472). So "order note last" has no expression in
+    // the payment tile - there is nothing to sort - and no plugin order-note
+    // field was invented to give it one. The module relays core's value to Two
+    // as `order_note`; see getCartOrderNote().
+    //
+    // Single source of truth
     // for the admin switch that gates each one, the POST parameter that
     // carries it from the payment tile, and its length/validation shape
     // (ABN-472). Every one of them renders inside the Two payment tile at the
@@ -116,10 +131,21 @@ class Twopayment extends PaymentModule
     // names are applied at the payload-building call site, because they are
     // not uniform (two `buyer_*` scalars, one conditional scalar, one entry in
     // an `invoice_details` sub-object).
+    // Cap on the relayed order note. PrestaShop's `message.message` column is a
+    // TEXT, so core imposes no useful bound of its own; this keeps one buyer's
+    // pasted essay from being the reason an order-create call is rejected.
+    const ORDER_NOTE_MAX_LENGTH = 1000;
+
     const OPTIONAL_CHECKOUT_FIELDS = array(
-        'department' => array(
-            'config' => 'PS_TWO_ENABLE_DEPARTMENT',
-            'input' => 'two_department',
+        'invoice_email' => array(
+            'config' => 'PS_TWO_ENABLE_INVOICE_EMAIL',
+            'input' => 'two_invoice_email',
+            'type' => 'email',
+            'max_length' => 255,
+        ),
+        'purchase_order_number' => array(
+            'config' => 'PS_TWO_ENABLE_PO_NUMBER',
+            'input' => 'two_purchase_order_number',
             'type' => 'text',
             'max_length' => 255,
         ),
@@ -129,16 +155,10 @@ class Twopayment extends PaymentModule
             'type' => 'text',
             'max_length' => 255,
         ),
-        'purchase_order_number' => array(
-            'config' => 'PS_TWO_ENABLE_PO_NUMBER',
-            'input' => 'two_purchase_order_number',
+        'department' => array(
+            'config' => 'PS_TWO_ENABLE_DEPARTMENT',
+            'input' => 'two_department',
             'type' => 'text',
-            'max_length' => 255,
-        ),
-        'invoice_email' => array(
-            'config' => 'PS_TWO_ENABLE_INVOICE_EMAIL',
-            'input' => 'two_invoice_email',
-            'type' => 'email',
             'max_length' => 255,
         ),
     );
@@ -1157,21 +1177,50 @@ class Twopayment extends PaymentModule
         // "Billing address differs from shipping address", so anything hosted
         // there is invisible to most buyers - which is exactly what happened to
         // department and project before this release.
+        //
+        // ORDER IS LOAD-BEARING and must stay in step with
+        // self::OPTIONAL_CHECKOUT_FIELDS, which is what the checkout tile
+        // iterates: invoice email, purchase order number, project, department.
+        // The switches read top-to-bottom in the same sequence the buyer sees.
+        // The order note completes that standard sequence but has no switch and
+        // no tile field - it is PrestaShop core's own `delivery_message` on the
+        // shipping step (see the constant's comment).
         $inputs[] = array(
             'type' => 'switch',
-            'label' => $this->l('Show Department field'),
-            'name' => 'PS_TWO_ENABLE_DEPARTMENT',
+            'label' => $this->l('Show Invoice email field'),
+            'name' => 'PS_TWO_ENABLE_INVOICE_EMAIL',
             'is_bool' => true,
-            'desc' => $this->l('If you choose YES then customers will see a department field in the Two payment section at checkout.'),
+            'desc' => $this->l('If you choose YES then customers will see an invoice email field in the Two payment section at checkout. It sits with the payment method rather than the address so the buyer is prompted to consider a dedicated invoicing address even when their billing and shipping addresses match.'),
             'required' => true,
             'values' => array(
                 array(
-                    'id' => 'PS_TWO_ENABLE_DEPARTMENT_ON',
+                    'id' => 'PS_TWO_ENABLE_INVOICE_EMAIL_ON',
                     'value' => 1,
                     'label' => $this->l('Yes')
                 ),
                 array(
-                    'id' => 'PS_TWO_ENABLE_DEPARTMENT_OFF',
+                    'id' => 'PS_TWO_ENABLE_INVOICE_EMAIL_OFF',
+                    'value' => 0,
+                    'label' => $this->l('No')
+                ),
+            ),
+        );
+
+        $inputs[] = array(
+            'type' => 'switch',
+            'label' => $this->l('Show Purchase order number field'),
+            'name' => 'PS_TWO_ENABLE_PO_NUMBER',
+            'is_bool' => true,
+            'desc' => $this->l('If you choose YES then customers will see a purchase order number field in the Two payment section at checkout.'),
+            'required' => true,
+            'values' => array(
+                array(
+                    'id' => 'PS_TWO_ENABLE_PO_NUMBER_ON',
+                    'value' => 1,
+                    'label' => $this->l('Yes')
+                ),
+                array(
+                    'id' => 'PS_TWO_ENABLE_PO_NUMBER_OFF',
                     'value' => 0,
                     'label' => $this->l('No')
                 ),
@@ -1199,45 +1248,24 @@ class Twopayment extends PaymentModule
         );
         $inputs[] = array(
             'type' => 'switch',
-            'label' => $this->l('Show Purchase order number field'),
-            'name' => 'PS_TWO_ENABLE_PO_NUMBER',
+            'label' => $this->l('Show Department field'),
+            'name' => 'PS_TWO_ENABLE_DEPARTMENT',
             'is_bool' => true,
-            'desc' => $this->l('If you choose YES then customers will see a purchase order number field in the Two payment section at checkout.'),
+            'desc' => $this->l('If you choose YES then customers will see a department field in the Two payment section at checkout.'),
             'required' => true,
             'values' => array(
                 array(
-                    'id' => 'PS_TWO_ENABLE_PO_NUMBER_ON',
+                    'id' => 'PS_TWO_ENABLE_DEPARTMENT_ON',
                     'value' => 1,
                     'label' => $this->l('Yes')
                 ),
                 array(
-                    'id' => 'PS_TWO_ENABLE_PO_NUMBER_OFF',
+                    'id' => 'PS_TWO_ENABLE_DEPARTMENT_OFF',
                     'value' => 0,
                     'label' => $this->l('No')
                 ),
             ),
         );
-        $inputs[] = array(
-            'type' => 'switch',
-            'label' => $this->l('Show Invoice email field'),
-            'name' => 'PS_TWO_ENABLE_INVOICE_EMAIL',
-            'is_bool' => true,
-            'desc' => $this->l('If you choose YES then customers will see an invoice email field in the Two payment section at checkout. It sits with the payment method rather than the address so the buyer is prompted to consider a dedicated invoicing address even when their billing and shipping addresses match.'),
-            'required' => true,
-            'values' => array(
-                array(
-                    'id' => 'PS_TWO_ENABLE_INVOICE_EMAIL_ON',
-                    'value' => 1,
-                    'label' => $this->l('Yes')
-                ),
-                array(
-                    'id' => 'PS_TWO_ENABLE_INVOICE_EMAIL_OFF',
-                    'value' => 0,
-                    'label' => $this->l('No')
-                ),
-            ),
-        );
-
         // Offset pricing fee (buyer surcharge) fields — appended so the
         // per-term grid reflects the merchant's currently-offered terms.
         // TWO-24752 / TWO-24893.
@@ -1294,10 +1322,11 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_PAYMENT_TERM_TYPE'] = Tools::getValue('PS_TWO_PAYMENT_TERM_TYPE', Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'));
 
         // Checkout fields (moved from the former "Other Settings" tab).
-        $fields_values['PS_TWO_ENABLE_DEPARTMENT'] = Tools::getValue('PS_TWO_ENABLE_DEPARTMENT', Configuration::get('PS_TWO_ENABLE_DEPARTMENT'));
-        $fields_values['PS_TWO_ENABLE_PROJECT'] = Tools::getValue('PS_TWO_ENABLE_PROJECT', Configuration::get('PS_TWO_ENABLE_PROJECT'));
-        $fields_values['PS_TWO_ENABLE_PO_NUMBER'] = Tools::getValue('PS_TWO_ENABLE_PO_NUMBER', Configuration::get('PS_TWO_ENABLE_PO_NUMBER'));
+        // Standard field order, same as the form inputs and the checkout tile.
         $fields_values['PS_TWO_ENABLE_INVOICE_EMAIL'] = Tools::getValue('PS_TWO_ENABLE_INVOICE_EMAIL', Configuration::get('PS_TWO_ENABLE_INVOICE_EMAIL'));
+        $fields_values['PS_TWO_ENABLE_PO_NUMBER'] = Tools::getValue('PS_TWO_ENABLE_PO_NUMBER', Configuration::get('PS_TWO_ENABLE_PO_NUMBER'));
+        $fields_values['PS_TWO_ENABLE_PROJECT'] = Tools::getValue('PS_TWO_ENABLE_PROJECT', Configuration::get('PS_TWO_ENABLE_PROJECT'));
+        $fields_values['PS_TWO_ENABLE_DEPARTMENT'] = Tools::getValue('PS_TWO_ENABLE_DEPARTMENT', Configuration::get('PS_TWO_ENABLE_DEPARTMENT'));
 
         // Payment terms checkboxes
         $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
@@ -1427,10 +1456,11 @@ class Twopayment extends PaymentModule
         }
 
         // Checkout fields (moved from the former "Other Settings" tab).
-        Configuration::updateValue('PS_TWO_ENABLE_DEPARTMENT', Tools::getValue('PS_TWO_ENABLE_DEPARTMENT'));
-        Configuration::updateValue('PS_TWO_ENABLE_PROJECT', Tools::getValue('PS_TWO_ENABLE_PROJECT'));
-        Configuration::updateValue('PS_TWO_ENABLE_PO_NUMBER', Tools::getValue('PS_TWO_ENABLE_PO_NUMBER'));
+        // Standard field order, same as the form inputs and the checkout tile.
         Configuration::updateValue('PS_TWO_ENABLE_INVOICE_EMAIL', Tools::getValue('PS_TWO_ENABLE_INVOICE_EMAIL'));
+        Configuration::updateValue('PS_TWO_ENABLE_PO_NUMBER', Tools::getValue('PS_TWO_ENABLE_PO_NUMBER'));
+        Configuration::updateValue('PS_TWO_ENABLE_PROJECT', Tools::getValue('PS_TWO_ENABLE_PROJECT'));
+        Configuration::updateValue('PS_TWO_ENABLE_DEPARTMENT', Tools::getValue('PS_TWO_ENABLE_DEPARTMENT'));
 
         // Save payment terms checkboxes. Iterate ONLY the terms the admin form
         // actually rendered (the backend-restricted offerable source), NOT the
@@ -3579,6 +3609,46 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * The buyer's order comment for this cart, for Two's `order_note`.
+     *
+     * This is PrestaShop CORE's field, not one of ours: the "If you would like
+     * to add a comment about your order" textarea (`name="delivery_message"`)
+     * on the checkout shipping step. Core's CheckoutDeliveryStep hands it to
+     * CheckoutSession::setMessage(), which stores one row per cart in the
+     * `message` table - so it is readable from any request that knows the cart,
+     * including the ones with no buyer submission in scope. No plugin
+     * order-note field exists and none should be added (ABN-472).
+     *
+     * Core writes the value through Tools::safeOutput(), i.e. htmlentities, so
+     * it is decoded back to plain text here rather than shipping `&amp;` and
+     * `&quot;` to Two.
+     *
+     * @param Cart|null $cart
+     * @return string Empty when the buyer left the comment blank
+     */
+    public function getCartOrderNote($cart)
+    {
+        if (!Validate::isLoadedObject($cart) || (int) $cart->id <= 0) {
+            return '';
+        }
+
+        // Reading core's storage directly rather than through CheckoutSession:
+        // that class resolves the cart from the request context, which is wrong
+        // (or absent) on the webhook and admin paths that also build payloads.
+        $row = Message::getMessageByCartId((int) $cart->id);
+        if (!is_array($row) || !isset($row['message'])) {
+            return '';
+        }
+
+        $note = trim(html_entity_decode((string) $row['message'], ENT_QUOTES, 'UTF-8'));
+        if ($note === '') {
+            return '';
+        }
+
+        return Tools::substr($note, 0, self::ORDER_NOTE_MAX_LENGTH);
+    }
+
+    /**
      * The optional field values the buyer submitted with the payment form.
      *
      * Front-office, same-request only: these arrive as POST parameters on the
@@ -4445,7 +4515,11 @@ class Twopayment extends PaymentModule
                 'expected_delivery_date' => date('Y-m-d', strtotime('+ ' . $expected_delivery_days . ' days'))
             ],
             'recurring' => false,
-            'order_note' => '',
+            // PrestaShop core's own checkout order comment (`delivery_message`
+            // on the shipping step), relayed rather than duplicated by a plugin
+            // field (ABN-472). Read from the cart, so the value survives into
+            // the requests that carry no buyer submission.
+            'order_note' => $this->getCartOrderNote($cart),
             'line_items' => $line_items,
             'terms' => $this->buildTermsPayload(),
         ];
@@ -4568,7 +4642,11 @@ class Twopayment extends PaymentModule
                 'expected_delivery_date' => date('Y-m-d', strtotime('+ ' . $expected_delivery_days . ' days'))
             ],
             'recurring' => false,
-            'order_note' => '',
+            // PrestaShop core's own checkout order comment (`delivery_message`
+            // on the shipping step), relayed rather than duplicated by a plugin
+            // field (ABN-472). Read from the cart, so the value survives into
+            // the requests that carry no buyer submission.
+            'order_note' => $this->getCartOrderNote($cart),
             'line_items' => $line_items,
         ];
 

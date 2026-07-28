@@ -40,6 +40,14 @@ namespace {
         public static array $addresses = [];
         public static array $carriers = [];
         public static array $cartProducts = [];
+        /**
+         * PrestaShop core's checkout order comment, one row per cart, as
+         * Message::getMessageByCartId() returns it: [id_cart => ['id_message' =>
+         * int, 'message' => string]]. Core stores it htmlentities-encoded.
+         *
+         * @var array<int,array<string,mixed>>
+         */
+        public static array $cartMessages = [];
         public static array $cartTotals = [];
         public static array $cartShipping = [];
         public static array $cartRules = [];
@@ -171,6 +179,7 @@ namespace {
             self::$addresses = [];
             self::$carriers = [];
             self::$cartProducts = [];
+            self::$cartMessages = [];
             self::$cartTotals = [];
             self::$cartShipping = [];
             self::$cartRules = [];
@@ -465,6 +474,18 @@ namespace {
         public static function isEmail($email): bool
         {
             return is_string($email) && filter_var($email, FILTER_VALIDATE_EMAIL) !== false;
+        }
+    }
+
+    /**
+     * Core's order-comment storage. Only the one static reader the module uses;
+     * core keys exactly one row per cart.
+     */
+    class Message
+    {
+        public static function getMessageByCartId($idCart)
+        {
+            return StubStore::$cartMessages[(int) $idCart] ?? false;
         }
     }
 
