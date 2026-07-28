@@ -137,7 +137,7 @@ class Twopayment extends PaymentModule
     const CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP = 'PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP';
     // Per-install activation constant for the field above. Set in
     // `config/defines_custom.inc.php` - PrestaShop core's sanctioned override
-    // file, required by `config/defines.inc.php` on every request (front,
+    // file, include_once'd by `config/config.inc.php` on every request (front,
     // back office and CLI) before any module loads, preserved across core
     // upgrades, and editable over plain FTP on shared hosting:
     //
