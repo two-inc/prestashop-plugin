@@ -405,6 +405,70 @@ twopayment/
 - **TwoCompanySearch**: Company search functionality
 - **TwoOptionalFields**: Optional buyer reference fields in the payment tile (client-side)
 
+## Versioning and upgrade scripts
+
+The version-bump level is decided by convention, not by hand:
+
+| Change lands on | Level | Who does it                                      |
+| --------------- | ----- | ------------------------------------------------ |
+| `staging`       | patch | Automatic — `.github/workflows/version-bump.yml` |
+| `main`          | minor | Manual — `make bump`                             |
+| either          | major | Escape hatch, see below                          |
+
+**Do not hand-run a bump for a PR into `staging`.** It is automated, and a
+manual bump would double-bump when the workflow fires on the merge.
+
+A major is not chosen by hand either. Two independent signals are considered and
+the higher wins:
+
+- **Declared** — a root `.next-major` file whose first token is the target
+  major, with a short reason on the same line:
+
+      3  # PrestaShop 9 only, 3.0.0 release
+
+  This covers a _planned_ major that no single commit happens to mark. It is
+  reviewable in the PR that decides it, and it is not cleared afterwards — it
+  disarms itself once the major it names has shipped. A `.next-major` naming a
+  major _below_ the current version is a hard failure, not a no-op.
+
+- **Discovered** — a `!` on a conventional-commit type (`feat!:`) or a
+  `BREAKING CHANGE:` footer, in the commits since the last bump.
+
+`.github/scripts/decide-bump-level.sh` implements all of this and logs its full
+reasoning on every run. It is identical in every Two plugin repository.
+
+### Why the version is load-bearing here
+
+PrestaShop executes `upgrade/upgrade-<version>.php` **only for versions strictly
+above the one already installed**, and it derives the function to call from the
+filename. Both halves fail *silently*:
+
+- a script whose filename and `upgrade_module_X_Y_Z` function disagree is loaded
+  and then nothing is called;
+- a script numbered **above** the declared module version is never in range for
+  any upgrade, so it never runs.
+
+There is no error, no warning and no log line. The first symptom is a merchant
+whose data was quietly never migrated. So two rules:
+
+1. `upgrade/upgrade-X.Y.Z.php` must declare `upgrade_module_X_Y_Z()`.
+2. The declared version — in **both** `config.xml` and `twopayment.php` — must
+   be **at least** the highest `upgrade/` filename.
+
+   Note the boundary: declared **equal to** the highest upgrade script is the
+   normal, correct case, because a script is named for the version it upgrades
+   *to*. Shipping 2.7.0 alongside `upgrade-2.7.0.php` is exactly the intended
+   pattern — that script is what migrates a 2.6.x shop onto 2.7.0. Only a
+   script numbered *above* the declared version is unreachable.
+
+`tests/UpgradeScriptVersionSpec.php` gates both, and runs in the offline suite
+(`php tests/run.php`).
+
+The version sequence is legitimately **non-contiguous**: 2.6.7 was deliberately
+skipped, and most releases ship no upgrade script at all because most need no
+data migration. The gate does not require contiguity, and must never be changed
+to.
+
 ## Developer & AI Quickstart
 
 ### Start Here

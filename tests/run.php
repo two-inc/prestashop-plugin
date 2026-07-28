@@ -5535,7 +5535,7 @@ require __DIR__ . '/FulfilledStatusMappingSpec.php';
 require __DIR__ . '/AddressLookupConfigSpec.php';
 require __DIR__ . '/OrgNumberPreVerificationSpec.php';
 require __DIR__ . '/IntentApprovedNoticeSpec.php';
-require __DIR__ . '/OptionalCheckoutFieldsSpec.php';
+require __DIR__ . '/UpgradeScriptVersionSpec.php';
 // LAST, deliberately: DefaultShippingTaxCodeSpec defines
 // _TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_ partway through its own run, and a
 // PHP constant cannot be undefined again. ShippingCostSourcingSpec asserts the
@@ -5567,7 +5567,7 @@ $tests = [
     'AddressLookupConfigSpec::runAll' => [AddressLookupConfigSpec::class, 'runAll'],
     'OrgNumberPreVerificationSpec::runAll' => [OrgNumberPreVerificationSpec::class, 'runAll'],
     'IntentApprovedNoticeSpec::runAll' => [IntentApprovedNoticeSpec::class, 'runAll'],
-    'OptionalCheckoutFieldsSpec::runAll' => [OptionalCheckoutFieldsSpec::class, 'runAll'],
+    'UpgradeScriptVersionSpec::runAll' => [UpgradeScriptVersionSpec::class, 'runAll'],
     // Keep last - see the require above.
     'DefaultShippingTaxCodeSpec::runAll' => [DefaultShippingTaxCodeSpec::class, 'runAll'],
 ];
