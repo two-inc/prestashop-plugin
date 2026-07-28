@@ -69,10 +69,28 @@ For every user-facing string change:
 
 ## Release Consistency Rules
 
+**Do not hand-bump the version for a PR into `staging`.** The patch bump is
+automated (`.github/workflows/version-bump.yml`, TWO-25230) and fires on the
+merge; a manual bump double-bumps. Use `make bump` only when releasing off
+`main`, and let `.github/scripts/decide-bump-level.sh` pick the level.
+
 When bumping/releasing versions, keep these in sync:
 - `twopayment.php` version
 - `config.xml` version
 - `CHANGELOG.md`
+
+**Upgrade scripts.** PrestaShop executes `upgrade/upgrade-<version>.php` only
+for versions **strictly above** the installed one, and derives the function name
+from the filename. Both halves fail *silently* — no error, no log line, just a
+merchant whose data was never migrated. So:
+- `upgrade/upgrade-X.Y.Z.php` must declare `upgrade_module_X_Y_Z()`;
+- the declared module version must be **at least** the highest `upgrade/` filename
+  (equal is the normal case — a script is named for the version it upgrades *to*;
+  only a script numbered *above* the declared version is unreachable).
+
+`tests/UpgradeScriptVersionSpec.php` gates both. The version sequence is
+legitimately **non-contiguous** (2.6.7 was deliberately skipped, and most
+releases need no migration at all) — never add a contiguity check.
 
 ## Common Failure Patterns to Avoid
 
