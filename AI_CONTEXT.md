@@ -78,8 +78,12 @@ Reliable B2B invoice checkout via Two, with:
   - Order intent polling and UI messaging
 - `views/js/modules/TwoCompanySearch.js`
   - Company discovery and selection
-- `views/js/modules/TwoFieldValidation.js`
-  - Account/company field validation behavior
+- `views/js/modules/TwoSoleTrader.js`
+  - Business / sole-trader toggle and enrolment prompt
+- `views/js/modules/TwoOptionalFields.js`
+  - Optional buyer reference fields in the payment tile: mirrors each visible
+    input into its hidden twin inside the payment form (the tile is a sibling
+    of that form, not a child), and rejects a malformed invoice email on submit
 
 ### Admin UI
 - `views/templates/hook/displayAdminOrderLeft.tpl`

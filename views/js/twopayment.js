@@ -146,6 +146,25 @@
                 });
             }
 
+            // Optional buyer reference fields (ABN-472) - mirrors the visible
+            // tile inputs into the payment form's hidden twins. Always
+            // constructed: which fields exist in the DOM is decided
+            // server-side by the four PS_TWO_ENABLE_* switches, and with none
+            // of them on this module simply finds nothing to mirror.
+            if (typeof TwoOptionalFields !== 'undefined') {
+                if (
+                    window.TwoOptionalFields_Instance &&
+                    typeof window.TwoOptionalFields_Instance.cleanup === 'function'
+                ) {
+                    window.TwoOptionalFields_Instance.cleanup();
+                }
+                window.TwoOptionalFields_Instance = new TwoOptionalFields({
+                    i18n: {
+                        invalid_invoice_email: twopayment.i18n && twopayment.i18n.invalid_invoice_email
+                    }
+                });
+            }
+
         } catch (error) {
             console.error('Two Payment: Initialization failed:', error);
             
@@ -184,6 +203,9 @@
     window.addEventListener('beforeunload', function() {
         if (window.TwoCheckoutManager_Instance && typeof window.TwoCheckoutManager_Instance.cleanup === 'function') {
             window.TwoCheckoutManager_Instance.cleanup();
+        }
+        if (window.TwoOptionalFields_Instance && typeof window.TwoOptionalFields_Instance.cleanup === 'function') {
+            window.TwoOptionalFields_Instance.cleanup();
         }
     });
         }); 
