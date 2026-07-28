@@ -4,26 +4,32 @@
  *
  * 2.7.0 moves the optional buyer reference fields out of the billing address
  * block and into the Two payment tile, adds two more of them, and makes all
- * four visible out of the box (ABN-472).
+ * four visible out of the box on a FRESH install (ABN-472).
  *
- * WHAT THIS CHANGES ON AN EXISTING SHOP - deliberately, and it IS a visible
- * checkout change:
+ * WHAT THIS SCRIPT DOES - seed only, never overwrite:
  *
- *   PS_TWO_ENABLE_DEPARTMENT      -> 1
- *   PS_TWO_ENABLE_PROJECT         -> 1
- *   PS_TWO_ENABLE_PO_NUMBER       -> 1  (new key)
- *   PS_TWO_ENABLE_INVOICE_EMAIL   -> 1  (new key)
+ *   PS_TWO_ENABLE_DEPARTMENT      -> 1  ONLY if the key is absent
+ *   PS_TWO_ENABLE_PROJECT         -> 1  ONLY if the key is absent
+ *   PS_TWO_ENABLE_PO_NUMBER       -> 1  new key, so absent everywhere
+ *   PS_TWO_ENABLE_INVOICE_EMAIL   -> 1  new key, so absent everywhere
  *
- * These are WRITTEN, not seeded-if-absent, and that is the whole point of the
- * script. Seeding only absent keys would have been very nearly a no-op: the
- * admin form has always saved department and project on every submit, so
- * practically every live shop already carries a stored 0 for both - a 0 that
- * came from install() never writing a default and the switches therefore
- * rendering off, not from a merchant deciding these fields were unwanted. The
- * agreed cross-platform out-of-box state is all four fields visible, and an
- * upgraded shop is expected to land on it. A merchant who wants one off turns
- * it off in the module configuration afterwards; the switch still works and
- * nothing here runs again.
+ * A stored value is treated as a merchant's choice regardless of how it got
+ * there, which is the same call the WooCommerce plugin makes. `hasKey()` is
+ * therefore the gate on every one of the four, not just the new ones, and the
+ * script is safe to run again.
+ *
+ * EXPECTED CONSEQUENCE, and it is accepted rather than a bug: on department and
+ * project this is close to a NO-OP for existing shops. The admin form has
+ * always saved both keys on every submit, so practically every live shop
+ * already carries a stored 0 - a 0 that came from install() never writing a
+ * default (the switches therefore rendered off) rather than from a decision.
+ * Those shops keep department and project OFF until a merchant switches them
+ * on; only the two new fields, purchase order number and invoice email, appear
+ * at checkout after upgrading. A near-empty log line here is the correct
+ * outcome, not a broken upgrade.
+ *
+ * Fresh installs are unaffected by any of this: install() writes all four keys
+ * to 1 directly.
  *
  * There is no data migration. Nothing was ever stored against these fields:
  * department and project were injected into the address form but PrestaShop's
@@ -50,18 +56,27 @@ function upgrade_module_2_7_0($module)
         'PS_TWO_ENABLE_INVOICE_EMAIL',
     );
 
+    $seeded = array();
     foreach ($enabled_by_default as $key) {
+        // Absent only. A stored 0 is a choice and survives this upgrade.
+        if (Configuration::hasKey($key)) {
+            continue;
+        }
         Configuration::updateValue($key, 1);
+        $seeded[] = $key;
     }
 
-    PrestaShopLogger::addLog(
-        'Two Payment v2.7.0 upgrade: enabled the optional checkout fields (' .
-        implode(', ', $enabled_by_default) . ') - they now render in the Two payment tile instead of the billing address block (ABN-472)',
-        1,
-        null,
-        'Module',
-        $module->id
-    );
+    if (!empty($seeded)) {
+        PrestaShopLogger::addLog(
+            'Two Payment v2.7.0 upgrade: seeded the absent optional checkout field switches (' .
+            implode(', ', $seeded) . ') to 1 - they render in the Two payment tile instead of the billing address block. ' .
+            'Keys already stored were left exactly as the merchant had them (ABN-472)',
+            1,
+            null,
+            'Module',
+            $module->id
+        );
+    }
 
     return true;
 }
