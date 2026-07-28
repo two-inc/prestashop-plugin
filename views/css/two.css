@@ -18,6 +18,12 @@
  * `two-company-search-loading` is applied by hand on the custom fallback path,
  * where jQuery UI is absent.
  */
+/* Reserved unconditionally, not only while loading: toggling the padding with
+   the spinner reflowed the field's text in and out on every keystroke. */
+.two-company-search-input {
+    padding-right: 32px;
+}
+
 .two-company-search-input.ui-autocomplete-loading,
 .two-company-search-input.two-company-search-loading {
     background-image: url("../img/loader.gif");
@@ -25,8 +31,6 @@
     background-position: right 8px center;
     /* loader.gif is 16x16; pinned so a themed input cannot scale it. */
     background-size: 16px 16px;
-    /* Keeps typed text from running underneath the spinner. */
-    padding-right: 32px;
 }
 
 /* "Search unavailable" row - a message, not a selectable company. */

@@ -308,20 +308,31 @@ class TwoCompanySearch {
         if (typeof $.fn.autocomplete === 'function') {
             this.companyField.autocomplete({
                 source: (request, response) => {
-                    const key = request.term + '|' + (this.getCurrentCountry() || 'GB');
+                    const key = this.buildCacheKey(request.term);
                     const cached = TwoCompanySearch.cacheGet(key);
                     if (cached) {
                         response(cached);
                         return;
                     }
                     this.searchCompanies(request.term, (results, meta) => {
+                        if (meta && meta.silent) {
+                            // Superseded or aborted. Still has to call response()
+                            // so jQuery UI decrements `pending` and clears the
+                            // loading class; it drops the content itself because
+                            // its requestIndex has already moved on.
+                            response([]);
+                            return;
+                        }
                         if (meta && meta.unavailable) {
                             // Not cached: the service may well be healthy again
                             // by the buyer's next keystroke.
                             response([this.buildUnavailableItem()]);
                             return;
                         }
-                        TwoCompanySearch.cacheSet(key, results);
+                        // A known-partial list is not worth pinning for 5 minutes.
+                        if (!(meta && meta.degraded)) {
+                            TwoCompanySearch.cacheSet(key, results);
+                        }
                         response(results);
                     });
                 },
@@ -359,15 +370,26 @@ class TwoCompanySearch {
             // search - select/focus below already refuse the row without it.
             try {
                 const instance = this.companyField.autocomplete('instance');
-                if (instance) {
+                if (instance && typeof instance._renderItem === 'function') {
+                    const defaultRenderItem = instance._renderItem.bind(instance);
                     instance._renderItem = (ul, item) => {
-                        const li = $('<li>');
-                        if (item.two_unavailable) {
-                            li.addClass('two-autocomplete-unavailable ui-state-disabled')
-                                .attr('aria-disabled', 'true');
+                        // Normal companies go through jQuery UI's OWN renderer.
+                        // Reimplementing it would hard-code one version's markup:
+                        // 1.11 emits <li><a>, 1.12 emits <li><div>, and the theme
+                        // decides which ships. Overriding both would strip the
+                        // anchor from every row on 1.11 and break its highlight.
+                        if (!item.two_unavailable) {
+                            return defaultRenderItem(ul, item);
                         }
-                        li.append($('<div>').text(item.label || item.value || ''));
-                        return li.appendTo(ul);
+                        // `ui-state-disabled` is what jQuery UI's menu checks, so
+                        // the row is skipped by keyboard navigation rather than
+                        // merely refused on select. .text() (as jQuery UI's own
+                        // renderer does) keeps markup out of the dropdown.
+                        return $('<li>')
+                            .addClass('two-autocomplete-unavailable ui-state-disabled')
+                            .attr('aria-disabled', 'true')
+                            .append($('<div>').text(item.label || ''))
+                            .appendTo(ul);
                     };
                 }
             } catch (e) {
@@ -376,6 +398,23 @@ class TwoCompanySearch {
         } else {
             this.setupCustomAutocomplete();
         }
+    }
+
+    /**
+     * Cache key for a search term.
+     *
+     * The country half must be exactly what searchCompanies() puts on the wire.
+     * It omits the `country` parameter entirely when no country is selected, so
+     * keying an unselected country as 'GB' filed server-default results under
+     * GB and then served them once the buyer actually picked GB. An empty
+     * segment keeps the two cases distinct - and matters more now the cache
+     * outlives the widget instead of dying at the next address-form re-render.
+     *
+     * @param {string} term
+     * @returns {string}
+     */
+    buildCacheKey(term) {
+        return term + '|' + (this.getCurrentCountry() || '');
     }
 
     /**
@@ -410,6 +449,13 @@ class TwoCompanySearch {
     setupCustomAutocomplete() {
         const inputEl = this.companyField.get(0);
         if (!inputEl) return;
+
+        // This runs again on every country change and address-form update, so
+        // without tearing the previous one down each call left an orphan
+        // dropdown behind whose input listener still fired - duplicate searches
+        // and duplicate spinner toggles on the one shared field, of which
+        // destroy() could only ever clean up the most recent.
+        this.teardownCustomAutocomplete();
 
         // Create suggestion container
         let container = document.createElement('div');
@@ -494,9 +540,11 @@ class TwoCompanySearch {
             list.style.display = 'block';
         };
 
-        // Debounced input
+        // Debounced input. Held in a named ref so teardown can unbind it: the
+        // listener is on the shared company field, not on the container, so
+        // dropping the container would leave it firing.
         let debounceId = null;
-        inputEl.addEventListener('input', () => {
+        const onInput = () => {
             const term = inputEl.value || '';
             clearTimeout(debounceId);
             debounceId = setTimeout(() => {
@@ -504,7 +552,7 @@ class TwoCompanySearch {
                     renderResults([]);
                     return;
                 }
-                const key = term + '|' + (this.getCurrentCountry() || 'GB');
+                const key = this.buildCacheKey(term);
                 const cached = TwoCompanySearch.cacheGet(key);
                 if (cached) {
                     renderResults(cached);
@@ -512,28 +560,73 @@ class TwoCompanySearch {
                 }
                 renderLoading();
                 this.searchCompanies(term, (results, meta) => {
+                    if (meta && meta.silent) {
+                        // Superseded or aborted. A newer request owns the UI and
+                        // has already re-armed the spinner, so leave the loading
+                        // state alone - clearing it here would kill the spinner
+                        // for the request still in flight.
+                        return;
+                    }
                     // Discard results if the input has moved on to a different
                     // term since this request was fired (belt-and-braces on
                     // top of the sequence/abort guard in searchCompanies()).
+                    // The spinner must still be cleared: this branch is reached
+                    // when the term changed WITHOUT a newer search superseding
+                    // it - a programmatic val('') on country change fires no
+                    // input event, so nothing else would ever clear it.
                     if ((inputEl.value || '') !== term) {
+                        setLoadingState(false);
                         return;
                     }
                     if (meta && meta.unavailable) {
                         renderUnavailable();
                         return;
                     }
-                    TwoCompanySearch.cacheSet(key, results);
+                    if (!(meta && meta.degraded)) {
+                        TwoCompanySearch.cacheSet(key, results);
+                    }
                     renderResults(results);
                 });
             }, 300);
-        });
+        };
 
-        inputEl.addEventListener('blur', () => {
+        const onBlur = () => {
             setTimeout(() => { list.style.display = 'none'; }, 150);
-        });
+        };
+
+        inputEl.addEventListener('input', onInput);
+        inputEl.addEventListener('blur', onBlur);
 
         // Save for cleanup
-        this._customAutocomplete = { container, list };
+        this._customAutocomplete = { container, list, inputEl, onInput, onBlur };
+    }
+
+    /**
+     * Remove the custom (non-jQuery-UI) dropdown and unbind its listeners.
+     *
+     * Safe to call when nothing is set up, and idempotent - it is used both to
+     * make setupCustomAutocomplete() re-entrant and on destroy().
+     */
+    teardownCustomAutocomplete() {
+        const existing = this._customAutocomplete;
+        if (!existing) {
+            return;
+        }
+        if (existing.inputEl) {
+            if (existing.onInput) {
+                existing.inputEl.removeEventListener('input', existing.onInput);
+            }
+            if (existing.onBlur) {
+                existing.inputEl.removeEventListener('blur', existing.onBlur);
+            }
+        }
+        if (existing.list && existing.list.parentNode) {
+            existing.list.parentNode.removeChild(existing.list);
+        }
+        if (existing.container && existing.container.parentNode) {
+            existing.container.parentNode.removeChild(existing.container);
+        }
+        this._customAutocomplete = null;
     }
     
     /**
@@ -617,7 +710,16 @@ class TwoCompanySearch {
             timeout: 30000,
             success: (data) => {
                 if (seq !== this._companySearchSeq) {
-                    // Stale response for a superseded request; discard.
+                    // Stale response for a superseded request. Reported as
+                    // `silent` rather than simply dropped: jQuery UI clears
+                    // `ui-autocomplete-loading` only when a request's response
+                    // callback runs (it decrements `pending` there), so a
+                    // dropped callback leaks the spinner forever. It discards
+                    // the CONTENT of a superseded request by its own
+                    // requestIndex check, so nothing is rendered.
+                    // Deliberately does not null _companySearchXhr - that
+                    // handle belongs to the newer request now.
+                    responseCallback([], { silent: true });
                     return;
                 }
                 this._companySearchXhr = null;
@@ -650,31 +752,33 @@ class TwoCompanySearch {
                 // than a truthiness check.
                 //
                 // Degraded WITH results still renders the results - partial data
-                // beats an error message. Degraded with nothing to show is the
-                // case that matters, because an empty list is exactly what the
-                // buyer misreads as "my company is not registered".
-                if (data && data.degraded === true && formattedResults.length === 0) {
+                // beats an error message - but is passed through as degraded so
+                // the caller does not cache a known-partial list for five
+                // minutes and keep serving it after the provider recovers.
+                // Degraded with nothing to show is the case that matters,
+                // because an empty list is exactly what the buyer misreads as
+                // "my company is not registered".
+                const degraded = !!(data && data.degraded === true);
+                if (degraded && formattedResults.length === 0) {
                     responseCallback([], { unavailable: true });
                     return;
                 }
 
-                responseCallback(formattedResults);
+                responseCallback(formattedResults, degraded ? { degraded: true } : null);
             },
             error: (xhr, status, error) => {
-                if (seq !== this._companySearchSeq) {
-                    // Aborted (superseded) or otherwise stale; nothing to report.
+                // A genuine abort is routine - the buyer typed another character,
+                // or the address form was re-rendered under us - and must not be
+                // reported as a failure; the replacement request drives the UI.
+                // Same for a response that arrived after its request was
+                // superseded. Both still report back as `silent` rather than being
+                // dropped, so jQuery UI's `pending` counter stays balanced and
+                // the loading spinner is actually cleared (see success handler).
+                if (seq !== this._companySearchSeq || status === 'abort') {
+                    responseCallback([], { silent: true });
                     return;
                 }
                 this._companySearchXhr = null;
-
-                // A genuine abort is routine - the buyer typed another character,
-                // or the address form was re-rendered under us - and must stay
-                // silent. The replacement request drives the UI. Reaching here
-                // with a matching sequence number is defensive only, since both
-                // abort paths bump the sequence first.
-                if (status === 'abort') {
-                    return;
-                }
 
                 // Everything else is a real failure: timeout, 5xx, network error,
                 // unparseable body. It must NOT be reported as an empty result
@@ -1077,16 +1181,9 @@ class TwoCompanySearch {
             if (this.companyField && this.companyField.length && this.companyField.hasClass('ui-autocomplete-input')) {
                 this.companyField.autocomplete('destroy');
             }
-            // Remove custom autocomplete if present
-            if (this._customAutocomplete) {
-                if (this._customAutocomplete.list && this._customAutocomplete.list.parentNode) {
-                    this._customAutocomplete.list.parentNode.removeChild(this._customAutocomplete.list);
-                }
-                if (this._customAutocomplete.container && this._customAutocomplete.container.parentNode) {
-                    this._customAutocomplete.container.parentNode.removeChild(this._customAutocomplete.container);
-                }
-                this._customAutocomplete = null;
-            }
+            // Remove custom autocomplete if present. Also unbinds its listeners,
+            // which the inline version here did not.
+            this.teardownCustomAutocomplete();
         } catch (e) {
             // no-op
         }
