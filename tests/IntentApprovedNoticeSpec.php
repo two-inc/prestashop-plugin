@@ -35,6 +35,7 @@ final class IntentApprovedNoticeSpec
         self::testCopyOverrideEmptyIsInert();
         self::testCopyOverrideNonEmptyIsVerbatim();
         self::testShippedTwoBrandIsEnabledWithDefaultCopy();
+        self::testLoadingOverlayIsGatedOnTheSwitchButErrorPathsAreNot();
     }
 
     /**
@@ -199,5 +200,68 @@ final class IntentApprovedNoticeSpec
             $module->getIntentApprovedNotice(),
             'the resolver must report the platform default copy for the shipped Two brand'
         );
+    }
+
+    /**
+     * TWO-25224: the switch also governs the order-intent LOADING state, not
+     * only the approved sentence. The overlay carries our own "Checking Two
+     * payment eligibility..." copy, so a brand that declined the reassurance
+     * messaging was still announcing the check while it ran.
+     *
+     * Both error paths are deliberately NOT gated on the switch: a merchant
+     * who wants no reassurance still needs failures surfaced, or a declined
+     * buyer sees nothing at all. This test fails if either half regresses -
+     * the overlay coming back, or an error path picking the gate up.
+     *
+     * Asserted against the checkout JS source because that is the only render
+     * site and this harness is PHP-only (there is no jsdom/node unit lane in
+     * this repo - see tests/README.md). A source assertion is a coarse but
+     * real tripwire: deleting the gate fails this test.
+     */
+    private static function testLoadingOverlayIsGatedOnTheSwitchButErrorPathsAreNot(): void
+    {
+        $source = (string) file_get_contents(
+            dirname(__DIR__) . '/views/js/modules/TwoCheckoutManager.js'
+        );
+        TinyAssert::true($source !== '', 'the checkout manager source must be readable');
+
+        $loading = self::jsMethodBody($source, 'showOrderIntentLoading');
+        $gate = strpos($loading, 'approvedNoticeEnabled()');
+        TinyAssert::true(
+            $gate !== false,
+            'showOrderIntentLoading must consult the approved-notice switch'
+        );
+        $overlay = strpos($loading, "two-loading-overlay'");
+        TinyAssert::true(
+            $overlay !== false && $gate < $overlay,
+            'the switch must be consulted BEFORE the loading overlay is built'
+        );
+        TinyAssert::true(
+            strpos(substr($loading, $gate, $overlay - $gate), 'return;') !== false,
+            'a suppressed brand must return early, not fall through to the overlay'
+        );
+
+        foreach (['showOrderIntentDecline', 'showOrderIntentError'] as $method) {
+            TinyAssert::true(
+                strpos(self::jsMethodBody($source, $method), 'approvedNoticeEnabled') === false,
+                $method . ' must NOT be gated on the switch - errors are always surfaced'
+            );
+        }
+    }
+
+    /**
+     * Body of a top-level (four-space indented) class method in the checkout
+     * JS, from its opening brace to the first closing brace at that same
+     * indent. Good enough for this file's consistent formatting, and it fails
+     * loudly rather than silently matching nothing.
+     */
+    private static function jsMethodBody(string $source, string $method): string
+    {
+        $start = strpos($source, "\n    " . $method . '(');
+        TinyAssert::true($start !== false, $method . ' must exist in the checkout manager');
+        $end = strpos($source, "\n    }", $start);
+        TinyAssert::true($end !== false, $method . ' must have a closing brace at method indent');
+
+        return substr($source, $start, $end - $start);
     }
 }
