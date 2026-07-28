@@ -103,6 +103,46 @@ class Twopayment extends PaymentModule
     // Required coverage: NOK, GBP, SEK, USD, DKK, EUR
     const TWO_SUPPORTED_CURRENCY_ISOS = ['NOK', 'GBP', 'SEK', 'USD', 'DKK', 'EUR'];
 
+    // Optional buyer reference fields, in render order. Single source of truth
+    // for the admin switch that gates each one, the POST parameter that
+    // carries it from the payment tile, and its length/validation shape
+    // (ABN-472). Every one of them renders inside the Two payment tile at the
+    // payment step: PrestaShop asks for the shipping address FIRST and only
+    // reveals the billing address block when the buyer ticks "Billing address
+    // differs from shipping address", so a field hosted there - which is where
+    // department and project used to live - is invisible to most buyers.
+    //
+    // The array key is the key this plugin uses internally; the Two payload
+    // names are applied at the payload-building call site, because they are
+    // not uniform (two `buyer_*` scalars, one conditional scalar, one entry in
+    // an `invoice_details` sub-object).
+    const OPTIONAL_CHECKOUT_FIELDS = array(
+        'department' => array(
+            'config' => 'PS_TWO_ENABLE_DEPARTMENT',
+            'input' => 'two_department',
+            'type' => 'text',
+            'max_length' => 255,
+        ),
+        'project' => array(
+            'config' => 'PS_TWO_ENABLE_PROJECT',
+            'input' => 'two_project',
+            'type' => 'text',
+            'max_length' => 255,
+        ),
+        'purchase_order_number' => array(
+            'config' => 'PS_TWO_ENABLE_PO_NUMBER',
+            'input' => 'two_purchase_order_number',
+            'type' => 'text',
+            'max_length' => 255,
+        ),
+        'invoice_email' => array(
+            'config' => 'PS_TWO_ENABLE_INVOICE_EMAIL',
+            'input' => 'two_invoice_email',
+            'type' => 'email',
+            'max_length' => 255,
+        ),
+    );
+
     // Hidden virtual product that mirrors the Two buyer surcharge as a REAL
     // PrestaShop cart line, so the fee shows in the order summary, cart,
     // order and invoice (not only on the Two-side invoice). Lazily created
@@ -217,7 +257,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.6.9';
+        $this->version = '2.7.0';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -232,6 +272,10 @@ class Twopayment extends PaymentModule
         $this->enable_company_name = Configuration::get('PS_TWO_ENABLE_COMPANY_NAME');
         $this->enable_department = Configuration::get('PS_TWO_ENABLE_DEPARTMENT');
         $this->enable_project = Configuration::get('PS_TWO_ENABLE_PROJECT');
+        // The two optional-field switches added in 2.7.0
+        // (PS_TWO_ENABLE_PO_NUMBER, PS_TWO_ENABLE_INVOICE_EMAIL) deliberately
+        // get no property mirror here: isOptionalCheckoutFieldEnabled() is
+        // their single reader, and the two mirrors above are read by nothing.
         // Order intent pre-check is mandatory for all checkouts.
         $this->enable_order_intent = 1;
         $this->finalize_purchase_shipping = Configuration::get('PS_TWO_FINALIZE_PURCHASE');
@@ -397,6 +441,17 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 0);
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', 0); // Default: SSL verification enabled (secure)
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', 1);
+        // Optional buyer reference fields, all four rendered in the Two
+        // payment tile. Default ON, deliberately: they are the fields a B2B
+        // buyer needs to get an invoice routed and reconciled internally, and
+        // the cross-platform agreement is that they are visible out of the
+        // box. Before this release department/project had NO install default
+        // at all, so a fresh shop silently started with both OFF, and the
+        // other two fields did not exist.
+        Configuration::updateValue('PS_TWO_ENABLE_DEPARTMENT', 1);
+        Configuration::updateValue('PS_TWO_ENABLE_PROJECT', 1);
+        Configuration::updateValue('PS_TWO_ENABLE_PO_NUMBER', 1);
+        Configuration::updateValue('PS_TWO_ENABLE_INVOICE_EMAIL', 1);
         Configuration::updateValue('PS_TWO_ADDRESS_LOOKUP', 1); // Default: address lookup fills the address step, matching every other plugin
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', 1);
         Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', 'STANDARD'); // Default: Standard payment terms (not EOM)
@@ -638,6 +693,8 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_ID');
         Configuration::deleteByName('PS_TWO_ENABLE_DEPARTMENT');
         Configuration::deleteByName('PS_TWO_ENABLE_PROJECT');
+        Configuration::deleteByName('PS_TWO_ENABLE_PO_NUMBER');
+        Configuration::deleteByName('PS_TWO_ENABLE_INVOICE_EMAIL');
         Configuration::deleteByName('PS_TWO_ENABLE_TAX_SUBTOTALS');
         // Never an admin field and never read for a behavioural decision - the
         // advanced-settings save wrote it blindly on every submit (TWO-24739).
@@ -1093,12 +1150,19 @@ class Twopayment extends PaymentModule
         // Checkout fields (Magento two_payment > checkout_fields parity):
         // optional buyer inputs, placed after the term selection and before
         // the surcharge configuration.
+        //
+        // All four render inside the Two payment tile at the payment step, NOT
+        // in the billing address block. PrestaShop asks for the SHIPPING
+        // address first and only reveals the billing block when the buyer ticks
+        // "Billing address differs from shipping address", so anything hosted
+        // there is invisible to most buyers - which is exactly what happened to
+        // department and project before this release.
         $inputs[] = array(
             'type' => 'switch',
             'label' => $this->l('Show Department field'),
             'name' => 'PS_TWO_ENABLE_DEPARTMENT',
             'is_bool' => true,
-            'desc' => $this->l('If you choose YES then customers will see department field in checkout.'),
+            'desc' => $this->l('If you choose YES then customers will see a department field in the Two payment section at checkout.'),
             'required' => true,
             'values' => array(
                 array(
@@ -1118,7 +1182,7 @@ class Twopayment extends PaymentModule
             'label' => $this->l('Show Project field'),
             'name' => 'PS_TWO_ENABLE_PROJECT',
             'is_bool' => true,
-            'desc' => $this->l('If you choose YES then customers will see project field in checkout.'),
+            'desc' => $this->l('If you choose YES then customers will see a project field in the Two payment section at checkout.'),
             'required' => true,
             'values' => array(
                 array(
@@ -1128,6 +1192,46 @@ class Twopayment extends PaymentModule
                 ),
                 array(
                     'id' => 'PS_TWO_ENABLE_PROJECT_OFF',
+                    'value' => 0,
+                    'label' => $this->l('No')
+                ),
+            ),
+        );
+        $inputs[] = array(
+            'type' => 'switch',
+            'label' => $this->l('Show Purchase order number field'),
+            'name' => 'PS_TWO_ENABLE_PO_NUMBER',
+            'is_bool' => true,
+            'desc' => $this->l('If you choose YES then customers will see a purchase order number field in the Two payment section at checkout.'),
+            'required' => true,
+            'values' => array(
+                array(
+                    'id' => 'PS_TWO_ENABLE_PO_NUMBER_ON',
+                    'value' => 1,
+                    'label' => $this->l('Yes')
+                ),
+                array(
+                    'id' => 'PS_TWO_ENABLE_PO_NUMBER_OFF',
+                    'value' => 0,
+                    'label' => $this->l('No')
+                ),
+            ),
+        );
+        $inputs[] = array(
+            'type' => 'switch',
+            'label' => $this->l('Show Invoice email field'),
+            'name' => 'PS_TWO_ENABLE_INVOICE_EMAIL',
+            'is_bool' => true,
+            'desc' => $this->l('If you choose YES then customers will see an invoice email field in the Two payment section at checkout. It sits with the payment method rather than the address so the buyer is prompted to consider a dedicated invoicing address even when their billing and shipping addresses match.'),
+            'required' => true,
+            'values' => array(
+                array(
+                    'id' => 'PS_TWO_ENABLE_INVOICE_EMAIL_ON',
+                    'value' => 1,
+                    'label' => $this->l('Yes')
+                ),
+                array(
+                    'id' => 'PS_TWO_ENABLE_INVOICE_EMAIL_OFF',
                     'value' => 0,
                     'label' => $this->l('No')
                 ),
@@ -1192,6 +1296,8 @@ class Twopayment extends PaymentModule
         // Checkout fields (moved from the former "Other Settings" tab).
         $fields_values['PS_TWO_ENABLE_DEPARTMENT'] = Tools::getValue('PS_TWO_ENABLE_DEPARTMENT', Configuration::get('PS_TWO_ENABLE_DEPARTMENT'));
         $fields_values['PS_TWO_ENABLE_PROJECT'] = Tools::getValue('PS_TWO_ENABLE_PROJECT', Configuration::get('PS_TWO_ENABLE_PROJECT'));
+        $fields_values['PS_TWO_ENABLE_PO_NUMBER'] = Tools::getValue('PS_TWO_ENABLE_PO_NUMBER', Configuration::get('PS_TWO_ENABLE_PO_NUMBER'));
+        $fields_values['PS_TWO_ENABLE_INVOICE_EMAIL'] = Tools::getValue('PS_TWO_ENABLE_INVOICE_EMAIL', Configuration::get('PS_TWO_ENABLE_INVOICE_EMAIL'));
 
         // Payment terms checkboxes
         $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
@@ -1323,6 +1429,8 @@ class Twopayment extends PaymentModule
         // Checkout fields (moved from the former "Other Settings" tab).
         Configuration::updateValue('PS_TWO_ENABLE_DEPARTMENT', Tools::getValue('PS_TWO_ENABLE_DEPARTMENT'));
         Configuration::updateValue('PS_TWO_ENABLE_PROJECT', Tools::getValue('PS_TWO_ENABLE_PROJECT'));
+        Configuration::updateValue('PS_TWO_ENABLE_PO_NUMBER', Tools::getValue('PS_TWO_ENABLE_PO_NUMBER'));
+        Configuration::updateValue('PS_TWO_ENABLE_INVOICE_EMAIL', Tools::getValue('PS_TWO_ENABLE_INVOICE_EMAIL'));
 
         // Save payment terms checkboxes. Iterate ONLY the terms the admin form
         // actually rendered (the backend-restricted offerable source), NOT the
@@ -3163,6 +3271,7 @@ class Twopayment extends PaymentModule
             'approval_required' => $this->l('Payment approval required before proceeding'),
             'invoice_declined' => $this->l('Your invoice with Two cannot be approved at this time. Please select an alternative payment method.'),
             'invalid_email' => $this->l('The email address provided is invalid. Please check your email and try again.'),
+            'invalid_invoice_email' => $this->l('Please enter a valid invoice email address, or leave the field empty.'),
             'invalid_address' => $this->l('The address provided is invalid. Please go back and verify your billing address details.'),
             'company_incomplete' => $this->l('Company information is incomplete. Go back to your billing address and select your company from the search results.'),
             'validation_error' => $this->l('Some of the information provided is invalid. Please check your billing address details and try again.'),
@@ -3195,8 +3304,14 @@ class Twopayment extends PaymentModule
                 // widget itself, this gates only what a selection writes into
                 // the address step (TWO-25203).
                 'address_lookup' => $this->getAddressLookupEnabled(),
-                'enable_department' => $this->enable_department,
-                'enable_project' => $this->enable_project,
+                // Deliberately NOT handing the optional-field switches to the
+                // JS (ABN-472). Nothing ever read `enable_department` /
+                // `enable_project` here - the gate is server-side and total:
+                // a disabled field renders no input in the tile and declares
+                // no hidden twin in the payment form, so there is nothing for
+                // the client to hide, and nothing for it to decide. Adding
+                // `enable_po_number` / `enable_invoice_email` alongside two
+                // already-dead keys would just have grown the dead set.
                 'enable_order_intent' => $this->enable_order_intent,
                 'shop_country' => (string) Context::getContext()->country->iso_code,
                 'order_intent_url' => $this->context->link->getModuleLink($this->name, 'orderintent'),
@@ -3245,6 +3360,7 @@ class Twopayment extends PaymentModule
         $this->context->controller->registerJavascript('two-company-search', 'modules/twopayment/views/js/modules/TwoCompanySearch.js', array('priority' => 201, 'async' => false));
         $this->context->controller->registerJavascript('two-order-intent', 'modules/twopayment/views/js/modules/TwoOrderIntent.js', array('priority' => 202, 'async' => false));
         $this->context->controller->registerJavascript('two-sole-trader', 'modules/twopayment/views/js/modules/TwoSoleTrader.js', array('priority' => 204, 'async' => false));
+        $this->context->controller->registerJavascript('two-optional-fields', 'modules/twopayment/views/js/modules/TwoOptionalFields.js', array('priority' => 204, 'async' => false));
         // Phone validation removed - Two API handles phone number validation
         $this->context->controller->registerJavascript('two-checkout-manager', 'modules/twopayment/views/js/modules/TwoCheckoutManager.js', array('priority' => 205, 'async' => false));
         $this->context->controller->registerJavascript('two-script', 'modules/twopayment/views/js/twopayment.js', array('priority' => 206, 'async' => false));
@@ -3356,6 +3472,8 @@ class Twopayment extends PaymentModule
             $subtitle = $this->l('Buy now, pay later - instant credit');
         }
 
+        $optional_fields = $this->getOptionalCheckoutFieldsForDisplay();
+
         // Order intent is now handled on frontend via AJAX
         $this->context->smarty->assign(array(
             'subtitle' => $subtitle,
@@ -3364,16 +3482,143 @@ class Twopayment extends PaymentModule
             'message' => '',
             'module_dir' => $this->_path, // Module directory path for assets
             'two_portal_url' => $this->getTwoPortalUrl(), // Dynamic portal URL based on environment
+            // Optional buyer reference fields, rendered inside the tile rather
+            // than in the billing address block (ABN-472).
+            'two_optional_fields' => $optional_fields,
         ));
+
+        $inputs = ['token' => ['name' => 'token', 'type' => 'hidden', 'value' => Tools::getToken(false)]];
+        // The tile markup (additionalInformation) and the module's payment form
+        // are SIBLINGS in PrestaShop's payment step template, not nested - the
+        // form only ever contains the inputs declared here. So each visible
+        // field in the tile gets a hidden twin inside the form, and
+        // TwoOptionalFields.js mirrors the value across on input and again on
+        // submit. No hidden twin is declared for a disabled field, which is
+        // what keeps a disabled field out of the POST entirely.
+        foreach ($optional_fields as $field) {
+            $inputs[$field['input_name']] = array(
+                'name' => $field['input_name'],
+                'type' => 'hidden',
+                'value' => '',
+            );
+        }
 
         $preTwoOption = new PaymentOption();
         $preTwoOption->setModuleName($this->name)
             ->setCallToActionText($title)
             ->setAction($this->context->link->getModuleLink($this->name, 'payment', array(), true))
-            ->setInputs(['token' => ['name' => 'token', 'type' => 'hidden', 'value' => Tools::getToken(false)]])
+            ->setInputs($inputs)
             ->setAdditionalInformation($this->context->smarty->fetch('module:twopayment/views/templates/hook/paymentinfo.tpl'));
 
         return $preTwoOption;
+    }
+
+    /**
+     * Whether one optional buyer reference field is switched on.
+     *
+     * Strict: an absent Configuration row reads as OFF. There is deliberately
+     * no default-on fallback here - install() seeds all four keys to 1 and
+     * upgrade-2.7.0 writes them on existing shops, so the stored row IS the
+     * default. A getter fallback would make the admin switch disagree with the
+     * rendered checkout on any shop whose row was missing.
+     *
+     * @param string $key One of the keys of self::OPTIONAL_CHECKOUT_FIELDS
+     * @return bool
+     */
+    public function isOptionalCheckoutFieldEnabled($key)
+    {
+        if (!isset(self::OPTIONAL_CHECKOUT_FIELDS[$key])) {
+            return false;
+        }
+
+        return (int) Configuration::get(self::OPTIONAL_CHECKOUT_FIELDS[$key]['config']) === 1;
+    }
+
+    /**
+     * The enabled optional fields, in render order, with everything the tile
+     * template and the payment form need.
+     *
+     * @return array<string,array<string,string>>
+     */
+    public function getOptionalCheckoutFieldsForDisplay()
+    {
+        $labels = array(
+            'department' => $this->l('Department'),
+            'project' => $this->l('Project'),
+            'purchase_order_number' => $this->l('Purchase order number'),
+            'invoice_email' => $this->l('Invoice email address'),
+        );
+        $placeholders = array(
+            'department' => '',
+            'project' => '',
+            'purchase_order_number' => '',
+            'invoice_email' => $this->l('Only for invoices sent by Two'),
+        );
+
+        $fields = array();
+        foreach (self::OPTIONAL_CHECKOUT_FIELDS as $key => $definition) {
+            if (!$this->isOptionalCheckoutFieldEnabled($key)) {
+                continue;
+            }
+            $fields[$key] = array(
+                'key' => $key,
+                'input_name' => $definition['input'],
+                'type' => $definition['type'],
+                'max_length' => (string) $definition['max_length'],
+                'label' => $labels[$key],
+                'placeholder' => $placeholders[$key],
+            );
+        }
+
+        return $fields;
+    }
+
+    /**
+     * The optional field values the buyer submitted with the payment form.
+     *
+     * Front-office, same-request only: these arrive as POST parameters on the
+     * payment submit, so this returns an empty array anywhere the buyer's
+     * submission is not in scope (admin order edit, provider webhooks). A
+     * disabled field is never read, so turning a switch off keeps its value
+     * out of the payload even if the parameter is forged onto the request.
+     *
+     * @return array<string,string> Keyed by payload field key, empty values omitted
+     */
+    public function getSubmittedOptionalCheckoutFields()
+    {
+        $values = array();
+        foreach (self::OPTIONAL_CHECKOUT_FIELDS as $key => $definition) {
+            if (!$this->isOptionalCheckoutFieldEnabled($key)) {
+                continue;
+            }
+
+            $raw = Tools::getValue($definition['input'], '');
+            if (!is_string($raw)) {
+                continue;
+            }
+
+            $value = trim(strip_tags($raw));
+            if ($value === '') {
+                continue;
+            }
+            $value = Tools::substr($value, 0, (int) $definition['max_length']);
+
+            // An invalid optional email is dropped, never a checkout blocker:
+            // the buyer-side script rejects it before submit, and by the time
+            // the order is being created the alternative would be failing a
+            // checkout over a field the buyer did not have to fill in at all.
+            if ($definition['type'] === 'email' && !Validate::isEmail($value)) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Dropped invalid optional checkout field "' . $key . '" from the Two order payload',
+                    2
+                );
+                continue;
+            }
+
+            $values[$key] = $value;
+        }
+
+        return $values;
     }
 
     /**
@@ -4143,6 +4388,10 @@ class Twopayment extends PaymentModule
         $buyerCompanyName = $buyerData['company_name'];
         $shippingOrgName = !empty($shippingData['company_name']) ? $shippingData['company_name'] : $buyerCompanyName;
 
+        // Optional buyer reference fields, submitted with the payment form from
+        // the Two payment tile (ABN-472).
+        $optional_fields = $this->getSubmittedOptionalCheckoutFields();
+
         if (!is_array($merchant_urls)) {
             // Backward compatibility: legacy flow where merchant order id was the local PrestaShop id_order
             $merchant_urls = [
@@ -4177,8 +4426,8 @@ class Twopayment extends PaymentModule
                     'phone_number' => $this->getPhoneWithFallback($invoice_address),
                 ],
             ],
-            'buyer_department' => property_exists($invoice_address, 'department') ? (string)$invoice_address->department : '',
-            'buyer_project' => property_exists($invoice_address, 'project') ? (string)$invoice_address->project : '',
+            'buyer_department' => isset($optional_fields['department']) ? $optional_fields['department'] : '',
+            'buyer_project' => isset($optional_fields['project']) ? $optional_fields['project'] : '',
             'merchant_additional_info' => '',
             'merchant_order_id' => (string)$merchant_order_id,
             'merchant_reference' => (string)($order_reference),
@@ -4198,6 +4447,17 @@ class Twopayment extends PaymentModule
 
         if ($this->shouldIncludeTaxSubtotals()) {
             $request_data['tax_subtotals'] = $tax_subtotals;
+        }
+
+        // Two's payload shape for the remaining two optional fields is not a
+        // pair of always-present scalars like buyer_department / buyer_project,
+        // so they are added only when the buyer actually filled them in - the
+        // same conditional shape the WooCommerce plugin sends.
+        if (isset($optional_fields['purchase_order_number'])) {
+            $request_data['buyer_purchase_order_number'] = $optional_fields['purchase_order_number'];
+        }
+        if (isset($optional_fields['invoice_email'])) {
+            $request_data['invoice_details']['invoice_emails'] = array($optional_fields['invoice_email']);
         }
 
         PrestaShopLogger::addLog('TwoPayment: Order creation with terms - ' . json_encode($request_data['terms']), 1);
@@ -4282,8 +4542,16 @@ class Twopayment extends PaymentModule
                     'phone_number' => $this->getPhoneWithFallback($invoice_address),
                 ],
             ],
-            'buyer_department' => property_exists($invoice_address, 'department') ? (string)$invoice_address->department : '',
-            'buyer_project' => property_exists($invoice_address, 'project') ? (string)$invoice_address->project : '',
+            // Unchanged behaviour, now stated outright instead of hidden behind
+            // a property check that could never be true. This is the order
+            // UPDATE payload: it is built from admin order edits, provider
+            // webhooks and status transitions, none of which carry the buyer's
+            // payment-step submission, and the optional fields are not
+            // persisted locally. They were always sent empty here - the
+            // property check read `department` / `project` off the Address
+            // entity, and PrestaShop's address table has no such columns.
+            'buyer_department' => '',
+            'buyer_project' => '',
             'merchant_additional_info' => '',
             'merchant_order_id' => (string)$order->id,
             'merchant_reference' => (string)($orderpaymentdata['two_order_reference']),
