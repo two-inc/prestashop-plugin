@@ -394,3 +394,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_696b031073e74bf2cb98e5ef201d4aa3'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6825c19161f9f1b9a4047b08720ac98c'] = 'Este pedido no tiene asignada una referencia de pedido del proveedor de pagos.';
 $_MODULE['<{twopayment}prestashop>twopayment_c86427e7020aa074399a2ecdb9c42a1d'] = 'No se pudo recuperar la factura. Por favor, inténtalo de nuevo más tarde o contacta con el propietario de la tienda.';
 $_MODULE['<{twopayment}prestashop>twopayment_7de934009c752b9208f359e4db589fa0'] = 'No tienes permiso para acceder a esta factura.';
+$_MODULE['<{twopayment}prestashop>twopayment_7aa0ef00af5612e50834b5bf969457e6'] = 'La búsqueda de empresas no está disponible temporalmente. Por favor, inténtalo de nuevo.';

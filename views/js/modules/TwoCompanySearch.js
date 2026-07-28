@@ -2,8 +2,77 @@
  * Two Company Search Module - Clean, focused company selection
  * Handles company autocomplete, organization number persistence, and address saving
  */
+
 class TwoCompanySearch {
     static DEFAULT_COMPANY_SEARCH_LIMIT = 50;
+
+    /**
+     * Company-search result cache, held on the CLASS rather than inside
+     * setupAutocomplete().
+     *
+     * TwoCheckoutManager.handleAddressFormUpdate() destroys and re-creates this
+     * widget on every `prestashop.on('updatedAddressForm')`, and PrestaShop
+     * fires that for ordinary interactions such as changing country. A cache
+     * owned by the setupAutocomplete() closure was therefore thrown away and
+     * started cold after every one of those re-renders, so the buyer re-paid a
+     * full API round trip for a term they had already searched moments earlier.
+     * Class scope outlives any individual instance, so the cache survives
+     * teardown.
+     *
+     * Aborting the in-flight request on teardown remains correct and is
+     * unchanged: a response whose widget no longer exists has nowhere to
+     * render. Only the cache is preserved, not the pending request.
+     */
+    static _resultCache = new Map();
+    static _CACHE_TTL_MS = 5 * 60 * 1000;
+    // Bounds the cache. It now lives for the whole page session rather than
+    // until the next address-form re-render, so it needs an eviction policy it
+    // did not need before.
+    static _CACHE_MAX_ENTRIES = 50;
+
+    /**
+     * Read a still-live cache entry, or null. Expired entries drop on read.
+     *
+     * @param {string} key
+     * @returns {Array|null}
+     */
+    static cacheGet(key) {
+        const entry = TwoCompanySearch._resultCache.get(key);
+        if (!entry) {
+            return null;
+        }
+        if ((Date.now() - entry.t) >= TwoCompanySearch._CACHE_TTL_MS) {
+            TwoCompanySearch._resultCache.delete(key);
+            return null;
+        }
+        return entry.v;
+    }
+
+    /**
+     * Store a result set. Only ever called for a completed search - a cached
+     * failure would keep showing the buyer an error after the service recovered.
+     *
+     * @param {string} key
+     * @param {Array} value
+     */
+    static cacheSet(key, value) {
+        const cache = TwoCompanySearch._resultCache;
+        const cutoff = Date.now() - TwoCompanySearch._CACHE_TTL_MS;
+        cache.forEach((entry, cachedKey) => {
+            if (entry.t <= cutoff) {
+                cache.delete(cachedKey);
+            }
+        });
+        // Map iterates in insertion order, so the first key is the oldest.
+        while (cache.size >= TwoCompanySearch._CACHE_MAX_ENTRIES) {
+            const oldest = cache.keys().next();
+            if (oldest.done) {
+                break;
+            }
+            cache.delete(oldest.value);
+        }
+        cache.set(key, { v: value, t: Date.now() });
+    }
 
     constructor(config) {
         this.config = {
@@ -232,43 +301,113 @@ class TwoCompanySearch {
             return;
         }
 
-        // Shared cache for both jQuery UI and custom autocomplete
-        const cache = new Map();
-        const TTL_MS = 5 * 60 * 1000;
-        const now = () => Date.now();
+        // Marks the field for the in-field spinner CSS (views/css/two.css).
+        this.companyField.addClass('two-company-search-input');
 
         // Use jQuery UI autocomplete if available; otherwise fallback to custom
         if (typeof $.fn.autocomplete === 'function') {
             this.companyField.autocomplete({
                 source: (request, response) => {
                     const key = request.term + '|' + (this.getCurrentCountry() || 'GB');
-                    const cached = cache.get(key);
-                    if (cached && (now() - cached.t) < TTL_MS) {
-                        response(cached.v);
+                    const cached = TwoCompanySearch.cacheGet(key);
+                    if (cached) {
+                        response(cached);
                         return;
                     }
-                    this.searchCompanies(request.term, (results) => {
-                        cache.set(key, { v: results, t: now() });
+                    this.searchCompanies(request.term, (results, meta) => {
+                        if (meta && meta.unavailable) {
+                            // Not cached: the service may well be healthy again
+                            // by the buyer's next keystroke.
+                            response([this.buildUnavailableItem()]);
+                            return;
+                        }
+                        TwoCompanySearch.cacheSet(key, results);
                         response(results);
                     });
                 },
                 minLength: 3,
+                // 300ms matches the custom fallback path below and the
+                // Magento/WooCommerce plugins.
                 delay: 300,
                 select: (event, ui) => {
+                    // The "search unavailable" row is a message, not a company:
+                    // returning false stops jQuery UI writing it into the field.
+                    if (ui && ui.item && ui.item.two_unavailable) {
+                        return false;
+                    }
                     return this.onCompanySelected(event, ui);
+                },
+                focus: (event, ui) => {
+                    // Likewise keep it out of the field on keyboard navigation.
+                    if (ui && ui.item && ui.item.two_unavailable) {
+                        return false;
+                    }
                 }
             });
 
-            if (!this.companyField.hasClass('ui-autocomplete-input')) {
-                
+            // Render the unavailable row as non-selectable. `ui-state-disabled`
+            // is what jQuery UI's menu itself checks, so the row is skipped by
+            // keyboard navigation rather than merely being refused on select.
+            //
+            // Company names always go through .text(), matching jQuery UI's own
+            // default renderer, so a name containing markup cannot inject HTML
+            // into the dropdown.
+            //
+            // Wrapped: `autocomplete('instance')` only exists from jQuery UI
+            // 1.11, and an unknown-method call throws. A theme shipping an older
+            // jQuery UI must lose the styling of this row, not the whole company
+            // search - select/focus below already refuse the row without it.
+            try {
+                const instance = this.companyField.autocomplete('instance');
+                if (instance) {
+                    instance._renderItem = (ul, item) => {
+                        const li = $('<li>');
+                        if (item.two_unavailable) {
+                            li.addClass('two-autocomplete-unavailable ui-state-disabled')
+                                .attr('aria-disabled', 'true');
+                        }
+                        li.append($('<div>').text(item.label || item.value || ''));
+                        return li.appendTo(ul);
+                    };
+                }
+            } catch (e) {
+                // Older jQuery UI without `instance`; styling only, safe to skip.
             }
         } else {
-            
-            this.setupCustomAutocomplete(cache, TTL_MS, now);
+            this.setupCustomAutocomplete();
         }
     }
 
-    setupCustomAutocomplete(cache, TTL_MS, now) {
+    /**
+     * Message shown in place of results when the search could not be completed.
+     *
+     * A failed search must never render as an empty dropdown: to the buyer that
+     * is indistinguishable from "your company is not registered", which is a
+     * reason to abandon checkout rather than retry.
+     *
+     * @returns {string}
+     */
+    getSearchUnavailableText() {
+        return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_unavailable)
+            || 'Company search is temporarily unavailable. Please try again.';
+    }
+
+    /**
+     * Pseudo-result carrying the unavailable message through jQuery UI's
+     * result-list plumbing. Flagged so select/focus/render can treat it as a
+     * message rather than a company.
+     *
+     * @returns {Object}
+     */
+    buildUnavailableItem() {
+        return {
+            label: this.getSearchUnavailableText(),
+            value: '',
+            two_unavailable: true
+        };
+    }
+
+    setupCustomAutocomplete() {
         const inputEl = this.companyField.get(0);
         if (!inputEl) return;
 
@@ -290,7 +429,14 @@ class TwoCompanySearch {
         list.style.overflowY = 'auto';
         container.appendChild(list);
 
+        // jQuery UI is absent on this path, so nothing toggles the loading class
+        // for us; do it by hand against the same CSS the live path uses.
+        const setLoadingState = (isLoading) => {
+            this.companyField.toggleClass('two-company-search-loading', !!isLoading);
+        };
+
         const renderResults = (items) => {
+            setLoadingState(false);
             list.innerHTML = '';
             if (!items || items.length === 0) {
                 list.style.display = 'none';
@@ -322,6 +468,7 @@ class TwoCompanySearch {
         const searchingText = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_searching)
             || 'Searching...';
         const renderLoading = () => {
+            setLoadingState(true);
             list.innerHTML = '';
             const row = document.createElement('div');
             row.className = 'two-autocomplete-item two-autocomplete-loading';
@@ -329,6 +476,20 @@ class TwoCompanySearch {
             row.style.color = '#888';
             row.style.fontStyle = 'italic';
             row.textContent = searchingText;
+            list.appendChild(row);
+            list.style.display = 'block';
+        };
+
+        // Failure state for this path. Same reasoning as buildUnavailableItem():
+        // an empty list would read as "company not registered".
+        const renderUnavailable = () => {
+            setLoadingState(false);
+            list.innerHTML = '';
+            const row = document.createElement('div');
+            row.className = 'two-autocomplete-item two-autocomplete-unavailable';
+            row.style.padding = '6px 10px';
+            row.style.color = '#888';
+            row.textContent = this.getSearchUnavailableText();
             list.appendChild(row);
             list.style.display = 'block';
         };
@@ -344,20 +505,24 @@ class TwoCompanySearch {
                     return;
                 }
                 const key = term + '|' + (this.getCurrentCountry() || 'GB');
-                const cached = cache.get(key);
-                if (cached && (now() - cached.t) < TTL_MS) {
-                    renderResults(cached.v);
+                const cached = TwoCompanySearch.cacheGet(key);
+                if (cached) {
+                    renderResults(cached);
                     return;
                 }
                 renderLoading();
-                this.searchCompanies(term, (results) => {
+                this.searchCompanies(term, (results, meta) => {
                     // Discard results if the input has moved on to a different
                     // term since this request was fired (belt-and-braces on
                     // top of the sequence/abort guard in searchCompanies()).
                     if ((inputEl.value || '') !== term) {
                         return;
                     }
-                    cache.set(key, { v: results, t: now() });
+                    if (meta && meta.unavailable) {
+                        renderUnavailable();
+                        return;
+                    }
+                    TwoCompanySearch.cacheSet(key, results);
                     renderResults(results);
                 });
             }, 300);
@@ -444,7 +609,12 @@ class TwoCompanySearch {
             dataType: 'json',
             xhrFields: { withCredentials: false },
             beforeSend: this.buildPublicApiBeforeSend(),
-            timeout: 10000,
+            // 30s, not 10s. The server's own retry envelope is stop_after_delay(10),
+            // so a 10s client timeout gave up at the exact instant a successful
+            // response would have arrived - the buyer saw a failure for a search
+            // that had in fact just succeeded. The ceiling has to sit clear of the
+            // server's, not on top of it.
+            timeout: 30000,
             success: (data) => {
                 if (seq !== this._companySearchSeq) {
                     // Stale response for a superseded request; discard.
@@ -473,6 +643,21 @@ class TwoCompanySearch {
                     };
                 });
 
+                // The endpoint can answer 200 with an empty or partial body when
+                // its upstream registry provider timed out, flagging that with
+                // `degraded: true`. An absent field must read as false: every
+                // response predating the flag lacks it, so `=== true` rather
+                // than a truthiness check.
+                //
+                // Degraded WITH results still renders the results - partial data
+                // beats an error message. Degraded with nothing to show is the
+                // case that matters, because an empty list is exactly what the
+                // buyer misreads as "my company is not registered".
+                if (data && data.degraded === true && formattedResults.length === 0) {
+                    responseCallback([], { unavailable: true });
+                    return;
+                }
+
                 responseCallback(formattedResults);
             },
             error: (xhr, status, error) => {
@@ -482,7 +667,20 @@ class TwoCompanySearch {
                 }
                 this._companySearchXhr = null;
 
-                responseCallback([]);
+                // A genuine abort is routine - the buyer typed another character,
+                // or the address form was re-rendered under us - and must stay
+                // silent. The replacement request drives the UI. Reaching here
+                // with a matching sequence number is defensive only, since both
+                // abort paths bump the sequence first.
+                if (status === 'abort') {
+                    return;
+                }
+
+                // Everything else is a real failure: timeout, 5xx, network error,
+                // unparseable body. It must NOT be reported as an empty result
+                // set, which is what this handler used to do and is the whole
+                // reason a broken search looked like an unregistered company.
+                responseCallback([], { unavailable: true });
             }
         });
     }
@@ -866,6 +1064,14 @@ class TwoCompanySearch {
             const countryField = document.querySelector("select[name='id_country']");
             if (countryField && this.countryListener) {
                 countryField.removeEventListener('change', this.countryListener);
+            }
+            // Drop the spinner classes. The abort above resolves no handler, so
+            // without this a teardown mid-search leaves a spinner running in a
+            // field that is no longer searching anything.
+            if (this.companyField && this.companyField.length) {
+                this.companyField.removeClass(
+                    'two-company-search-input two-company-search-loading ui-autocomplete-loading'
+                );
             }
             // Destroy autocomplete instance if present
             if (this.companyField && this.companyField.length && this.companyField.hasClass('ui-autocomplete-input')) {
