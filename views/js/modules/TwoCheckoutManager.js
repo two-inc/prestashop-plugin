@@ -880,9 +880,27 @@ class TwoCheckoutManager {
     
     /**
      * Show order intent loading state (theme-independent)
+     *
+     * Renders nothing when the brand suppressed the approved notice
+     * (TWO-25224). That switch turns off the buyer-facing *reassurance
+     * messaging* around the order-intent pre-check, and this overlay is part
+     * of it - it carries our own "Checking Two payment eligibility..." copy,
+     * so a brand that declined the approval sentence was still announcing the
+     * check. Errors (showOrderIntentError / showOrderIntentDecline) are NOT
+     * gated on the switch: a merchant who wants no reassurance still needs
+     * failures surfaced, or a declined buyer sees nothing at all.
+     *
+     * The isLoadingUIShown bookkeeping below still happens either way - it is
+     * the in-flight guard that stops the periodic selection check and the
+     * step-change handler from firing a second intent, not a fact about the
+     * DOM. Skipping it would double-fire the intent for suppressed brands.
      */
     showOrderIntentLoading() {
         if (!this.twoPaymentOption) return;
+        if (!this.approvedNoticeEnabled()) {
+            this.isLoadingUIShown = true;
+            return;
+        }
         const parent = this.twoPaymentOption.querySelector('.payment-option-content') || this.twoPaymentOption;
         parent.classList.add('two-overlay-parent');
         let overlay = parent.querySelector('#two-loading-overlay');
