@@ -18,11 +18,14 @@ final class DeployVersionInfoSpec
         self::testDetachedHeadReturnsShortSha();
         self::testGarbageHeadReturnsNull();
         self::testMissingRefAndPackedRefsReturnsNull();
-        self::testSidecarFileTakesPrecedenceOverGitDir();
+        self::testGitDirTakesPrecedenceOverSidecar();
         self::testInvalidSidecarFallsBackToGitDir();
         self::testGitlinkFileReturnsShortSha();
+        self::testGitlinkTakesPrecedenceOverValidSidecar();
         self::testEmptySidecarFallsBackToGitlinkFile();
         self::testGarbageSidecarFallsBackToGitlinkFile();
+        self::testMalformedGitlinkFallsBackToValidSidecar();
+        self::testUnreadableGitlinkFallsBackToValidSidecar();
         self::testNeitherSidecarNorGitReturnsNull();
         self::testGitlinkFileWithoutShaReturnsNull();
         self::testDeployedAtLabelMatchesModuleFileMtime();
@@ -136,10 +139,11 @@ final class DeployVersionInfoSpec
         self::removeDir(dirname($git));
     }
 
-    private static function testSidecarFileTakesPrecedenceOverGitDir(): void
+    private static function testGitDirTakesPrecedenceOverSidecar(): void
     {
-        // Deploy-time sidecar file (written by the git-sync materialise loop) must win
-        // over a co-located .git directory when both exist.
+        // TWO-25194: live git state wins over the build-time sidecar stamp. The stamp is
+        // frozen when package-release.sh runs, so a stamped tree that is later checked
+        // out over would otherwise keep reporting the stale build sha forever.
         $git = self::makeTempGitDir();
         file_put_contents($git . '/HEAD', "ref: refs/heads/staging\n");
         mkdir($git . '/refs/heads', 0777, true);
@@ -147,7 +151,7 @@ final class DeployVersionInfoSpec
         $sidecar = dirname($git) . '/.two-deployed-commit';
         file_put_contents($sidecar, "1234abc\n");
 
-        TinyAssert::same('1234abc', self::callCommitHash($git, $sidecar));
+        TinyAssert::same('abcdef0', self::callCommitHash($git, $sidecar));
         self::removeDir(dirname($git));
     }
 
@@ -183,6 +187,57 @@ final class DeployVersionInfoSpec
         file_put_contents($gitlink, "gitdir: ../../.git/worktrees/fbdc80b92070eded9a2acbef222da0d55ac4af48\n");
 
         TinyAssert::same('fbdc80b', self::callCommitHash($gitlink));
+        self::removeDir($dir);
+    }
+
+    private static function testGitlinkTakesPrecedenceOverValidSidecar(): void
+    {
+        // TWO-25194: the gitlink reflects what the git-sync loop has checked out RIGHT
+        // NOW, so it must beat a perfectly well-formed build-time stamp. package-release.sh
+        // only removes its stamp via an EXIT trap, so an interrupted run leaves a stale
+        // (but syntactically valid) sidecar behind that must never win.
+        $dir = self::makeTempModuleDir();
+        $gitlink = $dir . '/.git';
+        file_put_contents($gitlink, "gitdir: ../../.git/worktrees/fbdc80b92070eded9a2acbef222da0d55ac4af48\n");
+        $sidecar = $dir . '/.two-deployed-commit';
+        file_put_contents($sidecar, "1234abc\n");
+
+        TinyAssert::same('fbdc80b', self::callCommitHash($gitlink, $sidecar));
+        self::removeDir($dir);
+    }
+
+    private static function testMalformedGitlinkFallsBackToValidSidecar(): void
+    {
+        // The gitlink exists and is readable but carries no worktree sha (plain gitdir
+        // pointer). That must FALL THROUGH to the sidecar, not return null — the bug the
+        // pre-TWO-25194 early `return null` introduced once gitlink moved to first place.
+        $dir = self::makeTempModuleDir();
+        $gitlink = $dir . '/.git';
+        file_put_contents($gitlink, "gitdir: /srv/repos/prestashop-plugin/.git\n");
+        $sidecar = $dir . '/.two-deployed-commit';
+        file_put_contents($sidecar, "1234abc\n");
+
+        TinyAssert::same('1234abc', self::callCommitHash($gitlink, $sidecar));
+        self::removeDir($dir);
+    }
+
+    private static function testUnreadableGitlinkFallsBackToValidSidecar(): void
+    {
+        // An unreadable gitlink file must also fall through rather than hard-null.
+        $dir = self::makeTempModuleDir();
+        $gitlink = $dir . '/.git';
+        file_put_contents($gitlink, "gitdir: ../../.git/worktrees/fbdc80b92070eded9a2acbef222da0d55ac4af48\n");
+        $sidecar = $dir . '/.two-deployed-commit';
+        file_put_contents($sidecar, "1234abc\n");
+        @chmod($gitlink, 0000);
+
+        // Skip the assertion when running as a user that bypasses mode bits (e.g. root
+        // in CI containers), where the file stays readable no matter the chmod.
+        if (!is_readable($gitlink)) {
+            TinyAssert::same('1234abc', self::callCommitHash($gitlink, $sidecar));
+        }
+
+        @chmod($gitlink, 0644);
         self::removeDir($dir);
     }
 
@@ -222,7 +277,8 @@ final class DeployVersionInfoSpec
 
     private static function testGitlinkFileWithoutShaReturnsNull(): void
     {
-        // A gitlink pointing at a plain (non-worktree) gitdir carries no sha.
+        // A gitlink pointing at a plain (non-worktree) gitdir carries no sha, and with no
+        // sidecar to fall through to there is nothing left to resolve.
         $dir = self::makeTempModuleDir();
         $gitlink = $dir . '/.git';
         file_put_contents($gitlink, "gitdir: /srv/repos/prestashop-plugin/.git\n");
