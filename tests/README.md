@@ -17,6 +17,11 @@ This folder contains deterministic tests for order-building and payload safety l
 - Cart-rule monetary (`value_real`/`value_tax_exc`) discount line attribution
 - Tracking number sourcing (order_carrier vs legacy shipping_number) and the admin tracking-update hook (TWO-24762)
 - Partial refunds via credit slips: amount+currency payload, slip-ID idempotency key, remaining-balance guard, and duplicate-refund suppression (TWO-24759)
+- Default shipping tax code: hidden-unless-activated admin field, no-default-value refusal parity, save-while-hidden never wiping the stored selection, carrier-wins resolution order, and the README/code drift guard on the activation constant (TWO-25200)
+
+`DefaultShippingTaxCodeSpec` **must stay last** in `run.php`: it `define()`s
+`_TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_` partway through its own run and a PHP
+constant cannot be undefined again.
 
 ## Why this matters
 
