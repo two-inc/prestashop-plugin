@@ -48,6 +48,12 @@ jobs:
           php -l tests/IntentApprovedNoticeSpec.php
           php -l tests/DeployVersionInfoSpec.php
           php -l tests/run.php
+          # Integration probes + their harness. They only run inside a
+          # PrestaShop container (.github/workflows/integration.yml), so this
+          # is where a syntax error in them gets caught cheaply.
+          php -l tests/integration/default-shipping-tax-code.php
+          php -l tests/integration/fixtures/twocarrierlesstest/twocarrierlesstest.php
+          php -l dev/ci/seed-carrierless-cart.php
 
       - name: Run offline test suite
         run: php tests/run.php
