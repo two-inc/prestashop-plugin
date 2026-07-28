@@ -5534,6 +5534,7 @@ require __DIR__ . '/CheckoutLatencySpec.php';
 require __DIR__ . '/FulfilledStatusMappingSpec.php';
 require __DIR__ . '/AddressLookupConfigSpec.php';
 require __DIR__ . '/OrgNumberPreVerificationSpec.php';
+require __DIR__ . '/IntentApprovedNoticeSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
@@ -5558,6 +5559,7 @@ $tests = [
     'FulfilledStatusMappingSpec::runAll' => [FulfilledStatusMappingSpec::class, 'runAll'],
     'AddressLookupConfigSpec::runAll' => [AddressLookupConfigSpec::class, 'runAll'],
     'OrgNumberPreVerificationSpec::runAll' => [OrgNumberPreVerificationSpec::class, 'runAll'],
+    'IntentApprovedNoticeSpec::runAll' => [IntentApprovedNoticeSpec::class, 'runAll'],
 ];
 
 $failed = 0;

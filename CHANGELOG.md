@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Module version bumped to `2.6.7`
 
 ### Added
+- **Per-brand off switch for the order-intent approved notice** (TWO-25218, umbrella TWO-24739)
+  - Two **separate** keys in `brands/two.php`, because on/off and wording are unrelated decisions and must not share a key
+  - `intent_approved_notice_enabled` - the switch, an explicit boolean **only**, resolved by `Twopayment::isIntentApprovedNoticeEnabled()` and handed to the checkout JS as `window.twopayment.intent_approved_notice_enabled` (a real JS boolean). `true` shows the notice; `false` suppresses it entirely, rendering no element at all, not even an empty wrapper; an **absent** key is the documented default `true`, which is what keeps a third-party overlay that declares nothing on. Any non-boolean value is a clear logged error (`PrestaShopLogger`, severity 3, naming the key, the offending value's type and the brand code) and then the default `true` - deliberately not a throw, because this resolves while rendering a buyer-facing checkout where a white screen is a worse failure than a notice that stays on, and `true` is the fail-safe direction
+  - `intent_approved_notice` - the copy override **only**, resolved by `Twopayment::getIntentApprovedNotice()`. A non-empty string is used verbatim as the company-variant template, where `%s` is the buyer's company name; absent, `null`, empty or whitespace-only all mean the platform default translated copy. An override replaces the company variant only - the no-company copy stays default
+  - **Empty is now inert.** Under the superseded TWO-25213 design an empty `intent_approved_notice` was how you turned the notice off; it no longer does anything. That old meaning is what a reader will remember, so it is called out in the brand-file comments and the resolver docblocks. Nothing about the copy key can switch the notice off
+  - Both approved-message render sites gate on the boolean, never on the falsiness of the copy string: the inline `.two-order-intent-message` in `TwoOrderIntent` (`processResult()` and `updateUI()`) and `TwoCheckoutManager.showOrderIntentApproval()`. In both consumers an absent or non-boolean payload value reads as **enabled**, so an older cached JS file or an older template that never carried the key can never mean off
+  - Only the **approved** notice is switched. Declined and error messages are functional and always render, and order prevention on decline is untouched
+  - Migration hazard, documented rather than "fixed": a new module against a stale overlay that still carries an empty `intent_approved_notice` and no `intent_approved_notice_enabled` resolves to notice **on** - wrong for that brand, but not broken, and fixed by declaring the boolean. Making an empty copy value a hard error would turn that window into a broken store instead, so no legacy-compat path resurrects empty-means-off
+  - No `Configuration` key is added and no upgrade script is needed, so this carries no version bump of its own
+
 - **Merchant toggle for the checkout address lookup** (TWO-25203, umbrella TWO-24739)
   - The company address lookup on the checkout address step was unconditional: picking a company from the company search always overwrote the address fields (street, postcode, city) and the organisation-number fields (DNI, VAT number). The other plugins each let the merchant turn that off; this one did not
   - New `PS_TWO_ADDRESS_LOOKUP` switch on the advanced-settings page, **enabled by default**. With it off the company search still runs and still records the company name and organisation number - the Two flow needs those - but nothing is written into the address or identifier fields
@@ -61,6 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Measured over a six-step checkout session
 
 ### Changed
+- **Buyer-facing copy: the approved order-intent notice now says checks continue** (TWO-25213, umbrella TWO-24739)
+  - `Your invoice with Two is likely to be accepted for %s` becomes `Your invoice with Two is likely to be accepted for %s, subject to additional checks.`, and the no-company variant gains the same trailing caveat
+  - This lands all four plugins on one canonical pair of strings; the other platforms already carried the caveat. Declined copy is unchanged. Translators see the two changed source strings as new
 - **Invoice upload is now gated on the merchant record, not an admin toggle** (TWO-25111, per decision TWO-25106 Option A)
   - The plugin-side invoice upload (own-invoice merchants) now triggers only when the `invoice_distributed_by_merchant` flag on the Two merchant record (`GET /v1/merchant`) is true - the same signal checkout-api itself enforces (TWO-24761), and the same gating model Magento (TWO-24758) and WooCommerce (TWO-24757) use
   - The flag is cached by the existing TTL-gated merchant-record fetch (shared with `available_terms`/`due_in_days`); absent-from-response is treated as false, a failed fetch serves the last known value, and a merchant identity change fails closed
