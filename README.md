@@ -30,7 +30,7 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 - jQuery compatibility handling for older PrestaShop versions
 - Comprehensive error logging with optional debug mode
 - Order payload validation ensuring exact PrestaShop invoice matching
-- Robust tax rate calculation with fallback validation
+- Declared-rate VAT relay with fail-loud divergence checks (see [.ai/vat-rate-sourcing.md](.ai/vat-rate-sourcing.md))
 - User-friendly error messages for API validation failures
 - Phone number fallback (phone → phone_mobile)
 - Provider-first checkout finalization (local order created after provider verification)
@@ -94,7 +94,6 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 | Order Intent | Enable Order Intent check | Enabled |
 | Account Type | Show account type selector | Enabled |
 | Auto Fulfill Orders | Automatically fulfill orders with Two when status changes | Enabled |
-| Invoice Upload | Auto-upload invoices to Two | Disabled |
 | SSL Verification | Verify SSL certificates | Enabled |
 | Debug Mode | Enable detailed diagnostic logging | Disabled |
 | Default shipping tax code | Tax rules group assumed for shipping when the carrier's rate cannot be resolved. Hidden unless activated — see below | Not set |
@@ -245,7 +244,8 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
   2. Then use Two's Merchant Portal to handle partial fulfillments directly
 
 **Invoice Upload (Optional):**
-- If "Use Own Invoices" is enabled in module configuration:
+- Gated solely on the merchant's server-side `invoice_distributed_by_merchant` flag, read
+  from the cached `GET /v1/merchant` record. There is no admin toggle. When the flag is set:
   - After successful fulfillment, the module automatically generates the PrestaShop invoice PDF
   - Uploads it to Two via a three-step process:
     1. **Request signed upload URL** from Two API
@@ -339,7 +339,11 @@ twopayment/
 ├── twopayment.php              # Main module class
 ├── config.xml                  # Module metadata
 ├── classes/
-│   └── TwoInvoiceUploadService.php  # Invoice upload service
+│   ├── TwoCheckoutAmountException.php   # Fail-loud amount/rate divergence
+│   ├── TwoInvoiceRetrievalService.php   # Invoice fetch/download
+│   ├── TwoInvoiceUploadService.php      # Invoice upload service
+│   ├── TwoSoleTrader.php                # Sole-trader gating
+│   └── TwoSurchargeCalculator.php       # Buyer surcharge amounts
 ├── controllers/
 │   └── front/
 │       ├── payment.php         # Payment processing
@@ -353,15 +357,19 @@ twopayment/
 │   │   ├── twopayment.js      # Main JS
 │   │   └── modules/           # Modular JS components
 │   └── templates/
-│       └── hook/
-│           └── paymentinfo.tpl # Payment UI template
-└── upgrade/                   # Version upgrade scripts
+│       └── hook/             # Checkout + admin-order templates
+├── tests/                    # Offline harness, e2e (Playwright), integration matrix
+├── dev/                      # Local-stack and CI helper scripts
+├── .ai/                      # Engineering notes, decisions, learnings
+├── Makefile                  # Local dev + the gates CI runs
+└── upgrade/                  # Version upgrade scripts
 ```
 
 ### Key Components
 
 - **Twopayment**: Main module class handling hooks, configuration, API calls
-- **TwoInvoiceUploadService**: Handles invoice PDF upload to Two
+- **TwoInvoiceUploadService** / **TwoInvoiceRetrievalService**: Invoice PDF upload and fetch
+- **TwoSurchargeCalculator**: Buyer surcharge amounts
 - **TwoCheckoutManager**: Frontend checkout flow management
 - **TwoOrderIntent**: Order Intent validation (client-side)
 - **TwoCompanySearch**: Company search functionality
@@ -371,29 +379,25 @@ twopayment/
 ### Start Here
 
 - [AI_CONTEXT.md](AI_CONTEXT.md): AI operating manual (architecture, invariants, pitfalls)
-- [AGENTS.md](AGENTS.md): repository guardrails for any coding agent
+- [AGENTS.md](AGENTS.md): repository guardrails for any coding agent — the mandatory
+  invariants and the pre-commit verification commands live here
+- [.ai/vat-rate-sourcing.md](.ai/vat-rate-sourcing.md): how order-payload tax rates are
+  sourced and where the payload fails loud
+- [.ai/decisions.md](.ai/decisions.md) / [.ai/learnings.md](.ai/learnings.md): dated
+  journals of record
 - [tests/README.md](tests/README.md): test coverage and execution details
-- [CHANGELOG.md](CHANGELOG.md): behavior/history reference
+- [CHANGELOG.md](CHANGELOG.md): version history
 
-Compatibility note:
-- [CLAUDE.md](CLAUDE.md) is a pointer to `AI_CONTEXT.md` for tooling compatibility only.
-
-### Mandatory Invariants
-
-- Never create a local PrestaShop order if Two rejects order creation or verification.
-- Keep provider-first checkout flow and retry idempotency intact.
-- Apply rejection safeguards globally (not country-specific).
-- Keep tax and amount formulas aligned with PrestaShop totals and test expectations.
-- Update translation surfaces (`$this->l`, JS i18n map, `translations/es.php`) for user-facing text changes.
-
-### Minimum Verification Before Commit
+### Local Development
 
 ```bash
-php -l twopayment.php
-php tests/run.php
+make help       # all targets
+make install    # boot a local PrestaShop with the module installed
+make test       # the unit harness CI runs (php tests/run.php)
+make phpstan    # the static-analysis gate CI runs
+make format     # php-cs-fixer (PSR-12)
+make test-integration  # real-engine probes (see tests/integration/README.md)
 ```
-
-If you modified more PHP files, lint each touched file as well.
 
 ## API Integration
 
@@ -446,7 +450,8 @@ The module builds order payloads that exactly match PrestaShop invoices:
 ### Invoice Upload Failing
 - **Symptom**: Invoices not uploading to Two
 - **Solutions**:
-  - Verify "Use Own Invoices" option enabled in module config
+  - Verify the merchant record has `invoice_distributed_by_merchant` set (contact Two support);
+    checkout-api returns 403 for upload attempts when it is false
   - Check PrestaShop logs for upload errors
   - Verify PDF generation works (test invoice download)
   - Check file size limits (max 2MB)
@@ -477,20 +482,24 @@ The module builds order payloads that exactly match PrestaShop invoices:
   - Simply typing a company name is not enough - must click to select from search
   - If using an existing address, customer should edit it to add/verify company
 
-### Tax Rate Issues (0% Tax)
-- **Symptom**: Two API rejects order with tax rate error
+### Tax Rate Issues / Checkout Declined on Tax
+- **Symptom**: checkout is declined and the log shows "Declared tax rate does not reconcile
+  with applied amounts"
+- **Cause**: the tax-rules group the merchant configured for that line resolves to a
+  different rate than the tax PrestaShop actually applied to it. The module relays the
+  declared rate and refuses to invent one — see
+  [.ai/vat-rate-sourcing.md](.ai/vat-rate-sourcing.md).
 - **Solutions**:
-  - Enable Debug Mode in module settings (Other Settings → Enable Debug Mode)
-  - Check PrestaShop logs for "TwoPayment: Product tax debug" entries
-  - Verify products have correct tax rules assigned in PrestaShop
-  - Module now calculates tax from actual amounts as fallback
-  - Contact Two support with debug logs if issue persists
+  - Read the log entry: it names the line, the declared rate, the net, the applied tax and
+    the tax expected at the declared rate
+  - Check that line's tax-rules group, including any address-specific `TaxRule` (state /
+    postcode scoped rules are a common source of divergence)
+  - Verify products, the carrier, ecotax and gift wrapping all have the intended tax rules
+    group assigned
+  - Contact Two support with the log entry if the configuration looks correct
 
 ### Debug Mode
 - **When to use**: Only enable when requested by Two support for troubleshooting
-- **What it logs**: 
-  - Tax calculations per product (rate field, net/gross amounts, calculated rate)
-  - Helps diagnose tax rate discrepancies between PrestaShop and Two API
 - **How to enable**: 
   1. Go to Module Configuration → Other Settings
   2. Toggle "Enable Debug Mode" to Yes
