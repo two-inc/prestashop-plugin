@@ -53,7 +53,9 @@ cd "${MODULE_DIR}"
 
 # Stamp the deployed commit into a sidecar file INSIDE the module source dir so
 # it is picked up by the copy below and ships inside the packaged module.
-# getTwoDeployedCommitHash() reads this first (no .git in the artifact).
+# getTwoDeployedCommitHash() reads this LAST (TWO-25194) — a live `.git` gitlink or
+# directory always wins, because this stamp is frozen at build time. The stamp is what
+# resolves the sha in a packaged artifact, which ships no .git at all.
 SIDECAR_FILE="${MODULE_DIR}/.two-deployed-commit"
 SIDECAR_PREEXISTING=0
 if [ -f "${SIDECAR_FILE}" ]; then
