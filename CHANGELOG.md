@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Merchant toggle for the checkout address lookup** (TWO-25203, umbrella TWO-24739)
+  - The company address lookup on the checkout address step was unconditional: picking a company from the company search always overwrote the address fields (street, postcode, city) and the organisation-number fields (DNI, VAT number). The other plugins each let the merchant turn that off; this one did not
+  - New `PS_TWO_ADDRESS_LOOKUP` switch on the advanced-settings page, **enabled by default**. With it off the company search still runs and still records the company name and organisation number - the Two flow needs those - but nothing is written into the address or identifier fields
+  - The fill semantics are unchanged and remain deliberate: with the toggle on, re-searching and picking a different company overwrites both the address and the organisation number with the new company's values
+  - Separate from the existing "Activate company name auto-complete" switch (`PS_TWO_ENABLE_COMPANY_NAME`), which gates the search widget itself. Neither key was reused or widened
+  - Existing installs are behaving as "on", so the 2.6.6 upgrade script seeds the key to `1` - only when absent, so a merchant's saved opt-out survives a re-run - and every reader resolves an absent or empty row to enabled, meaning an install whose upgrade has not run yet cannot silently lose the fill
+  - Module version bumped to `2.6.6`
+
 ### Fixed
 - **Company search now bounds its result set** (TWO-25192)
   - The request to `GET /companies/v2/company` sent only `q` and `country`, so the API's own default page size decided how many rows came back. A common company name in a large country returned an unbounded list into the autocomplete dropdown

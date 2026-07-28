@@ -6,6 +6,10 @@ class TwoCheckoutManager {
     constructor(config) {
         this.config = {
             companySearchEnabled: false,
+            // Default-on, mirroring the server-side resolver: the address
+            // lookup was unconditional before the toggle existed (TWO-25203),
+            // so an omitted value must not turn it off.
+            addressLookupEnabled: true,
             orderIntentEnabled: false,
             checkoutHost: '',
             orderIntentUrl: '',
@@ -1883,7 +1887,8 @@ class TwoCheckoutManager {
     initializeCompanySearch() {
         if (!this.companySearch && window.TwoCompanySearch) {
             this.companySearch = new TwoCompanySearch({
-                checkoutHost: this.config.checkoutHost
+                checkoutHost: this.config.checkoutHost,
+                addressLookupEnabled: this.config.addressLookupEnabled !== false
             });
         }
     }
