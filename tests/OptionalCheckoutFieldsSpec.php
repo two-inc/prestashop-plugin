@@ -53,10 +53,13 @@ final class OptionalCheckoutFieldsSpec
     public static function runAll(): void
     {
         self::testFreshInstallEnablesAllFour();
-        self::testUpgrade270EnablesAllFourOverAStoredZero();
+        self::testUpgrade270SeedsOnlyAbsentKeys();
+        self::testUpgrade270LeavesAStoredZeroAlone();
         self::testAdminFormRoundTripsEveryField();
         self::testAbsentKeyIsOffRatherThanADefaultOnFallback();
         self::testEnabledFieldsAreExposedToTheTileInRenderOrder();
+        self::testAdminSwitchesRenderInTheSameOrderAsTheTile();
+        self::testCoreOrderNoteIsRelayedOnCreateAndUpdate();
         self::testDisabledFieldIsNotRenderedAndNotReadFromThePost();
         self::testSubmittedValuesAreTrimmedStrippedAndTruncated();
         self::testInvalidInvoiceEmailIsDroppedAndLogged();
@@ -234,19 +237,51 @@ final class OptionalCheckoutFieldsSpec
     }
 
     /**
-     * The accepted behaviour change. A merchant's stored 0 is overwritten
-     * deliberately: the admin form has always saved department and project on
-     * every submit, so a live shop's 0 came from install() never writing a
-     * default rather than from a decision, and seed-if-absent would therefore
-     * have changed nothing anywhere.
+     * An install from before any of these keys existed: every one absent, so
+     * every one gets seeded to 1.
      */
-    private static function testUpgrade270EnablesAllFourOverAStoredZero(): void
+    private static function testUpgrade270SeedsOnlyAbsentKeys(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
 
-        // The shape a live pre-2.7.0 shop is in: department/project stored off
-        // by omission, the two new keys not present at all.
+        foreach (self::KEYS as $key) {
+            TinyAssert::false(Configuration::hasKey($key));
+        }
+
+        self::upgrade($module);
+
+        foreach (self::KEYS as $field => $key) {
+            TinyAssert::same(1, Configuration::get($key), 'Expected upgrade to seed ' . $key);
+            TinyAssert::true($module->isOptionalCheckoutFieldEnabled($field));
+        }
+
+        TinyAssert::true(
+            self::loggedContains('seeded the absent optional checkout field switches'),
+            'Expected the upgrade to log the keys it seeded'
+        );
+    }
+
+    /**
+     * The shape practically every LIVE pre-2.7.0 shop is in, and the case the
+     * seed-only guard exists for: department and project already carry a stored
+     * 0, so the upgrade must leave both exactly as they are and seed only the
+     * two genuinely new keys.
+     *
+     * A stored value is treated as the merchant's choice regardless of how it
+     * got there - the same call the WooCommerce plugin makes - even though on
+     * these two keys the 0 most likely came from install() never having written
+     * a default rather than from a decision. The documented consequence is that
+     * such a shop keeps department and project OFF after upgrading and only the
+     * two new fields appear. That near-no-op is the intended outcome; if this
+     * test starts failing because both keys came back as 1, the guard has been
+     * dropped, not fixed.
+     */
+    private static function testUpgrade270LeavesAStoredZeroAlone(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
         Configuration::updateValue('PS_TWO_ENABLE_DEPARTMENT', 0);
         Configuration::updateValue('PS_TWO_ENABLE_PROJECT', 0);
         TinyAssert::false(Configuration::hasKey('PS_TWO_ENABLE_PO_NUMBER'));
@@ -254,23 +289,25 @@ final class OptionalCheckoutFieldsSpec
 
         self::upgrade($module);
 
-        foreach (self::KEYS as $field => $key) {
-            TinyAssert::same(1, Configuration::get($key), 'Expected upgrade to enable ' . $key);
-            TinyAssert::true($module->isOptionalCheckoutFieldEnabled($field));
-        }
+        TinyAssert::same(0, (int) Configuration::get('PS_TWO_ENABLE_DEPARTMENT'), 'A stored 0 must survive the upgrade');
+        TinyAssert::same(0, (int) Configuration::get('PS_TWO_ENABLE_PROJECT'), 'A stored 0 must survive the upgrade');
+        TinyAssert::false($module->isOptionalCheckoutFieldEnabled('department'));
+        TinyAssert::false($module->isOptionalCheckoutFieldEnabled('project'));
 
-        // A visible checkout change gets a trail in the shop log.
-        TinyAssert::true(
-            self::loggedContains('enabled the optional checkout fields'),
-            'Expected the upgrade to log the fields it switched on'
+        // Only the two new fields turn up at checkout on such a shop.
+        TinyAssert::same(1, Configuration::get('PS_TWO_ENABLE_PO_NUMBER'));
+        TinyAssert::same(1, Configuration::get('PS_TWO_ENABLE_INVOICE_EMAIL'));
+        TinyAssert::same(
+            ['invoice_email', 'purchase_order_number'],
+            array_keys($module->getOptionalCheckoutFieldsForDisplay()),
+            'An upgraded shop with both older switches off shows only the two new fields'
         );
 
-        // Idempotent, and it must not resurrect a merchant's later opt-out
-        // silently on a re-run... it rewrites, which is the documented
-        // contract. Pinned so the choice stays a choice.
-        Configuration::updateValue('PS_TWO_ENABLE_PROJECT', 0);
+        // Re-runnable: a stored 1 is equally a stored value, and a merchant who
+        // switches something back off afterwards must not have it resurrected.
+        Configuration::updateValue('PS_TWO_ENABLE_PO_NUMBER', 0);
         self::upgrade($module);
-        TinyAssert::same(1, Configuration::get('PS_TWO_ENABLE_PROJECT'));
+        TinyAssert::same(0, (int) Configuration::get('PS_TWO_ENABLE_PO_NUMBER'), 'A later opt-out must not be resurrected');
     }
 
     private static function testAdminFormRoundTripsEveryField(): void
@@ -336,8 +373,12 @@ final class OptionalCheckoutFieldsSpec
 
         $fields = $module->getOptionalCheckoutFieldsForDisplay();
 
+        // The agreed standard field order, shared with the admin switches.
+        // The fifth field in that sequence, the order note, is core's
+        // `delivery_message` on the shipping step and has no tile presence, so
+        // it cannot and does not appear here.
         TinyAssert::same(
-            ['department', 'project', 'purchase_order_number', 'invoice_email'],
+            ['invoice_email', 'purchase_order_number', 'project', 'department'],
             array_keys($fields),
             'Render order is part of the checkout layout, not incidental'
         );
@@ -347,6 +388,104 @@ final class OptionalCheckoutFieldsSpec
         TinyAssert::same('email', $fields['invoice_email']['type']);
         TinyAssert::same('text', $fields['department']['type']);
         TinyAssert::same('255', $fields['department']['max_length']);
+    }
+
+    /**
+     * The admin pane is supposed to read like the thing it configures, so the
+     * switches must render in the same sequence as the checkout fields. Two
+     * separate lists express that order - the constant the tile iterates and the
+     * form's input array - and nothing but a test stops them drifting apart.
+     */
+    private static function testAdminSwitchesRenderInTheSameOrderAsTheTile(): void
+    {
+        self::reset();
+        self::enableAll();
+        $module = new TwopaymentTestHarness();
+
+        $method = new ReflectionMethod(Twopayment::class, 'getTwoPaymentSettingsForm');
+        $form = $method->invoke($module);
+
+        $switchOrder = array();
+        foreach ($form['form']['input'] as $input) {
+            $name = isset($input['name']) ? (string) $input['name'] : '';
+            if (in_array($name, self::KEYS, true)) {
+                $switchOrder[] = $name;
+            }
+        }
+
+        $tileOrder = array();
+        foreach (array_keys($module->getOptionalCheckoutFieldsForDisplay()) as $field) {
+            $tileOrder[] = self::KEYS[$field];
+        }
+
+        TinyAssert::same(
+            [
+                'PS_TWO_ENABLE_INVOICE_EMAIL',
+                'PS_TWO_ENABLE_PO_NUMBER',
+                'PS_TWO_ENABLE_PROJECT',
+                'PS_TWO_ENABLE_DEPARTMENT',
+            ],
+            $switchOrder,
+            'Admin switches must render in the agreed standard field order'
+        );
+        TinyAssert::same($switchOrder, $tileOrder, 'Admin switch order must match the checkout tile order');
+    }
+
+    /**
+     * The order note is core's field, relayed rather than duplicated.
+     *
+     * Core writes it through Tools::safeOutput() (htmlentities), so the relay
+     * has to decode it - otherwise Two receives `&amp;` and `&quot;`. It is read
+     * from the cart rather than the request, which is what lets the UPDATE
+     * payload carry it too: were it read from the buyer's submission, an admin
+     * order edit would blank the note on Two's side.
+     */
+    private static function testCoreOrderNoteIsRelayedOnCreateAndUpdate(): void
+    {
+        self::reset();
+        self::enableAll();
+        $module = new TwopaymentTestHarness();
+        $cart = self::seedCart(7204, 7214, 7224);
+
+        // Blank first: no row at all means an empty note, not a warning.
+        TinyAssert::same('', $module->getCartOrderNote($cart));
+        $payload = $module->getTwoNewOrderData('merchant-attempt-7204a', $cart, self::merchantUrls());
+        TinyAssert::same('', $payload['order_note']);
+
+        StubStore::$cartMessages[7204] = [
+            'id_message' => 51,
+            // Exactly what core stores for: Leave at reception &  ring "twice"
+            'message' => 'Leave at reception &amp; ring &quot;twice&quot;',
+        ];
+
+        TinyAssert::same('Leave at reception & ring "twice"', $module->getCartOrderNote($cart));
+
+        $payload = $module->getTwoNewOrderData('merchant-attempt-7204b', $cart, self::merchantUrls());
+        TinyAssert::same('Leave at reception & ring "twice"', $payload['order_note']);
+
+        // The update path has no buyer submission but does have the cart, so the
+        // note survives an admin edit instead of being wiped.
+        $order = new class {
+            public bool $loaded = true;
+            public int $id = 7204;
+            public int $id_cart = 7204;
+            public int $id_carrier = 0;
+            public string $shipping_number = '';
+
+            public function getIdOrderCarrier(): int
+            {
+                return 0;
+            }
+        };
+        $updatePayload = $module->getTwoUpdateOrderData($order, [
+            'two_order_reference' => 'ref-7204',
+            'two_day_on_invoice' => '30',
+        ]);
+        TinyAssert::same('Leave at reception & ring "twice"', $updatePayload['order_note']);
+
+        // Capped, so one pasted essay cannot be the reason an order is rejected.
+        StubStore::$cartMessages[7204]['message'] = str_repeat('n', 1500);
+        TinyAssert::same(1000, strlen($module->getCartOrderNote($cart)));
     }
 
     private static function testDisabledFieldIsNotRenderedAndNotReadFromThePost(): void
