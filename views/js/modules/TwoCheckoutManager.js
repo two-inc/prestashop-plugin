@@ -50,19 +50,31 @@ class TwoCheckoutManager {
     }
 
     /**
-     * Per-brand order-intent APPROVED notice switch (TWO-25213). Same three
-     * states as TwoOrderIntent.approvedNoticeOverride() - null = platform
-     * default copy (notice ON), '' = suppressed entirely, non-empty = verbatim
-     * company-variant template. Read locally rather than through
-     * this.orderIntent so it is correct before that module is initialised, and
-     * so an absent key still means ON.
+     * Is the order-intent APPROVED notice enabled for this brand? (TWO-25218)
+     * Mirror of TwoOrderIntent.approvedNoticeEnabled(): only an explicit `false`
+     * turns it off, and an absent or non-boolean value reads as ENABLED so an
+     * older cached JS file or template can never mean off.
+     *
+     * Read locally rather than through this.orderIntent so it is correct before
+     * that module is initialised.
+     */
+    approvedNoticeEnabled() {
+        const configured = window.twopayment ? window.twopayment.intent_approved_notice_enabled : null;
+        return typeof configured === 'boolean' ? configured : true;
+    }
+
+    /**
+     * Copy override for that notice (TWO-25218). Mirror of
+     * TwoOrderIntent.approvedNoticeOverride() - null = platform default copy,
+     * non-empty = verbatim company-variant template. Empty and whitespace-only
+     * are inert (default copy); this key does not switch the notice off.
      */
     approvedNoticeOverride() {
         const configured = window.twopayment ? window.twopayment.intent_approved_notice : null;
-        if (typeof configured !== 'string') {
+        if (typeof configured !== 'string' || configured.trim() === '') {
             return null;
         }
-        return configured.trim() === '' ? '' : configured;
+        return configured;
     }
 
     escapeHtml(value) {
@@ -755,7 +767,7 @@ class TwoCheckoutManager {
         if (result.approved) {
             const approvedNotice = this.approvedNoticeOverride();
             let approvedMsg = result.message || this.t('payment_approved_message', 'Payment approved! Choose your payment terms below.');
-            if (companyName && approvedNotice !== null && approvedNotice !== '') {
+            if (companyName && approvedNotice !== null) {
                 // Brand override replaces only the company variant.
                 approvedMsg = approvedNotice.replace('%s', companyName);
             } else if (companyName && window.twopayment && window.twopayment.i18n && window.twopayment.i18n.invoice_likely_accepted_for) {
@@ -902,11 +914,11 @@ class TwoCheckoutManager {
      * Show order intent approval message and payment terms (theme-independent)
      */
     showOrderIntentApproval(message) {
-        // Notice switched off for this brand (TWO-25213): render no approval
+        // Notice switched off for this brand (TWO-25218): render no approval
         // message and do not create a container for one. Everything else an
         // approval does - clearing the loading state, revealing the payment
         // terms selector - still has to happen.
-        if (this.approvedNoticeOverride() === '') {
+        if (!this.approvedNoticeEnabled()) {
             const existing = document.querySelector('.two-payment-info') ||
                 document.querySelector('#two-order-intent-messages');
             if (existing) {
