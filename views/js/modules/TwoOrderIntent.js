@@ -338,10 +338,50 @@ class TwoOrderIntent {
                     }
                 },
                 error: (xhr, status, error) => {
-                    reject(new Error(`Two order intent failed: ${error}`));
+                    // TWO-25206: Two is the only thing that verifies the buyer's
+                    // organization number now, so its rejection reason has to reach
+                    // getErrorMessage() - jQuery's statusText alone ("Bad Request")
+                    // carries none of it and every 4xx collapsed into the generic
+                    // "pick another payment method" decline. Carry error_code and
+                    // error_message through so COMPANY_NOT_FOUND (the response to an
+                    // org number that does not resolve against the company registry)
+                    // maps to the actionable company-search prompt instead.
+                    reject(new Error(`Two order intent failed: ${TwoOrderIntent.describeApiError(xhr, error)}`));
                 }
             });
         });
+    }
+
+    /**
+     * Flatten an order-intent error response into a matchable string.
+     * Reads the JSON body first (error_code / error_message), and falls back to
+     * jQuery's statusText when the body is absent or not JSON.
+     */
+    static describeApiError(xhr, statusText) {
+        let body = xhr && xhr.responseJSON ? xhr.responseJSON : null;
+
+        if (!body && xhr && typeof xhr.responseText === 'string' && xhr.responseText !== '') {
+            try {
+                body = JSON.parse(xhr.responseText);
+            } catch (e) {
+                body = null;
+            }
+        }
+
+        const parts = [];
+        if (body && typeof body === 'object') {
+            if (body.error_code) {
+                parts.push('' + body.error_code);
+            }
+            if (body.error_message) {
+                parts.push('' + body.error_message);
+            }
+        }
+        if (parts.length === 0 && statusText) {
+            parts.push('' + statusText);
+        }
+
+        return parts.join(' ');
     }
 
     processResult(response) {
@@ -394,6 +434,19 @@ class TwoOrderIntent {
         // field that's actually blocking them.
         if (error.includes('select your company') || error.includes('search for your company')) {
             return errorString;
+        }
+
+        // TWO-25206: Two rejects the order intent with COMPANY_NOT_FOUND when the
+        // organization number does not resolve against the company registry. This
+        // is the case the plugin's own pre-verification used to catch locally, so
+        // show the buyer the same instruction it used to show - matched before the
+        // generic keyword branches below so the wording cannot drift into a vaguer
+        // one. Kept ahead of 'not found' too, which is a broader catch-all.
+        if (error.includes('company_not_found') || error.includes('company not found')) {
+            return this.t(
+                'select_company_to_use_two',
+                'To pay with Two, go back to your billing address and search for your company name. Select your company from the results to verify your business.'
+            );
         }
 
         // Phone number validation errors (priority - specific error type)

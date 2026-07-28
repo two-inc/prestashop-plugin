@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **Redundant organisation-number pre-verification on the checkout path** (TWO-25206, umbrella TWO-24739)
+  - When a logged-in buyer checked out against a saved billing address, the module pulled an organisation number out of that address (`dni`, `vat_number`, `companyid`) and then made its own blocking, unauthenticated `GET /companies/v2/company?q=<orgnum>&country=<iso>` call - a 30-second timeout budget on the buyer-blocking order-intent AJAX - before it would let the buyer pay with Two. Neither the WooCommerce nor the Magento plugin has an equivalent step
+  - The call was redundant. Two validates the organisation number's format and checksum per country and resolves it against the company registry synchronously on the same `/v1/order_intent` request this handler builds the payload for, rejecting the intent before it is created when it does not resolve. It also overwrites the company name from the registry, so any name the module resolved locally was discarded and re-derived anyway. The module's own payload path has always sent this organisation number unverified, so the pre-check never guarded the payload - only its own prompt
+  - It was also actively harmful. The pre-check used the **fuzzy** company-search endpoint while order intent uses the **exact** by-organisation-number one, so a company Two resolves fine could fail the pre-check and the buyer was hard-blocked with "go back to your billing address and search for your company name". A slow or unreachable provider was indistinguishable from "this company does not exist" - both blocked. And when the fuzzy search returned no exact match but exactly one result, the module accepted **that** company, whose organisation number differed from the one searched, and cached it as the buyer's verified identity
+  - The organisation number found on the address is now handed to Two as-is, and Two is the only thing that verifies it. It is deliberately not treated as search-verified anywhere it was not before
+  - Removed with it: `verifyCompanyByOrgNumber()`, the `getTwoVerifiedCompanyForOrgNumber()` wrapper and its `two_company_verify_miss` cookie memo (added by TWO-24799 to make the miss path survivable), `extractOrganizationNumber()`, and the `COMPANY_VERIFY_MISS_CACHE_TTL` constant. `extractOrgNumberFromAddress()` is untouched - it is still how a saved-address organisation number reaches Two
+  - No configuration key was removed, so this release needs no upgrade script
+  - Module version bumped to `2.6.7`
+
 ### Added
 - **Merchant toggle for the checkout address lookup** (TWO-25203, umbrella TWO-24739)
   - The company address lookup on the checkout address step was unconditional: picking a company from the company search always overwrote the address fields (street, postcode, city) and the organisation-number fields (DNI, VAT number). The other plugins each let the merchant turn that off; this one did not
@@ -17,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Module version bumped to `2.6.6`
 
 ### Fixed
+- **A rejected order intent now tells the buyer what to fix** (TWO-25206)
+  - The browser calls `/v1/order_intent` directly and the error handler read only jQuery's status text ("Bad Request"), never the JSON body. Every 4xx therefore collapsed into the generic "cannot be approved at this time, please select an alternative payment method" - including `COMPANY_NOT_FOUND`, which is the response to an organisation number that does not resolve against the company registry and is precisely the case the removed pre-check used to catch locally
+  - `error_code` and `error_message` are now carried out of the response body, and `COMPANY_NOT_FOUND` maps to the same instruction the pre-check used to show: go back to the billing address and search for the company. The message is the existing translated `select_company_to_use_two` string, matched ahead of the broader keyword branches so the wording cannot drift into a vaguer one
 - **Company search now bounds its result set** (TWO-25192)
   - The request to `GET /companies/v2/company` sent only `q` and `country`, so the API's own default page size decided how many rows came back. A common company name in a large country returned an unbounded list into the autocomplete dropdown
   - The request now carries `limit` (50, matching the Magento and WooCommerce plugins) and `offset` (always 0). As on both of those platforms there is no load-more or next-page control - the first page is the whole result set - so the dropdown is capped rather than paged, and the existing scroll containers handle the rest
