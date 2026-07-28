@@ -1,0 +1,47 @@
+#!/bin/bash
+# Switch the hidden "Default shipping tax code" admin field on for this
+# install, by adding its activation constant to PrestaShop's per-install
+# override file — the same one-line edit a merchant's own developer makes.
+#
+# The file is config/defines_custom.inc.php. PrestaShop includes it from
+# config/config.inc.php (line 30 on 8.2.7, before defines.inc.php) if it
+# exists, on every front, back-office and CLI request, and preserves it across
+# core upgrades.
+#
+# Appends rather than overwrites: an install may already be using this file for
+# something else (a demo-mode override, for instance).
+#
+# Usage: docker exec <container> bash /var/www/html/modules/twopayment/dev/enable-default-shipping-tax-code
+# Undo:  docker exec <container> bash /var/www/html/modules/twopayment/dev/enable-default-shipping-tax-code --reset
+
+set -e
+
+FILE=/var/www/html/config/defines_custom.inc.php
+CONSTANT=_TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_
+
+if [ "$1" = "--reset" ]; then
+    if [ -f "$FILE" ] && grep -q "$CONSTANT" "$FILE"; then
+        grep -v "$CONSTANT" "$FILE" > "$FILE.tmp"
+        mv "$FILE.tmp" "$FILE"
+        chown www-data:www-data "$FILE"
+        echo "removed $CONSTANT from $FILE"
+    else
+        echo "$CONSTANT not present in $FILE — nothing to do"
+    fi
+    rm -rf /var/www/html/var/cache/*
+    exit 0
+fi
+
+if [ ! -f "$FILE" ]; then
+    printf '<?php\n' > "$FILE"
+fi
+
+if grep -q "$CONSTANT" "$FILE"; then
+    echo "$CONSTANT already set in $FILE"
+else
+    printf "\ndefine('%s', true);\n" "$CONSTANT" >> "$FILE"
+    echo "added $CONSTANT to $FILE"
+fi
+
+chown www-data:www-data "$FILE"
+rm -rf /var/www/html/var/cache/*
