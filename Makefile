@@ -37,7 +37,7 @@ TWO_ENVIRONMENT      ?= sandbox
 TWO_STORE_COUNTRY    ?= NO
 export TWO_STORE_COUNTRY
 
-.PHONY: help install configure run debug stop clean flush logs proxy archive test test-integration carrierless-shop carrierless-off patch minor major format phpstan bumpver-patch bumpver-minor bumpver-major
+.PHONY: help install configure run debug stop clean flush logs proxy archive test test-integration carrierless-shop carrierless-off bump patch minor major format phpstan bumpver-patch bumpver-minor bumpver-major
 
 .DEFAULT_GOAL := help
 
@@ -196,18 +196,42 @@ phpstan:
 		&& php /tmp/phpstan.phar analyse --configuration=phpstan.neon --no-progress --memory-limit=1G"
 
 # Requires bumpver on PATH (pip install bumpver / pipx install bumpver),
-# same implicit prerequisite as magento-plugin / woocommerce-plugin.
+# same implicit prerequisite as the sibling plugin repos.
 # tag/push are off in bumpver.toml — this only commits the bump locally.
+#
+# Version-bump convention (TWO-25230): patch on staging, minor on main, major
+# via the escape hatch. The staging half is now automated in
+# .github/workflows/version-bump.yml, so DO NOT hand-run a bump for a PR into
+# staging any more — the workflow fires on the merge and you would double-bump.
+#
+# Prefer `make bump`: it asks .github/scripts/decide-bump-level.sh for the
+# level rather than leaving it to whoever is at the keyboard. The explicit
+# patch/minor/major targets remain for a deliberate override.
 bumpver-%:
 	SKIP=commit-msg bumpver update --$*
 
-## Bump patch version
+## Bump the version at the level the convention says
+bump:
+	@branch="$$(git rev-parse --abbrev-ref HEAD)"; \
+	out="$$(.github/scripts/decide-bump-level.sh "$$branch")"; \
+	level="$$(printf '%s\n' "$$out" | sed -n 's/^level=//p')"; \
+	set_version="$$(printf '%s\n' "$$out" | sed -n 's/^set_version=//p')"; \
+	reason="$$(printf '%s\n' "$$out" | sed -n 's/^reason=//p')"; \
+	if [ -n "$$set_version" ]; then \
+		echo "Convention says major -> $$set_version ($$reason)"; \
+		SKIP=commit-msg bumpver update --set-version "$$set_version"; \
+	else \
+		echo "Convention says $$level ($$reason)"; \
+		SKIP=commit-msg bumpver update --$$level; \
+	fi
+
+## Bump patch version (prefer `make bump`)
 patch: bumpver-patch
 
-## Bump minor version
+## Bump minor version (prefer `make bump`)
 minor: bumpver-minor
 
-## Bump major version
+## Bump major version (prefer `make bump`)
 major: bumpver-major
 
 ## Create a versioned zip archive
