@@ -71,8 +71,9 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 5. **Optional Features**:
    - Enable/disable company name field requirement
    - Enable/disable organization number field requirement
-   - Enable/disable department field
-   - Enable/disable project field
+   - Enable/disable the optional buyer reference fields shown in the Two
+     payment section at checkout: department, project, purchase order number,
+     invoice email address (all enabled by default)
    - Enable/disable Order Intent check (Required for use)
    - Enable/disable account type selection
    - Enable automatic invoice upload to Two
@@ -89,14 +90,43 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 | Default Payment Term | Default term when multiple available | 30 days |
 | Company Name | Require company name field | Enabled |
 | Organization Number | Require organization number | Enabled |
-| Department Field | Show department field | Disabled |
-| Project Field | Show project field | Disabled |
+| Department Field | Show department field in the Two payment section | Enabled |
+| Project Field | Show project field in the Two payment section | Enabled |
+| Purchase order number Field | Show purchase order number field in the Two payment section | Enabled |
+| Invoice email Field | Show invoice email address field in the Two payment section | Enabled |
 | Order Intent | Enable Order Intent check | Enabled |
 | Account Type | Show account type selector | Enabled |
 | Auto Fulfill Orders | Automatically fulfill orders with Two when status changes | Enabled |
 | SSL Verification | Verify SSL certificates | Enabled |
 | Debug Mode | Enable detailed diagnostic logging | Disabled |
 | Default shipping tax code | Tax rules group assumed for shipping when the carrier's rate cannot be resolved. Hidden unless activated — see below | Not set |
+
+### Optional buyer reference fields
+
+Four optional fields can be shown to the buyer, each with its own switch, all
+**enabled by default**: department, project, purchase order number and invoice
+email address. Their values are sent to Two with the order (`buyer_department`,
+`buyer_project`, `buyer_purchase_order_number`, and
+`invoice_details.invoice_emails` respectively); an empty field is simply not
+sent, and none of them is ever required.
+
+They render **inside the Two payment section at the payment step**, not in the
+billing address block. PrestaShop asks for the shipping address first and only
+reveals the billing address block when the buyer ticks "Billing address differs
+from shipping address", so a field hosted there is invisible to most buyers.
+The invoice email in particular has to be visible in the case where billing and
+shipping match, which is exactly when the buyer should be prompted to consider
+a separate address for invoices.
+
+A switch that is off renders no element at all — not a hidden one — and its
+value is never read from the request even if the parameter is supplied by hand.
+
+**Order comments** are deliberately not a plugin field. PrestaShop core already
+offers one: the "If you would like to add a comment about your order" textarea
+(`delivery_message`) on the checkout **shipping** step, rendered by
+`checkout/_partials/steps/shipping.tpl` and stored by core against the order.
+Use that. Note that it reaches the merchant through PrestaShop only: the module
+sends an empty `order_note` to Two and does not relay core's comment.
 
 ### Default shipping tax code (hidden setting)
 
@@ -373,6 +403,7 @@ twopayment/
 - **TwoCheckoutManager**: Frontend checkout flow management
 - **TwoOrderIntent**: Order Intent validation (client-side)
 - **TwoCompanySearch**: Company search functionality
+- **TwoOptionalFields**: Optional buyer reference fields in the payment tile (client-side)
 
 ## Developer & AI Quickstart
 
@@ -417,6 +448,8 @@ The module builds order payloads that exactly match PrestaShop invoices:
 - Shipping and discount line items
 - Buyer and shipping addresses
 - Payment terms
+- The optional buyer reference fields the buyer filled in at the payment step
+  (see "Optional buyer reference fields" above)
 
 ## Troubleshooting
 
