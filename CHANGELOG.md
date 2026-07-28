@@ -110,6 +110,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Merchants who had the toggle enabled were server-side whitelisted, and all previously-whitelisted merchants already carry `invoice_distributed_by_merchant = true` (TWO-24761), so no merchant loses the feature on upgrade
 
 ### Added
+- **Optional "Default shipping tax code" for shops that price shipping outside the carrier table** (TWO-25200)
+  - PrestaShop keeps the shipping VAT declaration on the carrier row (`carrier_tax_rules_group_shop`) and nowhere else. A merchant running custom logistics with `id_carrier = 0` has no carrier to declare it on - core discards the whole delivery-option list on that sentinel - so the plugin refused the order rather than guess a rate (TWO-25161 / TWO-25180)
+  - A new Advanced Settings field lets such a merchant declare that group on the module instead. Resolution order is now: the carrier's declared tax-rules group, then this default, then the same loud refusal as before. The default is never consulted when a carrier does declare a group
+  - **No default value.** An install that has not set it behaves exactly as before, and a selection that points at a since-deleted group is treated as unset rather than relayed as 0%
+  - The field is **hidden unless the install opts in** with `define('_TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_', true);` in `config/defines_custom.inc.php` (see README). The constant gates the admin field only - a value the merchant already saved keeps working if the constant later disappears - and a save while the field is hidden never rewrites the stored selection
+  - Whenever the fallback is actually used, the shop log carries a warning naming the group, its id and the resolved rate, so a merchant on the fallback path is distinguishable from one resolving normally
+  - Module version bumped to `2.6.8`
 - **Real FX layer on Two's own spot rates** (TWO-25105)
   - Every Two-side currency conversion (platform/merchant minimum-order gate, minimum-order decline hint, admin floor display and save validation, fixed-surcharge/cap re-denomination) now uses the rates from `GET /refdata/v1/fx-rates` - the same EUR-pivot table checkout-api enforces server-side - instead of PrestaShop core's own conversion rates
   - The full rate table is fetched server-side with the merchant API key (never from browser JS), cached in module configuration with a 6h TTL refreshed from the checkout media hook, and fetched on demand when a not-yet-cached currency reaches a conversion; the response's `as_of` staleness floor is retained alongside the rates
