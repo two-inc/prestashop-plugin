@@ -301,11 +301,28 @@ class TwoCompanySearch {
             return;
         }
 
+        // Re-resolve the field before touching it. This method is re-invoked from
+        // the `updatedAddressForm` handler, and PrestaShop REPLACES the address
+        // form's DOM on that event - so the object cached by init() can be a
+        // detached input, and every class and binding below would land on a node
+        // that is no longer on the page.
+        const currentField = $(this.config.companyFieldSelector);
+        if (currentField.length) {
+            this.companyField = currentField;
+        }
+        if (!this.companyField || !this.companyField.length) {
+            return;
+        }
+
         // Marks the field for the in-field spinner CSS (views/css/two.css).
         this.companyField.addClass('two-company-search-input');
 
-        // Use jQuery UI autocomplete if available; otherwise fallback to custom
-        if (typeof $.fn.autocomplete === 'function') {
+        // Use jQuery UI autocomplete if available; otherwise fallback to custom.
+        // `$.fn.autocomplete` alone is not proof of jQuery UI - the older
+        // bassistance jquery.autocomplete plugin claims the same name with an
+        // incompatible signature, and feeding it this options object would leave
+        // the field with no working search at all while skipping the fallback.
+        if ($.ui && $.ui.autocomplete && typeof $.fn.autocomplete === 'function') {
             this.companyField.autocomplete({
                 source: (request, response) => {
                     const key = this.buildCacheKey(request.term);
@@ -368,9 +385,21 @@ class TwoCompanySearch {
             // 1.11, and an unknown-method call throws. A theme shipping an older
             // jQuery UI must lose the styling of this row, not the whole company
             // search - select/focus below already refuse the row without it.
+            //
+            // Patched at most ONCE per widget instance. jQuery UI's widget
+            // bridge does not build a fresh instance when `.autocomplete({...})`
+            // is called on an already-initialised field - it runs option()+
+            // _init() on the existing one - and this method is re-invoked on
+            // every country change and address-form update. Without the guard
+            // each call would capture the previous wrapper and wrap it again,
+            // nesting one layer deeper every time until rendering a row blew the
+            // stack. A destroyed-and-recreated widget is a new instance and
+            // carries no flag, so it is patched again as intended.
             try {
                 const instance = this.companyField.autocomplete('instance');
-                if (instance && typeof instance._renderItem === 'function') {
+                if (instance && typeof instance._renderItem === 'function'
+                    && !instance._twoRenderItemPatched) {
+                    instance._twoRenderItemPatched = true;
                     const defaultRenderItem = instance._renderItem.bind(instance);
                     instance._renderItem = (ul, item) => {
                         // Normal companies go through jQuery UI's OWN renderer.
@@ -441,6 +470,12 @@ class TwoCompanySearch {
     buildUnavailableItem() {
         return {
             label: this.getSearchUnavailableText(),
+            // NOT a safety net, despite appearances: jQuery UI's _normalize()
+            // rewrites this as `item.value || item.label`, so by the time the
+            // item reaches select/focus/_renderItem its value IS the message
+            // text. The `two_unavailable` checks in those three handlers are the
+            // only thing keeping it out of the company field - do not remove one
+            // on the assumption that an empty value makes it harmless.
             value: '',
             two_unavailable: true
         };
@@ -1148,8 +1183,18 @@ class TwoCompanySearch {
             }
         }
         
-        // Also listen for PrestaShop address form updates
-        if (typeof prestashop !== 'undefined' && prestashop.on) {
+        // Also listen for PrestaShop address form updates.
+        //
+        // Registered at most once per instance. The handler calls back into this
+        // very method, which used to register another handler each time - so the
+        // count DOUBLED on every `updatedAddressForm`, and none were ever
+        // unregistered. Every duplicate then re-ran the whole re-setup, so the
+        // work per event grew exponentially. (The country listener above is
+        // already de-duplicated by the removeEventListener it does first; only
+        // this registration lacked an equivalent, and `prestashop.on` exposes no
+        // matching `off` to unregister in destroy().)
+        if (!this._addressFormListenerBound && typeof prestashop !== 'undefined' && prestashop.on) {
+            this._addressFormListenerBound = true;
             prestashop.on('updatedAddressForm', () => {
                 // Address form was re-rendered; re-bind country listener and autocomplete
                 this.setupCountryChangeListener(0);
