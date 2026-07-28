@@ -3313,6 +3313,7 @@ class Twopayment extends PaymentModule
             'from_end_of_month' => $this->l('from end of month'),
             'end_of_month_plus_days' => $this->l('End of Month + %s days'),
             'company_search_searching' => $this->l('Searching...'),
+            'company_search_unavailable' => $this->l('Company search is temporarily unavailable. Please try again.'),
             'sole_trader_registered_business' => $this->l('Registered business'),
             'sole_trader_label' => $this->l('Sole trader'),
         );
