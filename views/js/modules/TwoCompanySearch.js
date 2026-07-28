@@ -18,6 +18,10 @@ class TwoCompanySearch {
             // buyer an unbounded list. Like both of those plugins there is
             // no load-more UI - the first page is the whole result set.
             companySearchLimit: TwoCompanySearch.DEFAULT_COMPANY_SEARCH_LIMIT,
+            // Merchant toggle for the address lookup (TWO-25203). Default-on,
+            // mirroring the server-side resolver: the fill was unconditional
+            // before the toggle existed, so an omitted value keeps it on.
+            addressLookupEnabled: true,
             ...config
         };
         
@@ -156,12 +160,12 @@ class TwoCompanySearch {
 
         let orgNumber = String(this.organizationField.val() || '').trim();
         const dniField = $("input[name='dni']");
-        const vatField = $("input[name='vat_number']");
-
         const dniValue = dniField.length > 0 ? String(dniField.val() || '').trim() : '';
-        const vatValue = vatField.length > 0 ? String(vatField.val() || '').trim() : '';
 
-        // If user already filled DNI manually, reuse it as fallback org number for Two flow.
+        // If user already filled DNI manually, reuse it as fallback org number
+        // for Two flow. This direction is the customer's own input flowing
+        // *into* the Two flow, not the lookup writing out, so it is not gated
+        // by the address-lookup toggle.
         if (!orgNumber && dniValue) {
             orgNumber = dniValue;
             this.organizationField.val(orgNumber);
@@ -174,15 +178,51 @@ class TwoCompanySearch {
             return;
         }
 
-        if (dniField.length > 0 && !dniValue) {
-            dniField.val(orgNumber);
+        this.writeOrganizationToAddressIdentifiers(orgNumber, true);
+    }
+
+    /**
+     * Whether the merchant has the address lookup switched on
+     * (PS_TWO_ADDRESS_LOOKUP, TWO-25203).
+     *
+     * This gates only what a company selection *writes* into the address step.
+     * Company search itself, and the hidden organisation-number field the Two
+     * flow needs, are governed by companySearchEnabled and stay live either
+     * way.
+     */
+    isAddressLookupEnabled() {
+        return this.config.addressLookupEnabled !== false;
+    }
+
+    /**
+     * Single gate for the DNI / vat_number writes the lookup performs - the
+     * selection handler, the company-details refinement, and the pre-submit
+     * sync all go through here rather than each carrying its own condition.
+     *
+     * @param {string} orgNumber
+     * @param {boolean} [onlyIfEmpty] Leave a value the customer typed alone.
+     */
+    writeOrganizationToAddressIdentifiers(orgNumber, onlyIfEmpty) {
+        if (!this.isAddressLookupEnabled()) {
+            return;
         }
 
-        if (vatField.length > 0 && !vatValue) {
-            vatField.val(orgNumber);
+        const value = String(orgNumber || '').trim();
+        if (!value) {
+            return;
         }
+
+        [$("input[name='dni']"), $("input[name='vat_number']")].forEach(field => {
+            if (field.length === 0) {
+                return;
+            }
+            if (onlyIfEmpty && String(field.val() || '').trim() !== '') {
+                return;
+            }
+            field.val(value);
+        });
     }
-    
+
     /**
      * Setup jQuery UI Autocomplete for company search
      */
@@ -555,16 +595,10 @@ class TwoCompanySearch {
                 companyid: ui.item.organization_number
             });
             
-            // Also sync to DNI field if it exists
-            const dniField = $("input[name='dni']");
-            if (dniField.length > 0) {
-                dniField.val(ui.item.organization_number);
-            }
-
-            const vatField = $("input[name='vat_number']");
-            if (vatField.length > 0) {
-                vatField.val(ui.item.organization_number);
-            }
+            // Also sync to the DNI / VAT fields - gated on the address-lookup
+            // toggle inside the writer (TWO-25203). Unconditional overwrite so
+            // a re-search replaces the previous company's number.
+            this.writeOrganizationToAddressIdentifiers(ui.item.organization_number);
         }
 
         // For some countries (e.g. GB), org number may only be present in company details.
@@ -641,14 +675,7 @@ class TwoCompanySearch {
                 if (!currentOrgNumber || currentOrgNumber !== natIdVal) {
                     this.organizationField.val(natIdVal);
                     this.organizationField.attr('data-two-company-name', this.companyField ? this.companyField.val() : '');
-                    const dniField = $("input[name='dni']");
-                    if (dniField.length > 0) {
-                        dniField.val(natIdVal);
-                    }
-                    const vatField = $("input[name='vat_number']");
-                    if (vatField.length > 0) {
-                        vatField.val(natIdVal);
-                    }
+                    this.writeOrganizationToAddressIdentifiers(natIdVal);
                     // Persist to cookie so backend can use it during order placement
                     this.persistCompanyToCookie({
                         company: this.companyField ? this.companyField.val() : '',
@@ -671,6 +698,12 @@ class TwoCompanySearch {
      * Auto-fill address fields with company address data
      */
     autoFillAddress(addresses) {
+        // Single gate for the address-field writes (TWO-25203). Both call
+        // paths into the fill land here.
+        if (!this.isAddressLookupEnabled()) {
+            return;
+        }
+
         // Prefer business/registered/visiting; fallback to first
         const address = addresses.find(addr => (addr.type && (
             String(addr.type).toUpperCase().includes('BUSINESS') ||

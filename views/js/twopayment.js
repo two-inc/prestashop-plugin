@@ -108,6 +108,11 @@
             // Initialize the checkout manager with configuration
             const checkoutManager = new TwoCheckoutManager({
                 companySearchEnabled: twopayment.company_name_search === '1',
+                // Separate toggle from companySearchEnabled (TWO-25203): the
+                // search widget can be on while the address / DNI / VAT fill
+                // is off. Absent reads as enabled, matching the server-side
+                // default-on resolver.
+                addressLookupEnabled: twopayment.address_lookup !== '0',
                 orderIntentEnabled: true,
                 checkoutHost: twopayment.checkout_host,
                 orderIntentUrl: twopayment.order_intent_url,
@@ -154,6 +159,8 @@
 
                         const checkoutManager = new TwoCheckoutManager({
                             companySearchEnabled: twopayment.company_name_search === '1',
+                            // Keep in step with the primary config object above (TWO-25203).
+                            addressLookupEnabled: twopayment.address_lookup !== '0',
                             orderIntentEnabled: true,
                             checkoutHost: twopayment.checkout_host,
                             orderIntentUrl: twopayment.order_intent_url,
