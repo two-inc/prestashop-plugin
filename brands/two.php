@@ -24,18 +24,34 @@ return array(
     // Buyer-facing label for the offset-pricing fee line; null falls back to
     // the translated default in Twopayment::getTwoSurchargeLineLabel().
     'fee_line_label' => null,
-    // Per-brand switch for the order-intent APPROVED notice shown inline in
-    // the Two payment option at checkout (TWO-25213). Three states, resolved
-    // by Twopayment::getIntentApprovedNotice():
+    // ON/OFF switch for the order-intent APPROVED notice shown inline in the
+    // Two payment option at checkout (TWO-25218). Explicit boolean ONLY,
+    // resolved by Twopayment::isIntentApprovedNoticeEnabled():
     //
-    //   null (or key absent) - platform default translated copy, notice ON.
-    //                          This is the Two default.
-    //   ''                   - notice suppressed entirely: no element is
-    //                          rendered, not even an empty wrapper.
-    //   non-empty string     - used verbatim as the company-variant template,
-    //                          where %s is the buyer's company name.
+    //   true          - notice ON. Declared explicitly here, not left implied.
+    //   false         - notice suppressed entirely: no element is rendered,
+    //                   not even an empty wrapper.
+    //   key absent    - documented default TRUE (notice ON). This is what
+    //                   keeps a third-party overlay that declares nothing on ON.
+    //   anything else - a clear logged error, then the default TRUE. Never a
+    //                   silent third behaviour. Deliberately not a throw: this
+    //                   resolves on a buyer-facing checkout render, and a white
+    //                   screen is a worse failure than a notice that stays on.
     //
     // Only the APPROVED notice is switched; declined and error messages are
     // functional and always render.
+    'intent_approved_notice_enabled' => true,
+    // COPY OVERRIDE ONLY for that notice (TWO-25218), resolved by
+    // Twopayment::getIntentApprovedNotice():
+    //
+    //   null (or key absent) - platform default translated copy. The Two default.
+    //   non-empty string     - used verbatim as the company-variant template,
+    //                          where %s is the buyer's company name.
+    //
+    // NOTE: an empty or whitespace-only string is now INERT - it resolves to
+    // the platform default copy. It is NOT an off switch. Under TWO-25213 it
+    // was, so that is what a reader will remember; the switch is
+    // 'intent_approved_notice_enabled' above and nothing else. An override
+    // replaces the company variant only; the no-company copy stays default.
     'intent_approved_notice' => null,
 );

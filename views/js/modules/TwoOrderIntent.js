@@ -26,26 +26,41 @@ class TwoOrderIntent {
     }
 
     /**
-     * Per-brand order-intent APPROVED notice switch (TWO-25213), read from the
-     * checkout JS payload (brands/two.php -> Twopayment::getIntentApprovedNotice).
+     * Is the order-intent APPROVED notice enabled for this brand? (TWO-25218)
+     * Read from window.twopayment.intent_approved_notice_enabled
+     * (brands/two.php -> Twopayment::isIntentApprovedNoticeEnabled), which the
+     * PHP side emits as a real JS boolean.
      *
-     *   null - platform default translated copy, notice ON
-     *   ''   - notice suppressed entirely, no element rendered
+     * Only an explicit `false` turns the notice off. An absent key, or any
+     * non-boolean value, reads as ENABLED - so an older cached JS file or an
+     * older template that never carried this key can never mean off. That is
+     * deliberate and must not be "tidied" into a truthiness check.
+     */
+    approvedNoticeEnabled() {
+        const configured = window.twopayment ? window.twopayment.intent_approved_notice_enabled : null;
+        return typeof configured === 'boolean' ? configured : true;
+    }
+
+    /**
+     * Copy override for that notice (TWO-25218), read from
+     * window.twopayment.intent_approved_notice.
+     *
+     *   null - platform default translated copy
      *   text - verbatim company-variant template, %s = company name
      *
-     * Anything that is not a string reads as null, so an older cached payload
-     * with no such key means ON rather than off.
+     * Empty and whitespace-only resolve to null (default copy). This key does
+     * NOT switch the notice off - approvedNoticeEnabled() does.
      */
     approvedNoticeOverride() {
         const configured = window.twopayment ? window.twopayment.intent_approved_notice : null;
-        if (typeof configured !== 'string') {
+        if (typeof configured !== 'string' || configured.trim() === '') {
             return null;
         }
-        return configured.trim() === '' ? '' : configured;
+        return configured;
     }
 
     isApprovedNoticeSuppressed() {
-        return this.approvedNoticeOverride() === '';
+        return this.approvedNoticeEnabled() === false;
     }
 
     buildPublicApiBeforeSend() {
@@ -412,7 +427,7 @@ class TwoOrderIntent {
             return { success: false, approved: false, message: this.t('invalid_response_from_server', 'Invalid response from server') };
         }
         const approvedNotice = this.approvedNoticeOverride();
-        const approvedSuppressed = approvedNotice === '';
+        const approvedSuppressed = !this.approvedNoticeEnabled();
         const result = {
             success: !!response.success,
             approved: !!response.approved,
@@ -558,11 +573,11 @@ class TwoOrderIntent {
         });
         if ($twoPaymentOption.length === 0) return;
         const approvedNotice = this.approvedNoticeOverride();
-        // Notice switched off for this brand (TWO-25213): render no element at
+        // Notice switched off for this brand (TWO-25218): render no element at
         // all - not even an empty wrapper - and drop any element left over
         // from an earlier decline so a stale message cannot outlive an
         // approval. The functional part of an approval still runs below.
-        if (result.approved && approvedNotice === '') {
+        if (result.approved && !this.approvedNoticeEnabled()) {
             $twoPaymentOption.find('.two-order-intent-message').remove();
             $twoPaymentOption.removeClass('disabled');
             $twoPaymentOption.find('input[type="radio"]').prop('disabled', false);
