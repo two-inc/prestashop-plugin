@@ -1,0 +1,83 @@
+name: Integration (real PrestaShop engine)
+
+# TWO-25217. The offline suite (tests/run.php) stubs PrestaShop core, so it can
+# only prove the module's logic is right about a cart shape the stub asserts
+# into existence. These probes ask a REAL engine for the payload of a real cart
+# and check what comes back, closing exactly that gap — see
+# tests/integration/README.md.
+#
+# Still hermetic, like every other job in this repo: no secrets, no live Two
+# API, no browser. Reuses the same dev/ci/*.sh harness as smoke.yml and e2e.yml.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: Integration probes (PS ${{ matrix.ps-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        # Same matrix as e2e.yml, and the same reason the 1.7 line is missing:
+        # Docker Hub's prestashop/prestashop repo has dropped all 1.6/1.7 tags.
+        # See the skip job in e2e.yml for the full explanation.
+        ps-version: ["8", "9"]
+    env:
+      SFX: integration-${{ matrix.ps-version }}-${{ github.run_id }}
+      PS_IMAGE: prestashop/prestashop:${{ matrix.ps-version }}-apache
+      # The probes never call Two — but the module primes checkout media on
+      # some paths, so point that at a port nothing listens on so it fails
+      # fast instead of reaching Two's real sandbox from public CI.
+      TWO_API_BASE_URL: "http://127.0.0.1:1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Boot PrestaShop
+        run: dev/ci/boot-prestashop.sh
+
+      - name: Stage HEAD module source
+        run: |
+          set -o pipefail
+          mkdir -p /tmp/head-module
+          git ls-files -z | tar --null -cf - -T - | tar -xf - -C /tmp/head-module
+
+      - name: Install module from HEAD
+        run: dev/ci/install-module.sh /tmp/head-module
+
+      - name: Seed Two config (hermetic — no live merchant key)
+        run: dev/ci/seed-two-config.sh
+
+      - name: Seed the carrier-less shipping cart
+        run: dev/ci/seed-carrierless-cart.sh
+
+      - name: Run integration probes
+        run: dev/ci/run-integration-probes.sh
+
+      - name: Dump module log on failure
+        if: failure()
+        run: |
+          docker exec -u www-data "ps-$SFX" php -d memory_limit=512M -r '
+            require "/var/www/html/config/config.inc.php";
+            $logs = new PrestaShopCollection("PrestaShopLogger");
+            $logs->where("message", "like", "%TwoPayment%");
+            foreach ($logs as $log) {
+              echo "[" . (int) $log->severity . "] " . $log->message . PHP_EOL;
+            }
+          ' || true
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker rm -f "ps-$SFX" "psdb-$SFX" 2>/dev/null || true
+          docker network rm "psnet-$SFX" 2>/dev/null || true
