@@ -613,6 +613,78 @@ describe('the company-detail fill', () => {
 
         expect($("input[name='companyid']").val()).toBe(expected);
         expect($("input[name='dni']").val()).toBe(expected);
+        // The selection marker has to be written alongside the number. Without
+        // it the next clearStaleOrganizationSelection() — any input/change event,
+        // or the next re-render — reads the freshly fetched number as stale and
+        // wipes it, which is the same defect the stale-selection block pins.
+        expect($("input[name='companyid']").attr('data-two-company-name')).toBe(
+            'Example Trading Ltd'
+        );
+    });
+
+    test('a detail number overrides the one the search supplied', async () => {
+        const search = makeInstance();
+        search.onCompanySelected(null, {
+            item: {
+                value: 'Example Trading Ltd',
+                organization_number: '11111111',
+                lookup_id: 'lookup-abc-123'
+            }
+        });
+        expect($("input[name='companyid']").val()).toBe('11111111');
+
+        ajax.last().succeed({ national_identifier: { id: '87654321' } });
+        await flushPromises();
+
+        // The detail endpoint is the more authoritative source; a search result
+        // that disagrees with it must not be the value that submits.
+        expect($("input[name='companyid']").val()).toBe('87654321');
+        expect($("input[name='dni']").val()).toBe('87654321');
+    });
+
+    test('a detail number equal to the search one changes nothing', async () => {
+        const search = makeInstance();
+        search.onCompanySelected(null, {
+            item: {
+                value: 'Example Trading Ltd',
+                organization_number: '12345678',
+                lookup_id: 'lookup-abc-123'
+            }
+        });
+        $("input[name='dni']").val('buyer-typed');
+
+        ajax.last().succeed({ national_identifier: { id: '12345678' } });
+        await flushPromises();
+
+        // No divergence means no re-write, so a value the buyer put in the DNI
+        // field afterwards is left alone.
+        expect($("input[name='companyid']").val()).toBe('12345678');
+        expect($("input[name='dni']").val()).toBe('buyer-typed');
+    });
+
+    test('a filled address field notifies the theme', async () => {
+        const events = [];
+        $("input[name='address1']").on('input change', (e) => events.push(e.type));
+
+        await fillFrom({
+            addresses: [{ type: 'BUSINESS', street_address: '1 Example Street' }]
+        });
+
+        // PrestaShop's own checkout scripts listen on these; a silent val() write
+        // fills the box without the theme noticing the address changed.
+        expect(events).toEqual(['input', 'change']);
+    });
+
+    test('an address field already holding the value is not rewritten', async () => {
+        $("input[name='address1']").val('1 Example Street');
+        const events = [];
+        $("input[name='address1']").on('input change', (e) => events.push(e.type));
+
+        await fillFrom({
+            addresses: [{ type: 'BUSINESS', street_address: '1 Example Street' }]
+        });
+
+        expect(events).toEqual([]);
     });
 
     test('a business address wins over a mailing one whatever the order', async () => {

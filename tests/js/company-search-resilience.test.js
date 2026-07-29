@@ -457,6 +457,32 @@ describe('class-static result cache', () => {
         expect(new URL(ajax.last().url).searchParams.get('country')).toBe('US');
     });
 
+    test('a browser locale region is upper-cased, and only a 2-letter one is used', () => {
+        const language = jest
+            .spyOn(window.navigator, 'language', 'get')
+            .mockReturnValue('en-no');
+        try {
+            const search = makeInstance();
+            document.querySelector("select[name='id_country']").innerHTML = '';
+            expect(search.getCurrentCountry()).toBe('NO');
+        } finally {
+            language.mockRestore();
+        }
+
+        const longRegion = jest
+            .spyOn(window.navigator, 'language', 'get')
+            .mockReturnValue('zh-Hans');
+        try {
+            const search = makeInstance();
+            document.querySelector("select[name='id_country']").innerHTML = '';
+            // A script subtag is not a country. Passed through it would put
+            // `country=HANS` on the wire.
+            expect(search.getCurrentCountry()).toBe('GB');
+        } finally {
+            longRegion.mockRestore();
+        }
+    });
+
     test('with no locale to guess from either, the key falls back to GB', () => {
         const language = jest
             .spyOn(window.navigator, 'language', 'get')
