@@ -1536,16 +1536,18 @@ class TwoCompanySearch {
                     // Deliberately relayed even when unresolved. '' makes the
                     // controller's `if (!empty($country))` skip the country
                     // write, so with no prior marker the cookie ends up
-                    // company + id and an EMPTY country - and twopayment.php
-                    // then DISCARDS the whole session company on the next
-                    // read, because a value with no country marker cannot be
-                    // safely reused across countries. The outcome is discard,
-                    // not keep: an unresolved country loses the prefill, it
-                    // does not preserve it. Safe either way for the order
-                    // payload, whose country_iso comes from the address
-                    // server-side (Country::getIsoById), never from this
-                    // cookie, so an empty value here can never reach the API
-                    // as a guess.
+                    // company + id and an EMPTY country. What happens to that
+                    // half-record on the next read depends on the reader:
+                    // twopayment.php's legacy-marker discard is gated on
+                    // `!Tools::isEmpty($country_iso)`, so it DISCARDS the whole
+                    // session company when the read path has an address country
+                    // to compare against, and REUSES it when the read path has
+                    // none - which is exactly the case orderintent.php hits
+                    // when no checkout address is selected yet and it passes
+                    // ''. Safe either way for the order payload, whose
+                    // country_iso comes from the address server-side
+                    // (Country::getIsoById), never from this cookie, so an
+                    // empty value here can never reach the API as a guess.
                     country: this.getCurrentCountry(),
                     id_address: this.getCurrentAddressId()
                 },

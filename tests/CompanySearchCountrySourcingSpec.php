@@ -27,12 +27,20 @@ declare(strict_types=1);
  *    payload under exactly that name. A rename on either side is invisible at
  *    runtime: the JS falls back to hardcoded English, so a merchant's
  *    translated checkout quietly stops being translated;
- *  - the two guesses are gone from getCurrentCountry() for good. Asserted
- *    against the source rather than through behaviour, because the
- *    reachable-in-jsdom behaviour is only a subset - a re-added GB literal on
- *    a path no test builds a DOM for would pass every Jest case and still ship
- *    the defect. The source check is textual, so it catches a re-added literal
- *    whatever quoting style it uses, but not a value assembled at runtime.
+ *  - the two guesses are gone for good. Asserted against the source rather
+ *    than through behaviour, because the reachable-in-jsdom behaviour is only a
+ *    subset - a re-added GB literal on a path no test builds a DOM for would
+ *    pass every Jest case and still ship the defect. Both defects are asserted
+ *    as SHAPES over the whole comment-stripped file rather than over a sliced
+ *    method body: the defect is a RETURN of a hardcoded country, and no
+ *    legitimate `return '<literal>'` of a country code exists anywhere in the
+ *    file (extractCountryFromText() maps country NAMES to 'GB' in a plain map
+ *    entry, which is a resolution and not a return). Whole-file shape checks
+ *    cost nothing in precision here and cannot be defeated by gutting,
+ *    reordering or re-indenting a method. They are textual, so they catch a
+ *    re-added literal in any quoting style but not a value assembled at
+ *    runtime; a gutted getCurrentCountry() is caught separately, by asserting
+ *    that the two real resolution sources it reads are still read at all.
  */
 final class CompanySearchCountrySourcingSpec
 {
@@ -67,10 +75,11 @@ final class CompanySearchCountrySourcingSpec
      * that start with `*`, and multi-line `/* ... *\/` blocks whose
      * continuation lines start with an ordinary word.
      *
-     * A trailing comment on a code line is NOT stripped, so a `// ... GB ...`
-     * tacked onto the end of real code would false-fail. None exist in either
-     * guarded file; if one is ever added, strip it here rather than renaming
-     * the guess.
+     * A trailing `//` comment on a code line is NOT stripped, so a
+     * `// ... GB ...` tacked onto the end of real code would false-fail. None
+     * exist in either guarded file; if one is ever added, strip it here rather
+     * than renaming the guess. Trailing `/* ... *\/` blocks and a trailing
+     * `/*` opener ARE stripped, below.
      *
      * Keys are 1-based source line numbers and survive the stripping, so a
      * failure message can point at the real line.
@@ -116,7 +125,10 @@ final class CompanySearchCountrySourcingSpec
     }
 
     /**
-     * Slice one function body out of already-comment-stripped lines.
+     * Slice one PHP method body out of already-comment-stripped lines.
+     *
+     * PHP-only by design: the JS assertions deliberately do not slice, so this
+     * only ever has to cope with PSR-12 brace-on-its-own-next-line style.
      *
      * The body ends at the first following line that is nothing but the closing
      * brace at the declaration's own indentation. Anchoring on the declaration's
@@ -124,8 +136,12 @@ final class CompanySearchCountrySourcingSpec
      * slice stable when members are reordered - a no-op edit must not fail a
      * spec.
      *
-     * An EMPTY slice is never returned: a gutted method would otherwise make
-     * every per-line assertion over its body pass by iterating nothing.
+     * There is deliberately NO empty-slice guard. Brace-on-next-line style puts
+     * the opening `{` into the collected body, so the slice is never empty and
+     * such a guard could never fire. A gutted hook is caught instead by the
+     * caller's own map and injection assertions, which fail on a body that no
+     * longer contains them - those two assertions are the only thing protecting
+     * this slice, and that is enough for what it guards.
      *
      * @param array<int, string> $lines
      *
@@ -145,12 +161,6 @@ final class CompanySearchCountrySourcingSpec
                 continue;
             }
             if (rtrim($line) === $indent . '}') {
-                TinyAssert::true(
-                    $body !== array(),
-                    'Sliced an EMPTY body for ' . $signature . ' out of ' . $where
-                    . ' - the method was gutted, so anything asserted over its body asserts nothing'
-                );
-
                 return $body;
             }
             $body[$number] = $line;
@@ -183,9 +193,10 @@ final class CompanySearchCountrySourcingSpec
         // variable, leaving $param_countries an empty array, fails here. A
         // co-occurrence check would not: the dead-map build still mentions
         // both column names. Still tolerant of a cast, a row-variable rename
-        // or a line wrap, which are not regressions.
+        // or a line wrap, which are not regressions - the line-wrap tolerance
+        // comes from the negated character classes, which match newlines.
         TinyAssert::true(
-            preg_match('#\$param_countries\[[^\]]*id_country[^\]]*\][^;]{0,120}iso_code#s', $body_text) === 1,
+            preg_match('#\$param_countries\[[^\]]*id_country[^\]]*\][^;]{0,120}iso_code#', $body_text) === 1,
             'The id_country -> ISO map is no longer built from the shop country table inside ' . $hook . '()'
         );
 
@@ -236,18 +247,39 @@ final class CompanySearchCountrySourcingSpec
             );
         }
 
-        // A hardcoded GB is checked only inside getCurrentCountry(), because it
-        // is legitimate below that: extractCountryFromText() maps the country
-        // NAME "United Kingdom" to it, which is a resolution, not a default.
-        // Quote style is not assumed - a backtick template literal is the same
-        // defect as a single-quoted one.
-        $body = self::functionBody($lines, 'getCurrentCountry() {', $path);
-        foreach ($body as $number => $line) {
-            TinyAssert::true(
-                preg_match('#\bGB\b#', $line) !== 1,
-                'A hardcoded GB default is back in getCurrentCountry(), at '
-                . $path . ':' . $number . ' - ' . trim($line)
-            );
-        }
+        // The defect being guarded is a RETURN of a hardcoded country, so that
+        // is the shape asserted, over the whole file. No method slicing: the
+        // one legitimate GB in this file is a map entry in
+        // extractCountryFromText() ('united kingdom' => 'GB'), which resolves a
+        // country NAME and is not a return, so it needs no carved-out range.
+        // Checking the shape instead of a line range makes this immune to the
+        // whole class of slicing bug - a gutted, re-indented, one-line-brace or
+        // reordered method cannot make it pass by accident. Quote style is not
+        // assumed: a backtick template literal is the same defect as a
+        // single-quoted one. Line wraps between `return` and the literal are
+        // tolerated because the negated class matches newlines.
+        $code = implode("\n", $lines);
+        $found = array();
+        TinyAssert::true(
+            preg_match('#\breturn\b[^;]*([\'"`])GB\1#', $code, $found) !== 1,
+            'A hardcoded GB default is returned again in ' . $path
+            . ' - ' . trim((string) (isset($found[0]) ? $found[0] : ''))
+        );
+
+        // Gutting getCurrentCountry() would satisfy every assertion above by
+        // containing nothing at all, so assert that the two authoritative
+        // sources it resolves from are still read. Both strings appear only
+        // inside that method, so losing either means the resolution chain is
+        // gone - which is the same defect as guessing, arrived at differently.
+        TinyAssert::true(
+            strpos($code, "getAttribute('data-iso-code')") !== false,
+            'The country select\'s own ISO code is no longer read in ' . $path
+            . ' - getCurrentCountry() has lost its first-choice resolution source'
+        );
+        TinyAssert::true(
+            strpos($code, 'window.twopayment.countries[') !== false,
+            'The server-injected id_country -> ISO map is no longer read in ' . $path
+            . ' - getCurrentCountry() has lost its authoritative resolution source'
+        );
     }
 }
