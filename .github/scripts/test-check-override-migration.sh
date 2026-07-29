@@ -134,6 +134,37 @@ expect "an unchanged upgrade script mentioning the class does not count" 1 \
      printf '<?php\n// Foo was migrated long ago.\nfunction upgrade_module_1_0_0(\$m) { TwoOverrideMigrator::refresh(\$m); }\n' > upgrade/upgrade-1.0.0.php" \
     "printf '<?php\nclass Foo extends FooCore { public function a() { return 1; } }\n' > override/classes/form/Foo.php"
 
+# Raised in adversarial review. `grep -qF Foo` is satisfied by `FooBar`, so a
+# retired Foo.php would pass the gate on an upgrade script that only ever
+# mentions an unrelated FooBar. Substring matching in a gate is a false PASS,
+# which is the only direction that matters.
+expect "a longer class name does not satisfy a retired shorter one" 1 \
+    "$OVERRIDE" \
+    "git rm -q override/classes/form/Foo.php
+     printf '<?php\nfunction upgrade_module_9_9_9(\$m) { TwoOverrideMigrator::refresh(\$m, array(\"classes/form/FooBar.php\")); }\n' > upgrade/upgrade-9.9.9.php"
+
+# ...and the boundary must not be so strict that the real quoted path fails.
+expect "the class named inside a quoted path still matches" 0 \
+    "$OVERRIDE" \
+    "git rm -q override/classes/form/Foo.php
+     printf '<?php\nfunction upgrade_module_9_9_9(\$m) { TwoOverrideMigrator::refresh(\$m, array(\"classes/form/Foo.php\")); }\n' > upgrade/upgrade-9.9.9.php"
+
+# When only the MODIFIED branch fails, the retired-paths hint must not be
+# printed — it points at the wrong fix. (The exit code for this scenario is
+# already covered above; this asserts on the OUTPUT.)
+dir=$(make_repo "$OVERRIDE" \
+    "printf '<?php\nclass Foo extends FooCore { public function a() { return 1; } }\n' > override/classes/form/Foo.php
+     printf '<?php\nfunction upgrade_module_9_9_9(\$m) { Configuration::updateValue(\"X\", 1); }\n' > upgrade/upgrade-9.9.9.php")
+out=$(cd "$dir" && bash "$check" base head 2>&1) || true
+rm -rf "$dir"
+if printf '%s' "$out" | grep -q 'retired-paths\|array('; then
+    echo "FAIL  modified-only failure printed the retired-paths hint"
+    fail=$((fail + 1))
+else
+    echo "PASS  modified-only failure prints only the modified hint"
+    pass=$((pass + 1))
+fi
+
 echo ""
 echo "${pass} passed, ${fail} failed"
 [ "$fail" -eq 0 ]
