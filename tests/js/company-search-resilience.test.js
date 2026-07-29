@@ -443,67 +443,138 @@ describe('class-static result cache', () => {
         expect(new URL(ajax.last().url).searchParams.get('country')).toBe('NO');
     });
 
-    test('with nothing selected the key falls back to the browser locale', () => {
+    test('with nothing selected there is no key to answer from, and no search', () => {
         const search = makeInstance();
         document.querySelector("select[name='id_country']").innerHTML = '';
+        const rec = callbackRecorder();
 
-        // There is no "no country selected" key: getCurrentCountry() never
-        // returns empty, it guesses from navigator.language (en-US under jsdom).
-        // What matters is that the guess reaches the KEY and the WIRE as the same
-        // value — a country the key believes in but the request does not is how
-        // one country's results end up answering another's search.
-        expect(search.getCurrentCountry()).toBe('US');
-        expect(search.buildCacheKey('exa')).toBe('exa|US');
-        search.searchCompanies('exa', callbackRecorder().fn);
-        expect(new URL(ajax.last().url).searchParams.get('country')).toBe('US');
+        // getCurrentCountry() used to guess here — navigator.language, then a
+        // literal 'GB' — so a shop whose select the resolution chain could not
+        // read searched the GB register for every buyer, silently. It now
+        // resolves or returns empty, and an empty country means no request.
+        expect(search.getCurrentCountry()).toBe('');
+        expect(search.buildCacheKey('exa')).toBe('exa|');
+
+        search.searchCompanies('exa', rec.fn);
+
+        expect(ajax.calls).toHaveLength(0);
+        expect(rec.calls).toHaveLength(1);
+        expect(rec.calls[0].results).toEqual([]);
+        expect(rec.calls[0].meta).toEqual({ countryUnresolved: true });
     });
 
-    test('a browser locale region is upper-cased, and only a 2-letter one is used', () => {
-        const language = jest
-            .spyOn(window.navigator, 'language', 'get')
-            .mockReturnValue('en-no');
+    test('the browser locale is not consulted, whatever it says', () => {
+        // The worst of the removed guesses: the buyer's browser locale has no
+        // relationship to the shop's country or the company's, so a laptop set
+        // to en-US searched the US register for a Dutch company.
+        const language = jest.spyOn(window.navigator, 'language', 'get').mockReturnValue('en-no');
         try {
             const search = makeInstance();
             document.querySelector("select[name='id_country']").innerHTML = '';
-            expect(search.getCurrentCountry()).toBe('NO');
+            expect(search.getCurrentCountry()).toBe('');
         } finally {
             language.mockRestore();
         }
-
-        const longRegion = jest
-            .spyOn(window.navigator, 'language', 'get')
-            .mockReturnValue('zh-Hans');
-        try {
-            const search = makeInstance();
-            document.querySelector("select[name='id_country']").innerHTML = '';
-            // A script subtag is not a country. Passed through it would put
-            // `country=HANS` on the wire.
-            expect(search.getCurrentCountry()).toBe('GB');
-        } finally {
-            longRegion.mockRestore();
-        }
     });
 
-    test('with no locale to guess from either, the key falls back to GB', () => {
-        const language = jest
-            .spyOn(window.navigator, 'language', 'get')
-            .mockReturnValue('xx');
+    test('the authoritative id-to-ISO map resolves a select with no ISO attribute', () => {
+        // The real fix, not a fallback: window.twopayment.countries is built
+        // server-side from THIS shop's country table (Country::getCountries() in
+        // twopayment.php) and injected via Media::addJsDef, so it covers every
+        // country the shop has rather than the ten ids that used to be hardcoded
+        // here. Lower-cased there, upper-cased on the wire.
+        document.body.innerHTML = '';
+        buildAddressForm({ country: null, countryId: '44', countryText: 'Nederland' });
+        window.twopayment = { countries: { 44: 'nl' } };
         try {
             const search = makeInstance();
-            document.querySelector("select[name='id_country']").innerHTML = '';
 
-            // The last resort is a literal 'GB'. Pinned explicitly because the
-            // jsdom default locale hides it, and because a test that merely
-            // reads getCurrentCountry() back cannot fail if it changes.
-            expect(search.getCurrentCountry()).toBe('GB');
-            expect(search.buildCacheKey('exa')).toBe('exa|GB');
-            // And the same 'GB' goes on the wire, so the entry filed under it
-            // really is a GB search rather than a server-default one wearing a
-            // GB label.
+            expect(search.getCurrentCountry()).toBe('NL');
+            expect(search.buildCacheKey('exa')).toBe('exa|NL');
             search.searchCompanies('exa', callbackRecorder().fn);
-            expect(new URL(ajax.last().url).searchParams.get('country')).toBe('GB');
+            expect(new URL(ajax.last().url).searchParams.get('country')).toBe('NL');
         } finally {
-            language.mockRestore();
+            delete window.twopayment;
+        }
+    });
+
+    test('an id the map does not cover resolves to nothing rather than to GB', () => {
+        // PrestaShop country ids are per-installation table rows, not constants.
+        // The hardcoded map this replaces was therefore wrong on any shop whose
+        // country table had been edited — and wrong SILENTLY, because a miss fell
+        // straight through to the 'GB' default.
+        document.body.innerHTML = '';
+        buildAddressForm({ country: null, countryId: '999', countryText: 'Somewhere' });
+        window.twopayment = { countries: { 44: 'nl' } };
+        try {
+            const search = makeInstance();
+            const rec = callbackRecorder();
+
+            expect(search.getCurrentCountry()).toBe('');
+            search.searchCompanies('exa', rec.fn);
+
+            expect(ajax.calls).toHaveLength(0);
+            expect(rec.calls[0].meta).toEqual({ countryUnresolved: true });
+        } finally {
+            delete window.twopayment;
+        }
+    });
+
+    test('the option text still resolves when there is no map to read', () => {
+        // Kept as the last strategy for a theme that renders its own select and
+        // loads the search without the module's JS defs. It is an exact
+        // full-name match, so it fails closed rather than guessing.
+        document.body.innerHTML = '';
+        buildAddressForm({ country: null, countryId: '44', countryText: 'Netherlands' });
+        const search = makeInstance();
+
+        expect(search.getCurrentCountry()).toBe('NL');
+    });
+
+    test('nothing is cached for an unresolved country', () => {
+        // The cache is class-static and outlives the widget, so an entry filed
+        // under the empty key would be served to every later search for the same
+        // term. There must be no entry to serve.
+        document.body.innerHTML = '';
+        buildAddressForm({ country: null, countryId: '999' });
+        const search = makeInstance();
+        search.companyField.autocomplete('instance').search('exa');
+
+        expect(ajax.calls).toHaveLength(0);
+        expect(TwoCompanySearch.cacheGet('exa|')).toBeNull();
+    });
+
+    test('the buyer is told to pick a country rather than shown an empty list', () => {
+        // An empty dropdown reads as "your company is not registered", which is a
+        // reason to abandon checkout. It is also not the `unavailable` copy:
+        // nothing is broken and retrying changes nothing.
+        document.body.innerHTML = '';
+        buildAddressForm({ country: null, countryId: '999' });
+        window.twopayment = {
+            i18n: { company_search_select_country: 'Pick a country first.' }
+        };
+        try {
+            const search = makeInstance();
+            const rendered = [];
+            search.companyField.autocomplete('option', 'response', (event, ui) => {
+                ui.content.forEach((item) => rendered.push(item));
+            });
+            search.companyField.autocomplete('instance').search('exa');
+
+            // `value` is the MESSAGE, not the '' the item was built with:
+            // jQuery UI's _normalize() rewrites it as `value || label`. So the
+            // `two_unavailable` flag is the only thing keeping this row out of
+            // the company field — same trap as buildUnavailableItem() documents.
+            expect(rendered).toEqual([
+                {
+                    label: 'Pick a country first.',
+                    value: 'Pick a country first.',
+                    two_unavailable: true
+                }
+            ]);
+            expect(rendered[0].label).not.toBe(search.getSearchUnavailableText());
+        } finally {
+            delete window.twopayment;
         }
     });
 

@@ -3314,6 +3314,11 @@ class Twopayment extends PaymentModule
             'end_of_month_plus_days' => $this->l('End of Month + %s days'),
             'company_search_searching' => $this->l('Searching...'),
             'company_search_unavailable' => $this->l('Company search is temporarily unavailable. Please try again.'),
+            // Distinct from company_search_unavailable on purpose: nothing is
+            // broken and retrying will not help. The search could not establish
+            // which country's company register to query, and the only action
+            // that resolves it is the buyer selecting a country.
+            'company_search_select_country' => $this->l('Select your country above to search for your company.'),
             'sole_trader_registered_business' => $this->l('Registered business'),
             'sole_trader_label' => $this->l('Sole trader'),
         );

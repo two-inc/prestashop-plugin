@@ -140,17 +140,24 @@ function loadCompanySearch() {
  * The subset of the PrestaShop address form the module reads and writes.
  *
  * `id_country` carries `data-iso-code`, which is the first of getCurrentCountry()'s
- * four resolution strategies and the only deterministic one — after it come the
- * option's text, an id-to-iso map, a `navigator.language` guess and finally a
- * literal `'GB'`.
+ * three resolution strategies — after it come the server-supplied
+ * `window.twopayment.countries` id-to-ISO map and then the option's visible text.
+ * Pass `country: null` to build the select WITHOUT the attribute, which is how a
+ * test reaches the later strategies and the unresolvable case.
  *
  * @param {Object} [options]
- * @param {string} [options.country] ISO code for the selected option
+ * @param {?string} [options.country] ISO code for the selected option; null omits
+ *        the `data-iso-code` attribute entirely
+ * @param {string} [options.countryId] `id_country` value, default '17'
+ * @param {string} [options.countryText] option text, default 'Selected country'
  * @returns {void}
  */
 function buildAddressForm(options) {
     const opts = options || {};
-    const country = opts.country || 'GB';
+    const country = 'country' in opts ? opts.country : 'GB';
+    const countryId = opts.countryId || '17';
+    const countryText = opts.countryText || 'Selected country';
+    const isoAttr = country ? ' data-iso-code="' + country + '"' : '';
     document.body.innerHTML = [
         '<div class="js-address-form">',
         '  <form data-id-address="7">',
@@ -161,7 +168,7 @@ function buildAddressForm(options) {
         "    <input type='text' name='postcode' value='' />",
         "    <input type='text' name='city' value='' />",
         "    <select name='id_country'>",
-        '      <option value="17" data-iso-code="' + country + '" selected>Selected country</option>',
+        '      <option value="' + countryId + '"' + isoAttr + ' selected>' + countryText + '</option>',
         '    </select>',
         '  </form>',
         '</div>'
