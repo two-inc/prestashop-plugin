@@ -662,6 +662,45 @@ describe('the company-detail fill', () => {
         expect($("input[name='dni']").val()).toBe('buyer-typed');
     });
 
+    test('the detail request carries no credentials either', async () => {
+        const search = makeInstance();
+        search.onCompanySelected(null, {
+            item: { value: 'Example Trading Ltd', lookup_id: 'lookup-abc-123' }
+        });
+
+        // A second cross-origin call with its own settings block — the search
+        // endpoint's twin being right says nothing about this one.
+        expect(ajax.last().settings.crossDomain).toBe(true);
+        expect(ajax.last().settings.xhrFields).toEqual({ withCredentials: false });
+        expect(ajax.last().settings.timeout).toBe(10000);
+        ajax.last().succeed({});
+        await flushPromises();
+    });
+
+    test('a partial address writes the parts it has', async () => {
+        await fillFrom({
+            addresses: [{ type: 'BUSINESS', street_address: '1 Example Street' }]
+        });
+
+        expect($("input[name='address1']").val()).toBe('1 Example Street');
+        expect($("input[name='postcode']").val()).toBe('');
+    });
+
+    test('a partial address blanks a field the buyer had already filled', async () => {
+        $("input[name='city']").val('Buyerton');
+
+        await fillFrom({
+            addresses: [{ type: 'BUSINESS', street_address: '1 Example Street' }]
+        });
+
+        // CHARACTERISATION, not endorsement. The missing keys coalesce to '' well
+        // before the write guard sees them, so the guard's undefined/null arms are
+        // unreachable and an absent city overwrites one the buyer typed. Pinned so
+        // the behaviour cannot change silently; see Known gaps in the README for
+        // why it is recorded rather than fixed here.
+        expect($("input[name='city']").val()).toBe('');
+    });
+
     test('a filled address field notifies the theme', async () => {
         const events = [];
         $("input[name='address1']").on('input change', (e) => events.push(e.type));

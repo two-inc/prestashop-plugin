@@ -62,9 +62,9 @@ load order a theme's `<script>` tags produce.
 cache:
 
 - `responseCallback` fires **exactly once** per search on every path: short term, success,
-  timeout, network/parser error, abort, superseded-by-a-newer-search, backspacing under the
-  minimum while a request is live, a stale success that outran its abort, a stale failure,
-  and teardown mid-search. Zero calls leaks the spinner; two lets a superseded result
+  timeout, network error, parser error, a failure carrying no textStatus at all, abort,
+  superseded-by-a-newer-search, backspacing under the minimum while a request is live, a
+  stale success that outran its abort, a stale failure, and teardown mid-search. Zero calls leaks the spinner; two lets a superseded result
   overwrite a live one.
 - a failure is reported as `unavailable`, never as an empty result set — an empty dropdown
   reads to the buyer as "my company is not registered".
@@ -115,10 +115,12 @@ form (which it does for something as ordinary as a country change):
 - the submit hook restores `dni`/`vat_number` from `companyid` without overwriting a value
   the buyer typed, and a buyer-typed DNI becomes the organisation number when none was
   selected.
-- the company-detail fill: the number is read out of six payload shapes, a
+- the company-detail fill: the request carries `withCredentials: false` in its own right
+  (the search endpoint's twin being correct says nothing about this one), the number is
+  read out of six payload shapes and overrides a divergent search number, a
   BUSINESS/REGISTERED/VISITING address wins over an untyped or mailing one whatever the
-  order, four address key-variant spellings normalise, and a failed detail lookup leaves
-  the selection intact.
+  order, four address key-variant spellings normalise, a partial address writes the parts
+  it has, and a failed detail lookup leaves the selection intact.
 - the custom fallback used when jQuery UI is absent: its own spinner clears on failure,
   survives a superseded request, and repeated setup leaves exactly one dropdown rather
   than orphan containers listening on the shared field.
@@ -130,6 +132,13 @@ re-render safety rather than every behaviour in the file: the order-intent reche
 (`shouldDeferIntentTrigger` and both `triggerOrderIntentRecheck` call sites),
 `getCurrentCountry()`'s option-text and id-map strategies, and
 `persistCompanyToCookie`. Mutating any of those leaves the suite green.
+
+`autoFillAddress()`'s `typeof value === 'undefined' || value === null` write guard is
+unreachable: `street`/`postal`/`city` each coalesce to `''` a few lines above, so the guard
+never sees either value. Its observable consequence *is* pinned — an address missing a key
+blanks the corresponding field even when the buyer had filled it — as a characterisation
+test rather than an endorsement. Worth a production decision separately; changing it here
+would be a behaviour change in a test-only PR.
 
 Two branches of `clearStaleOrganizationSelection()` are redundant rather than untested —
 removing either changes no observable outcome for any reachable input: the absent-marker
