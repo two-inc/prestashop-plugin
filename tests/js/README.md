@@ -131,9 +131,12 @@ re-render safety rather than every behaviour in the file: the order-intent reche
 `getCurrentCountry()`'s option-text and id-map strategies, and
 `persistCompanyToCookie`. Mutating any of those leaves the suite green.
 
-Two branches of `clearStaleOrganizationSelection()` are redundant rather than untested:
-removing the absent-marker branch changes no observable outcome, because the
-name-mismatch comparison below it reaches the same result for every reachable input.
+Two branches of `clearStaleOrganizationSelection()` are redundant rather than untested —
+removing either changes no observable outcome for any reachable input: the absent-marker
+branch (the name-mismatch comparison below it reaches the same result) and the
+`!orgNumber` early return (with no number there is nothing for the branches below to
+clear). Likewise `normalizeCompanyName()`'s `.trim()`, since both call sites pass
+pre-trimmed values.
 
 ## Adding tests
 
