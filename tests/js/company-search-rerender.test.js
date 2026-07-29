@@ -30,7 +30,9 @@ const {
     buildAddressForm,
     replaceAddressForm,
     stubAjax,
-    callbackRecorder
+    callbackRecorder,
+    releaseWidgets,
+    flushPromises
 } = require('./ps-harness');
 
 const CHECKOUT_HOST = 'https://api.example.test';
@@ -55,17 +57,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-    // Release every widget before wiping the DOM. jQuery UI binds document-level
-    // handlers in _create that innerHTML = '' does not unbind, so abandoned
-    // widgets accumulate across a file and the first test to dispatch a
-    // document-level event would inherit close() calls from all of them — which
-    // reads as an order-dependent flake rather than the leak it is.
-    $("input[name='company']").each(function () {
-        const field = $(this);
-        if (field.hasClass('ui-autocomplete-input')) {
-            field.autocomplete('destroy');
-        }
-    });
+    releaseWidgets($);
     ajax.restore();
     document.body.innerHTML = '';
 });
@@ -308,9 +300,9 @@ describe('selecting a company through the real widget', () => {
             ]
         });
 
-        // fetchCompanyDetails() wraps the call in a Promise, so the fill lands a
-        // microtask after the response rather than synchronously with it.
-        await Promise.resolve();
+        // fetchCompanyDetails() wraps the call in a Promise, so the fill lands
+        // microtasks after the response rather than synchronously with it.
+        await flushPromises();
 
         expect($("input[name='companyid']").val()).toBe('87654321');
         expect($("input[name='address1']").val()).toBe('1 Example Street');
@@ -329,7 +321,7 @@ describe('selecting a company through the real widget', () => {
             addresses: [{ type: 'BUSINESS', street_address: '1 Example Street' }]
         });
 
-        await Promise.resolve();
+        await flushPromises();
 
         expect($("input[name='companyid']").val()).toBe('87654321');
         expect($("input[name='address1']").val()).toBe('');
@@ -453,6 +445,239 @@ describe('the _renderItem patch does not nest', () => {
         expect(field.autocomplete('option', 'select')(null, item)).toBe(false);
         expect(field.autocomplete('option', 'focus')(null, item)).toBe(false);
         expect(field.val()).toBe('');
+    });
+});
+
+describe('a stale organisation number is cleared across a re-render', () => {
+    /**
+     * A re-render can leave `companyid` populated while `company` no longer
+     * matches it — PrestaShop re-renders the form from server state, and the
+     * hidden field is not part of the address it round-trips. Submitting that
+     * pairing sends Two an organisation number for a different company.
+     */
+    function seed(company, companyid, tag) {
+        buildAddressForm({ country: 'GB' });
+        const form = document.querySelector('form');
+        form.querySelector("input[name='company']").value = company;
+        const hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.name = 'companyid';
+        hidden.value = companyid;
+        if (tag !== undefined) {
+            hidden.setAttribute('data-two-company-name', tag);
+        }
+        form.appendChild(hidden);
+    }
+
+    test('a matching pair is left alone', () => {
+        seed('Example Trading Ltd', '12345678', 'Example Trading Ltd');
+        makeInstance();
+
+        expect($("input[name='companyid']").val()).toBe('12345678');
+    });
+
+    test('a differing name clears the number and its marker', () => {
+        seed('Another Company Ltd', '12345678', 'Example Trading Ltd');
+        makeInstance();
+
+        expect($("input[name='companyid']").val()).toBe('');
+        expect($("input[name='companyid']").attr('data-two-company-name')).toBeUndefined();
+    });
+
+    test('the comparison ignores case and whitespace', () => {
+        seed('  EXAMPLE   TRADING   LTD ', '12345678', 'Example Trading Ltd');
+        makeInstance();
+
+        // Themes and server round-trips both reflow whitespace and casing; a
+        // strict comparison would drop a valid selection on every re-render.
+        expect($("input[name='companyid']").val()).toBe('12345678');
+    });
+
+    test('a number with no selection marker is treated as stale', () => {
+        seed('Example Trading Ltd', '12345678');
+        makeInstance();
+
+        // No marker means nothing recorded that this number came from a company
+        // the buyer picked, so it cannot be trusted to still belong to the name.
+        expect($("input[name='companyid']").val()).toBe('');
+    });
+
+    test('an empty company name clears the number and its marker', () => {
+        seed('', '12345678', 'Example Trading Ltd');
+        makeInstance();
+
+        expect($("input[name='companyid']").val()).toBe('');
+        expect($("input[name='companyid']").attr('data-two-company-name')).toBeUndefined();
+    });
+
+    test('an empty company name also drops an empty selection marker', () => {
+        seed('', '12345678', '');
+        makeInstance();
+
+        // The distinguishing case for the no-company branch: an empty marker is
+        // falsy, so the untagged branch would otherwise catch this input first
+        // and leave the marker attribute behind on the field.
+        expect($("input[name='companyid']").val()).toBe('');
+        expect($("input[name='companyid']").attr('data-two-company-name')).toBeUndefined();
+    });
+
+    test('editing the company name by hand clears the number', () => {
+        seed('Example Trading Ltd', '12345678', 'Example Trading Ltd');
+        makeInstance();
+        const input = document.querySelector("input[name='company']");
+
+        input.value = 'Example Trading Limited';
+        input.dispatchEvent(new window.Event('input'));
+
+        expect($("input[name='companyid']").val()).toBe('');
+    });
+});
+
+describe('the organisation number reaches the address identifiers on submit', () => {
+    /**
+     * `triggerHandler` rather than `trigger`: the module's handler is bound to
+     * the form itself so both reach it identically, but `trigger` also runs the
+     * native default action, which jsdom answers with a "not implemented"
+     * console dump.
+     */
+    function submitForm() {
+        $('form').triggerHandler('submit');
+    }
+
+    test('submitting the form syncs companyid into the identifier fields', () => {
+        const search = makeInstance();
+        search.onCompanySelected(null, {
+            item: { value: 'Example Trading Ltd', organization_number: '12345678' }
+        });
+        $("input[name='dni']").val('');
+        $("input[name='vat_number']").val('');
+
+        submitForm();
+
+        // The selection writes these too, but a re-render between selection and
+        // submit can blank them; the submit hook is the last chance to restore.
+        expect($("input[name='dni']").val()).toBe('12345678');
+        expect($("input[name='vat_number']").val()).toBe('12345678');
+    });
+
+    test('a value the buyer typed is not overwritten on submit', () => {
+        const search = makeInstance();
+        search.onCompanySelected(null, {
+            item: { value: 'Example Trading Ltd', organization_number: '12345678' }
+        });
+        $("input[name='dni']").val('buyer-typed');
+
+        submitForm();
+
+        // The submit sync is `onlyIfEmpty`: it fills a gap, it does not correct
+        // the customer.
+        expect($("input[name='dni']").val()).toBe('buyer-typed');
+    });
+
+    test('a DNI the buyer typed becomes the org number when none was selected', () => {
+        makeInstance();
+        $("input[name='dni']").val('99999999');
+
+        submitForm();
+
+        // The customer's own input flowing INTO the Two flow, which is the
+        // opposite direction to the lookup and so is not gated by the toggle.
+        expect($("input[name='companyid']").val()).toBe('99999999');
+    });
+});
+
+describe('the company-detail fill', () => {
+    /** Select a lookup-id-only company and settle its detail response. */
+    async function fillFrom(details, config) {
+        const search = makeInstance(config);
+        search.onCompanySelected(null, {
+            item: { value: 'Example Trading Ltd', lookup_id: 'lookup-abc-123' }
+        });
+        ajax.last().succeed(details);
+        await flushPromises();
+        return search;
+    }
+
+    test.each([
+        [{ national_identifier: { id: '1' } }, '1'],
+        [{ nationalIdentifier: { id: '2' } }, '2'],
+        [{ company: { national_identifier: { id: '3' } } }, '3'],
+        [{ company: { nationalIdentifier: { id: '4' } } }, '4'],
+        [{ registration_number: '5' }, '5'],
+        [{ company: { company_number: '6' } }, '6']
+    ])('reads the number out of %p', async (details, expected) => {
+        // Detail payloads arrive in as many shapes as search results do, and the
+        // detail number is the authoritative one for the countries that only
+        // return it here.
+        await fillFrom(details);
+
+        expect($("input[name='companyid']").val()).toBe(expected);
+        expect($("input[name='dni']").val()).toBe(expected);
+    });
+
+    test('a business address wins over a mailing one whatever the order', async () => {
+        await fillFrom({
+            addresses: [
+                { type: 'MAILING', street_address: 'Wrong Street', city: 'Wrongton' },
+                { type: 'BUSINESS', street_address: '1 Example Street', city: 'Exampleton' }
+            ]
+        });
+
+        expect($("input[name='address1']").val()).toBe('1 Example Street');
+        expect($("input[name='city']").val()).toBe('Exampleton');
+    });
+
+    test.each([['REGISTERED'], ['VISITING'], ['BUSINESS']])(
+        'a %s address is preferred over an untyped first entry',
+        async (type) => {
+            await fillFrom({
+                addresses: [
+                    { street_address: 'Wrong Street' },
+                    { type: type, street_address: '1 Example Street' }
+                ]
+            });
+
+            expect($("input[name='address1']").val()).toBe('1 Example Street');
+        }
+    );
+
+    test('the first address is used when none carries a preferred type', async () => {
+        await fillFrom({
+            addresses: [{ street_address: '1 Example Street' }, { street_address: 'Second Street' }]
+        });
+
+        expect($("input[name='address1']").val()).toBe('1 Example Street');
+    });
+
+    test.each([
+        [{ streetAddress: 'x', postalCode: 'p', locality: 'c' }],
+        [{ street: 'x', zip: 'p', city: 'c' }],
+        [{ address_line_1: 'x', zip_code: 'p', city: 'c' }],
+        [{ addressLine1: 'x', postal_code: 'p', city: 'c' }]
+    ])('normalises the address key variant %p', async (address) => {
+        await fillFrom({ addresses: [Object.assign({ type: 'BUSINESS' }, address)] });
+
+        expect($("input[name='address1']").val()).toBe('x');
+        expect($("input[name='postcode']").val()).toBe('p');
+        expect($("input[name='city']").val()).toBe('c');
+    });
+
+    test('a failed detail lookup leaves the selection intact', async () => {
+        const search = makeInstance();
+        search.onCompanySelected(null, {
+            item: {
+                value: 'Example Trading Ltd',
+                organization_number: '12345678',
+                lookup_id: 'lookup-abc-123'
+            }
+        });
+        ajax.last().fail('timeout');
+        await flushPromises();
+
+        // Address auto-fill is a convenience; losing it must not cost the buyer
+        // the company they already picked.
+        expect($("input[name='companyid']").val()).toBe('12345678');
+        expect($("input[name='company']").val()).toBe('Example Trading Ltd');
     });
 });
 
@@ -619,6 +844,85 @@ describe('a destroyed instance cannot act on the live DOM', () => {
         } finally {
             jest.useRealTimers();
         }
+    });
+
+    test('destroy unbinds the country change listener', () => {
+        const search = makeInstance();
+        const countrySelect = document.querySelector("select[name='id_country']");
+        const setup = jest.spyOn(search, 'setupAutocomplete');
+
+        search.destroy();
+        countrySelect.dispatchEvent(new window.Event('change'));
+
+        // A listener left bound leaks one live handler per address-form update,
+        // each of which re-runs the whole re-setup for a dead instance.
+        expect(setup).not.toHaveBeenCalled();
+    });
+
+    test('destroy unbinds from the selector it actually bound, not the default one', () => {
+        // setupCountryChangeListener() picks the first of five fallback selectors.
+        // Re-querying only `select[name='id_country']` in destroy() missed the
+        // listener entirely on a theme matching one of the others.
+        document.body.innerHTML = [
+            '<form>',
+            "  <input type='text' name='company' value='' />",
+            '  <select class="js-country"><option value="17" data-iso-code="GB" selected>C</option></select>',
+            '</form>'
+        ].join('\n');
+        const search = makeInstance();
+        const countrySelect = document.querySelector('.js-country');
+
+        expect(search._boundCountrySelector).toBe(countrySelect);
+        const setup = jest.spyOn(search, 'setupAutocomplete');
+        search.destroy();
+        countrySelect.dispatchEvent(new window.Event('change'));
+
+        expect(setup).not.toHaveBeenCalled();
+    });
+
+    test('the country change listener is de-duplicated on re-setup', () => {
+        const search = makeInstance();
+        const countrySelect = document.querySelector("select[name='id_country']");
+        for (let i = 0; i < 10; i += 1) {
+            search.setupCountryChangeListener(0);
+        }
+        const setup = jest.spyOn(search, 'setupAutocomplete');
+
+        countrySelect.dispatchEvent(new window.Event('change'));
+
+        // Without the removeEventListener that precedes each re-bind, ten
+        // address-form updates stack ten handlers on the one select and every
+        // country change re-runs the setup ten times.
+        expect(setup).toHaveBeenCalledTimes(1);
+    });
+
+    test('destroy tears the custom dropdown down even if the widget release throws', () => {
+        const savedUi = $.ui;
+        $.ui = undefined;
+        let search;
+        try {
+            search = makeInstance();
+            expect(search._customAutocomplete).toBeTruthy();
+            $.ui = savedUi;
+            // jQuery UI's bridge throws on a foreign or half-initialised widget.
+            // The custom teardown lives in its own try precisely so that cannot
+            // skip it: it unbinds live listeners and clears the pending debounce,
+            // and leaving those bound while the instance is marked destroyed is
+            // the exact zombie the flag exists to stop.
+            search.companyField.hasClass = () => {
+                throw new Error('simulated jQuery UI bridge failure');
+            };
+
+            search.destroy();
+        } finally {
+            $.ui = savedUi;
+        }
+
+        expect(search._customAutocomplete).toBeNull();
+        expect($('.two-autocomplete-container')).toHaveLength(0);
+        // Set last and unconditionally, outside both trys.
+        expect(search._destroyed).toBe(true);
+        expect(search.isInitialized).toBe(false);
     });
 
     test('destroy releases the widget from the field', () => {

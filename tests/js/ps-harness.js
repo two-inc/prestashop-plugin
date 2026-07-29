@@ -40,15 +40,19 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
  * @returns {Function} the jQuery instance bound to the current jsdom window
  */
 function installJQuery() {
-    // jquery's CommonJS entry point binds itself to `global.window` when a
-    // document is present, which under jest-environment-jsdom it is.
+    // jquery's UMD head keys on `global.document` — present under
+    // jest-environment-jsdom — and calls its factory with `noGlobal = true`, so
+    // it deliberately does NOT assign window.$ / window.jQuery itself. The four
+    // assignments below are therefore load-bearing, not tidying: without them
+    // the module source's free `$` resolves to nothing. Do not remove them.
     const jQuery = require('jquery');
     global.$ = jQuery;
     global.jQuery = jQuery;
     global.window.$ = jQuery;
     global.window.jQuery = jQuery;
-    // jquery-ui's distributed files are AMD-or-browser-globals; there is no
-    // CommonJS branch, so under Jest each one falls through to
+    // Every jquery-ui file the harness needs is AMD-or-browser-globals with no
+    // CommonJS branch (its bundled jquery-color vendor copy does have one, but
+    // nothing here loads it), so under Jest each one falls through to
     // `factory(jQuery)` and picks up the global set above. That branch does NOT
     // pull a file's own dependencies, so they have to be required in
     // dependency order by hand — exactly the load order a theme's <script>
@@ -135,9 +139,10 @@ function loadCompanySearch() {
 /**
  * The subset of the PrestaShop address form the module reads and writes.
  *
- * `id_country` carries `data-iso-code`, which is the first of the five country
- * resolution strategies in getCurrentCountry() and the only deterministic one
- * (the last is a navigator.language fallback).
+ * `id_country` carries `data-iso-code`, which is the first of getCurrentCountry()'s
+ * four resolution strategies and the only deterministic one — after it come the
+ * option's text, an id-to-iso map, a `navigator.language` guess and finally a
+ * literal `'GB'`.
  *
  * @param {Object} [options]
  * @param {string} [options.country] ISO code for the selected option
@@ -251,8 +256,52 @@ function callbackRecorder() {
     };
 }
 
+/**
+ * Release every autocomplete widget bound to a company field.
+ *
+ * jQuery UI binds document-level handlers in `_create` that wiping
+ * `document.body.innerHTML` does not unbind, so an abandoned widget keeps
+ * listening for the rest of the test file. Call this from `afterEach` BEFORE
+ * clearing the DOM: without it the handlers accumulate one per test, and the
+ * first test that dispatches a document-level event inherits `close()` calls
+ * from every zombie — which presents as an order-dependent flake rather than
+ * as the leak it is.
+ *
+ * @param {Function} $ jQuery instance
+ * @returns {void}
+ */
+function releaseWidgets($) {
+    $("input[name='company']").each(function () {
+        const field = $(this);
+        if (field.hasClass('ui-autocomplete-input')) {
+            field.autocomplete('destroy');
+        }
+    });
+}
+
+/**
+ * Drain the microtask queue.
+ *
+ * One tick is enough for `fetchCompanyDetails().then(...)`, but the `.finally()`
+ * that triggers the order-intent recheck lands three ticks later. Anything
+ * asserting past the address fill should await this rather than a bare
+ * `Promise.resolve()`, which passes vacuously.
+ *
+ * Chained microtasks rather than `setImmediate`/`setTimeout`: jsdom provides no
+ * `setImmediate`, and a real timer would not fire under `jest.useFakeTimers()`.
+ *
+ * @returns {Promise<void>}
+ */
+async function flushPromises() {
+    for (let i = 0; i < 8; i += 1) {
+        await Promise.resolve();
+    }
+}
+
 module.exports = {
     REPO_ROOT: REPO_ROOT,
+    releaseWidgets: releaseWidgets,
+    flushPromises: flushPromises,
     loadCompanySearch: loadCompanySearch,
     loadScript: loadScript,
     buildAddressForm: buildAddressForm,

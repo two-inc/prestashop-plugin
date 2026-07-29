@@ -80,10 +80,10 @@ cache:
 - organisation-number extraction across the payload shapes different registries use.
 - the cache: outlives the instance that filled it, keys on the country so two countries
   never share results, expires after five minutes, and evicts oldest-first at fifty
-  entries. One test records that `buildCacheKey`'s docblock is wrong about the
+  entries. Two tests record that `buildCacheKey`'s docblock is wrong about the
   unselected-country case — `getCurrentCountry()` never returns empty, it falls through to
-  `navigator.language` and then to a literal `'GB'` — and asserts only that the key and
-  the wire agree, which is the property the cache actually depends on.
+  a `navigator.language` guess and then to a literal `'GB'`, both of which are pinned
+  (the second by stubbing the locale, since jsdom's `en-US` default hides it).
 
 `company-search-rerender.test.js` — what happens when PrestaShop re-renders the address
 form (which it does for something as ordinary as a country change):
@@ -95,19 +95,45 @@ form (which it does for something as ordinary as a country change):
   the unavailable row writes nothing.
 - the spinner always comes back down — success, timeout, empty, degraded — and a
   superseded search leaves it up for the request that replaced it.
-- the `_renderItem` patch is applied once per widget instance and is byte-for-byte the
-  same function after 100 re-setups, 20 country changes and 20 `updatedAddressForm`
-  events; a genuinely new widget is patched again.
+- the `_renderItem` patch is applied once per widget instance and is still the same
+  function *by reference* after 100 re-setups, 20 country changes and 20
+  `updatedAddressForm` events; a genuinely new widget is patched again.
 - the unavailable row renders non-selectable (`ui-state-disabled`, `aria-disabled`) and as
   text, and `select`/`focus` refuse it.
 - a destroyed instance cannot act: `setupAutocomplete()` leaves the replaced field alone,
   `onCompanySelected()` returns false and writes no `companyid`/`dni`, the
-  `updatedAddressForm` handler stands down, and a pending country-listener retry never
-  fires. Each has a mirror-image test proving a *live* instance in the same position still
-  does the work.
+  `updatedAddressForm` handler stands down (asserted on the guard as well as the outcome,
+  since two sibling guards would otherwise mask it), the country change listener is
+  unbound — from the selector it actually bound, not just the default one — and a pending
+  country-listener retry never fires. The `onCompanySelected` case has a mirror-image test
+  proving a *live* instance in the same position still does the work.
+- `destroy()` tears the custom dropdown down in its own `try`, so a throwing jQuery UI
+  bridge cannot leave live listeners bound on an instance already marked destroyed.
+- a stale organisation number is cleared across a re-render: a matching pair survives,
+  a differing name or an absent selection marker clears it, and the comparison ignores
+  case and whitespace because themes and server round-trips both reflow them.
+- the submit hook restores `dni`/`vat_number` from `companyid` without overwriting a value
+  the buyer typed, and a buyer-typed DNI becomes the organisation number when none was
+  selected.
+- the company-detail fill: the number is read out of six payload shapes, a
+  BUSINESS/REGISTERED/VISITING address wins over an untyped or mailing one whatever the
+  order, four address key-variant spellings normalise, and a failed detail lookup leaves
+  the selection intact.
 - the custom fallback used when jQuery UI is absent: its own spinner clears on failure,
   survives a superseded request, and repeated setup leaves exactly one dropdown rather
   than orphan containers listening on the shared field.
+
+## Known gaps
+
+Deliberately out of scope for this suite, which covers company-search resilience and
+re-render safety rather than every behaviour in the file: the order-intent recheck
+(`shouldDeferIntentTrigger` and both `triggerOrderIntentRecheck` call sites),
+`getCurrentCountry()`'s option-text and id-map strategies, and
+`persistCompanyToCookie`. Mutating any of those leaves the suite green.
+
+Two branches of `clearStaleOrganizationSelection()` are redundant rather than untested:
+removing the absent-marker branch changes no observable outcome, because the
+name-mismatch comparison below it reaches the same result for every reachable input.
 
 ## Adding tests
 
