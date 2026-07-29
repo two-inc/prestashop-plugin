@@ -70,10 +70,12 @@ For every user-facing string change:
 
 ## Release Consistency Rules
 
-**Do not hand-bump the version for a PR into `staging`.** The patch bump is
-automated (`.github/workflows/version-bump.yml`, TWO-25230) and fires on the
-merge; a manual bump double-bumps. Use `make bump` only when releasing off
-`main`, and let `.github/scripts/decide-bump-level.sh` pick the level.
+**Do not hand-bump the version for a PR into `staging`.** The bump is automated
+(`.github/workflows/version-bump.yml`, TWO-25256): the version is computed from
+this PR's own conventional-commit subjects and committed onto the PR's branch, so
+by review time the tree already declares the version it will ship as. `make bump`
+previews that decision and writes nothing. `main` computes nothing at all - it
+tags the version already in the tree.
 
 When bumping/releasing versions, keep these in sync:
 - `twopayment.php` version
@@ -88,6 +90,17 @@ merchant whose data was never migrated. So:
 - the declared module version must be **at least** the highest `upgrade/` filename
   (equal is the normal case — a script is named for the version it upgrades *to*;
   only a script numbered *above* the declared version is unreachable).
+
+**A new upgrade script must be named for the version the PR lands with.** That is
+why the version computation has a PrestaShop-only clause: a PR that adds a new
+`upgrade/upgrade-<version>.php` forces a patch bump even when nothing else in the
+PR earns one, so the script gets a filename of its own.
+`.github/scripts/check-upgrade-script-version.sh` rejects the PR if an added
+script's filename does not match the computed version. This exists because
+appending a migration to an already-installed version's script was verified by
+experiment to never run at all on a shop that already reached that version
+(`number_upgraded=0`, silent). It composes with the static gate below - do not
+duplicate either in the other.
 
 `tests/UpgradeScriptVersionSpec.php` gates both. The version sequence is
 legitimately **non-contiguous** (2.6.7 was deliberately skipped, and most
