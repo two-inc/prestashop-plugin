@@ -80,10 +80,12 @@ cache:
 - organisation-number extraction across the payload shapes different registries use.
 - the cache: outlives the instance that filled it, keys on the country so two countries
   never share results, expires after five minutes, and evicts oldest-first at fifty
-  entries. Two tests record that `buildCacheKey`'s docblock is wrong about the
-  unselected-country case — `getCurrentCountry()` never returns empty, it falls through to
-  a `navigator.language` guess and then to a literal `'GB'`, both of which are pinned
-  (the second by stubbing the locale, since jsdom's `en-US` default hides it).
+  entries. The key/wire invariant is asserted directly as well as through each fallback
+  case: `getCurrentCountry()` never returns empty — it falls through to a
+  `navigator.language` guess and then to a literal `'GB'` — and whichever of those wins
+  reaches both the cache key and the `country` parameter, so neither can believe in a
+  country the other does not. (The `'GB'` last resort needs the locale stubbed, since
+  jsdom's `en-US` default hides it.)
 
 `company-search-rerender.test.js` — what happens when PrestaShop re-renders the address
 form (which it does for something as ordinary as a country change):
@@ -121,6 +123,10 @@ form (which it does for something as ordinary as a country change):
   BUSINESS/REGISTERED/VISITING address wins over an untyped or mailing one whatever the
   order, four address key-variant spellings normalise, a partial address writes the parts
   it has, and a failed detail lookup leaves the selection intact.
+- which values a partial address is allowed to clear: a field the buyer typed survives, a
+  field a *previous* company's fill wrote is cleared (and announces the clear to the
+  theme), a buyer edit on top of an autofill turns it back into buyer input, and a value
+  two successive companies happen to share is still recognised as autofilled by the third.
 - the custom fallback used when jQuery UI is absent: its own spinner clears on failure,
   survives a superseded request, and repeated setup leaves exactly one dropdown rather
   than orphan containers listening on the shared field.
@@ -137,13 +143,6 @@ re-render safety rather than every behaviour in the file: the order-intent reche
 closure re-hides only the list it was created with, and that node is already detached by
 the time a leaked handler could fire, so removing the unbind changes nothing any test can
 see. The `input`-listener unbind beside it is covered (via the duplicate-search count).
-
-`autoFillAddress()`'s `typeof value === 'undefined' || value === null` write guard is
-unreachable: `street`/`postal`/`city` each coalesce to `''` a few lines above, so the guard
-never sees either value. Its observable consequence *is* pinned — an address missing a key
-blanks the corresponding field even when the buyer had filled it — as a characterisation
-test rather than an endorsement. Worth a production decision separately; changing it here
-would be a behaviour change in a test-only PR.
 
 Two branches of `clearStaleOrganizationSelection()` are redundant rather than untested —
 removing either changes no observable outcome for any reachable input: the absent-marker

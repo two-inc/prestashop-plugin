@@ -6,6 +6,12 @@
 class TwoCompanySearch {
     static DEFAULT_COMPANY_SEARCH_LIMIT = 50;
 
+    // Records the exact value an address autofill wrote into a field, so a
+    // later fill can tell "we put this here" from "the buyer typed this". The
+    // buyer editing the field leaves the attribute stale rather than matching,
+    // which is the signal we need - see autoFillAddress().
+    static AUTOFILL_MARKER_ATTR = 'data-two-autofilled-value';
+
     /**
      * Company-search result cache, held on the CLASS rather than inside
      * setupAutocomplete().
@@ -493,18 +499,26 @@ class TwoCompanySearch {
     /**
      * Cache key for a search term.
      *
-     * The country half must be exactly what searchCompanies() puts on the wire.
-     * It omits the `country` parameter entirely when no country is selected, so
-     * keying an unselected country as 'GB' filed server-default results under
-     * GB and then served them once the buyer actually picked GB. An empty
-     * segment keeps the two cases distinct - and matters more now the cache
-     * outlives the widget instead of dying at the next address-form re-render.
+     * The country half must be exactly what searchCompanies() puts on the wire,
+     * or one country's results get served for another's search - and that
+     * matters more now the cache outlives the widget instead of dying at the
+     * next address-form re-render.
+     *
+     * That invariant is structural, not a coincidence to be re-checked: both
+     * this and searchCompanies() take the value from getCurrentCountry(), which
+     * never returns empty - it resolves the selected option, then guesses from
+     * `navigator.language`, then falls back to a literal 'GB'. So there is no
+     * "no country selected" case to key separately: whatever the fallback
+     * chain produces is also what goes on the wire, so a search filed under it
+     * is genuinely a search for that country. Do not give either side its own
+     * fallback - a country the key believes in but the request does not is
+     * exactly how one country's results end up answering another's search.
      *
      * @param {string} term
      * @returns {string}
      */
     buildCacheKey(term) {
-        return term + '|' + (this.getCurrentCountry() || '');
+        return term + '|' + this.getCurrentCountry();
     }
 
     /**
@@ -796,7 +810,11 @@ class TwoCompanySearch {
             return;
         }
 
-        // Get country ISO from the selected option if available; otherwise omit
+        // Country ISO for the search. getCurrentCountry() always resolves to
+        // something (selected option, then locale guess, then 'GB'), so this is
+        // always on the wire - and buildCacheKey() files the response under the
+        // same value, which is what stops one country's results answering
+        // another country's search.
         const country = this.getCurrentCountry();
 
         // Build URL with correct API parameters. `limit`/`offset` mirror the
@@ -807,8 +825,7 @@ class TwoCompanySearch {
         // platforms.
         const limit = Number(this.config.companySearchLimit)
             || TwoCompanySearch.DEFAULT_COMPANY_SEARCH_LIMIT;
-        const params = new URLSearchParams({ q: term, limit: limit, offset: 0 });
-        if (country) params.set('country', country);
+        const params = new URLSearchParams({ q: term, limit: limit, offset: 0, country: country });
         // Direct Two API call from frontend as required
         const searchUrl = `${this.config.checkoutHost}/companies/v2/company?${params}`;
 
@@ -1149,16 +1166,43 @@ class TwoCompanySearch {
             'city': city
         };
         Object.entries(fieldMappings).forEach(([fieldName, value]) => {
-            if (typeof value === 'undefined' || value === null) {
+            const field = $(`input[name='${fieldName}']`);
+            if (field.length === 0) {
                 return;
             }
-            const field = $(`input[name='${fieldName}']`);
-            if (field.length > 0) {
-                if (field.val() !== String(value)) {
-                    field.val(value);
+
+            const incoming = String(value == null ? '' : value);
+            const current = String(field.val() == null ? '' : field.val());
+            // What a previous fill wrote here, if it was us. The key variants
+            // above all coalesce to '', so an address simply missing a key is
+            // indistinguishable from one carrying an empty string by the time we
+            // get here - which is why the old undefined/null guard never fired
+            // and an absent city blanked a city the buyer had typed.
+            const written = field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR);
+
+            if (incoming === '') {
+                // Nothing to fill. Clear only what we ourselves put here and
+                // the buyer has not since changed - otherwise selecting company
+                // B would leave company A's street sitting in the form. Any
+                // other value is buyer input and is left alone: a company
+                // record missing a field is not evidence the buyer's own answer
+                // is wrong.
+                if (typeof written !== 'undefined' && written === current && current !== '') {
+                    field.removeAttr(TwoCompanySearch.AUTOFILL_MARKER_ATTR);
+                    field.val('');
                     field.trigger('input');
                     field.trigger('change');
                 }
+                return;
+            }
+
+            // Record the value as ours even when it already matches, so a later
+            // fill can still recognise it as autofilled rather than typed.
+            field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR, incoming);
+            if (current !== incoming) {
+                field.val(incoming);
+                field.trigger('input');
+                field.trigger('change');
             }
         });
     }
