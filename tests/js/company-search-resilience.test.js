@@ -132,6 +132,25 @@ describe('exactly one callback per search', () => {
         expect(rec.calls[0].results).toEqual([]);
     });
 
+    test('falling back under the minimum settles the in-flight search once', () => {
+        const search = makeInstance();
+        const first = callbackRecorder();
+        const second = callbackRecorder();
+
+        search.searchCompanies('exa', first.fn);
+        // Backspacing under the minimum has to cancel the live request, not
+        // merely stop issuing new ones — otherwise it resolves later and
+        // repopulates a dropdown the buyer has already emptied.
+        search.searchCompanies('ex', second.fn);
+
+        expect(ajax.calls).toHaveLength(1);
+        expect(ajax.calls[0].aborted).toBe(true);
+        expect(first.calls).toHaveLength(1);
+        expect(first.calls[0].meta).toEqual({ silent: true });
+        expect(second.calls).toHaveLength(1);
+        expect(second.calls[0].meta).toBeNull();
+    });
+
     test('a superseding search settles the one it replaced exactly once', () => {
         const search = makeInstance();
         const first = callbackRecorder();
@@ -238,6 +257,42 @@ describe('request envelope', () => {
 
         // An unbounded response is the failure mode the limit exists to stop.
         expect(new URL(ajax.last().url).searchParams.get('limit')).toBe('50');
+    });
+
+    test('the request carries no credentials', () => {
+        const search = makeInstance();
+        search.searchCompanies('exa', callbackRecorder().fn);
+
+        // This is a cross-origin call to the public company API from a shop
+        // page. `withCredentials: true` would attach the buyer's cookies for
+        // that origin to every keystroke's search.
+        expect(ajax.last().settings.crossDomain).toBe(true);
+        expect(ajax.last().settings.xhrFields).toEqual({ withCredentials: false });
+    });
+
+    test('the country code is normalised to upper case', () => {
+        document.body.innerHTML = '';
+        buildAddressForm({ country: 'gb' });
+        const search = makeInstance();
+        search.searchCompanies('exa', callbackRecorder().fn);
+
+        // Themes do emit lower-case iso codes. Un-normalised, that puts
+        // `country=gb` on the wire and forks the cache key from `GB`.
+        expect(new URL(ajax.last().url).searchParams.get('country')).toBe('GB');
+        expect(search.buildCacheKey('exa')).toBe('exa|GB');
+    });
+
+    test('a settled request releases its handle', () => {
+        const search = makeInstance();
+        search.searchCompanies('exa', callbackRecorder().fn);
+        expect(search._companySearchXhr).not.toBeNull();
+
+        ajax.last().succeed(SEARCH_RESPONSE);
+
+        // Holding a settled handle means the next search aborts something
+        // already finished — harmless with real jQuery, but it is the half of
+        // the race fix that is easiest to drop by accident.
+        expect(search._companySearchXhr).toBeNull();
     });
 
     test('credential headers cannot be attached to the public API call', () => {
@@ -371,25 +426,54 @@ describe('class-static result cache', () => {
         ]);
     });
 
-    test('the key keeps an unselected country distinct from an explicit one', () => {
+    test('the key carries the country, so two countries do not share results', () => {
+        const gb = makeInstance();
+        expect(gb.buildCacheKey('exa')).toBe('exa|GB');
+
+        document.body.innerHTML = '';
+        buildAddressForm({ country: 'NO' });
+        const no = makeInstance();
+
+        // The country half must be exactly what searchCompanies() puts on the
+        // wire, or one country's results get served for another's search.
+        expect(no.buildCacheKey('exa')).toBe('exa|NO');
+        no.searchCompanies('exa', callbackRecorder().fn);
+        expect(new URL(ajax.last().url).searchParams.get('country')).toBe('NO');
+    });
+
+    test('the key falls back with the country resolver rather than diverging', () => {
         const search = makeInstance();
         document.querySelector("select[name='id_country']").innerHTML = '';
 
-        // searchCompanies() omits `country` entirely when nothing is selected.
-        // Keying that as 'GB' filed server-default results under GB and then
-        // served them once the buyer actually picked GB.
-        expect(search.buildCacheKey('exa')).not.toBe('exa|GB');
+        // NOTE: getCurrentCountry() never returns empty — with no selected
+        // option it falls through to navigator.language and then to a literal
+        // 'GB'. buildCacheKey()'s docblock describes an empty segment for the
+        // unselected case; that path is unreachable today. What matters for the
+        // cache is only that the key and the wire agree, which is asserted here
+        // rather than assuming either value.
+        const resolved = search.getCurrentCountry();
+        expect(resolved).toBeTruthy();
+        expect(search.buildCacheKey('exa')).toBe('exa|' + resolved);
+        search.searchCompanies('exa', callbackRecorder().fn);
+        expect(new URL(ajax.last().url).searchParams.get('country')).toBe(resolved);
     });
 
-    test('an expired entry drops on read', () => {
+    test('an entry expires after five minutes, and drops on read', () => {
+        // Hard-coded rather than read off the class: the boundary logic and the
+        // VALUE are separate decisions, and a five-minute window is the one that
+        // was reasoned about (long enough to cover a buyer retyping a name,
+        // short enough that a registry correction is not pinned for a session).
+        const TTL_MS = 5 * 60 * 1000;
+        expect(TwoCompanySearch._CACHE_TTL_MS).toBe(TTL_MS);
+
         const now = Date.now();
         const spy = jest.spyOn(Date, 'now').mockReturnValue(now);
         try {
             TwoCompanySearch.cacheSet('k', ['v']);
-            spy.mockReturnValue(now + TwoCompanySearch._CACHE_TTL_MS - 1);
+            spy.mockReturnValue(now + TTL_MS - 1);
             expect(TwoCompanySearch.cacheGet('k')).toEqual(['v']);
 
-            spy.mockReturnValue(now + TwoCompanySearch._CACHE_TTL_MS);
+            spy.mockReturnValue(now + TTL_MS);
             expect(TwoCompanySearch.cacheGet('k')).toBeNull();
             expect(TwoCompanySearch._resultCache.has('k')).toBe(false);
         } finally {
@@ -397,14 +481,17 @@ describe('class-static result cache', () => {
         }
     });
 
-    test('the cache is bounded, evicting oldest first', () => {
-        const max = TwoCompanySearch._CACHE_MAX_ENTRIES;
+    test('the cache holds at most 50 entries, evicting oldest first', () => {
+        // Also hard-coded. The cache lives for the whole page session now rather
+        // than until the next address-form re-render, so the bound is what stops
+        // a long checkout accumulating without limit.
+        const max = 50;
+        expect(TwoCompanySearch._CACHE_MAX_ENTRIES).toBe(max);
+
         for (let i = 0; i < max + 5; i += 1) {
             TwoCompanySearch.cacheSet('key-' + i, [i]);
         }
 
-        // It now lives for the whole page session rather than until the next
-        // address-form re-render, so it needs an eviction policy.
         expect(TwoCompanySearch._resultCache.size).toBeLessThanOrEqual(max);
         expect(TwoCompanySearch.cacheGet('key-0')).toBeNull();
         expect(TwoCompanySearch.cacheGet('key-' + (max + 4))).toEqual([max + 4]);

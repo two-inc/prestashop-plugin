@@ -3,7 +3,7 @@
 Jest + jsdom over the module's front-office JavaScript in `views/js/`.
 
 ```bash
-make test-js            # from the module root
+make test-js            # from the module root; needs host Node 20+
 npm run test:js         # equivalent, if node_modules is already installed
 ```
 
@@ -11,8 +11,8 @@ CI gates this as the `jest` job in `.github/workflows/tests.yml`. It is a real g
 `continue-on-error`.
 
 The layout mirrors `magento-plugin`'s `Test/Js/`: a `package.json` at the repo root whose
-only purpose is to hold JS devDependencies (it is excluded from the release zip by
-`package-release.sh`), a jest config sitting next to the tests with `rootDir` pointed back
+only purpose is to hold JS devDependencies (`package-release.sh` already excluded
+`package.json` and `package-lock.json` from the release zip), a jest config sitting next to the tests with `rootDir` pointed back
 at the repo root, and `testEnvironment: 'jsdom'`.
 
 Files glob — unlike `tests/run.php`, a new `*.test.js` needs no registration.
@@ -62,26 +62,37 @@ load order a theme's `<script>` tags produce.
 cache:
 
 - `responseCallback` fires **exactly once** per search on every path: short term, success,
-  timeout, network/parser error, abort, superseded-by-a-newer-search, a stale success that
-  outran its abort, a stale failure, and teardown mid-search. Zero calls leaks the
-  spinner; two lets a superseded result overwrite a live one.
+  timeout, network/parser error, abort, superseded-by-a-newer-search, backspacing under the
+  minimum while a request is live, a stale success that outran its abort, a stale failure,
+  and teardown mid-search. Zero calls leaks the spinner; two lets a superseded result
+  overwrite a live one.
 - a failure is reported as `unavailable`, never as an empty result set — an empty dropdown
   reads to the buyer as "my company is not registered".
 - an abort is `silent`; a timeout is not.
 - request envelope: 30s timeout (clear of the API's own `stop_after_delay(10)` retry
-  window), `limit`/`offset` bounding, country parameter, and the `beforeSend` guard that
-  makes it impossible to attach credential headers to the public API call.
+  window), `limit`/`offset` bounding, the country parameter and its upper-casing,
+  `withCredentials: false` on this cross-origin call, the `beforeSend` guard that makes it
+  impossible to attach credential headers, and the handle being released once settled.
 - `degraded === true` handling: degraded-with-no-results reads as unavailable,
   degraded-with-results still renders them but is flagged so the caller does not cache a
   known-partial list; an absent field means false, and so does every truthy non-`true`
   value.
 - organisation-number extraction across the payload shapes different registries use.
-- the cache: outlives the instance that filled it, keeps an unselected country distinct
-  from an explicit one, expires on TTL, and evicts oldest-first at its bound.
+- the cache: outlives the instance that filled it, keys on the country so two countries
+  never share results, expires after five minutes, and evicts oldest-first at fifty
+  entries. One test records that `buildCacheKey`'s docblock is wrong about the
+  unselected-country case — `getCurrentCountry()` never returns empty, it falls through to
+  `navigator.language` and then to a literal `'GB'` — and asserts only that the key and
+  the wire agree, which is the property the cache actually depends on.
 
 `company-search-rerender.test.js` — what happens when PrestaShop re-renders the address
 form (which it does for something as ordinary as a country change):
 
+- a company selected through the real widget (menu focus + select, not a direct
+  `onCompanySelected()` call) lands in `company`, `companyid`, `dni` and `vat_number`; a
+  lookup-id-only company gets its number and address from the detail endpoint; the
+  address-lookup toggle stops the address fill without stopping `companyid`; and selecting
+  the unavailable row writes nothing.
 - the spinner always comes back down — success, timeout, empty, degraded — and a
   superseded search leaves it up for the request that replaced it.
 - the `_renderItem` patch is applied once per widget instance and is byte-for-byte the

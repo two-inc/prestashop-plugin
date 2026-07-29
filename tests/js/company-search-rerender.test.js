@@ -55,6 +55,17 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+    // Release every widget before wiping the DOM. jQuery UI binds document-level
+    // handlers in _create that innerHTML = '' does not unbind, so abandoned
+    // widgets accumulate across a file and the first test to dispatch a
+    // document-level event would inherit close() calls from all of them — which
+    // reads as an order-dependent flake rather than the leak it is.
+    $("input[name='company']").each(function () {
+        const field = $(this);
+        if (field.hasClass('ui-autocomplete-input')) {
+            field.autocomplete('destroy');
+        }
+    });
     ajax.restore();
     document.body.innerHTML = '';
 });
@@ -229,6 +240,100 @@ describe('the spinner always comes back down', () => {
         // The service may well be healthy again by the next keystroke.
         source({ term: 'exa' }, callbackRecorder().fn);
         expect(ajax.calls).toHaveLength(2);
+    });
+});
+
+describe('selecting a company through the real widget', () => {
+    /** Search, settle, then pick the first row the way a buyer's click does. */
+    function selectFirstResult(term, response) {
+        const field = liveField();
+        const instance = field.autocomplete('instance');
+        field.val(term);
+        instance.search(term);
+        ajax.last().succeed(response);
+        const row = instance.menu.element.children('li').first();
+        instance.menu.focus(null, row);
+        instance.menu.select($.Event('click'));
+        return field;
+    }
+
+    test('the selection reaches the live fields', () => {
+        makeInstance();
+
+        const field = selectFirstResult('exa', SEARCH_RESPONSE);
+
+        // The happy path, driven end to end through jQuery UI rather than by
+        // calling onCompanySelected() directly — otherwise the `select` option
+        // could be unwired entirely and every direct-call test would still pass.
+        expect(field.val()).toBe('Example Trading Ltd');
+        expect($("input[name='companyid']").val()).toBe('12345678');
+        expect($("input[name='companyid']").attr('data-two-company-name')).toBe(
+            'Example Trading Ltd'
+        );
+        expect($("input[name='dni']").val()).toBe('12345678');
+        expect($("input[name='vat_number']").val()).toBe('12345678');
+    });
+
+    test('selecting the unavailable row writes nothing into the field', () => {
+        makeInstance();
+
+        const field = selectFirstResult('exa', { items: [], degraded: true });
+
+        // `_normalize()` rewrites the row's value as `value || label`, so without
+        // the two_unavailable checks the message text itself lands in the field.
+        expect(field.val()).toBe('exa');
+        expect($("input[name='companyid']").val()).toBe('');
+    });
+
+    test('a company with only a lookup id fetches its details', async () => {
+        makeInstance();
+
+        selectFirstResult('exa', {
+            items: [{ name: 'Example Trading Ltd', lookup_id: 'lookup-abc-123' }]
+        });
+
+        // Some registries (GB among them) return the organisation number only on
+        // the detail endpoint, so the number has to arrive by that second call.
+        expect(ajax.calls).toHaveLength(2);
+        expect(ajax.last().url).toContain('/companies/v2/company/lookup-abc-123');
+        ajax.last().succeed({
+            national_identifier: { id: '87654321' },
+            addresses: [
+                {
+                    type: 'BUSINESS',
+                    street_address: '1 Example Street',
+                    postal_code: 'EX1 1EX',
+                    city: 'Exampleton'
+                }
+            ]
+        });
+
+        // fetchCompanyDetails() wraps the call in a Promise, so the fill lands a
+        // microtask after the response rather than synchronously with it.
+        await Promise.resolve();
+
+        expect($("input[name='companyid']").val()).toBe('87654321');
+        expect($("input[name='address1']").val()).toBe('1 Example Street');
+        expect($("input[name='postcode']").val()).toBe('EX1 1EX');
+        expect($("input[name='city']").val()).toBe('Exampleton');
+    });
+
+    test('the address-lookup toggle stops the detail fill but not companyid', async () => {
+        makeInstance({ addressLookupEnabled: false });
+
+        selectFirstResult('exa', {
+            items: [{ name: 'Example Trading Ltd', lookup_id: 'lookup-abc-123' }]
+        });
+        ajax.last().succeed({
+            national_identifier: { id: '87654321' },
+            addresses: [{ type: 'BUSINESS', street_address: '1 Example Street' }]
+        });
+
+        await Promise.resolve();
+
+        expect($("input[name='companyid']").val()).toBe('87654321');
+        expect($("input[name='address1']").val()).toBe('');
+        expect($("input[name='dni']").val()).toBe('');
     });
 });
 
@@ -463,7 +568,20 @@ describe('a destroyed instance cannot act on the live DOM', () => {
         // `prestashop.on` has no `off`, so this handler outlives the instance.
         // The only available defence is for the callback to check the flag.
         expect(bus.handlerCount('updatedAddressForm')).toBe(1);
-        bus.emit('updatedAddressForm');
+        const setup = jest.spyOn(search, 'setupAutocomplete');
+        const listener = jest.spyOn(search, 'setupCountryChangeListener');
+        try {
+            bus.emit('updatedAddressForm');
+
+            // Asserted on the guard itself as well as on the outcome: the two
+            // methods below carry their own `_destroyed` checks, so an outcome-only
+            // test cannot tell whether THIS guard is still there.
+            expect(setup).not.toHaveBeenCalled();
+            expect(listener).not.toHaveBeenCalled();
+        } finally {
+            setup.mockRestore();
+            listener.mockRestore();
+        }
 
         expect($(newField).hasClass('two-company-search-input')).toBe(false);
         expect($(newField).hasClass('ui-autocomplete-input')).toBe(false);

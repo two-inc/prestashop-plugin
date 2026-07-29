@@ -10,5 +10,10 @@
 module.exports = {
     rootDir: '../..',
     testMatch: ['<rootDir>/tests/js/**/*.test.js'],
-    testEnvironment: 'jsdom'
+    testEnvironment: 'jsdom',
+    // The suite restores its own spies and stubs by hand; these are the net for
+    // the next test that forgets to, since a leaked spy on Date.now or on an
+    // instance method fails somewhere other than where it was created.
+    restoreMocks: true,
+    resetMocks: true
 };
