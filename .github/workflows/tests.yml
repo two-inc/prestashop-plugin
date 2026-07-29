@@ -104,3 +104,26 @@ jobs:
 
       - name: Run phpstan
         run: php /tmp/phpstan.phar analyse --configuration=phpstan.neon --no-progress --memory-limit=1G
+
+  jest:
+    name: Jest (Node 20)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install JS devDependencies
+        run: npm ci --no-audit --no-fund
+
+      # Real gate, deliberately not continue-on-error: the company-search
+      # regressions these tests pin (stuck spinner, nested _renderItem wrapper,
+      # a destroyed instance writing to the live field) were all invisible to
+      # the PHP suites, so an advisory JS job would have caught none of them.
+      - name: Run Jest
+        run: npm run test:js

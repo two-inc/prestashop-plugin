@@ -37,7 +37,7 @@ TWO_ENVIRONMENT      ?= sandbox
 TWO_STORE_COUNTRY    ?= NO
 export TWO_STORE_COUNTRY
 
-.PHONY: help install configure run debug stop clean flush logs proxy archive test test-integration carrierless-shop carrierless-off bump patch minor major format phpstan bumpver-patch bumpver-minor bumpver-major
+.PHONY: help install configure run debug stop clean flush logs proxy archive test test-js test-integration carrierless-shop carrierless-off bump patch minor major format phpstan bumpver-patch bumpver-minor bumpver-major
 
 .DEFAULT_GOAL := help
 
@@ -176,6 +176,11 @@ carrierless-shop:
 ## Undo make carrierless-shop: hide the "Default shipping tax code" field again
 carrierless-off:
 	docker exec $(CONTAINER) bash /var/www/html/modules/$(MODULE_NAME)/dev/enable-default-shipping-tax-code --reset
+
+## Run the Jest suite over the module's browser JS (same suite CI runs)
+test-js:
+	@[ -d node_modules ] || npm ci --no-audit --no-fund
+	npm run test:js
 
 ## Run the tests/integration probes against the running local shop (run make carrierless-shop first)
 test-integration:
