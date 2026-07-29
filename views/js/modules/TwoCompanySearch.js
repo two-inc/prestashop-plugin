@@ -414,6 +414,13 @@ class TwoCompanySearch {
                             response([]);
                             return;
                         }
+                        if (meta && meta.countryUnresolved) {
+                            // Not cached, and not an empty dropdown: an empty
+                            // list here would read as "your company is not
+                            // registered" when in fact no search was made.
+                            response([this.buildSelectCountryItem()]);
+                            return;
+                        }
                         if (meta && meta.unavailable) {
                             // Not cached: the service may well be healthy again
                             // by the buyer's next keystroke.
@@ -512,14 +519,17 @@ class TwoCompanySearch {
      * next address-form re-render.
      *
      * That invariant is structural, not a coincidence to be re-checked: both
-     * this and searchCompanies() take the value from getCurrentCountry(), which
-     * never returns empty - it resolves the selected option, then guesses from
-     * `navigator.language`, then falls back to a literal 'GB'. So there is no
-     * "no country selected" case to key separately: whatever the fallback
-     * chain produces is also what goes on the wire, so a search filed under it
-     * is genuinely a search for that country. Do not give either side its own
-     * fallback - a country the key believes in but the request does not is
-     * exactly how one country's results end up answering another's search.
+     * this and searchCompanies() take the value from getCurrentCountry() and
+     * neither adds a fallback of its own. A country the key believes in but the
+     * request does not is exactly how one country's results end up answering
+     * another's search, so do not add one here.
+     *
+     * getCurrentCountry() CAN now return '' (it stopped guessing - see there),
+     * which makes the key `term|`. Nothing is ever filed under it, because
+     * searchCompanies() declines to search at all in that case, so the read is
+     * a guaranteed miss rather than a bucket where unrelated countries pool.
+     * The empty half is still carried rather than special-cased: giving this
+     * side its own substitute for "unknown" is the exact mistake above.
      *
      * @param {string} term
      * @returns {string}
@@ -558,6 +568,38 @@ class TwoCompanySearch {
             // text. The `two_unavailable` checks in those three handlers are the
             // only thing keeping it out of the company field - do not remove one
             // on the assumption that an empty value makes it harmless.
+            value: '',
+            two_unavailable: true
+        };
+    }
+
+    /**
+     * Message shown when the search cannot tell which country to search.
+     *
+     * Deliberately not the `unavailable` copy: nothing is broken and retrying
+     * changes nothing. The one action that helps is the buyer picking a country
+     * on the address form, so say that instead of blaming the service.
+     *
+     * @returns {string}
+     */
+    getSelectCountryText() {
+        return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_select_country)
+            || 'Select your country above to search for your company.';
+    }
+
+    /**
+     * Pseudo-result carrying the select-a-country message through jQuery UI.
+     *
+     * Reuses `two_unavailable` rather than adding a second flag: that flag is
+     * what the select / focus / _renderItem handlers check to keep a message row
+     * out of the company field, and this row needs exactly the same treatment.
+     * It means "not a company", not "the service is down".
+     *
+     * @returns {Object}
+     */
+    buildSelectCountryItem() {
+        return {
+            label: this.getSelectCountryText(),
             value: '',
             two_unavailable: true
         };
@@ -657,6 +699,20 @@ class TwoCompanySearch {
             list.style.display = 'block';
         };
 
+        // Same reasoning, different cause: no search was made because the
+        // country is unknown, so point at the fix the buyer can apply.
+        const renderSelectCountry = () => {
+            setLoadingState(false);
+            list.innerHTML = '';
+            const row = document.createElement('div');
+            row.className = 'two-autocomplete-item two-autocomplete-select-country';
+            row.style.padding = '6px 10px';
+            row.style.color = '#888';
+            row.textContent = this.getSelectCountryText();
+            list.appendChild(row);
+            list.style.display = 'block';
+        };
+
         // Debounced input. Held in a named ref so teardown can unbind it: the
         // listener is on the shared company field, not on the container, so
         // dropping the container would leave it firing.
@@ -704,6 +760,10 @@ class TwoCompanySearch {
                     // input event, so nothing else would ever clear it.
                     if ((inputEl.value || '') !== term) {
                         setLoadingState(false);
+                        return;
+                    }
+                    if (meta && meta.countryUnresolved) {
+                        renderSelectCountry();
                         return;
                     }
                     if (meta && meta.unavailable) {
@@ -817,12 +877,30 @@ class TwoCompanySearch {
             return;
         }
 
-        // Country ISO for the search. getCurrentCountry() always resolves to
-        // something (selected option, then locale guess, then 'GB'), so this is
-        // always on the wire - and buildCacheKey() files the response under the
-        // same value, which is what stops one country's results answering
+        // Country ISO for the search. Whatever getCurrentCountry() resolves
+        // goes on the wire, and buildCacheKey() files the response under that
+        // same value - which is what stops one country's results answering
         // another country's search.
         const country = this.getCurrentCountry();
+
+        if (!country) {
+            // No country, no search. The alternative - send the request without
+            // the parameter and let the API pick - is not available: `country`
+            // is REQUIRED on GET /companies/v2/company, so an omitted one is a
+            // 422 the buyer would read as "search is broken". And the guess this
+            // replaces was worse than either, because a GB register searched for
+            // a Dutch buyer looks like a working search returning no match.
+            //
+            // Reported distinctly from `unavailable` because the remedy is the
+            // buyer's, not ours: pick a country on the address form. Treated
+            // like the short-term branch above for sequencing, so a pending
+            // request for the previous country cannot land afterwards and
+            // repaint the list.
+            this._companySearchSeq += 1;
+            this._abortPendingCompanySearch();
+            responseCallback([], { countryUnresolved: true });
+            return;
+        }
 
         // Build URL with correct API parameters. `limit`/`offset` mirror the
         // Magento and WooCommerce plugins: bound the response to one page so
@@ -934,51 +1012,76 @@ class TwoCompanySearch {
     }
     
     /**
-     * Get current country from checkout form - SIMPLIFIED
+     * ISO 3166-1 alpha-2 country the company search should query, or `''` when
+     * it cannot be established.
+     *
+     * The company register searched is decided entirely by this value, so a
+     * wrong answer here is worse than no answer: the buyer is shown companies
+     * from a register their company is not in, and there is nothing on screen
+     * saying which register was used. This function therefore resolves or
+     * returns empty. It does not guess.
+     *
+     * Two guesses used to sit at the bottom of this chain and both are gone:
+     *
+     * - `navigator.language`. The buyer's browser locale has no relationship to
+     *   either the shop's country or the company's. A Dutch company bought for
+     *   by someone whose laptop is set to en-US searched the US register.
+     * - a literal `'GB'`. Any shop that missed every map above searched GB
+     *   companies for every buyer, on every keystroke, silently and forever.
+     *
+     * What replaces them is an authoritative source the module already ships:
+     * `window.twopayment.countries`, the complete `id_country` -> ISO map built
+     * server-side from `Country::getCountries()` in twopayment.php and injected
+     * via `Media::addJsDef`. It supersedes the ten-entry hardcoded id map that
+     * used to be strategy three - PrestaShop's country ids are per-installation
+     * table rows, not constants, so hardcoding them was wrong on any shop whose
+     * country table had been edited, and wrong SILENTLY because a mismatched id
+     * simply fell through to the guesses below. TwoOrderIntent.js already reads
+     * this same map.
+     *
+     * The remaining two strategies are both exact matches rather than guesses:
+     * `data-iso-code` is the ISO code itself, and the option-text map only
+     * resolves on a full country-name match. Either fails closed.
+     *
+     * @returns {string} uppercase ISO code, or '' when unresolvable
      */
     getCurrentCountry() {
-        // Method 1: Check if country option has data attribute with ISO code
         const countryField = document.querySelector("select[name='id_country']");
         if (countryField && countryField.selectedOptions.length > 0) {
             const selectedOption = countryField.selectedOptions[0];
-            
-            // Check for data-iso attribute
+
+            // 1. The ISO code, stated outright. Themes that render the country
+            // select from PrestaShop's own template carry it.
             const isoCode = selectedOption.getAttribute('data-iso-code') || selectedOption.getAttribute('data-iso');
             if (isoCode) {
                 return isoCode.toUpperCase();
             }
-            
-            // Method 2: Extract from option text
+
+            // 2. The server-built id -> ISO map for THIS shop's country table.
+            // Values are lower-cased by twopayment.php; the API wants upper.
+            const countryId = selectedOption.value;
+            const isoFromConfig = (window.twopayment && window.twopayment.countries)
+                ? window.twopayment.countries[countryId]
+                : null;
+            if (isoFromConfig) {
+                return String(isoFromConfig).toUpperCase();
+            }
+
+            // 3. The option's visible text, for a theme that renders its own
+            // select AND loads the search without the module's JS defs.
             const optionText = selectedOption.textContent.trim();
             const countryFromText = this.extractCountryFromText(optionText);
             if (countryFromText) {
                 return countryFromText;
             }
-            
-            // Method 3: Simple ID-based mapping for common countries
-            const countryId = countryField.value;
-            const commonCountries = {
-                '17': 'GB', '6': 'ES', '8': 'FR', '1': 'DE', '10': 'IT',
-                '13': 'NL', '3': 'BE', '21': 'US', '4': 'CA', '24': 'AU'
-            };
-            
-            if (commonCountries[countryId]) {
-                return commonCountries[countryId];
-            }
         }
-        
-        // Method 4: Browser locale fallback
-        const browserLang = navigator.language || navigator.userLanguage;
-        if (browserLang && browserLang.includes('-')) {
-            const countryCode = browserLang.split('-')[1];
-            if (countryCode && countryCode.length === 2) {
-                return countryCode.toUpperCase();
-            }
-        }
-        
-        return 'GB'; // Safe default
+
+        // Unresolvable. searchCompanies() declines to search rather than
+        // sending a country it invented - see the countryUnresolved branch
+        // there for why omitting the parameter is not an option either.
+        return '';
     }
-    
+
     /**
      * Extract country code from country name text
      */
@@ -1430,6 +1533,21 @@ class TwoCompanySearch {
                     token: window.twopayment.ajax_token,
                     company: data.company,
                     companyid: data.companyid,
+                    // Deliberately relayed even when unresolved. '' makes the
+                    // controller's `if (!empty($country))` skip the country
+                    // write, so with no prior marker the cookie ends up
+                    // company + id and an EMPTY country. What happens to that
+                    // half-record on the next read depends on the reader:
+                    // twopayment.php's legacy-marker discard is gated on
+                    // `!Tools::isEmpty($country_iso)`, so it DISCARDS the whole
+                    // session company when the read path has an address country
+                    // to compare against, and REUSES it when the read path has
+                    // none - which is exactly the case orderintent.php hits
+                    // when no checkout address is selected yet and it passes
+                    // ''. Safe either way for the order payload, whose
+                    // country_iso comes from the address server-side
+                    // (Country::getIsoById), never from this cookie, so an
+                    // empty value here can never reach the API as a guess.
                     country: this.getCurrentCountry(),
                     id_address: this.getCurrentAddressId()
                 },
