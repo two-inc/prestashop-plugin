@@ -61,7 +61,7 @@ load order a theme's `<script>` tags produce.
 `company-search-resilience.test.js` — `searchCompanies()` and the class-static result
 cache:
 
-- `responseCallback` fires **exactly once** per search on every path: short term, success,
+- `responseCallback` fires **exactly once** per search on all twelve paths: short term, success,
   timeout, network error, parser error, a failure carrying no textStatus at all, abort,
   superseded-by-a-newer-search, backspacing under the minimum while a request is live, a
   stale success that outran its abort, a stale failure, and teardown mid-search. Zero calls leaks the spinner; two lets a superseded result
@@ -132,6 +132,11 @@ re-render safety rather than every behaviour in the file: the order-intent reche
 (`shouldDeferIntentTrigger` and both `triggerOrderIntentRecheck` call sites),
 `getCurrentCountry()`'s option-text and id-map strategies, and
 `persistCompanyToCookie`. Mutating any of those leaves the suite green.
+
+`teardownCustomAutocomplete()`'s `blur`-listener unbind is unobservable: the handler's
+closure re-hides only the list it was created with, and that node is already detached by
+the time a leaked handler could fire, so removing the unbind changes nothing any test can
+see. The `input`-listener unbind beside it is covered (via the duplicate-search count).
 
 `autoFillAddress()`'s `typeof value === 'undefined' || value === null` write guard is
 unreachable: `street`/`postal`/`city` each coalesce to `''` a few lines above, so the guard

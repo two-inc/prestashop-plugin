@@ -1156,6 +1156,33 @@ describe('the custom fallback used when jQuery UI is absent', () => {
         expect(ajax.calls).toHaveLength(1);
     });
 
+    test('blurring the field closes the dropdown, and does not reopen it after destroy', () => {
+        const search = makeInstance();
+        const input = document.querySelector("input[name='company']");
+        type('exa');
+        ajax.last().succeed(SEARCH_RESPONSE);
+        expect($('.two-autocomplete-list').css('display')).not.toBe('none');
+
+        input.dispatchEvent(new window.Event('blur'));
+        jest.advanceTimersByTime(150);
+        expect($('.two-autocomplete-list').css('display')).toBe('none');
+
+        // NOTE what this does and does not pin. The blur handler's unbind in
+        // teardownCustomAutocomplete() has no observable consequence: the closure
+        // only re-hides the list it was created with, and that node is already
+        // detached by the time a leaked handler could fire, so a leaked one is
+        // idempotent. Recorded as redundancy in the README rather than pretended
+        // to be covered. What IS pinned here: blur closes the dropdown while
+        // live, and destroy leaves nothing for a blur to act on.
+        search.destroy();
+        expect($('.two-autocomplete-container')).toHaveLength(0);
+        expect(() => {
+            input.dispatchEvent(new window.Event('blur'));
+            jest.advanceTimersByTime(150);
+        }).not.toThrow();
+        expect($('.two-autocomplete-container')).toHaveLength(0);
+    });
+
     test('switching to the jQuery UI path removes the fallback and its spinner', () => {
         const search = makeInstance();
         type('exa');
