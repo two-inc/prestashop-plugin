@@ -37,7 +37,7 @@ TWO_ENVIRONMENT      ?= sandbox
 TWO_STORE_COUNTRY    ?= NO
 export TWO_STORE_COUNTRY
 
-.PHONY: help install configure run debug stop clean flush logs proxy archive test test-integration carrierless-shop carrierless-off bump patch minor major format phpstan bumpver-patch bumpver-minor bumpver-major
+.PHONY: help install configure run debug stop clean flush logs proxy archive test test-js test-integration carrierless-shop carrierless-off bump patch minor major format phpstan bumpver-patch bumpver-minor bumpver-major
 
 .DEFAULT_GOAL := help
 
@@ -146,6 +146,19 @@ logs:
 ## Run the unit test harness (same suite CI runs)
 test:
 	docker run --rm -v "$(CURDIR)":/app -w /app php:8.2-cli php tests/run.php
+
+# Unlike `test` / `phpstan` / `format`, this one runs on the HOST rather than in
+# a container: it needs Node, same implicit prerequisite as `bumpver` for the
+# version targets. Install once with any Node 20+ and it is self-servicing after
+# that. Re-runs `npm ci` whenever the lockfile is newer than the installed tree,
+# so a devDependency bump cannot leave you testing against stale versions while
+# CI tests against the pinned ones.
+## Run the Jest suite over the module's browser JS (needs host Node 20+; same suite CI runs)
+test-js:
+	@if [ ! -d node_modules ] || [ package-lock.json -nt node_modules ]; then \
+		npm ci --no-audit --no-fund; \
+	fi
+	npm run test:js
 
 # Carrier-less shipping (TWO-25200 / TWO-25217). A shop where shipping is
 # priced but no carrier declares a tax rules group for it — the shape the

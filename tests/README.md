@@ -46,6 +46,21 @@ php tests/run.php      # directly, if you have a local PHP
 A new `tests/*Spec.php` file must also be added to the `require` list at the bottom of
 `tests/run.php` — the runner does not glob.
 
+## Browser JS suite (Jest)
+
+`tests/js/` covers the module's front-office JavaScript under `views/js/`. CI gates it
+(`.github/workflows/tests.yml`, job `jest`); locally it is `make test-js`.
+
+```bash
+make test-js           # installs devDeps when the lockfile moves, then npm run test:js
+```
+
+This target runs on the host, not in a container: it needs Node 20+ installed, the
+same implicit prerequisite `bumpver` is for the version targets.
+
+Unlike the PHP harness these tests glob, so a new `tests/js/*.test.js` file needs no
+registration. See `tests/js/README.md` for how the harness stands the browser up.
+
 ## Playwright checkout suite
 
 `tests/e2e/` drives a real checkout against a provisioned PrestaShop container; CI runs it
