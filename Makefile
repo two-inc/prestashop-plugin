@@ -212,31 +212,20 @@ phpstan:
 # same implicit prerequisite as the sibling plugin repos.
 # tag/push are off in bumpver.toml — this only commits the bump locally.
 #
-# Version-bump convention (TWO-25230): patch on staging, minor on main, major
-# via the escape hatch. The staging half is now automated in
-# .github/workflows/version-bump.yml, so DO NOT hand-run a bump for a PR into
-# staging any more — the workflow fires on the merge and you would double-bump.
+# Version-bump convention (TWO-25256): the version is computed from the
+# conventional-commit types of a PR's own commits and committed onto that PR's
+# branch by .github/workflows/version-bump.yml, so it describes the change
+# rather than the branch it merges into. DO NOT hand-run a bump for a PR into
+# `staging` - CI owns it, and a hand-run one is at best redundant.
 #
-# Prefer `make bump`: it asks .github/scripts/decide-bump-level.sh for the
-# level rather than leaving it to whoever is at the keyboard. The explicit
-# patch/minor/major targets remain for a deliberate override.
+# `make bump` is now a PREVIEW of that decision (it writes nothing). The
+# explicit patch/minor/major targets remain for a deliberate manual override.
 bumpver-%:
 	SKIP=commit-msg bumpver update --$*
 
-## Bump the version at the level the convention says
+## Preview the version this branch's PR will land with (writes nothing)
 bump:
-	@branch="$$(git rev-parse --abbrev-ref HEAD)"; \
-	out="$$(.github/scripts/decide-bump-level.sh "$$branch")"; \
-	level="$$(printf '%s\n' "$$out" | sed -n 's/^level=//p')"; \
-	set_version="$$(printf '%s\n' "$$out" | sed -n 's/^set_version=//p')"; \
-	reason="$$(printf '%s\n' "$$out" | sed -n 's/^reason=//p')"; \
-	if [ -n "$$set_version" ]; then \
-		echo "Convention says major -> $$set_version ($$reason)"; \
-		SKIP=commit-msg bumpver update --set-version "$$set_version"; \
-	else \
-		echo "Convention says $$level ($$reason)"; \
-		SKIP=commit-msg bumpver update --$$level; \
-	fi
+	@.github/scripts/decide-bump-level.sh origin/staging HEAD >/dev/null
 
 ## Bump patch version (prefer `make bump`)
 patch: bumpver-patch
