@@ -127,6 +127,7 @@ Run from module root:
 
 ```bash
 make test              # php tests/run.php in the CI container
+make test-js           # jest over views/js (jsdom + real jQuery/jQuery UI)
 make phpstan           # the static-analysis gate CI runs
 make test-integration  # real-engine probes; needs `make carrierless-shop` first
 ```

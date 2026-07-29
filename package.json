@@ -1,0 +1,14 @@
+{
+  "name": "two-inc/prestashop",
+  "description": "Two payment gateway for PrestaShop — JS dev-only manifest. The module's runtime metadata lives in twopayment.php; this file exists so the npm-based Jest test runner has somewhere to declare devDeps. Excluded from the release zip by package-release.sh.",
+  "private": true,
+  "scripts": {
+    "test:js": "jest --config tests/js/jest.config.js"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0",
+    "jquery": "^3.7.1",
+    "jquery-ui": "^1.14.1"
+  }
+}
