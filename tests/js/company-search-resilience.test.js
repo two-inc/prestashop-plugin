@@ -20,7 +20,8 @@ const {
     loadCompanySearch,
     buildAddressForm,
     stubAjax,
-    callbackRecorder
+    callbackRecorder,
+    releaseWidgets
 } = require('./ps-harness');
 
 const CHECKOUT_HOST = 'https://api.example.test';
@@ -48,6 +49,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+    releaseWidgets($);
     ajax.restore();
     document.body.innerHTML = '';
 });
@@ -441,21 +443,36 @@ describe('class-static result cache', () => {
         expect(new URL(ajax.last().url).searchParams.get('country')).toBe('NO');
     });
 
-    test('the key falls back with the country resolver rather than diverging', () => {
+    test('with nothing selected the key falls back to the browser locale', () => {
         const search = makeInstance();
         document.querySelector("select[name='id_country']").innerHTML = '';
 
-        // NOTE: getCurrentCountry() never returns empty — with no selected
-        // option it falls through to navigator.language and then to a literal
-        // 'GB'. buildCacheKey()'s docblock describes an empty segment for the
-        // unselected case; that path is unreachable today. What matters for the
-        // cache is only that the key and the wire agree, which is asserted here
-        // rather than assuming either value.
-        const resolved = search.getCurrentCountry();
-        expect(resolved).toBeTruthy();
-        expect(search.buildCacheKey('exa')).toBe('exa|' + resolved);
+        // NOTE: getCurrentCountry() never returns empty, so buildCacheKey()'s
+        // docblock is wrong about an empty segment for the unselected case — that
+        // path is unreachable. Strategy 4 is a navigator.language guess, which
+        // under jsdom is en-US.
+        expect(search.getCurrentCountry()).toBe('US');
+        expect(search.buildCacheKey('exa')).toBe('exa|US');
         search.searchCompanies('exa', callbackRecorder().fn);
-        expect(new URL(ajax.last().url).searchParams.get('country')).toBe(resolved);
+        expect(new URL(ajax.last().url).searchParams.get('country')).toBe('US');
+    });
+
+    test('with no locale to guess from either, the key falls back to GB', () => {
+        const language = jest
+            .spyOn(window.navigator, 'language', 'get')
+            .mockReturnValue('xx');
+        try {
+            const search = makeInstance();
+            document.querySelector("select[name='id_country']").innerHTML = '';
+
+            // The last resort is a literal 'GB'. Pinned explicitly because the
+            // jsdom default locale hides it, and because a test that merely
+            // reads getCurrentCountry() back cannot fail if it changes.
+            expect(search.getCurrentCountry()).toBe('GB');
+            expect(search.buildCacheKey('exa')).toBe('exa|GB');
+        } finally {
+            language.mockRestore();
+        }
     });
 
     test('an entry expires after five minutes, and drops on read', () => {
