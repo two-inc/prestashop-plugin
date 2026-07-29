@@ -24,6 +24,11 @@ class TwoCompanySearch {
      * render. Only the cache is preserved, not the pending request.
      */
     static _resultCache = new Map();
+    // A company registered mid-session stays absent from an already-searched
+    // term until its entry expires. That staleness is deliberate: buyers search
+    // for their own company, which is already registered, so nothing here busts
+    // the cache on registration - the TTL below is the only thing that clears
+    // it, and a page reload starts cold.
     static _CACHE_TTL_MS = 5 * 60 * 1000;
     // Bounds the cache. It now lives for the whole page session rather than
     // until the next address-form re-render, so it needs an eviction policy it
