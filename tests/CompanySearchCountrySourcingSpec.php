@@ -18,8 +18,11 @@ declare(strict_types=1);
  *    map from this shop's own country table, AND still injects it in the same
  *    method that registers the search script. That map is now the search's
  *    authoritative source, not a nice-to-have for the order-intent module, so
- *    moving it to a method nothing calls, or dropping it from the addJsDef
- *    payload, would silently return the search to guessing;
+ *    moving it OUT OF THIS METHOD, or dropping it from the addJsDef payload,
+ *    would silently return the search to guessing. The assertion is that
+ *    tight on purpose: it fails even for a behaviour-preserving extraction
+ *    into a helper the hook still calls, because whether the map survives the
+ *    hook's early-return gate is exactly what it guards;
  *  - the i18n key the JS reads for the "pick a country" row exists in the
  *    payload under exactly that name. A rename on either side is invisible at
  *    runtime: the JS falls back to hardcoded English, so a merchant's
@@ -58,10 +61,16 @@ final class CompanySearchCountrySourcingSpec
     }
 
     /**
-     * Strip comments so a prose explanation of a removed guess does not read as
-     * the guess itself - the WHY comments deliberately name both. Handles `//`
-     * lines, docblock continuations and multi-line `/* ... *\/` blocks whose
+     * Strip LEADING comment lines so a prose explanation of a removed guess
+     * does not read as the guess itself - the WHY comments deliberately name
+     * both. Handles lines that START with `//`, docblock continuation lines
+     * that start with `*`, and multi-line `/* ... *\/` blocks whose
      * continuation lines start with an ordinary word.
+     *
+     * A trailing comment on a code line is NOT stripped, so a `// ... GB ...`
+     * tacked onto the end of real code would false-fail. None exist in either
+     * guarded file; if one is ever added, strip it here rather than renaming
+     * the guess.
      *
      * Keys are 1-based source line numbers and survive the stripping, so a
      * failure message can point at the real line.
@@ -115,6 +124,9 @@ final class CompanySearchCountrySourcingSpec
      * slice stable when members are reordered - a no-op edit must not fail a
      * spec.
      *
+     * An EMPTY slice is never returned: a gutted method would otherwise make
+     * every per-line assertion over its body pass by iterating nothing.
+     *
      * @param array<int, string> $lines
      *
      * @return array<int, string> body lines, keyed by source line number
@@ -133,6 +145,12 @@ final class CompanySearchCountrySourcingSpec
                 continue;
             }
             if (rtrim($line) === $indent . '}') {
+                TinyAssert::true(
+                    $body !== array(),
+                    'Sliced an EMPTY body for ' . $signature . ' out of ' . $where
+                    . ' - the method was gutted, so anything asserted over its body asserts nothing'
+                );
+
                 return $body;
             }
             $body[$number] = $line;
@@ -160,10 +178,14 @@ final class CompanySearchCountrySourcingSpec
         // Built from Country::getCountries() for THIS install, so it covers
         // every country the shop has rather than a handful of ids guessed at
         // in JavaScript. PrestaShop country ids are table rows, not constants.
-        // Matched loosely: a cast, a row-variable rename or a line wrap is not
-        // a regression, so only the two column names are pinned.
+        // Anchored on the SUBSCRIPT - `$param_countries[<...id_country...>] =
+        // <...iso_code...>` - so that building the map into some other
+        // variable, leaving $param_countries an empty array, fails here. A
+        // co-occurrence check would not: the dead-map build still mentions
+        // both column names. Still tolerant of a cast, a row-variable rename
+        // or a line wrap, which are not regressions.
         TinyAssert::true(
-            preg_match('#\$param_countries\b.{0,160}id_country.{0,160}iso_code#s', $body_text) === 1,
+            preg_match('#\$param_countries\[[^\]]*id_country[^\]]*\][^;]{0,120}iso_code#s', $body_text) === 1,
             'The id_country -> ISO map is no longer built from the shop country table inside ' . $hook . '()'
         );
 

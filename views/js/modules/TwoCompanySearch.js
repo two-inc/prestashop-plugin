@@ -1533,12 +1533,19 @@ class TwoCompanySearch {
                     token: window.twopayment.ajax_token,
                     company: data.company,
                     companyid: data.companyid,
-                    // Deliberately relayed even when unresolved: '' makes the
+                    // Deliberately relayed even when unresolved. '' makes the
                     // controller's `if (!empty($country))` skip the country
-                    // write and keep whatever it already had, which is the
-                    // wanted outcome. The order payload's country_iso comes
-                    // from the address, never from this cookie, so an empty
-                    // value here can never reach the API as a guess.
+                    // write, so with no prior marker the cookie ends up
+                    // company + id and an EMPTY country - and twopayment.php
+                    // then DISCARDS the whole session company on the next
+                    // read, because a value with no country marker cannot be
+                    // safely reused across countries. The outcome is discard,
+                    // not keep: an unresolved country loses the prefill, it
+                    // does not preserve it. Safe either way for the order
+                    // payload, whose country_iso comes from the address
+                    // server-side (Country::getIsoById), never from this
+                    // cookie, so an empty value here can never reach the API
+                    // as a guess.
                     country: this.getCurrentCountry(),
                     id_address: this.getCurrentAddressId()
                 },
