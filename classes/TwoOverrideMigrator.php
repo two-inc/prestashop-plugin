@@ -101,7 +101,50 @@ class TwoOverrideMigrator
     const STALE = 'stale';
 
     /**
-     * Every `module:` name stamped into an override file, in order of
+     * The comment text of a PHP source file, and nothing else.
+     *
+     * Stamps are only ever read out of real comment tokens, never out of raw
+     * source. A multiline string literal can contain text that is
+     * indistinguishable from a stamp once you are matching line by line:
+     *
+     *     $doc = "\n    * module: twopayment\n    * version: 2.4.0\n";
+     *
+     * Matching that on raw source would classify a perfectly current override as
+     * stale and rewrite it. Tokenising first makes the whole ownership decision
+     * structurally incapable of reading a string literal.
+     *
+     * `token_get_all()` is stdlib - no parser dependency, and this module has no
+     * runtime composer dependencies to add one to. It needs a `<?php` open tag to
+     * produce tokens at all; a file without one yields no comments, which lands
+     * on UNSTAMPED, which means "leave it alone". That is the safe direction, and
+     * it is the same direction taken when the file cannot be tokenised at all.
+     *
+     * @param string $source
+     *
+     * @return string
+     */
+    private static function commentText($source)
+    {
+        $tokens = @token_get_all((string) $source);
+        if (!is_array($tokens)) {
+            return '';
+        }
+
+        $text = '';
+        foreach ($tokens as $token) {
+            if (!is_array($token) || !isset($token[0], $token[1])) {
+                continue;
+            }
+            if ($token[0] === T_COMMENT || $token[0] === T_DOC_COMMENT) {
+                $text .= $token[1] . "\n";
+            }
+        }
+
+        return $text;
+    }
+
+    /**
+     * Every `module:` name stamped into an override file's COMMENTS, in order of
      * appearance and with duplicates kept.
      *
      * @param string $source
@@ -111,13 +154,13 @@ class TwoOverrideMigrator
     public static function stampedModules($source)
     {
         $matches = array();
-        preg_match_all('/^\s*\*\s*module:\s*(\S+)\s*$/m', (string) $source, $matches);
+        preg_match_all('/^\s*\*\s*module:\s*(\S+)\s*$/m', self::commentText($source), $matches);
 
         return isset($matches[1]) ? $matches[1] : array();
     }
 
     /**
-     * Every `version:` stamped into an override file.
+     * Every `version:` stamped into an override file's COMMENTS.
      *
      * @param string $source
      *
@@ -126,7 +169,7 @@ class TwoOverrideMigrator
     public static function stampedVersions($source)
     {
         $matches = array();
-        preg_match_all('/^\s*\*\s*version:\s*([0-9][0-9.]*)\s*$/m', (string) $source, $matches);
+        preg_match_all('/^\s*\*\s*version:\s*([0-9][0-9.]*)\s*$/m', self::commentText($source), $matches);
 
         return isset($matches[1]) ? $matches[1] : array();
     }

@@ -139,20 +139,46 @@ fi
 # argument. Requiring the class name in the added lines is the closest a static
 # check can get to verifying that.
 if [ -n "$deleted" ]; then
+    # Tracked separately from $rc: $rc may already be 1 from the MODIFIED branch
+    # above, and printing the retired-paths hint for a failure that was actually
+    # about a modified file sends the reader to the wrong fix.
+    deleted_rc=0
+
     while IFS= read -r path; do
         [ -n "$path" ] || continue
         class=$(basename "$path" .php)
 
-        if printf '%s' "$upgrade_additions" | grep -qF "$class"; then
+        # Word-boundary match, not a bare substring: `grep -qF Foo` is satisfied
+        # by the string `FooBar` appearing anywhere in the added lines, which
+        # would pass the gate for a retired `Foo.php` that nothing migrates.
+        # PrestaShop class names are [A-Za-z0-9_]+, so the class name is safe to
+        # interpolate into a pattern; anything else is a filename we do not
+        # understand, and the safe answer there is to demand a human look.
+        case "$class" in
+            *[!A-Za-z0-9_]* | '')
+                echo "::error file=${path}::${path} has a basename this check cannot match safely (${class}). Rename it, or migrate it by hand and say so."
+                deleted_rc=1
+                continue
+                ;;
+        esac
+
+        if printf '%s' "$upgrade_additions" | grep -qE "(^|[^A-Za-z0-9_])${class}([^A-Za-z0-9_]|$)"; then
             echo "OK  ${path} retired — an upgrade script in this PR names ${class}."
             continue
         fi
 
         echo "::error file=${path}::${path} was RETIRED, but no upgrade script in this PR mentions ${class}. A retired override cannot be auto-discovered (it is gone from the module tree), so it must be named in TwoOverrideMigrator::refresh()'s retired-paths argument — otherwise every shop that has it keeps running it forever."
-        rc=1
+        deleted_rc=1
     done <<<"$deleted"
 
-    if [ "$rc" -ne 0 ]; then
+    # NOT `[ ... ] && rc=1`: under `set -e` a false test makes that list return 1
+    # and kills the script, which here would mean exiting non-zero for the right
+    # reason by accident and skipping the hint below.
+    if [ "$deleted_rc" -ne 0 ]; then
+        rc=1
+    fi
+
+    if [ "$deleted_rc" -ne 0 ]; then
         explain
         echo ""
         echo "FIX: add upgrade/upgrade-<this PR's version>.php calling"

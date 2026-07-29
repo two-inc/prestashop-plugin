@@ -34,6 +34,8 @@ final class OverrideMigrationSpec
         self::testMixedOurVersionsIsStale();
         self::testOurStampWithNoVersionIsStale();
         self::testStampParsingIgnoresProse();
+        self::testStampInsideAStringLiteralIsNotAStamp();
+        self::testUntokenisableSourceIsLeftAlone();
     }
 
     /**
@@ -186,6 +188,50 @@ final class OverrideMigrationSpec
             TwoOverrideMigrator::UNSTAMPED,
             TwoOverrideMigrator::classify($source, '2.7.1'),
             'No real stamps means UNSTAMPED, which means leave it alone.'
+        );
+    }
+
+    private static function testStampInsideAStringLiteralIsNotAStamp(): void
+    {
+        // Raised in adversarial review. A multiline string literal can contain
+        // text that is byte-identical to a stamp, and matching line-by-line on
+        // raw source cannot tell the two apart. Here the file is genuinely
+        // CURRENT; reading the literal would classify it STALE and rewrite it.
+        // Stamps are therefore extracted from comment TOKENS only.
+        $source = "<?php\n\nclass CustomerAddressFormatter extends CustomerAddressFormatterCore\n{\n"
+            . self::stamp(TwoOverrideMigrator::MODULE_NAME, '2.7.1')
+            . "    public function getFormat()\n    {\n"
+            . '        $doc = "' . "\\n    * module: " . TwoOverrideMigrator::MODULE_NAME
+            . "\\n    * version: 2.4.0\\n\";\n"
+            . "        return \$doc;\n    }\n}\n";
+
+        TinyAssert::count(
+            1,
+            TwoOverrideMigrator::stampedModules($source),
+            'The module stamp inside the string literal must not be counted — only the '
+            . 'real comment stamp is.'
+        );
+
+        TinyAssert::same(
+            TwoOverrideMigrator::CURRENT,
+            TwoOverrideMigrator::classify($source, '2.7.1'),
+            'A current override whose body happens to contain stamp-shaped text in a string '
+            . 'literal must classify CURRENT. Reading the literal would report the fake '
+            . '2.4.0 and delete a file that was never stale.'
+        );
+    }
+
+    private static function testUntokenisableSourceIsLeftAlone(): void
+    {
+        // No `<?php` open tag: token_get_all() yields inline HTML and no comment
+        // tokens, so nothing is ours and nothing is touched. Failing towards
+        // "leave it alone" is the whole point — the alternative is deleting a
+        // file we could not read.
+        TinyAssert::same(
+            TwoOverrideMigrator::UNSTAMPED,
+            TwoOverrideMigrator::classify("* module: twopayment\n* version: 2.4.0\n", '2.7.1'),
+            'Source that yields no PHP comment tokens must classify UNSTAMPED, even when the '
+            . 'raw bytes look exactly like a stamp.'
         );
     }
 }
