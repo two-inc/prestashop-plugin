@@ -103,6 +103,12 @@ class TwoCompanySearch {
         this._companySearchSeq = 0;
         this._companySearchXhr = null;
 
+        // Set by destroy(). Every entry point reachable from an event checks it,
+        // so make it explicit rather than relying on undefined being falsy.
+        this._destroyed = false;
+        // Pending retry from setupCountryChangeListener(), cleared on destroy.
+        this._countryRetryTimeoutId = null;
+
         this.init();
     }
     
@@ -297,7 +303,28 @@ class TwoCompanySearch {
      */
     setupAutocomplete() {
         if (!this.config.checkoutHost) {
-            
+
+            return;
+        }
+
+        // A destroyed instance must never touch the DOM again.
+        //
+        // TwoCheckoutManager.handleAddressFormUpdate() destroys this instance and
+        // builds a fresh one on every `updatedAddressForm`, but the handler this
+        // instance registered on that same event cannot be unregistered -
+        // `prestashop.on` has no `off` - so a destroyed instance still gets
+        // called and still runs this method.
+        //
+        // That used to be harmless: the destroyed instance held a jQuery object
+        // for the node PrestaShop had already replaced, so its work landed on a
+        // detached element and went nowhere. Once this method started
+        // re-resolving the field against the live DOM, the destroyed instance
+        // began resolving to the SAME live input as the live instance and
+        // re-binding the widget with its own stale closures - and its
+        // organizationField is still the detached hidden `companyid` input its
+        // own init() created, so the selected company's organisation number was
+        // written somewhere that no longer submits. Guard, do not re-resolve.
+        if (this._destroyed) {
             return;
         }
 
@@ -308,11 +335,40 @@ class TwoCompanySearch {
         // that is no longer on the page.
         const currentField = $(this.config.companyFieldSelector);
         if (currentField.length) {
+            const previousField = this.companyField;
+            const isDifferentNode = previousField
+                && previousField.length
+                && previousField.get(0) !== currentField.get(0);
+            // Release the widget still attached to the node we are moving off.
+            // destroy() only ever sees whatever companyField points at now, so
+            // without this each address-form update abandoned a live widget - and
+            // its `<ul class="ui-autocomplete">` menu, which jQuery UI appends to
+            // document.body rather than next to the input - with nothing left
+            // holding a reference that could clean either up.
+            if (isDifferentNode) {
+                try {
+                    if (previousField.hasClass('ui-autocomplete-input')) {
+                        previousField.autocomplete('destroy');
+                    }
+                } catch (e) {
+                    // Already gone or never initialised; nothing to release.
+                }
+                previousField.removeClass(
+                    'two-company-search-input two-company-search-loading ui-autocomplete-loading'
+                );
+            }
             this.companyField = currentField;
         }
         if (!this.companyField || !this.companyField.length) {
             return;
         }
+
+        // Drop any custom dropdown left over from a previous setup before
+        // choosing a path. A theme that loads jQuery UI late takes the custom
+        // path first and this branch second, which would otherwise leave an
+        // orphan container listening on the same input as the real widget:
+        // duplicate searches and two things fighting over one spinner.
+        this.teardownCustomAutocomplete();
 
         // Marks the field for the in-field spinner CSS (views/css/two.css).
         this.companyField.addClass('two-company-search-input');
@@ -578,11 +634,22 @@ class TwoCompanySearch {
         // Debounced input. Held in a named ref so teardown can unbind it: the
         // listener is on the shared company field, not on the container, so
         // dropping the container would leave it firing.
-        let debounceId = null;
+        // Mutable holder rather than a bare `let` so teardown can reach the
+        // pending timer. A debounce tick that survives teardown would call
+        // searchCompanies(), which bumps the sequence and aborts the NEW
+        // dropdown's in-flight request - that request then resolves as `silent`,
+        // so its spinner is never cleared and the buyer is left on a permanent
+        // "Searching..." row while the orphan renders into a removed list.
+        const debounce = { id: null };
         const onInput = () => {
+            // Defence in depth: teardown unbinds this listener, but a destroyed
+            // instance must not search even if an unbind was somehow missed.
+            if (this._destroyed) {
+                return;
+            }
             const term = inputEl.value || '';
-            clearTimeout(debounceId);
-            debounceId = setTimeout(() => {
+            clearTimeout(debounce.id);
+            debounce.id = setTimeout(() => {
                 if (term.length < 3) {
                     renderResults([]);
                     return;
@@ -633,7 +700,7 @@ class TwoCompanySearch {
         inputEl.addEventListener('blur', onBlur);
 
         // Save for cleanup
-        this._customAutocomplete = { container, list, inputEl, onInput, onBlur };
+        this._customAutocomplete = { container, list, inputEl, onInput, onBlur, debounce };
     }
 
     /**
@@ -646,6 +713,19 @@ class TwoCompanySearch {
         const existing = this._customAutocomplete;
         if (!existing) {
             return;
+        }
+        if (existing.debounce) {
+            clearTimeout(existing.debounce.id);
+            existing.debounce.id = null;
+        }
+        // Clear the fallback path's spinner class here, not just in destroy().
+        // This method also runs when setup switches from the custom path to the
+        // jQuery-UI one (a theme that loads jQuery UI late), and that branch only
+        // ever touches `ui-autocomplete-loading` - so a spinner armed by the
+        // custom path would otherwise keep running on a field with no dropdown,
+        // which is the very failure this teardown exists to prevent.
+        if (this.companyField && this.companyField.length) {
+            this.companyField.removeClass('two-company-search-loading');
         }
         if (existing.inputEl) {
             if (existing.onInput) {
@@ -895,6 +975,12 @@ class TwoCompanySearch {
      * Handle company selection from autocomplete - SIMPLIFIED APPROACH
      */
     onCompanySelected(event, ui) {
+        // A destroyed instance's organizationField is a detached hidden input, so
+        // writing a selection through it silently loses the organisation number.
+        // Stand down instead.
+        if (this._destroyed) {
+            return false;
+        }
         if (!ui.item) {
             return false;
         }
@@ -1130,6 +1216,10 @@ class TwoCompanySearch {
      * Setup event listener for country changes to refresh autocomplete
      */
     setupCountryChangeListener(retryCount = 0) {
+        // A destroyed instance must not re-bind anything (see setupAutocomplete).
+        if (this._destroyed) {
+            return;
+        }
         // Try multiple possible selectors for country field
         const possibleSelectors = [
             "select[name='id_country']",
@@ -1177,7 +1267,7 @@ class TwoCompanySearch {
             
             // Try again after a delay (DOM might not be fully ready) - max 3 retries
             if (retryCount < 3) {
-                setTimeout(() => {
+                this._countryRetryTimeoutId = setTimeout(() => {
                     this.setupCountryChangeListener(retryCount + 1);
                 }, 1000);
             }
@@ -1196,6 +1286,17 @@ class TwoCompanySearch {
         if (!this._addressFormListenerBound && typeof prestashop !== 'undefined' && prestashop.on) {
             this._addressFormListenerBound = true;
             prestashop.on('updatedAddressForm', () => {
+                // Bail once destroyed. `prestashop.on` has no `off`, so this
+                // handler outlives the instance that registered it and the only
+                // available defence is for the callback to stand down. Note what
+                // the guard above does and does not buy: it stops ONE instance
+                // registering repeatedly, but the manager creates a new instance
+                // per address-form update and each one registers once, so the
+                // handler count still grows by one per event. They are inert
+                // after this check, which is what makes that acceptable.
+                if (this._destroyed) {
+                    return;
+                }
                 // Address form was re-rendered; re-bind country listener and autocomplete
                 this.setupCountryChangeListener(0);
                 this.setupAutocomplete();
@@ -1211,8 +1312,22 @@ class TwoCompanySearch {
 
             // Remove country change listener
             const countryField = document.querySelector("select[name='id_country']");
-            if (countryField && this.countryListener) {
-                countryField.removeEventListener('change', this.countryListener);
+            // Stop the pending retry before anything else: it would otherwise
+            // fire up to 3s from now, resolve the country select against the
+            // LIVE document and bind this dying instance's listener to it.
+            clearTimeout(this._countryRetryTimeoutId);
+            this._countryRetryTimeoutId = null;
+            // Unbind from the element actually bound. setupCountryChangeListener
+            // picks the first of five fallback selectors, so re-querying only
+            // `select[name='id_country']` here missed the listener entirely on a
+            // theme that matched one of the others - leaking a live handler per
+            // address-form update.
+            if (this.countryListener) {
+                if (this._boundCountrySelector) {
+                    this._boundCountrySelector.removeEventListener('change', this.countryListener);
+                } else if (countryField) {
+                    countryField.removeEventListener('change', this.countryListener);
+                }
             }
             // Drop the spinner classes. The abort above resolves no handler, so
             // without this a teardown mid-search leaves a spinner running in a
@@ -1226,13 +1341,24 @@ class TwoCompanySearch {
             if (this.companyField && this.companyField.length && this.companyField.hasClass('ui-autocomplete-input')) {
                 this.companyField.autocomplete('destroy');
             }
-            // Remove custom autocomplete if present. Also unbinds its listeners,
-            // which the inline version here did not.
+        } catch (e) {
+            // no-op
+        }
+        // Remove the custom dropdown in its OWN try. It unbinds live listeners and
+        // clears the pending debounce, so it must not be skippable by an earlier
+        // failure - jQuery UI's bridge can throw on a foreign or half-initialised
+        // widget, and leaving those listeners bound while the instance is marked
+        // destroyed is exactly the zombie this guard exists to stop.
+        try {
             this.teardownCustomAutocomplete();
         } catch (e) {
             // no-op
         }
         this.isInitialized = false;
+        // Set LAST and unconditionally, outside the try: even if teardown threw
+        // half way, this instance must never act on the DOM again. Everything
+        // that can be re-entered from an event checks it.
+        this._destroyed = true;
     }
 
     persistCompanyToCookie(data) {
