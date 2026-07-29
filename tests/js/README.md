@@ -80,14 +80,29 @@ cache:
 - organisation-number extraction across the payload shapes different registries use.
 - the cache: outlives the instance that filled it, keys on the country so two countries
   never share results, expires after five minutes, and evicts oldest-first at fifty
-  entries. The key/wire invariant is asserted directly as well as through each fallback
-  case: `getCurrentCountry()` never returns empty — it falls through to a
-  `navigator.language` guess and then to a literal `'GB'` — and whichever of those wins
-  reaches both the cache key and the `country` parameter, so neither can believe in a
-  country the other does not. (The `'GB'` last resort needs the locale stubbed, since
-  jsdom's `en-US` default hides it.) The one place they could still fork is a country
-  change *during* a request, since the key is built before the request and closed over —
-  pinned too: the entry stays filed under the country the request actually carried.
+  entries. The key/wire invariant is asserted directly as well as through each resolution
+  case: whatever `getCurrentCountry()` returns reaches both the cache key and the `country`
+  parameter, so neither can believe in a country the other does not. The one place they
+  could still fork is a country change *during* a request, since the key is built before
+  the request and closed over — pinned too: the entry stays filed under the country the
+  request actually carried.
+- country resolution, which decides which register is searched: the `data-iso-code`
+  attribute, then the server-supplied `window.twopayment.countries` id-to-ISO map (built
+  from this shop's own country table), then an exact match on the option's visible text.
+  When none resolves, `getCurrentCountry()` returns `''` and **no search is made** —
+  reported as `{ countryUnresolved: true }`, rendered as a "pick a country" row rather
+  than an empty list, and never cached. It used to guess instead: `navigator.language`
+  and then a literal `'GB'`, so a shop the chain could not read searched GB companies for
+  every buyer, silently, forever. Both guesses are pinned as gone, the locale one with a
+  stub since jsdom's `en-US` default would otherwise hide it. Omitting the parameter is
+  not an alternative — `country` is required on `GET /companies/v2/company`, so an
+  omitted one is a 422.
+
+  The source-level half of that lives in the PHP suite
+  (`tests/CompanySearchCountrySourcingSpec.php`): that the map is still injected, that the
+  i18n key the JS reads still exists under that name, and that neither guess has come
+  back. Reachable-in-jsdom behaviour is only a subset — a re-added `'GB'` on a path no
+  test builds a DOM for would pass every Jest case here.
 
 `company-search-rerender.test.js` — what happens when PrestaShop re-renders the address
 form (which it does for something as ordinary as a country change):
