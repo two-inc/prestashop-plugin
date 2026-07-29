@@ -426,16 +426,32 @@ twopayment/
 
 ## Versioning and upgrade scripts
 
-The version-bump level is decided by convention, not by hand:
+The version is computed from the change itself, not from the branch it lands on:
 
-| Change lands on | Level | Who does it                                      |
-| --------------- | ----- | ------------------------------------------------ |
-| `staging`       | patch | Automatic — `.github/workflows/version-bump.yml` |
-| `main`          | minor | Manual — `make bump`                             |
-| either          | major | Escape hatch, see below                          |
+| Change                | What happens                                                                                      |
+| --------------------- | ------------------------------------------------------------------------------------------------- |
+| PR into `staging`     | The version is computed and committed onto the PR's own branch — `.github/workflows/version-bump.yml` |
+| merge into `staging`  | Nothing. The merge brings in the version its PR already computed.                                 |
+| `staging` into `main` | Nothing is computed. `main` tags the version already in the tree and cuts the Release.             |
 
-**Do not hand-run a bump for a PR into `staging`.** It is automated, and a
-manual bump would double-bump when the workflow fires on the merge.
+With `M` the version on `origin/main` and `C` the version on the PR head, the
+PR's own commits (`origin/staging..HEAD`, `--no-merges`) are classified by
+conventional-commit type:
+
+- a `!` on the type (`feat!:`, `TWO-1/fix(scope)!:`) or a `BREAKING CHANGE:`
+  footer → `(M.major + 1).0.0`
+- a `feat:` → `M.major.(M.minor + 1).0`
+- anything else — `fix`, and `chore` / `docs` / `ci` / `test` / `refactor`
+  alike → `M.major.M.minor.(M.patch + 1)`
+
+The candidate is then clamped with `max(C, candidate)`. That clamp is what makes
+the whole thing idempotent: a re-run, the `synchronize` event fired by the bump
+commit itself, and a second fix commit on the same PR all compute the same
+answer and write nothing. It also means the version can never regress while
+`main` is behind `staging`.
+
+**Do not hand-run a bump for a PR into `staging`.** CI owns it. `make bump`
+previews the decision and writes nothing.
 
 A major is not chosen by hand either. Two independent signals are considered and
 the higher wins:
@@ -448,13 +464,16 @@ the higher wins:
   This covers a _planned_ major that no single commit happens to mark. It is
   reviewable in the PR that decides it, and it is not cleared afterwards — it
   disarms itself once the major it names has shipped. A `.next-major` naming a
-  major _below_ the current version is a hard failure, not a no-op.
+  major _below the major on `main`_ is a hard failure, not a no-op.
 
-- **Discovered** — a `!` on a conventional-commit type (`feat!:`) or a
-  `BREAKING CHANGE:` footer, in the commits since the last bump.
+- **Discovered** — a `!` on a conventional-commit type or a `BREAKING CHANGE:`
+  footer, in **this PR's own commits** only. Deliberately not the cumulative
+  `main..staging` range: a break that already landed on `staging` must not be
+  re-discovered by every later PR.
 
-`.github/scripts/decide-bump-level.sh` implements all of this and logs its full
-reasoning on every run. It is identical in every Two plugin repository.
+`.github/scripts/decide-bump-level.sh` implements all of this, is unit-tested by
+`.github/scripts/test-decide-bump-level.sh`, and logs its full reasoning on every
+run. It is identical in every Two plugin repository.
 
 ### Why the version is load-bearing here
 
