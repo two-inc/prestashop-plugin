@@ -48,6 +48,9 @@ jobs:
           php -l tests/IntentApprovedNoticeSpec.php
           php -l tests/DeployVersionInfoSpec.php
           php -l tests/UpgradeScriptVersionSpec.php
+          php -l tests/OverrideMigrationSpec.php
+          php -l classes/TwoOverrideMigrator.php
+          php -l upgrade/upgrade-2.7.1.php
           php -l tests/run.php
           # Integration probes + their harness. They only run inside a
           # PrestaShop container (.github/workflows/integration.yml), so this
