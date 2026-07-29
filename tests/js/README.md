@@ -85,7 +85,9 @@ cache:
   `navigator.language` guess and then to a literal `'GB'` — and whichever of those wins
   reaches both the cache key and the `country` parameter, so neither can believe in a
   country the other does not. (The `'GB'` last resort needs the locale stubbed, since
-  jsdom's `en-US` default hides it.)
+  jsdom's `en-US` default hides it.) The one place they could still fork is a country
+  change *during* a request, since the key is built before the request and closed over —
+  pinned too: the entry stays filed under the country the request actually carried.
 
 `company-search-rerender.test.js` — what happens when PrestaShop re-renders the address
 form (which it does for something as ordinary as a country change):
@@ -127,6 +129,10 @@ form (which it does for something as ordinary as a country change):
   field a *previous* company's fill wrote is cleared (and announces the clear to the
   theme), a buyer edit on top of an autofill turns it back into buyer input, and a value
   two successive companies happen to share is still recognised as autofilled by the third.
+  The load-bearing one is a company *confirming* a value the buyer had already typed:
+  there is no write to do, but the marker still has to be recorded, or the next company
+  that lacks that field reads it as untouched buyer input and one company's address sticks
+  to another for the rest of checkout.
 - the custom fallback used when jQuery UI is absent: its own spinner clears on failure,
   survives a superseded request, and repeated setup leaves exactly one dropdown rather
   than orphan containers listening on the shared field.

@@ -529,6 +529,27 @@ describe('class-static result cache', () => {
         });
     });
 
+    test('a country change mid-request does not re-file the response', () => {
+        // The one way key and wire could still fork: the key is built before the
+        // request and closed over, so if the buyer changes country while the
+        // response is in flight, the entry must stay filed under the country the
+        // REQUEST carried, not the one now selected. It does, because both are
+        // resolved in the same synchronous tick before the request goes out.
+        const search = makeInstance();
+        search.companyField.autocomplete('instance').search('exa');
+        expect(new URL(ajax.last().url).searchParams.get('country')).toBe('GB');
+
+        const inFlight = ajax.last();
+        document.querySelector("select[name='id_country']").innerHTML =
+            '<option value="44" data-iso-code="NO" selected>Norge</option>';
+        expect(search.getCurrentCountry()).toBe('NO');
+
+        inFlight.succeed(SEARCH_RESPONSE);
+
+        expect(TwoCompanySearch.cacheGet('exa|GB')).not.toBeNull();
+        expect(TwoCompanySearch.cacheGet('exa|NO')).toBeNull();
+    });
+
     test('an entry expires after five minutes, and drops on read', () => {
         // Hard-coded rather than read off the class: the boundary logic and the
         // VALUE are separate decisions, and a five-minute window is the one that

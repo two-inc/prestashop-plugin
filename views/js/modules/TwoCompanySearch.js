@@ -10,6 +10,13 @@ class TwoCompanySearch {
     // later fill can tell "we put this here" from "the buyer typed this". The
     // buyer editing the field leaves the attribute stale rather than matching,
     // which is the signal we need - see autoFillAddress().
+    //
+    // It lives on the DOM node, so PrestaShop replacing the address form on
+    // `updatedAddressForm` takes it with the node. A value that survives that
+    // re-render therefore reads as buyer input to the next fill and is left
+    // alone. That is the residual case, and it errs the right way: the cost is
+    // one company's city outliving its selection across a re-render, against
+    // blanking an answer the buyer gave us.
     static AUTOFILL_MARKER_ATTR = 'data-two-autofilled-value';
 
     /**
