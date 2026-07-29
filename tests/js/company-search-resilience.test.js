@@ -447,10 +447,11 @@ describe('class-static result cache', () => {
         const search = makeInstance();
         document.querySelector("select[name='id_country']").innerHTML = '';
 
-        // NOTE: getCurrentCountry() never returns empty, so buildCacheKey()'s
-        // docblock is wrong about an empty segment for the unselected case — that
-        // path is unreachable. Strategy 4 is a navigator.language guess, which
-        // under jsdom is en-US.
+        // There is no "no country selected" key: getCurrentCountry() never
+        // returns empty, it guesses from navigator.language (en-US under jsdom).
+        // What matters is that the guess reaches the KEY and the WIRE as the same
+        // value — a country the key believes in but the request does not is how
+        // one country's results end up answering another's search.
         expect(search.getCurrentCountry()).toBe('US');
         expect(search.buildCacheKey('exa')).toBe('exa|US');
         search.searchCompanies('exa', callbackRecorder().fn);
@@ -496,9 +497,57 @@ describe('class-static result cache', () => {
             // reads getCurrentCountry() back cannot fail if it changes.
             expect(search.getCurrentCountry()).toBe('GB');
             expect(search.buildCacheKey('exa')).toBe('exa|GB');
+            // And the same 'GB' goes on the wire, so the entry filed under it
+            // really is a GB search rather than a server-default one wearing a
+            // GB label.
+            search.searchCompanies('exa', callbackRecorder().fn);
+            expect(new URL(ajax.last().url).searchParams.get('country')).toBe('GB');
         } finally {
             language.mockRestore();
         }
+    });
+
+    test('the key and the wire never disagree about the country', () => {
+        // The invariant both halves of the fix rest on, asserted directly rather
+        // than inferred from the individual fallback cases: whatever
+        // getCurrentCountry() resolves, the request carries it and the key
+        // records it. Give either side its own fallback and the cache starts
+        // answering one country's search with another's results.
+        [
+            ['GB', 'gb'],
+            ['NO', 'NO'],
+            ['DE', 'de']
+        ].forEach(([expected, markup]) => {
+            document.body.innerHTML = '';
+            buildAddressForm({ country: markup });
+            const search = makeInstance();
+            search.searchCompanies('exa', callbackRecorder().fn);
+
+            const onTheWire = new URL(ajax.last().url).searchParams.get('country');
+            expect(onTheWire).toBe(expected);
+            expect(search.buildCacheKey('exa')).toBe('exa|' + onTheWire);
+        });
+    });
+
+    test('a country change mid-request does not re-file the response', () => {
+        // The one way key and wire could still fork: the key is built before the
+        // request and closed over, so if the buyer changes country while the
+        // response is in flight, the entry must stay filed under the country the
+        // REQUEST carried, not the one now selected. It does, because both are
+        // resolved in the same synchronous tick before the request goes out.
+        const search = makeInstance();
+        search.companyField.autocomplete('instance').search('exa');
+        expect(new URL(ajax.last().url).searchParams.get('country')).toBe('GB');
+
+        const inFlight = ajax.last();
+        document.querySelector("select[name='id_country']").innerHTML =
+            '<option value="44" data-iso-code="NO" selected>Norge</option>';
+        expect(search.getCurrentCountry()).toBe('NO');
+
+        inFlight.succeed(SEARCH_RESPONSE);
+
+        expect(TwoCompanySearch.cacheGet('exa|GB')).not.toBeNull();
+        expect(TwoCompanySearch.cacheGet('exa|NO')).toBeNull();
     });
 
     test('an entry expires after five minutes, and drops on read', () => {
