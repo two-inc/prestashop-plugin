@@ -1059,7 +1059,7 @@ class TwoCompanySearch {
 
             // 2. The server-built id -> ISO map for THIS shop's country table.
             // Values are lower-cased by twopayment.php; the API wants upper.
-            const countryId = countryField.value;
+            const countryId = selectedOption.value;
             const isoFromConfig = (window.twopayment && window.twopayment.countries)
                 ? window.twopayment.countries[countryId]
                 : null;
@@ -1533,6 +1533,12 @@ class TwoCompanySearch {
                     token: window.twopayment.ajax_token,
                     company: data.company,
                     companyid: data.companyid,
+                    // Deliberately relayed even when unresolved: '' makes the
+                    // controller's `if (!empty($country))` skip the country
+                    // write and keep whatever it already had, which is the
+                    // wanted outcome. The order payload's country_iso comes
+                    // from the address, never from this cookie, so an empty
+                    // value here can never reach the API as a guess.
                     country: this.getCurrentCountry(),
                     id_address: this.getCurrentAddressId()
                 },
