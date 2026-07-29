@@ -3481,6 +3481,17 @@ class Twopayment extends PaymentModule
             return [];
         }
 
+        // Surcharge-quotability gate (TWO-25269): hide the payment option
+        // when a configured buyer surcharge cannot be denominated in the
+        // cart currency. Same mechanism as the minimum-order gate above -
+        // withholding the option, never erroring the checkout - because the
+        // alternative outcomes are an order created with NO surcharge at all
+        // (silent undercharge) or one carrying an uncapped percentage
+        // (overcharge). See isTwoSurchargeQuotableForCart.
+        if (!$this->isTwoSurchargeQuotableForCart($cart)) {
+            return [];
+        }
+
         // B2B checkout: Two shows for any company-bearing buyer. There is
         // no account-type selector to also gate on (TWO-24755 rework) -
         // the front-end prompts for the company at payment time when
@@ -3838,8 +3849,12 @@ class Twopayment extends PaymentModule
 
         // Offset pricing fee (buyer surcharge) — appended AFTER product-line
         // reconciliation so it never perturbs the cart-vs-lines gate. The fee
-        // is quoted from POST /v1/pricing/order/fee (fail-soft: a missing quote
-        // simply omits the line and never blocks checkout). Applying it in the
+        // is quoted from POST /v1/pricing/order/fee. A missing quote omits the
+        // line HERE, but that is no longer a silent undercharge: TWO-25269
+        // withholds the payment option entirely when the surcharge cannot be
+        // quoted in the cart currency, so a buyer never reaches this builder
+        // in that state, and a quote that fails only at this point leaves the
+        // hidden cart line in place for the parity gate to catch. Applying it in the
         // shared pricing builder keeps the intent, create and update payloads
         // consistent, so the order-intent approval reconciles against the same
         // gross the create call sends. TWO-24752 / TWO-24893.
@@ -8098,8 +8113,17 @@ class Twopayment extends PaymentModule
      * conversion rates, so the plugin reasons with the same rates
      * checkout-api enforces server-side. Returns null when no rate table has
      * ever been fetched or either currency is absent from it - the CALLER
-     * decides the failure posture (the checkout gate fails closed on the
-     * platform minimum, the decline hint and admin descriptions fail soft).
+     * decides the failure posture, and since TWO-25269 every path that
+     * decides an amount the buyer is CHARGED fails closed: the
+     * platform-minimum gate and the buyer-surcharge gate both withhold the
+     * payment option. Only DISPLAY paths (the decline hint, the admin
+     * descriptions, the per-term chip previews) still degrade.
+     *
+     * Deliberately silent: this method is shared by fail-closed and
+     * fail-soft callers, so an error log here would fire on every preview
+     * degrade. The fail-closed decision sites log instead - see
+     * isTwoSurchargeQuotableForCart, convertTwoBuyerFeeShareCurrency and
+     * logTwoMinimumOrderGateDecision.
      *
      * A stale table is still served (last-known-good, ticket fail
      * semantics); a cache miss triggers ONE TTL/backoff-gated on-demand
@@ -8820,17 +8844,37 @@ class Twopayment extends PaymentModule
      * configured in into the quote currency, via Two's FX rates (TWO-25105).
      * Percentage members are currency-agnostic and pass through untouched.
      *
-     * Returns null when a conversion is needed but no rate is available -
-     * the caller omits the quote entirely (fee line skipped, checkout never
-     * blocked) instead of quoting a fixed fee denominated in the wrong
-     * currency, which is what the old currency pinning silently did on
-     * multi-currency stores.
+     * Returns null when the block cannot be honestly re-denominated, which
+     * since TWO-25269 is a FAIL-CLOSED signal: the caller omits the quote and
+     * the payment option is withheld, rather than quoting a fixed fee
+     * denominated in the wrong currency (what the old currency pinning
+     * silently did on multi-currency stores) or charging a surcharge the
+     * merchant never configured.
+     *
+     * Two distinct null cases, both of which PrestaShop previously missed
+     * entirely:
+     *
+     *  - No rate for the pair. Nothing can be denominated.
+     *  - A CONFIGURED `cap` whose converted value rounds to 0.00. A zero cap
+     *    is indistinguishable downstream from NO cap, so passing it through
+     *    sends an UNCAPPED percentage - an overcharge. WooCommerce guards
+     *    this; PrestaShop did not.
+     *
+     * The third rounds-to-zero case is deliberately NOT a failure: a fixed
+     * `surcharge` that converts to 0.00 is a legitimately tiny configured
+     * amount, genuinely negligible in a stronger currency, and 0.00 is the
+     * arithmetically correct answer. It is logged at info level and passes
+     * through.
+     *
+     * An ABSENT cap is a legitimate configuration and never a failure - it
+     * means an uncapped percentage surcharge, which continues to be charged.
      *
      * @param array $share buyer_fee_share block from TwoSurchargeCalculator
      * @param string $quote_currency_iso the currency the fee is quoted in
+     * @param int|null $days term the block belongs to, for the failure log
      * @return array|null
      */
-    public function convertTwoBuyerFeeShareCurrency(array $share, $quote_currency_iso)
+    public function convertTwoBuyerFeeShareCurrency(array $share, $quote_currency_iso, $days = null)
     {
         if (!isset($share['surcharge']) && !isset($share['cap'])) {
             return $share;
@@ -8840,13 +8884,43 @@ class Twopayment extends PaymentModule
         if ($quote_iso === '' || $shop_iso === '' || $quote_iso === $shop_iso) {
             return $share;
         }
+        $pair = ($shop_iso ?: '?') . '->' . ($quote_iso ?: '?');
+        $term = $days === null ? 'unspecified' : (int) $days;
         foreach (array('surcharge', 'cap') as $member) {
             if (!isset($share[$member])) {
+                // An absent cap is uncapped-by-design, not a failure.
                 continue;
             }
-            $converted = $this->convertTwoAmountBetweenCurrencies((float) $share[$member], $shop_iso, $quote_iso);
+            $configured = (float) $share[$member];
+            $converted = $this->convertTwoAmountBetweenCurrencies($configured, $shop_iso, $quote_iso);
             if ($converted === null) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Buyer surcharge unquotable - no FX rate ' . $pair
+                    . ' for the configured ' . $member . ' on term ' . $term . ' days; failing closed',
+                    3
+                );
                 return null;
+            }
+            if ($member === 'cap' && $configured > 0 && round($converted, 2) <= 0.0) {
+                // A zero cap reads downstream as NO cap: an uncapped
+                // percentage, i.e. an overcharge. Never send it.
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Buyer surcharge unquotable - configured cap ' . $this->getTwoRoundAmount($configured)
+                    . ' ' . $shop_iso . ' rounds to 0.00 ' . $quote_iso . ' (' . $pair . ') on term ' . $term
+                    . ' days; a zero cap would send an uncapped percentage, failing closed',
+                    3
+                );
+                return null;
+            }
+            if ($member === 'surcharge' && $configured > 0 && round($converted, 2) <= 0.0) {
+                // Legitimately negligible in a stronger currency - correct,
+                // not a failure.
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Configured fixed buyer surcharge ' . $this->getTwoRoundAmount($configured)
+                    . ' ' . $shop_iso . ' rounds to 0.00 ' . $quote_iso . ' (' . $pair . ') on term ' . $term
+                    . ' days; quoting 0.00, the surcharge is negligible in the cart currency',
+                    1
+                );
             }
             $share[$member] = $converted;
         }
@@ -8854,9 +8928,111 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Whether a configured buyer surcharge can be denominated in the cart
+     * currency at all (TWO-25269). False withholds the payment option.
+     *
+     * WHY THIS EXISTS. Before this gate, a store whose cart currency had no
+     * FX rate against the shop default offered Two normally, the fee quote
+     * came back null, applyTwoSurchargeCartLineSync removed the hidden
+     * surcharge cart line as though the buyer had deselected it, and the
+     * order was created with ZERO surcharge and nothing logged. A silent
+     * undercharge on every affected order.
+     *
+     * THE CONDITION IS TERM-INDEPENDENT, deliberately. No term is selected
+     * when payment options render, so the gate cannot ask "is the chosen
+     * term quotable". It does not need to: the rate lookup for the
+     * (shop default -> cart) pair fails identically for every term, so one
+     * unresolvable pair condemns all of them. Gating instead on "any offered
+     * term is unquotable" would over-reject a whole store because of one
+     * misconfigured term.
+     *
+     *   surcharge enabled
+     *   AND cart currency !== the currency the surcharge is configured in
+     *   AND at least one offered term carries a fixed or cap component
+     *   AND the rate is unresolvable
+     *   -> withhold
+     *
+     * A percentage-only grid needs no conversion (percentages are
+     * currency-agnostic), so it never trips the gate.
+     *
+     * The per-term cap-rounds-to-zero check rides along here rather than in
+     * a term-independent test because a cap is per-term data. It is
+     * conservative on purpose: ANY offered term whose configured cap rounds
+     * to 0.00 withholds the option, because the buyer is free to pick that
+     * term later and a zero cap sends an uncapped percentage - an
+     * overcharge. Over-rejecting is the right side to err on for an
+     * overcharge; it is not for a misconfigured single term, which is why the
+     * no-rate case above is not evaluated per-term.
+     *
+     * @param Cart $cart
+     * @return bool
+     */
+    public function isTwoSurchargeQuotableForCart($cart)
+    {
+        $settings = $this->getTwoSurchargeSettings();
+        if (empty($settings['enabled'])) {
+            return true;
+        }
+        if (!Validate::isLoadedObject($cart)) {
+            return true;
+        }
+
+        $shop_iso = $this->getTwoShopDefaultCurrencyIso();
+        $cart_currency = new Currency((int) $cart->id_currency);
+        $cart_iso = Validate::isLoadedObject($cart_currency)
+            ? Tools::strtoupper(trim((string) $cart_currency->iso_code))
+            : '';
+        if ($cart_iso === '' || $shop_iso === '' || $cart_iso === $shop_iso) {
+            // No re-denomination needed at all.
+            return true;
+        }
+
+        foreach ($this->getAvailablePaymentTerms() as $days) {
+            $days = (int) $days;
+            $share = $this->buildTwoBuyerFeeShare($days);
+            if ($share === null) {
+                continue;
+            }
+            // Percentage-only terms carry no currency-bearing member.
+            if (!isset($share['surcharge']) && !isset($share['cap'])) {
+                continue;
+            }
+            if ($this->convertTwoBuyerFeeShareCurrency($share, $cart_iso, $days) === null) {
+                // convertTwoBuyerFeeShareCurrency has already logged the
+                // specific reason (no rate, or a cap rounding to zero) at
+                // error level with the currency pair and term.
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Payment option hidden for cart ' . (int) $cart->id
+                    . ' - buyer surcharge cannot be quoted in ' . $cart_iso
+                    . ' (configured in ' . $shop_iso . '), failing closed rather than charging the wrong amount',
+                    3
+                );
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
      * Quote the buyer's fee share for one term via POST /v1/pricing/order/fee.
-     * Fail-soft: returns null on any error (the fee line is simply omitted and
-     * checkout is never blocked on a quote, TWO-24752). Request-scoped cache.
+     * Returns null on any error. Request-scoped cache.
+     *
+     * A null is NOT fail-soft any more (TWO-25269 reverses the TWO-24752
+     * contract). What null means now depends on the caller, and the two kinds
+     * of caller are held apart deliberately:
+     *
+     *  - CHARGE paths - buildTwoSurchargeLineItemForCart, and through it the
+     *    order payload builder and the hidden surcharge cart line - treat
+     *    null as a failure. isTwoSurchargeQuotableForCart withholds the
+     *    payment option up front for the whole-store case (no FX rate,
+     *    cap rounding to zero), and applyTwoSurchargeCartLineSync reports
+     *    failure rather than removing the line, for anything that fails
+     *    later.
+     *  - DISPLAY paths - getTwoOfferedTermSurchargeAmounts' per-term chip
+     *    previews - still degrade that one chip to no fee text. They show a
+     *    number, they never decide one.
+     *
      *
      * @param int    $days
      * @param float  $gross_amount fee basis (product + shipping gross)
@@ -8885,10 +9061,11 @@ class Twopayment extends PaymentModule
         // Fixed amounts and caps are configured in the shop default currency;
         // re-denominate them into the quote currency via Two's FX rates
         // (TWO-25105 - replaces the previous single-currency-stores-only
-        // pinning). An unconvertible amount omits the quote (fail-soft, the
-        // TWO-24752 contract) rather than sending a figure in the wrong
-        // currency.
-        $share = $this->convertTwoBuyerFeeShareCurrency($share, (string) $currency_iso);
+        // pinning). No rate, or a cap that rounds to zero, omits the quote
+        // (TWO-25269 fail-closed: the payment option is withheld) rather than
+        // sending a figure in the wrong currency or an uncapped percentage.
+        // convertTwoBuyerFeeShareCurrency logs the specific reason.
+        $share = $this->convertTwoBuyerFeeShareCurrency($share, (string) $currency_iso, $days);
         if ($share === null) {
             return $this->twoFeeCache[$cacheKey] = null;
         }
@@ -9171,10 +9348,15 @@ class Twopayment extends PaymentModule
      * @param float    $gross_basis product + shipping gross (fee basis)
      * @param int|null $paymentTermDays explicit term (update/admin context has no
      *                 buyer cookie); null falls back to the selected term.
+     * @param bool|null $quoteUnavailable out-param (TWO-25269): true when the
+     *                 null is an unavailable fee QUOTE rather than an absent
+     *                 or genuinely zero surcharge. Callers that CHARGE must
+     *                 distinguish the two - see applyTwoSurchargeCartLineSync.
      * @return array|null
      */
-    public function buildTwoSurchargeLineItemForCart($cart, $gross_basis, $paymentTermDays = null)
+    public function buildTwoSurchargeLineItemForCart($cart, $gross_basis, $paymentTermDays = null, &$quoteUnavailable = null)
     {
+        $quoteUnavailable = false;
         $settings = $this->getTwoSurchargeSettings();
         if (empty($settings['enabled'])) {
             return null;
@@ -9195,11 +9377,17 @@ class Twopayment extends PaymentModule
 
         $fee = $this->fetchTwoTermFee($days, (float) $gross_basis, $buyerCountry, $currencyIso);
         if ($fee === null) {
+            // TWO-25269: tell the caller this null is an unavailable QUOTE,
+            // not an absent surcharge. applyTwoSurchargeCartLineSync must not
+            // read it as the buyer deselecting.
+            $quoteUnavailable = true;
             return null;
         }
 
         $net = round((float) $fee['buyer_fee_share'], 2);
         if ($net <= 0) {
+            // A quoted zero (or a fixed amount that converted to 0.00) is a
+            // real answer, not a failure: no line to add.
             return null;
         }
         // The rate is the selected TaxRulesGroup's destination-resolved rate
@@ -9247,8 +9435,16 @@ class Twopayment extends PaymentModule
      * from the live cart, loop over every offered term, per-term failure
      * degrades that term to 0.0 while the others keep their quotes.
      *
-     * Fail-soft contract (same discipline as fetchTwoMerchantFeeRates): this
-     * sits behind a checkout-render AJAX call and must never throw and never
+     * Fail-soft contract (same discipline as fetchTwoMerchantFeeRates), and
+     * deliberately RETAINED through TWO-25269's fail-closed sweep: these are
+     * DISPLAY previews, not a charge. They show a number, they never decide
+     * one, so a failure degrades the affected chip instead of removing the
+     * payment option. Matches magento-plugin, whose preview paths also
+     * degrade while only the authoritative total path fails closed. The
+     * charge-deciding paths (isTwoSurchargeQuotableForCart,
+     * applyTwoSurchargeCartLineSync) are where the posture flipped.
+     *
+     * This method must never throw and never
      * break checkout. {success:false} — surcharge disabled, no loaded cart,
      * no offered terms, or a zero/empty cart basis — tells the JS to clear
      * the chips' loading indicators (no fee text is shown; the buyer is never
@@ -9933,7 +10129,30 @@ class Twopayment extends PaymentModule
                     $basisTotals = $this->calculateTwoLineItemTotals($this->getTwoProductItems($cart));
                     $basis = round((float) $basisTotals['gross'], 2);
                     if ($basis > 0) {
-                        $line = $this->buildTwoSurchargeLineItemForCart($cart, $basis);
+                        $quoteUnavailable = false;
+                        $line = $this->buildTwoSurchargeLineItemForCart($cart, $basis, null, $quoteUnavailable);
+                        if ($quoteUnavailable) {
+                            // TWO-25269: an unavailable quote is a FAILURE,
+                            // not a deselection. Falling through to the
+                            // removal branch below is what produced the
+                            // silent undercharge this ticket closes: the line
+                            // was deleted, success was reported, and the
+                            // order was created with no surcharge at all.
+                            // Leave the cart untouched and report failure -
+                            // the payment option is withheld up front for the
+                            // whole-store case (isTwoSurchargeQuotableForCart),
+                            // and for anything that only fails here the
+                            // order-create parity gate blocks loudly rather
+                            // than mischarging.
+                            PrestaShopLogger::addLog(
+                                'TwoPayment: Surcharge cart line sync failed for cart ' . (int) $cart->id
+                                . ' - fee quote unavailable; refusing to remove the surcharge line, which'
+                                . ' would create the order with no surcharge at all',
+                                3
+                            );
+                            $result['present'] = $existing !== null;
+                            return $result;
+                        }
                         if ($line !== null) {
                             $expectedNet = round((float) $line['net_amount'], 2);
                             $expectedGross = round((float) $line['gross_amount'], 2);
@@ -9943,9 +10162,11 @@ class Twopayment extends PaymentModule
             }
 
             if ($expectedNet === null || $expectedNet <= 0) {
-                // Deselected / disabled / quote unavailable / empty basis:
+                // Deselected / disabled / genuinely zero fee / empty basis:
                 // the Two payload will carry no fee line either (same quote
-                // source), so removing keeps both sides consistent.
+                // source), so removing keeps both sides consistent. An
+                // unavailable QUOTE no longer reaches here - it returned
+                // failure above (TWO-25269).
                 if ($existing !== null) {
                     $this->removeTwoSurchargeCartLineInternal($cart, $productId);
                     $result['changed'] = true;

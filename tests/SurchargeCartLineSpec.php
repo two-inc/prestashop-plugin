@@ -40,7 +40,7 @@ final class SurchargeCartLineSpec
         self::testDeselectRemovesLineAndReselectReaddsOnce();
         self::testFreshRequestReplayLeavesNoDuplicateOrStaleLine();
         self::testTermChangeUpdatesAmountWithoutDuplicating();
-        self::testQuoteFailureRemovesLineAndStaysConsistent();
+        self::testQuoteFailureKeepsLineAndFailsLoudly();
         self::testCartLineNetMatchesTwoPayloadFeeLine();
         self::testOrderCreateParityGateFailsClosedOnDivergence();
         self::testStaleGuardRemovesLineForOtherPaymentModuleController();
@@ -285,23 +285,49 @@ final class SurchargeCartLineSpec
         TinyAssert::same(10.00, round((float) $lines[0]['total_wt'], 2)); // 25% on 8.00
     }
 
-    private static function testQuoteFailureRemovesLineAndStaysConsistent(): void
+    /**
+     * TWO-25269. This assertion is the OPPOSITE of what it was before that
+     * ticket, and the old behaviour was the bug.
+     *
+     * The sync used to treat "fee quote unavailable" as equivalent to
+     * "surcharge deselected": it removed the cart line and returned success,
+     * on the reasoning that the Two payload would carry no fee line either so
+     * removing kept both sides consistent. Both sides were consistent - and
+     * consistently WRONG. Two was still offered (hookPaymentOptions never
+     * consulted the surcharge at all), so the order was created with ZERO
+     * surcharge and nothing logged. A silent undercharge.
+     *
+     * An unavailable quote is a FAILURE, not a deselection. The cart keeps its
+     * line, success is false, and it is logged. Whole-store causes are caught
+     * earlier by isTwoSurchargeQuotableForCart withholding the payment option;
+     * anything that only fails here reaches the order-create parity gate,
+     * which blocks loudly.
+     */
+    private static function testQuoteFailureKeepsLineAndFailsLoudly(): void
     {
         $module = self::makeModule();
         $cart = self::makeCart();
         $module->syncTwoSurchargeCartLine($cart, true);
         TinyAssert::count(1, self::feeLines());
 
-        // Fee quote becomes unavailable: the Two payload would carry no fee
-        // line, so the cart line must go too (consistency over stickiness).
         $module->forcedFeeResponse = ['http_status' => 500];
         // New quote signature (term change) bypasses the request/session cache.
         Context::getContext()->cookie->two_payment_term = 60;
+        PrestaShopLogger::reset();
         $result = $module->syncTwoSurchargeCartLine($cart, true);
-        TinyAssert::true($result['success']);
-        TinyAssert::true($result['changed']);
-        TinyAssert::false($result['present']);
-        TinyAssert::count(0, self::feeLines());
+
+        TinyAssert::false($result['success'], 'an unavailable quote is a failure, not a silent success');
+        TinyAssert::false($result['changed'], 'nothing may be changed on an unquotable sync');
+        TinyAssert::true($result['present'], 'the caller must be told the existing line is still there');
+        TinyAssert::count(1, self::feeLines(), 'the surcharge line must NOT be removed - removing it is the undercharge');
+
+        $logged = false;
+        foreach (PrestaShopLogger::$logs as $entry) {
+            if (strpos($entry['message'], 'refusing to remove the surcharge line') !== false && $entry['severity'] === 3) {
+                $logged = true;
+            }
+        }
+        TinyAssert::true($logged, 'refusing to remove must be logged at error level');
     }
 
     /* ---- requirement 2 + 5: single computation path, parity gate ---- */

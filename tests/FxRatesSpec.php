@@ -16,11 +16,27 @@ declare(strict_types=1);
  *  - Failure: a failed fetch serves the last-known-good table (gate
  *    conversions keep working) and backs off FX_RATES_RETRY_BACKOFF before
  *    retrying; with NO table ever fetched, conversions resolve null - the
- *    platform-minimum gate fails closed, display conversions fail soft.
+ *    charge-deciding gates fail closed, display conversions fail soft.
  *  - Fixed surcharge / cap re-denomination: fetchTwoTermFee converts the
  *    shop-default-currency figures into the quote currency through the
  *    endpoint rate (pinning removed); an unconvertible figure omits the
  *    quote instead of sending a wrong-currency amount.
+ *
+ * TWO-25269 reverses the buyer-surcharge posture from fail-soft to
+ * fail-closed, and the assertions in the second half of this file are the
+ * OPPOSITE of what they asserted before it. Three rounds-to-zero cases, held
+ * apart deliberately:
+ *
+ *   no rate resolvable        -> withhold the payment option, error log
+ *   configured cap -> 0.00    -> withhold the payment option, error log
+ *                                (a zero cap reads as NO cap downstream: an
+ *                                uncapped percentage, i.e. an OVERCHARGE)
+ *   fixed amount -> 0.00      -> proceed with 0.00, info log (correct, not a
+ *                                failure)
+ *
+ * An ABSENT cap is a legitimate uncapped-percentage configuration and must
+ * keep charging normally - see
+ * testAbsentCapStillChargesAndOffersTheOption.
  */
 final class FxRatesSpec
 {
@@ -41,6 +57,15 @@ final class FxRatesSpec
         self::testSettingsSaveWarmsColdCache();
         self::testSettingsSaveWarmRespectsFailureBackoffAndMissingKey();
         self::testMerchantIdentityChangeClearsFxClockSoWarmFetchRuns();
+        // TWO-25269 - fail-closed reversal.
+        self::testNoRateForCartCurrencyWithholdsPaymentOption();
+        self::testPercentageOnlySurchargeNeverTripsTheGate();
+        self::testCapRoundingToZeroWithholdsPaymentOption();
+        self::testAbsentCapStillChargesAndOffersTheOption();
+        self::testFixedSurchargeRoundingToZeroProceedsWithInfoLog();
+        // The cart-line-sync half of TWO-25269 lives in SurchargeCartLineSpec,
+        // which already owns the real cart/product/tax fixture:
+        // testQuoteFailureKeepsLineAndFailsLoudly.
     }
 
     /**
@@ -526,15 +551,7 @@ final class FxRatesSpec
     {
         self::reset();
         self::surchargeFixtures();
-
-        // Fresh table WITHOUT the quote currency: USD cannot be converted
-        // and (fresh TTL) no refetch is due.
-        Configuration::updateValue(Twopayment::CONFIG_FX_RATES, json_encode([
-            'base' => 'EUR',
-            'as_of' => '2026-07-14',
-            'rates' => ['EUR' => 1.0, 'NOK' => 0.1],
-        ]));
-        Configuration::updateValue(Twopayment::CONFIG_FX_RATES_TS, time());
+        self::tableWithoutUsd();
 
         $module = self::moduleWithResponses([
             '/v1/pricing/order/fee' => [
@@ -544,12 +561,286 @@ final class FxRatesSpec
             ],
         ]);
 
-        // Fail-soft: the quote is omitted entirely (fee line skipped,
-        // checkout never blocked) instead of quoting 10 "USD" that are
-        // really EUR - the wrong-currency figure the old pinning produced.
+        // The quote is omitted rather than quoting 10 "USD" that are really
+        // EUR - the wrong-currency figure the old pinning produced.
         TinyAssert::same(null, $module->fetchTwoTermFee(30, 1000.0, 'US', 'USD'));
         foreach ($module->requests as $request) {
             TinyAssert::notSame('/v1/pricing/order/fee', $request['endpoint'], 'no pricing call may carry an unconverted fixed fee');
         }
+
+        // TWO-25269: it is no longer SILENT. The previous contract logged
+        // nothing at all here, which is what let the undercharge through
+        // unnoticed on live stores.
+        TinyAssert::true(
+            self::hasLog('no FX rate EUR->USD', 3),
+            'an unquotable surcharge must log at error level naming the currency pair'
+        );
+        TinyAssert::true(self::hasLog('term 30 days', 3), 'the failure log must name the term');
     }
+
+    /* ------------------------------------------------------------------ *
+     *  TWO-25269 - the fail-closed reversal                               *
+     *                                                                     *
+     *  Before this ticket PrestaShop offered Two normally when the         *
+     *  surcharge could not be denominated in the cart currency, the fee    *
+     *  quote came back null, the hidden surcharge cart line was REMOVED    *
+     *  as though the buyer had deselected it, and the order was created    *
+     *  with ZERO surcharge and nothing logged. A silent undercharge.       *
+     * ------------------------------------------------------------------ */
+
+    /** Fresh table (no refetch due) that simply lacks USD. */
+    private static function tableWithoutUsd(): void
+    {
+        Configuration::updateValue(Twopayment::CONFIG_FX_RATES, json_encode([
+            'base' => 'EUR',
+            'as_of' => '2026-07-14',
+            'rates' => ['EUR' => 1.0, 'NOK' => 0.1, 'GBP' => 1.25, 'IDR' => 0.00006],
+        ]));
+        Configuration::updateValue(Twopayment::CONFIG_FX_RATES_TS, time());
+    }
+
+    private static function hasLog(string $needle, ?int $severity = null): bool
+    {
+        foreach (PrestaShopLogger::$logs as $entry) {
+            if (strpos($entry['message'], $needle) === false) {
+                continue;
+            }
+            if ($severity !== null && $entry['severity'] !== $severity) {
+                continue;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * A module whose hookPaymentOptions is reachable: a company-bearing
+     * billing address, the cart currency enabled for the module, and a
+     * sentinel payment option so a returned option is countable.
+     */
+    private static function gateModule(int $idCurrency): object
+    {
+        StubStore::$countries[826] = 'GB';
+        StubStore::$addresses[904] = [
+            'id_country' => 826,
+            'company' => 'Example Trading Ltd',
+            'vat_number' => 'GB123456789',
+            'loaded' => true,
+        ];
+        StubStore::$moduleCurrencies['twopayment'] = [['id_currency' => $idCurrency]];
+
+        $module = new class extends TwopaymentTestHarness {
+            protected function getTwoPaymentOption()
+            {
+                return (object) ['method' => 'two'];
+            }
+        };
+        $module->active = true;
+
+        $cart = new Cart(4200 + $idCurrency);
+        $cart->id_address_invoice = 904;
+        $cart->id_currency = $idCurrency;
+        $module->context->cart = $cart;
+
+        return $module;
+    }
+
+    /**
+     * Case 1 of 3: NO RATE RESOLVABLE -> fail closed.
+     *
+     * The payment option is WITHHELD, reusing the same mechanism the
+     * minimum-order gate already uses (hookPaymentOptions returns []) rather
+     * than erroring the checkout.
+     */
+    private static function testNoRateForCartCurrencyWithholdsPaymentOption(): void
+    {
+        self::reset();
+        self::surchargeFixtures();
+        // Shop default stays EUR; the cart is in USD, which the table lacks.
+        StubStore::$currencies[4] = ['iso_code' => 'USD', 'conversion_rate' => 999.0, 'loaded' => true];
+        self::tableWithoutUsd();
+
+        $module = self::gateModule(4);
+
+        TinyAssert::same(0, count($module->hookPaymentOptions([])), 'an unquotable surcharge must withhold the payment option');
+        TinyAssert::true(
+            self::hasLog('Payment option hidden for cart', 3),
+            'withholding the option is invisible to the merchant unless logged'
+        );
+        TinyAssert::true(self::hasLog('cannot be quoted in USD', 3));
+
+        // Same store, cart in the shop's own currency: nothing to convert, so
+        // the gate must not fire.
+        self::reset();
+        self::surchargeFixtures();
+        self::tableWithoutUsd();
+        $sameCurrency = self::gateModule(1);
+        TinyAssert::same(1, count($sameCurrency->hookPaymentOptions([])), 'a same-currency cart needs no conversion and must be offered');
+    }
+
+    /**
+     * The gate is TERM-INDEPENDENT: it must not fire merely because the
+     * surcharge grid is percentage-only, since percentages carry no currency.
+     */
+    private static function testPercentageOnlySurchargeNeverTripsTheGate(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '1.5');
+        Configuration::updateValue('PS_TWO_SURCHARGE_FIXED_30', '0');
+        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', '0');
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+        StubStore::$currencies[4] = ['iso_code' => 'USD', 'conversion_rate' => 999.0, 'loaded' => true];
+        self::tableWithoutUsd();
+
+        $module = self::gateModule(4);
+
+        TinyAssert::same(
+            1,
+            count($module->hookPaymentOptions([])),
+            'a percentage-only surcharge is currency-agnostic and must never withhold the option'
+        );
+    }
+
+    /**
+     * Case 2 of 3: a CONFIGURED CAP whose converted value rounds to 0.00 ->
+     * fail closed. A zero cap is indistinguishable downstream from NO cap, so
+     * passing it through sends an UNCAPPED percentage: an OVERCHARGE.
+     * PrestaShop had no guard for this at all.
+     */
+    private static function testCapRoundingToZeroWithholdsPaymentOption(): void
+    {
+        self::reset();
+        // Shop configured in a weak currency: a 20-unit cap is worth
+        // 0.0012 EUR, which rounds to nothing at all.
+        StubStore::$currencies[4] = ['iso_code' => 'IDR', 'conversion_rate' => 999.0, 'loaded' => true];
+        Configuration::updateValue('PS_CURRENCY_DEFAULT', 4);
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'fixed_and_percentage');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '1.5');
+        // Healthy fixed amount - only the cap is the problem.
+        Configuration::updateValue('PS_TWO_SURCHARGE_FIXED_30', '100000');
+        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', '20');
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+        self::tableWithoutUsd();
+
+        // Cart in EUR, shop default IDR.
+        $module = self::gateModule(1);
+
+        TinyAssert::same(0, count($module->hookPaymentOptions([])), 'a cap that rounds to zero would send an uncapped percentage - withhold');
+        TinyAssert::true(
+            self::hasLog('rounds to 0.00 EUR', 3),
+            'the zero-cap overcharge guard must log at error level'
+        );
+        TinyAssert::true(self::hasLog('uncapped percentage', 3), 'the log must say why a zero cap is dangerous');
+
+        // And no pricing call may carry the zero cap.
+        $quoting = self::moduleWithResponses([
+            '/v1/pricing/order/fee' => ['http_status' => 200, 'buyer_fee_share' => '5.00', 'currency' => 'EUR'],
+        ]);
+        TinyAssert::same(null, $quoting->fetchTwoTermFee(30, 1000.0, 'NL', 'EUR'));
+        foreach ($quoting->requests as $request) {
+            TinyAssert::notSame('/v1/pricing/order/fee', $request['endpoint'], 'no pricing call may carry a zero cap');
+        }
+    }
+
+    /**
+     * ⚠ THE CAP IS OPTIONAL. "No cap defined" is a legitimate configuration
+     * meaning an UNCAPPED percentage surcharge, and it must keep charging
+     * normally with the option still offered. An absent cap is never a
+     * failure - only a configured one that converts to nothing.
+     */
+    private static function testAbsentCapStillChargesAndOffersTheOption(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'fixed_and_percentage');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '1.5');
+        Configuration::updateValue('PS_TWO_SURCHARGE_FIXED_30', '10');
+        // No cap configured at all.
+        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', '0');
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+        StubStore::$currencies[2] = ['iso_code' => 'NOK', 'conversion_rate' => 999.0, 'loaded' => true];
+        self::tableWithoutUsd();
+
+        // Shop default EUR, cart NOK - a real cross-currency conversion, just
+        // with no cap to convert.
+        $module = self::gateModule(2);
+        TinyAssert::same(1, count($module->hookPaymentOptions([])), 'an absent cap must never withhold the payment option');
+
+        // And the surcharge is genuinely charged, uncapped: the fixed 10 EUR
+        // reaches the API as 100 NOK and no `cap` member is sent.
+        $quoting = self::moduleWithResponses([
+            '/v1/pricing/order/fee' => ['http_status' => 200, 'buyer_fee_share' => '115.00', 'currency' => 'NOK'],
+        ]);
+        $quote = $quoting->fetchTwoTermFee(30, 1000.0, 'NO', 'NOK');
+        TinyAssert::same('115.00', $quote['buyer_fee_share'], 'an uncapped percentage surcharge must still be charged');
+
+        $pricing = null;
+        foreach ($quoting->requests as $request) {
+            if ($request['endpoint'] === '/v1/pricing/order/fee') {
+                $pricing = $request['payload'];
+            }
+        }
+        TinyAssert::true(is_array($pricing), 'the pricing quote must have been requested');
+        TinyAssert::same(100.0, $pricing['buyer_fee_share']['surcharge']);
+        TinyAssert::same(1.5, $pricing['buyer_fee_share']['percentage']);
+        TinyAssert::false(
+            array_key_exists('cap', $pricing['buyer_fee_share']),
+            'no cap was configured, so none may be invented - the percentage is uncapped by design'
+        );
+    }
+
+    /**
+     * Case 3 of 3: a FIXED amount whose converted value rounds to 0.00 is NOT
+     * a failure. It is a legitimately tiny configured amount, genuinely
+     * negligible in a stronger currency, and 0.00 is the arithmetically
+     * correct answer. Proceed with 0.00, log at INFO.
+     */
+    private static function testFixedSurchargeRoundingToZeroProceedsWithInfoLog(): void
+    {
+        self::reset();
+        StubStore::$currencies[4] = ['iso_code' => 'IDR', 'conversion_rate' => 999.0, 'loaded' => true];
+        Configuration::updateValue('PS_CURRENCY_DEFAULT', 4);
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'fixed_and_percentage');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '1.5');
+        // 20 IDR is worth 0.0012 EUR: negligible, but correct.
+        Configuration::updateValue('PS_TWO_SURCHARGE_FIXED_30', '20');
+        // Healthy cap - only the fixed amount rounds away.
+        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', '500000');
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+        self::tableWithoutUsd();
+
+        $module = self::gateModule(1);
+        TinyAssert::same(
+            1,
+            count($module->hookPaymentOptions([])),
+            'a fixed amount that rounds to zero is arithmetically correct, not a failure - keep offering Two'
+        );
+        TinyAssert::true(
+            self::hasLog('quoting 0.00, the surcharge is negligible', 1),
+            'the negligible-fixed case is info, not error'
+        );
+        TinyAssert::false(
+            self::hasLog('failing closed', 3),
+            'a fixed amount rounding to zero must not be logged as a fail-closed event'
+        );
+
+        // The quote proceeds and carries 0.00 for the fixed member while the
+        // percentage and the (healthy) cap are intact.
+        $quoting = self::moduleWithResponses([
+            '/v1/pricing/order/fee' => ['http_status' => 200, 'buyer_fee_share' => '15.00', 'currency' => 'EUR'],
+        ]);
+        $quote = $quoting->fetchTwoTermFee(30, 1000.0, 'NL', 'EUR');
+        TinyAssert::same('15.00', $quote['buyer_fee_share'], 'the quote must proceed, not be omitted');
+
+        $pricing = null;
+        foreach ($quoting->requests as $request) {
+            if ($request['endpoint'] === '/v1/pricing/order/fee') {
+                $pricing = $request['payload'];
+            }
+        }
+        TinyAssert::true(is_array($pricing), 'the pricing quote must have been requested');
+        TinyAssert::same(0.0, $pricing['buyer_fee_share']['surcharge'], 'a negligible fixed amount is quoted as 0.00');
+        TinyAssert::same(30.0, $pricing['buyer_fee_share']['cap'], '500000 IDR is a healthy 30.00 EUR cap');
+    }
+
 }
