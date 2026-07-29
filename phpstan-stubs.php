@@ -26,3 +26,14 @@ if (!defined('_MYSQL_ENGINE_')) {
 if (!defined('_PS_CACHE_DIR_')) {
     define('_PS_CACHE_DIR_', '/tmp/ps-cache/');
 }
+
+if (!defined('_PS_ROOT_DIR_')) {
+    define('_PS_ROOT_DIR_', '/var/www/html');
+}
+
+// `_PS_ROOT_DIR_ . '/override/'` at runtime. The shop's own override tree, which
+// is a different thing from the module's `override/` template directory — see
+// classes/TwoOverrideMigrator.php.
+if (!defined('_PS_OVERRIDE_DIR_')) {
+    define('_PS_OVERRIDE_DIR_', '/var/www/html/override/');
+}
