@@ -106,6 +106,37 @@ duplicate either in the other.
 legitimately **non-contiguous** (2.6.7 was deliberately skipped, and most
 releases need no migration at all) — never add a contiguity check.
 
+**Touching anything under `override/` is a MIGRATION, not an edit.** The module's
+`override/` directory is a **template**. PrestaShop copies it into the *shop's*
+own override tree once, at install or reset, and from then on the shop's copy is
+the file that executes. Nothing rewrites that copy — not an upgrade, not a
+deploy, not a git-sync, not a module reset. `Module::addOverride()` cannot even do
+it when it runs: for every method the shop copy already declares it *throws*
+rather than replacing, and it has no path that removes one. So:
+
+- **editing** an override changes nothing on any existing shop;
+- **retiring** one leaves it running forever.
+
+Both are **silent** — new version reported, new files on disk, green deploy, old
+behaviour on the storefront. That combination cost a day of diagnosis in
+TWO-25265, where a shop stamped `2.4.0` kept injecting retired address-form
+fields while reporting `2.7.0`.
+
+So the version that changes or retires an override must call
+`TwoOverrideMigrator::refresh($module)` from its upgrade script, naming any
+**retired** path explicitly (a retired file is gone from the module tree, so it
+cannot be discovered). `.github/scripts/check-override-migration.sh` fails the PR
+otherwise; `.github/scripts/test-check-override-migration.sh` tests the check.
+Never delete a shop-level override that carries another module's `module:` stamp —
+that tree is a shared merge target, and `classes/TwoOverrideMigrator.php`
+deliberately refuses to touch co-owned or unstamped files.
+
+Related but **not** the same problem: `.tpl` changes also go stale on a shop,
+because a compiled Smarty template is never regenerated while
+`PS_SMARTY_FORCE_COMPILE` is `0`. That is shop configuration, not a migration, and
+is fixed chart-side in `two-inc/platform-tools` — nothing in this repo can address
+it.
+
 ## Common Failure Patterns to Avoid
 
 - Reintroducing local order writes before provider success.

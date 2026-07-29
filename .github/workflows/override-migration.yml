@@ -1,0 +1,68 @@
+name: Override migration
+
+# Fails a pull request that changes or retires a file under `override/` without
+# an upgrade script to migrate the shops that already hold the old copy.
+#
+# Its own workflow rather than a step in `version-bump.yml`, deliberately, for
+# two reasons. `version-bump.yml` triggers on PRs to `staging` only and skips
+# fork PRs outright (it has nowhere to push a bump commit to) — a governance gate
+# that silently does not run on a whole class of PR is worse than no gate. And
+# this check needs nothing from the version computation, so coupling it to a job
+# that writes commits would only make it fail for reasons unrelated to overrides.
+#
+# Not in `tests.yml` either: that workflow triggers on `push`, where there is no
+# base ref to diff against.
+#
+# See .github/scripts/check-override-migration.sh for the defect this prevents
+# and — more importantly — for the list of things it cannot catch.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: override-migration-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  self-test:
+    # The check is gated on its own tests, for the same reason version-bump.yml
+    # gates the version arithmetic on its: the dangerous failure of a gate is
+    # passing something it should have caught, and that failure is invisible.
+    # Throwaway git repos, no network, a couple of seconds.
+    name: Test the check itself
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - run: .github/scripts/test-check-override-migration.sh
+
+  check:
+    name: A changed override needs a migration
+    needs: self-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Full history: the check uses a three-dot diff, which needs the merge
+          # base of the PR's head and its target branch to exist locally.
+          fetch-depth: 0
+
+      - name: Fetch the base branch
+        # actions/checkout only guarantees the ref it was asked for, and on a
+        # `pull_request` event that is the merge ref — the base branch itself is
+        # not necessarily present under a name the diff can use.
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          git fetch --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+
+      - name: Check override changes carry a migration
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          .github/scripts/check-override-migration.sh \
+            "origin/${BASE_REF}" "${{ github.event.pull_request.head.sha }}"
