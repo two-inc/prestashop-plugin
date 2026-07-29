@@ -782,6 +782,33 @@ describe('the company-detail fill', () => {
         expect($("input[name='city']").val()).toBe('');
     });
 
+    test('a company confirming a value the buyer typed still claims it', async () => {
+        // The load-bearing case for recording the marker OUTSIDE the write
+        // branch: there is nothing to write, because the company's city is the
+        // one the buyer already typed. Record it anyway - the fill has claimed
+        // that value for this company, so the next company that lacks a city
+        // must be able to clear it. With the marker recorded only on write, this
+        // reads as untouched buyer input and the city sticks to the wrong
+        // company for the rest of checkout.
+        $("input[name='city']").val('Exampleton');
+
+        const search = makeInstance();
+        search.onCompanySelected(null, {
+            item: { value: 'Example Trading Ltd', lookup_id: 'lookup-abc-123' }
+        });
+        ajax.last().succeed({ addresses: [{ type: 'BUSINESS', city: 'Exampleton' }] });
+        await flushPromises();
+        expect($("input[name='city']").val()).toBe('Exampleton');
+
+        search.onCompanySelected(null, {
+            item: { value: 'Second Trading Ltd', lookup_id: 'lookup-def-456' }
+        });
+        ajax.last().succeed({ addresses: [{ type: 'BUSINESS', street_address: '2 Second Street' }] });
+        await flushPromises();
+
+        expect($("input[name='city']").val()).toBe('');
+    });
+
     test('clearing a stale autofill notifies the theme', async () => {
         const search = makeInstance();
         search.onCompanySelected(null, {
