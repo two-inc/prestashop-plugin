@@ -37,10 +37,15 @@ declare(strict_types=1);
  *    file (extractCountryFromText() maps country NAMES to 'GB' in a plain map
  *    entry, which is a resolution and not a return). Whole-file shape checks
  *    cost nothing in precision here and cannot be defeated by gutting,
- *    reordering or re-indenting a method. They are textual, so they catch a
- *    re-added literal in any quoting style but not a value assembled at
- *    runtime; a gutted getCurrentCountry() is caught separately, by asserting
- *    that the two real resolution sources it reads are still read at all.
+ *    reordering or re-indenting a method. They are textual, so what they catch
+ *    is a country literal in the RETURN EXPRESSION itself, in any quoting
+ *    style. A literal reached through a variable or a method call is NOT
+ *    caught - `const FALLBACK = 'GB'; return FALLBACK;` walks through, and so
+ *    does `return this.defaultCountry()`. The guard is narrower than the
+ *    defect space on purpose: it pins the shape the defect actually had, and
+ *    the behaviour itself is pinned by Jest. A gutted getCurrentCountry() is
+ *    caught separately, by asserting that the two real resolution sources it
+ *    reads are still read at all.
  */
 final class CompanySearchCountrySourcingSpec
 {
@@ -75,11 +80,15 @@ final class CompanySearchCountrySourcingSpec
      * that start with `*`, and multi-line `/* ... *\/` blocks whose
      * continuation lines start with an ordinary word.
      *
-     * A trailing `//` comment on a code line is NOT stripped, so a
-     * `// ... GB ...` tacked onto the end of real code would false-fail. None
-     * exist in either guarded file; if one is ever added, strip it here rather
-     * than renaming the guess. Trailing `/* ... *\/` blocks and a trailing
-     * `/*` opener ARE stripped, below.
+     * A trailing `//` comment on a code line is NOT stripped. That only matters
+     * for the `navigator.language` sweep, which is a plain substring match: a
+     * `// ... navigator.language ...` tacked onto the end of real code would
+     * false-fail there. It does NOT affect the GB check, which needs a quoted
+     * country code inside a `return` with no intervening `;`, so both
+     * `return ''; // no GB fallback` and `// used to be 'GB'` pass. None of
+     * either exist in the guarded files today; if one is ever added, strip it
+     * here rather than renaming the guess. Trailing `/* ... *\/` blocks and a
+     * trailing `/*` opener ARE stripped, below.
      *
      * Keys are 1-based source line numbers and survive the stripping, so a
      * failure message can point at the real line.
