@@ -28,7 +28,7 @@ Run from module root — these are the same gates CI runs:
 
 ```bash
 make test      # php tests/run.php
-make test-js   # jest over views/js
+make test-js   # jest over views/js (host Node 20+, not containerised)
 make phpstan   # static analysis
 ```
 

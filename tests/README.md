@@ -52,8 +52,11 @@ A new `tests/*Spec.php` file must also be added to the `require` list at the bot
 (`.github/workflows/tests.yml`, job `jest`); locally it is `make test-js`.
 
 ```bash
-make test-js           # installs devDeps on first run, then npm run test:js
+make test-js           # installs devDeps when the lockfile moves, then npm run test:js
 ```
+
+This target runs on the host, not in a container: it needs Node 20+ installed, the
+same implicit prerequisite `bumpver` is for the version targets.
 
 Unlike the PHP harness these tests glob, so a new `tests/js/*.test.js` file needs no
 registration. See `tests/js/README.md` for how the harness stands the browser up.

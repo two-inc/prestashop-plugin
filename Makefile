@@ -147,6 +147,19 @@ logs:
 test:
 	docker run --rm -v "$(CURDIR)":/app -w /app php:8.2-cli php tests/run.php
 
+# Unlike `test` / `phpstan` / `format`, this one runs on the HOST rather than in
+# a container: it needs Node, same implicit prerequisite as `bumpver` for the
+# version targets. Install once with any Node 20+ and it is self-servicing after
+# that. Re-runs `npm ci` whenever the lockfile is newer than the installed tree,
+# so a devDependency bump cannot leave you testing against stale versions while
+# CI tests against the pinned ones.
+## Run the Jest suite over the module's browser JS (needs host Node 20+; same suite CI runs)
+test-js:
+	@if [ ! -d node_modules ] || [ package-lock.json -nt node_modules ]; then \
+		npm ci --no-audit --no-fund; \
+	fi
+	npm run test:js
+
 # Carrier-less shipping (TWO-25200 / TWO-25217). A shop where shipping is
 # priced but no carrier declares a tax rules group for it — the shape the
 # optional "Default shipping tax code" setting exists for. Not part of
@@ -176,11 +189,6 @@ carrierless-shop:
 ## Undo make carrierless-shop: hide the "Default shipping tax code" field again
 carrierless-off:
 	docker exec $(CONTAINER) bash /var/www/html/modules/$(MODULE_NAME)/dev/enable-default-shipping-tax-code --reset
-
-## Run the Jest suite over the module's browser JS (same suite CI runs)
-test-js:
-	@[ -d node_modules ] || npm ci --no-audit --no-fund
-	npm run test:js
 
 ## Run the tests/integration probes against the running local shop (run make carrierless-shop first)
 test-integration:
