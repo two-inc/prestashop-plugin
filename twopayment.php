@@ -1674,9 +1674,9 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Dropdown options for the default shipping tax code. String ids so
-     * PHP 7's loose
-     * `'' == 0` cannot conflate the unselected placeholder with "No tax", and
+     * Dropdown options for the default shipping tax code. String ids, so
+     * PHP 7's loose `'' == 0` cannot conflate the unselected placeholder
+     * with "No tax", and
      * a currently-configured group that has been deactivated is always kept
      * in the list (suffixed "(inactive)") so an unrelated save cannot silently
      * drop the merchant's selection to the first option.
@@ -9210,16 +9210,22 @@ class Twopayment extends PaymentModule
      * fallback - is PrestaShop's first-class "No tax" sentinel: fail-safe is
      * an untaxed fee, never an invented rate. TWO-25071.
      *
+     * Shares ONE normalisation with getTwoSurchargeTaxRulesGroupFormDefault()
+     * (TWO-25279), so the admin form can never display a treatment the
+     * checkout is not applying. It previously used `is_numeric` on the
+     * untrimmed value while the form reader trimmed first: on PHP 7, which
+     * rejects trailing whitespace in a numeric string (PHP 8.0 accepts it),
+     * a stored '400 ' made the form show the merchant's real group while the
+     * checkout silently applied no tax at all. Values in those shapes can
+     * only be written from outside this module.
+     *
      * @return int
      */
     public function getTwoSurchargeTaxRulesGroupId()
     {
-        $raw = Configuration::get(self::CONFIG_SURCHARGE_TAX_RULES_GROUP);
-        if ($raw === false || $raw === null || !is_numeric($raw)) {
-            return 0;
-        }
+        $normalised = $this->getTwoSurchargeTaxRulesGroupFormDefault();
 
-        return max(0, (int) $raw);
+        return $normalised === '' ? 0 : max(0, (int) $normalised);
     }
 
     /**
@@ -10752,6 +10758,11 @@ class Twopayment extends PaymentModule
      * unset/blank/non-numeric to 0 and would re-offer "No tax" to every
      * shop that has not chosen yet.
      *
+     * The carve-out is deliberately ONE-WAY: once such a shop saves any real
+     * tax rules group, "No tax" is no longer its stored value and disappears
+     * from the list for good. That is the point of the change - the option is
+     * a legacy accommodation, not a treatment to switch back to.
+     *
      * A configured group that has merely been DEACTIVATED is re-injected
      * too (suffixed "(inactive)"), for the same reason. A configured group
      * that has been DELETED cannot be - there is no name left to render -
@@ -10813,12 +10824,13 @@ class Twopayment extends PaymentModule
      * ctype_digit, not is_numeric: a whole non-negative integer only, the
      * same shape validTwoSurchargeFormValues accepts and
      * saveTwoSurchargeFormValues writes. is_numeric would let '-5', '0.4',
-     * ' 0' and '0e0' all collapse to '0' and so re-offer the suppressed
-     * "No tax" option to a shop that never chose it, and would turn '1e1'
-     * into a pre-selection of '10' that is absent from the option list.
-     * Only a value written outside this module (a direct DB edit, or a
-     * pre-release build) can be in those shapes; they now read as
-     * unselected, which the merchant resolves by picking a group.
+     * and '0e0' all collapse to '0' and so re-offer the suppressed "No tax"
+     * option to a shop that never chose it. Only a value written outside this
+     * module (a direct DB edit, or a pre-release build) can be in those
+     * shapes; they now read as unselected, which the merchant resolves by
+     * picking a group. getTwoSurchargeTaxRulesGroupId() shares this
+     * normalisation, so an odd stored shape can never make the form and the
+     * checkout disagree.
      *
      * @return string '' (unselected) or the stored group id ('0' = No tax)
      */
@@ -10887,6 +10899,8 @@ class Twopayment extends PaymentModule
         $groupTrimmed = is_string($groupRaw) ? trim($groupRaw) : '';
         if ($groupTrimmed === '') {
             $this->errors[] = $this->l('Select a surcharge tax treatment: surcharges are enabled, so you must explicitly choose a tax rules group before saving.');
+            // NB: deliberately does not name "No tax" as an option - it is no
+            // longer offered (TWO-25279). Asserted in SurchargeSpec.
         } else {
             // ctype_digit: a whole non-negative integer only - '0.5', '-5'
             // and friends are rejected, never truncated into a selection
