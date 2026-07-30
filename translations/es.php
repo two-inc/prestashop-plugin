@@ -325,6 +325,8 @@ $_MODULE['<{twopayment}prestashop>paymentinfo_26615a6d6e63f2904432b8b425ee6e93']
 $_MODULE['<{twopayment}prestashop>paymentinfo_c1cf258d03ea6e7a7d9a004d3a017610'] = 'Elige la opción de Compra Ahora, Paga Después que mejor se adapte a ti';
 $_MODULE['<{twopayment}prestashop>paymentinfo_a002c8066738bc8f9d9394abdcef7ea8'] = 'Tu período de pago comienza cuando se cumple tu pedido';
 $_MODULE['<{twopayment}prestashop>paymentinfo_1ffcb4e0a351d5e143bec6362c0feaf8'] = 'El pago vence al final del mes actual más los días seleccionados desde que se cumple tu pedido';
+$_MODULE['<{twopayment}prestashop>paymentinfo_1c76cbfe21c6f44c1d1e59d54f3e4420'] = 'Empresa';
+$_MODULE['<{twopayment}prestashop>paymentinfo_4e1d2b56da5ef5d0c57afc363cb790d8'] = 'Número de empresa';
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_b9484b0275e32e5b1011b9e3a49ce19a'] = 'Pago con Two';
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_7de46cb469a9606c3f20c512df2519f3'] = 'Plazos de la factura';
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_cdca48ec5dde79b84b395c0c557bb290'] = '%d días';

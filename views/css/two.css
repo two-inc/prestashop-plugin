@@ -1338,6 +1338,38 @@
     color: #b42318;
 }
 
+/* Read-only captured company in the payment tile (TWO-25288).
+   Label / value spans, matching the admin order tab's two-info-label +
+   two-info-value idiom rather than a readonly input - the buyer cannot change
+   either value from here. */
+.two-company-summary {
+    margin-top: 12px;
+    padding: 12px 16px;
+    background: #fafbfc;
+    border-radius: 6px;
+    border: 1px solid #f0f2f5;
+}
+
+.two-company-summary__row + .two-company-summary__row {
+    margin-top: 6px;
+}
+
+.two-company-summary__label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: #667085;
+}
+
+.two-company-summary__value {
+    display: block;
+    font-size: 14px;
+    word-break: break-word;
+    /* An empty number slot still has to occupy its line, or the manual-entry
+       case collapses the row and reads as a missing element. */
+    min-height: 1.2em;
+}
+
 /* Optional buyer reference fields in the payment tile (ABN-472) */
 .two-optional-fields {
     margin-top: 12px;

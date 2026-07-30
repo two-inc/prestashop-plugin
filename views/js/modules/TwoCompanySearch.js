@@ -250,6 +250,27 @@ class TwoCompanySearch {
         });
     }
 
+    /**
+     * Repaint the tile's read-only company summary (TWO-25288).
+     *
+     * Called at each point where this module changes the captured pair, because
+     * every one of those writes goes through jQuery's `.val()` / `.attr()`, which
+     * fire no event - so the summary module has nothing it could observe and has
+     * to be told. It re-reads the DOM itself; nothing is passed in.
+     *
+     * Guarded rather than assumed present: this module ships and runs on the
+     * address step, where the payment tile does not exist yet.
+     */
+    refreshCompanySummary() {
+        try {
+            if (window.TwoCompanySummary && typeof window.TwoCompanySummary.render === 'function') {
+                window.TwoCompanySummary.render();
+            }
+        } catch (e) {
+            // Display only. It must never break the capture it describes.
+        }
+    }
+
     setupAddressIdentifierSync() {
         if (!this.companyField || this.companyField.length === 0) {
             return;
@@ -809,6 +830,7 @@ class TwoCompanySearch {
         }
         this.clearLookupWrittenAddressIdentifiers();
         this.clearPersistedCompany();
+        this.refreshCompanySummary();
     }
 
     /**
@@ -1856,7 +1878,9 @@ class TwoCompanySearch {
         if (!shouldDeferIntentTrigger) {
             triggerOrderIntentRecheck();
         }
-        
+
+        this.refreshCompanySummary();
+
         return true;
     }
     
@@ -1909,6 +1933,10 @@ class TwoCompanySearch {
                         company: this.companyField ? this.companyField.val() : '',
                         companyid: natIdVal
                     });
+                    // The GB path: the selection carried no organisation number
+                    // and this is the first point one exists, so the summary
+                    // rendered at selection time showed a blank number slot.
+                    this.refreshCompanySummary();
                 }
             }
             // Find addresses list in various shapes
