@@ -49,6 +49,7 @@ final class SurchargeSpec
         self::testSurchargeTaxTreatmentRequiredWhenSurchargesEnabled();
         self::testSurchargeCapOfZeroIsRefusedOnSave();
         self::testSurchargeCapZeroRuleIsSkippedWhileTheCapColumnIsHidden();
+        self::testSurchargeCapZeroRuleCoversTermsOutsideTheStoredTickedSubset();
         self::testConfiguredZeroCapIsRelayedVerbatimAndAbsenceMeansUncapped();
         self::testMonetaryMembersAreRoundedToTwoDecimalPlaces();
         self::testUpgrade250FlagsFlatRateShopsForTaxReselection();
@@ -817,6 +818,79 @@ final class SurchargeSpec
             strpos((string) $errors[0], 'cannot be 0') !== false,
             'the error must name zero as the problem'
         );
+        Tools::resetTestValues();
+    }
+
+    /**
+     * The zero rule must run over the RENDERED term set, not the stored ticked
+     * subset. The grid renders a row per OFFERABLE term, so a cap can be typed
+     * on a term the merchant is ticking in the SAME submit - and the ticked
+     * subset is rewritten only after this validation runs. Validating the
+     * stored subset therefore skipped that cell and stored the zero
+     * unvalidated.
+     *
+     * This test deliberately uses a NON-DEFAULT term. The two term sources
+     * disagree only where the offerable set and the ticked subset diverge:
+     * with nothing ticked, the ticked subset collapses to its
+     * DEFAULT_PAYMENT_TERM_DAYS fallback, so any assertion written on the
+     * default term is answered identically by both and cannot tell them apart.
+     */
+    private static function testSurchargeCapZeroRuleCoversTermsOutsideTheStoredTickedSubset(): void
+    {
+        self::reset();
+        Tools::resetTestValues();
+        StubStore::$taxRulesGroups[400] = ['name' => 'Standard rate', 'active' => 1];
+        $module = self::makeConfigHarness();
+
+        // The stored subset is the default term ALONE - the merchant has not
+        // ticked anything else yet.
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . Twopayment::DEFAULT_PAYMENT_TERM_DAYS, '1');
+
+        // Pick a term that is offerable but NOT in the stored subset, so the
+        // two sources genuinely answer differently.
+        $offerable = array_map('intval', Twopayment::PAYMENT_TERMS_OPTIONS);
+        $unticked = null;
+        foreach ($offerable as $candidate) {
+            if ($candidate !== Twopayment::DEFAULT_PAYMENT_TERM_DAYS) {
+                $unticked = $candidate;
+                break;
+            }
+        }
+        TinyAssert::true($unticked !== null, 'the offerable set must contain a non-default term');
+
+        // The divergence, asserted rather than assumed: the ticked subset does
+        // not contain the term, the offerable (rendered) set does.
+        TinyAssert::same(
+            [Twopayment::DEFAULT_PAYMENT_TERM_DAYS],
+            $module->getAvailablePaymentTerms(),
+            'the stored ticked subset must not contain the term under test'
+        );
+        TinyAssert::true(in_array($unticked, $offerable, true), 'the term under test must be offerable, and so rendered');
+
+        Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+        Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+        // The merchant ticks the term in THIS submit. The stored subset still
+        // does not know about it while the surcharge grid is validated.
+        Tools::setTestValue('PS_TWO_PAYMENT_TERMS_' . $unticked, '1');
+        Tools::setTestValue('PS_TWO_SURCHARGE_PCT_' . $unticked, '2.5');
+        Tools::setTestValue('PS_TWO_SURCHARGE_FIXED_' . $unticked, '');
+        Tools::setTestValue('PS_TWO_SURCHARGE_CAP_' . $unticked, '0');
+
+        $errors = $module->validateSurchargeFormForTest();
+        TinyAssert::count(1, $errors, 'a zero cap on a rendered-but-not-yet-ticked term must be refused');
+        TinyAssert::true(
+            strpos((string) $errors[0], 'cannot be 0') !== false,
+            'the error must name zero as the problem'
+        );
+        TinyAssert::true(
+            strpos((string) $errors[0], (string) $unticked . '-day') !== false,
+            sprintf('the error must name the %d-day term, proving the rendered set was walked', $unticked)
+        );
+
+        // A positive cap on that same term still saves, so the rule is about
+        // the value and not about the term being outside the stored subset.
+        Tools::setTestValue('PS_TWO_SURCHARGE_CAP_' . $unticked, '9');
+        TinyAssert::count(0, $module->validateSurchargeFormForTest(), 'a positive cap on the same term must be valid');
         Tools::resetTestValues();
     }
 
