@@ -569,7 +569,10 @@ describe('class-static result cache', () => {
                 {
                     label: 'Pick a country first.',
                     value: 'Pick a country first.',
-                    two_unavailable: true
+                    two_unavailable: true,
+                    // Its own row class: nothing is broken, so the row must not
+                    // be identified in the DOM as the failure row.
+                    two_row_class: 'two-autocomplete-select-country'
                 }
             ]);
             expect(rendered[0].label).not.toBe(search.getSearchUnavailableText());

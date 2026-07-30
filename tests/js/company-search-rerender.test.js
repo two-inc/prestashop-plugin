@@ -86,8 +86,287 @@ describe('the real jQuery UI widget is what gets bound', () => {
         expect(liveField().hasClass('two-company-search-input')).toBe(true);
         expect(liveField().hasClass('ui-autocomplete-input')).toBe(true);
         expect(liveField().autocomplete('instance')).toBeTruthy();
-        expect(liveField().autocomplete('option', 'minLength')).toBe(3);
+        // 0 is deliberate (TWO-25288). jQuery UI does not invoke `source` for a
+        // term shorter than `minLength`, so a threshold here would swallow
+        // sub-threshold keystrokes and the too-short hint could never render. The
+        // threshold lives in the `source` guard instead - see the hint tests
+        // below, which pin that no request escapes it.
+        expect(liveField().autocomplete('option', 'minLength')).toBe(0);
         expect(liveField().autocomplete('option', 'delay')).toBe(300);
+    });
+});
+
+describe('the company-search hints (TWO-25288)', () => {
+    /**
+     * Drive the widget's own search so the `source` guard, jQuery UI's menu and
+     * the `_renderItem` patch are all the things under test.
+     */
+    function search(term) {
+        const field = liveField();
+        // Bootstrapped-guard: without the widget bound, every hint assertion
+        // below would pass vacuously against an untouched DOM.
+        expect(field.hasClass('ui-autocomplete-input')).toBe(true);
+        expect(field.autocomplete('instance')).toBeTruthy();
+        field.val(term);
+        field.autocomplete('instance').search(term);
+        return field;
+    }
+
+    /** Rows currently in the jQuery UI menu. */
+    function rows() {
+        return $('ul.ui-autocomplete li');
+    }
+
+    describe('the threshold is one constant', () => {
+        test('the published constant is 3', () => {
+            // Pins the shipped default so a change to it is a visible diff here
+            // rather than a silent change of checkout behaviour. Every other
+            // assertion in this file derives from the constant, on purpose: they
+            // must pin the RELATIONSHIP between what is claimed and what is
+            // enforced, which is the thing that drifts.
+            expect(TwoCompanySearch.MIN_SEARCH_LENGTH).toBe(3);
+        });
+
+        test('the hint states the number the guard actually enforces', () => {
+            const instance = makeInstance();
+            const threshold = TwoCompanySearch.MIN_SEARCH_LENGTH;
+
+            // The msgid's own `%d` must be gone, replaced by the constant.
+            expect(instance.getTooShortText()).toBe(
+                'Please enter ' + threshold + ' or more characters'
+            );
+            expect(instance.getTooShortText()).not.toContain('%d');
+        });
+
+        test('the number comes from the constant, not from the translation', () => {
+            const saved = window.twopayment;
+            window.twopayment = { i18n: { company_search_too_short: 'Introduce %d o más caracteres' } };
+            try {
+                expect(makeInstance().getTooShortText()).toBe(
+                    'Introduce ' + TwoCompanySearch.MIN_SEARCH_LENGTH + ' o más caracteres'
+                );
+            } finally {
+                window.twopayment = saved;
+            }
+        });
+    });
+
+    describe('the empty-field hint occupies the placeholder', () => {
+        test('setup applies it when the field carries none', () => {
+            expect(liveField().attr('placeholder')).toBeUndefined();
+
+            makeInstance();
+
+            expect(liveField().attr('placeholder')).toBe('Enter company name to search');
+        });
+
+        test('it uses the translated wording when one is supplied', () => {
+            const saved = window.twopayment;
+            window.twopayment = { i18n: { company_search_placeholder: 'Introduce el nombre de la empresa para buscar' } };
+            try {
+                makeInstance();
+                expect(liveField().attr('placeholder')).toBe('Introduce el nombre de la empresa para buscar');
+            } finally {
+                window.twopayment = saved;
+            }
+        });
+
+        test('a placeholder the theme already set is left alone', () => {
+            liveField().attr('placeholder', 'Theme wording');
+
+            makeInstance();
+
+            expect(liveField().attr('placeholder')).toBe('Theme wording');
+        });
+
+        test('it is reapplied to the fresh input after an address-form re-render', () => {
+            makeInstance();
+            replaceAddressForm({ country: 'GB' });
+            expect(liveField().attr('placeholder')).toBeUndefined();
+
+            // PrestaShop swapped the node; the hint has to land on the new one.
+            bus.emit('updatedAddressForm');
+
+            expect(liveField().attr('placeholder')).toBe('Enter company name to search');
+        });
+    });
+
+    describe('the min-chars hint on the jQuery UI path', () => {
+        test('a sub-threshold term shows the hint and fires no request', () => {
+            const instance = makeInstance();
+            const short = 'a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1);
+
+            search(short);
+
+            expect(rows()).toHaveLength(1);
+            expect(rows().hasClass('two-autocomplete-too-short')).toBe(true);
+            expect(rows().text()).toBe(instance.getTooShortText());
+            // Before TWO-25288 the widget swallowed this term and showed nothing,
+            // which is indistinguishable from a search that found no match.
+            expect(ajax.calls).toHaveLength(0);
+        });
+
+        test('the hint row is not the failure row', () => {
+            makeInstance();
+
+            search('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1));
+
+            // Nothing is broken and retrying will not help, so it must not carry
+            // the class the failure copy is styled and asserted by.
+            expect(rows().hasClass('two-autocomplete-unavailable')).toBe(false);
+        });
+
+        test('the hint row is non-selectable and cannot reach the field', () => {
+            const instance = makeInstance();
+            const field = liveField();
+
+            search('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1));
+
+            // `ui-state-disabled` is what jQuery UI own menu checks, so the row is
+            // skipped by keyboard navigation rather than merely refused on select.
+            expect(rows().hasClass('ui-state-disabled')).toBe(true);
+            expect(rows().attr('aria-disabled')).toBe('true');
+
+            const item = { item: instance.buildTooShortItem() };
+            expect(field.autocomplete('option', 'select')(null, item)).toBe(false);
+            expect(field.autocomplete('option', 'focus')(null, item)).toBe(false);
+            expect(field.val()).toBe('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1));
+        });
+
+        test('a term at the threshold searches and shows no hint', () => {
+            makeInstance();
+
+            search('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH));
+
+            expect(ajax.calls).toHaveLength(1);
+            expect($('ul.ui-autocomplete li.two-autocomplete-too-short')).toHaveLength(0);
+        });
+
+        test('an empty field shows no row at all', () => {
+            makeInstance();
+
+            search('');
+
+            // The placeholder is already the hint for this state; a dropdown
+            // repeating it under an untouched field is noise.
+            expect(rows()).toHaveLength(0);
+            expect(ajax.calls).toHaveLength(0);
+        });
+
+        test('whitespace alone is told to type more rather than searched for', () => {
+            makeInstance();
+
+            // Long enough to clear the threshold by raw length, but there is
+            // nothing here the search could match on, so it must not go on the
+            // wire - and it must not be refused silently either.
+            search('   ');
+
+            expect(ajax.calls).toHaveLength(0);
+            expect(rows()).toHaveLength(1);
+            expect(rows().hasClass('two-autocomplete-too-short')).toBe(true);
+        });
+    });
+
+    describe('the country-not-chosen row is not the failure row', () => {
+        test('it carries its own class on the jQuery UI path', () => {
+            // No resolvable ISO code, so no search can be made. The cause is the
+            // buyer not having picked a country, which is not a failure of the
+            // service - and the DOM must say which of the two it is.
+            document.body.innerHTML = '';
+            buildAddressForm({ country: null, countryId: '999' });
+
+            const instance = makeInstance();
+            search('exa');
+
+            expect(ajax.calls).toHaveLength(0);
+            expect(rows()).toHaveLength(1);
+            expect(rows().text()).toBe(instance.getSelectCountryText());
+            expect(rows().hasClass('two-autocomplete-select-country')).toBe(true);
+            expect(rows().hasClass('two-autocomplete-unavailable')).toBe(false);
+        });
+    });
+
+    /**
+     * Every message row must LOOK like a message, whatever its cause.
+     *
+     * The row classes above are asserted by name, and that assertion passes just
+     * as happily with a row that renders in body text under a pointer cursor and
+     * takes jQuery UI's hover highlight - i.e. one that looks exactly like a
+     * clickable company while being unselectable. Only the resolved style catches
+     * that, which is why the shipped stylesheet is loaded here, and why the rules
+     * are keyed on a class shared by every message row rather than on one cause.
+     */
+    describe('a message row is painted as a message', () => {
+        let stylesheet;
+
+        beforeEach(() => {
+            stylesheet = installStylesheet('views/css/two.css');
+        });
+
+        afterEach(() => {
+            if (stylesheet && stylesheet.parentNode) {
+                stylesheet.parentNode.removeChild(stylesheet);
+            }
+        });
+
+        test('the too-short row is muted and unclickable, exactly as the failure row is', () => {
+            makeInstance();
+
+            search('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1));
+            const hint = rows().get(0);
+
+            expect(rows().hasClass('two-autocomplete-message')).toBe(true);
+            expect(window.getComputedStyle(hint).color).toBe('rgb(136, 136, 136)');
+            expect(window.getComputedStyle(hint).cursor).toBe('default');
+
+            // The wrapper div is where jQuery UI puts the text, and where the
+            // module's own generic row rules paint body-text colour `!important`.
+            const wrapper = rows().children('div').get(0);
+            expect(window.getComputedStyle(wrapper).color).toBe('rgb(136, 136, 136)');
+            expect(window.getComputedStyle(wrapper).cursor).toBe('default');
+
+            // The same row rendered for the failure cause, for comparison: the
+            // two must be indistinguishable in appearance, since the whole point
+            // of the per-cause class is that it changes the WORDING and the DOM
+            // identity, not the look.
+            const failure = $('<li>')
+                .addClass('two-autocomplete-message two-autocomplete-unavailable')
+                .appendTo(document.body)
+                .get(0);
+            expect(window.getComputedStyle(hint).color)
+                .toBe(window.getComputedStyle(failure).color);
+            expect(window.getComputedStyle(hint).cursor)
+                .toBe(window.getComputedStyle(failure).cursor);
+        });
+
+        test('the hover highlight is suppressed on the row jQuery UI would highlight', () => {
+            makeInstance();
+            search('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1));
+
+            // `ui-state-active` is what jQuery UI's menu puts on the wrapper of
+            // the row under the pointer. On a message row that highlight is a
+            // promise the row cannot keep, so the stylesheet has to out-rank it.
+            const wrapper = rows().children('div').addClass('ui-state-active').get(0);
+            const painted = window.getComputedStyle(wrapper);
+
+            expect(painted.color).toBe('rgb(136, 136, 136)');
+            expect(painted.cursor).toBe('default');
+            expect(painted.margin).toBe('0px');
+            // The highlight the generic wrapper rule paints, declared
+            // `!important` there, so this row's rules have to out-rank it.
+            expect(painted.backgroundColor).not.toBe('rgb(248, 249, 250)');
+        });
+
+        test('the country-not-chosen row gets the same paint', () => {
+            document.body.innerHTML = '';
+            buildAddressForm({ country: null, countryId: '999' });
+            makeInstance();
+
+            search('exa');
+
+            expect(rows().hasClass('two-autocomplete-message')).toBe(true);
+            expect(window.getComputedStyle(rows().get(0)).color).toBe('rgb(136, 136, 136)');
+        });
     });
 });
 
@@ -1446,6 +1725,91 @@ describe('the custom fallback used when jQuery UI is absent', () => {
 
         expect(liveField().hasClass('two-company-search-loading')).toBe(true);
         expect($('.two-autocomplete-loading')).toHaveLength(1);
+    });
+
+    describe('the company-search hints (TWO-25288)', () => {
+        test('the empty-field hint is applied on this path too', () => {
+            expect(liveField().attr('placeholder')).toBeUndefined();
+
+            const search = makeInstance();
+
+            // Bootstrapped-guard: this must be the fallback path, or the
+            // assertion is really re-testing the jQuery UI one.
+            expect(liveField().hasClass('ui-autocomplete-input')).toBe(false);
+            expect(search._customAutocomplete).toBeTruthy();
+            expect(liveField().attr('placeholder')).toBe('Enter company name to search');
+        });
+
+        test('a sub-threshold term shows the hint and fires no request', () => {
+            const search = makeInstance();
+            expect(search._customAutocomplete).toBeTruthy();
+
+            type('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1));
+
+            const row = $('.two-autocomplete-too-short');
+            expect(row).toHaveLength(1);
+            expect(row.text()).toBe(search.getTooShortText());
+            expect($('.two-autocomplete-list').css('display')).not.toBe('none');
+            expect(ajax.calls).toHaveLength(0);
+            // Nothing was requested, so nothing may leave a spinner running.
+            expect(liveField().hasClass('two-company-search-loading')).toBe(false);
+            expect($('.two-autocomplete-unavailable')).toHaveLength(0);
+        });
+
+        test('a term at the threshold searches and shows no hint', () => {
+            const search = makeInstance();
+            expect(search._customAutocomplete).toBeTruthy();
+
+            type('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH));
+
+            expect(ajax.calls).toHaveLength(1);
+            expect($('.two-autocomplete-too-short')).toHaveLength(0);
+        });
+
+        test('whitespace alone is told to type more rather than searched for', () => {
+            const search = makeInstance();
+            expect(search._customAutocomplete).toBeTruthy();
+
+            type('   ');
+
+            expect(ajax.calls).toHaveLength(0);
+            expect($('.two-autocomplete-too-short')).toHaveLength(1);
+        });
+
+        test('the hint row is painted as a message on this path too', () => {
+            const stylesheet = installStylesheet('views/css/two.css');
+            try {
+                makeInstance();
+                type('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1));
+
+                // The shared class is what carries the message look, and this
+                // path must carry it as well or the two paths diverge again. The
+                // cursor comes from the stylesheet alone - the row inlines its
+                // colour but nothing inlines this - so it is the assertion that
+                // fails if the shared class is dropped here.
+                const row = $('.two-autocomplete-too-short');
+                expect(row.hasClass('two-autocomplete-message')).toBe(true);
+                expect(window.getComputedStyle(row.get(0)).cursor).toBe('default');
+                expect(window.getComputedStyle(row.get(0)).color).toBe('rgb(136, 136, 136)');
+            } finally {
+                if (stylesheet && stylesheet.parentNode) {
+                    stylesheet.parentNode.removeChild(stylesheet);
+                }
+            }
+        });
+
+        test('clearing the field closes the list rather than showing the hint', () => {
+            const search = makeInstance();
+            type('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1));
+            expect($('.two-autocomplete-too-short')).toHaveLength(1);
+
+            type('');
+
+            expect(search._customAutocomplete).toBeTruthy();
+            expect($('.two-autocomplete-too-short')).toHaveLength(0);
+            expect($('.two-autocomplete-list').css('display')).toBe('none');
+            expect(ajax.calls).toHaveLength(0);
+        });
     });
 
     test('a failure clears the spinner and shows the unavailable row', () => {

@@ -1147,6 +1147,11 @@ namespace {
             return $this->availableValues[(string) $key] ?? null;
         }
 
+        public function getAvailableValues(): array
+        {
+            return $this->availableValues;
+        }
+
         public function addConstraint($constraint): self
         {
             $this->constraints[] = $constraint;
