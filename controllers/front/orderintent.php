@@ -52,6 +52,9 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             case 'saveCompany':
                 $this->ajaxProcessSaveCompany();
                 break;
+            case 'clearCompany':
+                $this->ajaxProcessClearCompany();
+                break;
             case 'getCompany':
                 $this->ajaxProcessGetCompany();
                 break;
@@ -268,6 +271,47 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $this->context->cookie->setExpire(time() + Twopayment::COOKIE_EXPIRY_ONE_HOUR);
         PrestaShopLogger::addLog('TwoPayment: Saved company in cookie for session', 1);
         $this->sendJsonResponse(json_encode(['success' => true]));
+    }
+
+    /**
+     * Forget the session company (TWO-25288).
+     *
+     * Its own action rather than a `saveCompany` carrying empty values, because
+     * that action rejects an empty company or company id up front and answers
+     * "missing company data" - so using it to clear would be a silent no-op.
+     *
+     * Needed because the session company is the FIRST thing the order payload and
+     * the order-intent handler consult, ahead of the address, and it is otherwise
+     * discarded only on a country mismatch or an address switch - never on the
+     * buyer changing the company name. A buyer who declares their company is not
+     * in the register and types a different name would otherwise have the
+     * previously selected company credit-checked at placement.
+     *
+     * Every key `saveCompany` writes is unset here, including the country and
+     * address markers: leaving a marker behind with no company is the half-record
+     * state whose interpretation differs between the two readers of this cookie.
+     */
+    public function ajaxProcessClearCompany()
+    {
+        if (!$this->validateAjaxToken()) {
+            $this->sendJsonResponse(json_encode([
+                'success' => false,
+                'error' => $this->module->l('Invalid token')
+            ]));
+            return;
+        }
+
+        unset($this->context->cookie->two_company_name);
+        unset($this->context->cookie->two_company_id);
+        unset($this->context->cookie->two_company_country);
+        unset($this->context->cookie->two_company_address_id);
+        $this->context->cookie->write();
+
+        PrestaShopLogger::addLog('TwoPayment: Session company cleared for manual company entry', 1);
+
+        $this->sendJsonResponse(json_encode([
+            'success' => true
+        ]));
     }
 
     /**

@@ -52,7 +52,8 @@ final class CompanySearchCountrySourcingSpec
     public static function runAll(): void
     {
         self::testCountryIsoMapIsInjectedByTheMediaHook();
-        self::testSelectCountryCopyKeyMatchesTheKeyTheJsReads();
+        self::testDropdownCopyKeysMatchTheKeysTheJsReads();
+        self::testClearCompanyActionSeam();
         self::testJsNoLongerGuessesTheCountry();
     }
 
@@ -225,18 +226,86 @@ final class CompanySearchCountrySourcingSpec
         );
     }
 
-    private static function testSelectCountryCopyKeyMatchesTheKeyTheJsReads(): void
+    /**
+     * Every dropdown copy key must exist on BOTH sides under the same name.
+     *
+     * This is the only gate that can catch it. The Jest suite stubs
+     * `window.twopayment.i18n` itself, so a PHP key renamed to a typo leaves it
+     * perfectly green while the shipped row falls back to its English literal for
+     * good - a row that looks entirely correct in English and is permanently
+     * untranslated everywhere else, which is the exact failure this ticket exists
+     * to remove.
+     *
+     * A loop rather than one case per key, deliberately: a new row added to that
+     * dropdown must be added HERE, and a list is the shape that makes the
+     * omission obvious. The manual-entry pair is TWO-25288 element 5.
+     */
+    private static function testDropdownCopyKeysMatchTheKeysTheJsReads(): void
     {
-        $key = 'company_search_select_country';
+        $keys = [
+            'company_search_select_country' => 'the "pick a country" row',
+            'company_search_manual_entry' => 'the manual-entry row',
+            'company_search_back_to_search' => 'the back-to-search link',
+        ];
+
+        foreach ($keys as $key => $description) {
+            TinyAssert::true(
+                strpos(self::moduleSource(), "'" . $key . "' => \$this->l(") !== false,
+                'Missing translatable copy for ' . $description . ': ' . $key
+            );
+            TinyAssert::true(
+                strpos(self::searchJsSource(), 'window.twopayment.i18n.' . $key) !== false,
+                'The search JS no longer reads ' . $key . ' (' . $description
+                . '); the PHP copy is dead and the row is permanently untranslated'
+            );
+        }
+    }
+
+    /**
+     * The endpoint action the browser posts to forget the session company must
+     * exist on the controller under exactly that name (TWO-25288).
+     *
+     * Same seam, same invisibility as the copy keys above: an action name that
+     * agrees on neither side fails SILENTLY. The browser fires and forgets, the
+     * controller falls through its switch, and the stale session company - which
+     * the order payload consults ahead of the address - survives. The buyer then
+     * has the company they explicitly disowned credit-checked at placement. No
+     * Jest test can see this; the JS suite stubs the transport.
+     *
+     * The unset list is asserted too, because clearing the company while leaving
+     * the country or address marker behind is the half-record state whose reading
+     * differs between the two consumers of this cookie.
+     */
+    private static function testClearCompanyActionSeam(): void
+    {
+        $action = 'clearCompany';
+        $controller = file_get_contents(dirname(__DIR__) . '/controllers/front/orderintent.php');
+        TinyAssert::true(is_string($controller), 'Unreadable controllers/front/orderintent.php');
+        $controller = (string) $controller;
 
         TinyAssert::true(
-            strpos(self::moduleSource(), "'" . $key . "' => \$this->l(") !== false,
-            'Missing translatable copy for the "pick a country" row: ' . $key
+            strpos(self::searchJsSource(), "action: '" . $action . "'") !== false,
+            'The search JS no longer posts the ' . $action
+            . ' action; entering manual entry would leave the session company in place'
         );
         TinyAssert::true(
-            strpos(self::searchJsSource(), 'window.twopayment.i18n.' . $key) !== false,
-            'The search JS no longer reads ' . $key . '; the PHP copy is dead and the row is untranslated'
+            strpos($controller, "case '" . $action . "':") !== false,
+            'The order-intent controller no longer dispatches ' . $action
+            . '; the clear falls through the switch and silently does nothing'
         );
+
+        foreach ([
+            'two_company_name',
+            'two_company_id',
+            'two_company_country',
+            'two_company_address_id',
+        ] as $cookieKey) {
+            TinyAssert::true(
+                strpos($controller, 'unset($this->context->cookie->' . $cookieKey . ')') !== false,
+                'The ' . $action . ' action no longer unsets ' . $cookieKey
+                . ', leaving a half-record session company behind'
+            );
+        }
     }
 
     private static function testJsNoLongerGuessesTheCountry(): void
