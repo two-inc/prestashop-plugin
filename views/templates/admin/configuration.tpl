@@ -132,9 +132,13 @@
                 var showPercentage = (type === 'percentage' || type === 'fixed_and_percentage');
                 var showFixed = (type === 'fixed' || type === 'fixed_and_percentage');
                 var showCap = (type === 'percentage' || type === 'fixed_and_percentage');
-                grid.find('.two-col-percentage').toggle(showPercentage);
-                grid.find('.two-col-fixed').toggle(showFixed);
-                grid.find('.two-col-cap').toggle(showCap);
+                // Scoped to the whole form-group rather than the table, so the
+                // cap help text BELOW the grid is hidden with the cap column
+                // rather than left on screen describing a field the merchant
+                // cannot see (TWO-25289).
+                gridGroup.find('.two-col-percentage').toggle(showPercentage);
+                gridGroup.find('.two-col-fixed').toggle(showFixed);
+                gridGroup.find('.two-col-cap').toggle(showCap);
             }
             updateSurchargeGridVisibility();
             $('select[name="PS_TWO_SURCHARGE_TYPE"]').on('change', updateSurchargeGridVisibility);

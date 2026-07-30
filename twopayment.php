@@ -8840,12 +8840,20 @@ class Twopayment extends PaymentModule
             // Blank stays null; anything numeric, zero included, is a real
             // configured cap (TWO-25289). The save path stores '' for a blank
             // cell, so blank is the honest "unconfigured" signal.
+            // A NEGATIVE stored cap is absent too. It is nonsense the admin
+            // form rejects, so it can only arrive by a direct Configuration
+            // write or an import - the same routes that justify relaying a
+            // stored zero - and relaying it would be refused upstream anyway.
             $cap_raw = Configuration::get('PS_TWO_SURCHARGE_CAP_' . $days);
-            $cap_set = $cap_raw !== false && $cap_raw !== null && trim((string) $cap_raw) !== '';
+            $cap_trimmed = trim((string) $cap_raw);
+            $cap_set = $cap_raw !== false
+                && $cap_raw !== null
+                && is_numeric($cap_trimmed)
+                && (float) $cap_trimmed >= 0;
             $grid[$days] = array(
                 'percentage' => (float) Configuration::get('PS_TWO_SURCHARGE_PCT_' . $days),
                 'fixed' => (float) Configuration::get('PS_TWO_SURCHARGE_FIXED_' . $days),
-                'limit' => $cap_set ? (float) $cap_raw : null,
+                'limit' => $cap_set ? (float) $cap_trimmed : null,
             );
         }
 
@@ -8927,6 +8935,17 @@ class Twopayment extends PaymentModule
                 // An absent cap is uncapped-by-design, not a failure.
                 continue;
             }
+            // Zero needs no rate: it is zero in every currency. Skipping it
+            // matters because this method FAILS CLOSED on a missing rate, and
+            // a term whose only currency-bearing member is a zero cap would
+            // otherwise take Two offline for every buyer on the shop over a
+            // conversion that has no work to do (TWO-25289). That is the
+            // TWO-25276 regression shape exactly, reached by a different
+            // route: a stored zero cap is relayed rather than dropped now, so
+            // it reaches here where it never used to.
+            if ((float) $share[$member] === 0.0) {
+                continue;
+            }
             $configured = (float) $share[$member];
             $converted = $this->convertTwoAmountBetweenCurrencies($configured, $shop_iso, $quote_iso);
             if ($converted === null) {
@@ -8993,8 +9012,10 @@ class Twopayment extends PaymentModule
      * the whole store offline for every buyer. (TWO-25276 removed exactly
      * such a condition - a per-term "configured cap rounds to 0.00" check -
      * which withheld Two from every buyer on affected shops. Its premise was
-     * wrong: checkout-api clamps the fee to zero for a zero cap rather than
-     * treating it as uncapped, so there was never an overcharge to guard.)
+     * wrong: the pricing service bounds the fee at zero for a zero cap rather
+     * than treating it as uncapped, so there was never an overcharge to guard.
+     * References live on TWO-25269 - this repository is public and that
+     * service's is not.)
      *
      * @param Cart $cart
      * @return bool
@@ -10835,7 +10856,10 @@ class Twopayment extends PaymentModule
         // Cap semantics, stated where the cap is entered. Both sentences
         // exist because the grid otherwise invites exactly the mistake it
         // then refuses on save (TWO-25289).
-        $html .= '<p class="help-block" style="margin-top:8px;">'
+        // two-col-cap so the admin JS hides this alongside the cap COLUMN: on
+        // a fixed-only surcharge the column is hidden and cap-only copy left
+        // on screen describes a field the merchant cannot see.
+        $html .= '<p class="help-block two-col-cap" style="margin-top:8px;">'
             . htmlspecialchars(
                 $this->l('The cap applies to the whole fee: the percentage and the fixed fee together, not the percentage alone. Leave it empty for no cap.'),
                 ENT_QUOTES,
@@ -11039,7 +11063,18 @@ class Twopayment extends PaymentModule
                 // directly, with 0% and a 0 fixed fee. A BLANK cap stays
                 // valid and still means "no cap" - the guard above already
                 // skipped it, so absence and zero stay distinguishable.
-                if ($suffix === 'CAP' && $raw !== false && $raw !== '' && is_numeric($raw) && (float) $raw === 0.0) {
+                // round() first, not `=== 0.0`: TwoSurchargeCalculator rounds
+                // the cap to 2dp before sending it, so a sub-cent cap (0.001)
+                // would pass an exact-zero check and then become a hard cap of
+                // 0.00 on the wire - the very outcome being refused, reached a
+                // step later. Refusing everything that rounds away is what
+                // makes "the rounding direction cannot matter" actually true.
+                if ($suffix === 'CAP'
+                    && $raw !== false
+                    && $raw !== ''
+                    && is_numeric($raw)
+                    && round((float) $raw, TwoSurchargeCalculator::MONEY_DECIMALS) === 0.0
+                ) {
                     $this->errors[] = sprintf(
                         $this->l('Surcharge cap for the %d-day term cannot be 0. To charge nothing on this term, set the percentage and the fixed fee to 0 instead, and leave the cap empty.'),
                         $days

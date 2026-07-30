@@ -116,7 +116,7 @@ class TwoSurchargeCalculator
         // with it: a 0 arriving by any route the form does not police — a value
         // stored before that validation existed, a direct Configuration write,
         // an import — would otherwise still be relayed uncapped.
-        if ($hasPercentage && isset($row['limit']) && $row['limit'] !== null) {
+        if ($hasPercentage && isset($row['limit'])) {
             $buyer_fee_share['cap'] = round((float) $row['limit'], self::MONEY_DECIMALS);
         }
 
