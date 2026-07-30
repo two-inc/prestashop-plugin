@@ -2874,9 +2874,9 @@ class Twopayment extends PaymentModule
      * This hook builds an {amount, currency} partial-refund payload from the
      * credit slip and calls POST /v1/order/{id}/refund. Two's refund endpoint
      * accepts a simple {amount, currency} body for partial refunds (line_items
-     * optional) - confirmed against the checkout-api RefundRequestSchema
-     * (PartialRefundRequestSchema) - so we avoid mapping PrestaShop's
-     * credit-slip product list to Two line items.
+     * optional) - confirmed against the refund endpoint's documented request
+     * contract - so we avoid mapping PrestaShop's credit-slip product list to
+     * Two line items.
      *
      * Idempotency + duplicate-refund protection:
      *  - The idempotency key is derived from the credit slip ID
@@ -8853,11 +8853,10 @@ class Twopayment extends PaymentModule
      * zero-cap guard was reverted, its premise was wrong):
      *
      *  - A converted `cap` of 0.00 is passed straight through as a zero cap.
-     *    checkout-api clamps the fee to zero for it - `fees.py` tests the cap
-     *    with `if c is not None: b = min(b, c)`, and its `cap 0 forces zero
-     *    regardless of surcharge` test pins that - so a zero cap means the
-     *    surcharge is simply not applied. It is NOT read as "no cap", and
-     *    there is no overcharge to guard against.
+     *    The pricing API clamps the fee to zero for it: a cap is applied
+     *    whenever one is present, and an absent cap is a distinct case - so a
+     *    zero cap means the surcharge is simply not applied. It is NOT read as
+     *    "no cap", and there is no overcharge to guard against. See TWO-25276.
      *  - A fixed `surcharge` that converts to 0.00 is a legitimately tiny
      *    configured amount, genuinely negligible in a stronger currency, and
      *    0.00 is the arithmetically correct answer. Logged at info level.
