@@ -13428,18 +13428,29 @@ class Twopayment extends PaymentModule
      * Whether two company names are the same company as far as this cookie is
      * concerned.
      *
-     * Case- and whitespace-insensitive, mirroring the browser's
-     * normalizeCompanyName(). A buyer tidying the capitalisation of the company
-     * they selected has not disowned it, and treating that as a change would
-     * throw away a perfectly good organisation number.
+     * Case- and whitespace-insensitive, but this is NOT claimed to mirror the
+     * browser's normalizeCompanyName() exactly: JS's `\s` collapses a non-breaking
+     * space (the browser regex engine treats it as whitespace), PCRE's `\s` here
+     * does not without the unicode modifier. So a name that differs only by an
+     * NBSP-vs-space swap normalizes as unchanged in the browser but as a real
+     * difference here. That is conservative rather than a bug worth chasing: on
+     * divergence this side is more willing to say "changed" and drop a stale
+     * organisation number than to risk calling two different names the same one.
+     * A buyer tidying the capitalisation of the company they selected has not
+     * disowned it, and treating that as a change would throw away a perfectly
+     * good organisation number.
      *
      * An empty previous name never matches, so the first company saved on a
-     * session cannot be read as an unchanged one.
+     * session cannot be read as an unchanged one. That guard is live, not
+     * decorative: without it, a previous name of '' would compare equal to a
+     * company name that is present but normalizes to '' (whitespace-only), which
+     * would read as "unchanged" and leave a stale organisation number in place
+     * under a blank name.
      */
     private function twoCompanyNamesMatch($left, $right)
     {
         $normalize = function ($value) {
-            return preg_replace('/\s+/', ' ', trim(mb_strtolower((string) $value)));
+            return preg_replace('/\s+/', ' ', trim(Tools::strtolower((string) $value)));
         };
 
         $normalizedLeft = $normalize($left);

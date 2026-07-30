@@ -201,7 +201,10 @@ final class SessionCompanyClearSpec
 
     /**
      * Nor is retyping the same company with different capitalisation or spacing.
-     * The comparison mirrors the browser's own name normalisation.
+     * The comparison is conservative rather than an exact mirror of the browser's
+     * own name normalisation — on any ambiguity (an NBSP-for-space swap, say) it
+     * is willing to call the names different and drop a stale organisation number
+     * rather than risk treating two distinct names as the same one.
      */
     private static function testAddressSaveKeepsTheNumberOnAMerelyRetypedName(): void
     {
