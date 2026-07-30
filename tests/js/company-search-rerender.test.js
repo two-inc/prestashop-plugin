@@ -755,6 +755,33 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25288)', () => 
             );
         }
 
+        /**
+         * Complete a selection the way a buyer's click does, through jQuery UI's
+         * own menu and therefore through onCompanySelected().
+         *
+         * Deliberately NOT `organizationField.val(...)` by hand. A selection
+         * writes THREE places - the hidden organisation field, `dni` and
+         * `vat_number` - and a hand-set stand-in reaches only the first, so the
+         * two address identifiers stay empty and every assertion about what a
+         * clear does to them passes vacuously. That is exactly how the disowned
+         * organisation number survived into the order payload unnoticed.
+         */
+        function selectFirstCompany() {
+            const widget = liveField().autocomplete('instance');
+            const row = widget.menu.element.children('li').first();
+            widget.menu.focus(null, row);
+            widget.menu.select($.Event('click'));
+        }
+
+        /**
+         * `triggerHandler` rather than `trigger`: the pre-submit sync is bound to
+         * the form itself so both reach it, but `trigger` also runs the native
+         * default action, which jsdom answers with a "not implemented" dump.
+         */
+        function submitForm() {
+            $('form').triggerHandler('submit');
+        }
+
         test('the hidden organisation number and its company tag are dropped', () => {
             withEndpoint(() => {
                 const instance = makeInstance();
@@ -762,16 +789,129 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25288)', () => 
                 search(AT_THRESHOLD);
                 ajax.last().succeed(SEARCH_RESPONSE);
 
-                // Stand in for a completed selection.
-                instance.organizationField
-                    .val('12345678')
-                    .attr('data-two-company-name', 'Example Trading Ltd');
+                selectFirstCompany();
                 expect(instance.organizationField.val()).toBe('12345678');
+                expect(instance.organizationField.attr('data-two-company-name'))
+                    .toBe('Example Trading Ltd');
 
                 field.autocomplete('option', 'select')(null, { item: instance.buildManualEntryItem() });
 
                 expect(instance.organizationField.val()).toBe('');
                 expect(instance.organizationField.attr('data-two-company-name')).toBeUndefined();
+            });
+        });
+
+        /**
+         * The organisation number is what decides WHO gets credit-checked and
+         * invoiced, so a buyer who disowns a company and types their own name
+         * must not leave that company's number anywhere the server can read it.
+         * `dni` and `vat_number` are read off the saved address by the server's
+         * own resolver, independently of the session company, so leaving them
+         * behind makes the typed name cosmetic.
+         */
+        test('the identification and VAT numbers the lookup wrote are dropped too', () => {
+            withEndpoint(() => {
+                const instance = makeInstance();
+                const field = liveField();
+                search(AT_THRESHOLD);
+                ajax.last().succeed(SEARCH_RESPONSE);
+
+                selectFirstCompany();
+                // Bootstrapped-guard: with these empty the assertions below could
+                // not fail whatever the clear does.
+                expect($("input[name='dni']").val()).toBe('12345678');
+                expect($("input[name='vat_number']").val()).toBe('12345678');
+
+                field.autocomplete('option', 'select')(null, { item: instance.buildManualEntryItem() });
+
+                expect($("input[name='dni']").val()).toBe('');
+                expect($("input[name='vat_number']").val()).toBe('');
+            });
+        });
+
+        /**
+         * The second half of the same defect. Clearing the hidden field is not
+         * enough on its own, because the pre-submit sync adopts a `dni` with no
+         * organisation number beside it as the organisation number - so a `dni`
+         * left behind is re-adopted at submit and re-tagged with the name the
+         * buyer has just typed, producing a credit check on one company under
+         * the name of another.
+         */
+        test('the pre-submit sync does not re-adopt the disowned number', () => {
+            withEndpoint(() => {
+                const instance = makeInstance();
+                const field = liveField();
+                search(AT_THRESHOLD);
+                ajax.last().succeed(SEARCH_RESPONSE);
+                selectFirstCompany();
+
+                field.autocomplete('option', 'select')(null, { item: instance.buildManualEntryItem() });
+                // The buyer now types the company they actually are.
+                instance.companyField.val('Unregistered Trading Name');
+
+                submitForm();
+
+                expect(instance.organizationField.val()).toBe('');
+                expect(instance.organizationField.attr('data-two-company-name')).toBeUndefined();
+                expect($("input[name='dni']").val()).toBe('');
+                expect($("input[name='vat_number']").val()).toBe('');
+            });
+        });
+
+        /**
+         * The marker-match guard, pinned directly. A buyer who corrects the
+         * identification number after selecting a company has replaced the
+         * lookup's value with their own, which leaves the marker stale rather
+         * than matching - so the value is theirs and must survive the clear.
+         *
+         * Without this case the clear could be a blanket one and every other
+         * assertion here would still pass, because they all disown BEFORE
+         * anything buyer-typed is in the field.
+         */
+        test('an identification number the buyer edited after selecting survives', () => {
+            withEndpoint(() => {
+                const instance = makeInstance();
+                const field = liveField();
+                search(AT_THRESHOLD);
+                ajax.last().succeed(SEARCH_RESPONSE);
+                selectFirstCompany();
+                expect($("input[name='dni']").val()).toBe('12345678');
+
+                // The buyer corrects it by hand. Same field, different value, so
+                // the marker no longer describes what is there.
+                $("input[name='dni']").val('55554444');
+
+                field.autocomplete('option', 'select')(null, { item: instance.buildManualEntryItem() });
+
+                expect($("input[name='dni']").val()).toBe('55554444');
+                // The one they did NOT touch is still the lookup's and still goes.
+                expect($("input[name='vat_number']").val()).toBe('');
+            });
+        });
+
+        /**
+         * The constraint that rules out a blanket clear: the pre-submit sync's
+         * adoption of a buyer-typed identification number is legitimate and is
+         * the only way a manual-entry buyer's own number reaches the Two flow.
+         * Only what the LOOKUP wrote may be cleared.
+         */
+        test('an identification number the buyer typed is still adopted at submit', () => {
+            withEndpoint(() => {
+                const instance = makeInstance();
+                const field = liveField();
+                search(AT_THRESHOLD);
+                ajax.last().succeed(SEARCH_RESPONSE);
+                selectFirstCompany();
+
+                field.autocomplete('option', 'select')(null, { item: instance.buildManualEntryItem() });
+                instance.companyField.val('Unregistered Trading Name');
+                $("input[name='dni']").val('99887766');
+
+                submitForm();
+
+                expect(instance.organizationField.val()).toBe('99887766');
+                expect(instance.organizationField.attr('data-two-company-name'))
+                    .toBe('Unregistered Trading Name');
             });
         });
 

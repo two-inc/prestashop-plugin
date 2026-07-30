@@ -325,14 +325,70 @@ class TwoCompanySearch {
             return;
         }
 
-        [$("input[name='dni']"), $("input[name='vat_number']")].forEach(field => {
+        this.addressIdentifierFields().forEach(field => {
             if (field.length === 0) {
                 return;
             }
             if (onlyIfEmpty && String(field.val() || '').trim() !== '') {
+                // Buyer input. Deliberately NOT marked: the marker's whole
+                // meaning is "the lookup put this here", and mislabelling the
+                // buyer's own number would let clearSelectedCompany() delete it.
                 return;
             }
             field.val(value);
+            field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR, value);
+        });
+    }
+
+    /**
+     * The two address inputs a company selection mirrors its organisation number
+     * into.
+     *
+     * One list rather than the selector pair written twice, because the clear has
+     * to walk exactly the fields the write walks. A field present in one list and
+     * absent from the other is a disowned organisation number left in the form.
+     *
+     * @returns {Array<Object>} jQuery objects, any of which may be empty
+     */
+    addressIdentifierFields() {
+        return [$("input[name='dni']"), $("input[name='vat_number']")];
+    }
+
+    /**
+     * Drop the identification / VAT numbers, but ONLY the ones the lookup itself
+     * wrote and the buyer has not since changed.
+     *
+     * Not a blanket clear, and that constraint is what makes this method
+     * necessary rather than a one-line addition to clearSelectedCompany(). A
+     * buyer-typed identification number is legitimate and load-bearing: it is
+     * the only route by which a manual-entry buyer's own number reaches the Two
+     * flow, via syncOrganizationToAddressIdentifiers() adopting it as the
+     * organisation number at submit. Clearing it would delete the buyer's answer.
+     *
+     * So the same marker the address autofill uses distinguishes the two: it
+     * records the exact value written, and a buyer edit leaves it stale rather
+     * than matching. Same attribute deliberately - the semantics are identical
+     * and these fields never overlap the ones autoFillAddress() walks, so one
+     * vocabulary is better than two that have to be kept in step.
+     *
+     * @returns {void}
+     */
+    clearLookupWrittenAddressIdentifiers() {
+        this.addressIdentifierFields().forEach(field => {
+            if (field.length === 0) {
+                return;
+            }
+            const written = field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR);
+            if (typeof written === 'undefined') {
+                return;
+            }
+            if (written !== String(field.val() == null ? '' : field.val())) {
+                return;
+            }
+            field.removeAttr(TwoCompanySearch.AUTOFILL_MARKER_ATTR);
+            field.val('');
+            field.trigger('input');
+            field.trigger('change');
         });
     }
 
@@ -732,14 +788,26 @@ class TwoCompanySearch {
      * the other leaves the buyer looking at an empty field while the order still
      * carries the old company.
      *
-     * What this deliberately does NOT touch: the identification-number and
-     * VAT-number inputs on the address form. See enterManualEntryMode().
+     * THREE halves, in truth. The selection also mirrors the organisation number
+     * into the address form's identification-number and VAT-number inputs, and
+     * the server reads those off the saved address on a path of their own,
+     * independently of the session company. Worse, the pre-submit sync adopts an
+     * identification number with no organisation number beside it AS the
+     * organisation number - so a `dni` left behind here is re-adopted at submit
+     * and re-tagged with the name the buyer has just typed, which is a credit
+     * check on one company under the name of another. Clearing two of the three
+     * therefore does not merely leak a stale value, it silently undoes itself.
+     *
+     * Only the values the lookup wrote go, never a buyer-typed one - see
+     * clearLookupWrittenAddressIdentifiers() for why that distinction is
+     * load-bearing rather than cautious.
      */
     clearSelectedCompany() {
         if (this.organizationField && this.organizationField.length) {
             this.organizationField.val('');
             this.organizationField.removeAttr('data-two-company-name');
         }
+        this.clearLookupWrittenAddressIdentifiers();
         this.clearPersistedCompany();
     }
 
@@ -752,9 +820,22 @@ class TwoCompanySearch {
      * is exactly the failure this method exists to prevent.
      *
      * Fire-and-forget, and failure is tolerated, matching persistCompanyToCookie()
-     * next to it: the authoritative company check runs server-side at payment
-     * submit from the same resolver, so a lost clear costs a rejected order
-     * rather than a wrong one.
+     * next to it.
+     *
+     * What makes that tolerable is NOT that the resolver would reject the order.
+     * It would not: the resolver returns the session company first, with no
+     * comparison against the address, so a dropped or still-in-flight clear
+     * would on its own yield a WRONG order rather than a rejected one - silently.
+     * (An earlier version of this comment claimed the opposite. It was wrong, and
+     * the guarantee it appealed to did not exist.)
+     *
+     * What makes it tolerable is that the same clear happens server-side and
+     * unconditionally: Twopayment::hookActionCustomerAddressSave() drops the
+     * session organisation number whenever the address saves a different company
+     * name with no organisation number beside it, which is what this state looks
+     * like from the server. So the outcome does not depend on this request
+     * arriving, and there is no ordering guard here for the same reason - unlike
+     * the surcharge-line endpoint, where the browser IS the only writer.
      */
     clearPersistedCompany() {
         try {
