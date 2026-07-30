@@ -68,6 +68,7 @@ final class FxRatesSpec
         self::testNoRateForCartCurrencyWithholdsPaymentOption();
         self::testPercentageOnlySurchargeNeverTripsTheGate();
         self::testStoredZeroCapNeverTripsTheGateEvenWithNoFxRate();
+        self::testZeroCapDoesNotExemptANonZeroFixedSurchargeFromTheFxRequirement();
         self::testCapRoundingToZeroPassesThroughAndKeepsTheOption();
         self::testAbsentCapStillChargesAndOffersTheOption();
         self::testFixedSurchargeRoundingToZeroProceedsWithInfoLog();
@@ -751,6 +752,39 @@ final class FxRatesSpec
         TinyAssert::false(
             self::hasLog('failing closed', 3),
             'a zero cap is not a fail-closed event: nothing may be logged at error level'
+        );
+    }
+
+    /**
+     * The zero exemption must be PER MEMBER, not per block. A zero cap needs
+     * no rate, but a non-zero fixed surcharge in the same block still does -
+     * and without a rate it must still fail closed and withhold the option.
+     * Skipping the whole block on account of the zero cap would quote a fixed
+     * fee denominated in the wrong currency, which is worse than the bug the
+     * exemption fixes.
+     */
+    private static function testZeroCapDoesNotExemptANonZeroFixedSurchargeFromTheFxRequirement(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'fixed_and_percentage');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '1.5');
+        // A healthy fixed fee beside the zero cap.
+        Configuration::updateValue('PS_TWO_SURCHARGE_FIXED_30', '10');
+        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', '0');
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+        StubStore::$currencies[4] = ['iso_code' => 'USD', 'conversion_rate' => 999.0, 'loaded' => true];
+        self::tableWithoutUsd();
+
+        $module = self::gateModule(4);
+
+        TinyAssert::same(
+            0,
+            count($module->hookPaymentOptions([])),
+            'a non-zero fixed surcharge with no FX rate must still withhold the option'
+        );
+        TinyAssert::true(
+            self::hasLog('failing closed', 3),
+            'the fail-closed reason must still be logged at error level'
         );
     }
 

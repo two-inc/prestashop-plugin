@@ -48,6 +48,7 @@ final class SurchargeSpec
         self::testSurchargeTaxRulesGroupFormDefaultRequiresExplicitChoice();
         self::testSurchargeTaxTreatmentRequiredWhenSurchargesEnabled();
         self::testSurchargeCapOfZeroIsRefusedOnSave();
+        self::testSurchargeCapZeroRuleIsSkippedWhileTheCapColumnIsHidden();
         self::testConfiguredZeroCapIsRelayedVerbatimAndAbsenceMeansUncapped();
         self::testMonetaryMembersAreRoundedToTwoDecimalPlaces();
         self::testUpgrade250FlagsFlatRateShopsForTaxReselection();
@@ -781,6 +782,41 @@ final class SurchargeSpec
         Tools::setTestValue('PS_TWO_SURCHARGE_PCT_30', '0');
         Tools::setTestValue('PS_TWO_SURCHARGE_FIXED_30', '0');
         TinyAssert::count(0, $module->validateSurchargeFormForTest(), 'a positive cap with 0% and 0 fixed must be valid');
+        Tools::resetTestValues();
+    }
+
+    /**
+     * While the cap column is HIDDEN (a surcharge type with no percentage) the
+     * zero rule is skipped. The admin JS hides the column and, since the
+     * toggle was rescoped, the help text explaining the rule with it - so
+     * refusing a legacy zero there would abort the whole Payment Settings save
+     * over a field the merchant can neither see nor read about.
+     */
+    private static function testSurchargeCapZeroRuleIsSkippedWhileTheCapColumnIsHidden(): void
+    {
+        self::reset();
+        Tools::resetTestValues();
+        StubStore::$taxRulesGroups[400] = ['name' => 'Standard rate', 'active' => 1];
+        $module = self::makeConfigHarness();
+
+        Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+        foreach (['PCT', 'FIXED'] as $suffix) {
+            Tools::setTestValue('PS_TWO_SURCHARGE_' . $suffix . '_30', '');
+        }
+        Tools::setTestValue('PS_TWO_SURCHARGE_CAP_30', '0');
+
+        // Fixed-only: the cap column is hidden, so the save must go through.
+        Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', 'fixed');
+        TinyAssert::count(0, $module->validateSurchargeFormForTest(), 'a hidden cap column must not block the save');
+
+        // Percentage: the column is visible, so the same value is refused.
+        Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+        $errors = $module->validateSurchargeFormForTest();
+        TinyAssert::true(count($errors) > 0, 'a visible cap column still refuses a zero');
+        TinyAssert::true(
+            strpos((string) $errors[0], 'cannot be 0') !== false,
+            'the error must name zero as the problem'
+        );
         Tools::resetTestValues();
     }
 
