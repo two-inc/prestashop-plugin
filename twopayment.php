@@ -3331,6 +3331,12 @@ class Twopayment extends PaymentModule
             // in every translation catalogue. Same shape as
             // `end_of_month_plus_days` above.
             'company_search_too_short' => $this->l('Please enter %d or more characters'),
+            // The manual-entry affordance and its reverse link (TWO-25288). The
+            // last row inside the dropdown, and the way back out of the manual
+            // entry it switches to. Identical wording on every plugin surface -
+            // do not paraphrase either of these when translating.
+            'company_search_manual_entry' => $this->l('My company is not on the list'),
+            'company_search_back_to_search' => $this->l('Search for company'),
             'sole_trader_registered_business' => $this->l('Registered business'),
             'sole_trader_label' => $this->l('Sole trader'),
         );
@@ -13355,32 +13361,115 @@ class Twopayment extends PaymentModule
         if (!isset($params['address']) || !is_object($params['address'])) {
             return;
         }
-        
+
         $address = $params['address'];
-        
+
         // Only process if this address has company information
         if (empty($address->company)) {
             return;
         }
-        
+
         // Store company data in session for persistence across checkout steps
         if (isset($this->context->cookie)) {
+            $previousCompanyName = isset($this->context->cookie->two_company_name)
+                ? (string) $this->context->cookie->two_company_name
+                : '';
+
             $this->context->cookie->two_company_name = $address->company;
             if (!empty($address->id)) {
                 $this->context->cookie->two_company_address_id = (string) (int) $address->id;
             }
-            
+
             // Try to get organization number from form data if available
             $companyId = Tools::getValue('companyid', '');
             if (!empty($companyId)) {
                 $this->context->cookie->two_company_id = $companyId;
+            } elseif (
+                isset($this->context->cookie->two_company_id)
+                && !$this->twoCompanyNamesMatch($previousCompanyName, (string) $address->company)
+            ) {
+                // TWO-25288. The buyer saved a DIFFERENT company name with no
+                // organisation number beside it - which is what disowning a
+                // selected company looks like by the time it reaches the server.
+                //
+                // The line above has just overwritten the cookie's company NAME,
+                // so leaving the old organisation number in place would pair one
+                // company's number with another company's name, and the resolver
+                // consults this cookie FIRST, ahead of the address. That pairing
+                // is the wrong-company credit check in its purest form.
+                //
+                // This is also the server-side backstop for the browser's clear
+                // being fire-and-forget: a clear request that is dropped, or is
+                // still in flight when the address saves, lands here instead. So
+                // the guarantee does not depend on that request arriving.
+                //
+                // The country marker goes with it. A marker with no organisation
+                // number behind it is the half-record state the clearCompany
+                // action exists to avoid, and the two readers of this cookie
+                // disagree about how to interpret it.
+                unset($this->context->cookie->two_company_id);
+                unset($this->context->cookie->two_company_country);
+
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Dropped session company number - address company changed from "'
+                    . $previousCompanyName . '" to "' . $address->company . '" with no companyid supplied',
+                    1
+                );
             }
-            
+
             // Set cookie expiration (1 hour)
             $this->context->cookie->setExpire(time() + self::COOKIE_EXPIRY_ONE_HOUR);
-            
-            PrestaShopLogger::addLog('TwoPayment: Company data captured from address save - Company: ' . $address->company, 1);                                 
+
+            PrestaShopLogger::addLog('TwoPayment: Company data captured from address save - Company: ' . $address->company, 1);
         }
+    }
+
+    /**
+     * Whether two company names are the same company as far as this cookie is
+     * concerned.
+     *
+     * Case- and whitespace-insensitive, but this is NOT claimed to mirror the
+     * browser's normalizeCompanyName() exactly: JS's `\s` collapses a non-breaking
+     * space (the browser regex engine treats it as whitespace), PCRE's `\s` here
+     * does not without the unicode modifier. So a name that differs only by an
+     * NBSP-vs-space swap normalizes as unchanged in the browser but as a real
+     * difference here. That is conservative rather than a bug worth chasing: on
+     * divergence this side is more willing to say "changed" and drop a stale
+     * organisation number than to risk calling two different names the same one.
+     * A buyer tidying the capitalisation of the company they selected has not
+     * disowned it, and treating that as a change would throw away a perfectly
+     * good organisation number.
+     *
+     * An empty previous name never matches, so the first company saved on a
+     * session cannot be read as an unchanged one. That guard is live, not
+     * decorative: the caller only reaches this function once the address's
+     * company is confirmed non-empty (`empty($address->company)` above already
+     * returned), but a whitespace-only company name survives that check and
+     * normalizes to '' - same as an unset previous name. Without the guard, a
+     * previous name of '' would compare equal to that whitespace-only company,
+     * read as "unchanged", and leave a stale organisation number in place under
+     * a blank-looking name. A literally-empty previous name paired with an
+     * already-set company id is not otherwise reachable - no writer of the
+     * cookie ever stores an empty name (each guards on a non-empty company
+     * before writing, and no path unsets the name while leaving the id behind)
+     * - so this is the one case the guard exists for.
+     *
+     * Note for anyone chasing non-ASCII behaviour under the PHP test suite:
+     * tests/bootstrap.php stubs Tools::strtolower() as a byte-wise ASCII
+     * strtolower(), not the real mb_strtolower(). That gap predates this
+     * change (the stub already backed the other Tools::strtolower() call
+     * site) and is not newly introduced here - a non-ASCII capitalisation
+     * tidy-up is untested by this suite either way.
+     */
+    private function twoCompanyNamesMatch($left, $right)
+    {
+        $normalize = function ($value) {
+            return preg_replace('/\s+/', ' ', trim(Tools::strtolower((string) $value)));
+        };
+
+        $normalizedLeft = $normalize($left);
+
+        return $normalizedLeft !== '' && $normalizedLeft === $normalize($right);
     }
     
     /**

@@ -188,6 +188,99 @@ form (which it does for something as ordinary as a country change):
   the white-box regression is pinned through `background-size` instead, which the removed
   rule's `background` shorthand resets to `auto`.
 
+- the **manual-entry affordance** (TWO-25288 element 5) — `My company is not on the list`
+  as the last row inside the dropdown, and the `Search for company` link that leads back
+  out of the manual entry it switches to. Pinned on **both** render paths, because the two
+  paths implement its keyboard reachability by completely different mechanisms and a change
+  pinned in one looks green while half the surface is untested.
+
+  The assertions are aimed at the **inversion**, not at the row's presence. Every other
+  non-company row in this dropdown carries `ui-state-disabled` and `aria-disabled` so that
+  jQuery UI's own menu *skips* it; this one must be reachable and selectable, so the cases
+  assert it carries neither, that the widget counts it among the rows it navigates
+  (`ui-menu-item` on the row and `ui-menu-item-wrapper` on its child — our own class alone
+  would pass just as happily for a row the widget refuses to focus), that `focus` does not
+  refuse it *while still refusing a message row in the same test*, and that `select` runs
+  the action, returns `false`, and leaves the field holding what the buyer typed.
+
+  Position and threshold are asserted as such: last after real results, last after the
+  failure row, last after the country-not-chosen row, present with zero results, and
+  **absent** below the threshold and on an empty field. The raw results are what gets
+  cached, so a cache hit does not stack a second footer — pinned by searching the same term
+  twice with no new request.
+
+  **The key-event cases are the ones that matter most, and they must be driven
+  through the real widget.** The widget's focus event fires *after* the menu has
+  focused the row, and its return value gates only the write that mirrors a
+  key-navigated item into the input — and it performs that write only for a
+  **key-type** original event. So calling the `focus` option directly, as an
+  earlier version of these tests did, cannot observe the defect at all: it passes
+  whether the guard is there or not. The cases now trigger the widget's own menu
+  focus event with a synthetic keydown original event, in both list shapes,
+  because the normalizer behaves differently in each — alongside real companies
+  the row keeps an empty value (an unguarded write **blanks** the buyer's term),
+  and alongside a message row every value is rewritten from its label (an
+  unguarded write puts the **affordance text** into the field).
+
+  Focus restoration is asserted on both paths, on activation and on the way back,
+  via `document.activeElement`. This is the one behaviour whose regression is
+  invisible to a sighted mouse user and total for a keyboard one, because
+  activating the row removes the focused element from the list.
+
+  Forgetting the selected company is asserted too, and on all three of the places a
+  selection writes the organisation number — because two of them were missing and
+  the defect they left was invisible. The hidden number and its company-name marker
+  are dropped; the session company is cleared through its own endpoint action,
+  asserted to be a POST carrying the token and asserted *not* to be the save
+  action, which rejects an empty company id and would therefore clear nothing; and
+  the address step's `dni` / `vat_number` are dropped, which is the pair the server
+  reads off the saved address independently of the session company.
+
+  Two things about those cases are deliberate. The selection is completed **through
+  jQuery UI's own menu**, not by setting the hidden field by hand: a hand-set
+  stand-in reaches one of the three fields, leaves the other two empty, and every
+  assertion about what a clear does to them then passes vacuously — which is
+  exactly how the disowned number survived unnoticed. And the clear is asserted
+  **through a form submit** as well as directly, because the pre-submit sync adopts
+  a `dni` with no organisation number beside it *as* the organisation number, so a
+  clear that leaves one behind silently undoes itself one step later. The
+  complementary case is asserted beside it: a `dni` the buyer typed themselves is
+  still adopted at submit, which is what rules out a blanket clear.
+
+  A missing endpoint is asserted to be tolerated with the local half still
+  happening. What makes that tolerable is asserted in PHP, not here — see
+  `tests/SessionCompanyClearSpec.php`, which drives both the clear action and the
+  address-save backstop that holds when the browser's fire-and-forget request never
+  arrives.
+
+  On the fallback path the row has no widget to lean on, so it carries its own
+  `role="button"`, `tabindex="0"` and Enter/Space handling, and each of those is asserted
+  directly — including that Space is `preventDefault`ed (its default action is to scroll)
+  and that an unrelated key does nothing. Two fallback-only cases matter more than they
+  look: every one of that path's four renderers wipes the list's `innerHTML`, so the footer
+  is asserted separately in the loading, results, zero-result and failure states; and
+  moving focus onto the row blurs the input, whose blur closes the list 150ms later, so one
+  case blurs the input, focuses the row, advances the timers and then activates it by
+  keyboard. Without the cancel that case pins, the affordance would be pointer-only in
+  practice however good its ARIA looked. A third closes the other half of that:
+  the row re-arms the close on its own blur, because the input is otherwise the
+  only node that closes this list and the row is now the first tab stop after the
+  company field whenever the dropdown is open — so tabbing onward would have left
+  the list painted over the address form indefinitely.
+
+  **The PHP half of this element cannot be covered here at all.** Two seams are
+  invisible to this suite because it stubs both sides of them: the dictionary keys
+  (this suite supplies its own `i18n` object, so a PHP key renamed to a typo leaves
+  every case green while the shipped row is permanently untranslated) and the
+  endpoint action name used to clear the session company (the transport is stubbed,
+  so a name that agrees on neither side fails silently and the disowned company is
+  still credit-checked). Both name agreements are pinned in
+  `tests/CompanySearchCountrySourcingSpec.php`, which is where seam assertions for
+  this feature live — spelling only. What the clear action DOES, and the address-save
+  backstop that holds when the browser's request never arrives, are driven for real
+  in `tests/SessionCompanyClearSpec.php`. That split is deliberate: a source grep
+  cannot see an early `return` above the work it greps for, and did not.
+
 ## Known gaps
 
 Deliberately out of scope for this suite, which covers company-search resilience and
