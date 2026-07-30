@@ -45,8 +45,15 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
         // field from their Two registration once enrolled; matches the
         // Magento and WooCommerce plugins (the third-account_type-option
         // approach previously here has been dropped, see TWO-24755).
+        //
+        // The placeholder is the empty-field hint (TWO-25288). Its wording was
+        // replaced rather than joined by a second hint: there is exactly one
+        // slot in an empty field, and a message row hanging under a field the
+        // buyer has not touched yet is noise. The browser JS applies the same
+        // wording when this slot is empty, which covers a theme rendering its
+        // own address form.
         if (isset($format['company']) && $format['company'] instanceof FormField) {
-            $format['company']->addAvailableValue('placeholder', $this->translator->trans('Search your company name', [], 'Shop.Forms.Labels'));
+            $format['company']->addAvailableValue('placeholder', $this->translator->trans('Enter company name to search', [], 'Shop.Forms.Labels'));
         }
 
         if (isset($format['phone']) && $format['phone'] instanceof FormField) {
