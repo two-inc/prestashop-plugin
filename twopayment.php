@@ -13449,9 +13449,10 @@ class Twopayment extends PaymentModule
      * previous name of '' would compare equal to that whitespace-only company,
      * read as "unchanged", and leave a stale organisation number in place under
      * a blank-looking name. A literally-empty previous name paired with an
-     * already-set company id is not otherwise reachable - every writer of the
-     * cookie sets the name and id together - so this is the one case the guard
-     * exists for.
+     * already-set company id is not otherwise reachable - no writer of the
+     * cookie ever stores an empty name (each guards on a non-empty company
+     * before writing, and no path unsets the name while leaving the id behind)
+     * - so this is the one case the guard exists for.
      *
      * Note for anyone chasing non-ASCII behaviour under the PHP test suite:
      * tests/bootstrap.php stubs Tools::strtolower() as a byte-wise ASCII
