@@ -43,6 +43,8 @@ final class SurchargeSpec
         self::testSurchargeTaxRateForCartResolvesDestinationThroughCoreGates();
         self::testSurchargeTaxRulesGroupOptionsNeverDropTheConfiguredSelection();
         self::testSurchargeTaxRulesGroupFormDefaultRequiresExplicitChoice();
+        self::testSurchargeTaxTreatmentFieldLabelMatchesOtherPlatforms();
+        self::testNoTaxSentinelSuppressedUnlessAlreadyStored();
         self::testSurchargeTaxTreatmentRequiredWhenSurchargesEnabled();
         self::testUpgrade250FlagsFlatRateShopsForTaxReselection();
         self::testSurchargeTaxMigrationNoticeLifecycle();
@@ -494,6 +496,11 @@ final class SurchargeSpec
                 $this->saveTwoSurchargeFormValues();
             }
 
+            public function inputsForTest(): array
+            {
+                return $this->getTwoSurchargeFormInputs();
+            }
+
             public function validateSurchargeFormForTest(): array
             {
                 $this->errors = [];
@@ -527,19 +534,98 @@ final class SurchargeSpec
             TinyAssert::true(is_string($option['id']), 'option ids must be strings (PHP 7 template loose == would conflate \'\' with 0)');
             $byId[$option['id']] = (string) $option['name'];
         }
-        TinyAssert::same(['-- Select surcharge tax treatment --', 'No tax', 'Standard rate', 'Retired rate (inactive)'], array_values($byId), 'placeholder leads; deactivated configured group must stay selectable, flagged inactive');
-        TinyAssert::same(['', '0', '400', '500'], array_map('strval', array_keys($byId)), 'inactive groups that are NOT configured stay hidden');
+        TinyAssert::same(['-- Select surcharge tax treatment --', 'Standard rate', 'Retired rate (inactive)'], array_values($byId), 'placeholder leads; deactivated configured group must stay selectable, flagged inactive');
+        TinyAssert::same(['', '400', '500'], array_map('strval', array_keys($byId)), 'inactive groups that are NOT configured stay hidden');
 
         // Configured group active -> plain listing, no duplicate, no tag.
         Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
         $options = $module->optionsForTest();
-        TinyAssert::count(3, $options);
-        TinyAssert::same('Standard rate', (string) $options[2]['name'], 'active configured group is listed once, untagged');
+        TinyAssert::count(2, $options);
+        TinyAssert::same('Standard rate', (string) $options[1]['name'], 'active configured group is listed once, untagged');
 
         // Configured group deleted entirely -> nothing to inject (runtime
-        // already fails safe to "No tax" for a nonexistent group).
+        // already fails safe to untaxed for a nonexistent group).
         Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '999');
-        TinyAssert::count(3, $module->optionsForTest());
+        TinyAssert::count(2, $module->optionsForTest());
+    }
+
+    /**
+     * TWO-25279: the selector's label is "Surcharge Tax Treatment", matching
+     * the Magento and WooCommerce fields verbatim. The description must not
+     * advertise "No tax" as a choice any more, since it is no longer offered.
+     */
+    private static function testSurchargeTaxTreatmentFieldLabelMatchesOtherPlatforms(): void
+    {
+        self::reset();
+        $module = self::makeConfigHarness();
+
+        $field = null;
+        foreach ($module->inputsForTest() as $input) {
+            if (isset($input['name']) && $input['name'] === Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP) {
+                $field = $input;
+                break;
+            }
+        }
+        TinyAssert::true($field !== null, 'the surcharge tax treatment field must exist in the config form');
+        TinyAssert::same('Surcharge Tax Treatment', (string) $field['label'], 'label must match the Magento/WooCommerce wording');
+        TinyAssert::true(strpos((string) $field['desc'], 'No tax') === false, 'the description must not offer "No tax" as a selection');
+    }
+
+    /**
+     * TWO-25279: core's "No tax" sentinel (id 0) is not a tax rules group
+     * the merchant configured, so it is never offered for a NEW selection -
+     * a merchant who wants an untaxed fee must build a 0% group and pick it.
+     *
+     * It is re-offered for a shop that already stores it, and that carve-out
+     * is what keeps such a shop able to save AT ALL: with the option absent
+     * the browser submits the leading placeholder on the next unrelated
+     * Payment-settings save, and validTwoSurchargeFormValues rejects a blank
+     * treatment while surcharges are enabled. This test walks that whole
+     * round trip - render, resubmit, validate, persist.
+     */
+    private static function testNoTaxSentinelSuppressedUnlessAlreadyStored(): void
+    {
+        self::reset();
+        Tools::resetTestValues();
+        StubStore::$taxRulesGroups[400] = ['name' => 'Standard rate', 'active' => 1];
+        $module = self::makeConfigHarness();
+
+        // Nothing chosen yet -> "No tax" absent.
+        $ids = array_map('strval', array_column($module->optionsForTest(), 'id'));
+        TinyAssert::same(['', '400'], $ids, 'an unconfigured shop is never offered "No tax"');
+
+        // A real group chosen -> still absent.
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+        $ids = array_map('strval', array_column($module->optionsForTest(), 'id'));
+        TinyAssert::same(['', '400'], $ids, 'a shop on a real group is never offered "No tax"');
+
+        // Blank / garbage must NOT be mistaken for a stored "No tax":
+        // getTwoSurchargeTaxRulesGroupId() collapses both to 0, so reading
+        // the stored value through it would re-offer the option to every
+        // shop that has not chosen yet.
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '');
+        TinyAssert::same(['', '400'], array_map('strval', array_column($module->optionsForTest(), 'id')), 'blank config is not a stored "No tax"');
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, 'abc');
+        TinyAssert::same(['', '400'], array_map('strval', array_column($module->optionsForTest(), 'id')), 'garbage config is not a stored "No tax"');
+
+        // Stored "No tax" -> re-offered, and it is the pre-selection.
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '0');
+        $options = $module->optionsForTest();
+        $ids = array_map('strval', array_column($options, 'id'));
+        TinyAssert::same(['', '0', '400'], $ids, 'a shop already storing "No tax" must still see it');
+        TinyAssert::same('No tax', (string) $options[1]['name'], 'the re-offered option keeps its label');
+        TinyAssert::same('0', $module->formDefaultForTest(), 'the stored value is the pre-selection, so the select renders on it');
+
+        // ...and the value that select posts back still saves cleanly.
+        foreach (['PCT', 'FIXED', 'CAP'] as $suffix) {
+            Tools::setTestValue('PS_TWO_SURCHARGE_' . $suffix . '_30', '');
+        }
+        Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+        Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, $module->formDefaultForTest());
+        TinyAssert::count(0, $module->validateSurchargeFormForTest(), 'resubmitting the stored "No tax" must not block the save');
+        $module->saveSurchargeFormForTest();
+        TinyAssert::same('0', (string) Configuration::get(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP), 'the stored "No tax" survives the round trip unchanged');
+        Tools::resetTestValues();
     }
 
     /**
