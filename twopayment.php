@@ -13442,10 +13442,23 @@ class Twopayment extends PaymentModule
      *
      * An empty previous name never matches, so the first company saved on a
      * session cannot be read as an unchanged one. That guard is live, not
-     * decorative: without it, a previous name of '' would compare equal to a
-     * company name that is present but normalizes to '' (whitespace-only), which
-     * would read as "unchanged" and leave a stale organisation number in place
-     * under a blank name.
+     * decorative: the caller only reaches this function once the address's
+     * company is confirmed non-empty (`empty($address->company)` above already
+     * returned), but a whitespace-only company name survives that check and
+     * normalizes to '' - same as an unset previous name. Without the guard, a
+     * previous name of '' would compare equal to that whitespace-only company,
+     * read as "unchanged", and leave a stale organisation number in place under
+     * a blank-looking name. A literally-empty previous name paired with an
+     * already-set company id is not otherwise reachable - every writer of the
+     * cookie sets the name and id together - so this is the one case the guard
+     * exists for.
+     *
+     * Note for anyone chasing non-ASCII behaviour under the PHP test suite:
+     * tests/bootstrap.php stubs Tools::strtolower() as a byte-wise ASCII
+     * strtolower(), not the real mb_strtolower(). That gap predates this
+     * change (the stub already backed the other Tools::strtolower() call
+     * site) and is not newly introduced here - a non-ASCII capitalisation
+     * tidy-up is untested by this suite either way.
      */
     private function twoCompanyNamesMatch($left, $right)
     {
