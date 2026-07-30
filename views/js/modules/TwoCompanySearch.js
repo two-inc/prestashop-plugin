@@ -3,6 +3,18 @@
  * Handles company autocomplete, organization number persistence, and address saving
  */
 
+/**
+ * Shortest term the company search will act on (TWO-25288).
+ *
+ * The ONE place this number is written. It gates the request on both render
+ * paths AND is interpolated into the hint the buyer reads, so the number the
+ * hint claims and the number the code enforces cannot drift apart - which is
+ * why the translatable string in twopayment.php carries an unresolved `%d`
+ * rather than a spelled-out "3". Do not reintroduce a literal here, in the
+ * widget options, or in the translation catalogues.
+ */
+const MIN_SEARCH_LENGTH = 3;
+
 class TwoCompanySearch {
     static DEFAULT_COMPANY_SEARCH_LIMIT = 50;
 
@@ -391,6 +403,13 @@ class TwoCompanySearch {
         // Marks the field for the in-field spinner CSS (views/css/two.css).
         this.companyField.addClass('two-company-search-input');
 
+        // Empty-field hint. Set here rather than only in the address-form
+        // override so it survives PrestaShop replacing the input on
+        // `updatedAddressForm`, and so it reaches themes that supply their own
+        // address form and never run that override. Before the path branch, so
+        // both render paths get it.
+        this.applyEmptyFieldHint();
+
         // Use jQuery UI autocomplete if available; otherwise fallback to custom.
         // `$.fn.autocomplete` alone is not proof of jQuery UI - the older
         // bassistance jquery.autocomplete plugin claims the same name with an
@@ -399,6 +418,19 @@ class TwoCompanySearch {
         if ($.ui && $.ui.autocomplete && typeof $.fn.autocomplete === 'function') {
             this.companyField.autocomplete({
                 source: (request, response) => {
+                    const term = String(request.term || '');
+                    // Empty field: the placeholder is already the hint for this
+                    // state, so opening a dropdown to repeat it would be noise.
+                    if (term.length === 0) {
+                        response([]);
+                        return;
+                    }
+                    // Typed, but not enough to search on. Say so instead of
+                    // leaving the buyer with a field that appears to do nothing.
+                    if (term.length < MIN_SEARCH_LENGTH) {
+                        response([this.buildTooShortItem()]);
+                        return;
+                    }
                     const key = this.buildCacheKey(request.term);
                     const cached = TwoCompanySearch.cacheGet(key);
                     if (cached) {
@@ -434,7 +466,16 @@ class TwoCompanySearch {
                         response(results);
                     });
                 },
-                minLength: 3,
+                // Deliberately 0, and NOT MIN_SEARCH_LENGTH: jQuery UI never
+                // invokes `source` for a term shorter than `minLength`, so
+                // leaving the threshold here would make the too-short hint
+                // unreachable by construction - the widget would swallow those
+                // keystrokes silently, which is the behaviour TWO-25288 removes.
+                // The threshold has moved into the `source` guard above, which is
+                // the ONLY gate on this path and reads MIN_SEARCH_LENGTH; no
+                // request can escape it, because `source` is where the request is
+                // made.
+                minLength: 0,
                 // 300ms matches the custom fallback path below and the
                 // Magento/WooCommerce plugins.
                 delay: 300,
@@ -495,8 +536,11 @@ class TwoCompanySearch {
                         // the row is skipped by keyboard navigation rather than
                         // merely refused on select. .text() (as jQuery UI's own
                         // renderer does) keeps markup out of the dropdown.
+                        // `two_row_class` lets a message row be told apart in the
+                        // DOM (the too-short hint is not a failure) while keeping
+                        // the disabled/keyboard-skip behaviour identical.
                         return $('<li>')
-                            .addClass('two-autocomplete-unavailable ui-state-disabled')
+                            .addClass((item.two_row_class || 'two-autocomplete-unavailable') + ' ui-state-disabled')
                             .attr('aria-disabled', 'true')
                             .append($('<div>').text(item.label || ''))
                             .appendTo(ul);
@@ -536,6 +580,85 @@ class TwoCompanySearch {
      */
     buildCacheKey(term) {
         return term + '|' + this.getCurrentCountry();
+    }
+
+    /**
+     * Hint shown in the empty company field (TWO-25288).
+     *
+     * Occupies the placeholder slot, which is why the previous wording there was
+     * replaced rather than joined: two hints cannot share one slot, and a
+     * separate second row under an empty field would be noise on a field the
+     * buyer has not touched yet.
+     *
+     * Applied only when the field carries no placeholder, so a merchant theme or
+     * a shop-level override of the address form still wins. In the standard flow
+     * the address-form override has already put the same wording there.
+     *
+     * @returns {void}
+     */
+    applyEmptyFieldHint() {
+        const field = this.companyField;
+        if (!field || field.length === 0) {
+            return;
+        }
+        const existing = field.attr('placeholder');
+        if (existing !== undefined && String(existing).trim() !== '') {
+            return;
+        }
+        field.attr('placeholder', TwoCompanySearch.getEmptyFieldHintText());
+    }
+
+    /**
+     * @returns {string} wording for the empty-field hint
+     */
+    static getEmptyFieldHintText() {
+        return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_placeholder)
+            || 'Enter company name to search';
+    }
+
+    /**
+     * Message shown when the term is too short to search on (TWO-25288).
+     *
+     * Below the threshold PrestaShop used to show nothing at all - jQuery UI
+     * simply never opened its menu - which is indistinguishable from a search
+     * that ran and found nothing.
+     *
+     * A FIXED number, not a countdown of characters still needed. A count that
+     * changes on every keystroke reads as an error being repeatedly re-raised,
+     * and it has to be recomputed at every call site, which is exactly where a
+     * claimed threshold drifts from the enforced one. `%d` is interpolated from
+     * MIN_SEARCH_LENGTH so the number the buyer reads IS the number the guards
+     * apply.
+     *
+     * @returns {string}
+     */
+    getTooShortText() {
+        const template = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_too_short)
+            || 'Please enter %d or more characters';
+        return String(template).replace('%d', String(MIN_SEARCH_LENGTH));
+    }
+
+    /**
+     * Pseudo-result carrying the too-short message through jQuery UI's
+     * result-list plumbing.
+     *
+     * Reuses `two_unavailable` for the same reason buildSelectCountryItem() does:
+     * that flag is what the select / focus / _renderItem handlers check to keep a
+     * message row out of the company field. It means "not a company".
+     *
+     * `two_row_class` overrides only the row's own class so this row is
+     * distinguishable in the DOM from a genuine failure - the disabled/keyboard
+     * behaviour is shared and must stay shared.
+     *
+     * @returns {Object}
+     */
+    buildTooShortItem() {
+        return {
+            label: this.getTooShortText(),
+            value: '',
+            two_unavailable: true,
+            two_row_class: 'two-autocomplete-too-short'
+        };
     }
 
     /**
@@ -699,6 +822,21 @@ class TwoCompanySearch {
             list.style.display = 'block';
         };
 
+        // Too short to search on. Not a failure, so it gets its own class - but
+        // it is rendered as a row on this path too, because the alternative is
+        // the empty dropdown this path used to show below the threshold.
+        const renderTooShort = () => {
+            setLoadingState(false);
+            list.innerHTML = '';
+            const row = document.createElement('div');
+            row.className = 'two-autocomplete-item two-autocomplete-too-short';
+            row.style.padding = '6px 10px';
+            row.style.color = '#888';
+            row.textContent = this.getTooShortText();
+            list.appendChild(row);
+            list.style.display = 'block';
+        };
+
         // Same reasoning, different cause: no search was made because the
         // country is unknown, so point at the fix the buyer can apply.
         const renderSelectCountry = () => {
@@ -732,8 +870,14 @@ class TwoCompanySearch {
             const term = inputEl.value || '';
             clearTimeout(debounce.id);
             debounce.id = setTimeout(() => {
-                if (term.length < 3) {
+                // Empty field: the placeholder is the hint for this state, so
+                // close the list rather than repeat it in a row.
+                if (term.length === 0) {
                     renderResults([]);
+                    return;
+                }
+                if (term.length < MIN_SEARCH_LENGTH) {
+                    renderTooShort();
                     return;
                 }
                 const key = this.buildCacheKey(term);
@@ -869,7 +1013,7 @@ class TwoCompanySearch {
      *      matches the CURRENT request.
      */
     searchCompanies(term, responseCallback) {
-        if (term.length < 3) {
+        if (term.length < MIN_SEARCH_LENGTH) {
             // Empty/short term cancels any pending search rather than racing it.
             this._companySearchSeq += 1;
             this._abortPendingCompanySearch();
@@ -1611,3 +1755,8 @@ class TwoCompanySearch {
 
 // Export for use in other modules
 window.TwoCompanySearch = TwoCompanySearch;
+// Published so a test can assert the enforced threshold against the number the
+// hint shows the buyer. A top-level `const` in a classic script is not reachable
+// from outside the script, and the whole point of a single constant is lost if a
+// test has to hard-code the number to check it.
+window.TwoCompanySearch.MIN_SEARCH_LENGTH = MIN_SEARCH_LENGTH;

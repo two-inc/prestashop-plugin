@@ -3319,6 +3319,18 @@ class Twopayment extends PaymentModule
             // which country's company register to query, and the only action
             // that resolves it is the buyer selecting a country.
             'company_search_select_country' => $this->l('Select your country above to search for your company.'),
+            // Placeholder for the empty company field. Also set server-side by
+            // the address-form override; this copy is what reaches a theme that
+            // renders its own address form, and what survives PrestaShop
+            // replacing the input on an address-form update.
+            'company_search_placeholder' => $this->l('Enter company name to search'),
+            // `%d` is deliberately left UNRESOLVED here. The browser JS holds the
+            // one threshold constant and interpolates it, so the number this
+            // sentence claims cannot drift from the number the search enforces.
+            // Spelling a number out here would create a second source of truth
+            // in every translation catalogue. Same shape as
+            // `end_of_month_plus_days` above.
+            'company_search_too_short' => $this->l('Please enter %d or more characters'),
             'sole_trader_registered_business' => $this->l('Registered business'),
             'sole_trader_label' => $this->l('Sole trader'),
         );

@@ -237,7 +237,8 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 ### Checkout Flow
 
 #### 1. Address Step (Business Accounts)
-- Customer types at least 3 characters in the `Company` field
+- The empty `Company` field carries the hint `Enter company name to search`
+- Customer types at least 3 characters in the `Company` field; below that the dropdown says `Please enter 3 or more characters` rather than staying shut. The threshold is a single constant in `views/js/modules/TwoCompanySearch.js` and is interpolated into that message, so the number shown always matches the number enforced
 - Module searches Two's Company API v2 (frontend call)
 - Customer selects a company from search results
 - Module stores organization number in hidden `companyid` field
@@ -559,7 +560,7 @@ The module builds order payloads that exactly match PrestaShop invoices:
 ### Company Search Not Working
 - **Symptom**: No results when typing company name
 - **Solutions**:
-  - Ensure at least 3 characters typed
+  - Ensure at least 3 characters typed (below the threshold the dropdown says so)
   - Check browser console for API errors
   - Verify network calls to `/companies/v2/company`
   - Check API key is valid
