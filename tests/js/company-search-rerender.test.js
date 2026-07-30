@@ -25,6 +25,9 @@
 
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+
 const {
     loadCompanySearch,
     buildAddressForm,
@@ -33,7 +36,8 @@ const {
     callbackRecorder,
     releaseWidgets,
     flushPromises,
-    installStylesheet
+    installStylesheet,
+    REPO_ROOT
 } = require('./ps-harness');
 
 const CHECKOUT_HOST = 'https://api.example.test';
@@ -1200,22 +1204,28 @@ describe('a destroyed instance cannot act on the live DOM', () => {
 });
 
 /**
- * TWO-25288. The in-field spinner is a real element now, not a background GIF on
- * the input, so it has DOM lifecycle of its own: it can be inserted twice, it can
- * be orphaned by an address-form re-render, and it can end up on the wrong side of
- * the fallback dropdown. None of that was possible while it was a background-image.
+ * TWO-25288. The in-field spinner is the loader GIF, set as the company input's
+ * own `background-image` and shown purely by the loading class the module already
+ * puts on that input.
+ *
+ * Nothing in this suite covered that before, and "the class is set" is not the
+ * same claim: the class was already asserted elsewhere while an unscoped
+ * `!important` rule further down the stylesheet quietly out-ranked the scoped one
+ * and painted a white background over the field. Only reading the resolved style
+ * catches that, so these are the sole tests here that load a real stylesheet
+ * (`installStylesheet()` in the harness).
  *
  * Both render paths are pinned deliberately. The jQuery UI path and the custom
- * fallback share the CSS contract but not a line of the code that arms it, so
+ * fallback set different classes and share nothing but the CSS contract, so
  * covering one and assuming the other leaves half the surface untested with a
  * green suite.
  */
-describe('the in-field spinner element', () => {
+describe('the in-field spinner GIF', () => {
     let stylesheet;
 
     beforeEach(() => {
-        // The real shipped stylesheet, so the sibling combinator that decides
-        // visibility is the thing under test rather than a restatement of it.
+        // The real shipped stylesheet, so the rule under test is the one that
+        // ships rather than a restatement of it.
         stylesheet = installStylesheet('views/css/two.css');
     });
 
@@ -1225,175 +1235,105 @@ describe('the in-field spinner element', () => {
         }
     });
 
-    /** Every spinner in the document, however it got there. */
-    function spinners() {
-        return document.querySelectorAll('.two-company-search-spinner');
+    function styleOf(el) {
+        return window.getComputedStyle(el);
     }
 
-    /** The one spinner, asserting first that there is exactly one. */
-    function spinner() {
-        expect(spinners()).toHaveLength(1);
-        return spinners()[0];
-    }
+    test('the asset the stylesheet asks for is actually in the repo', () => {
+        // A rule naming a file that is not shipped resolves in jsdom exactly as
+        // happily as one naming a file that is, so the URL assertions below would
+        // all pass with the GIF deleted. This is the case that would not.
+        const css = fs.readFileSync(path.join(REPO_ROOT, 'views/css/two.css'), 'utf8');
+        const match = css.match(/\.two-company-search-input\.ui-autocomplete-loading[\s\S]*?url\("([^"]+)"\)/);
+        expect(match).not.toBeNull();
 
-    function displayOf(el) {
-        return window.getComputedStyle(el).display;
-    }
+        // Resolved the way a browser resolves it: relative to the stylesheet.
+        const asset = path.resolve(path.join(REPO_ROOT, 'views/css'), match[1]);
+        expect(fs.existsSync(asset)).toBe(true);
 
-    test('setup inserts exactly one, after the input, in a positioned parent', () => {
+        // Animated, and the size the rule pins. A still image here would be a
+        // spinner that never spins, which no CSS assertion can tell apart.
+        const bytes = fs.readFileSync(asset);
+        expect(bytes.slice(0, 6).toString('latin1')).toBe('GIF89a');
+        expect(bytes.readUInt16LE(6)).toBe(16);
+        expect(bytes.readUInt16LE(8)).toBe(16);
+        // Frame count. A GIF with one image descriptor is a static picture; this
+        // one must have several or it does not animate.
+        let frames = 0;
+        for (let i = 0; i < bytes.length; i += 1) {
+            if (bytes[i] === 0x2c) frames += 1;
+        }
+        expect(frames).toBeGreaterThan(1);
+    });
+
+    test('nothing paints on the field while it is idle', () => {
         makeInstance();
         const input = liveField().get(0);
-        const el = spinner();
 
-        expect(el.tagName).toBe('SPAN');
-        expect(el.previousElementSibling).toBe(input);
-        expect(el.parentNode).toBe(input.parentNode);
-        // Decorative: the dropdown carries the meaning.
-        expect(el.getAttribute('aria-hidden')).toBe('true');
-        // Without the containing block the absolute positioning would resolve
-        // against some ancestor further up and land the spinner anywhere.
-        expect(input.parentNode.classList.contains('two-company-search-field')).toBe(true);
+        // The paint is gated on the loading class, so an idle field must be
+        // untouched. The gutter, by contrast, is reserved unconditionally:
+        // toggling the padding with the spinner reflowed the field's text in and
+        // out on every keystroke.
+        expect(styleOf(input).backgroundImage).toBe('');
+        expect(styleOf(input).paddingRight).toBe('32px');
     });
 
-    test('it actually animates: a stepped timing function would freeze it', () => {
+    test('the scoped rule is the one that applies while loading, not an !important one', () => {
         makeInstance();
-        const animation = window.getComputedStyle(spinner()).animation;
-
-        // The spoke pattern has a 30deg period, so `steps(12, end)` over one turn
-        // advances in 30deg increments and maps the pattern exactly onto itself -
-        // a spinner that is present, correctly coloured, correctly sized and
-        // completely motionless. Asserting on the keyframes NAME would not catch
-        // it, which is why this pins the timing function.
-        expect(animation).toContain('linear');
-        expect(animation).not.toContain('steps');
-        // The keyframes are shared with the eligibility overlay's spinner; a
-        // rename there must not silently stop this one animating.
-        expect(animation).toContain('two-spin');
-    });
-
-    test('it is not centred with a transform, which the animation would overwrite', () => {
-        makeInstance();
-        const style = window.getComputedStyle(spinner());
-
-        // The spin animation owns `transform`. Centring with
-        // `transform: translateY(-50%)` is the obvious way to do this and it is
-        // wrong: the animation overwrites it on the first frame and drops the
-        // spinner half its height out of the field. `top` does the centring.
-        expect(style.transform).toBe('');
-        // Deliberately not asserting the exact `top` value. `calc(50% - 0.5em)` is
-        // one correct answer and `top: 50%; margin-top: -0.5em` is another; pinning
-        // the current spelling would fail a valid refactor. What must not come back
-        // is `transform`.
-        expect(style.position).toBe('absolute');
-    });
-
-    test('repeated setup never inserts a second one', () => {
-        const search = makeInstance();
-        for (let i = 0; i < 10; i += 1) {
-            search.setupAutocomplete();
-        }
-
-        expect(spinners()).toHaveLength(1);
-    });
-
-    test('a country change never inserts a second one', () => {
-        makeInstance();
-        for (let i = 0; i < 10; i += 1) {
-            bus.emit('updatedAddressForm');
-        }
-
-        expect(spinners()).toHaveLength(1);
-    });
-
-    test('it is re-created against the replaced field after a re-render', () => {
-        const search = makeInstance();
-        const before = spinner();
-
-        const newField = replaceAddressForm();
-        search.setupAutocomplete();
-
-        // PrestaShop replaced the whole form, so the old spinner went with its
-        // parent. What matters is that exactly one exists and that it is a
-        // sibling of the LIVE input - a spinner left in the detached subtree
-        // would never show, and a second one in the live subtree would show
-        // twice.
-        expect(spinners()).toHaveLength(1);
-        expect(spinner()).not.toBe(before);
-        expect(spinner().previousElementSibling).toBe(newField);
-        expect(newField.parentNode.classList.contains('two-company-search-field')).toBe(true);
-    });
-
-    test('and it is still WIRED after a re-render, not merely present', () => {
-        const search = makeInstance();
-        replaceAddressForm();
-        search.setupAutocomplete();
-
-        const el = spinner();
-        expect(displayOf(el)).toBe('none');
-
-        // The defect this exists to catch is a span that survives re-render as
-        // dead markup: present, unduplicated, correctly placed, and driven by
-        // nothing - which every count-and-position assertion above would pass.
-        // The only proof is driving a real search against the re-rendered form.
         const field = liveField();
+        const input = field.get(0);
+
         field.val('exa');
         field.autocomplete('instance').search('exa');
+        expect(field.hasClass(LOADING_CLASS)).toBe(true);
 
-        expect(displayOf(el)).toBe('inline-block');
-
-        ajax.last().succeed(SEARCH_RESPONSE);
-
-        expect(displayOf(el)).toBe('none');
+        // This is the substantive change. A second, unscoped
+        // `.ui-autocomplete-loading` rule used to sit further down this
+        // stylesheet declaring `background: white ... !important` and
+        // `padding-right: 25px !important`. Being `!important` it out-ranked the
+        // scoped rule whatever the specificity, so the field really did get a
+        // white box painted over the merchant's theme and a 25px gutter while the
+        // 32px one was reserved - and both rules named the same GIF, so the
+        // spinner looked fine and nothing gave it away.
+        //
+        // Both values below flip if that rule comes back, which is why they are
+        // asserted here, in the loading state, rather than on an idle field: the
+        // removed rule was gated on the same class and an idle field cannot see
+        // it.
+        //
+        // `background-size` is the proxy for the white box rather than
+        // `background-color`, which cannot do the job: jsdom's own default
+        // stylesheet already resolves every `input` to a white background, so
+        // that assertion passes whatever this stylesheet says. The removed rule
+        // used the `background` SHORTHAND, which resets the longhands it omits -
+        // so `background-size` reverts to `auto` if it comes back, and the
+        // spinner is drawn at whatever size the field gives it.
+        const painted = styleOf(input);
+        expect(painted.paddingRight).toBe('32px');
+        expect(painted.backgroundSize).toBe('16px 16px');
     });
 
-    test('a theme that swaps only the input leaves one spinner, not two', () => {
-        const search = makeInstance();
-        const oldInput = liveField().get(0);
-        const parent = oldInput.parentNode;
-
-        // The whole-form re-render is the common case; this is the other one.
-        // The parent survives, so a spinner left next to the dead input would
-        // still be in the live subtree and the next setup would add a second.
-        const fresh = document.createElement('input');
-        fresh.setAttribute('type', 'text');
-        fresh.setAttribute('name', 'company');
-        parent.replaceChild(fresh, oldInput);
-
-        search.setupAutocomplete();
-
-        expect(spinners()).toHaveLength(1);
-        expect(spinner().previousElementSibling).toBe(fresh);
-    });
-
-    test('destroy removes it and the containing-block class', () => {
-        const search = makeInstance();
-        const parent = liveField().get(0).parentNode;
-        expect(spinners()).toHaveLength(1);
-
-        search.destroy();
-
-        expect(spinners()).toHaveLength(0);
-        expect(parent.classList.contains('two-company-search-field')).toBe(false);
-    });
-
-    test('it shows during a jQuery UI search and hides again afterwards', () => {
+    test('the GIF paints on the input during a jQuery UI search, and stops after', () => {
         makeInstance();
         const field = liveField();
-        const el = spinner();
-
-        expect(displayOf(el)).toBe('none');
+        const input = field.get(0);
 
         field.val('exa');
         field.autocomplete('instance').search('exa');
 
-        // jQuery UI puts `ui-autocomplete-loading` on the input; the stylesheet
-        // turns that into a visible sibling with no JS involvement at all.
-        expect(field.hasClass('ui-autocomplete-loading')).toBe(true);
-        expect(displayOf(el)).toBe('inline-block');
+        // jQuery UI puts `ui-autocomplete-loading` on the input itself; the
+        // stylesheet turns that into the GIF with no JS involvement at all.
+        expect(field.hasClass(LOADING_CLASS)).toBe(true);
+        const painted = styleOf(input);
+        expect(painted.backgroundImage).toContain('loader.gif');
+        // Repeated across the field would tile the spinner; unpinned size would
+        // let a themed input scale it.
+        expect(painted.backgroundRepeat).toBe('no-repeat');
+        expect(painted.backgroundSize).toBe('16px 16px');
 
         ajax.last().succeed(SEARCH_RESPONSE);
 
-        expect(displayOf(el)).toBe('none');
+        expect(styleOf(input).backgroundImage).toBe('');
     });
 
     describe('on the custom fallback path, where jQuery UI is absent', () => {
@@ -1418,95 +1358,56 @@ describe('the in-field spinner element', () => {
             return input;
         }
 
-        test('it shows during a search and hides again afterwards', () => {
+        test('the GIF paints during a search and stops afterwards', () => {
             makeInstance();
-            const el = spinner();
+            const input = liveField().get(0);
 
-            expect(displayOf(el)).toBe('none');
+            expect(styleOf(input).backgroundImage).toBe('');
 
             type('exa');
 
-            // The fallback sets its own class by hand, matched by the same
-            // sibling rule - one CSS contract for both paths.
+            // This path sets its own class by hand, matched by the same rule -
+            // one CSS contract, two arming mechanisms.
             expect(liveField().hasClass('two-company-search-loading')).toBe(true);
-            expect(displayOf(el)).toBe('inline-block');
+            expect(styleOf(input).backgroundImage).toContain('loader.gif');
 
             ajax.last().succeed(SEARCH_RESPONSE);
 
-            expect(displayOf(el)).toBe('none');
+            expect(styleOf(input).backgroundImage).toBe('');
         });
 
-        test('a failed search hides it again', () => {
+        test('a failed search stops it too', () => {
             makeInstance();
-            const el = spinner();
+            const input = liveField().get(0);
             type('exa');
 
             ajax.last().fail('timeout');
 
-            expect(displayOf(el)).toBe('none');
+            expect(styleOf(input).backgroundImage).toBe('');
         });
+    });
 
-        test('it still shows with the dropdown container sitting between it and the input', () => {
-            makeInstance();
-            const input = liveField().get(0);
-            const el = spinner();
+    test('it still paints after an address-form re-render', () => {
+        const search = makeInstance();
+        replaceAddressForm();
+        search.setupAutocomplete();
 
-            // This path inserts its dropdown container directly after the input,
-            // so the spinner is NOT the input's adjacent sibling here. That is
-            // exactly why the stylesheet uses the general sibling combinator: an
-            // adjacent one (`+`) would match the container and the spinner would
-            // never appear on this path, with the class assertions still passing.
-            expect(el.previousElementSibling).not.toBe(input);
-            expect(input.nextElementSibling.classList.contains('two-autocomplete-container')).toBe(true);
+        // The re-render replaces the input, so the class the stylesheet keys off
+        // has to be re-applied to the replacement. A field that searches with no
+        // visible feedback is the failure this catches, and every class-level
+        // assertion elsewhere passes while it is broken.
+        const field = liveField();
+        const input = field.get(0);
+        expect(styleOf(input).backgroundImage).toBe('');
 
-            type('exa');
+        field.val('exa');
+        field.autocomplete('instance').search('exa');
 
-            expect(displayOf(el)).toBe('inline-block');
-        });
+        expect(styleOf(input).backgroundImage).toContain('loader.gif');
 
-        test('repeated setup on this path still leaves exactly one', () => {
-            const search = makeInstance();
-            for (let i = 0; i < 10; i += 1) {
-                search.setupAutocomplete();
-            }
+        ajax.last().succeed(SEARCH_RESPONSE);
 
-            expect(spinners()).toHaveLength(1);
-            expect($('.two-autocomplete-container')).toHaveLength(1);
-        });
-
-        test('a re-render on this path re-creates one and only one', () => {
-            const search = makeInstance();
-            const newField = replaceAddressForm();
-
-            search.setupAutocomplete();
-
-            expect(spinners()).toHaveLength(1);
-            // A FOLLOWING sibling, not necessarily the adjacent one - this path's
-            // dropdown container sits in between. That is the relationship the
-            // stylesheet's general sibling combinator actually needs.
-            expect(spinner().parentNode).toBe(newField.parentNode);
-            expect(newField.compareDocumentPosition(spinner())
-                & window.Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-        });
-
-        test('and it is still WIRED after a re-render on this path too', () => {
-            const search = makeInstance();
-            replaceAddressForm();
-            search.setupAutocomplete();
-
-            const el = spinner();
-            expect(displayOf(el)).toBe('none');
-
-            // Same proof as the jQuery UI path: a re-rendered form must leave a
-            // spinner that a real search still drives, not dead markup.
-            type('exa');
-
-            expect(displayOf(el)).toBe('inline-block');
-
-            ajax.last().succeed(SEARCH_RESPONSE);
-
-            expect(displayOf(el)).toBe('none');
-        });
+        expect(styleOf(input).backgroundImage).toBe('');
     });
 });
 

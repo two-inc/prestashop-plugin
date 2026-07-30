@@ -151,46 +151,39 @@ form (which it does for something as ordinary as a country change):
 - the custom fallback used when jQuery UI is absent: its own spinner clears on failure,
   survives a superseded request, and repeated setup leaves exactly one dropdown rather
   than orphan containers listening on the shared field.
-- the in-field spinner **element** (TWO-25288). The spinner is drawn in CSS now rather than
-  being a background GIF on the input, so it is a real `<span>` sibling with a DOM lifecycle
-  of its own — it can be inserted twice, orphaned by a re-render, or end up on the wrong
-  side of the fallback dropdown, none of which a background-image could do. Pinned on
-  **both** render paths, because they share the CSS contract but not a line of the code that
-  arms it: exactly one spinner after ten repeated setups, ten country changes, a whole-form
-  re-render and a theme that swaps only the input; `destroy()` removing the element and the
-  containing-block class, not just the classes; no `transform` resolving on the element,
-  since the animation owns that property and would overwrite `translateY(-50%)` centring on
-  its first frame; and the animation not being stepped — the spokes have a 30deg period, so
-  `steps(12, end)` maps the pattern onto itself and renders a spinner that never moves,
-  which a test asserting only the keyframes *name* would have passed.
+- the in-field spinner **GIF** (TWO-25288). The spinner is the loader GIF, set as the company
+  input's own `background-image` and painted purely by the loading class the module already
+  puts on that input. Pinned on **both** render paths, because they set different classes and
+  share nothing but the CSS contract, so covering one and assuming the other leaves half the
+  surface untested with a green suite: the GIF resolves while a search runs and stops after,
+  on the jQuery UI path, on the no-jQuery-UI fallback path (including after a failed search),
+  and after an address-form re-render replaces the input.
 
-  Two cases pin that the span is still **wired** after an address-form re-render, not merely
-  present — one per render path. This is the exposure that comes with owning the element: the
-  span is inserted by us into markup the *platform* re-renders, so the failure mode is a span
-  that survives as dead decoration — present, unduplicated, correctly placed, driven by
-  nothing — which every count-and-position assertion passes. The only proof is driving a real
-  search against the re-rendered form and watching `display` change. Verified by mutation:
-  inserting the span outside the input's parent reddens both, while leaving the module's own
-  loading-state code untouched.
+  These are the only tests here that load a **stylesheet** (`installStylesheet()` in the
+  harness). "The class is set" is a weaker claim than "the spinner appears", and the gap
+  between them is not hypothetical: an unscoped `!important` rule further down the stylesheet
+  used to out-rank the scoped one and paint a white box and its own gutter over the field,
+  with the class set correctly throughout. One case pins that specifically, in the **loading**
+  state — the removed rule was gated on the same class, so an idle field cannot see it.
 
   Nothing stubs the loading state. The harness replaces only `$.ajax` (the network) and the
   `prestashop` event bus; jQuery, the jQuery UI autocomplete widget and the module source are
   all real, so the class toggling that drives the spinner is unstubbed production code on both
   paths.
 
-  One case exists specifically to pin the **general** sibling combinator: the fallback path
-  inserts its dropdown container directly after the input, so on that path the spinner is
-  not the input's adjacent sibling and a `+` selector would match the container instead —
-  spinner permanently invisible on that path, every class assertion still green.
+  One case reads the GIF off disk rather than trusting the stylesheet, because jsdom resolves
+  a `url()` naming a missing file exactly as happily as one naming a real file — so every
+  other assertion here passes with the asset deleted. It checks the file exists at the path
+  the rule resolves to, that it is a GIF of the pinned 16x16, and that it has more than one
+  frame: a still image would be a spinner that never spins, which no CSS assertion can tell
+  apart from a working one.
 
-  These are the only tests here that load a **stylesheet** (`installStylesheet()` in the
-  harness). Visibility is decided entirely by a sibling selector keyed off the loading class
-  on the input, so asserting on classes and on the element's presence would pass with a
-  spinner that is permanently invisible. They read `getComputedStyle(...).display` against
-  the real `views/css/two.css` instead. Note that jsdom cascades by **document order alone**,
-  with no specificity: the stylesheet's `display` rules are ordered so that order and
-  specificity give the same answer, and a `display` declaration added to the spinner's
-  appearance rule would pass here while being wrong in a browser.
+  **Two jsdom limits to know before adding assertions here.** The multi-value
+  `background-position` form resolves to an empty string even when the rule is correct, so do
+  not assert on it. And jsdom's own default stylesheet resolves every `input` to
+  `background-color: white`, so an assertion that the field is *not* white can never fail —
+  the white-box regression is pinned through `background-size` instead, which the removed
+  rule's `background` shorthand resets to `auto`.
 
 ## Known gaps
 
