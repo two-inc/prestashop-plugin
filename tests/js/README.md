@@ -164,6 +164,20 @@ form (which it does for something as ordinary as a country change):
   `steps(12, end)` maps the pattern onto itself and renders a spinner that never moves,
   which a test asserting only the keyframes *name* would have passed.
 
+  Two cases pin that the span is still **wired** after an address-form re-render, not merely
+  present — one per render path. This is the exposure that comes with owning the element: the
+  span is inserted by us into markup the *platform* re-renders, so the failure mode is a span
+  that survives as dead decoration — present, unduplicated, correctly placed, driven by
+  nothing — which every count-and-position assertion passes. The only proof is driving a real
+  search against the re-rendered form and watching `display` change. Verified by mutation:
+  inserting the span outside the input's parent reddens both, while leaving the module's own
+  loading-state code untouched.
+
+  Nothing stubs the loading state. The harness replaces only `$.ajax` (the network) and the
+  `prestashop` event bus; jQuery, the jQuery UI autocomplete widget and the module source are
+  all real, so the class toggling that drives the spinner is unstubbed production code on both
+  paths.
+
   One case exists specifically to pin the **general** sibling combinator: the fallback path
   inserts its dropdown container directly after the input, so on that path the spinner is
   not the input's adjacent sibling and a `+` selector would match the container instead —

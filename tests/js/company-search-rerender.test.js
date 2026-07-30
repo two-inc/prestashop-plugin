@@ -1323,6 +1323,29 @@ describe('the in-field spinner element', () => {
         expect(newField.parentNode.classList.contains('two-company-search-field')).toBe(true);
     });
 
+    test('and it is still WIRED after a re-render, not merely present', () => {
+        const search = makeInstance();
+        replaceAddressForm();
+        search.setupAutocomplete();
+
+        const el = spinner();
+        expect(displayOf(el)).toBe('none');
+
+        // The defect this exists to catch is a span that survives re-render as
+        // dead markup: present, unduplicated, correctly placed, and driven by
+        // nothing - which every count-and-position assertion above would pass.
+        // The only proof is driving a real search against the re-rendered form.
+        const field = liveField();
+        field.val('exa');
+        field.autocomplete('instance').search('exa');
+
+        expect(displayOf(el)).toBe('inline-block');
+
+        ajax.last().succeed(SEARCH_RESPONSE);
+
+        expect(displayOf(el)).toBe('none');
+    });
+
     test('a theme that swaps only the input leaves one spinner, not two', () => {
         const search = makeInstance();
         const oldInput = liveField().get(0);
@@ -1464,6 +1487,25 @@ describe('the in-field spinner element', () => {
             expect(spinner().parentNode).toBe(newField.parentNode);
             expect(newField.compareDocumentPosition(spinner())
                 & window.Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        });
+
+        test('and it is still WIRED after a re-render on this path too', () => {
+            const search = makeInstance();
+            replaceAddressForm();
+            search.setupAutocomplete();
+
+            const el = spinner();
+            expect(displayOf(el)).toBe('none');
+
+            // Same proof as the jQuery UI path: a re-rendered form must leave a
+            // spinner that a real search still drives, not dead markup.
+            type('exa');
+
+            expect(displayOf(el)).toBe('inline-block');
+
+            ajax.last().succeed(SEARCH_RESPONSE);
+
+            expect(displayOf(el)).toBe('none');
         });
     });
 });
