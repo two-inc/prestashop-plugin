@@ -1280,7 +1280,11 @@ describe('the in-field spinner element', () => {
         // wrong: the animation overwrites it on the first frame and drops the
         // spinner half its height out of the field. `top` does the centring.
         expect(style.transform).toBe('');
-        expect(style.top).toContain('calc');
+        // Deliberately not asserting the exact `top` value. `calc(50% - 0.5em)` is
+        // one correct answer and `top: 50%; margin-top: -0.5em` is another; pinning
+        // the current spelling would fail a valid refactor. What must not come back
+        // is `transform`.
+        expect(style.position).toBe('absolute');
     });
 
     test('repeated setup never inserts a second one', () => {
