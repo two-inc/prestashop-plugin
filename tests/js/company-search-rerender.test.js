@@ -25,6 +25,9 @@
 
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+
 const {
     loadCompanySearch,
     buildAddressForm,
@@ -32,7 +35,10 @@ const {
     stubAjax,
     callbackRecorder,
     releaseWidgets,
-    flushPromises
+    flushPromises,
+    installStylesheet,
+    countGifFrames,
+    REPO_ROOT
 } = require('./ps-harness');
 
 const CHECKOUT_HOST = 'https://api.example.test';
@@ -1195,6 +1201,214 @@ describe('a destroyed instance cannot act on the live DOM', () => {
         expect($(oldField).hasClass('two-company-search-input')).toBe(false);
         expect($(newField).hasClass('ui-autocomplete-input')).toBe(true);
         expect(search.companyField.get(0)).toBe(newField);
+    });
+});
+
+/**
+ * TWO-25288. The in-field spinner is the loader GIF, set as the company input's
+ * own `background-image` and shown purely by the loading class the module already
+ * puts on that input.
+ *
+ * Nothing in this suite covered that before, and "the class is set" is not the
+ * same claim: the class was already asserted elsewhere while an unscoped
+ * `!important` rule further down the stylesheet quietly out-ranked the scoped one
+ * and painted a white background over the field. Only reading the resolved style
+ * catches that, so these are the sole tests here that load a real stylesheet
+ * (`installStylesheet()` in the harness).
+ *
+ * Both render paths are pinned deliberately. The jQuery UI path and the custom
+ * fallback set different classes and share nothing but the CSS contract, so
+ * covering one and assuming the other leaves half the surface untested with a
+ * green suite.
+ */
+describe('the in-field spinner GIF', () => {
+    let stylesheet;
+
+    beforeEach(() => {
+        // The real shipped stylesheet, so the rule under test is the one that
+        // ships rather than a restatement of it.
+        stylesheet = installStylesheet('views/css/two.css');
+    });
+
+    afterEach(() => {
+        if (stylesheet && stylesheet.parentNode) {
+            stylesheet.parentNode.removeChild(stylesheet);
+        }
+    });
+
+    function styleOf(el) {
+        return window.getComputedStyle(el);
+    }
+
+    test('the asset the stylesheet asks for is actually in the repo', () => {
+        // A rule naming a file that is not shipped resolves in jsdom exactly as
+        // happily as one naming a file that is, so the URL assertions below would
+        // all pass with the GIF deleted. This is the case that would not.
+        const css = fs.readFileSync(path.join(REPO_ROOT, 'views/css/two.css'), 'utf8');
+        const match = css.match(/\.two-company-search-input\.ui-autocomplete-loading[\s\S]*?url\("([^"]+)"\)/);
+        expect(match).not.toBeNull();
+
+        // Resolved the way a browser resolves it: relative to the stylesheet.
+        const asset = path.resolve(path.join(REPO_ROOT, 'views/css'), match[1]);
+        expect(fs.existsSync(asset)).toBe(true);
+
+        // Animated, and the size the rule pins. A still image here would be a
+        // spinner that never spins, which no CSS assertion can tell apart.
+        const bytes = fs.readFileSync(asset);
+        expect(bytes.slice(0, 6).toString('latin1')).toBe('GIF89a');
+        expect(bytes.readUInt16LE(6)).toBe(16);
+        expect(bytes.readUInt16LE(8)).toBe(16);
+        // Frame count. A GIF with one image descriptor is a static picture; this
+        // one must have several or it does not animate. Counted by walking the
+        // block structure rather than by scanning for the image-descriptor
+        // byte, which also occurs inside the colour table and the compressed
+        // pixel data - a scan finds 'frames' in a single-frame file, so the
+        // assertion below could never fail.
+        expect(countGifFrames(bytes)).toBeGreaterThan(1);
+    });
+
+    test('nothing paints on the field while it is idle', () => {
+        makeInstance();
+        const input = liveField().get(0);
+
+        // The paint is gated on the loading class, so an idle field must be
+        // untouched. The gutter, by contrast, is reserved unconditionally:
+        // toggling the padding with the spinner reflowed the field's text in and
+        // out on every keystroke.
+        expect(styleOf(input).backgroundImage).toBe('');
+        expect(styleOf(input).paddingRight).toBe('32px');
+    });
+
+    test('the scoped rule is the one that applies while loading, not an !important one', () => {
+        makeInstance();
+        const field = liveField();
+        const input = field.get(0);
+
+        field.val('exa');
+        field.autocomplete('instance').search('exa');
+        expect(field.hasClass(LOADING_CLASS)).toBe(true);
+
+        // This is the substantive change. A second, unscoped
+        // `.ui-autocomplete-loading` rule used to sit further down this
+        // stylesheet declaring `background: white ... !important` and
+        // `padding-right: 25px !important`. Being `!important` it out-ranked the
+        // scoped rule whatever the specificity, so the field really did get a
+        // white box painted over the merchant's theme and a 25px gutter while the
+        // 32px one was reserved - and both rules named the same GIF, so the
+        // spinner looked fine and nothing gave it away.
+        //
+        // Both values below flip if that rule comes back, which is why they are
+        // asserted here, in the loading state, rather than on an idle field: the
+        // removed rule was gated on the same class and an idle field cannot see
+        // it.
+        //
+        // `background-size` is the proxy for the white box rather than
+        // `background-color`, which cannot do the job: jsdom's own default
+        // stylesheet already resolves every `input` to a white background, so
+        // that assertion passes whatever this stylesheet says. The removed rule
+        // used the `background` SHORTHAND, which resets the longhands it omits -
+        // so `background-size` reverts to `auto` if it comes back, and the
+        // spinner is drawn at whatever size the field gives it.
+        const painted = styleOf(input);
+        expect(painted.paddingRight).toBe('32px');
+        expect(painted.backgroundSize).toBe('16px 16px');
+    });
+
+    test('the GIF paints on the input during a jQuery UI search, and stops after', () => {
+        makeInstance();
+        const field = liveField();
+        const input = field.get(0);
+
+        field.val('exa');
+        field.autocomplete('instance').search('exa');
+
+        // jQuery UI puts `ui-autocomplete-loading` on the input itself; the
+        // stylesheet turns that into the GIF with no JS involvement at all.
+        expect(field.hasClass(LOADING_CLASS)).toBe(true);
+        const painted = styleOf(input);
+        expect(painted.backgroundImage).toContain('loader.gif');
+        // Repeated across the field would tile the spinner; unpinned size would
+        // let a themed input scale it.
+        expect(painted.backgroundRepeat).toBe('no-repeat');
+        expect(painted.backgroundSize).toBe('16px 16px');
+
+        ajax.last().succeed(SEARCH_RESPONSE);
+
+        expect(styleOf(input).backgroundImage).toBe('');
+    });
+
+    describe('on the custom fallback path, where jQuery UI is absent', () => {
+        let savedUi;
+
+        beforeEach(() => {
+            jest.useFakeTimers();
+            savedUi = $.ui;
+            $.ui = undefined;
+        });
+
+        afterEach(() => {
+            jest.useRealTimers();
+            $.ui = savedUi;
+        });
+
+        function type(term) {
+            const input = document.querySelector("input[name='company']");
+            input.value = term;
+            input.dispatchEvent(new window.Event('input'));
+            jest.advanceTimersByTime(300);
+            return input;
+        }
+
+        test('the GIF paints during a search and stops afterwards', () => {
+            makeInstance();
+            const input = liveField().get(0);
+
+            expect(styleOf(input).backgroundImage).toBe('');
+
+            type('exa');
+
+            // This path sets its own class by hand, matched by the same rule -
+            // one CSS contract, two arming mechanisms.
+            expect(liveField().hasClass('two-company-search-loading')).toBe(true);
+            expect(styleOf(input).backgroundImage).toContain('loader.gif');
+
+            ajax.last().succeed(SEARCH_RESPONSE);
+
+            expect(styleOf(input).backgroundImage).toBe('');
+        });
+
+        test('a failed search stops it too', () => {
+            makeInstance();
+            const input = liveField().get(0);
+            type('exa');
+
+            ajax.last().fail('timeout');
+
+            expect(styleOf(input).backgroundImage).toBe('');
+        });
+    });
+
+    test('it still paints after an address-form re-render', () => {
+        const search = makeInstance();
+        replaceAddressForm();
+        search.setupAutocomplete();
+
+        // The re-render replaces the input, so the class the stylesheet keys off
+        // has to be re-applied to the replacement. A field that searches with no
+        // visible feedback is the failure this catches, and every class-level
+        // assertion elsewhere passes while it is broken.
+        const field = liveField();
+        const input = field.get(0);
+        expect(styleOf(input).backgroundImage).toBe('');
+
+        field.val('exa');
+        field.autocomplete('instance').search('exa');
+
+        expect(styleOf(input).backgroundImage).toContain('loader.gif');
+
+        ajax.last().succeed(SEARCH_RESPONSE);
+
+        expect(styleOf(input).backgroundImage).toBe('');
     });
 });
 

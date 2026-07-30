@@ -151,6 +151,42 @@ form (which it does for something as ordinary as a country change):
 - the custom fallback used when jQuery UI is absent: its own spinner clears on failure,
   survives a superseded request, and repeated setup leaves exactly one dropdown rather
   than orphan containers listening on the shared field.
+- the in-field spinner **GIF** (TWO-25288). The spinner is the loader GIF, set as the company
+  input's own `background-image` and painted purely by the loading class the module already
+  puts on that input. Pinned on **both** render paths, because they set different classes and
+  share nothing but the CSS contract, so covering one and assuming the other leaves half the
+  surface untested with a green suite: the GIF resolves while a search runs and stops after,
+  on the jQuery UI path, on the no-jQuery-UI fallback path (including after a failed search),
+  and after an address-form re-render replaces the input.
+
+  These are the only tests here that load a **stylesheet** (`installStylesheet()` in the
+  harness). "The class is set" is a weaker claim than "the spinner appears", and the gap
+  between them is not hypothetical: an unscoped `!important` rule further down the stylesheet
+  used to out-rank the scoped one and paint a white box and its own gutter over the field,
+  with the class set correctly throughout. One case pins that specifically, in the **loading**
+  state — the removed rule was gated on the same class, so an idle field cannot see it.
+
+  Nothing stubs the loading state. The harness replaces only `$.ajax` (the network) and the
+  `prestashop` event bus; jQuery, the jQuery UI autocomplete widget and the module source are
+  all real, so the class toggling that drives the spinner is unstubbed production code on both
+  paths.
+
+  One case reads the GIF off disk rather than trusting the stylesheet, because jsdom resolves
+  a `url()` naming a missing file exactly as happily as one naming a real file — so every
+  other assertion here passes with the asset deleted. It checks the file exists at the path
+  the rule resolves to, that it is a GIF of the pinned 16x16, and that it has more than one
+  frame: a still image would be a spinner that never spins, which no CSS assertion can tell
+  apart from a working one. The frame count comes from `countGifFrames()`, which walks the
+  GIF block structure — counting raw `0x2C` bytes across the file does not work, because that
+  value also occurs inside the colour table and the compressed pixel data, so a single-frame
+  file passes such a scan.
+
+  **Two jsdom limits to know before adding assertions here.** The multi-value
+  `background-position` form resolves to an empty string even when the rule is correct, so do
+  not assert on it. And jsdom's own default stylesheet resolves every `input` to
+  `background-color: white`, so an assertion that the field is *not* white can never fail —
+  the white-box regression is pinned through `background-size` instead, which the removed
+  rule's `background` shorthand resets to `auto`.
 
 ## Known gaps
 

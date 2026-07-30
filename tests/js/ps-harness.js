@@ -73,6 +73,33 @@ function installJQuery() {
 }
 
 /**
+ * Load one of the module's REAL stylesheets into the jsdom document.
+ *
+ * The in-field company-search spinner is a loader GIF painted by CSS alone,
+ * keyed off the loading class the module puts on the input, so a test that only
+ * asserted on that class would pass with a spinner that never appears - and did:
+ * an unscoped `!important` rule further down the stylesheet out-ranked the scoped
+ * one and painted a white background over the field, with the class set correctly
+ * throughout. jsdom applies the cascade for selectors of this shape, so reading
+ * `getComputedStyle(...)` exercises the rule that actually ships.
+ *
+ * Not automatic: only the tests that assert on rendered appearance need it, and
+ * jsdom's CSS parser drops declarations it does not understand - notably the
+ * multi-value `background-position` form, which resolves to an empty string here
+ * even when the rule is correct, so do not assert on it.
+ *
+ * @param {string} relPath repo-relative path, e.g. 'views/css/two.css'
+ * @returns {HTMLStyleElement} the injected <style>
+ */
+function installStylesheet(relPath) {
+    const css = fs.readFileSync(path.join(REPO_ROOT, relPath), 'utf8');
+    const style = global.document.createElement('style');
+    style.textContent = css;
+    global.document.head.appendChild(style);
+    return style;
+}
+
+/**
  * Minimal stand-in for PrestaShop's front-office event bus.
  *
  * Note the deliberate absence of an `off`: the real bus has none either, which
@@ -305,12 +332,90 @@ async function flushPromises() {
     }
 }
 
+/**
+ * Count the image frames in a GIF by walking its block structure.
+ *
+ * Counting raw 0x2C bytes across the whole file does not work: that value
+ * occurs freely inside the colour tables and the LZW-compressed pixel data, so
+ * a genuinely single-frame GIF reports plenty of 'frames' and an
+ * animation assertion built on the scan can never fail. The structure has to
+ * be walked so only bytes actually sitting in an image-descriptor position
+ * count.
+ *
+ * @param {Buffer} bytes the whole GIF file
+ * @returns {number} the number of image descriptors in the stream
+ */
+function countGifFrames(bytes) {
+    // Header (6) + logical screen descriptor (7).
+    let at = 13;
+
+    // Global colour table, when the descriptor's packed field says there is one.
+    const packed = bytes[10];
+    if (packed & 0x80) {
+        at += 3 * Math.pow(2, (packed & 0x07) + 1);
+    }
+
+    // Data sub-blocks: a length byte, that many bytes, repeated until a
+    // zero-length block terminates the sequence.
+    const skipSubBlocks = function () {
+        while (at < bytes.length) {
+            const size = bytes[at];
+            at += 1;
+            if (size === 0) {
+                return;
+            }
+            at += size;
+        }
+    };
+
+    let frames = 0;
+
+    while (at < bytes.length) {
+        const block = bytes[at];
+        at += 1;
+
+        if (block === 0x3b) {
+            // Trailer: end of stream.
+            return frames;
+        }
+
+        if (block === 0x21) {
+            // Extension: a label byte, then sub-blocks.
+            at += 1;
+            skipSubBlocks();
+            continue;
+        }
+
+        if (block === 0x2c) {
+            frames += 1;
+            // Image descriptor: 4x2 bytes of geometry plus a packed field.
+            const localPacked = bytes[at + 8];
+            at += 9;
+            if (localPacked & 0x80) {
+                at += 3 * Math.pow(2, (localPacked & 0x07) + 1);
+            }
+            // LZW minimum code size, then the compressed data sub-blocks.
+            at += 1;
+            skipSubBlocks();
+            continue;
+        }
+
+        // Anything else means the walk has lost sync with the stream; stop
+        // rather than counting noise.
+        break;
+    }
+
+    return frames;
+}
+
 module.exports = {
     REPO_ROOT: REPO_ROOT,
+    countGifFrames: countGifFrames,
     releaseWidgets: releaseWidgets,
     flushPromises: flushPromises,
     loadCompanySearch: loadCompanySearch,
     loadScript: loadScript,
+    installStylesheet: installStylesheet,
     buildAddressForm: buildAddressForm,
     replaceAddressForm: replaceAddressForm,
     stubAjax: stubAjax,
