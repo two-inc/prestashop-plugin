@@ -139,6 +139,14 @@ class TwoCompanySearch {
         // Pending retry from setupCountryChangeListener(), cleared on destroy.
         this._countryRetryTimeoutId = null;
 
+        // Manual-entry mode (TWO-25288). Set by the "my company is not on the
+        // list" row in the dropdown; while it is on, neither render path opens a
+        // dropdown at all, so the buyer types the company name into the field
+        // without a suggestion list arguing with them. The reverse link below
+        // the field turns it back off.
+        this._manualEntry = false;
+        this._backToSearchLink = null;
+
         this.init();
     }
     
@@ -317,14 +325,70 @@ class TwoCompanySearch {
             return;
         }
 
-        [$("input[name='dni']"), $("input[name='vat_number']")].forEach(field => {
+        this.addressIdentifierFields().forEach(field => {
             if (field.length === 0) {
                 return;
             }
             if (onlyIfEmpty && String(field.val() || '').trim() !== '') {
+                // Buyer input. Deliberately NOT marked: the marker's whole
+                // meaning is "the lookup put this here", and mislabelling the
+                // buyer's own number would let clearSelectedCompany() delete it.
                 return;
             }
             field.val(value);
+            field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR, value);
+        });
+    }
+
+    /**
+     * The two address inputs a company selection mirrors its organisation number
+     * into.
+     *
+     * One list rather than the selector pair written twice, because the clear has
+     * to walk exactly the fields the write walks. A field present in one list and
+     * absent from the other is a disowned organisation number left in the form.
+     *
+     * @returns {Array<Object>} jQuery objects, any of which may be empty
+     */
+    addressIdentifierFields() {
+        return [$("input[name='dni']"), $("input[name='vat_number']")];
+    }
+
+    /**
+     * Drop the identification / VAT numbers, but ONLY the ones the lookup itself
+     * wrote and the buyer has not since changed.
+     *
+     * Not a blanket clear, and that constraint is what makes this method
+     * necessary rather than a one-line addition to clearSelectedCompany(). A
+     * buyer-typed identification number is legitimate and load-bearing: it is
+     * the only route by which a manual-entry buyer's own number reaches the Two
+     * flow, via syncOrganizationToAddressIdentifiers() adopting it as the
+     * organisation number at submit. Clearing it would delete the buyer's answer.
+     *
+     * So the same marker the address autofill uses distinguishes the two: it
+     * records the exact value written, and a buyer edit leaves it stale rather
+     * than matching. Same attribute deliberately - the semantics are identical
+     * and these fields never overlap the ones autoFillAddress() walks, so one
+     * vocabulary is better than two that have to be kept in step.
+     *
+     * @returns {void}
+     */
+    clearLookupWrittenAddressIdentifiers() {
+        this.addressIdentifierFields().forEach(field => {
+            if (field.length === 0) {
+                return;
+            }
+            const written = field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR);
+            if (typeof written === 'undefined') {
+                return;
+            }
+            if (written !== String(field.val() == null ? '' : field.val())) {
+                return;
+            }
+            field.removeAttr(TwoCompanySearch.AUTOFILL_MARKER_ATTR);
+            field.val('');
+            field.trigger('input');
+            field.trigger('change');
         });
     }
 
@@ -419,6 +483,13 @@ class TwoCompanySearch {
             this.companyField.autocomplete({
                 source: (request, response) => {
                     const term = String(request.term || '');
+                    // Manual entry: the buyer has said their company is not in
+                    // the register, so no dropdown at all - not results, not a
+                    // hint row. The reverse link is the way back.
+                    if (this._manualEntry) {
+                        response([]);
+                        return;
+                    }
                     // Empty field: the placeholder is already the hint for this
                     // state, so opening a dropdown to repeat it would be noise.
                     if (term.length === 0) {
@@ -437,7 +508,7 @@ class TwoCompanySearch {
                     const key = this.buildCacheKey(request.term);
                     const cached = TwoCompanySearch.cacheGet(key);
                     if (cached) {
-                        response(cached);
+                        response(this.withManualEntryRow(cached));
                         return;
                     }
                     this.searchCompanies(request.term, (results, meta) => {
@@ -453,20 +524,25 @@ class TwoCompanySearch {
                             // Not cached, and not an empty dropdown: an empty
                             // list here would read as "your company is not
                             // registered" when in fact no search was made.
-                            response([this.buildSelectCountryItem()]);
+                            response(this.withManualEntryRow([this.buildSelectCountryItem()]));
                             return;
                         }
                         if (meta && meta.unavailable) {
                             // Not cached: the service may well be healthy again
                             // by the buyer's next keystroke.
-                            response([this.buildUnavailableItem()]);
+                            response(this.withManualEntryRow([this.buildUnavailableItem()]));
                             return;
                         }
                         // A known-partial list is not worth pinning for 5 minutes.
+                        //
+                        // The RAW results are cached, never the list with the
+                        // manual-entry row appended: the row is decoration owned
+                        // by this render, and caching it would put a second copy
+                        // in the list on the next cache hit.
                         if (!(meta && meta.degraded)) {
                             TwoCompanySearch.cacheSet(key, results);
                         }
-                        response(results);
+                        response(this.withManualEntryRow(results));
                     });
                 },
                 // Deliberately 0, and NOT MIN_SEARCH_LENGTH: jQuery UI never
@@ -483,6 +559,15 @@ class TwoCompanySearch {
                 // Magento/WooCommerce plugins.
                 delay: 300,
                 select: (event, ui) => {
+                    // The manual-entry row IS actionable, unlike the message
+                    // rows: it runs its action and then returns false, which is
+                    // what stops jQuery UI writing its label into the company
+                    // field. `value: ''` is not what protects the field -
+                    // _normalize() has already rewritten that to the label.
+                    if (ui && ui.item && ui.item.two_manual_entry) {
+                        this.enterManualEntryMode();
+                        return false;
+                    }
                     // The "search unavailable" row is a message, not a company:
                     // returning false stops jQuery UI writing it into the field.
                     if (ui && ui.item && ui.item.two_unavailable) {
@@ -491,8 +576,29 @@ class TwoCompanySearch {
                     return this.onCompanySelected(event, ui);
                 },
                 focus: (event, ui) => {
-                    // Likewise keep it out of the field on keyboard navigation.
-                    if (ui && ui.item && ui.item.two_unavailable) {
+                    // Returning false here does NOT stop the row being focused -
+                    // jQuery UI's menu has already focused it by the time this
+                    // fires, and the return value gates ONLY the `_value()` write
+                    // that mirrors a key-navigated item into the input. So the
+                    // manual-entry row needs this guard exactly as much as the
+                    // message rows do, and it keeps its keyboard reachability.
+                    //
+                    // Without it, arrow-keying onto the row writes into the
+                    // company field, in one of two ways depending on what else is
+                    // in the list. _normalize() early-returns when the FIRST item
+                    // has both a label and a value, so alongside real companies
+                    // this row keeps `value: ''` and arrow-down BLANKS the term
+                    // the buyer typed; alongside a message row (zero results,
+                    // unavailable, country-not-chosen) the first value is falsy,
+                    // normalisation runs, and arrow-down writes the affordance
+                    // text itself into the field. Either way `_value()` writes
+                    // through .val(), which fires no `input` event, so
+                    // clearStaleOrganizationSelection() never runs and the
+                    // organisation number of the previously picked company stays
+                    // behind a field that now reads empty or nonsense. The
+                    // widget then adopts the field contents as its search term
+                    // after `select` returns, so the damage outlives the row.
+                    if (ui && ui.item && (ui.item.two_unavailable || ui.item.two_manual_entry)) {
                         return false;
                     }
                 }
@@ -527,6 +633,38 @@ class TwoCompanySearch {
                     instance._twoRenderItemPatched = true;
                     const defaultRenderItem = instance._renderItem.bind(instance);
                     instance._renderItem = (ul, item) => {
+                        // The manual-entry row (TWO-25288). The INVERSE of a
+                        // message row: no `ui-state-disabled` and no
+                        // `aria-disabled`, because this one has to be reachable
+                        // by arrow keys and announced as selectable. Rendered by
+                        // hand rather than through jQuery UI's own renderer so
+                        // it can carry its own class and never be mistaken for a
+                        // company in the DOM. .text() for the same reason every
+                        // other row uses it.
+                        //
+                        // `aria-label` is load-bearing, not belt and braces. The
+                        // widget announces a key-focused row through its live
+                        // region as `aria-label || item.value`, and this row's
+                        // value is '' whenever the list also holds real companies
+                        // (_normalize() early-returns in that case), so without an
+                        // explicit label the row is silently announced as nothing
+                        // to a screen reader while looking correct on screen.
+                        //
+                        // On a jQuery UI older than 1.12 this row gets no visible
+                        // highlight when key-focused: that line tags the active
+                        // item on an `<a>` child, which this hand-rendered
+                        // `<li><div>` does not have. The stylesheet's `:focus`
+                        // rule does not cover it either - the widget's focus is a
+                        // CLASS on the wrapper, not DOM focus, so `:focus` never
+                        // matches on this path. Reachable and announced there,
+                        // just not highlighted.
+                        if (item.two_manual_entry) {
+                            return $('<li>')
+                                .addClass('two-autocomplete-manual-entry')
+                                .attr('aria-label', item.label || '')
+                                .append($('<div>').text(item.label || ''))
+                                .appendTo(ul);
+                        }
                         // Normal companies go through jQuery UI's OWN renderer.
                         // Reimplementing it would hard-code one version's markup:
                         // 1.11 emits <li><a>, 1.12 emits <li><div>, and the theme
@@ -560,6 +698,302 @@ class TwoCompanySearch {
         } else {
             this.setupCustomAutocomplete();
         }
+
+        // Manual entry survives a COUNTRY CHANGE, which is the one path that
+        // re-enters this method on a live instance: its listener re-runs setup
+        // against a field it has just cleared, which takes the old link with it,
+        // so the link has to be put back or the buyer is stranded in manual mode
+        // with no way out.
+        //
+        // It deliberately does NOT survive an address-form update, despite that
+        // path also calling this method. The checkout manager destroys this
+        // instance and builds a fresh one on `updatedAddressForm`, the surviving
+        // instance's own handler stands down on the `_destroyed` check, and the
+        // replacement starts in search mode - so the branch below is unreachable
+        // on that path and manual mode resets. That is the intended behaviour, not
+        // an oversight: the form has been re-rendered from the server and the
+        // buyer is starting that step again.
+        //
+        // After the path branch, because the fallback path anchors the link below
+        // its dropdown container, which only exists once that branch has run.
+        if (this._manualEntry) {
+            this.renderBackToSearchLink();
+        }
+    }
+
+    /**
+     * Append the manual-entry row to a result set (TWO-25288).
+     *
+     * LAST, always: it is the escape from the list, so it belongs after
+     * everything the list has to offer. Applied to every rendered set at or
+     * above the threshold - real results, zero results, and the two
+     * no-search-was-made rows - because "my company is not on the list" is most
+     * useful in exactly the states where the list is unhelpful.
+     *
+     * Not applied below the threshold: nothing has been searched for yet, so
+     * "not on the list" is a claim the buyer is in no position to make.
+     *
+     * @param {Array} items
+     * @returns {Array}
+     */
+    withManualEntryRow(items) {
+        return (items || []).concat([this.buildManualEntryItem()]);
+    }
+
+    /**
+     * @returns {string} wording for the manual-entry row
+     */
+    getManualEntryText() {
+        return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_manual_entry)
+            || 'My company is not on the list';
+    }
+
+    /**
+     * @returns {string} wording for the link back out of manual entry
+     */
+    getBackToSearchText() {
+        return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_back_to_search)
+            || 'Search for company';
+    }
+
+    /**
+     * Pseudo-result carrying the manual-entry affordance through jQuery UI's
+     * result-list plumbing.
+     *
+     * `two_manual_entry` is its OWN flag, deliberately not `two_unavailable`.
+     * That flag means "not a company, and keyboard-skipped"; this row is not a
+     * company either but must be keyboard-REACHABLE, so sharing the flag would
+     * give it the exact opposite of the treatment it needs.
+     *
+     * `value: ''` is cosmetic only. jQuery UI's _normalize() rewrites it to
+     * `value || label`, so what keeps the label out of the company field is the
+     * `select` handler returning false - nothing else.
+     *
+     * @returns {Object}
+     */
+    buildManualEntryItem() {
+        return {
+            label: this.getManualEntryText(),
+            value: '',
+            two_manual_entry: true
+        };
+    }
+
+    /**
+     * Forget the currently selected company, on the browser and on the server.
+     *
+     * Both halves are required. The hidden organisation field is what the address
+     * form submits; the session company is what the order payload and the
+     * order-intent handler read FIRST, ahead of the address. Clearing one and not
+     * the other leaves the buyer looking at an empty field while the order still
+     * carries the old company.
+     *
+     * THREE halves, in truth. The selection also mirrors the organisation number
+     * into the address form's identification-number and VAT-number inputs, and
+     * the server reads those off the saved address on a path of their own,
+     * independently of the session company. Worse, the pre-submit sync adopts an
+     * identification number with no organisation number beside it AS the
+     * organisation number - so a `dni` left behind here is re-adopted at submit
+     * and re-tagged with the name the buyer has just typed, which is a credit
+     * check on one company under the name of another. Clearing two of the three
+     * therefore does not merely leak a stale value, it silently undoes itself.
+     *
+     * Only the values the lookup wrote go, never a buyer-typed one - see
+     * clearLookupWrittenAddressIdentifiers() for why that distinction is
+     * load-bearing rather than cautious.
+     */
+    clearSelectedCompany() {
+        if (this.organizationField && this.organizationField.length) {
+            this.organizationField.val('');
+            this.organizationField.removeAttr('data-two-company-name');
+        }
+        this.clearLookupWrittenAddressIdentifiers();
+        this.clearPersistedCompany();
+    }
+
+    /**
+     * Ask the server to drop the session company.
+     *
+     * Its own endpoint action rather than a `saveCompany` with empty values:
+     * that action refuses an empty company or company id outright and answers
+     * "missing company data", so calling it to clear is a silent no-op - which
+     * is exactly the failure this method exists to prevent.
+     *
+     * Fire-and-forget, and failure is tolerated, matching persistCompanyToCookie()
+     * next to it.
+     *
+     * What makes that tolerable is NOT that the resolver would reject the order.
+     * It would not: the resolver returns the session company first, with no
+     * comparison against the address, so a dropped or still-in-flight clear
+     * would on its own yield a WRONG order rather than a rejected one - silently.
+     * (An earlier version of this comment claimed the opposite. It was wrong, and
+     * the guarantee it appealed to did not exist.)
+     *
+     * What makes it tolerable is that the same clear happens server-side and
+     * unconditionally: Twopayment::hookActionCustomerAddressSave() drops the
+     * session organisation number whenever the address saves a different company
+     * name with no organisation number beside it, which is what this state looks
+     * like from the server. So the outcome does not depend on this request
+     * arriving, and there is no ordering guard here for the same reason - unlike
+     * the surcharge-line endpoint, where the browser IS the only writer.
+     */
+    clearPersistedCompany() {
+        try {
+            if (!window.twopayment || !window.twopayment.order_intent_url || !window.twopayment.ajax_token) {
+                return;
+            }
+            $.ajax({
+                url: window.twopayment.order_intent_url,
+                method: 'POST',
+                data: {
+                    ajax: 1,
+                    action: 'clearCompany',
+                    token: window.twopayment.ajax_token
+                },
+                timeout: 10000
+            });
+        } catch (e) {
+            // no-op
+        }
+    }
+
+    /**
+     * Switch to manual entry: forget the selected company, close the dropdown,
+     * stop searching, and offer the way back.
+     */
+    enterManualEntryMode() {
+        if (this._destroyed) {
+            return;
+        }
+        this._manualEntry = true;
+
+        // Drop the previously selected company BEFORE anything else.
+        //
+        // "My company is not on the list" is a statement that the selected
+        // company is wrong, and the server-side resolver's FIRST priority is the
+        // session company - which outranks the address entirely and is discarded
+        // only on a country mismatch or an address switch, never on the company
+        // name changing. So without this, a buyer who picks a company, chooses
+        // this row, types a different name and places the order has the ORIGINAL
+        // company credit-checked: the hidden organisation field is cleared by the
+        // typing, and the resolver ignores it and answers from the session.
+        //
+        // Scoped deliberately to this path. The same hole is reachable today by
+        // retyping over a selection, and closing it generally is a separate piece
+        // of work - but this element promotes it to a one-click route sitting
+        // directly under the results the buyer just chose from, so it cannot ship
+        // relying on that.
+        this.clearSelectedCompany();
+
+        if (this.companyField && this.companyField.length) {
+            if (this.companyField.hasClass('ui-autocomplete-input')) {
+                try {
+                    this.companyField.autocomplete('close');
+                    // And hide the menu outright. jQuery UI's own `close` is
+                    // conditioned on the menu passing jQuery's `:visible`, which
+                    // is a LAYOUT test - so it is a no-op wherever layout is not
+                    // computed, and the dropdown stays on screen with the buyer
+                    // already switched to manual entry. Doing it unconditionally
+                    // costs nothing when `close` already did it.
+                    const instance = this.companyField.autocomplete('instance');
+                    if (instance && instance.menu && instance.menu.element) {
+                        instance.menu.element.hide();
+                    }
+                } catch (e) {
+                    // Older jQuery UI, or already released: the source guard
+                    // above keeps the list from reopening either way.
+                }
+            }
+        }
+        if (this._customAutocomplete && this._customAutocomplete.list) {
+            this._customAutocomplete.list.style.display = 'none';
+        }
+
+        this.renderBackToSearchLink();
+
+        // Focus goes back to the field the buyer is now expected to type into,
+        // not left on a row that has just been removed from the document.
+        if (this.companyField && this.companyField.length) {
+            this.companyField.trigger('focus');
+        }
+    }
+
+    /**
+     * Leave manual entry and re-arm the search for whatever is in the field, so
+     * the buyer sees the dropdown again without having to retype.
+     */
+    exitManualEntryMode() {
+        if (this._destroyed) {
+            return;
+        }
+        this._manualEntry = false;
+        this.removeBackToSearchLink();
+
+        if (!this.companyField || this.companyField.length === 0) {
+            return;
+        }
+        this.companyField.trigger('focus');
+
+        const term = String(this.companyField.val() || '');
+        if (this.companyField.hasClass('ui-autocomplete-input')) {
+            try {
+                this.companyField.autocomplete('search', term);
+            } catch (e) {
+                // no-op
+            }
+            return;
+        }
+        if (this._customAutocomplete && this._customAutocomplete.inputEl) {
+            this._customAutocomplete.inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+    }
+
+    /**
+     * Render the `Search for company` link below the company field.
+     *
+     * A real `<button type="button">`: focusable, Enter/Space-activated and
+     * announced as a button by the browser with nothing added by hand, which a
+     * `<div>` or an `<a>` without `href` is not. `type="button"` because this
+     * sits inside PrestaShop's own address form and a default-type button would
+     * submit it.
+     */
+    renderBackToSearchLink() {
+        if (!this.companyField || this.companyField.length === 0) {
+            return;
+        }
+        this.removeBackToSearchLink();
+
+        const link = $('<button type="button"></button>')
+            .addClass('two-company-search-back')
+            .text(this.getBackToSearchText());
+        link.on('click.twoManualEntry', (event) => {
+            event.preventDefault();
+            this.exitManualEntryMode();
+        });
+
+        // Below the fallback path's dropdown container when there is one, so the
+        // link does not land between the field and its own dropdown.
+        const anchor = (this._customAutocomplete && this._customAutocomplete.container)
+            ? $(this._customAutocomplete.container)
+            : this.companyField;
+        anchor.after(link);
+        this._backToSearchLink = link;
+    }
+
+    /**
+     * Remove the reverse link and unbind it.
+     *
+     * The class-wide sweep is deliberate: this instance's own reference does not
+     * cover a link left behind by a previous instance whose field PrestaShop has
+     * since replaced, and two of these on one form is worse than none.
+     */
+    removeBackToSearchLink() {
+        if (this._backToSearchLink) {
+            this._backToSearchLink.off('.twoManualEntry');
+            this._backToSearchLink.remove();
+            this._backToSearchLink = null;
+        }
+        $('.two-company-search-back').off('.twoManualEntry').remove();
     }
 
     /**
@@ -776,10 +1210,62 @@ class TwoCompanySearch {
             this.companyField.toggleClass('two-company-search-loading', !!isLoading);
         };
 
-        const renderResults = (items) => {
+        // Closing the list is deferred on blur so a click on a row still lands.
+        // Held in a mutable holder so the manual-entry row's focus handler can
+        // cancel it: without that, moving focus onto the row blurs the input and
+        // the list is gone 150ms later, before any key can reach the row.
+        const blurTimer = { id: null };
+
+        /**
+         * The manual-entry footer row (TWO-25288).
+         *
+         * This path has no keyboard model at all - the company rows are plain
+         * divs with `mousedown` handlers, no roles and no arrow keys - and
+         * retrofitting a full listbox is a different job. So this row carries its
+         * own: `role="button"`, `tabindex="0"`, its text content as its
+         * accessible name, and Enter/Space handled explicitly. Space is
+         * `preventDefault`ed because the default action on a focused button-role
+         * element is to scroll the page.
+         */
+        const appendManualEntryRow = () => {
+            const row = document.createElement('div');
+            row.className = 'two-autocomplete-item two-autocomplete-manual-entry';
+            row.setAttribute('role', 'button');
+            row.setAttribute('tabindex', '0');
+            row.style.padding = '6px 10px';
+            row.style.cursor = 'pointer';
+            row.textContent = this.getManualEntryText();
+            row.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                this.enterManualEntryMode();
+            });
+            row.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+                    e.preventDefault();
+                    this.enterManualEntryMode();
+                }
+            });
+            // Focus arriving here blurs the input; cancel the close it queued.
+            row.addEventListener('focus', () => {
+                clearTimeout(blurTimer.id);
+                blurTimer.id = null;
+            });
+            // And re-arm it on the way out, or the list is left open for good.
+            // The input is otherwise the only node that closes this list, and
+            // this row is now the first tab stop after it whenever the dropdown
+            // is open - so tabbing onward, or clicking away, would leave the list
+            // painted over the address form until the next keystroke. `onBlur` is
+            // declared further down this same closure and is only ever reached
+            // from an event, long after setup has finished.
+            row.addEventListener('blur', () => onBlur());
+            list.appendChild(row);
+            return row;
+        };
+
+        const renderResults = (items, withManualEntry) => {
             setLoadingState(false);
             list.innerHTML = '';
-            if (!items || items.length === 0) {
+            if ((!items || items.length === 0) && !withManualEntry) {
                 list.style.display = 'none';
                 return;
             }
@@ -800,6 +1286,9 @@ class TwoCompanySearch {
                 });
                 list.appendChild(row);
             });
+            if (withManualEntry) {
+                appendManualEntryRow();
+            }
             list.style.display = 'block';
         };
 
@@ -818,6 +1307,10 @@ class TwoCompanySearch {
             row.style.fontStyle = 'italic';
             row.textContent = searchingText;
             list.appendChild(row);
+            // Every one of these renderers wipes the list, so the footer has to
+            // be re-appended by each of them or it flickers out of existence the
+            // moment the state changes.
+            appendManualEntryRow();
             list.style.display = 'block';
         };
 
@@ -832,6 +1325,7 @@ class TwoCompanySearch {
             row.style.color = '#888';
             row.textContent = this.getSearchUnavailableText();
             list.appendChild(row);
+            appendManualEntryRow();
             list.style.display = 'block';
         };
 
@@ -861,6 +1355,7 @@ class TwoCompanySearch {
             row.style.color = '#888';
             row.textContent = this.getSelectCountryText();
             list.appendChild(row);
+            appendManualEntryRow();
             list.style.display = 'block';
         };
 
@@ -882,11 +1377,19 @@ class TwoCompanySearch {
             }
             const term = inputEl.value || '';
             clearTimeout(debounce.id);
+            // Manual entry: no dropdown at all on this path either. Cancelling
+            // the pending tick as well as returning, or a debounce armed by the
+            // keystroke before the buyer chose manual entry would reopen it.
+            if (this._manualEntry) {
+                debounce.id = null;
+                list.style.display = 'none';
+                return;
+            }
             debounce.id = setTimeout(() => {
                 // Empty field: the placeholder is the hint for this state, so
                 // close the list rather than repeat it in a row.
                 if (term.length === 0) {
-                    renderResults([]);
+                    renderResults([], false);
                     return;
                 }
                 // Trimmed, for the same reason as the jQuery UI guard above.
@@ -897,7 +1400,7 @@ class TwoCompanySearch {
                 const key = this.buildCacheKey(term);
                 const cached = TwoCompanySearch.cacheGet(key);
                 if (cached) {
-                    renderResults(cached);
+                    renderResults(cached, true);
                     return;
                 }
                 renderLoading();
@@ -931,20 +1434,24 @@ class TwoCompanySearch {
                     if (!(meta && meta.degraded)) {
                         TwoCompanySearch.cacheSet(key, results);
                     }
-                    renderResults(results);
+                    // `true` even for zero results: that is the state in which
+                    // "my company is not on the list" is the most useful thing
+                    // on the screen, so the list opens for the footer alone.
+                    renderResults(results, true);
                 });
             }, 300);
         };
 
         const onBlur = () => {
-            setTimeout(() => { list.style.display = 'none'; }, 150);
+            clearTimeout(blurTimer.id);
+            blurTimer.id = setTimeout(() => { list.style.display = 'none'; }, 150);
         };
 
         inputEl.addEventListener('input', onInput);
         inputEl.addEventListener('blur', onBlur);
 
         // Save for cleanup
-        this._customAutocomplete = { container, list, inputEl, onInput, onBlur, debounce };
+        this._customAutocomplete = { container, list, inputEl, onInput, onBlur, debounce, blurTimer };
     }
 
     /**
@@ -961,6 +1468,12 @@ class TwoCompanySearch {
         if (existing.debounce) {
             clearTimeout(existing.debounce.id);
             existing.debounce.id = null;
+        }
+        // Same reasoning: a deferred close firing after teardown would reach into
+        // a removed list.
+        if (existing.blurTimer) {
+            clearTimeout(existing.blurTimer.id);
+            existing.blurTimer.id = null;
         }
         // Clear the fallback path's spinner class here, not just in destroy().
         // This method also runs when setup switches from the custom path to the
@@ -1670,6 +2183,13 @@ class TwoCompanySearch {
         // destroyed is exactly the zombie this guard exists to stop.
         try {
             this.teardownCustomAutocomplete();
+        } catch (e) {
+            // no-op
+        }
+        // Its own try for the same reason: the reverse link is a live listener on
+        // a node that outlives this instance otherwise.
+        try {
+            this.removeBackToSearchLink();
         } catch (e) {
             // no-op
         }

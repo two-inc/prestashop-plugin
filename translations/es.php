@@ -397,3 +397,5 @@ $_MODULE['<{twopayment}prestashop>twopayment_7de934009c752b9208f359e4db589fa0'] 
 $_MODULE['<{twopayment}prestashop>twopayment_7aa0ef00af5612e50834b5bf969457e6'] = 'La búsqueda de empresas no está disponible temporalmente. Por favor, inténtalo de nuevo.';
 $_MODULE['<{twopayment}prestashop>twopayment_6fd95deaadec67e72965ee1c5a8d81cf'] = 'Introduce el nombre de la empresa para buscar';
 $_MODULE['<{twopayment}prestashop>twopayment_11379daccc4d43380822ecb7bc5bc1b7'] = 'Introduce %d o más caracteres';
+$_MODULE['<{twopayment}prestashop>twopayment_a305be9a7fd5f6541e913ce81317976d'] = 'Mi empresa no está en la lista';
+$_MODULE['<{twopayment}prestashop>twopayment_070800fb9c7ae071aff6e63bded5c3c2'] = 'Buscar empresa';
