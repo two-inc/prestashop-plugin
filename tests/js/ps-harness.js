@@ -75,16 +75,18 @@ function installJQuery() {
 /**
  * Load one of the module's REAL stylesheets into the jsdom document.
  *
- * The in-field company-search spinner is shown and hidden by CSS alone - a
- * sibling combinator keyed off the loading class on the input - so a test that
- * only asserted on classes and on the presence of the element would pass with a
- * spinner that is permanently invisible, or permanently visible. jsdom applies
- * the cascade for selectors of this shape, so `getComputedStyle(...).display`
- * exercises the actual rule that ships.
+ * The in-field company-search spinner is a loader GIF painted by CSS alone,
+ * keyed off the loading class the module puts on the input, so a test that only
+ * asserted on that class would pass with a spinner that never appears - and did:
+ * an unscoped `!important` rule further down the stylesheet out-ranked the scoped
+ * one and painted a white background over the field, with the class set correctly
+ * throughout. jsdom applies the cascade for selectors of this shape, so reading
+ * `getComputedStyle(...)` exercises the rule that actually ships.
  *
  * Not automatic: only the tests that assert on rendered appearance need it, and
- * jsdom's CSS parser drops declarations it does not understand, so the rest of
- * the suite should not be made to depend on it.
+ * jsdom's CSS parser drops declarations it does not understand - notably the
+ * multi-value `background-position` form, which resolves to an empty string here
+ * even when the rule is correct, so do not assert on it.
  *
  * @param {string} relPath repo-relative path, e.g. 'views/css/two.css'
  * @returns {HTMLStyleElement} the injected <style>

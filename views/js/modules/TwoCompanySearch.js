@@ -20,19 +20,6 @@ class TwoCompanySearch {
     static AUTOFILL_MARKER_ATTR = 'data-two-autofilled-value';
 
     /**
-     * The in-field search spinner, and the containing block it is positioned in.
-     *
-     * The spinner is a real sibling element rather than a background-image on the
-     * input, because it is drawn in CSS: an `input` accepts no `::before` or
-     * `::after`, and a background-image cannot be animated spokes. views/css/two.css
-     * shows and hides it purely from the loading class on the input, via a sibling
-     * combinator, so neither render path has to know it exists.
-     */
-    static SPINNER_CLASS = 'two-company-search-spinner';
-
-    static FIELD_WRAPPER_CLASS = 'two-company-search-field';
-
-    /**
      * Company-search result cache, held on the CLASS rather than inside
      * setupAutocomplete().
      *
@@ -387,13 +374,6 @@ class TwoCompanySearch {
                 previousField.removeClass(
                     'two-company-search-input two-company-search-loading ui-autocomplete-loading'
                 );
-                // And take the spinner with it. The usual re-render replaces the
-                // whole address form, so the old spinner is detached along with
-                // its parent - but a theme that swaps only the input would
-                // otherwise leave a spinner behind next to a field that no
-                // longer drives it, and the next ensureSpinnerElement() would
-                // add a second one in the same parent.
-                this.removeSpinnerElement(previousField);
             }
             this.companyField = currentField;
         }
@@ -410,12 +390,6 @@ class TwoCompanySearch {
 
         // Marks the field for the in-field spinner CSS (views/css/two.css).
         this.companyField.addClass('two-company-search-input');
-
-        // The spinner is a real element, so it has to be (re-)created here, in
-        // the same method the `updatedAddressForm` handler re-runs, and not once
-        // at init(). PrestaShop replaces the address form's DOM on that event,
-        // which takes any previously inserted spinner with it.
-        this.ensureSpinnerElement();
 
         // Use jQuery UI autocomplete if available; otherwise fallback to custom.
         // `$.fn.autocomplete` alone is not proof of jQuery UI - the older
@@ -631,101 +605,6 @@ class TwoCompanySearch {
         };
     }
 
-    /**
-     * The spinner elements that are DIRECT children of the given input's parent.
-     *
-     * Idempotence is decided by reading the DOM, deliberately, and never from a
-     * remembered reference. A reference this instance holds can point at a node
-     * PrestaShop has already detached, and the live instance holds no reference
-     * to a spinner a *destroyed* instance inserted - both of which end in two
-     * spinners in one field. The parent is the only thing that knows the truth.
-     *
-     * Direct children only: the fallback dropdown is also a descendant of this
-     * parent, and nothing inside it is ever a spinner.
-     *
-     * @param {?HTMLElement} inputEl the company input
-     * @returns {Array<HTMLElement>} zero, one or (defensively) more spinners
-     */
-    static findSpinnerElements(inputEl) {
-        const parent = inputEl && inputEl.parentNode;
-        const children = (parent && parent.children) || [];
-        const found = [];
-        for (let i = 0; i < children.length; i += 1) {
-            const child = children[i];
-            if (child.classList && child.classList.contains(TwoCompanySearch.SPINNER_CLASS)) {
-                found.push(child);
-            }
-        }
-        return found;
-    }
-
-    /**
-     * Ensure exactly one spinner element sits after the company input.
-     *
-     * Called from setupAutocomplete(), which is the method the `updatedAddressForm`
-     * handler re-runs, so this runs again on every address-form re-render, every
-     * country change and every repeated setup. It must therefore be idempotent in
-     * all three, and it is: it counts what is in the parent first and only creates
-     * when there is nothing to reuse.
-     *
-     * @returns {void}
-     */
-    ensureSpinnerElement() {
-        const inputEl = this.companyField && this.companyField.length
-            ? this.companyField.get(0)
-            : null;
-        const parent = inputEl && inputEl.parentNode;
-        if (!parent) {
-            return;
-        }
-
-        const existing = TwoCompanySearch.findSpinnerElements(inputEl);
-        // More than one can only come from a path that bypassed this method.
-        // Drop the extras rather than trusting the count.
-        while (existing.length > 1) {
-            const extra = existing.pop();
-            extra.parentNode.removeChild(extra);
-        }
-
-        if (!existing.length) {
-            const spinner = document.createElement('span');
-            spinner.className = TwoCompanySearch.SPINNER_CLASS;
-            // Decorative. The dropdown and its "Searching..." row carry the
-            // meaning, so this is hidden from assistive technology rather than
-            // announced as an unlabelled graphic.
-            spinner.setAttribute('aria-hidden', 'true');
-            // Directly after the input, which is what the stylesheet's sibling
-            // selector needs. An existing one is left exactly where it is: this
-            // method is the only thing that ever inserts a spinner, so it is
-            // already in the right place.
-            parent.insertBefore(spinner, inputEl.nextSibling);
-        }
-
-        // The spinner is absolutely positioned, so its offset parent has to be a
-        // containing block. See `.two-company-search-field` in views/css/two.css.
-        parent.classList.add(TwoCompanySearch.FIELD_WRAPPER_CLASS);
-    }
-
-    /**
-     * Remove the spinner, and the containing-block class, from a field's parent.
-     *
-     * @param {?Object} [field] jQuery object for the input; defaults to the
-     *        current companyField
-     * @returns {void}
-     */
-    removeSpinnerElement(field) {
-        const target = field || this.companyField;
-        const inputEl = target && target.length ? target.get(0) : null;
-        const parent = inputEl && inputEl.parentNode;
-        if (!parent) {
-            return;
-        }
-        TwoCompanySearch.findSpinnerElements(inputEl).forEach((spinner) => {
-            spinner.parentNode.removeChild(spinner);
-        });
-        parent.classList.remove(TwoCompanySearch.FIELD_WRAPPER_CLASS);
-    }
-
     setupCustomAutocomplete() {
         const inputEl = this.companyField.get(0);
         if (!inputEl) return;
@@ -741,13 +620,6 @@ class TwoCompanySearch {
         let container = document.createElement('div');
         container.className = 'two-autocomplete-container';
         container.style.position = 'relative';
-        // Deliberately unchanged by the CSS spinner work (TWO-25288), even though
-        // this lands the container BETWEEN the input and the spinner span. The
-        // spinner is `position: absolute` against the shared parent, so its
-        // placement is decided entirely by that containing block and not at all by
-        // where it sits among its siblings - and the stylesheet matches it with the
-        // GENERAL sibling combinator, which does not care either. Re-anchoring this
-        // insertion would have been a no-op with a rationale that sounded good.
         inputEl.parentNode.insertBefore(container, inputEl.nextSibling);
 
         let list = document.createElement('div');
@@ -1623,10 +1495,6 @@ class TwoCompanySearch {
                 this.companyField.removeClass(
                     'two-company-search-input two-company-search-loading ui-autocomplete-loading'
                 );
-                // The spinner is our own element, so removing the classes is not
-                // enough to unwind it - take the node and the containing-block
-                // class with them.
-                this.removeSpinnerElement();
             }
             // Destroy autocomplete instance if present
             if (this.companyField && this.companyField.length && this.companyField.hasClass('ui-autocomplete-input')) {
