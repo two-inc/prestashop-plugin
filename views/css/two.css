@@ -1173,15 +1173,8 @@
     color: #dc3545;
 }
 
-/* A second, unscoped `.ui-autocomplete-loading` rule used to live here, pointing
-   at the same loader GIF. It is gone; the scoped rule at the top of this file is
-   now the only one. It had to go, and not merely for tidiness: it declared
-   `background: white url(...) ... !important` and `padding-right: 25px !important`,
-   so it OUT-RANKED the scoped rule by `!important` alone whatever the specificity.
-   The company field therefore still got the white background and the 25px gutter
-   that the scoped rule exists to avoid, and the scoped rule's own
-   `background-position` and 32px reservation never took effect. It also matched
-   every other jQuery UI autocomplete on the page, which was never intended. */
+/* TWO-25288: an unscoped duplicate `.ui-autocomplete-loading` rule was removed here;
+   the scoped rule at the top of this file is now the only one. */
 
 /* Autocomplete Dropdown Styling */
 .ui-autocomplete {
