@@ -37,6 +37,7 @@ const {
     releaseWidgets,
     flushPromises,
     installStylesheet,
+    countGifFrames,
     REPO_ROOT
 } = require('./ps-harness');
 
@@ -1258,12 +1259,12 @@ describe('the in-field spinner GIF', () => {
         expect(bytes.readUInt16LE(6)).toBe(16);
         expect(bytes.readUInt16LE(8)).toBe(16);
         // Frame count. A GIF with one image descriptor is a static picture; this
-        // one must have several or it does not animate.
-        let frames = 0;
-        for (let i = 0; i < bytes.length; i += 1) {
-            if (bytes[i] === 0x2c) frames += 1;
-        }
-        expect(frames).toBeGreaterThan(1);
+        // one must have several or it does not animate. Counted by walking the
+        // block structure rather than by scanning for the image-descriptor
+        // byte, which also occurs inside the colour table and the compressed
+        // pixel data - a scan finds 'frames' in a single-frame file, so the
+        // assertion below could never fail.
+        expect(countGifFrames(bytes)).toBeGreaterThan(1);
     });
 
     test('nothing paints on the field while it is idle', () => {
