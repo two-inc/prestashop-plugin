@@ -35,6 +35,14 @@ class TwoSurchargeCalculator
     const VALID_TYPES = array('percentage', 'fixed', 'fixed_and_percentage');
 
     /**
+     * Decimal places every monetary member of the block is rounded to. The
+     * pricing API refuses a value finer than two places rather than rounding
+     * it itself, so an over-precise configured amount would be rejected
+     * outright (TWO-25289).
+     */
+    const MONEY_DECIMALS = 2;
+
+    /**
      * Coerce a stored surcharge type to a known value, defaulting to "none".
      *
      * @param mixed $type
@@ -54,7 +62,8 @@ class TwoSurchargeCalculator
      *    default of 100% is never silently applied)
      *  - `surcharge_basis` is sent explicitly
      *  - fixed types supply `surcharge`
-     *  - a positive limit on a percentage type supplies `cap`
+     *  - a limit that is SET on a percentage type supplies `cap`; only a null
+     *    (unconfigured) limit means "no cap"
      *  - rounding (percentage modes only) supplies `rounding`
      *  - differential mode supplies `reference_terms` (default term) so the
      *    API computes the delta itself — no delta math in the plugin
@@ -90,15 +99,25 @@ class TwoSurchargeCalculator
         // (Twopayment::convertTwoBuyerFeeShareCurrency, TWO-25105).
         // Percentage surcharge is currency-agnostic.
         if ($hasFixed && isset($row['fixed']) && (float) $row['fixed'] > 0) {
-            $buyer_fee_share['surcharge'] = (float) $row['fixed'];
+            $buyer_fee_share['surcharge'] = round((float) $row['fixed'], self::MONEY_DECIMALS);
         }
 
         // `cap` only applies where the fee has a percentage component — a
-        // fixed-only fee is constant, nothing to clamp — so a stored limit left
+        // fixed-only fee is constant, nothing to bound — so a stored limit left
         // over from a previous surcharge type must not leak into a fixed-only
         // request.
-        if ($hasPercentage && isset($row['limit']) && (float) $row['limit'] > 0) {
-            $buyer_fee_share['cap'] = (float) $row['limit'];
+        //
+        // Only a NULL limit means "no cap". A limit of exactly 0 is relayed as
+        // `cap => 0`, which bounds the fee at zero (TWO-25289). This used to be
+        // a `> 0` test, so a configured 0 became "no cap" and the percentage
+        // went out UNCAPPED — an overcharge, and the opposite of the merchant's
+        // instruction. The admin form now refuses a zero cap outright
+        // (Twopayment::validTwoSurchargeFormValues), but the filter had to go
+        // with it: a 0 arriving by any route the form does not police — a value
+        // stored before that validation existed, a direct Configuration write,
+        // an import — would otherwise still be relayed uncapped.
+        if ($hasPercentage && isset($row['limit']) && $row['limit'] !== null) {
+            $buyer_fee_share['cap'] = round((float) $row['limit'], self::MONEY_DECIMALS);
         }
 
         // `rounding` snaps the final buyer line to a clean increment,

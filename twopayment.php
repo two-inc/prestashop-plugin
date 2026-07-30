@@ -8832,10 +8832,20 @@ class Twopayment extends PaymentModule
         $grid = array();
         foreach ($this->getAvailablePaymentTerms() as $days) {
             $days = (int) $days;
+            // The cap is deliberately NOT cast unconditionally: an unset
+            // Configuration key reads back as false and (float) false is 0.0,
+            // which would make "no cap configured" indistinguishable from a
+            // cap of zero — and those are different instructions to the
+            // pricing API (absent = uncapped, 0 = bound the fee at zero).
+            // Blank stays null; anything numeric, zero included, is a real
+            // configured cap (TWO-25289). The save path stores '' for a blank
+            // cell, so blank is the honest "unconfigured" signal.
+            $cap_raw = Configuration::get('PS_TWO_SURCHARGE_CAP_' . $days);
+            $cap_set = $cap_raw !== false && $cap_raw !== null && trim((string) $cap_raw) !== '';
             $grid[$days] = array(
                 'percentage' => (float) Configuration::get('PS_TWO_SURCHARGE_PCT_' . $days),
                 'fixed' => (float) Configuration::get('PS_TWO_SURCHARGE_FIXED_' . $days),
-                'limit' => (float) Configuration::get('PS_TWO_SURCHARGE_CAP_' . $days),
+                'limit' => $cap_set ? (float) $cap_raw : null,
             );
         }
 
@@ -8883,11 +8893,12 @@ class Twopayment extends PaymentModule
      * zero-cap guard was reverted, its premise was wrong):
      *
      *  - A converted `cap` of 0.00 is passed straight through as a zero cap.
-     *    The pricing API clamps the fee to zero for it: a cap is applied
-     *    whenever one is present, and an absent cap is a distinct case - so a
-     *    zero cap means the surcharge is simply not applied. It is NOT read as
-     *    "no cap", and there is no overcharge to guard against. See TWO-25276.
-     *  - A fixed `surcharge` that converts to 0.00 is a legitimately tiny
+     *    The pricing service bounds the fee at zero for it: it tests the cap
+     *    for PRESENCE rather than truthiness, and its own suite pins that, so
+     *    a zero cap means the surcharge is simply not applied. It is NOT read
+     *    as "no cap", and there is no overcharge to guard against. (Source
+     *    references live on TWO-25269, not here: this repository is public
+     *    and that service's is not.)     *  - A fixed `surcharge` that converts to 0.00 is a legitimately tiny
      *    configured amount, genuinely negligible in a stronger currency, and
      *    0.00 is the arithmetically correct answer. Logged at info level.
      *
@@ -8936,6 +8947,11 @@ class Twopayment extends PaymentModule
                     1
                 );
             }
+            // Already 2dp: convertTwoAmountBetweenCurrencies() rounds once at
+            // its own boundary, which is what the pricing API requires (it
+            // refuses a finer value rather than rounding it). The
+            // same-currency path never reaches here, so the configured value
+            // is rounded in TwoSurchargeCalculator instead (TWO-25289).
             $share[$member] = $converted;
         }
         return $share;
@@ -10778,7 +10794,10 @@ class Twopayment extends PaymentModule
             . '<th>' . $this->l('Term') . '</th>'
             . '<th class="two-col-percentage">' . $this->l('Percentage') . '</th>'
             . '<th class="two-col-fixed">' . $this->l('Fixed fee') . '</th>'
-            . '<th class="two-col-cap">' . $this->l('Cap on percentage') . '</th>'
+            // "Cap", not "Cap on percentage": the cap bounds the whole fee
+            // line - the percentage and the fixed fee together - so the old
+            // heading described it wrongly (TWO-25289).
+            . '<th class="two-col-cap">' . $this->l('Cap') . '</th>'
             . '</tr></thead><tbody>';
 
         $term_type = Configuration::get('PS_TWO_PAYMENT_TERM_TYPE');
@@ -10812,6 +10831,23 @@ class Twopayment extends PaymentModule
         }
 
         $html .= '</tbody></table>';
+
+        // Cap semantics, stated where the cap is entered. Both sentences
+        // exist because the grid otherwise invites exactly the mistake it
+        // then refuses on save (TWO-25289).
+        $html .= '<p class="help-block" style="margin-top:8px;">'
+            . htmlspecialchars(
+                $this->l('The cap applies to the whole fee: the percentage and the fixed fee together, not the percentage alone. Leave it empty for no cap.'),
+                ENT_QUOTES,
+                'UTF-8'
+            )
+            . ' '
+            . htmlspecialchars(
+                $this->l('A cap of 0 is not allowed. To charge nothing on a term, set that term\'s percentage and fixed fee to 0 instead.'),
+                ENT_QUOTES,
+                'UTF-8'
+            )
+            . '</p>';
 
         return $html;
     }
@@ -10991,6 +11027,23 @@ class Twopayment extends PaymentModule
                 $raw = Tools::getValue('PS_TWO_SURCHARGE_' . $suffix . '_' . $days);
                 if ($raw !== false && $raw !== '' && (!is_numeric($raw) || (float) $raw < 0)) {
                     $this->errors[] = $this->l('Surcharge values must be non-negative numbers.');
+
+                    return;
+                }
+                // A cap of exactly 0 is refused (TWO-25289). It is never what
+                // a merchant means by it: the cap bounds the WHOLE fee - the
+                // percentage and the fixed fee together, not the percentage
+                // alone - so a cap of 0 silently wipes a configured fixed fee
+                // too, and nothing in the grid says so. The intent it gets
+                // mistaken for ("charge nothing on this term") is expressible
+                // directly, with 0% and a 0 fixed fee. A BLANK cap stays
+                // valid and still means "no cap" - the guard above already
+                // skipped it, so absence and zero stay distinguishable.
+                if ($suffix === 'CAP' && $raw !== false && $raw !== '' && is_numeric($raw) && (float) $raw === 0.0) {
+                    $this->errors[] = sprintf(
+                        $this->l('Surcharge cap for the %d-day term cannot be 0. To charge nothing on this term, set the percentage and the fixed fee to 0 instead, and leave the cap empty.'),
+                        $days
+                    );
 
                     return;
                 }
