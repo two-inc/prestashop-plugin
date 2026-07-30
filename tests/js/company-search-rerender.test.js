@@ -1947,3 +1947,82 @@ describe('the custom fallback used when jQuery UI is absent', () => {
         expect(liveField().hasClass('two-company-search-loading')).toBe(false);
     });
 });
+
+describe('the inline grey company-id hint (TWO-25288)', () => {
+    function hintText() {
+        return $('.two-company-id-hint').text();
+    }
+
+    test('is empty before any selection', () => {
+        makeInstance();
+
+        expect($('.two-company-id-hint').length).toBe(1);
+        expect(hintText()).toBe('');
+    });
+
+    test('shows the selected company\'s org number', () => {
+        const search = makeInstance();
+        search.onCompanySelected(null, {
+            item: { value: 'Example Trading Ltd', organization_number: '12345678' }
+        });
+
+        expect(hintText()).toBe('12345678');
+    });
+
+    test('is cleared by reset()', () => {
+        const search = makeInstance();
+        search.onCompanySelected(null, {
+            item: { value: 'Example Trading Ltd', organization_number: '12345678' }
+        });
+
+        search.reset();
+
+        expect(hintText()).toBe('');
+    });
+
+    test('is cleared when the buyer edits the company name after selecting one', () => {
+        const search = makeInstance();
+        search.onCompanySelected(null, {
+            item: { value: 'Example Trading Ltd', organization_number: '12345678' }
+        });
+
+        // Mirrors clearStaleOrganizationSelection()'s own trigger: an input event
+        // on the company field once a selection marker exists.
+        liveField().val('Example Trading Lt').trigger('input');
+
+        expect(hintText()).toBe('');
+    });
+
+    test('picks up a GB org number that only arrives via the details lookup', async () => {
+        const search = makeInstance();
+        search.onCompanySelected(null, {
+            item: { value: 'Example Trading Ltd', lookup_id: 'lookup-abc-123' }
+        });
+
+        // No organization_number on the search result itself, so the hint must
+        // not claim one yet.
+        expect(hintText()).toBe('');
+
+        ajax.last().succeed({
+            addresses: [{ type: 'BUSINESS', street_address: '1 Example Street' }],
+            national_identifier: { id: '87654321' }
+        });
+        await flushPromises();
+
+        expect(hintText()).toBe('87654321');
+    });
+
+    test('a second, hidden-number selection does not keep the first hint on screen', () => {
+        const search = makeInstance();
+        search.onCompanySelected(null, {
+            item: { value: 'Example Trading Ltd', organization_number: '12345678' }
+        });
+        expect(hintText()).toBe('12345678');
+
+        search.onCompanySelected(null, {
+            item: { value: 'Second Trading Ltd', lookup_id: 'lookup-def-456' }
+        });
+
+        expect(hintText()).toBe('');
+    });
+});
