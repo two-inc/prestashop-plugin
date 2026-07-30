@@ -40,7 +40,8 @@ declare(strict_types=1);
  * simply not applied. (Source references live on TWO-25269, not here: this
  * repository is public and that service's is not.) The guard
  * had a live cost: it looped every offered term, so one term whose cap
- * rounded away withheld Two from EVERY buyer on the shop. *
+ * rounded away withheld Two from EVERY buyer on the shop.
+ *
  * An ABSENT cap is a different configuration again - an uncapped percentage
  * surcharge - and must keep charging normally. See
  * testAbsentCapStillChargesAndOffersTheOption.
