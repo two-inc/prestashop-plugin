@@ -34,12 +34,12 @@ declare(strict_types=1);
  *
  * The zero-cap case used to withhold the option, on the premise that a zero
  * cap reads downstream as NO cap and would therefore send an uncapped
- * percentage. TWO-25276 reverted that: the premise was false. checkout-api's
- * `fees.py` tests the cap with `if c is not None: b = min(b, c)` and its
- * `cap 0 forces zero regardless of surcharge` test pins the result, so a zero
- * cap clamps the fee to zero - the surcharge is simply not applied. The guard
- * had a live cost: it looped every offered term, so one term whose cap
- * rounded away withheld Two from EVERY buyer on the shop.
+ * percentage. TWO-25276 reverted that: the premise was false. The pricing API
+ * applies a cap whenever one is present, and distinguishes that from an absent
+ * cap, so a zero cap clamps the fee to zero - the surcharge is simply not
+ * applied. See TWO-25276. The guard had a live cost: it looped every offered
+ * term, so one term whose cap rounded away withheld Two from EVERY buyer on
+ * the shop.
  *
  * An ABSENT cap is a different configuration again - an uncapped percentage
  * surcharge - and must keep charging normally. See
@@ -717,11 +717,11 @@ final class FxRatesSpec
      * TWO-25276 - this assertion is the OPPOSITE of what TWO-25269 shipped,
      * and TWO-25269 was wrong. It withheld the option on the premise that a
      * zero cap reads downstream as NO cap, i.e. an uncapped percentage. It
-     * does not: checkout-api's `fees.py` tests the cap with
-     * `if c is not None: b = min(b, c)`, and its `cap 0 forces zero regardless
-     * of surcharge` test pins the outcome. A zero cap clamps the fee to zero -
-     * the surcharge is simply not applied, which is exactly what a merchant
-     * capping at zero asked for. There is no overcharge to guard against.
+     * does not: the pricing API applies a cap whenever one is present, and
+     * distinguishes that from an absent cap, so a zero cap clamps the fee to
+     * zero - the surcharge is simply not applied, which is exactly what a
+     * merchant capping at zero asked for. There is no overcharge to guard
+     * against. See TWO-25276.
      *
      * The guard was not merely redundant: isTwoSurchargeQuotableForCart loops
      * EVERY offered term, so a single term whose cap rounded away withheld Two
