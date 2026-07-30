@@ -13361,32 +13361,90 @@ class Twopayment extends PaymentModule
         if (!isset($params['address']) || !is_object($params['address'])) {
             return;
         }
-        
+
         $address = $params['address'];
-        
+
         // Only process if this address has company information
         if (empty($address->company)) {
             return;
         }
-        
+
         // Store company data in session for persistence across checkout steps
         if (isset($this->context->cookie)) {
+            $previousCompanyName = isset($this->context->cookie->two_company_name)
+                ? (string) $this->context->cookie->two_company_name
+                : '';
+
             $this->context->cookie->two_company_name = $address->company;
             if (!empty($address->id)) {
                 $this->context->cookie->two_company_address_id = (string) (int) $address->id;
             }
-            
+
             // Try to get organization number from form data if available
             $companyId = Tools::getValue('companyid', '');
             if (!empty($companyId)) {
                 $this->context->cookie->two_company_id = $companyId;
+            } elseif (
+                isset($this->context->cookie->two_company_id)
+                && !$this->twoCompanyNamesMatch($previousCompanyName, (string) $address->company)
+            ) {
+                // TWO-25288. The buyer saved a DIFFERENT company name with no
+                // organisation number beside it - which is what disowning a
+                // selected company looks like by the time it reaches the server.
+                //
+                // The line above has just overwritten the cookie's company NAME,
+                // so leaving the old organisation number in place would pair one
+                // company's number with another company's name, and the resolver
+                // consults this cookie FIRST, ahead of the address. That pairing
+                // is the wrong-company credit check in its purest form.
+                //
+                // This is also the server-side backstop for the browser's clear
+                // being fire-and-forget: a clear request that is dropped, or is
+                // still in flight when the address saves, lands here instead. So
+                // the guarantee does not depend on that request arriving.
+                //
+                // The country marker goes with it. A marker with no organisation
+                // number behind it is the half-record state the clearCompany
+                // action exists to avoid, and the two readers of this cookie
+                // disagree about how to interpret it.
+                unset($this->context->cookie->two_company_id);
+                unset($this->context->cookie->two_company_country);
+
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Dropped session company number - address company changed from "'
+                    . $previousCompanyName . '" to "' . $address->company . '" with no companyid supplied',
+                    1
+                );
             }
-            
+
             // Set cookie expiration (1 hour)
             $this->context->cookie->setExpire(time() + self::COOKIE_EXPIRY_ONE_HOUR);
-            
-            PrestaShopLogger::addLog('TwoPayment: Company data captured from address save - Company: ' . $address->company, 1);                                 
+
+            PrestaShopLogger::addLog('TwoPayment: Company data captured from address save - Company: ' . $address->company, 1);
         }
+    }
+
+    /**
+     * Whether two company names are the same company as far as this cookie is
+     * concerned.
+     *
+     * Case- and whitespace-insensitive, mirroring the browser's
+     * normalizeCompanyName(). A buyer tidying the capitalisation of the company
+     * they selected has not disowned it, and treating that as a change would
+     * throw away a perfectly good organisation number.
+     *
+     * An empty previous name never matches, so the first company saved on a
+     * session cannot be read as an unchanged one.
+     */
+    private function twoCompanyNamesMatch($left, $right)
+    {
+        $normalize = function ($value) {
+            return preg_replace('/\s+/', ' ', trim(mb_strtolower((string) $value)));
+        };
+
+        $normalizedLeft = $normalize($left);
+
+        return $normalizedLeft !== '' && $normalizedLeft === $normalize($right);
     }
     
     /**

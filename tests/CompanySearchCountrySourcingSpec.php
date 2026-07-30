@@ -272,9 +272,15 @@ final class CompanySearchCountrySourcingSpec
      * has the company they explicitly disowned credit-checked at placement. No
      * Jest test can see this; the JS suite stubs the transport.
      *
-     * The unset list is asserted too, because clearing the company while leaving
-     * the country or address marker behind is the half-record state whose reading
-     * differs between the two consumers of this cookie.
+     * SCOPE: the name agreement across the two languages, and nothing else. What
+     * the action DOES - which keys it empties, that it refuses a bad token, that
+     * the switch actually dispatches it - is driven in SessionCompanyClearSpec
+     * and must stay there. This test used to assert those too, by grepping the
+     * controller for `case 'clearCompany':` and for each `unset(...)` literal, and
+     * that is precisely what a source grep cannot do: an early `return` above the
+     * unsets left every grepped literal in place and the suite stayed green, and
+     * inverting the token guard passed identically. A grep pins spelling; only
+     * execution pins behaviour.
      */
     private static function testClearCompanyActionSeam(): void
     {
@@ -293,19 +299,6 @@ final class CompanySearchCountrySourcingSpec
             'The order-intent controller no longer dispatches ' . $action
             . '; the clear falls through the switch and silently does nothing'
         );
-
-        foreach ([
-            'two_company_name',
-            'two_company_id',
-            'two_company_country',
-            'two_company_address_id',
-        ] as $cookieKey) {
-            TinyAssert::true(
-                strpos($controller, 'unset($this->context->cookie->' . $cookieKey . ')') !== false,
-                'The ' . $action . ' action no longer unsets ' . $cookieKey
-                . ', leaving a half-record session company behind'
-            );
-        }
     }
 
     private static function testJsNoLongerGuessesTheCountry(): void

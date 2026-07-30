@@ -227,12 +227,31 @@ form (which it does for something as ordinary as a country change):
   invisible to a sighted mouse user and total for a keyboard one, because
   activating the row removes the focused element from the list.
 
-  Forgetting the selected company is asserted too: the hidden number and its
-  company-name marker are dropped, and the session company is cleared through its
-  own endpoint action — asserted to be a POST carrying the token, and asserted
-  *not* to be the save action, which rejects an empty company id and would
-  therefore clear nothing. A missing endpoint is asserted to be tolerated with the
-  local half still happening.
+  Forgetting the selected company is asserted too, and on all three of the places a
+  selection writes the organisation number — because two of them were missing and
+  the defect they left was invisible. The hidden number and its company-name marker
+  are dropped; the session company is cleared through its own endpoint action,
+  asserted to be a POST carrying the token and asserted *not* to be the save
+  action, which rejects an empty company id and would therefore clear nothing; and
+  the address step's `dni` / `vat_number` are dropped, which is the pair the server
+  reads off the saved address independently of the session company.
+
+  Two things about those cases are deliberate. The selection is completed **through
+  jQuery UI's own menu**, not by setting the hidden field by hand: a hand-set
+  stand-in reaches one of the three fields, leaves the other two empty, and every
+  assertion about what a clear does to them then passes vacuously — which is
+  exactly how the disowned number survived unnoticed. And the clear is asserted
+  **through a form submit** as well as directly, because the pre-submit sync adopts
+  a `dni` with no organisation number beside it *as* the organisation number, so a
+  clear that leaves one behind silently undoes itself one step later. The
+  complementary case is asserted beside it: a `dni` the buyer typed themselves is
+  still adopted at submit, which is what rules out a blanket clear.
+
+  A missing endpoint is asserted to be tolerated with the local half still
+  happening. What makes that tolerable is asserted in PHP, not here — see
+  `tests/SessionCompanyClearSpec.php`, which drives both the clear action and the
+  address-save backstop that holds when the browser's fire-and-forget request never
+  arrives.
 
   On the fallback path the row has no widget to lean on, so it carries its own
   `role="button"`, `tabindex="0"` and Enter/Space handling, and each of those is asserted
@@ -255,8 +274,12 @@ form (which it does for something as ordinary as a country change):
   every case green while the shipped row is permanently untranslated) and the
   endpoint action name used to clear the session company (the transport is stubbed,
   so a name that agrees on neither side fails silently and the disowned company is
-  still credit-checked). Both are pinned in `tests/CompanySearchCountrySourcingSpec.php`,
-  which is where seam assertions for this feature live.
+  still credit-checked). Both name agreements are pinned in
+  `tests/CompanySearchCountrySourcingSpec.php`, which is where seam assertions for
+  this feature live — spelling only. What the clear action DOES, and the address-save
+  backstop that holds when the browser's request never arrives, are driven for real
+  in `tests/SessionCompanyClearSpec.php`. That split is deliberate: a source grep
+  cannot see an early `return` above the work it greps for, and did not.
 
 ## Known gaps
 
