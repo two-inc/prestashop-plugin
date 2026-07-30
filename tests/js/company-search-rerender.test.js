@@ -86,8 +86,172 @@ describe('the real jQuery UI widget is what gets bound', () => {
         expect(liveField().hasClass('two-company-search-input')).toBe(true);
         expect(liveField().hasClass('ui-autocomplete-input')).toBe(true);
         expect(liveField().autocomplete('instance')).toBeTruthy();
-        expect(liveField().autocomplete('option', 'minLength')).toBe(3);
+        // 0 is deliberate (TWO-25288). jQuery UI does not invoke `source` for a
+        // term shorter than `minLength`, so a threshold here would swallow
+        // sub-threshold keystrokes and the too-short hint could never render. The
+        // threshold lives in the `source` guard instead - see the hint tests
+        // below, which pin that no request escapes it.
+        expect(liveField().autocomplete('option', 'minLength')).toBe(0);
         expect(liveField().autocomplete('option', 'delay')).toBe(300);
+    });
+});
+
+describe('the company-search hints (TWO-25288)', () => {
+    /**
+     * Drive the widget's own search so the `source` guard, jQuery UI's menu and
+     * the `_renderItem` patch are all the things under test.
+     */
+    function search(term) {
+        const field = liveField();
+        // Bootstrapped-guard: without the widget bound, every hint assertion
+        // below would pass vacuously against an untouched DOM.
+        expect(field.hasClass('ui-autocomplete-input')).toBe(true);
+        expect(field.autocomplete('instance')).toBeTruthy();
+        field.val(term);
+        field.autocomplete('instance').search(term);
+        return field;
+    }
+
+    /** Rows currently in the jQuery UI menu. */
+    function rows() {
+        return $('ul.ui-autocomplete li');
+    }
+
+    describe('the threshold is one constant', () => {
+        test('the published constant is 3', () => {
+            // Pins the shipped default so a change to it is a visible diff here
+            // rather than a silent change of checkout behaviour. Every other
+            // assertion in this file derives from the constant, on purpose: they
+            // must pin the RELATIONSHIP between what is claimed and what is
+            // enforced, which is the thing that drifts.
+            expect(TwoCompanySearch.MIN_SEARCH_LENGTH).toBe(3);
+        });
+
+        test('the hint states the number the guard actually enforces', () => {
+            const instance = makeInstance();
+            const threshold = TwoCompanySearch.MIN_SEARCH_LENGTH;
+
+            // The msgid's own `%d` must be gone, replaced by the constant.
+            expect(instance.getTooShortText()).toBe(
+                'Please enter ' + threshold + ' or more characters'
+            );
+            expect(instance.getTooShortText()).not.toContain('%d');
+        });
+
+        test('the number comes from the constant, not from the translation', () => {
+            const saved = window.twopayment;
+            window.twopayment = { i18n: { company_search_too_short: 'Introduce %d o más caracteres' } };
+            try {
+                expect(makeInstance().getTooShortText()).toBe(
+                    'Introduce ' + TwoCompanySearch.MIN_SEARCH_LENGTH + ' o más caracteres'
+                );
+            } finally {
+                window.twopayment = saved;
+            }
+        });
+    });
+
+    describe('the empty-field hint occupies the placeholder', () => {
+        test('setup applies it when the field carries none', () => {
+            expect(liveField().attr('placeholder')).toBeUndefined();
+
+            makeInstance();
+
+            expect(liveField().attr('placeholder')).toBe('Enter company name to search');
+        });
+
+        test('it uses the translated wording when one is supplied', () => {
+            const saved = window.twopayment;
+            window.twopayment = { i18n: { company_search_placeholder: 'Introduce el nombre de la empresa para buscar' } };
+            try {
+                makeInstance();
+                expect(liveField().attr('placeholder')).toBe('Introduce el nombre de la empresa para buscar');
+            } finally {
+                window.twopayment = saved;
+            }
+        });
+
+        test('a placeholder the theme already set is left alone', () => {
+            liveField().attr('placeholder', 'Theme wording');
+
+            makeInstance();
+
+            expect(liveField().attr('placeholder')).toBe('Theme wording');
+        });
+
+        test('it is reapplied to the fresh input after an address-form re-render', () => {
+            makeInstance();
+            replaceAddressForm({ country: 'GB' });
+            expect(liveField().attr('placeholder')).toBeUndefined();
+
+            // PrestaShop swapped the node; the hint has to land on the new one.
+            bus.emit('updatedAddressForm');
+
+            expect(liveField().attr('placeholder')).toBe('Enter company name to search');
+        });
+    });
+
+    describe('the min-chars hint on the jQuery UI path', () => {
+        test('a sub-threshold term shows the hint and fires no request', () => {
+            const instance = makeInstance();
+            const short = 'a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1);
+
+            search(short);
+
+            expect(rows()).toHaveLength(1);
+            expect(rows().hasClass('two-autocomplete-too-short')).toBe(true);
+            expect(rows().text()).toBe(instance.getTooShortText());
+            // Before TWO-25288 the widget swallowed this term and showed nothing,
+            // which is indistinguishable from a search that found no match.
+            expect(ajax.calls).toHaveLength(0);
+        });
+
+        test('the hint row is not the failure row', () => {
+            makeInstance();
+
+            search('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1));
+
+            // Nothing is broken and retrying will not help, so it must not carry
+            // the class the failure copy is styled and asserted by.
+            expect(rows().hasClass('two-autocomplete-unavailable')).toBe(false);
+        });
+
+        test('the hint row is non-selectable and cannot reach the field', () => {
+            const instance = makeInstance();
+            const field = liveField();
+
+            search('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1));
+
+            // `ui-state-disabled` is what jQuery UI own menu checks, so the row is
+            // skipped by keyboard navigation rather than merely refused on select.
+            expect(rows().hasClass('ui-state-disabled')).toBe(true);
+            expect(rows().attr('aria-disabled')).toBe('true');
+
+            const item = { item: instance.buildTooShortItem() };
+            expect(field.autocomplete('option', 'select')(null, item)).toBe(false);
+            expect(field.autocomplete('option', 'focus')(null, item)).toBe(false);
+            expect(field.val()).toBe('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1));
+        });
+
+        test('a term at the threshold searches and shows no hint', () => {
+            makeInstance();
+
+            search('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH));
+
+            expect(ajax.calls).toHaveLength(1);
+            expect($('ul.ui-autocomplete li.two-autocomplete-too-short')).toHaveLength(0);
+        });
+
+        test('an empty field shows no row at all', () => {
+            makeInstance();
+
+            search('');
+
+            // The placeholder is already the hint for this state; a dropdown
+            // repeating it under an untouched field is noise.
+            expect(rows()).toHaveLength(0);
+            expect(ajax.calls).toHaveLength(0);
+        });
     });
 });
 
@@ -1446,6 +1610,59 @@ describe('the custom fallback used when jQuery UI is absent', () => {
 
         expect(liveField().hasClass('two-company-search-loading')).toBe(true);
         expect($('.two-autocomplete-loading')).toHaveLength(1);
+    });
+
+    describe('the company-search hints (TWO-25288)', () => {
+        test('the empty-field hint is applied on this path too', () => {
+            expect(liveField().attr('placeholder')).toBeUndefined();
+
+            const search = makeInstance();
+
+            // Bootstrapped-guard: this must be the fallback path, or the
+            // assertion is really re-testing the jQuery UI one.
+            expect(liveField().hasClass('ui-autocomplete-input')).toBe(false);
+            expect(search._customAutocomplete).toBeTruthy();
+            expect(liveField().attr('placeholder')).toBe('Enter company name to search');
+        });
+
+        test('a sub-threshold term shows the hint and fires no request', () => {
+            const search = makeInstance();
+            expect(search._customAutocomplete).toBeTruthy();
+
+            type('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1));
+
+            const row = $('.two-autocomplete-too-short');
+            expect(row).toHaveLength(1);
+            expect(row.text()).toBe(search.getTooShortText());
+            expect($('.two-autocomplete-list').css('display')).not.toBe('none');
+            expect(ajax.calls).toHaveLength(0);
+            // Nothing was requested, so nothing may leave a spinner running.
+            expect(liveField().hasClass('two-company-search-loading')).toBe(false);
+            expect($('.two-autocomplete-unavailable')).toHaveLength(0);
+        });
+
+        test('a term at the threshold searches and shows no hint', () => {
+            const search = makeInstance();
+            expect(search._customAutocomplete).toBeTruthy();
+
+            type('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH));
+
+            expect(ajax.calls).toHaveLength(1);
+            expect($('.two-autocomplete-too-short')).toHaveLength(0);
+        });
+
+        test('clearing the field closes the list rather than showing the hint', () => {
+            const search = makeInstance();
+            type('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1));
+            expect($('.two-autocomplete-too-short')).toHaveLength(1);
+
+            type('');
+
+            expect(search._customAutocomplete).toBeTruthy();
+            expect($('.two-autocomplete-too-short')).toHaveLength(0);
+            expect($('.two-autocomplete-list').css('display')).toBe('none');
+            expect(ajax.calls).toHaveLength(0);
+        });
     });
 
     test('a failure clears the spinner and shows the unavailable row', () => {
