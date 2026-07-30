@@ -8846,10 +8846,9 @@ class Twopayment extends PaymentModule
             // stored zero - and relaying it would be refused upstream anyway.
             $cap_raw = Configuration::get('PS_TWO_SURCHARGE_CAP_' . $days);
             $cap_trimmed = trim((string) $cap_raw);
-            $cap_set = $cap_raw !== false
-                && $cap_raw !== null
-                && is_numeric($cap_trimmed)
-                && (float) $cap_trimmed >= 0;
+            // is_numeric() is already false for false and null, so no
+            // separate guards for them.
+            $cap_set = is_numeric($cap_trimmed) && (float) $cap_trimmed >= 0;
             $grid[$days] = array(
                 'percentage' => (float) Configuration::get('PS_TWO_SURCHARGE_PCT_' . $days),
                 'fixed' => (float) Configuration::get('PS_TWO_SURCHARGE_FIXED_' . $days),
@@ -10859,7 +10858,16 @@ class Twopayment extends PaymentModule
         // two-col-cap so the admin JS hides this alongside the cap COLUMN: on
         // a fixed-only surcharge the column is hidden and cap-only copy left
         // on screen describes a field the merchant cannot see.
-        $html .= '<p class="help-block two-col-cap" style="margin-top:8px;">'
+        // Initial visibility computed SERVER-side, like the rows above: the
+        // admin JS hides it on load, but relying on that alone flashes
+        // cap-only copy on every render and leaves it up permanently wherever
+        // the JS does not run.
+        $cap_help_style = in_array(
+            TwoSurchargeCalculator::normalizeType(Configuration::get('PS_TWO_SURCHARGE_TYPE')),
+            array('percentage', 'fixed_and_percentage'),
+            true
+        ) ? '' : 'display:none;';
+        $html .= '<p class="help-block two-col-cap" style="margin-top:8px;' . $cap_help_style . '">'
             . htmlspecialchars(
                 $this->l('The cap applies to the whole fee: the percentage and the fixed fee together, not the percentage alone. Leave it empty for no cap.'),
                 ENT_QUOTES,
@@ -10867,7 +10875,7 @@ class Twopayment extends PaymentModule
             )
             . ' '
             . htmlspecialchars(
-                $this->l('A cap of 0 is not allowed. To charge nothing on a term, set that term\'s percentage and fixed fee to 0 instead.'),
+                $this->l('A cap of 0 is not allowed. To charge nothing on a term, set the percentage and the fixed fee for that term to 0 instead.'),
                 ENT_QUOTES,
                 'UTF-8'
             )
@@ -11045,11 +11053,39 @@ class Twopayment extends PaymentModule
                 }
             }
         }
-        foreach ($this->getAvailablePaymentTerms() as $days) {
+        // The RENDERED term set, not getAvailablePaymentTerms(): the grid
+        // renders (and therefore posts) a row per OFFERABLE term, and the
+        // ticked subset is rewritten by saveTwoPaymentSettingsFormValues()
+        // BEFORE saveTwoSurchargeFormValues() reads it. Validating the stored
+        // subset therefore skipped any cell on a term ticked in the same
+        // submit - so a cap of 0 typed on a newly-ticked term was stored
+        // unvalidated and then relayed, silently wiping the whole fee. The
+        // offerable source does not move during a save, and it is a superset
+        // of what gets persisted, so nothing storable escapes the checks.
+        // The cap column is only VISIBLE alongside a percentage, and the admin
+        // JS hides it (and, with it, the help text explaining this very rule)
+        // otherwise - but a hidden input still posts, so a cap stored while the
+        // type was percentage keeps arriving. Refusing it would abort the whole
+        // Payment Settings save over a field the merchant can neither see nor
+        // read about. The value is still stored either way; only the zero rule
+        // is skipped, and a legacy zero resurfaces when the column comes back
+        // into view, which is where they can act on it.
+        $cap_column_visible = in_array($type, array('percentage', 'fixed_and_percentage'), true);
+
+        $rendered_terms = array_map('intval', $this->getOfferableTermSource(false));
+        foreach ($rendered_terms as $days) {
             $days = (int) $days;
             foreach (array('PCT', 'FIXED', 'CAP') as $suffix) {
                 $raw = Tools::getValue('PS_TWO_SURCHARGE_' . $suffix . '_' . $days);
-                if ($raw !== false && $raw !== '' && (!is_numeric($raw) || (float) $raw < 0)) {
+                // An UNSUBMITTED cell is nothing to validate. `false` is what
+                // core returns for an absent key; null is included because a
+                // rendered-but-cleared input and a genuinely absent one must
+                // behave the same, and the earlier `!== false && !== ''` pair
+                // let null through to be reported as a non-numeric value.
+                if ($raw === false || $raw === null || trim((string) $raw) === '') {
+                    continue;
+                }
+                if (!is_numeric($raw) || (float) $raw < 0) {
                     $this->errors[] = $this->l('Surcharge values must be non-negative numbers.');
 
                     return;
@@ -11070,9 +11106,7 @@ class Twopayment extends PaymentModule
                 // step later. Refusing everything that rounds away is what
                 // makes "the rounding direction cannot matter" actually true.
                 if ($suffix === 'CAP'
-                    && $raw !== false
-                    && $raw !== ''
-                    && is_numeric($raw)
+                    && $cap_column_visible
                     && round((float) $raw, TwoSurchargeCalculator::MONEY_DECIMALS) === 0.0
                 ) {
                     $this->errors[] = sprintf(
