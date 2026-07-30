@@ -755,8 +755,11 @@ final class SurchargeSpec
         TinyAssert::count(0, $module->validateSurchargeFormForTest(), 'a blank cap must stay valid');
 
         // A cap of 0, however it is typed -> blocked, with an error that says
-        // what to do instead.
-        foreach (['0', '0.0', '0.00', '00'] as $zero) {
+        // what to do instead. A SUB-CENT cap goes with it: the calculator
+        // rounds the cap to 2dp before sending, so 0.001 would pass an
+        // exact-zero check and then arrive as a hard cap of 0.00 - the very
+        // outcome being refused, one step later.
+        foreach (['0', '0.0', '0.00', '00', '0.001', '0.004'] as $zero) {
             Tools::setTestValue('PS_TWO_SURCHARGE_CAP_30', $zero);
             $errors = $module->validateSurchargeFormForTest();
             TinyAssert::count(1, $errors);
@@ -765,6 +768,11 @@ final class SurchargeSpec
                 sprintf('a cap typed as "%s" must be refused, naming zero as the problem', $zero)
             );
         }
+
+        // 0.005 rounds UP to 0.01, so it survives: the boundary is where the
+        // rounding lands, not an arbitrary threshold.
+        Tools::setTestValue('PS_TWO_SURCHARGE_CAP_30', '0.005');
+        TinyAssert::count(0, $module->validateSurchargeFormForTest(), 'a cap that rounds UP to 0.01 must survive');
 
         // A positive cap -> allowed. And a zero PERCENTAGE with a zero FIXED
         // fee is allowed too: that pair is exactly what the error tells the
@@ -805,6 +813,27 @@ final class SurchargeSpec
         TinyAssert::same(null, $settings['grid'][30]['limit'], 'a blank cap reads back as null, not 0.0');
         $share = $module->buildTwoBuyerFeeShare(30);
         TinyAssert::false(array_key_exists('cap', $share), 'an unconfigured cap sends no cap key');
+
+        // Non-numeric is absent too, NOT a zero cap. Without the is_numeric
+        // gate it would cast to 0.0 and become a real cap of zero, silently
+        // suppressing the whole fee on a shop that was previously uncapped.
+        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', 'abc');
+        $settings = $module->getTwoSurchargeSettings();
+        TinyAssert::same(null, $settings['grid'][30]['limit'], 'a non-numeric stored cap is absent, not 0.0');
+        TinyAssert::false(
+            array_key_exists('cap', $module->buildTwoBuyerFeeShare(30)),
+            'a non-numeric stored cap must never be relayed as a zero cap'
+        );
+
+        // A NEGATIVE stored cap is absent as well. Letting a zero through must
+        // not also let a negative through.
+        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', '-10');
+        $settings = $module->getTwoSurchargeSettings();
+        TinyAssert::same(null, $settings['grid'][30]['limit'], 'a negative stored cap is absent, not -10.0');
+        TinyAssert::false(
+            array_key_exists('cap', $module->buildTwoBuyerFeeShare(30)),
+            'a negative stored cap must never be relayed'
+        );
     }
 
     /**

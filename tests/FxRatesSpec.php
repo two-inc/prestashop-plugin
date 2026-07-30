@@ -67,6 +67,7 @@ final class FxRatesSpec
         // TWO-25269 - fail-closed reversal.
         self::testNoRateForCartCurrencyWithholdsPaymentOption();
         self::testPercentageOnlySurchargeNeverTripsTheGate();
+        self::testStoredZeroCapNeverTripsTheGateEvenWithNoFxRate();
         self::testCapRoundingToZeroPassesThroughAndKeepsTheOption();
         self::testAbsentCapStillChargesAndOffersTheOption();
         self::testFixedSurchargeRoundingToZeroProceedsWithInfoLog();
@@ -708,6 +709,48 @@ final class FxRatesSpec
             1,
             count($module->hookPaymentOptions([])),
             'a percentage-only surcharge is currency-agnostic and must never withhold the option'
+        );
+    }
+
+    /**
+     * A STORED cap of 0 must not trip the gate either, and this is a sharper
+     * case than the percentage-only one above.
+     *
+     * A zero cap is relayed rather than dropped now (TWO-25289), so it reaches
+     * convertTwoBuyerFeeShareCurrency() where it never used to. That method
+     * FAILS CLOSED on a missing FX rate, and isTwoSurchargeQuotableForCart()
+     * loops EVERY offered term - so without the zero short-circuit a single
+     * term carrying a zero cap withheld Two from every buyer on the shop, on a
+     * conversion with no work to do. That is the TWO-25276 regression shape,
+     * reached by a different route.
+     *
+     * Zero needs no rate: it is zero in every currency.
+     */
+    private static function testStoredZeroCapNeverTripsTheGateEvenWithNoFxRate(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '1.5');
+        Configuration::updateValue('PS_TWO_SURCHARGE_FIXED_30', '0');
+        // A real stored cap of zero - NOT a blank. This is the value the admin
+        // form now refuses, kept reachable here because the change deliberately
+        // does not migrate rows stored before that validation existed.
+        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', '0');
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+        StubStore::$currencies[4] = ['iso_code' => 'USD', 'conversion_rate' => 999.0, 'loaded' => true];
+        // No USD in the rate table, so any conversion this term needs fails.
+        self::tableWithoutUsd();
+
+        $module = self::gateModule(4);
+
+        TinyAssert::same(
+            1,
+            count($module->hookPaymentOptions([])),
+            'a stored zero cap needs no FX rate and must never withhold the option'
+        );
+        TinyAssert::false(
+            self::hasLog('failing closed', 3),
+            'a zero cap is not a fail-closed event: nothing may be logged at error level'
         );
     }
 
