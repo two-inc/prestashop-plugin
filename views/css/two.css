@@ -597,6 +597,28 @@
 }
 
 /*
+ * Selected company's organisation number, shown inline next to the company
+ * name field once a search result is chosen (TWO-25288). Reuses the plugin's
+ * existing muted-grey token (see .two-info-label above) rather than a
+ * one-off lighter grey, so it reads consistently with the other inline hints
+ * already in this checkout instead of introducing a second shade of grey.
+ * Positioned absolutely inside whatever field wrapper it lands in - the
+ * companion JS makes that wrapper `position: relative` only if it is
+ * currently static, since the wrapper markup comes from theme/core
+ * PrestaShop templates this plugin does not own.
+ */
+.two-company-id-hint {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #6b7280;
+    font-size: 11px;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+/*
  * Payment terms chip selector (TWO-24752). Replaces the previous slider.
  * Structure/behaviour mirrors the Magento (Hyva) and WooCommerce chip
  * selectors; the palette keeps PrestaShop's existing slate accent
