@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The purchase-order field is now called "PO Number" everywhere** (TWO-25278, umbrella TWO-24739, reverses TWO-25271)
+  - The admin toggle said `Show Purchase order number field` and the checkout field said `Purchase order number`, while the Magento plugin's checkout tile said `PO Number`. The same field therefore had two names depending on which plugin, and which pane, a merchant was looking at. All four plugins now use the single phrase `PO Number`
+  - **Why the short phrase rather than the long one**: it leaves no stale translation key behind to maintain, carries no cosmetic-breakage risk for a shop upgrading, and renders better in the field. TWO-25271 had briefly gone the other way, standardising on the longer phrase; that is reversed here
+  - Surfaces: the admin switch label, its help text, and the checkout tile's field label, plus the two README references. The switch keeps the `Show <x> field` pattern shared with the invoice email, project and department switches, which are unchanged
+  - **Display copy only.** `PS_TWO_ENABLE_PO_NUMBER`, the `two_purchase_order_number` input name, the `purchase_order_number` internal key and the `buyer_purchase_order_number` payload field are all untouched, so no stored configuration and no request shape changes
+  - **No migration**, and therefore no new upgrade script: nothing is persisted and no configuration key is added or renamed
+  - `translations/es.php` carries no entry for any of the three changed strings, so no translation is orphaned by the new source hashes. The gap for Spanish predates this change and is unaffected by it
+
 ### Fixed
 - **A buyer surcharge that could not be priced in the cart currency was silently not charged at all** (TWO-25269, umbrella TWO-24739)
   - **This was believed to be safe and was not.** The previous reasoning was that PrestaShop was "already fail-closed because the quote is omitted". Both halves of that were wrong. `hookPaymentOptions()` never consulted the surcharge, the fee quote or FX at all - between the minimum-order gate and the return there was nothing but an unconditional "payment option shown" log. And `applyTwoSurchargeCartLineSync()` treated "quote unavailable" as equivalent to "surcharge deselected", removing the hidden surcharge cart line and returning **success**
