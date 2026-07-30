@@ -176,7 +176,10 @@ form (which it does for something as ordinary as a country change):
   other assertion here passes with the asset deleted. It checks the file exists at the path
   the rule resolves to, that it is a GIF of the pinned 16x16, and that it has more than one
   frame: a still image would be a spinner that never spins, which no CSS assertion can tell
-  apart from a working one.
+  apart from a working one. The frame count comes from `countGifFrames()`, which walks the
+  GIF block structure — counting raw `0x2C` bytes across the file does not work, because that
+  value also occurs inside the colour table and the compressed pixel data, so a single-frame
+  file passes such a scan.
 
   **Two jsdom limits to know before adding assertions here.** The multi-value
   `background-position` form resolves to an empty string even when the rule is correct, so do
