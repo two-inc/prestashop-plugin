@@ -44,6 +44,7 @@ final class SurchargeSpec
         self::testSurchargeTaxRulesGroupOptionsNeverDropTheConfiguredSelection();
         self::testSurchargeTaxRulesGroupFormDefaultRequiresExplicitChoice();
         self::testSurchargeTaxTreatmentFieldLabelIsTheSharedWording();
+        self::testFormAndRuntimeReadTheStoredGroupIdentically();
         self::testNoTaxSentinelSuppressedUnlessAlreadyStored();
         self::testSurchargeTaxTreatmentRequiredWhenSurchargesEnabled();
         self::testUpgrade250FlagsFlatRateShopsForTaxReselection();
@@ -575,6 +576,38 @@ final class SurchargeSpec
     }
 
     /**
+     * TWO-25279: the form reader and the runtime tax authority share one
+     * normalisation, so the admin can never display a treatment the checkout
+     * is not applying. The divergence this pins: PHP 7 rejects trailing
+     * whitespace in a numeric string, so a stored '400 ' used to read as
+     * group 400 in the form and as 0 ("No tax") at checkout.
+     */
+    private static function testFormAndRuntimeReadTheStoredGroupIdentically(): void
+    {
+        self::reset();
+        StubStore::$taxRulesGroups[400] = ['name' => 'Standard rate', 'active' => 1];
+        $module = self::makeConfigHarness();
+
+        foreach (array('400', ' 400 ', '0', ' 0 ', '', 'abc', '-5', '0.4', '1e1', '007') as $stored) {
+            Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, $stored);
+            $formDefault = $module->formDefaultForTest();
+            $runtime = $module->getTwoSurchargeTaxRulesGroupId();
+            $expected = $formDefault === '' ? 0 : (int) $formDefault;
+            TinyAssert::same(
+                $expected,
+                $runtime,
+                'stored ' . var_export($stored, true) . ': form shows ' . var_export($formDefault, true)
+                . ' but runtime resolves ' . $runtime
+            );
+        }
+
+        // Spot-check the concrete case, not just self-consistency.
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400 ');
+        TinyAssert::same('400', $module->formDefaultForTest(), 'a padded id still pre-selects its group');
+        TinyAssert::same(400, $module->getTwoSurchargeTaxRulesGroupId(), 'and the checkout applies that same group');
+    }
+
+    /**
      * TWO-25279: core's "No tax" sentinel (id 0) is not a tax rules group
      * the merchant configured, so it is never offered for a NEW selection -
      * a merchant who wants an untaxed fee must build a 0% group and pick it.
@@ -707,6 +740,10 @@ final class SurchargeSpec
         $errors = $module->validateSurchargeFormForTest();
         TinyAssert::count(1, $errors);
         TinyAssert::true(strpos((string) $errors[0], 'Select a surcharge tax treatment') !== false, 'error names the missing selection');
+        TinyAssert::true(
+            strpos((string) $errors[0], 'No tax') === false,
+            'the blank-treatment error must not offer "No tax" (TWO-25279)'
+        );
 
         // Enabled + blank submitted (the placeholder) -> blocked.
         Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '');
@@ -779,6 +816,10 @@ final class SurchargeSpec
         TinyAssert::count(1, PrestaShopLogger::$logs);
         TinyAssert::same(2, PrestaShopLogger::$logs[0]['severity'], 'logged as a warning');
         TinyAssert::true(strpos(PrestaShopLogger::$logs[0]['message'], 'UNTAXED') !== false, 'log spells out the consequence');
+        TinyAssert::true(
+            strpos(PrestaShopLogger::$logs[0]['message'], 'Surcharge Tax Treatment') !== false,
+            'the upgrade log must name the field by its current label (TWO-25279)'
+        );
 
         // Group already selected -> no flag, no log.
         self::reset();
