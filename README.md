@@ -73,8 +73,8 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
    - Enable/disable organization number field requirement
    - Enable/disable the optional buyer reference fields shown in the Two
      payment section at checkout, in this order: invoice email address,
-     purchase order number, project, department (all enabled by default on a
-     fresh install)
+     PO Number, project, department (all enabled by default on a fresh
+     install)
    - Enable/disable Order Intent check (Required for use)
    - Enable/disable account type selection
    - Enable automatic invoice upload to Two
@@ -92,7 +92,7 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 | Company Name | Require company name field | Enabled |
 | Organization Number | Require organization number | Enabled |
 | Invoice email Field | Show invoice email address field in the Two payment section | Enabled |
-| Purchase order number Field | Show purchase order number field in the Two payment section | Enabled |
+| PO Number Field | Show PO Number field in the Two payment section | Enabled |
 | Project Field | Show project field in the Two payment section | Enabled |
 | Department Field | Show department field in the Two payment section | Enabled |
 | Order Intent | Enable Order Intent check | Enabled |
@@ -110,7 +110,7 @@ used by both the admin switches and the checkout fields so the configuration
 pane reads like the thing it configures:
 
 1. Invoice email address — sent as `invoice_details.invoice_emails`
-2. Purchase order number — sent as `buyer_purchase_order_number`
+2. PO Number — sent as `buyer_purchase_order_number`
 3. Project — sent as `buyer_project`
 4. Department — sent as `buyer_department`
 5. Order note — **PrestaShop core's field, not one of ours** (see below); sent

@@ -1208,10 +1208,10 @@ class Twopayment extends PaymentModule
 
         $inputs[] = array(
             'type' => 'switch',
-            'label' => $this->l('Show Purchase order number field'),
+            'label' => $this->l('Show PO Number field'),
             'name' => 'PS_TWO_ENABLE_PO_NUMBER',
             'is_bool' => true,
-            'desc' => $this->l('If you choose YES then customers will see a purchase order number field in the Two payment section at checkout.'),
+            'desc' => $this->l('If you choose YES then customers will see a PO Number field in the Two payment section at checkout.'),
             'required' => true,
             'values' => array(
                 array(
@@ -3597,7 +3597,7 @@ class Twopayment extends PaymentModule
         $labels = array(
             'department' => $this->l('Department'),
             'project' => $this->l('Project'),
-            'purchase_order_number' => $this->l('Purchase order number'),
+            'purchase_order_number' => $this->l('PO Number'),
             'invoice_email' => $this->l('Invoice email address'),
         );
         $placeholders = array(
