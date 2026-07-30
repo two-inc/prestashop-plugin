@@ -408,8 +408,68 @@ function countGifFrames(bytes) {
     return frames;
 }
 
+/**
+ * Render the SHIPPED payment-tile template into the document.
+ *
+ * Deliberately reads `views/templates/hook/paymentinfo.tpl` and strips Smarty
+ * rather than hand-writing a copy of the block under test. A hand-written
+ * fixture would keep passing after someone renamed a class or deleted a slot in
+ * the real template - which is precisely the failure a tile test exists to
+ * catch, since nothing else in the suite reads that file.
+ *
+ * The transform is intentionally crude and covers only what this template uses:
+ * comments, `{l s='...'}` translations, `{$var|modifiers}` output, and the one
+ * `{if}...{/if}` block (the optional-fields loop, dropped wholesale - it is
+ * server-gated and not what these tests are about).
+ *
+ * Call AFTER buildAddressForm(), which replaces document.body wholesale; this
+ * appends.
+ *
+ * @returns {HTMLElement} the `.two-payment-container` that was appended
+ */
+function buildPaymentTile() {
+    const tpl = fs.readFileSync(
+        path.join(REPO_ROOT, 'views/templates/hook/paymentinfo.tpl'),
+        'utf8'
+    );
+    const html = tpl
+        .replace(/\{\*[\s\S]*?\*\}/g, '')
+        .replace(/\{if[\s\S]*?\{\/if\}/g, '')
+        .replace(/\{l\s+s='([^']*)'[^}]*\}/g, '$1')
+        .replace(/\{\$[^}]*\}/g, '');
+    const holder = global.document.createElement('div');
+    holder.innerHTML = html;
+    const container = holder.querySelector('.two-payment-container');
+    if (!container) {
+        throw new Error('harness: paymentinfo.tpl produced no .two-payment-container');
+    }
+    global.document.body.appendChild(container);
+    return container;
+}
+
+/**
+ * Load TwoCompanySummary as a <script> tag would, with its static state reset.
+ *
+ * The sole-trader pair is class-static by design - it has to outlive the tile
+ * DOM - so it must not outlive a TEST. Reset by assignment rather than through
+ * setSoleTrader(null), which would render as a side effect of loading.
+ *
+ * @returns {Function} the TwoCompanySummary class
+ */
+function loadCompanySummary() {
+    loadScript('views/js/modules/TwoCompanySummary.js');
+    const TwoCompanySummary = global.window.TwoCompanySummary;
+    if (typeof TwoCompanySummary !== 'function') {
+        throw new Error('harness: TwoCompanySummary was not exported onto window');
+    }
+    TwoCompanySummary._soleTrader = null;
+    return TwoCompanySummary;
+}
+
 module.exports = {
     REPO_ROOT: REPO_ROOT,
+    buildPaymentTile: buildPaymentTile,
+    loadCompanySummary: loadCompanySummary,
     countGifFrames: countGifFrames,
     releaseWidgets: releaseWidgets,
     flushPromises: flushPromises,
