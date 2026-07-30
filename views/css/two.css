@@ -1173,11 +1173,8 @@
     color: #dc3545;
 }
 
-/* Autocomplete Loading Indicator */
-.ui-autocomplete-loading {
-    background: white url("../img/loader.gif") right center no-repeat !important;
-    padding-right: 25px !important;
-}
+/* TWO-25288: an unscoped duplicate `.ui-autocomplete-loading` rule was removed here;
+   the scoped rule at the top of this file is now the only one. */
 
 /* Autocomplete Dropdown Styling */
 .ui-autocomplete {
