@@ -43,7 +43,7 @@ final class SurchargeSpec
         self::testSurchargeTaxRateForCartResolvesDestinationThroughCoreGates();
         self::testSurchargeTaxRulesGroupOptionsNeverDropTheConfiguredSelection();
         self::testSurchargeTaxRulesGroupFormDefaultRequiresExplicitChoice();
-        self::testSurchargeTaxTreatmentFieldLabelMatchesOtherPlatforms();
+        self::testSurchargeTaxTreatmentFieldLabelIsTheSharedWording();
         self::testNoTaxSentinelSuppressedUnlessAlreadyStored();
         self::testSurchargeTaxTreatmentRequiredWhenSurchargesEnabled();
         self::testUpgrade250FlagsFlatRateShopsForTaxReselection();
@@ -550,11 +550,11 @@ final class SurchargeSpec
     }
 
     /**
-     * TWO-25279: the selector's label is "Surcharge Tax Treatment", matching
-     * the Magento and WooCommerce fields verbatim. The description must not
+     * TWO-25279: the selector's label is "Surcharge Tax Treatment" - the
+     * wording the Magento and WooCommerce selectors also use. The description must not
      * advertise "No tax" as a choice any more, since it is no longer offered.
      */
-    private static function testSurchargeTaxTreatmentFieldLabelMatchesOtherPlatforms(): void
+    private static function testSurchargeTaxTreatmentFieldLabelIsTheSharedWording(): void
     {
         self::reset();
         $module = self::makeConfigHarness();
@@ -567,7 +567,10 @@ final class SurchargeSpec
             }
         }
         TinyAssert::true($field !== null, 'the surcharge tax treatment field must exist in the config form');
-        TinyAssert::same('Surcharge Tax Treatment', (string) $field['label'], 'label must match the Magento/WooCommerce wording');
+        // Pins the literal in THIS repo. Cross-platform agreement is a
+        // convention the three PRs land together, not something a
+        // single-repo test can observe.
+        TinyAssert::same('Surcharge Tax Treatment', (string) $field['label'], 'label must be the shared cross-plugin wording');
         TinyAssert::true(strpos((string) $field['desc'], 'No tax') === false, 'the description must not offer "No tax" as a selection');
     }
 
@@ -607,6 +610,34 @@ final class SurchargeSpec
         TinyAssert::same(['', '400'], array_map('strval', array_column($module->optionsForTest(), 'id')), 'blank config is not a stored "No tax"');
         Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, 'abc');
         TinyAssert::same(['', '400'], array_map('strval', array_column($module->optionsForTest(), 'id')), 'garbage config is not a stored "No tax"');
+        // Numeric-but-not-integer shapes must not collapse to '0' and
+        // re-offer the suppressed option: is_numeric would accept all of
+        // these, ctype_digit does not. Only a write from outside this
+        // module can produce them.
+        foreach (array('-5', '0.4', '0e0', '0.0', '+0') as $rogue) {
+            Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, $rogue);
+            TinyAssert::same('', $module->formDefaultForTest(), 'stored ' . $rogue . ' must read as unselected');
+            TinyAssert::same(
+                ['', '400'],
+                array_map('strval', array_column($module->optionsForTest(), 'id')),
+                'stored ' . $rogue . ' must not re-offer "No tax"'
+            );
+        }
+        // Surrounding whitespace is trimmed first, exactly as
+        // validTwoSurchargeFormValues and saveTwoSurchargeFormValues do, so
+        // ' 0 ' IS a stored "No tax" and stays offered.
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, ' 0 ');
+        TinyAssert::same('0', $module->formDefaultForTest(), 'whitespace-padded 0 is still a stored "No tax"');
+        TinyAssert::same(
+            ['', '0', '400'],
+            array_map('strval', array_column($module->optionsForTest(), 'id')),
+            'whitespace-padded 0 must still be re-offered'
+        );
+
+        // ...and a scientific-notation value must not pre-select an id that
+        // is absent from the list (the '1e1' -> '10' trap).
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '1e1');
+        TinyAssert::same('', $module->formDefaultForTest(), 'stored 1e1 must not pre-select group 10');
 
         // Stored "No tax" -> re-offered, and it is the pre-selection.
         Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '0');
@@ -695,7 +726,18 @@ final class SurchargeSpec
 
         // Enabled + nonexistent group -> blocked (pre-existing rule intact).
         Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '999');
-        TinyAssert::count(1, $module->validateSurchargeFormForTest());
+        $errors = $module->validateSurchargeFormForTest();
+        TinyAssert::count(1, $errors);
+        // The message must not advertise "No tax" as an acceptable answer,
+        // since it is no longer offered (TWO-25279).
+        TinyAssert::true(
+            strpos((string) $errors[0], 'Surcharge tax treatment must be one of') !== false,
+            'the invalid-group error names the treatment, not the old field name'
+        );
+        TinyAssert::true(
+            strpos((string) $errors[0], 'No tax') === false,
+            'the invalid-group error must not offer "No tax"'
+        );
 
         // Enabled + decimal/negative -> blocked, never truncated into a
         // selection the merchant did not make.
@@ -783,6 +825,10 @@ final class SurchargeSpec
         $notice = $module->getTwoSurchargeTaxMigrationNotice();
         TinyAssert::true($notice !== '', 'flagged shop must see the warning');
         TinyAssert::true(strpos($notice, 'NOT taxed') !== false, 'warning spells out the consequence');
+        TinyAssert::true(
+            strpos($notice, 'Surcharge Tax Treatment') !== false,
+            'warning must name the field by its current label (TWO-25279)'
+        );
         TinyAssert::true($module->getTwoSurchargeTaxMigrationNotice() !== '', 'warning persists until a selection is saved');
 
         // Selection appears (any save path) -> notice self-retires and the

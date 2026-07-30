@@ -34,7 +34,7 @@ function upgrade_module_2_5_0($module)
             'TwoPayment Upgrade 2.5.0: A flat surcharge tax rate (PS_TWO_SURCHARGE_TAX_RATE='
             . trim((string) $flatRate)
             . ') was configured but is no longer used. The surcharge is UNTAXED until a'
-            . ' Surcharge Tax Rules Group is selected and saved in the module Payment settings.',
+            . ' Surcharge Tax Treatment is selected and saved in the module Payment settings.',
             2,
             null,
             'Module',

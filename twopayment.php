@@ -1674,8 +1674,8 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Dropdown options for the default shipping tax code. Same construction
-     * as getTwoSurchargeTaxRulesGroupOptions() - string ids so PHP 7's loose
+     * Dropdown options for the default shipping tax code. String ids so
+     * PHP 7's loose
      * `'' == 0` cannot conflate the unselected placeholder with "No tax", and
      * a currently-configured group that has been deactivated is always kept
      * in the list (suffixed "(inactive)") so an unrelated save cannot silently
@@ -10749,11 +10749,15 @@ class Twopayment extends PaymentModule
      * saving any Payment setting. Read through
      * getTwoSurchargeTaxRulesGroupFormDefault(), never
      * getTwoSurchargeTaxRulesGroupId(), because the latter collapses
-     * unset/blank/garbage to 0 and would re-offer "No tax" to every shop
-     * that has not chosen yet.
+     * unset/blank/non-numeric to 0 and would re-offer "No tax" to every
+     * shop that has not chosen yet.
      *
-     * The currently-configured group is ALWAYS present even when
-     * deactivated (suffixed "(inactive)"), for the same reason.
+     * A configured group that has merely been DEACTIVATED is re-injected
+     * too (suffixed "(inactive)"), for the same reason. A configured group
+     * that has been DELETED cannot be - there is no name left to render -
+     * so that shop still falls back to the placeholder and is still
+     * blocked from saving Payment settings while surcharges are enabled.
+     * That hole predates this change and is not widened by it.
      *
      * @return array<int,array{id:string,name:string}>
      */
@@ -10766,7 +10770,9 @@ class Twopayment extends PaymentModule
             $options[] = array('id' => '0', 'name' => $this->l('No tax'));
         }
         $groups = TaxRulesGroup::getTaxRulesGroups(true);
-        $seen = array(0 => true);
+        // No 0 seed: the "No tax" pseudo-id is handled above, and the only
+        // consumer below filters on $configuredId > 0.
+        $seen = array();
         foreach ((array) $groups as $group) {
             if (!isset($group['id_tax_rules_group'])) {
                 continue;
@@ -10794,7 +10800,7 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Pre-selection for the surcharge tax rules group dropdown: the stored
+     * Pre-selection for the surcharge tax treatment dropdown: the stored
      * selection, else '' - the unselected placeholder. NEVER auto-defaults:
      * not Product::getIdTaxRulesGroupMostUsed() (a full-catalog COUNT/GROUP
      * BY re-run on every unsaved config page render, pre-selecting a taxing
@@ -10804,13 +10810,24 @@ class Twopayment extends PaymentModule
      * surcharges are enabled the save is blocked until they do
      * (validTwoSurchargeFormValues).
      *
+     * ctype_digit, not is_numeric: a whole non-negative integer only, the
+     * same shape validTwoSurchargeFormValues accepts and
+     * saveTwoSurchargeFormValues writes. is_numeric would let '-5', '0.4',
+     * ' 0' and '0e0' all collapse to '0' and so re-offer the suppressed
+     * "No tax" option to a shop that never chose it, and would turn '1e1'
+     * into a pre-selection of '10' that is absent from the option list.
+     * Only a value written outside this module (a direct DB edit, or a
+     * pre-release build) can be in those shapes; they now read as
+     * unselected, which the merchant resolves by picking a group.
+     *
      * @return string '' (unselected) or the stored group id ('0' = No tax)
      */
     protected function getTwoSurchargeTaxRulesGroupFormDefault()
     {
         $stored = Configuration::get(self::CONFIG_SURCHARGE_TAX_RULES_GROUP);
-        if ($stored !== false && $stored !== null && $stored !== '' && is_numeric($stored)) {
-            return (string) max(0, (int) $stored);
+        $stored = is_scalar($stored) ? trim((string) $stored) : '';
+        if ($stored !== '' && ctype_digit($stored)) {
+            return (string) (int) $stored;
         }
 
         return '';
