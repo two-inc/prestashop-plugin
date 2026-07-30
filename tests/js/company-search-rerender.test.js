@@ -2203,6 +2203,20 @@ describe('the custom fallback used when jQuery UI is absent', () => {
             expect(listRows().last().hasClass('two-autocomplete-manual-entry')).toBe(true);
         });
 
+        test('it survives the country-not-chosen render, and is still last', () => {
+            document.body.innerHTML = '';
+            buildAddressForm({ country: null, countryId: '999' });
+            const search = makeInstance();
+            expect(search._customAutocomplete).toBeTruthy();
+
+            type(AT_THRESHOLD);
+
+            expect(ajax.calls).toHaveLength(0);
+            expect(listRows()).toHaveLength(2);
+            expect(listRows().eq(0).hasClass('two-autocomplete-select-country')).toBe(true);
+            expect(listRows().last().hasClass('two-autocomplete-manual-entry')).toBe(true);
+        });
+
         test('it is absent below the threshold', () => {
             const search = makeInstance();
             expect(search._customAutocomplete).toBeTruthy();
