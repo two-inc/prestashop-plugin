@@ -181,7 +181,8 @@ class Twopayment extends PaymentModule
     // (PS_TWO_SURCHARGE_TAX_RATE) was configured but no TaxRulesGroup has
     // been selected yet: on upgrade the fee silently became untaxed, so a
     // persistent back-office warning nags until the merchant saves a
-    // selection (any explicit save - including "No tax" - clears it).
+    // real TaxRulesGroup selection ("No tax" is refused and does not
+    // clear it, since TWO-25279).
     const CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE = 'PS_TWO_SURCHARGE_TAX_MIGRATION_NOTICE';
 
     // Merchant-declared TaxRulesGroup assumed for SHIPPING when, and only
