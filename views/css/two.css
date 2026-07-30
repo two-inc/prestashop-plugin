@@ -1241,6 +1241,45 @@
     margin: 0 !important;
 }
 
+/*
+ * The manual-entry row (TWO-25288) - the INVERSE of a message row.
+ *
+ * It is the one non-company row in the dropdown that is actionable, so it must
+ * read as clickable: pointer cursor, body text, and no part of the muted
+ * treatment above. Separated from the rows it follows by a rule, because it is
+ * an escape from the list rather than another entry in it.
+ *
+ * The focus ring is not decoration. On the fallback render path this row is the
+ * only keyboard-reachable thing in the dropdown, and a `tabindex` with no
+ * visible focus state is worse than no keyboard support at all - the buyer
+ * cannot tell where they are.
+ */
+.two-autocomplete-manual-entry {
+    cursor: pointer;
+    border-top: 1px solid #e0e0e0;
+}
+
+.two-autocomplete-manual-entry:focus {
+    outline: 2px solid #1976d2;
+    outline-offset: -2px;
+}
+
+/*
+ * The way back out of manual entry. A real <button>, so every one of the
+ * browser's button defaults has to be undone to make it read as a link.
+ */
+.two-company-search-back {
+    display: inline-block;
+    margin-top: 6px;
+    padding: 0;
+    border: none;
+    background: none;
+    font: inherit;
+    color: #1976d2;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
 /* Clean up unused styles */
 .two-payment-loading,
 .payment-option img[src*="TwoLogo.svg"],
