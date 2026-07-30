@@ -181,7 +181,8 @@ class Twopayment extends PaymentModule
     // (PS_TWO_SURCHARGE_TAX_RATE) was configured but no TaxRulesGroup has
     // been selected yet: on upgrade the fee silently became untaxed, so a
     // persistent back-office warning nags until the merchant saves a
-    // selection (any explicit save - including "No tax" - clears it).
+    // real TaxRulesGroup selection ("No tax" is refused and does not
+    // clear it, since TWO-25279).
     const CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE = 'PS_TWO_SURCHARGE_TAX_MIGRATION_NOTICE';
 
     // Merchant-declared TaxRulesGroup assumed for SHIPPING when, and only
@@ -833,6 +834,17 @@ class Twopayment extends PaymentModule
         $migrationNotice = $this->getTwoSurchargeTaxMigrationNotice();
         if ($migrationNotice !== '') {
             $this->output .= $this->displayWarning($migrationNotice);
+        }
+
+        // A stored never-taxed treatment (TWO-25279). displayError, not
+        // displayWarning: the shop is charging an untaxed fee and cannot save
+        // its Payment settings until this is fixed, which is an error state
+        // rather than advice. The migration nag above self-retires once ANY
+        // value is stored - including the "No tax" sentinel - so this is the
+        // only thing that reports such a shop.
+        $neverTaxedNotice = $this->getTwoSurchargeNeverTaxedNotice();
+        if ($neverTaxedNotice !== '') {
+            $this->output .= $this->displayError($neverTaxedNotice);
         }
 
         $this->context->smarty->assign(
@@ -9229,6 +9241,83 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * THE decision point for "does this surcharge tax treatment leave the fee
+     * untaxed everywhere?" (TWO-25279).
+     *
+     * Four places need that answer and they MUST agree exactly:
+     *  - getTwoSurchargeTaxRulesGroupOptions(), which omits such a treatment
+     *    from the dropdown;
+     *  - validTwoSurchargeFormValues(), which refuses the save;
+     *  - saveTwoSurchargeFormValues(), which refuses to persist it even on
+     *    the surcharges-disabled path where validation does not run;
+     *  - getTwoSurchargeNeverTaxedNotice(), which fails loud when a shop is
+     *    already sitting on one.
+     *
+     * A shop that is warned but can still save, or blocked but never told
+     * why, would each be worse than either alone - so the rule lives here
+     * once instead of being restated four times.
+     *
+     * One shape is never-taxed on PrestaShop: the core "No tax" sentinel, tax
+     * rules group pseudo-id 0. The test is deliberately the same
+     * normalisation getTwoSurchargeTaxRulesGroupId() applies at checkout -
+     * numeric, then int-cast and floored at 0 - rather than a string
+     * comparison against '0'. That makes the answer here true exactly when
+     * the checkout would in fact leave the fee untaxed, so '0', ' 0 ', '0.0'
+     * and '-5' are all caught. A direct DB edit or an import can produce any
+     * of those shapes.
+     *
+     * Unset, blank and non-numeric are NOT never-taxed: those read as
+     * "unselected", a different state with its own message
+     * (validTwoSurchargeFormValues asks the merchant to choose). Reporting
+     * them here would put the wrong error on the page.
+     *
+     * @param mixed $value stored or submitted treatment value
+     * @return bool
+     */
+    public function isTwoSurchargeNeverTaxedTreatment($value)
+    {
+        if (!is_scalar($value) || is_bool($value)) {
+            return false;
+        }
+        $trimmed = trim((string) $value);
+        if ($trimmed === '' || !is_numeric($trimmed)) {
+            return false;
+        }
+
+        return max(0, (int) $trimmed) === 0;
+    }
+
+    /**
+     * Fail-loud error text for a shop whose STORED surcharge tax treatment is
+     * a never-taxed one, or '' when there is nothing to report (TWO-25279).
+     *
+     * There is deliberately no grandfathering and no silent rewrite of the
+     * merchant's tax configuration, which leaves exactly one case to handle
+     * honestly: a shop configured before this change, or written to from
+     * outside this module, that still stores the "No tax" sentinel. Doing
+     * nothing would be the worst option - the select cannot render a value
+     * absent from its options, so it falls back to the placeholder and the
+     * field simply looks unset, giving no hint that the fee is currently
+     * being charged untaxed.
+     *
+     * Rendered unconditionally, not only while surcharges are enabled: the
+     * treatment is wrong either way, and a shop that re-enables surcharges
+     * must not discover it then.
+     *
+     * @return string
+     */
+    public function getTwoSurchargeNeverTaxedNotice()
+    {
+        if (!$this->isTwoSurchargeNeverTaxedTreatment(
+            Configuration::get(self::CONFIG_SURCHARGE_TAX_RULES_GROUP)
+        )) {
+            return '';
+        }
+
+        return $this->l('Surcharge tax treatment is invalid: this shop is set to leave the surcharge UNTAXED in every country. That treatment is no longer available and these settings can no longer be saved while it is stored. Under Payment settings, select a tax rules group - to leave the fee untaxed, create a group with a 0% rate and select that.');
+    }
+
+    /**
      * Post-upgrade "surcharge tax needs re-selection" warning text, or ''
      * when no warning is due. Due when upgrade-2.5.0.php flagged a shop that
      * had the pre-release flat rate (PS_TWO_SURCHARGE_TAX_RATE) configured
@@ -9250,7 +9339,7 @@ class Twopayment extends PaymentModule
             return '';
         }
 
-        return $this->l('Surcharge tax needs re-selection: this shop previously used a flat surcharge tax rate, which has been replaced by a tax rules group. Until you select and save a "Surcharge Tax Rules Group" under Payment settings, the surcharge is NOT taxed.');
+        return $this->l('Surcharge tax needs re-selection: this shop previously used a flat surcharge tax rate, which has been replaced by a tax rules group. Until you select and save a "Surcharge Tax Treatment" under Payment settings, the surcharge is NOT taxed.');
     }
 
     /**
@@ -10634,9 +10723,13 @@ class Twopayment extends PaymentModule
         );
         $inputs[] = array(
             'type' => 'select',
-            'label' => $this->l('Surcharge Tax Rules Group'),
+            // Label matches the Magento and WooCommerce selectors verbatim
+            // (TWO-25279) - the field is the merchant's tax treatment
+            // decision, and the fact that PrestaShop expresses it as a tax
+            // rules group is an implementation detail of this platform.
+            'label' => $this->l('Surcharge Tax Treatment'),
             'name' => self::CONFIG_SURCHARGE_TAX_RULES_GROUP,
-            'desc' => $this->l('Tax rules group applied to the payment terms fee - the same tax rules groups you assign to products. Country and state rules, combined rates and zero-rating apply exactly as they do for any product. Select "No tax" to never tax the fee. A selection is required while surcharges are enabled.'),
+            'desc' => $this->l('Tax rules group applied to the payment terms fee - the same tax rules groups you assign to products. Country and state rules, combined rates and zero-rating apply exactly as they do for any product. To leave the fee untaxed, create a tax rules group with a 0% rate and select it here. A selection is required while surcharges are enabled.'),
             'options' => array(
                 'query' => $this->getTwoSurchargeTaxRulesGroupOptions(),
                 'id' => 'id',
@@ -10724,20 +10817,34 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Dropdown options for the surcharge tax rules group: an unselected
+     * Dropdown options for the surcharge tax treatment: an unselected
      * placeholder (id '' - never a valid selection, save-blocked while
-     * surcharges are enabled, see validTwoSurchargeFormValues), then
-     * PrestaShop's "No tax" sentinel (id 0), then the merchant's active tax
-     * rules groups - the same list core's own product-edit page offers (its
+     * surcharges are enabled, see validTwoSurchargeFormValues), then the
+     * merchant's active tax rules groups - the same list core's own
+     * product-edit page offers (its
      * TaxRulesGroup::getTaxRulesGroupsForOptions duplicates a group per
-     * rate, so the deduplicated getTaxRulesGroups source is used with the
-     * same manual "No tax" prepend). Ids are emitted as STRINGS so the
-     * form template's loose == never conflates the placeholder ('') with
-     * "No tax" ('0') on PHP 7 shops ('' == 0 is true there). The
-     * currently-configured group is ALWAYS present even when deactivated
-     * (suffixed "(inactive)"): if a stale selection dropped out of the
-     * list, the browser would submit the first option (the placeholder) on
-     * the next unrelated settings save and silently unset the treatment.
+     * rate, so the deduplicated getTaxRulesGroups source is used). Ids are
+     * emitted as STRINGS so the form template's loose == never conflates
+     * the placeholder ('') with "No tax" ('0') on PHP 7 shops ('' == 0 is
+     * true there).
+     *
+     * PrestaShop's built-in "No tax" sentinel (id 0) is NOT offered
+     * (TWO-25279). It is a core default rather than a tax rules group the
+     * merchant set up, and choosing it silently means "the fee is never
+     * taxed, in any country" - a tax decision made by picking an option we
+     * handed them. To leave the fee untaxed a merchant creates a 0%-rate
+     * group and selects that, so the treatment stays visible in Tax Rules.
+     * Same rule across the WooCommerce / PrestaShop / Magento plugins.
+     *
+     * There is deliberately NO grandfathering: a shop already storing '0'
+     * does not get the option back. Such a shop's select falls back to the
+     * placeholder and getTwoSurchargeNeverTaxedNotice() puts a loud error at
+     * the top of the configuration page, so "looks unset" cannot be mistaken
+     * for "is unset" while the fee is in fact untaxed.
+     *
+     * The currently-configured group is still present even when deactivated
+     * (suffixed "(inactive)"): a real group the merchant chose must not
+     * silently drop to the first option on an unrelated save.
      *
      * @return array<int,array{id:string,name:string}>
      */
@@ -10745,12 +10852,18 @@ class Twopayment extends PaymentModule
     {
         $options = array(
             array('id' => '', 'name' => $this->l('-- Select surcharge tax treatment --')),
-            array('id' => '0', 'name' => $this->l('No tax')),
         );
         $groups = TaxRulesGroup::getTaxRulesGroups(true);
-        $seen = array(0 => true);
+        // No 0 seed: the "No tax" pseudo-id is no longer an option.
+        $seen = array();
         foreach ((array) $groups as $group) {
             if (!isset($group['id_tax_rules_group'])) {
+                continue;
+            }
+            // Filtered through the shared predicate rather than assuming core
+            // never lists the sentinel, so the option list cannot drift from
+            // what the save guard refuses.
+            if ($this->isTwoSurchargeNeverTaxedTreatment($group['id_tax_rules_group'])) {
                 continue;
             }
             $id = (int) $group['id_tax_rules_group'];
@@ -10851,14 +10964,25 @@ class Twopayment extends PaymentModule
         $groupRaw = Tools::getValue(self::CONFIG_SURCHARGE_TAX_RULES_GROUP);
         $groupTrimmed = is_string($groupRaw) ? trim($groupRaw) : '';
         if ($groupTrimmed === '') {
-            $this->errors[] = $this->l('Select a surcharge tax treatment: surcharges are enabled, so you must explicitly choose a tax rules group (or "No tax") before saving.');
+            $this->errors[] = $this->l('Select a surcharge tax treatment: surcharges are enabled, so you must explicitly choose a tax rules group before saving.');
         } else {
             // ctype_digit: a whole non-negative integer only - '0.5', '-5'
             // and friends are rejected, never truncated into a selection
             // the merchant did not make.
-            $groupId = ctype_digit($groupTrimmed) ? (int) $groupTrimmed : -1;
-            if ($groupId < 0 || ($groupId > 0 && !Validate::isLoadedObject(new TaxRulesGroup($groupId)))) {
-                $this->errors[] = $this->l('Surcharge tax rules group must be "No tax" or one of the shop\'s existing tax rules groups.');
+            //
+            // A never-taxed treatment is refused outright, with its own
+            // message (TWO-25279). Removing it from the dropdown is a UI rule
+            // only; without this check a crafted POST could still persist a
+            // fee that is untaxed in every country. There is no
+            // already-stored exemption - a shop sitting on the sentinel is
+            // told to pick a real group, not allowed to re-save it.
+            if ($this->isTwoSurchargeNeverTaxedTreatment($groupTrimmed)) {
+                $this->errors[] = $this->l('That surcharge tax treatment leaves the surcharge untaxed in every country and is no longer available. Create a tax rules group with a 0% rate and select that instead.');
+            } else {
+                $groupId = ctype_digit($groupTrimmed) ? (int) $groupTrimmed : -1;
+                if ($groupId <= 0 || !Validate::isLoadedObject(new TaxRulesGroup($groupId))) {
+                    $this->errors[] = $this->l('Surcharge tax treatment must be one of the shop\'s existing tax rules groups. To leave the fee untaxed, create a group with a 0% rate.');
+                }
             }
         }
         foreach ($this->getAvailablePaymentTerms() as $days) {
@@ -10900,22 +11024,37 @@ class Twopayment extends PaymentModule
         // placeholder). While surcharges are enabled this path is
         // unreachable with '' (validTwoSurchargeFormValues blocks the save
         // first); while disabled, staying unselected is the point - the
-        // merchant must pick explicitly before enabling. '0' ("No tax") is
-        // only ever stored when the merchant submitted it.
+        // merchant must pick explicitly before enabling.
+        //
+        // 0 ("No tax") can no longer be stored at all (TWO-25279), so a
+        // crafted POST cannot persist a never-taxed fee even on the
+        // surcharges-disabled path, where validTwoSurchargeFormValues does
+        // not run.
         $groupRaw = Tools::getValue(self::CONFIG_SURCHARGE_TAX_RULES_GROUP, '');
         $groupTrimmed = is_string($groupRaw) ? trim($groupRaw) : '';
         $groupValue = '';
-        if ($groupTrimmed !== '' && ctype_digit($groupTrimmed)) {
+        if (
+            $groupTrimmed !== ''
+            && ctype_digit($groupTrimmed)
+            // Defensive, not operative: on PrestaShop the sentinel is id 0,
+            // which is never a loadable TaxRulesGroup, so the check below
+            // already rejects it - removing this line does not turn the
+            // suite red. It is here so the refusal is stated by NAME at
+            // every enforcement site, and survives any future relaxation of
+            // the isLoadedObject check.
+            && !$this->isTwoSurchargeNeverTaxedTreatment($groupTrimmed)
+        ) {
             $groupId = (int) $groupTrimmed;
-            if ($groupId === 0 || Validate::isLoadedObject(new TaxRulesGroup($groupId))) {
+            if (Validate::isLoadedObject(new TaxRulesGroup($groupId))) {
                 $groupValue = (string) $groupId;
             }
         }
         Configuration::updateValue(self::CONFIG_SURCHARGE_TAX_RULES_GROUP, $groupValue);
-        // An explicit merchant selection ("No tax" included) retires the
+        // An explicit merchant selection of a real group retires the
         // post-upgrade "needs re-selection" nag from upgrade-2.5.0.php. A
-        // save that stored '' (still unselected) does NOT - the nag is
-        // accurate until a real choice is made.
+        // save that stored '' (still unselected, which now includes a
+        // refused never-taxed submission) does NOT - the nag is accurate
+        // until a real choice is made.
         if ($groupValue !== '') {
             Configuration::updateValue(self::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE, '');
         }
