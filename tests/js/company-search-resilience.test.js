@@ -573,6 +573,15 @@ describe('class-static result cache', () => {
                     // Its own row class: nothing is broken, so the row must not
                     // be identified in the DOM as the failure row.
                     two_row_class: 'two-autocomplete-select-country'
+                },
+                // The manual-entry footer (TWO-25288 element 5), last, on every
+                // rendered set at or above the threshold. Its own flag, NOT
+                // `two_unavailable`: that flag means "keyboard-skipped", and this
+                // row has to be reachable.
+                {
+                    label: 'My company is not on the list',
+                    value: 'My company is not on the list',
+                    two_manual_entry: true
                 }
             ]);
             expect(rendered[0].label).not.toBe(search.getSearchUnavailableText());
