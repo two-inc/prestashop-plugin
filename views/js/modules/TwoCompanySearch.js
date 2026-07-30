@@ -161,6 +161,7 @@ class TwoCompanySearch {
         }
         
         this.createOrganizationField();
+        this.createCompanyIdHintField();
         this.clearStaleOrganizationSelection();
         this.setupCompanyInputSync();
         this.setupAddressIdentifierSync();
@@ -181,6 +182,45 @@ class TwoCompanySearch {
         }
         
         this.organizationField = orgField;
+    }
+
+    /**
+     * Create or ensure the inline "selected company's org number" hint span
+     * exists next to the company field (TWO-25288). Grey, informational
+     * only - never a form field, never submitted.
+     */
+    createCompanyIdHintField() {
+        let hintField = $('.two-company-id-hint');
+
+        if (hintField.length === 0) {
+            hintField = $('<span class="two-company-id-hint"></span>');
+            this.companyField.after(hintField);
+
+            // The hint is positioned absolutely (see two.css), which needs a
+            // positioned ancestor. The company field's wrapper markup comes
+            // from theme/core PrestaShop templates this plugin does not own,
+            // so only force `relative` when the wrapper is still `static` -
+            // never override a wrapper that already has its own positioning.
+            const wrapper = this.companyField.parent();
+            if (wrapper.length && wrapper.css('position') === 'static') {
+                wrapper.css('position', 'relative');
+            }
+        }
+
+        this.companyIdHintField = hintField;
+    }
+
+    /**
+     * Show or clear the inline org-number hint. Called on selection and on
+     * every path that clears the hidden companyid field, so the two never
+     * drift apart.
+     *
+     * @param {string} [value]
+     */
+    setCompanyIdHint(value) {
+        if (this.companyIdHintField && this.companyIdHintField.length) {
+            this.companyIdHintField.text(value ? String(value) : '');
+        }
     }
 
     normalizeCompanyName(value) {
@@ -224,18 +264,21 @@ class TwoCompanySearch {
         if (!company) {
             this.organizationField.val('');
             this.organizationField.removeAttr('data-two-company-name');
+            this.setCompanyIdHint('');
             return;
         }
 
         // If companyid exists but has no selection marker, treat it as stale after address/form re-renders.
         if (!taggedCompany) {
             this.organizationField.val('');
+            this.setCompanyIdHint('');
             return;
         }
 
         if (this.normalizeCompanyName(company) !== this.normalizeCompanyName(taggedCompany)) {
             this.organizationField.val('');
             this.organizationField.removeAttr('data-two-company-name');
+            this.setCompanyIdHint('');
         }
     }
 
@@ -1816,17 +1859,23 @@ class TwoCompanySearch {
         if (ui.item.organization_number) {
             this.organizationField.val(ui.item.organization_number);
             this.organizationField.attr('data-two-company-name', ui.item.value);
-            
+            this.setCompanyIdHint(ui.item.organization_number);
+
             // Persist for reliability across steps
             this.persistCompanyToCookie({
                 company: ui.item.value,
                 companyid: ui.item.organization_number
             });
-            
+
             // Also sync to the DNI / VAT fields - gated on the address-lookup
             // toggle inside the writer (TWO-25203). Unconditional overwrite so
             // a re-search replaces the previous company's number.
             this.writeOrganizationToAddressIdentifiers(ui.item.organization_number);
+        } else {
+            // No org number on this result (e.g. GB, resolved later via
+            // fetchCompanyDetails/lookup_id) - don't show a stale hint from a
+            // previous selection in the meantime.
+            this.setCompanyIdHint('');
         }
 
         // For some countries (e.g. GB), org number may only be present in company details.
@@ -1903,6 +1952,7 @@ class TwoCompanySearch {
                 if (!currentOrgNumber || currentOrgNumber !== natIdVal) {
                     this.organizationField.val(natIdVal);
                     this.organizationField.attr('data-two-company-name', this.companyField ? this.companyField.val() : '');
+                    this.setCompanyIdHint(natIdVal);
                     this.writeOrganizationToAddressIdentifiers(natIdVal);
                     // Persist to cookie so backend can use it during order placement
                     this.persistCompanyToCookie({
@@ -2022,6 +2072,7 @@ class TwoCompanySearch {
             this.organizationField.val('');
             this.organizationField.removeAttr('data-two-company-name');
         }
+        this.setCompanyIdHint('');
     }
     
     /**
@@ -2087,6 +2138,7 @@ class TwoCompanySearch {
                     this.organizationField.val('');
                     this.organizationField.removeAttr('data-two-company-name');
                 }
+                this.setCompanyIdHint('');
                 // Recreate autocomplete to ensure new country is used immediately
                 this.setupAutocomplete();
             };
