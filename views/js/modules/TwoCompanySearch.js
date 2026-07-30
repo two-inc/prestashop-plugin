@@ -427,7 +427,10 @@ class TwoCompanySearch {
                     }
                     // Typed, but not enough to search on. Say so instead of
                     // leaving the buyer with a field that appears to do nothing.
-                    if (term.length < MIN_SEARCH_LENGTH) {
+                    // Trimmed: whitespace is not something the search can match
+                    // on, so "   " must be told to type more rather than put on
+                    // the wire while "  " is refused.
+                    if (term.trim().length < MIN_SEARCH_LENGTH) {
                         response([this.buildTooShortItem()]);
                         return;
                     }
@@ -539,8 +542,13 @@ class TwoCompanySearch {
                         // `two_row_class` lets a message row be told apart in the
                         // DOM (the too-short hint is not a failure) while keeping
                         // the disabled/keyboard-skip behaviour identical.
+                        // `two-autocomplete-message` is emitted alongside it and
+                        // is what the stylesheet keys the muted colour, the
+                        // default cursor and the hover suppression on - so every
+                        // message row looks like a message whatever its cause.
                         return $('<li>')
-                            .addClass((item.two_row_class || 'two-autocomplete-unavailable') + ' ui-state-disabled')
+                            .addClass('two-autocomplete-message '
+                                + (item.two_row_class || 'two-autocomplete-unavailable') + ' ui-state-disabled')
                             .attr('aria-disabled', 'true')
                             .append($('<div>').text(item.label || ''))
                             .appendTo(ul);
@@ -718,13 +726,18 @@ class TwoCompanySearch {
      * out of the company field, and this row needs exactly the same treatment.
      * It means "not a company", not "the service is down".
      *
+     * `two_row_class` matches the class the custom fallback path gives this row:
+     * nothing is broken here, so it must not be identified in the DOM as the
+     * failure row - that conflation is what TWO-25288 removes.
+     *
      * @returns {Object}
      */
     buildSelectCountryItem() {
         return {
             label: this.getSelectCountryText(),
             value: '',
-            two_unavailable: true
+            two_unavailable: true,
+            two_row_class: 'two-autocomplete-select-country'
         };
     }
 
@@ -814,7 +827,7 @@ class TwoCompanySearch {
             setLoadingState(false);
             list.innerHTML = '';
             const row = document.createElement('div');
-            row.className = 'two-autocomplete-item two-autocomplete-unavailable';
+            row.className = 'two-autocomplete-item two-autocomplete-message two-autocomplete-unavailable';
             row.style.padding = '6px 10px';
             row.style.color = '#888';
             row.textContent = this.getSearchUnavailableText();
@@ -829,7 +842,7 @@ class TwoCompanySearch {
             setLoadingState(false);
             list.innerHTML = '';
             const row = document.createElement('div');
-            row.className = 'two-autocomplete-item two-autocomplete-too-short';
+            row.className = 'two-autocomplete-item two-autocomplete-message two-autocomplete-too-short';
             row.style.padding = '6px 10px';
             row.style.color = '#888';
             row.textContent = this.getTooShortText();
@@ -843,7 +856,7 @@ class TwoCompanySearch {
             setLoadingState(false);
             list.innerHTML = '';
             const row = document.createElement('div');
-            row.className = 'two-autocomplete-item two-autocomplete-select-country';
+            row.className = 'two-autocomplete-item two-autocomplete-message two-autocomplete-select-country';
             row.style.padding = '6px 10px';
             row.style.color = '#888';
             row.textContent = this.getSelectCountryText();
@@ -876,7 +889,8 @@ class TwoCompanySearch {
                     renderResults([]);
                     return;
                 }
-                if (term.length < MIN_SEARCH_LENGTH) {
+                // Trimmed, for the same reason as the jQuery UI guard above.
+                if (term.trim().length < MIN_SEARCH_LENGTH) {
                     renderTooShort();
                     return;
                 }
@@ -1013,7 +1027,9 @@ class TwoCompanySearch {
      *      matches the CURRENT request.
      */
     searchCompanies(term, responseCallback) {
-        if (term.length < MIN_SEARCH_LENGTH) {
+        // Trimmed: this is the last gate before a request is made, and a term of
+        // nothing but whitespace is not searchable however it reached here.
+        if (String(term).trim().length < MIN_SEARCH_LENGTH) {
             // Empty/short term cancels any pending search rather than racing it.
             this._companySearchSeq += 1;
             this._abortPendingCompanySearch();
