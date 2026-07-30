@@ -59,6 +59,44 @@ final class CustomerAddressFormatterOverrideSpec
         self::testCountryFieldIsPositionedBeforeCompany();
         self::testDniFieldIsPreservedByOverride();
         self::testCountrySwitchKeepsCoreFormatterCountryInSync();
+        self::testCompanyPlaceholderIsTheEmptyFieldHint();
+    }
+
+    /**
+     * The empty-field hint (TWO-25288) as a standard shop actually renders it.
+     *
+     * The browser JS applies the same wording when the slot is empty, and the JS
+     * suite covers that - but on a shop holding this override the placeholder is
+     * already in the markup, so the override is the path that ships the hint. An
+     * assertion on the JS half alone would leave the shipped half unpinned.
+     */
+    private static function testCompanyPlaceholderIsTheEmptyFieldHint(): void
+    {
+        $overridePath = dirname(__DIR__) . '/override/classes/form/CustomerAddressFormatter.php';
+        if (!class_exists('CustomerAddressFormatter', false)) {
+            require_once $overridePath;
+        }
+
+        $translator = new class {
+            public function trans($message, array $params = [], $domain = null): string
+            {
+                return (string) $message;
+            }
+        };
+
+        $formatter = new CustomerAddressFormatter(new Country(), $translator, []);
+        $format = $formatter->getFormat();
+
+        TinyAssert::true(isset($format['company']) && $format['company'] instanceof FormField, 'Expected company field in formatter output');
+
+        $availableValues = $format['company']->getAvailableValues();
+
+        TinyAssert::true(array_key_exists('placeholder', $availableValues), 'Expected company field to carry a placeholder');
+        TinyAssert::same(
+            'Enter company name to search',
+            $availableValues['placeholder'],
+            'Expected company placeholder to be the empty-field search hint'
+        );
     }
 
     private static function testOverrideConstructorInitializesCoreTranslatorState(): void

@@ -252,6 +252,121 @@ describe('the company-search hints (TWO-25288)', () => {
             expect(rows()).toHaveLength(0);
             expect(ajax.calls).toHaveLength(0);
         });
+
+        test('whitespace alone is told to type more rather than searched for', () => {
+            makeInstance();
+
+            // Long enough to clear the threshold by raw length, but there is
+            // nothing here the search could match on, so it must not go on the
+            // wire - and it must not be refused silently either.
+            search('   ');
+
+            expect(ajax.calls).toHaveLength(0);
+            expect(rows()).toHaveLength(1);
+            expect(rows().hasClass('two-autocomplete-too-short')).toBe(true);
+        });
+    });
+
+    describe('the country-not-chosen row is not the failure row', () => {
+        test('it carries its own class on the jQuery UI path', () => {
+            // No resolvable ISO code, so no search can be made. The cause is the
+            // buyer not having picked a country, which is not a failure of the
+            // service - and the DOM must say which of the two it is.
+            document.body.innerHTML = '';
+            buildAddressForm({ country: null, countryId: '999' });
+
+            const instance = makeInstance();
+            search('exa');
+
+            expect(ajax.calls).toHaveLength(0);
+            expect(rows()).toHaveLength(1);
+            expect(rows().text()).toBe(instance.getSelectCountryText());
+            expect(rows().hasClass('two-autocomplete-select-country')).toBe(true);
+            expect(rows().hasClass('two-autocomplete-unavailable')).toBe(false);
+        });
+    });
+
+    /**
+     * Every message row must LOOK like a message, whatever its cause.
+     *
+     * The row classes above are asserted by name, and that assertion passes just
+     * as happily with a row that renders in body text under a pointer cursor and
+     * takes jQuery UI's hover highlight - i.e. one that looks exactly like a
+     * clickable company while being unselectable. Only the resolved style catches
+     * that, which is why the shipped stylesheet is loaded here, and why the rules
+     * are keyed on a class shared by every message row rather than on one cause.
+     */
+    describe('a message row is painted as a message', () => {
+        let stylesheet;
+
+        beforeEach(() => {
+            stylesheet = installStylesheet('views/css/two.css');
+        });
+
+        afterEach(() => {
+            if (stylesheet && stylesheet.parentNode) {
+                stylesheet.parentNode.removeChild(stylesheet);
+            }
+        });
+
+        test('the too-short row is muted and unclickable, exactly as the failure row is', () => {
+            makeInstance();
+
+            search('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1));
+            const hint = rows().get(0);
+
+            expect(rows().hasClass('two-autocomplete-message')).toBe(true);
+            expect(window.getComputedStyle(hint).color).toBe('rgb(136, 136, 136)');
+            expect(window.getComputedStyle(hint).cursor).toBe('default');
+
+            // The wrapper div is where jQuery UI puts the text, and where the
+            // module's own generic row rules paint body-text colour `!important`.
+            const wrapper = rows().children('div').get(0);
+            expect(window.getComputedStyle(wrapper).color).toBe('rgb(136, 136, 136)');
+            expect(window.getComputedStyle(wrapper).cursor).toBe('default');
+
+            // The same row rendered for the failure cause, for comparison: the
+            // two must be indistinguishable in appearance, since the whole point
+            // of the per-cause class is that it changes the WORDING and the DOM
+            // identity, not the look.
+            const failure = $('<li>')
+                .addClass('two-autocomplete-message two-autocomplete-unavailable')
+                .appendTo(document.body)
+                .get(0);
+            expect(window.getComputedStyle(hint).color)
+                .toBe(window.getComputedStyle(failure).color);
+            expect(window.getComputedStyle(hint).cursor)
+                .toBe(window.getComputedStyle(failure).cursor);
+        });
+
+        test('the hover highlight is suppressed on the row jQuery UI would highlight', () => {
+            makeInstance();
+            search('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1));
+
+            // `ui-state-active` is what jQuery UI's menu puts on the wrapper of
+            // the row under the pointer. On a message row that highlight is a
+            // promise the row cannot keep, so the stylesheet has to out-rank it.
+            const wrapper = rows().children('div').addClass('ui-state-active').get(0);
+            const painted = window.getComputedStyle(wrapper);
+
+            expect(painted.color).toBe('rgb(136, 136, 136)');
+            expect(painted.cursor).toBe('default');
+            expect(painted.margin).toBe('0px');
+            // The highlight the generic wrapper rule paints, declared
+            // `!important` there, so this row's rules have to out-rank it.
+            expect(painted.backgroundColor).not.toBe('rgb(248, 249, 250)');
+        });
+
+        test('the country-not-chosen row gets the same paint', () => {
+            document.body.innerHTML = '';
+            buildAddressForm({ country: null, countryId: '999' });
+            makeInstance();
+
+            search('exa');
+
+            expect(rows().hasClass('two-autocomplete-message')).toBe(true);
+            expect(window.getComputedStyle(rows().get(0)).color).toBe('rgb(136, 136, 136)');
+        });
     });
 });
 
@@ -1649,6 +1764,38 @@ describe('the custom fallback used when jQuery UI is absent', () => {
 
             expect(ajax.calls).toHaveLength(1);
             expect($('.two-autocomplete-too-short')).toHaveLength(0);
+        });
+
+        test('whitespace alone is told to type more rather than searched for', () => {
+            const search = makeInstance();
+            expect(search._customAutocomplete).toBeTruthy();
+
+            type('   ');
+
+            expect(ajax.calls).toHaveLength(0);
+            expect($('.two-autocomplete-too-short')).toHaveLength(1);
+        });
+
+        test('the hint row is painted as a message on this path too', () => {
+            const stylesheet = installStylesheet('views/css/two.css');
+            try {
+                makeInstance();
+                type('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1));
+
+                // The shared class is what carries the message look, and this
+                // path must carry it as well or the two paths diverge again. The
+                // cursor comes from the stylesheet alone - the row inlines its
+                // colour but nothing inlines this - so it is the assertion that
+                // fails if the shared class is dropped here.
+                const row = $('.two-autocomplete-too-short');
+                expect(row.hasClass('two-autocomplete-message')).toBe(true);
+                expect(window.getComputedStyle(row.get(0)).cursor).toBe('default');
+                expect(window.getComputedStyle(row.get(0)).color).toBe('rgb(136, 136, 136)');
+            } finally {
+                if (stylesheet && stylesheet.parentNode) {
+                    stylesheet.parentNode.removeChild(stylesheet);
+                }
+            }
         });
 
         test('clearing the field closes the list rather than showing the hint', () => {

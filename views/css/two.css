@@ -33,25 +33,6 @@
     background-size: 16px 16px;
 }
 
-/* "Search unavailable" row - a message, not a selectable company. */
-.two-autocomplete-unavailable {
-    color: #888;
-    cursor: default;
-}
-
-.ui-autocomplete .two-autocomplete-unavailable.ui-menu-item > div {
-    color: #888;
-    cursor: default;
-}
-
-/* Never let the unavailable row take jQuery UI's hover/active highlight. */
-.ui-autocomplete .two-autocomplete-unavailable.ui-menu-item > div.ui-state-active {
-    background: none;
-    border: none;
-    color: #888;
-    margin: 0;
-}
-
 /* Remove custom styling that modifies core radio/checkbox visuals for consistency */
 .two-payment-option .custom-radio  {
     border: none;
@@ -1216,6 +1197,48 @@
 .ui-autocomplete .ui-menu-item-wrapper.ui-state-focus {
     background: #e3f2fd !important;
     color: #1976d2 !important;
+}
+
+/*
+ * Message rows - a message, not a selectable company.
+ *
+ * Keyed on the shared `two-autocomplete-message` class, NOT on the per-cause
+ * class next to it. Every message row (search unavailable, country not chosen,
+ * term too short) needs exactly this treatment, and keying the rules on one
+ * cause meant a new message row rendered looking like a clickable company while
+ * being unselectable - and the two render paths then did not match, because only
+ * the fallback path inlines the muted colour.
+ *
+ * Placed deliberately AFTER the generic dropdown rules above rather than with
+ * the other company-search rules at the top of this file: those rules paint
+ * every row's wrapper `!important`, so these have to win both on specificity and
+ * on source order.
+ */
+.two-autocomplete-message {
+    color: #888;
+    cursor: default;
+}
+
+/*
+ * `!important` because the generic `.ui-autocomplete .ui-menu-item-wrapper`
+ * rules further down this file declare their colour and background `!important`
+ * themselves, and jQuery UI puts `ui-menu-item-wrapper` on the wrapper of EVERY
+ * row including this one. Without it the row resolves to body-text colour with
+ * the hover highlight - i.e. it looks clickable while being unselectable - and
+ * only a resolved-style assertion catches that, never a class-name one.
+ */
+.ui-autocomplete .two-autocomplete-message.ui-menu-item > div {
+    color: #888 !important;
+    cursor: default !important;
+}
+
+/* Never let a message row take jQuery UI's hover/active highlight. */
+.ui-autocomplete .two-autocomplete-message.ui-menu-item > div.ui-state-active {
+    background: none !important;
+    border: none !important;
+    color: #888 !important;
+    cursor: default !important;
+    margin: 0 !important;
 }
 
 /* Clean up unused styles */
