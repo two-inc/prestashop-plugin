@@ -749,9 +749,9 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25288)', () => 
             }
         }
 
-        function clearCalls() {
+        function callsFor(action) {
             return ajax.calls.filter(
-                (call) => call.settings.data && call.settings.data.action === 'clearCompany'
+                (call) => call.settings.data && call.settings.data.action === action
             );
         }
 
@@ -784,14 +784,19 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25288)', () => 
 
                 field.autocomplete('option', 'select')(null, { item: instance.buildManualEntryItem() });
 
-                const cleared = clearCalls();
+                const cleared = callsFor('clearCompany');
                 expect(cleared).toHaveLength(1);
                 expect(cleared[0].settings.method).toBe('POST');
                 expect(cleared[0].settings.data.token).toBe('tok');
-                // NOT a saveCompany carrying empty values: that action rejects an
-                // empty company id outright, so using it to clear is a silent
-                // no-op and the stale session company survives.
-                expect(cleared[0].settings.data.action).not.toBe('saveCompany');
+                // NOT the save action carrying empty values: it rejects an empty
+                // company id outright, so using it to clear is a silent no-op and
+                // the stale session company survives.
+                //
+                // Asserted as a count over ALL calls, deliberately. Asserting
+                // `cleared[0].action !== 'saveCompany'` would be unfalsifiable -
+                // `cleared` is already filtered on the action being 'clearCompany',
+                // so that comparison can never fail whatever the source does.
+                expect(callsFor('saveCompany')).toHaveLength(0);
             });
         });
 
