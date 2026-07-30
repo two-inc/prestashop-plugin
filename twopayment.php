@@ -3485,9 +3485,8 @@ class Twopayment extends PaymentModule
         // when a configured buyer surcharge cannot be denominated in the
         // cart currency. Same mechanism as the minimum-order gate above -
         // withholding the option, never erroring the checkout - because the
-        // alternative outcomes are an order created with NO surcharge at all
-        // (silent undercharge) or one carrying an uncapped percentage
-        // (overcharge). See isTwoSurchargeQuotableForCart.
+        // alternative outcome is an order created with NO surcharge at all,
+        // a silent undercharge. See isTwoSurchargeQuotableForCart.
         if (!$this->isTwoSurchargeQuotableForCart($cart)) {
             return [];
         }
@@ -8844,29 +8843,26 @@ class Twopayment extends PaymentModule
      * configured in into the quote currency, via Two's FX rates (TWO-25105).
      * Percentage members are currency-agnostic and pass through untouched.
      *
-     * Returns null when the block cannot be honestly re-denominated, which
-     * since TWO-25269 is a FAIL-CLOSED signal: the caller omits the quote and
-     * the payment option is withheld, rather than quoting a fixed fee
-     * denominated in the wrong currency (what the old currency pinning
-     * silently did on multi-currency stores) or charging a surcharge the
-     * merchant never configured.
+     * Returns null in exactly ONE case: no FX rate for the pair, so nothing
+     * can be denominated at all. That is a FAIL-CLOSED signal (TWO-25269):
+     * the caller omits the quote and the payment option is withheld, rather
+     * than quoting a fixed fee denominated in the wrong currency, which is
+     * what the old currency pinning silently did on multi-currency stores.
      *
-     * Two distinct null cases, both of which PrestaShop previously missed
-     * entirely:
+     * Neither rounds-to-zero case is a failure (TWO-25276 - the earlier
+     * zero-cap guard was reverted, its premise was wrong):
      *
-     *  - No rate for the pair. Nothing can be denominated.
-     *  - A CONFIGURED `cap` whose converted value rounds to 0.00. A zero cap
-     *    is indistinguishable downstream from NO cap, so passing it through
-     *    sends an UNCAPPED percentage - an overcharge. WooCommerce guards
-     *    this; PrestaShop did not.
+     *  - A converted `cap` of 0.00 is passed straight through as a zero cap.
+     *    checkout-api clamps the fee to zero for it - `fees.py` tests the cap
+     *    with `if c is not None: b = min(b, c)`, and its `cap 0 forces zero
+     *    regardless of surcharge` test pins that - so a zero cap means the
+     *    surcharge is simply not applied. It is NOT read as "no cap", and
+     *    there is no overcharge to guard against.
+     *  - A fixed `surcharge` that converts to 0.00 is a legitimately tiny
+     *    configured amount, genuinely negligible in a stronger currency, and
+     *    0.00 is the arithmetically correct answer. Logged at info level.
      *
-     * The third rounds-to-zero case is deliberately NOT a failure: a fixed
-     * `surcharge` that converts to 0.00 is a legitimately tiny configured
-     * amount, genuinely negligible in a stronger currency, and 0.00 is the
-     * arithmetically correct answer. It is logged at info level and passes
-     * through.
-     *
-     * An ABSENT cap is a legitimate configuration and never a failure - it
+     * An ABSENT cap is a different thing again, and also never a failure - it
      * means an uncapped percentage surcharge, which continues to be charged.
      *
      * @param array $share buyer_fee_share block from TwoSurchargeCalculator
@@ -8897,17 +8893,6 @@ class Twopayment extends PaymentModule
                 PrestaShopLogger::addLog(
                     'TwoPayment: Buyer surcharge unquotable - no FX rate ' . $pair
                     . ' for the configured ' . $member . ' on term ' . $term . ' days; failing closed',
-                    3
-                );
-                return null;
-            }
-            if ($member === 'cap' && $configured > 0 && round($converted, 2) <= 0.0) {
-                // A zero cap reads downstream as NO cap: an uncapped
-                // percentage, i.e. an overcharge. Never send it.
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Buyer surcharge unquotable - configured cap ' . $this->getTwoRoundAmount($configured)
-                    . ' ' . $shop_iso . ' rounds to 0.00 ' . $quote_iso . ' (' . $pair . ') on term ' . $term
-                    . ' days; a zero cap would send an uncapped percentage, failing closed',
                     3
                 );
                 return null;
@@ -8955,14 +8940,16 @@ class Twopayment extends PaymentModule
      * A percentage-only grid needs no conversion (percentages are
      * currency-agnostic), so it never trips the gate.
      *
-     * The per-term cap-rounds-to-zero check rides along here rather than in
-     * a term-independent test because a cap is per-term data. It is
-     * conservative on purpose: ANY offered term whose configured cap rounds
-     * to 0.00 withholds the option, because the buyer is free to pick that
-     * term later and a zero cap sends an uncapped percentage - an
-     * overcharge. Over-rejecting is the right side to err on for an
-     * overcharge; it is not for a misconfigured single term, which is why the
-     * no-rate case above is not evaluated per-term.
+     * The no-FX-rate condition is the ONLY thing this gate trips on. Because
+     * it is term-independent, the loop below reaches the same answer on the
+     * first currency-bearing term it sees; it is written as a loop only so it
+     * can skip terms with no currency-bearing member at all. It must never
+     * grow a per-term charge condition: any single term rejecting would take
+     * the whole store offline for every buyer. (TWO-25276 removed exactly
+     * such a condition - a per-term "configured cap rounds to 0.00" check -
+     * which withheld Two from every buyer on affected shops. Its premise was
+     * wrong: checkout-api clamps the fee to zero for a zero cap rather than
+     * treating it as uncapped, so there was never an overcharge to guard.)
      *
      * @param Cart $cart
      * @return bool
@@ -8999,8 +8986,8 @@ class Twopayment extends PaymentModule
             }
             if ($this->convertTwoBuyerFeeShareCurrency($share, $cart_iso, $days) === null) {
                 // convertTwoBuyerFeeShareCurrency has already logged the
-                // specific reason (no rate, or a cap rounding to zero) at
-                // error level with the currency pair and term.
+                // reason - no FX rate for the pair - at error level with the
+                // currency pair and term.
                 PrestaShopLogger::addLog(
                     'TwoPayment: Payment option hidden for cart ' . (int) $cart->id
                     . ' - buyer surcharge cannot be quoted in ' . $cart_iso
@@ -9025,10 +9012,9 @@ class Twopayment extends PaymentModule
      *  - CHARGE paths - buildTwoSurchargeLineItemForCart, and through it the
      *    order payload builder and the hidden surcharge cart line - treat
      *    null as a failure. isTwoSurchargeQuotableForCart withholds the
-     *    payment option up front for the whole-store case (no FX rate,
-     *    cap rounding to zero), and applyTwoSurchargeCartLineSync reports
-     *    failure rather than removing the line, for anything that fails
-     *    later.
+     *    payment option up front for the whole-store case (no FX rate for the
+     *    pair), and applyTwoSurchargeCartLineSync reports failure rather than
+     *    removing the line, for anything that fails later.
      *  - DISPLAY paths - getTwoOfferedTermSurchargeAmounts' per-term chip
      *    previews - still degrade that one chip to no fee text. They show a
      *    number, they never decide one.
@@ -9061,10 +9047,11 @@ class Twopayment extends PaymentModule
         // Fixed amounts and caps are configured in the shop default currency;
         // re-denominate them into the quote currency via Two's FX rates
         // (TWO-25105 - replaces the previous single-currency-stores-only
-        // pinning). No rate, or a cap that rounds to zero, omits the quote
-        // (TWO-25269 fail-closed: the payment option is withheld) rather than
-        // sending a figure in the wrong currency or an uncapped percentage.
-        // convertTwoBuyerFeeShareCurrency logs the specific reason.
+        // pinning). No FX rate for the pair omits the quote (TWO-25269
+        // fail-closed: the payment option is withheld) rather than sending a
+        // figure in the wrong currency. A cap or fixed amount that merely
+        // rounds to 0.00 passes through - it is the correct answer, not a
+        // failure. convertTwoBuyerFeeShareCurrency logs the reason.
         $share = $this->convertTwoBuyerFeeShareCurrency($share, (string) $currency_iso, $days);
         if ($share === null) {
             return $this->twoFeeCache[$cacheKey] = null;

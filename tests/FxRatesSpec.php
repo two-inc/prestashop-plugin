@@ -23,19 +23,26 @@ declare(strict_types=1);
  *    quote instead of sending a wrong-currency amount.
  *
  * TWO-25269 reverses the buyer-surcharge posture from fail-soft to
- * fail-closed, and the assertions in the second half of this file are the
- * OPPOSITE of what they asserted before it. Three rounds-to-zero cases, held
- * apart deliberately:
+ * fail-closed for the ONE case where nothing can be denominated at all, and
+ * the assertions in the second half of this file are the OPPOSITE of what
+ * they asserted before it. Three cases, held apart deliberately:
  *
  *   no rate resolvable        -> withhold the payment option, error log
- *   configured cap -> 0.00    -> withhold the payment option, error log
- *                                (a zero cap reads as NO cap downstream: an
- *                                uncapped percentage, i.e. an OVERCHARGE)
+ *   configured cap -> 0.00    -> pass 0 straight through, KEEP offering Two
  *   fixed amount -> 0.00      -> proceed with 0.00, info log (correct, not a
  *                                failure)
  *
- * An ABSENT cap is a legitimate uncapped-percentage configuration and must
- * keep charging normally - see
+ * The zero-cap case used to withhold the option, on the premise that a zero
+ * cap reads downstream as NO cap and would therefore send an uncapped
+ * percentage. TWO-25276 reverted that: the premise was false. checkout-api's
+ * `fees.py` tests the cap with `if c is not None: b = min(b, c)` and its
+ * `cap 0 forces zero regardless of surcharge` test pins the result, so a zero
+ * cap clamps the fee to zero - the surcharge is simply not applied. The guard
+ * had a live cost: it looped every offered term, so one term whose cap
+ * rounded away withheld Two from EVERY buyer on the shop.
+ *
+ * An ABSENT cap is a different configuration again - an uncapped percentage
+ * surcharge - and must keep charging normally. See
  * testAbsentCapStillChargesAndOffersTheOption.
  */
 final class FxRatesSpec
@@ -60,7 +67,7 @@ final class FxRatesSpec
         // TWO-25269 - fail-closed reversal.
         self::testNoRateForCartCurrencyWithholdsPaymentOption();
         self::testPercentageOnlySurchargeNeverTripsTheGate();
-        self::testCapRoundingToZeroWithholdsPaymentOption();
+        self::testCapRoundingToZeroPassesThroughAndKeepsTheOption();
         self::testAbsentCapStillChargesAndOffersTheOption();
         self::testFixedSurchargeRoundingToZeroProceedsWithInfoLog();
         // The cart-line-sync half of TWO-25269 lives in SurchargeCartLineSpec,
@@ -703,12 +710,24 @@ final class FxRatesSpec
     }
 
     /**
-     * Case 2 of 3: a CONFIGURED CAP whose converted value rounds to 0.00 ->
-     * fail closed. A zero cap is indistinguishable downstream from NO cap, so
-     * passing it through sends an UNCAPPED percentage: an OVERCHARGE.
-     * PrestaShop had no guard for this at all.
+     * Case 2 of 3: a CONFIGURED CAP whose converted value rounds to 0.00 is
+     * NOT a failure. It passes straight through as `cap => 0`, and the payment
+     * option stays offered.
+     *
+     * TWO-25276 - this assertion is the OPPOSITE of what TWO-25269 shipped,
+     * and TWO-25269 was wrong. It withheld the option on the premise that a
+     * zero cap reads downstream as NO cap, i.e. an uncapped percentage. It
+     * does not: checkout-api's `fees.py` tests the cap with
+     * `if c is not None: b = min(b, c)`, and its `cap 0 forces zero regardless
+     * of surcharge` test pins the outcome. A zero cap clamps the fee to zero -
+     * the surcharge is simply not applied, which is exactly what a merchant
+     * capping at zero asked for. There is no overcharge to guard against.
+     *
+     * The guard was not merely redundant: isTwoSurchargeQuotableForCart loops
+     * EVERY offered term, so a single term whose cap rounded away withheld Two
+     * from every buyer on the shop.
      */
-    private static function testCapRoundingToZeroWithholdsPaymentOption(): void
+    private static function testCapRoundingToZeroPassesThroughAndKeepsTheOption(): void
     {
         self::reset();
         // Shop configured in a weak currency: a 20-unit cap is worth
@@ -717,7 +736,7 @@ final class FxRatesSpec
         Configuration::updateValue('PS_CURRENCY_DEFAULT', 4);
         Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'fixed_and_percentage');
         Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '1.5');
-        // Healthy fixed amount - only the cap is the problem.
+        // Healthy fixed amount alongside the cap that rounds away.
         Configuration::updateValue('PS_TWO_SURCHARGE_FIXED_30', '100000');
         Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', '20');
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
@@ -726,21 +745,33 @@ final class FxRatesSpec
         // Cart in EUR, shop default IDR.
         $module = self::gateModule(1);
 
-        TinyAssert::same(0, count($module->hookPaymentOptions([])), 'a cap that rounds to zero would send an uncapped percentage - withhold');
-        TinyAssert::true(
-            self::hasLog('rounds to 0.00 EUR', 3),
-            'the zero-cap overcharge guard must log at error level'
+        TinyAssert::same(
+            1,
+            count($module->hookPaymentOptions([])),
+            'a cap that rounds to zero clamps the fee to zero server-side - it must never withhold the option'
         );
-        TinyAssert::true(self::hasLog('uncapped percentage', 3), 'the log must say why a zero cap is dangerous');
+        TinyAssert::false(
+            self::hasLog('failing closed', 3),
+            'a cap rounding to zero must not be logged as a fail-closed event'
+        );
 
-        // And no pricing call may carry the zero cap.
+        // The quote proceeds and carries the zero cap verbatim.
         $quoting = self::moduleWithResponses([
             '/v1/pricing/order/fee' => ['http_status' => 200, 'buyer_fee_share' => '5.00', 'currency' => 'EUR'],
         ]);
-        TinyAssert::same(null, $quoting->fetchTwoTermFee(30, 1000.0, 'NL', 'EUR'));
+        $quote = $quoting->fetchTwoTermFee(30, 1000.0, 'NL', 'EUR');
+        TinyAssert::same('5.00', $quote['buyer_fee_share'], 'the quote must proceed, not be omitted');
+
+        $pricing = null;
         foreach ($quoting->requests as $request) {
-            TinyAssert::notSame('/v1/pricing/order/fee', $request['endpoint'], 'no pricing call may carry a zero cap');
+            if ($request['endpoint'] === '/v1/pricing/order/fee') {
+                $pricing = $request['payload'];
+            }
         }
+        TinyAssert::true(is_array($pricing), 'the pricing quote must have been requested');
+        TinyAssert::same(0.0, $pricing['buyer_fee_share']['cap'], '20 IDR is 0.0012 EUR: a zero cap, sent as one');
+        TinyAssert::same(6.0, $pricing['buyer_fee_share']['surcharge'], '100000 IDR is a healthy 6.00 EUR fixed amount');
+        TinyAssert::same(1.5, $pricing['buyer_fee_share']['percentage']);
     }
 
     /**
