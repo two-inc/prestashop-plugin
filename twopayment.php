@@ -3603,7 +3603,7 @@ class Twopayment extends PaymentModule
             'department' => '',
             'project' => '',
             'purchase_order_number' => '',
-            'invoice_email' => $this->l('Only for invoices sent by Two'),
+            'invoice_email' => '',
         );
 
         $fields = array();
