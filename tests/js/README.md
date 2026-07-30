@@ -209,6 +209,31 @@ form (which it does for something as ordinary as a country change):
   cached, so a cache hit does not stack a second footer — pinned by searching the same term
   twice with no new request.
 
+  **The key-event cases are the ones that matter most, and they must be driven
+  through the real widget.** The widget's focus event fires *after* the menu has
+  focused the row, and its return value gates only the write that mirrors a
+  key-navigated item into the input — and it performs that write only for a
+  **key-type** original event. So calling the `focus` option directly, as an
+  earlier version of these tests did, cannot observe the defect at all: it passes
+  whether the guard is there or not. The cases now trigger the widget's own menu
+  focus event with a synthetic keydown original event, in both list shapes,
+  because the normalizer behaves differently in each — alongside real companies
+  the row keeps an empty value (an unguarded write **blanks** the buyer's term),
+  and alongside a message row every value is rewritten from its label (an
+  unguarded write puts the **affordance text** into the field).
+
+  Focus restoration is asserted on both paths, on activation and on the way back,
+  via `document.activeElement`. This is the one behaviour whose regression is
+  invisible to a sighted mouse user and total for a keyboard one, because
+  activating the row removes the focused element from the list.
+
+  Forgetting the selected company is asserted too: the hidden number and its
+  company-name marker are dropped, and the session company is cleared through its
+  own endpoint action — asserted to be a POST carrying the token, and asserted
+  *not* to be the save action, which rejects an empty company id and would
+  therefore clear nothing. A missing endpoint is asserted to be tolerated with the
+  local half still happening.
+
   On the fallback path the row has no widget to lean on, so it carries its own
   `role="button"`, `tabindex="0"` and Enter/Space handling, and each of those is asserted
   directly — including that Space is `preventDefault`ed (its default action is to scroll)
@@ -218,7 +243,20 @@ form (which it does for something as ordinary as a country change):
   moving focus onto the row blurs the input, whose blur closes the list 150ms later, so one
   case blurs the input, focuses the row, advances the timers and then activates it by
   keyboard. Without the cancel that case pins, the affordance would be pointer-only in
-  practice however good its ARIA looked.
+  practice however good its ARIA looked. A third closes the other half of that:
+  the row re-arms the close on its own blur, because the input is otherwise the
+  only node that closes this list and the row is now the first tab stop after the
+  company field whenever the dropdown is open — so tabbing onward would have left
+  the list painted over the address form indefinitely.
+
+  **The PHP half of this element cannot be covered here at all.** Two seams are
+  invisible to this suite because it stubs both sides of them: the dictionary keys
+  (this suite supplies its own `i18n` object, so a PHP key renamed to a typo leaves
+  every case green while the shipped row is permanently untranslated) and the
+  endpoint action name used to clear the session company (the transport is stubbed,
+  so a name that agrees on neither side fails silently and the disowned company is
+  still credit-checked). Both are pinned in `tests/CompanySearchCountrySourcingSpec.php`,
+  which is where seam assertions for this feature live.
 
 ## Known gaps
 
