@@ -32,7 +32,8 @@ const {
     stubAjax,
     callbackRecorder,
     releaseWidgets,
-    flushPromises
+    flushPromises,
+    installStylesheet
 } = require('./ps-harness');
 
 const CHECKOUT_HOST = 'https://api.example.test';
@@ -1195,6 +1196,271 @@ describe('a destroyed instance cannot act on the live DOM', () => {
         expect($(oldField).hasClass('two-company-search-input')).toBe(false);
         expect($(newField).hasClass('ui-autocomplete-input')).toBe(true);
         expect(search.companyField.get(0)).toBe(newField);
+    });
+});
+
+/**
+ * TWO-25288. The in-field spinner is a real element now, not a background GIF on
+ * the input, so it has DOM lifecycle of its own: it can be inserted twice, it can
+ * be orphaned by an address-form re-render, and it can end up on the wrong side of
+ * the fallback dropdown. None of that was possible while it was a background-image.
+ *
+ * Both render paths are pinned deliberately. The jQuery UI path and the custom
+ * fallback share the CSS contract but not a line of the code that arms it, so
+ * covering one and assuming the other leaves half the surface untested with a
+ * green suite.
+ */
+describe('the in-field spinner element', () => {
+    let stylesheet;
+
+    beforeEach(() => {
+        // The real shipped stylesheet, so the sibling combinator that decides
+        // visibility is the thing under test rather than a restatement of it.
+        stylesheet = installStylesheet('views/css/two.css');
+    });
+
+    afterEach(() => {
+        if (stylesheet && stylesheet.parentNode) {
+            stylesheet.parentNode.removeChild(stylesheet);
+        }
+    });
+
+    /** Every spinner in the document, however it got there. */
+    function spinners() {
+        return document.querySelectorAll('.two-company-search-spinner');
+    }
+
+    /** The one spinner, asserting first that there is exactly one. */
+    function spinner() {
+        expect(spinners()).toHaveLength(1);
+        return spinners()[0];
+    }
+
+    function displayOf(el) {
+        return window.getComputedStyle(el).display;
+    }
+
+    test('setup inserts exactly one, after the input, in a positioned parent', () => {
+        makeInstance();
+        const input = liveField().get(0);
+        const el = spinner();
+
+        expect(el.tagName).toBe('SPAN');
+        expect(el.previousElementSibling).toBe(input);
+        expect(el.parentNode).toBe(input.parentNode);
+        // Decorative: the dropdown carries the meaning.
+        expect(el.getAttribute('aria-hidden')).toBe('true');
+        // Without the containing block the absolute positioning would resolve
+        // against some ancestor further up and land the spinner anywhere.
+        expect(input.parentNode.classList.contains('two-company-search-field')).toBe(true);
+    });
+
+    test('it actually animates: a stepped timing function would freeze it', () => {
+        makeInstance();
+        const animation = window.getComputedStyle(spinner()).animation;
+
+        // The spoke pattern has a 30deg period, so `steps(12, end)` over one turn
+        // advances in 30deg increments and maps the pattern exactly onto itself -
+        // a spinner that is present, correctly coloured, correctly sized and
+        // completely motionless. Asserting on the keyframes NAME would not catch
+        // it, which is why this pins the timing function.
+        expect(animation).toContain('linear');
+        expect(animation).not.toContain('steps');
+        // The keyframes are shared with the eligibility overlay's spinner; a
+        // rename there must not silently stop this one animating.
+        expect(animation).toContain('two-spin');
+    });
+
+    test('it is not centred with a transform, which the animation would overwrite', () => {
+        makeInstance();
+        const style = window.getComputedStyle(spinner());
+
+        // The spin animation owns `transform`. Centring with
+        // `transform: translateY(-50%)` is the obvious way to do this and it is
+        // wrong: the animation overwrites it on the first frame and drops the
+        // spinner half its height out of the field. `top` does the centring.
+        expect(style.transform).toBe('');
+        expect(style.top).toContain('calc');
+    });
+
+    test('repeated setup never inserts a second one', () => {
+        const search = makeInstance();
+        for (let i = 0; i < 10; i += 1) {
+            search.setupAutocomplete();
+        }
+
+        expect(spinners()).toHaveLength(1);
+    });
+
+    test('a country change never inserts a second one', () => {
+        makeInstance();
+        for (let i = 0; i < 10; i += 1) {
+            bus.emit('updatedAddressForm');
+        }
+
+        expect(spinners()).toHaveLength(1);
+    });
+
+    test('it is re-created against the replaced field after a re-render', () => {
+        const search = makeInstance();
+        const before = spinner();
+
+        const newField = replaceAddressForm();
+        search.setupAutocomplete();
+
+        // PrestaShop replaced the whole form, so the old spinner went with its
+        // parent. What matters is that exactly one exists and that it is a
+        // sibling of the LIVE input - a spinner left in the detached subtree
+        // would never show, and a second one in the live subtree would show
+        // twice.
+        expect(spinners()).toHaveLength(1);
+        expect(spinner()).not.toBe(before);
+        expect(spinner().previousElementSibling).toBe(newField);
+        expect(newField.parentNode.classList.contains('two-company-search-field')).toBe(true);
+    });
+
+    test('a theme that swaps only the input leaves one spinner, not two', () => {
+        const search = makeInstance();
+        const oldInput = liveField().get(0);
+        const parent = oldInput.parentNode;
+
+        // The whole-form re-render is the common case; this is the other one.
+        // The parent survives, so a spinner left next to the dead input would
+        // still be in the live subtree and the next setup would add a second.
+        const fresh = document.createElement('input');
+        fresh.setAttribute('type', 'text');
+        fresh.setAttribute('name', 'company');
+        parent.replaceChild(fresh, oldInput);
+
+        search.setupAutocomplete();
+
+        expect(spinners()).toHaveLength(1);
+        expect(spinner().previousElementSibling).toBe(fresh);
+    });
+
+    test('destroy removes it and the containing-block class', () => {
+        const search = makeInstance();
+        const parent = liveField().get(0).parentNode;
+        expect(spinners()).toHaveLength(1);
+
+        search.destroy();
+
+        expect(spinners()).toHaveLength(0);
+        expect(parent.classList.contains('two-company-search-field')).toBe(false);
+    });
+
+    test('it shows during a jQuery UI search and hides again afterwards', () => {
+        makeInstance();
+        const field = liveField();
+        const el = spinner();
+
+        expect(displayOf(el)).toBe('none');
+
+        field.val('exa');
+        field.autocomplete('instance').search('exa');
+
+        // jQuery UI puts `ui-autocomplete-loading` on the input; the stylesheet
+        // turns that into a visible sibling with no JS involvement at all.
+        expect(field.hasClass('ui-autocomplete-loading')).toBe(true);
+        expect(displayOf(el)).toBe('inline-block');
+
+        ajax.last().succeed(SEARCH_RESPONSE);
+
+        expect(displayOf(el)).toBe('none');
+    });
+
+    describe('on the custom fallback path, where jQuery UI is absent', () => {
+        let savedUi;
+
+        beforeEach(() => {
+            jest.useFakeTimers();
+            savedUi = $.ui;
+            $.ui = undefined;
+        });
+
+        afterEach(() => {
+            jest.useRealTimers();
+            $.ui = savedUi;
+        });
+
+        function type(term) {
+            const input = document.querySelector("input[name='company']");
+            input.value = term;
+            input.dispatchEvent(new window.Event('input'));
+            jest.advanceTimersByTime(300);
+            return input;
+        }
+
+        test('it shows during a search and hides again afterwards', () => {
+            makeInstance();
+            const el = spinner();
+
+            expect(displayOf(el)).toBe('none');
+
+            type('exa');
+
+            // The fallback sets its own class by hand, matched by the same
+            // sibling rule - one CSS contract for both paths.
+            expect(liveField().hasClass('two-company-search-loading')).toBe(true);
+            expect(displayOf(el)).toBe('inline-block');
+
+            ajax.last().succeed(SEARCH_RESPONSE);
+
+            expect(displayOf(el)).toBe('none');
+        });
+
+        test('a failed search hides it again', () => {
+            makeInstance();
+            const el = spinner();
+            type('exa');
+
+            ajax.last().fail('timeout');
+
+            expect(displayOf(el)).toBe('none');
+        });
+
+        test('it still shows with the dropdown container sitting between it and the input', () => {
+            makeInstance();
+            const input = liveField().get(0);
+            const el = spinner();
+
+            // This path inserts its dropdown container directly after the input,
+            // so the spinner is NOT the input's adjacent sibling here. That is
+            // exactly why the stylesheet uses the general sibling combinator: an
+            // adjacent one (`+`) would match the container and the spinner would
+            // never appear on this path, with the class assertions still passing.
+            expect(el.previousElementSibling).not.toBe(input);
+            expect(input.nextElementSibling.classList.contains('two-autocomplete-container')).toBe(true);
+
+            type('exa');
+
+            expect(displayOf(el)).toBe('inline-block');
+        });
+
+        test('repeated setup on this path still leaves exactly one', () => {
+            const search = makeInstance();
+            for (let i = 0; i < 10; i += 1) {
+                search.setupAutocomplete();
+            }
+
+            expect(spinners()).toHaveLength(1);
+            expect($('.two-autocomplete-container')).toHaveLength(1);
+        });
+
+        test('a re-render on this path re-creates one and only one', () => {
+            const search = makeInstance();
+            const newField = replaceAddressForm();
+
+            search.setupAutocomplete();
+
+            expect(spinners()).toHaveLength(1);
+            // A FOLLOWING sibling, not necessarily the adjacent one - this path's
+            // dropdown container sits in between. That is the relationship the
+            // stylesheet's general sibling combinator actually needs.
+            expect(spinner().parentNode).toBe(newField.parentNode);
+            expect(newField.compareDocumentPosition(spinner())
+                & window.Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        });
     });
 });
 

@@ -7,16 +7,27 @@
 /**
  * In-field company-search spinner.
  *
- * Restored from the commented-out legacy rule. Two changes from that version:
- * it is scoped to the company field itself (`.two-company-search-input`, added
- * by TwoCompanySearch.setupAutocomplete) rather than to every autocomplete in
- * `.js-address-form`, and it sets only background-image/position rather than the
- * `background` shorthand, so it no longer forces a white background over
- * whatever the merchant's theme gives the input.
+ * Drawn entirely in CSS. It used to be an animated GIF set as the input's
+ * `background-image`, which shipped a binary asset, could not take the
+ * merchant's or a brand overlay's colour, and rendered at one fixed pixel size
+ * whatever the field's own type size was.
  *
- * `ui-autocomplete-loading` is applied by jQuery UI on the live path;
+ * A pure-CSS spinner cannot be a background-image, and an `input` accepts
+ * neither `::before` nor `::after`, so the spinner is now a REAL element -
+ * a `<span class="two-company-search-spinner">` that
+ * TwoCompanySearch.ensureSpinnerElement() inserts once, immediately after the
+ * company input, and that survives an address-form re-render by being
+ * re-created against the replaced field.
+ *
+ * Visibility is still driven purely by the loading class on the INPUT, via a
+ * sibling combinator, so neither render path needs to know the spinner exists:
+ * `ui-autocomplete-loading` is applied by jQuery UI on the live path, and
  * `two-company-search-loading` is applied by hand on the custom fallback path,
  * where jQuery UI is absent.
+ *
+ * The GENERAL sibling combinator (`~`), not the adjacent one (`+`), on purpose.
+ * The fallback path inserts its own dropdown container as a sibling of the same
+ * input, so "the node directly after the input" is not reliably the spinner.
  */
 /* Reserved unconditionally, not only while loading: toggling the padding with
    the spinner reflowed the field's text in and out on every keystroke. */
@@ -24,13 +35,119 @@
     padding-right: 32px;
 }
 
-.two-company-search-input.ui-autocomplete-loading,
-.two-company-search-input.two-company-search-loading {
-    background-image: url("../img/loader.gif");
-    background-repeat: no-repeat;
-    background-position: right 8px center;
-    /* loader.gif is 16x16; pinned so a themed input cannot scale it. */
-    background-size: 16px 16px;
+/* The spinner is absolutely positioned, so the element it sits inside has to be
+   a containing block. Added by ensureSpinnerElement() to the input's own parent
+   - in PrestaShop's address form that is the column wrapping this one field, so
+   centring against it centres against the input. `position: relative` with no
+   offsets moves nothing on its own, so a theme's layout is unaffected. */
+.two-company-search-field {
+    position: relative;
+}
+
+/* Sits in the 32px of padding reserved above.
+ *
+ * NEVER centre this with `transform: translateY(-50%)`. The keyframes below
+ * animate `transform`, so the animation would overwrite the centring on its very
+ * first frame and drop the spinner half its height out of the field. `top` with
+ * `calc` does the same job and leaves `transform` to the animation; the box is
+ * 1em square, hence the half-em offset. A test asserts no `transform` resolves
+ * on this element for exactly that reason.
+ *
+ * Because it is absolutely positioned it is out of flow, so where the span sits
+ * among its siblings does not affect where it renders. */
+.two-company-search-spinner {
+    position: absolute;
+    right: 8px;
+    top: calc(50% - 0.5em);
+    /* Matches the size the GIF was pinned to, independent of the field's own
+       type size. Set via font-size, not width/height, so the mask geometry
+       below stays proportional. */
+    font-size: 16px;
+    pointer-events: none;
+}
+
+/* THE SELECTOR BELOW MUST STAY A SINGLE FLAT CLASS.
+   A brand overlay recolours the spinner with a flat single-class rule and wins
+   on stylesheet load order. Raising the specificity here (by scoping it to the
+   input, say) would silently stop branded recolouring working, with nothing in
+   CI failing. */
+.two-company-search-spinner {
+    /* Appearance only - `display` is deliberately NOT set here, it belongs to the
+       visibility rules below.
+       Those rules have to be the last word on `display` by document order AND by
+       specificity, not just one of the two. In a browser specificity decides; in
+       jsdom, which the Jest suite renders in, there is no specificity at all and
+       the last matching rule in source order wins. A `display` declaration here
+       would therefore be beaten by the hiding rule under test and beat it in a
+       browser - green suite, broken page. */
+    width: 1em;
+    height: 1em;
+    border-radius: 50%;
+
+    /* Colour: an overlay sets --two-spinner-color once and is done. Falls back
+       to the inherited text colour. */
+    color: var(--two-spinner-color, currentColor);
+
+    /* 12 spokes: a 30deg period with 10deg of ink in each.
+       `repeating-conic-gradient` needs Safari 12.1 / Chrome 79 / Firefox 83, and
+       where it is missing the gradient simply does not parse and no spinner is
+       drawn. No `@supports` fallback, deliberately: this stylesheet already ships
+       `inset` (`.two-loading-overlay`), whose support floor is Safari 14.1 and
+       Chrome 87 - strictly NEWER than the conic gradient's. A fallback here would
+       guard a browser the rest of the file has already given up on. */
+    background: repeating-conic-gradient(
+        from 0deg,
+        currentColor 0deg 10deg,
+        transparent 10deg 30deg
+    );
+
+    /* Punch the middle out so the spokes read as spokes and not as a pie. */
+    -webkit-mask: radial-gradient(farthest-side, transparent 38%, #000 40%);
+            mask: radial-gradient(farthest-side, transparent 38%, #000 40%);
+
+    /* `linear`, and DELIBERATELY NOT a stepped timing function.
+       The spoke pattern above has a 30deg period, and `steps(12, end)` over one
+       turn advances in 30deg increments - so every step maps the pattern exactly
+       onto itself and the element renders COMPLETELY MOTIONLESS. The same trap
+       catches any step count whose increment is a whole multiple of the spoke
+       period (12, 6, 4, 3...), and it fails silently: the spinner is present,
+       correctly coloured, correctly sized and simply never moves. If you want a
+       mechanical tick rather than a glide, the step count has to be coprime with
+       the 12 spokes, not equal to it.
+       `two-spin` is the stylesheet's existing "one full turn" keyframes, reused
+       here rather than declaring a second identical pair - see its definition
+       further down, which notes that it is now shared. */
+    animation: two-spin 1s linear infinite;
+}
+
+/* Visibility. Hidden unless a search is in flight, driven entirely from the
+   loading class on the INPUT so that neither render path has to know the spinner
+   exists - jQuery UI sets `ui-autocomplete-loading` itself, and the custom
+   fallback sets `two-company-search-loading` by hand.
+ *
+ * These two rules come last in the file on purpose: see the document-order note
+ * in the appearance rule above.
+ *
+ * The hiding rule is deliberately UNCONDITIONAL rather than sibling-scoped. A
+ * sibling-scoped hide would leave a span whose input has lost
+ * `two-company-search-input` matching neither rule, so it would fall back to the
+ * UA default of `display: inline` and spin forever. Hidden-unless-told-otherwise
+ * is the right default for an element whose whole job is to appear briefly. */
+.two-company-search-spinner {
+    display: none;
+}
+
+.two-company-search-input.ui-autocomplete-loading ~ .two-company-search-spinner,
+.two-company-search-input.two-company-search-loading ~ .two-company-search-spinner {
+    display: inline-block;
+}
+
+/* A loading indicator has to keep indicating, so slow it rather than stopping
+   it - a frozen spinner reads as a hung page. */
+@media (prefers-reduced-motion: reduce) {
+    .two-company-search-spinner {
+        animation-duration: 3s;
+    }
 }
 
 /* "Search unavailable" row - a message, not a selectable company. */
@@ -384,6 +501,10 @@
     font-weight: 500;
 }
 
+/* Shared: used by `.two-loading-spinner` (the eligibility overlay's rotating arc)
+   above and by `.two-company-search-spinner` (the in-field company-search spokes)
+   near the top of this file. Both want exactly one full turn, so do not narrow it
+   to either caller, and do not delete it with either one. */
 @keyframes two-spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
@@ -1173,11 +1294,13 @@
     color: #dc3545;
 }
 
-/* Autocomplete Loading Indicator */
-.ui-autocomplete-loading {
-    background: white url("../img/loader.gif") right center no-repeat !important;
-    padding-right: 25px !important;
-}
+/* The unscoped `.ui-autocomplete-loading` GIF rule that used to live here is
+   gone with the GIF. It was a second, broader copy of the in-field spinner - it
+   matched EVERY jQuery UI autocomplete on the page rather than the company field,
+   and forced a white background and its own padding with `!important`. Because it
+   was unscoped it kept rendering the GIF even once the scoped rule stopped, so
+   both had to go together. The replacement is the element-based spinner at the
+   top of this file; its padding reservation lives on `.two-company-search-input`. */
 
 /* Autocomplete Dropdown Styling */
 .ui-autocomplete {

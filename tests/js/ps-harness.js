@@ -73,6 +73,31 @@ function installJQuery() {
 }
 
 /**
+ * Load one of the module's REAL stylesheets into the jsdom document.
+ *
+ * The in-field company-search spinner is shown and hidden by CSS alone - a
+ * sibling combinator keyed off the loading class on the input - so a test that
+ * only asserted on classes and on the presence of the element would pass with a
+ * spinner that is permanently invisible, or permanently visible. jsdom applies
+ * the cascade for selectors of this shape, so `getComputedStyle(...).display`
+ * exercises the actual rule that ships.
+ *
+ * Not automatic: only the tests that assert on rendered appearance need it, and
+ * jsdom's CSS parser drops declarations it does not understand, so the rest of
+ * the suite should not be made to depend on it.
+ *
+ * @param {string} relPath repo-relative path, e.g. 'views/css/two.css'
+ * @returns {HTMLStyleElement} the injected <style>
+ */
+function installStylesheet(relPath) {
+    const css = fs.readFileSync(path.join(REPO_ROOT, relPath), 'utf8');
+    const style = global.document.createElement('style');
+    style.textContent = css;
+    global.document.head.appendChild(style);
+    return style;
+}
+
+/**
  * Minimal stand-in for PrestaShop's front-office event bus.
  *
  * Note the deliberate absence of an `off`: the real bus has none either, which
@@ -311,6 +336,7 @@ module.exports = {
     flushPromises: flushPromises,
     loadCompanySearch: loadCompanySearch,
     loadScript: loadScript,
+    installStylesheet: installStylesheet,
     buildAddressForm: buildAddressForm,
     replaceAddressForm: replaceAddressForm,
     stubAjax: stubAjax,

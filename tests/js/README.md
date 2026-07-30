@@ -151,6 +151,32 @@ form (which it does for something as ordinary as a country change):
 - the custom fallback used when jQuery UI is absent: its own spinner clears on failure,
   survives a superseded request, and repeated setup leaves exactly one dropdown rather
   than orphan containers listening on the shared field.
+- the in-field spinner **element** (TWO-25288). The spinner is drawn in CSS now rather than
+  being a background GIF on the input, so it is a real `<span>` sibling with a DOM lifecycle
+  of its own — it can be inserted twice, orphaned by a re-render, or end up on the wrong
+  side of the fallback dropdown, none of which a background-image could do. Pinned on
+  **both** render paths, because they share the CSS contract but not a line of the code that
+  arms it: exactly one spinner after ten repeated setups, ten country changes, a whole-form
+  re-render and a theme that swaps only the input; `destroy()` removing the element and the
+  containing-block class, not just the classes; no `transform` resolving on the element,
+  since the animation owns that property and would overwrite `translateY(-50%)` centring on
+  its first frame; and the animation not being stepped — the spokes have a 30deg period, so
+  `steps(12, end)` maps the pattern onto itself and renders a spinner that never moves,
+  which a test asserting only the keyframes *name* would have passed.
+
+  One case exists specifically to pin the **general** sibling combinator: the fallback path
+  inserts its dropdown container directly after the input, so on that path the spinner is
+  not the input's adjacent sibling and a `+` selector would match the container instead —
+  spinner permanently invisible on that path, every class assertion still green.
+
+  These are the only tests here that load a **stylesheet** (`installStylesheet()` in the
+  harness). Visibility is decided entirely by a sibling selector keyed off the loading class
+  on the input, so asserting on classes and on the element's presence would pass with a
+  spinner that is permanently invisible. They read `getComputedStyle(...).display` against
+  the real `views/css/two.css` instead. Note that jsdom cascades by **document order alone**,
+  with no specificity: the stylesheet's `display` rules are ordered so that order and
+  specificity give the same answer, and a `display` declaration added to the spinner's
+  appearance rule would pass here while being wrong in a browser.
 
 ## Known gaps
 
