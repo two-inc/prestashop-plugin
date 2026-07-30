@@ -9244,7 +9244,7 @@ class Twopayment extends PaymentModule
             return '';
         }
 
-        return $this->l('Surcharge tax needs re-selection: this shop previously used a flat surcharge tax rate, which has been replaced by a tax rules group. Until you select and save a "Surcharge Tax Rules Group" under Payment settings, the surcharge is NOT taxed.');
+        return $this->l('Surcharge tax needs re-selection: this shop previously used a flat surcharge tax rate, which has been replaced by a tax rules group. Until you select and save a "Surcharge Tax Treatment" under Payment settings, the surcharge is NOT taxed.');
     }
 
     /**
@@ -10628,9 +10628,13 @@ class Twopayment extends PaymentModule
         );
         $inputs[] = array(
             'type' => 'select',
-            'label' => $this->l('Surcharge Tax Rules Group'),
+            // Label matches the Magento and WooCommerce selectors verbatim
+            // (TWO-25279) - the field is the merchant's tax treatment
+            // decision, and the fact that PrestaShop expresses it as a tax
+            // rules group is an implementation detail of this platform.
+            'label' => $this->l('Surcharge Tax Treatment'),
             'name' => self::CONFIG_SURCHARGE_TAX_RULES_GROUP,
-            'desc' => $this->l('Tax rules group applied to the payment terms fee - the same tax rules groups you assign to products. Country and state rules, combined rates and zero-rating apply exactly as they do for any product. Select "No tax" to never tax the fee. A selection is required while surcharges are enabled.'),
+            'desc' => $this->l('Tax rules group applied to the payment terms fee - the same tax rules groups you assign to products. Country and state rules, combined rates and zero-rating apply exactly as they do for any product. To leave the fee untaxed, create a tax rules group with a 0% rate and select it here. A selection is required while surcharges are enabled.'),
             'options' => array(
                 'query' => $this->getTwoSurchargeTaxRulesGroupOptions(),
                 'id' => 'id',
@@ -10718,20 +10722,38 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Dropdown options for the surcharge tax rules group: an unselected
+     * Dropdown options for the surcharge tax treatment: an unselected
      * placeholder (id '' - never a valid selection, save-blocked while
-     * surcharges are enabled, see validTwoSurchargeFormValues), then
-     * PrestaShop's "No tax" sentinel (id 0), then the merchant's active tax
-     * rules groups - the same list core's own product-edit page offers (its
+     * surcharges are enabled, see validTwoSurchargeFormValues), then the
+     * merchant's active tax rules groups - the same list core's own
+     * product-edit page offers (its
      * TaxRulesGroup::getTaxRulesGroupsForOptions duplicates a group per
-     * rate, so the deduplicated getTaxRulesGroups source is used with the
-     * same manual "No tax" prepend). Ids are emitted as STRINGS so the
-     * form template's loose == never conflates the placeholder ('') with
-     * "No tax" ('0') on PHP 7 shops ('' == 0 is true there). The
-     * currently-configured group is ALWAYS present even when deactivated
-     * (suffixed "(inactive)"): if a stale selection dropped out of the
-     * list, the browser would submit the first option (the placeholder) on
-     * the next unrelated settings save and silently unset the treatment.
+     * rate, so the deduplicated getTaxRulesGroups source is used). Ids are
+     * emitted as STRINGS so the form template's loose == never conflates
+     * the placeholder ('') with "No tax" ('0') on PHP 7 shops ('' == 0 is
+     * true there).
+     *
+     * PrestaShop's built-in "No tax" sentinel (id 0) is NOT offered for new
+     * selections (TWO-25279). It is a core default rather than a tax rules
+     * group the merchant set up, and choosing it silently means "the fee is
+     * never taxed, in any country" - a tax decision the merchant never
+     * made explicitly. Same rule across WooCommerce / PrestaShop /
+     * Magento: an untaxed treatment must be a rule the merchant built.
+     *
+     * It IS re-offered when it is already the stored selection, and that
+     * carve-out is load-bearing rather than cosmetic: a select cannot
+     * render a value absent from its options, so the browser would submit
+     * the first option (the placeholder) on the next unrelated settings
+     * save, and validTwoSurchargeFormValues would then reject that save
+     * outright while surcharges are enabled - locking the merchant out of
+     * saving any Payment setting. Read through
+     * getTwoSurchargeTaxRulesGroupFormDefault(), never
+     * getTwoSurchargeTaxRulesGroupId(), because the latter collapses
+     * unset/blank/garbage to 0 and would re-offer "No tax" to every shop
+     * that has not chosen yet.
+     *
+     * The currently-configured group is ALWAYS present even when
+     * deactivated (suffixed "(inactive)"), for the same reason.
      *
      * @return array<int,array{id:string,name:string}>
      */
@@ -10739,8 +10761,10 @@ class Twopayment extends PaymentModule
     {
         $options = array(
             array('id' => '', 'name' => $this->l('-- Select surcharge tax treatment --')),
-            array('id' => '0', 'name' => $this->l('No tax')),
         );
+        if ($this->getTwoSurchargeTaxRulesGroupFormDefault() === '0') {
+            $options[] = array('id' => '0', 'name' => $this->l('No tax'));
+        }
         $groups = TaxRulesGroup::getTaxRulesGroups(true);
         $seen = array(0 => true);
         foreach ((array) $groups as $group) {
@@ -10845,14 +10869,21 @@ class Twopayment extends PaymentModule
         $groupRaw = Tools::getValue(self::CONFIG_SURCHARGE_TAX_RULES_GROUP);
         $groupTrimmed = is_string($groupRaw) ? trim($groupRaw) : '';
         if ($groupTrimmed === '') {
-            $this->errors[] = $this->l('Select a surcharge tax treatment: surcharges are enabled, so you must explicitly choose a tax rules group (or "No tax") before saving.');
+            $this->errors[] = $this->l('Select a surcharge tax treatment: surcharges are enabled, so you must explicitly choose a tax rules group before saving.');
         } else {
             // ctype_digit: a whole non-negative integer only - '0.5', '-5'
             // and friends are rejected, never truncated into a selection
             // the merchant did not make.
+            //
+            // 0 ("No tax") is still ACCEPTED here even though it is no
+            // longer offered for new selections (TWO-25279): a shop that
+            // already stores it re-submits it on every unrelated save, and
+            // rejecting it would lock that shop out of saving any Payment
+            // setting. The suppression is in the option list, which is what
+            // stops anyone newly choosing it.
             $groupId = ctype_digit($groupTrimmed) ? (int) $groupTrimmed : -1;
             if ($groupId < 0 || ($groupId > 0 && !Validate::isLoadedObject(new TaxRulesGroup($groupId)))) {
-                $this->errors[] = $this->l('Surcharge tax rules group must be "No tax" or one of the shop\'s existing tax rules groups.');
+                $this->errors[] = $this->l('Surcharge tax treatment must be one of the shop\'s existing tax rules groups.');
             }
         }
         foreach ($this->getAvailablePaymentTerms() as $days) {
