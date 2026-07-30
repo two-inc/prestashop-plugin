@@ -8905,7 +8905,8 @@ class Twopayment extends PaymentModule
      *    a zero cap means the surcharge is simply not applied. It is NOT read
      *    as "no cap", and there is no overcharge to guard against. (Source
      *    references live on TWO-25269, not here: this repository is public
-     *    and that service's is not.)     *  - A fixed `surcharge` that converts to 0.00 is a legitimately tiny
+     *    and that service's is not.)
+     *  - A fixed `surcharge` that converts to 0.00 is a legitimately tiny
      *    configured amount, genuinely negligible in a stronger currency, and
      *    0.00 is the arithmetically correct answer. Logged at info level.
      *
