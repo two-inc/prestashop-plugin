@@ -3427,6 +3427,12 @@ class Twopayment extends PaymentModule
         $this->context->controller->registerJavascript('two-order-intent', 'modules/twopayment/views/js/modules/TwoOrderIntent.js', array('priority' => 202, 'async' => false));
         $this->context->controller->registerJavascript('two-sole-trader', 'modules/twopayment/views/js/modules/TwoSoleTrader.js', array('priority' => 204, 'async' => false));
         $this->context->controller->registerJavascript('two-optional-fields', 'modules/twopayment/views/js/modules/TwoOptionalFields.js', array('priority' => 204, 'async' => false));
+        // Read-only company summary in the payment tile (TWO-25288). Before
+        // TwoCompanySearch (201) would be wrong: that module calls into this one
+        // on every capture change, so this one has to be defined by then, and a
+        // HIGHER priority number here would leave it undefined for the first
+        // selection on a fast address step. 200 puts it first.
+        $this->context->controller->registerJavascript('two-company-summary', 'modules/twopayment/views/js/modules/TwoCompanySummary.js', array('priority' => 200, 'async' => false));
         // Phone validation removed - Two API handles phone number validation
         $this->context->controller->registerJavascript('two-checkout-manager', 'modules/twopayment/views/js/modules/TwoCheckoutManager.js', array('priority' => 205, 'async' => false));
         $this->context->controller->registerJavascript('two-script', 'modules/twopayment/views/js/twopayment.js', array('priority' => 206, 'async' => false));

@@ -368,6 +368,25 @@ class TwoSoleTrader {
             .then(function (json) {
                 if (json && json.success) {
                     self.showStatus(companyLabel);
+                    // Feed the tile's read-only company summary (TWO-25288).
+                    // Pushed rather than read from the DOM because this flow
+                    // writes neither the address form's `company` input nor the
+                    // hidden `companyid` one - the enrolled pair only ever
+                    // exists in this response and in the server session, so
+                    // there is nothing on the page for the summary to find.
+                    // The name may legitimately be blank here: a sole trader
+                    // often trades under their own name, which is exactly why
+                    // companyLabel above falls back to the number.
+                    try {
+                        if (window.TwoCompanySummary && typeof window.TwoCompanySummary.setSoleTrader === 'function') {
+                            window.TwoCompanySummary.setSoleTrader({
+                                name: buyer.company_name || '',
+                                number: buyer.organization_number || ''
+                            });
+                        }
+                    } catch (e) {
+                        // Display only; never fail the enrolment over it.
+                    }
                     self.hidePrompt();
                     self.stopObserving();
                     document.dispatchEvent(new CustomEvent('two:sole-trader-ready'));
