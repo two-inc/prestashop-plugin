@@ -138,6 +138,19 @@ final class AssetCacheBustingSpec
      * captured whole, and a decoy elsewhere in the body can no longer stand
      * in for tokens the call itself must carry.
      *
+     * Paren-counting is string-literal-aware (round-3 adversarial review,
+     * Vader): a literal '(' or ')' inside a single- or double-quoted PHP
+     * string argument is valid code and must not perturb the depth count,
+     * or a call whose id/path string happens to contain a stray paren could
+     * either truncate its own capture early or run past its closing paren
+     * into the NEXT call's text - silently dropping that next call from the
+     * results (which the exact-count assertion below exists to catch) or, in
+     * the worst case, absorbing so much text that a later strpos() offset
+     * moves past a real call site entirely. Not exploitable against any
+     * current asset id/path in this module (verified: none contain '(', ')',
+     * '//', or '/*'), but the scanner itself must not depend on that staying
+     * true forever.
+     *
      * @return array<int, string> one entry per call site found
      */
     private static function extractCallStatements(string $source, string $methodCall): array
@@ -151,18 +164,37 @@ final class AssetCacheBustingSpec
             TinyAssert::true($parenStart !== false, "malformed call site for {$methodCall} - no opening paren found");
 
             $depth = 0;
+            $quoteChar = null;
             $i = $parenStart;
             for (; $i < $length; $i++) {
-                if ($source[$i] === '(') {
+                $char = $source[$i];
+
+                if ($quoteChar !== null) {
+                    if ($char === '\\') {
+                        ++$i; // skip the escaped character (e.g. \' or \\), it can't end the string
+                        continue;
+                    }
+                    if ($char === $quoteChar) {
+                        $quoteChar = null;
+                    }
+                    continue;
+                }
+
+                if ($char === "'" || $char === '"') {
+                    $quoteChar = $char;
+                    continue;
+                }
+
+                if ($char === '(') {
                     ++$depth;
-                } elseif ($source[$i] === ')') {
+                } elseif ($char === ')') {
                     --$depth;
                     if ($depth === 0) {
                         break;
                     }
                 }
             }
-            TinyAssert::true($depth === 0, "unbalanced parens for {$methodCall} call starting at offset {$pos}");
+            TinyAssert::true($depth === 0 && $quoteChar === null, "unbalanced parens or unterminated string for {$methodCall} call starting at offset {$pos}");
 
             $statements[] = substr($source, $pos, $i - $pos + 1);
             $offset = $i + 1;
@@ -219,15 +251,23 @@ final class AssetCacheBustingSpec
             );
         }
 
-        $callStatements = array_merge(
+        $frontStatements = array_merge(
             self::extractCallStatements($frontBody, '->registerJavascript('),
-            self::extractCallStatements($frontBody, '->registerStylesheet('),
-            self::extractCallStatements($adminBody, '->registerStylesheet(')
+            self::extractCallStatements($frontBody, '->registerStylesheet(')
         );
+        $adminStatements = self::extractCallStatements($adminBody, '->registerStylesheet(');
 
-        TinyAssert::true(count($callStatements) >= 8, 'expected at least 8 register*() call sites (7+ checkout, 1+ admin), found ' . count($callStatements));
+        // Exact counts, not a loose ">=" floor (round-3 adversarial review,
+        // Han): a floor only catches a surviving call site reverting its
+        // pattern, not a whole call site vanishing outright - which is
+        // exactly the silent-asset-drop failure mode TWO-53PS caused. These
+        // numbers are the real current count of register*() calls in each
+        // hook; update them deliberately if a call site is ever added or
+        // removed on purpose.
+        TinyAssert::same(8, count($frontStatements), 'expected exactly 8 register*() call sites in hookActionFrontControllerSetMedia() (1 CSS + 7 JS), found ' . count($frontStatements) . ' - a call site was added, removed, or renamed');
+        TinyAssert::same(1, count($adminStatements), 'expected exactly 1 registerStylesheet() call site in hookActionAdminControllerSetMedia(), found ' . count($adminStatements) . ' - it was added, removed, or renamed');
 
-        foreach ($callStatements as $statement) {
+        foreach (array_merge($frontStatements, $adminStatements) as $statement) {
             TinyAssert::true(
                 strpos($statement, 'getTwoModuleAssetPath(') !== false,
                 "register*() call must build its path via getTwoModuleAssetPath(), got: {$statement}"
