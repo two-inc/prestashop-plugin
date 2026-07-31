@@ -104,8 +104,12 @@ When adding/changing user-facing strings:
 1. Wrap PHP strings with `$this->l(...)`.
 2. For JS, expose keys via `Media::addJsDef(... 'i18n' => [...])` in `twopayment.php`.
 3. Consume keys in JS; avoid raw English literals for user-facing errors/messages.
-4. Add/update `translations/es.php` with natural Spanish, not literal machine phrasing.
+4. Add/update every locale in `translations/` — `es.php`, `nl.php`, `no.php`, `sv.php` — with
+   natural phrasing, not literal machine output. Dutch uses the informal `je`/`jouw` register.
 5. Re-check template `{l s=... mod='twopayment'}` coverage.
+6. Edit those files by hand. Do not regenerate them from the back office translation screen:
+   it keys module PHP strings by filename, while the runtime looks them up under the module
+   name, so a save there produces rows nothing reads. See the i18n section of `AGENTS.md`.
 
 ## 7) Tax and Amount Safety
 
