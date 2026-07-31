@@ -132,9 +132,18 @@
                 var showPercentage = (type === 'percentage' || type === 'fixed_and_percentage');
                 var showFixed = (type === 'fixed' || type === 'fixed_and_percentage');
                 var showCap = (type === 'percentage' || type === 'fixed_and_percentage');
-                grid.find('.two-col-percentage').toggle(showPercentage);
-                grid.find('.two-col-fixed').toggle(showFixed);
-                grid.find('.two-col-cap').toggle(showCap);
+                // Scoped to the whole form-group rather than the table, so the
+                // cap help text BELOW the grid is hidden with the cap column
+                // rather than left on screen describing a field the merchant
+                // cannot see (TWO-25289). Falls back to the table if the
+                // form-group does not resolve - the markup nests differently
+                // across PrestaShop majors, and before this rescoping an
+                // unresolved gridGroup only broke the whole-grid hide/show;
+                // it must not now also break the column toggles.
+                var scope = gridGroup.length ? gridGroup : grid;
+                scope.find('.two-col-percentage').toggle(showPercentage);
+                scope.find('.two-col-fixed').toggle(showFixed);
+                scope.find('.two-col-cap').toggle(showCap);
             }
             updateSurchargeGridVisibility();
             $('select[name="PS_TWO_SURCHARGE_TYPE"]').on('change', updateSurchargeGridVisibility);

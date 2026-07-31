@@ -401,3 +401,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_6fd95deaadec67e72965ee1c5a8d81cf'] 
 $_MODULE['<{twopayment}prestashop>twopayment_11379daccc4d43380822ecb7bc5bc1b7'] = 'Introduce %d o más caracteres';
 $_MODULE['<{twopayment}prestashop>twopayment_a305be9a7fd5f6541e913ce81317976d'] = 'Mi empresa no está en la lista';
 $_MODULE['<{twopayment}prestashop>twopayment_070800fb9c7ae071aff6e63bded5c3c2'] = 'Buscar empresa';
+$_MODULE['<{twopayment}prestashop>twopayment_88d53497f4a92958c67c73a9f2f52df3'] = 'Límite';
+$_MODULE['<{twopayment}prestashop>twopayment_e1f3e840de378499e19505d283e4601d'] = 'El límite del recargo para el plazo de %d días no puede ser 0. Si no quieres cobrar nada en este plazo, establece el porcentaje y la cuota fija en 0 y deja el límite vacío.';
+$_MODULE['<{twopayment}prestashop>twopayment_128ce19a81ca82c86adfed35ed88578a'] = 'El límite se aplica a la totalidad de la cuota: el porcentaje y la cuota fija juntos, no solo el porcentaje. Déjalo vacío para no aplicar ningún límite.';
+$_MODULE['<{twopayment}prestashop>twopayment_822f646e52655f26a80e2b6d0c79f41c'] = 'No se permite un límite de 0. Si no quieres cobrar nada en un plazo, establece el porcentaje y la cuota fija de ese plazo en 0.';

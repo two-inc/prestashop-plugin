@@ -47,6 +47,11 @@ final class SurchargeSpec
         self::testNeverTaxedNoticeReportsAStoredSentinel();
         self::testSurchargeTaxRulesGroupFormDefaultRequiresExplicitChoice();
         self::testSurchargeTaxTreatmentRequiredWhenSurchargesEnabled();
+        self::testSurchargeCapOfZeroIsRefusedOnSave();
+        self::testSurchargeCapZeroRuleIsSkippedWhileTheCapColumnIsHidden();
+        self::testSurchargeCapZeroRuleCoversTermsOutsideTheStoredTickedSubset();
+        self::testConfiguredZeroCapIsRelayedVerbatimAndAbsenceMeansUncapped();
+        self::testMonetaryMembersAreRoundedToTwoDecimalPlaces();
         self::testUpgrade250FlagsFlatRateShopsForTaxReselection();
         self::testSurchargeTaxMigrationNoticeLifecycle();
         self::testSurchargeLineItemUsesSelectedGroupDestinationRate();
@@ -76,7 +81,9 @@ final class SurchargeSpec
         $settings = [
             'type' => 'percentage',
             'differential' => false,
-            'grid' => [30 => ['percentage' => 2.5, 'fixed' => 0, 'limit' => 0]],
+            // limit null, not 0: a limit of 0 is now a real configured cap
+            // (relayed as cap => 0). Absence is what means "no cap".
+            'grid' => [30 => ['percentage' => 2.5, 'fixed' => 0, 'limit' => null]],
             'rounding_basis' => 'none',
             'rounding_step' => null,
         ];
@@ -84,7 +91,7 @@ final class SurchargeSpec
         TinyAssert::same(2.5, $share['percentage']);
         TinyAssert::same('buyer_pays', $share['surcharge_basis']);
         TinyAssert::false(isset($share['surcharge']), 'percentage-only must not send a fixed surcharge');
-        TinyAssert::false(isset($share['cap']), 'no cap when limit is 0');
+        TinyAssert::false(isset($share['cap']), 'no cap when no limit is configured');
         TinyAssert::false(isset($share['rounding']), 'no rounding block when basis is none');
         TinyAssert::false(isset($share['reference_terms']), 'no reference_terms outside differential mode');
     }
@@ -110,7 +117,7 @@ final class SurchargeSpec
         $settings = [
             'type' => 'fixed_and_percentage',
             'differential' => false,
-            'grid' => [30 => ['percentage' => 1.5, 'fixed' => 2.0, 'limit' => 0]],
+            'grid' => [30 => ['percentage' => 1.5, 'fixed' => 2.0, 'limit' => null]],
             'rounding_basis' => 'none',
             'rounding_step' => null,
         ];
@@ -722,6 +729,240 @@ final class SurchargeSpec
         $module->saveSurchargeFormForTest();
         TinyAssert::same('', (string) Configuration::get(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP), 'garbage never coerces to "No tax"');
         Tools::resetTestValues();
+    }
+
+    /**
+     * A cap of exactly 0 is refused on save (TWO-25289). It bounds the WHOLE
+     * fee - the percentage and the fixed fee together - so it silently wipes a
+     * configured fixed fee too, and the intent it gets mistaken for is
+     * expressible directly with 0% and a 0 fixed fee. A BLANK cap stays valid
+     * and still means "no cap".
+     */
+    private static function testSurchargeCapOfZeroIsRefusedOnSave(): void
+    {
+        self::reset();
+        Tools::resetTestValues();
+        StubStore::$taxRulesGroups[400] = ['name' => 'Standard rate', 'active' => 1];
+        $module = self::makeConfigHarness();
+
+        // Surcharges enabled with a valid tax treatment, so the only thing
+        // under test here is the grid.
+        Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+        Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+        foreach (['PCT', 'FIXED', 'CAP'] as $suffix) {
+            Tools::setTestValue('PS_TWO_SURCHARGE_' . $suffix . '_30', '');
+        }
+
+        // Blank cap -> allowed, and still means "no cap".
+        TinyAssert::count(0, $module->validateSurchargeFormForTest(), 'a blank cap must stay valid');
+
+        // A cap of 0, however it is typed -> blocked, with an error that says
+        // what to do instead. A SUB-CENT cap goes with it: the calculator
+        // rounds the cap to 2dp before sending, so 0.001 would pass an
+        // exact-zero check and then arrive as a hard cap of 0.00 - the very
+        // outcome being refused, one step later.
+        foreach (['0', '0.0', '0.00', '00', '0.001', '0.004'] as $zero) {
+            Tools::setTestValue('PS_TWO_SURCHARGE_CAP_30', $zero);
+            $errors = $module->validateSurchargeFormForTest();
+            TinyAssert::count(1, $errors);
+            TinyAssert::true(
+                strpos((string) $errors[0], 'cannot be 0') !== false,
+                sprintf('a cap typed as "%s" must be refused, naming zero as the problem', $zero)
+            );
+        }
+
+        // 0.005 rounds UP to 0.01, so it survives: the boundary is where the
+        // rounding lands, not an arbitrary threshold.
+        Tools::setTestValue('PS_TWO_SURCHARGE_CAP_30', '0.005');
+        TinyAssert::count(0, $module->validateSurchargeFormForTest(), 'a cap that rounds UP to 0.01 must survive');
+
+        // A positive cap -> allowed. And a zero PERCENTAGE with a zero FIXED
+        // fee is allowed too: that pair is exactly what the error tells the
+        // merchant to use instead.
+        Tools::setTestValue('PS_TWO_SURCHARGE_CAP_30', '9');
+        Tools::setTestValue('PS_TWO_SURCHARGE_PCT_30', '0');
+        Tools::setTestValue('PS_TWO_SURCHARGE_FIXED_30', '0');
+        TinyAssert::count(0, $module->validateSurchargeFormForTest(), 'a positive cap with 0% and 0 fixed must be valid');
+        Tools::resetTestValues();
+    }
+
+    /**
+     * While the cap column is HIDDEN (a surcharge type with no percentage) the
+     * zero rule is skipped. The admin JS hides the column and, since the
+     * toggle was rescoped, the help text explaining the rule with it - so
+     * refusing a legacy zero there would abort the whole Payment Settings save
+     * over a field the merchant can neither see nor read about.
+     */
+    private static function testSurchargeCapZeroRuleIsSkippedWhileTheCapColumnIsHidden(): void
+    {
+        self::reset();
+        Tools::resetTestValues();
+        StubStore::$taxRulesGroups[400] = ['name' => 'Standard rate', 'active' => 1];
+        $module = self::makeConfigHarness();
+
+        Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+        foreach (['PCT', 'FIXED'] as $suffix) {
+            Tools::setTestValue('PS_TWO_SURCHARGE_' . $suffix . '_30', '');
+        }
+        Tools::setTestValue('PS_TWO_SURCHARGE_CAP_30', '0');
+
+        // Fixed-only: the cap column is hidden, so the save must go through.
+        Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', 'fixed');
+        TinyAssert::count(0, $module->validateSurchargeFormForTest(), 'a hidden cap column must not block the save');
+
+        // Percentage: the column is visible, so the same value is refused.
+        Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+        $errors = $module->validateSurchargeFormForTest();
+        TinyAssert::true(count($errors) > 0, 'a visible cap column still refuses a zero');
+        TinyAssert::true(
+            strpos((string) $errors[0], 'cannot be 0') !== false,
+            'the error must name zero as the problem'
+        );
+        Tools::resetTestValues();
+    }
+
+    /**
+     * The zero rule must run over the RENDERED term set, not the stored ticked
+     * subset. The grid renders a row per OFFERABLE term, so a cap can be typed
+     * on a term the merchant is ticking in the SAME submit - and the ticked
+     * subset is rewritten only after this validation runs. Validating the
+     * stored subset therefore skipped that cell and stored the zero
+     * unvalidated.
+     *
+     * This test deliberately uses a NON-DEFAULT term. The two term sources
+     * disagree only where the offerable set and the ticked subset diverge:
+     * with nothing ticked, the ticked subset collapses to its
+     * DEFAULT_PAYMENT_TERM_DAYS fallback, so any assertion written on the
+     * default term is answered identically by both and cannot tell them apart.
+     */
+    private static function testSurchargeCapZeroRuleCoversTermsOutsideTheStoredTickedSubset(): void
+    {
+        self::reset();
+        Tools::resetTestValues();
+        StubStore::$taxRulesGroups[400] = ['name' => 'Standard rate', 'active' => 1];
+        $module = self::makeConfigHarness();
+
+        // The stored subset is the default term ALONE - the merchant has not
+        // ticked anything else yet.
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . Twopayment::DEFAULT_PAYMENT_TERM_DAYS, '1');
+
+        // Pick a term that is offerable but NOT in the stored subset, so the
+        // two sources genuinely answer differently.
+        $offerable = array_map('intval', Twopayment::PAYMENT_TERMS_OPTIONS);
+        $unticked = null;
+        foreach ($offerable as $candidate) {
+            if ($candidate !== Twopayment::DEFAULT_PAYMENT_TERM_DAYS) {
+                $unticked = $candidate;
+                break;
+            }
+        }
+        TinyAssert::true($unticked !== null, 'the offerable set must contain a non-default term');
+
+        // The divergence, asserted rather than assumed: the ticked subset does
+        // not contain the term, the offerable (rendered) set does.
+        TinyAssert::same(
+            [Twopayment::DEFAULT_PAYMENT_TERM_DAYS],
+            $module->getAvailablePaymentTerms(),
+            'the stored ticked subset must not contain the term under test'
+        );
+        TinyAssert::true(in_array($unticked, $offerable, true), 'the term under test must be offerable, and so rendered');
+
+        Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+        Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+        // The merchant ticks the term in THIS submit. The stored subset still
+        // does not know about it while the surcharge grid is validated.
+        Tools::setTestValue('PS_TWO_PAYMENT_TERMS_' . $unticked, '1');
+        Tools::setTestValue('PS_TWO_SURCHARGE_PCT_' . $unticked, '2.5');
+        Tools::setTestValue('PS_TWO_SURCHARGE_FIXED_' . $unticked, '');
+        Tools::setTestValue('PS_TWO_SURCHARGE_CAP_' . $unticked, '0');
+
+        $errors = $module->validateSurchargeFormForTest();
+        TinyAssert::count(1, $errors, 'a zero cap on a rendered-but-not-yet-ticked term must be refused');
+        TinyAssert::true(
+            strpos((string) $errors[0], 'cannot be 0') !== false,
+            'the error must name zero as the problem'
+        );
+        TinyAssert::true(
+            strpos((string) $errors[0], (string) $unticked . '-day') !== false,
+            sprintf('the error must name the %d-day term, proving the rendered set was walked', $unticked)
+        );
+
+        // A positive cap on that same term still saves, so the rule is about
+        // the value and not about the term being outside the stored subset.
+        Tools::setTestValue('PS_TWO_SURCHARGE_CAP_' . $unticked, '9');
+        TinyAssert::count(0, $module->validateSurchargeFormForTest(), 'a positive cap on the same term must be valid');
+        Tools::resetTestValues();
+    }
+
+    /**
+     * The settings read must keep ABSENT and ZERO distinguishable, and the
+     * calculator must relay a configured zero rather than dropping it. An
+     * unset Configuration key reads back as false and (float) false is 0.0,
+     * so the naive cast conflated the two - and the calculator's old `> 0`
+     * filter then turned a configured 0 into "no cap", relaying the
+     * percentage UNCAPPED. That is the overcharge TWO-25289 closes.
+     */
+    private static function testConfiguredZeroCapIsRelayedVerbatimAndAbsenceMeansUncapped(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'fixed_and_percentage');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '2.5');
+        Configuration::updateValue('PS_TWO_SURCHARGE_FIXED_30', '3');
+        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', '0');
+        $module = new TwopaymentTestHarness();
+        $settings = $module->getTwoSurchargeSettings();
+        TinyAssert::same(0.0, $settings['grid'][30]['limit'], 'a stored 0 is a real cap, not an absence');
+        $share = $module->buildTwoBuyerFeeShare(30);
+        TinyAssert::true(array_key_exists('cap', $share), 'a configured zero cap must not be dropped from the payload');
+        TinyAssert::same(0.0, $share['cap'], 'a configured zero cap is relayed as 0, never as "no cap"');
+
+        // Blank cap -> null through the settings read, and no `cap` key at
+        // all on the wire, which is what "uncapped" means.
+        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', '');
+        $settings = $module->getTwoSurchargeSettings();
+        TinyAssert::same(null, $settings['grid'][30]['limit'], 'a blank cap reads back as null, not 0.0');
+        $share = $module->buildTwoBuyerFeeShare(30);
+        TinyAssert::false(array_key_exists('cap', $share), 'an unconfigured cap sends no cap key');
+
+        // Non-numeric is absent too, NOT a zero cap. Without the is_numeric
+        // gate it would cast to 0.0 and become a real cap of zero, silently
+        // suppressing the whole fee on a shop that was previously uncapped.
+        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', 'abc');
+        $settings = $module->getTwoSurchargeSettings();
+        TinyAssert::same(null, $settings['grid'][30]['limit'], 'a non-numeric stored cap is absent, not 0.0');
+        TinyAssert::false(
+            array_key_exists('cap', $module->buildTwoBuyerFeeShare(30)),
+            'a non-numeric stored cap must never be relayed as a zero cap'
+        );
+
+        // A NEGATIVE stored cap is absent as well. Letting a zero through must
+        // not also let a negative through.
+        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', '-10');
+        $settings = $module->getTwoSurchargeSettings();
+        TinyAssert::same(null, $settings['grid'][30]['limit'], 'a negative stored cap is absent, not -10.0');
+        TinyAssert::false(
+            array_key_exists('cap', $module->buildTwoBuyerFeeShare(30)),
+            'a negative stored cap must never be relayed'
+        );
+    }
+
+    /**
+     * The pricing API refuses a monetary value finer than two decimal places
+     * rather than rounding it, so an over-precise configured amount was
+     * rejected upstream and surfaced to the buyer as a generic error
+     * (TWO-25289).
+     */
+    private static function testMonetaryMembersAreRoundedToTwoDecimalPlaces(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'fixed_and_percentage');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '2.5');
+        Configuration::updateValue('PS_TWO_SURCHARGE_FIXED_30', '10.999');
+        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', '20.005');
+        $module = new TwopaymentTestHarness();
+        $share = $module->buildTwoBuyerFeeShare(30);
+        TinyAssert::same(11.0, $share['surcharge'], 'the fixed fee is rounded to 2dp before the request');
+        TinyAssert::same(20.01, $share['cap'], 'the cap is rounded to 2dp before the request');
     }
 
     /**
