@@ -2117,6 +2117,13 @@ class TwoCompanySearch {
                 }
                 // Recreate autocomplete to ensure new country is used immediately
                 this.setupAutocomplete();
+                // The clears above go through `.val()` / `.removeAttr()` and
+                // fire no event, so the tile's summary would keep showing the
+                // company this country change has just discarded (TWO-25288). On
+                // core themes PrestaShop's own `updatedAddressForm` repaints it a
+                // few hundred ms later; a theme that does not re-render the
+                // address form on a country change never would.
+                this.refreshCompanySummary();
             };
             countryField.addEventListener('change', this.countryListener);
             this._boundCountrySelector = countryField;

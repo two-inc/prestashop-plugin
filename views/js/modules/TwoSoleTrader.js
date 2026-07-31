@@ -244,6 +244,18 @@ class TwoSoleTrader {
             }
         } else {
             this.hidePrompt();
+            // Forget the enrolled pair the tile's read-only summary is showing
+            // (TWO-25288). The buyer has just said they are a registered
+            // business, so the sole-trader company is no longer the one being
+            // credit-checked - and the summary's own fallback to that pair
+            // would otherwise keep asserting it until the page reloads.
+            try {
+                if (window.TwoCompanySummary && typeof window.TwoCompanySummary.setSoleTrader === 'function') {
+                    window.TwoCompanySummary.setSoleTrader(null);
+                }
+            } catch (e) {
+                // Display only; never fail the mode switch over it.
+            }
         }
     }
 
