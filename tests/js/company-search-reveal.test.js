@@ -456,6 +456,106 @@ describe('the same chip works on the custom fallback path (jQuery UI absent)', (
     });
 });
 
+describe('regressions found in adversarial review', () => {
+    test('a country change while revealed disarms the pending restore instead of resurrecting a stale pairing', () => {
+        // The country <select>'s own change handler runs on this SAME
+        // instance (unlike a genuine updatedAddressForm re-render, which
+        // destroy()s and replaces it) - so a reveal opened just before a
+        // country change must not leave its blur-restore timer armed against
+        // a snapshot captured under the PREVIOUS country.
+        jest.useFakeTimers();
+        makeInstance();
+        selectFirstResult('exa', SEARCH_RESPONSE);
+
+        chip().trigger('click');
+        liveField().trigger('blur');
+        // The country change happens inside the same window as the pending
+        // 200ms restore.
+        document.querySelector("select[name='id_country']").dispatchEvent(new window.Event('change'));
+
+        jest.advanceTimersByTime(250);
+
+        // Not the OLD company's pairing coming back from under the buyer.
+        expect(liveField().val()).toBe('');
+        expect($("input[name='companyid']").val()).toBe('');
+        expect(chipVisible()).toBe(false);
+    });
+
+    test('a deferred (GB-style) organisation number is not adopted if the buyer has since typed a different search', async () => {
+        // fetchCompanyDetails() resolves after a real network round trip;
+        // adopting it blindly would tag whatever the buyer is NOW typing with
+        // a different company's organisation number, and - since that tag is
+        // what hasConfirmedSelection() reads - cover the field they are
+        // actively using with the chip and pull it out of the tab order.
+        makeInstance();
+        selectFirstResult('exa', {
+            items: [{ name: 'Example Trading Ltd', lookup_id: 'lookup-abc' }]
+        });
+        expect(chipVisible()).toBe(false);
+
+        // The buyer moves on before the lookup resolves.
+        const field = liveField();
+        field.val('Something Else Entirely');
+        field.trigger('input');
+
+        ajax.last().succeed({ national_identifier: { id: '87654321' } });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect($("input[name='companyid']").val()).toBe('');
+        expect($("input[name='companyid']").attr('data-two-company-name')).toBeUndefined();
+        expect(chipVisible()).toBe(false);
+        expect(field.attr('tabindex')).toBeUndefined();
+        expect(field.val()).toBe('Something Else Entirely');
+    });
+
+    test('the covered field is aria-hidden while the chip shows it, and un-hidden once revealed', () => {
+        makeInstance();
+        const field = selectFirstResult('exa', SEARCH_RESPONSE);
+        expect(field.attr('aria-hidden')).toBe('true');
+
+        chip().trigger('click');
+
+        expect(field.attr('aria-hidden')).toBeUndefined();
+    });
+
+    test('two live company fields on the page each get their own chip, not one adopted from the other', () => {
+        // Simulates separate invoice/delivery address forms, each with its
+        // own input[name='company'] - createRevealChip()/removeRevealChip()
+        // must scope to THIS instance's own field, not a document-wide class
+        // lookup, or a second instance silently adopts the first's chip.
+        document.body.innerHTML = document.body.innerHTML.replace(
+            '</form>\n</div>',
+            '</form>\n</div><div class="js-address-form"><form><input type=\'text\' name=\'company2\' value=\'\' /></form></div>'
+        );
+        // Re-point the second form's field to the same selector this module
+        // reads, by giving the harness's makeInstance() a distinct selector.
+        const second = new TwoCompanySearch({
+            checkoutHost: CHECKOUT_HOST,
+            companyFieldSelector: "input[name='company2']"
+        });
+        makeInstance();
+        selectFirstResult('exa', SEARCH_RESPONSE);
+
+        second.companyField.val('Another Company Ltd');
+        second.organizationField.val('87654321');
+        second.organizationField.attr('data-two-company-name', 'Another Company Ltd');
+        second.updateRevealChip();
+
+        expect(chip()).toHaveLength(2);
+        expect(second.companyField.siblings('.two-company-search-reveal')).toHaveLength(1);
+        expect(liveField().siblings('.two-company-search-reveal')).toHaveLength(1);
+        expect(second.companyField.siblings('.two-company-search-reveal').get(0))
+            .not.toBe(liveField().siblings('.two-company-search-reveal').get(0));
+
+        second.destroy();
+
+        // The other field's chip must survive the second instance's teardown.
+        expect(chip()).toHaveLength(1);
+        expect(chipVisible()).toBe(true);
+    });
+});
+
 describe('teardown', () => {
     test('destroy() removes the chip and its click handler', () => {
         const instance = makeInstance();
