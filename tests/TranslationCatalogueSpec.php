@@ -195,16 +195,80 @@ final class TranslationCatalogueSpec
      */
     private static function assertNoSpecificArgument(string $path, string $contents): void
     {
-        $pattern = '/->l\(\s*(?:\'(?:[^\'\\\\]|\\\\.)*\'|"(?:[^"\\\\]|\\\\.)*")\s*,/';
+        $offset = 0;
 
-        if (preg_match($pattern, $contents)) {
-            throw new RuntimeException(sprintf(
-                '%s has an ->l() call with a second ($specific) argument. This module\'s key derivation '
-                . 'assumes every ->l() call resolves its source segment to the module name; a $specific '
-                . 'argument breaks that assumption for that one call. Remove the argument.',
-                $path
-            ));
+        while (($start = strpos($contents, '->l(', $offset)) !== false) {
+            $argsStart = $start + strlen('->l(');
+
+            if (self::hasTopLevelComma($contents, $argsStart)) {
+                throw new RuntimeException(sprintf(
+                    '%s has an ->l() call with a second ($specific) argument. This module\'s key derivation '
+                    . 'assumes every ->l() call resolves its source segment to the module name; a $specific '
+                    . 'argument breaks that assumption for that one call. Remove the argument.',
+                    $path
+                ));
+            }
+
+            $offset = $argsStart;
         }
+    }
+
+    /**
+     * Whether the ->l(...) argument list starting at $pos contains a comma
+     * outside any nested parentheses and outside any string literal — i.e. a
+     * genuine second argument. A regex anchored on "comma right after the
+     * first argument's closing quote" misses a call like
+     * ->l('str' . $suffix, 'specific'): the concatenation sits between the
+     * quote and the comma, so the true second argument slips through
+     * undetected. Walking the argument list char-by-char, tracking string
+     * and paren nesting, catches that shape too.
+     */
+    private static function hasTopLevelComma(string $contents, int $pos): bool
+    {
+        $length = strlen($contents);
+        $depth = 0;
+        $quote = null;
+
+        for ($i = $pos; $i < $length; $i++) {
+            $ch = $contents[$i];
+
+            if ($quote !== null) {
+                if ($ch === '\\') {
+                    $i++; // skip the escaped character, whatever it is
+                    continue;
+                }
+
+                if ($ch === $quote) {
+                    $quote = null;
+                }
+
+                continue;
+            }
+
+            if ($ch === '\'' || $ch === '"') {
+                $quote = $ch;
+                continue;
+            }
+
+            if ($ch === '(') {
+                $depth++;
+                continue;
+            }
+
+            if ($ch === ')') {
+                if ($depth === 0) {
+                    return false; // end of the ->l(...) call, no top-level comma seen
+                }
+                $depth--;
+                continue;
+            }
+
+            if ($ch === ',' && $depth === 0) {
+                return true;
+            }
+        }
+
+        return false; // unterminated call — not our problem here, php -l already gates it
     }
 
     /**
@@ -363,6 +427,40 @@ final class TranslationCatalogueSpec
     }
 
     /**
+     * Whether $value (the row already parsed by the PHP engine, so any escape
+     * that survived is a literal character sequence, not source syntax)
+     * contains a backslash that is NOT part of a \\ or \' pair. Those two
+     * pairs are what stripslashes() treats as "one escaped char, keep it";
+     * every other backslash gets silently dropped by stripslashes(), along
+     * with whatever follows it.
+     *
+     * Consumes recognised pairs two characters at a time rather than using a
+     * single-character lookahead — a lookahead re-inspects the second
+     * character of an already-valid \\ pair on its own and flags it (nothing
+     * follows a backslash mid-pair that is itself another backslash or a
+     * quote), which is a false positive on entirely legitimate content.
+     */
+    private static function hasUnescapedBackslash(string $value): bool
+    {
+        $length = strlen($value);
+
+        for ($i = 0; $i < $length; $i++) {
+            if ($value[$i] !== '\\') {
+                continue;
+            }
+
+            if ($i + 1 < $length && ($value[$i + 1] === '\\' || $value[$i + 1] === '\'')) {
+                $i++; // consume the pair, neither char is "stray"
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * @return array<string, string> key without the module/theme prefix => translation
      */
     private static function loadCatalogue(string $path): array
@@ -375,11 +473,16 @@ final class TranslationCatalogueSpec
             if (strpos($key, self::PREFIX) !== 0) {
                 throw new RuntimeException(sprintf(
                     'Row %s in %s does not carry the %s prefix. Translate::getModuleTranslation() checks a '
-                    . 'theme-scoped key ("<{twopayment}<theme>>...") before this one, so a row like this is '
-                    . 'reachable in general — just never for us, because this module ships exactly one '
-                    . 'catalogue shared by every theme, not a per-theme one. Prefix the row with %s.',
+                    . 'theme-scoped key ("<{twopayment}<theme>>...") before this one, so a row like this IS '
+                    . 'reachable — precisely when a shop\'s active theme name happens to match the row\'s '
+                    . 'segment — and when it is reachable it takes priority over the correct %s row, silently '
+                    . 'shadowing it for that theme. This module ships exactly one catalogue shared by every '
+                    . 'theme, so there is never a legitimate reason for a theme-scoped row here. Prefix the '
+                    . 'row with %s.',
                     $key,
                     basename($path),
+                    self::PREFIX,
+                    self::PREFIX,
                     self::PREFIX
                 ));
             }
@@ -393,7 +496,7 @@ final class TranslationCatalogueSpec
             // parser fine) yet still render wrong, because stripslashes() would
             // consume it and the character(s) after it. Catch it before that
             // silent step, not after.
-            if (preg_match('/\\\\(?!\\\\|\')/', $raw)) {
+            if (self::hasUnescapedBackslash($raw)) {
                 throw new RuntimeException(sprintf(
                     'Row %s in %s has a literal backslash outside a \\\' or \\\\ escape. '
                     . 'stripslashes() will silently consume it (and the character after it) at lookup time.',
