@@ -263,6 +263,36 @@ describe('sole trader shows the enrolled pair', () => {
     });
 });
 
+describe('a retype-then-submit does not resurrect a false pairing (PR two-inc/prestashop-plugin#122 interaction)', () => {
+    // #122's own body documents this as a residual: retyping over a selection
+    // clears `companyid` and its tag but leaves the lookup-written, MARKED
+    // `dni` field behind. The pre-submit sync (`syncOrganizationToAddressIdentifiers`)
+    // then adopts that leftover `dni` as the org number for whatever name is
+    // now in the field. #122 only cared that the number reached the POST;
+    // this tile now also has to not show it as a CONFIRMED pairing.
+    test('the resurrected number does not get shown beside the retyped name', () => {
+        makeInstance();
+        selectFirstResult('exa', SEARCH_RESPONSE);
+        expect($("input[name='dni']").val()).toBe('12345678');
+
+        // Retype over the selection: disowns companyid/tag, leaves dni alone.
+        typeCompanyName('Someone Else Ltd');
+        expect($("input[name='companyid']").val()).toBe('');
+        expect($("input[name='dni']").val()).toBe('12345678');
+        expect(shown()).toEqual({ name: 'Someone Else Ltd', number: '', hidden: false });
+
+        // Address form submits; the pre-submit sync fills the empty companyid
+        // back in from the leftover dni.
+        $('form').triggerHandler('submit');
+        expect($("input[name='companyid']").val()).toBe('12345678');
+
+        // The number must still not be shown paired with the retyped name -
+        // it was never confirmed against it.
+        TwoCompanySummary.render();
+        expect(shown()).toEqual({ name: 'Someone Else Ltd', number: '', hidden: false });
+    });
+});
+
 describe('it survives PrestaShop re-rendering the payment step', () => {
     test('a cart update repaints the replacement block', async () => {
         makeInstance();
