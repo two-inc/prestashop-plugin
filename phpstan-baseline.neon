@@ -41,6 +41,17 @@ parameters:
 			count: 1
 			path: twopayment.php
 
+		# False positive at the 1.7.6.0 analysis floor: Tools::hasMediaServer()
+		# was added to core in 1.7.7 alongside the media-server file_exists()
+		# resolution it guards against (TWO-53PS). The call site is guarded by
+		# method_exists('Tools', 'hasMediaServer'), so it is unreachable on
+		# versions where the method does not exist.
+		-
+			message: '#^Call to an undefined static method Tools\:\:hasMediaServer\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: twopayment.php
+
 		# False positive: every path through postProcess() ends in
 		# Tools::redirectAdmin() (which exits), but core does not annotate it
 		# @return never, so phpstan expects the AdminControllerCore-declared
