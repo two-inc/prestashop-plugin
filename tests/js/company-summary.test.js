@@ -20,6 +20,7 @@ const {
     loadCompanySummary,
     buildAddressForm,
     buildPaymentTile,
+    loadScript,
     stubAjax,
     releaseWidgets,
     flushPromises
@@ -206,7 +207,10 @@ describe('manual entry shows the name with a blank number', () => {
         // rather than as "this buyer has no number".
         expect(slot('number')).not.toBeNull();
         expect(root().contains(slot('number'))).toBe(true);
-        expect(root().classList.contains('two-company-summary--number-pending')).toBe(true);
+        // The row keeps its height, so the blank reads as an empty answer rather
+        // than as a collapsed element. The stylesheet does that with a
+        // min-height on the value span; nothing needs a state class for it.
+        expect(root().querySelectorAll('.two-company-summary__row')).toHaveLength(2);
     });
 
     test('choosing manual entry drops the number a previous selection showed', () => {
@@ -282,6 +286,34 @@ describe('it survives PrestaShop re-rendering the payment step', () => {
         });
     });
 
+    test('the repaint is deferred, not synchronous with the event', () => {
+        makeInstance();
+        selectFirstResult('exa', SEARCH_RESPONSE);
+        root().remove();
+        buildPaymentTile();
+
+        bus.emit('updatedCart');
+
+        // Synchronous here would paint DURING PrestaShop's own handling of the
+        // event - i.e. into the block it is about to replace - which is the whole
+        // reason for the setTimeout. Still empty immediately after the emit is
+        // what proves the deferral exists.
+        expect(shown()).toEqual({ name: '', number: '', hidden: true });
+    });
+
+    test('a second instance does not stack bus handlers', () => {
+        // The bus has no `off`, so a handler registered on it can never be taken
+        // back and cleanup() cannot remove one. Registering per instance would
+        // leak silently, since only one instance is built today.
+        const extra = new TwoCompanySummary();
+        const third = new TwoCompanySummary();
+
+        expect(bus.handlerCount('updatedCart')).toBe(1);
+
+        extra.cleanup();
+        third.cleanup();
+    });
+
     test('cleanup stops the instance listening', () => {
         makeInstance();
         summary.cleanup();
@@ -291,6 +323,104 @@ describe('it survives PrestaShop re-rendering the payment step', () => {
         expect(shown()).toEqual({ name: '', number: '', hidden: true });
         // afterEach calls cleanup() again; it has to be idempotent.
         expect(() => summary.cleanup()).not.toThrow();
+    });
+});
+
+describe('a DOM-captured company outranks a sole-trader enrolment', () => {
+    test('switching back to registered business and searching replaces the pair', () => {
+        makeInstance();
+        TwoCompanySummary.setSoleTrader({ name: 'Sole Trader AS', number: 'NO-999888777' });
+
+        selectFirstResult('exa', SEARCH_RESPONSE);
+
+        // The company that will actually be credit-checked is the one in the
+        // form. A sole-trader pair consulted first outranked it for the rest of
+        // the page, so the tile named one company while the order carried
+        // another.
+        expect(shown()).toEqual({
+            name: 'Example Trading Ltd',
+            number: '12345678',
+            hidden: false
+        });
+    });
+
+    test('a typed name alone still outranks it', () => {
+        makeInstance();
+        TwoCompanySummary.setSoleTrader({ name: 'Sole Trader AS', number: 'NO-999888777' });
+
+        typeCompanyName('Manually Typed Ltd');
+
+        expect(shown()).toEqual({
+            name: 'Manually Typed Ltd',
+            number: '',
+            hidden: false
+        });
+    });
+
+    test('the sole-trader toggle returning to business forgets the pair', () => {
+        // TwoSoleTrader.setMode('business') is the switch the buyer clicks; the
+        // ordering above is the backstop for a path that forgets to call it.
+        loadScript('views/js/modules/TwoSoleTrader.js');
+        const soleTrader = Object.create(window.TwoSoleTrader.prototype);
+        soleTrader.mode = 'sole_trader';
+        soleTrader.updateChips = () => {};
+        soleTrader.hidePrompt = () => {};
+
+        TwoCompanySummary.setSoleTrader({ name: 'Sole Trader AS', number: 'NO-999888777' });
+        expect(shown().number).toBe('NO-999888777');
+
+        soleTrader.setMode('business');
+
+        expect(TwoCompanySummary._soleTrader).toBeNull();
+        expect(shown()).toEqual({ name: '', number: '', hidden: true });
+    });
+});
+
+describe('a country change stops the tile advertising the old company', () => {
+    test('the summary clears with the fields the listener clears', () => {
+        makeInstance();
+        selectFirstResult('exa', SEARCH_RESPONSE);
+        expect(shown().number).toBe('12345678');
+
+        const country = document.querySelector("select[name='id_country']");
+        country.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        // The listener blanks company + companyid through `.val()`, which fires
+        // no event, so nothing else here could observe it. The form is empty and
+        // the tile has to be too.
+        expect(document.querySelector("input[name='company']").value).toBe('');
+        expect(shown()).toEqual({ name: '', number: '', hidden: true });
+    });
+});
+
+describe('the values are written as text, never as markup', () => {
+    test('a company name shaped like a tag renders as characters', () => {
+        makeInstance();
+
+        // The name comes from a third-party register and from the buyer's own
+        // keyboard. `innerHTML` here would be an injection point on both.
+        selectFirstResult('exa', {
+            items: [
+                {
+                    name: '<img src=x onerror="window.__twoXss = true">Example',
+                    national_identifier: { id: '12345678' }
+                }
+            ]
+        });
+
+        expect(root().querySelectorAll('img')).toHaveLength(0);
+        expect(window.__twoXss).toBeUndefined();
+        expect(slot('name').textContent).toBe('<img src=x onerror="window.__twoXss = true">Example');
+        expect(slot('name').children).toHaveLength(0);
+    });
+
+    test('a typed name shaped like a tag renders as characters', () => {
+        makeInstance();
+
+        typeCompanyName('<b>Bold Ltd</b>');
+
+        expect(root().querySelectorAll('b')).toHaveLength(0);
+        expect(slot('name').textContent).toBe('<b>Bold Ltd</b>');
     });
 });
 

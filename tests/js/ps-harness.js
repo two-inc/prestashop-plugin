@@ -443,6 +443,13 @@ function buildPaymentTile() {
     if (!container) {
         throw new Error('harness: paymentinfo.tpl produced no .two-payment-container');
     }
+    // The `{if}` strip is non-greedy and the template's only such block
+    // currently sits BELOW the summary. An `{if}` added above it, closing below,
+    // would swallow the summary block - so check for it here rather than letting
+    // a suite fail somewhere unrelated with a null dereference.
+    if (!container.querySelector('.two-company-summary')) {
+        throw new Error('harness: the Smarty strip removed .two-company-summary from the tile');
+    }
     global.document.body.appendChild(container);
     return container;
 }
@@ -463,6 +470,11 @@ function loadCompanySummary() {
         throw new Error('harness: TwoCompanySummary was not exported onto window');
     }
     TwoCompanySummary._soleTrader = null;
+    // Also class-static, and for the same reason: the bus it guards cannot be
+    // unsubscribed from, so the flag has to survive instances. It must not
+    // survive tests, or the first test in a file is the only one whose instance
+    // ever registers.
+    TwoCompanySummary._busBound = false;
     return TwoCompanySummary;
 }
 

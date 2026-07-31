@@ -75,8 +75,17 @@ load order a theme's `<script>` tags produce.
   address form, exactly one of it, unchanged by 25 renders — and a sole-trader push does not
   invent one. The identifier mirroring the selection performs is re-pinned here too, because
   this change added a call into the middle of `onCompanySelected()`.
-- the tile is repainted after a `updatedCart` re-render replaces the block, and `cleanup()`
-  stops the instance listening.
+- the tile is repainted after a `updatedCart` re-render replaces the block, that the repaint
+  is **deferred** rather than synchronous with the event, and that a second instance does not
+  stack bus handlers (the bus has no `off`, so a per-instance registration leaks silently —
+  only one instance is built today, which is exactly what would have hidden it). `cleanup()`
+  stops the instance listening and is idempotent.
+- a **sole-trader enrolment never outranks a company captured in the form**: selecting or
+  typing one replaces it, and `TwoSoleTrader.setMode('business')` forgets it outright.
+- a **country change** clears the display along with the fields its listener clears.
+- values are written as **text, not markup**: a company name shaped like `<img onerror=...>`
+  from the register, and one typed by the buyer, both render as characters. This is the only
+  injection-relevant line in the module and it was unguarded until the review round asked.
 
 It builds its DOM from the **shipped** `views/templates/hook/paymentinfo.tpl` via
 `buildPaymentTile()`, which strips Smarty rather than copying the markup into the test. A
