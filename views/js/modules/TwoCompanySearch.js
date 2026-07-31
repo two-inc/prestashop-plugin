@@ -147,6 +147,20 @@ class TwoCompanySearch {
         this._manualEntry = false;
         this._backToSearchLink = null;
 
+        // Click-to-reveal (TWO-25288 element 2). Woo/Luma's select2 keeps a
+        // `.select2-selection__rendered` chip showing the confirmed name in
+        // front of a separate `.select2-search__field` the buyer actually
+        // types into, so typing never touches the displayed name until a
+        // result is chosen. This field has no such split - the address form's
+        // own `input[name='company']` IS the search box - so the same
+        // protection is built as a covering chip: shown only while
+        // hasConfirmedSelection() is true, hidden the moment the buyer opens
+        // it back up. See revealSearch() / collapseReveal().
+        this._revealChip = null;
+        this._revealed = false;
+        this._revealSnapshot = null;
+        this._revealBlurTimerId = null;
+
         this.init();
     }
     
@@ -223,6 +237,214 @@ class TwoCompanySearch {
         }
     }
 
+    /**
+     * @returns {string} accessible name for the reveal chip
+     */
+    getEditCompanyText() {
+        return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_edit)
+            || 'Search for a different company';
+    }
+
+    /**
+     * Whether the field currently holds a company the buyer actually PICKED,
+     * as opposed to a name sitting next to a stale or absent organisation
+     * number. Deliberately the same test clearStaleOrganizationSelection()
+     * already uses - the file must have exactly one notion of "confirmed",
+     * not a second one that can quietly drift from it.
+     *
+     * @returns {boolean}
+     */
+    hasConfirmedSelection() {
+        if (!this.companyField || !this.companyField.length
+            || !this.organizationField || !this.organizationField.length) {
+            return false;
+        }
+        const company = String(this.companyField.val() || '').trim();
+        const orgNumber = String(this.organizationField.val() || '').trim();
+        const tag = String(this.organizationField.attr('data-two-company-name') || '').trim();
+        if (!company || !orgNumber || !tag) {
+            return false;
+        }
+        return this.normalizeCompanyName(company) === this.normalizeCompanyName(tag);
+    }
+
+    /**
+     * Create the click-to-reveal chip (TWO-25288 element 2), idempotently.
+     *
+     * A sibling `<button>`, absolutely positioned over the real input - the
+     * same wrapper createCompanyIdHintField() already forces to
+     * `position: relative` when it is still static. Called from
+     * setupAutocomplete(), not only init(): that method is what re-runs on
+     * every country change and `updatedAddressForm`, re-resolving whatever
+     * field PrestaShop just put on the page, so the chip has to be rebuilt on
+     * the same schedule or it goes missing the moment the DOM is replaced -
+     * exactly the failure mode applyEmptyFieldHint() next to it already
+     * guards against.
+     *
+     * Checked by class name rather than by this instance's own reference, for
+     * the same reason removeBackToSearchLink() sweeps the whole document: a
+     * destroyed instance's chip is removed by destroy() below, but a second
+     * one existing alongside the live chip would be worse than a stale
+     * reference to a single one.
+     */
+    createRevealChip() {
+        if (!this.companyField || !this.companyField.length) {
+            return;
+        }
+
+        let chip = $('.two-company-search-reveal');
+        if (chip.length === 0) {
+            chip = $('<button type="button" class="two-company-search-reveal"></button>');
+            this.companyField.after(chip);
+
+            const wrapper = this.companyField.parent();
+            if (wrapper.length && wrapper.css('position') === 'static') {
+                wrapper.css('position', 'relative');
+            }
+
+            chip.on('click.twoReveal', (event) => {
+                event.preventDefault();
+                this.revealSearch();
+            });
+        }
+
+        this._revealChip = chip;
+    }
+
+    /**
+     * Remove the chip and unbind it. Sweeps every `.two-company-search-reveal`
+     * in the document, not only this instance's own reference, matching
+     * removeBackToSearchLink() next to it - a chip orphaned by a previous,
+     * destroyed instance must not sit alongside a fresh one.
+     */
+    removeRevealChip() {
+        if (this._revealChip) {
+            this._revealChip.off('.twoReveal');
+            this._revealChip.remove();
+            this._revealChip = null;
+        }
+        $('.two-company-search-reveal').off('.twoReveal').remove();
+    }
+
+    /**
+     * Sync the chip's visibility/text and the field's tab-reachability to the
+     * current state.
+     *
+     * Hidden while `_revealed` (the buyer has opened the search and typing
+     * must reach the real field directly) or `_manualEntry` (same reason),
+     * and whenever there is no confirmed selection to protect - an empty or
+     * manually-typed field is exactly the plain-input behaviour that shipped
+     * before this element and needs no cover.
+     *
+     * `tabindex="-1"` while the chip covers the field is deliberate, not
+     * decorative: without it a keyboard user tabs through TWO stops for what
+     * must read as one control - the chip button, then the input hiding
+     * behind it.
+     */
+    updateRevealChip() {
+        if (!this._revealChip || !this._revealChip.length) {
+            return;
+        }
+        if (this._revealed || this._manualEntry || !this.hasConfirmedSelection()) {
+            this._revealChip.hide().text('');
+            if (this.companyField && this.companyField.length) {
+                this.companyField.removeAttr('tabindex');
+            }
+            return;
+        }
+        this._revealChip
+            .text(this.companyField.val())
+            .attr('title', this.getEditCompanyText())
+            .attr('aria-label', this.getEditCompanyText() + ': ' + this.companyField.val())
+            .show();
+        this.companyField.attr('tabindex', '-1');
+    }
+
+    /**
+     * Reveal the search box. Snapshots the confirmed pairing the chip was
+     * covering - name, organisation number AND its tag - so an abandoned
+     * search (see setupRevealBlurRestore()) can put back exactly what was
+     * there, not merely the visible name. Restoring the name alone and
+     * leaving the organisation number cleared (clearStaleOrganizationSelection()
+     * runs on the very first keystroke into the now-empty field) would show a
+     * confirmed-looking company with nothing behind it.
+     */
+    revealSearch() {
+        if (this._destroyed || this._revealed) {
+            return;
+        }
+        if (!this.companyField || !this.companyField.length) {
+            return;
+        }
+        this._revealSnapshot = {
+            company: String(this.companyField.val() || ''),
+            orgId: this.organizationField && this.organizationField.length
+                ? String(this.organizationField.val() || '') : '',
+            orgTag: this.organizationField && this.organizationField.length
+                ? this.organizationField.attr('data-two-company-name') : undefined
+        };
+        this._revealed = true;
+        this.companyField.val('');
+        this.updateRevealChip();
+        this.companyField.trigger('focus');
+    }
+
+    /**
+     * Stand reveal state down because something else already decided what the
+     * field should show - a fresh selection (onCompanySelected) or manual
+     * entry. Does NOT touch the field's value; the caller has already set it.
+     */
+    collapseReveal() {
+        this._revealed = false;
+        this._revealSnapshot = null;
+        this.updateRevealChip();
+    }
+
+    /**
+     * Bind the blur handler that resolves an opened-but-abandoned search:
+     * restore the snapshot revealSearch() took, so the buyer leaving the
+     * field without picking anything sees the same confirmed company they
+     * started with.
+     *
+     * Delayed 200ms, matching the fallback dropdown's own blur handling, so a
+     * click on a result - which keeps the field focused through
+     * preventDefault on mousedown, on both render paths - resolves and calls
+     * collapseReveal() FIRST. If `_revealed` is still true once the delay
+     * elapses, nothing claimed the open search.
+     *
+     * Guarded on `_manualEntry` too: entering manual entry mid-reveal must not
+     * have this timer put the old company back seconds later out from under
+     * the buyer's own "not on the list" choice.
+     */
+    setupRevealBlurRestore() {
+        if (!this.companyField || this.companyField.length === 0) {
+            return;
+        }
+        this.companyField.off('blur.twoReveal');
+        this.companyField.on('blur.twoReveal', () => {
+            clearTimeout(this._revealBlurTimerId);
+            this._revealBlurTimerId = setTimeout(() => {
+                if (this._destroyed || !this._revealed || this._manualEntry) {
+                    return;
+                }
+                const snap = this._revealSnapshot || {};
+                this.companyField.val(snap.company || '');
+                if (this.organizationField && this.organizationField.length) {
+                    this.organizationField.val(snap.orgId || '');
+                    if (snap.orgTag !== undefined) {
+                        this.organizationField.attr('data-two-company-name', snap.orgTag);
+                    } else {
+                        this.organizationField.removeAttr('data-two-company-name');
+                    }
+                }
+                this.setCompanyIdHint(snap.orgId || '');
+                this._revealed = false;
+                this._revealSnapshot = null;
+                this.updateRevealChip();
+            }, 200);
+        });
+    }
+
     normalizeCompanyName(value) {
         return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
     }
@@ -290,6 +512,11 @@ class TwoCompanySearch {
         this.companyField.off('.twoCompanySync');
         this.companyField.on('input.twoCompanySync change.twoCompanySync', () => {
             this.clearStaleOrganizationSelection();
+            // Belt and braces alongside collapseReveal()/setupRevealBlurRestore()
+            // (TWO-25288 element 2): whatever just cleared the tag above must
+            // not leave the chip showing a name with nothing confirmed behind
+            // it, however the field's value ended up changing.
+            this.updateRevealChip();
         });
     }
 
@@ -552,6 +779,14 @@ class TwoCompanySearch {
         // address form and never run that override. Before the path branch, so
         // both render paths get it.
         this.applyEmptyFieldHint();
+
+        // Click-to-reveal chip (TWO-25288 element 2). Same reasoning as the
+        // hint above: this method is the one that re-runs against whatever
+        // field PrestaShop just put on the page, so the chip and its blur
+        // handling have to be rebuilt here, not only in init().
+        this.createRevealChip();
+        this.updateRevealChip();
+        this.setupRevealBlurRestore();
 
         // Use jQuery UI autocomplete if available; otherwise fallback to custom.
         // `$.fn.autocomplete` alone is not proof of jQuery UI - the older
@@ -946,6 +1181,12 @@ class TwoCompanySearch {
             return;
         }
         this._manualEntry = true;
+        // Stand down an open reveal (TWO-25288 element 2) explicitly. Its own
+        // blur handler already checks `_manualEntry` before restoring, but
+        // clearing the snapshot here too means nothing is left to restore
+        // even if that ordering ever changes.
+        this._revealed = false;
+        this._revealSnapshot = null;
 
         // Drop the previously selected company BEFORE anything else.
         //
@@ -964,6 +1205,11 @@ class TwoCompanySearch {
         // directly under the results the buyer just chose from, so it cannot ship
         // relying on that.
         this.clearSelectedCompany();
+        // clearSelectedCompany() just dropped the org number and its tag, so
+        // hasConfirmedSelection() is now false - reflect that in the chip
+        // immediately rather than leaving it showing a name that no longer
+        // has a selection behind it.
+        this.updateRevealChip();
 
         if (this.companyField && this.companyField.length) {
             if (this.companyField.hasClass('ui-autocomplete-input')) {
@@ -1008,6 +1254,10 @@ class TwoCompanySearch {
         }
         this._manualEntry = false;
         this.removeBackToSearchLink();
+        // The field still holds whatever the buyer typed in manual entry, with
+        // no organisation number behind it - hasConfirmedSelection() is false,
+        // so this leaves the chip hidden rather than covering active typing.
+        this.updateRevealChip();
 
         if (!this.companyField || this.companyField.length === 0) {
             return;
@@ -1891,7 +2141,7 @@ class TwoCompanySearch {
         
         // SIMPLE & RELIABLE: Direct field assignment like old tillit.js
         this.companyField.val(ui.item.value);
-        
+
         // Set organization number immediately if available
         if (ui.item.organization_number) {
             this.organizationField.val(ui.item.organization_number);
@@ -1945,9 +2195,18 @@ class TwoCompanySearch {
 
         this.refreshCompanySummary();
 
+        // A fresh pick resolves whatever reveal state was open (TWO-25288
+        // element 2) - the chip re-covers the field with the new name rather
+        // than waiting for blur to notice. LAST, deliberately: the org number
+        // and its tag are what hasConfirmedSelection() reads, and both are
+        // already committed by this point on every branch above (immediate
+        // org number, or none at all - the deferred GB case resolves its own
+        // chip state from autoFillAddressIfNeeded() below).
+        this.collapseReveal();
+
         return true;
     }
-    
+
     /**
      * Fetch detailed company information
      */
@@ -2002,6 +2261,11 @@ class TwoCompanySearch {
                     // and this is the first point one exists, so the summary
                     // rendered at selection time showed a blank number slot.
                     this.refreshCompanySummary();
+                    // Same reason the reveal chip (TWO-25288 element 2) was left
+                    // uncovered by onCompanySelected() on this path - it reads
+                    // hasConfirmedSelection(), which only becomes true once the
+                    // tag written two lines up exists.
+                    this.updateRevealChip();
                 }
             }
             // Find addresses list in various shapes
@@ -2251,6 +2515,10 @@ class TwoCompanySearch {
             // LIVE document and bind this dying instance's listener to it.
             clearTimeout(this._countryRetryTimeoutId);
             this._countryRetryTimeoutId = null;
+            // Same reason: a deferred reveal-restore firing after teardown
+            // would write into a detached field (TWO-25288 element 2).
+            clearTimeout(this._revealBlurTimerId);
+            this._revealBlurTimerId = null;
             // Unbind from the element actually bound. setupCountryChangeListener
             // picks the first of five fallback selectors, so re-querying only
             // `select[name='id_country']` here missed the listener entirely on a
@@ -2292,6 +2560,13 @@ class TwoCompanySearch {
         // a node that outlives this instance otherwise.
         try {
             this.removeBackToSearchLink();
+        } catch (e) {
+            // no-op
+        }
+        // Its own try for the same reason as the reverse link: a live click
+        // handler on a node that would otherwise outlive this instance.
+        try {
+            this.removeRevealChip();
         } catch (e) {
             // no-op
         }

@@ -1302,6 +1302,41 @@
     cursor: pointer;
 }
 
+/*
+ * Click-to-reveal chip (TWO-25288 element 2). A sibling <button> absolutely
+ * positioned over the company field, standing in for select2's
+ * `.select2-selection__rendered` on the one surface where the address form's
+ * own input doubles as the search box. Shown only while a confirmed
+ * selection exists (see hasConfirmedSelection() in the companion JS), so
+ * typing into a freshly-revealed field never overwrites the name it was
+ * covering until a result is actually chosen.
+ */
+.two-company-search-reveal {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 6px 12px;
+    text-align: left;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    z-index: 2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.two-company-search-reveal:hover,
+.two-company-search-reveal:focus {
+    border-color: #999;
+    outline: none;
+}
+
 /* Clean up unused styles */
 .two-payment-loading,
 .payment-option img[src*="TwoLogo.svg"],
