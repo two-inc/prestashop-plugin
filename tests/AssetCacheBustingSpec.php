@@ -267,6 +267,43 @@ final class AssetCacheBustingSpec
         TinyAssert::same(8, count($frontStatements), 'expected exactly 8 register*() call sites in hookActionFrontControllerSetMedia() (1 CSS + 7 JS), found ' . count($frontStatements) . ' - a call site was added, removed, or renamed');
         TinyAssert::same(1, count($adminStatements), 'expected exactly 1 registerStylesheet() call site in hookActionAdminControllerSetMedia(), found ' . count($adminStatements) . ' - it was added, removed, or renamed');
 
+        // Identity, not just count (round-4 adversarial review, Vader): a
+        // count-only check passes if one real call site is deleted and a
+        // DIFFERENT one duplicated in its place (e.g. a bad merge/copy-paste
+        // that drops TwoOrderIntent.js but keeps the count at 8 by
+        // duplicating TwoCompanySearch.js) - checkout genuinely loses an
+        // asset while every assertion above stays green. Pin the exact,
+        // ordered set of ids this hook must register, and require each
+        // call's getTwoModuleAssetPath(...) and getTwoAssetVersion(...)
+        // arguments to reference the SAME relative path as each other (a
+        // duplicated call registering the wrong asset under a fresh id
+        // would still show up as an id-list mismatch below).
+        // Compared as sorted sets, not source order: extractCallStatements()
+        // is invoked once per method name (registerJavascript, then
+        // registerStylesheet), so $frontStatements interleaves them in
+        // pattern-call order, not the source's actual line order (two-css
+        // is a registerStylesheet call textually first in the hook, but
+        // lands last here). A sorted-set comparison is order-independent but
+        // still exact on identity - Vader's delete-one/duplicate-another
+        // mutation changes which ids are present regardless of ordering, so
+        // it's still caught.
+        $expectedFrontIds = array(
+            'two-checkout-manager',
+            'two-company-search',
+            'two-company-summary',
+            'two-css',
+            'two-optional-fields',
+            'two-order-intent',
+            'two-script',
+            'two-sole-trader',
+        );
+        $expectedAdminIds = array('module-twopayment-admin-css');
+
+        $actualFrontIds = self::extractCallIds($frontStatements);
+        sort($actualFrontIds);
+        TinyAssert::same($expectedFrontIds, $actualFrontIds, 'hookActionFrontControllerSetMedia() must register exactly this set of asset ids');
+        TinyAssert::same($expectedAdminIds, self::extractCallIds($adminStatements), 'hookActionAdminControllerSetMedia() must register exactly this set of asset ids');
+
         foreach (array_merge($frontStatements, $adminStatements) as $statement) {
             TinyAssert::true(
                 strpos($statement, 'getTwoModuleAssetPath(') !== false,
@@ -276,7 +313,51 @@ final class AssetCacheBustingSpec
                 strpos($statement, "'version' => \$this->getTwoAssetVersion(") !== false,
                 "register*() call must pass 'version' => \$this->getTwoAssetVersion(...), got: {$statement}"
             );
+
+            $modulePathArgs = self::extractQuotedArgsAfter($statement, 'getTwoModuleAssetPath');
+            $versionArgs = self::extractQuotedArgsAfter($statement, 'getTwoAssetVersion');
+            TinyAssert::same(1, count($modulePathArgs), "expected exactly one getTwoModuleAssetPath(...) argument, got: {$statement}");
+            TinyAssert::same(1, count($versionArgs), "expected exactly one getTwoAssetVersion(...) argument, got: {$statement}");
+            TinyAssert::same(
+                $modulePathArgs[0],
+                $versionArgs[0],
+                "getTwoModuleAssetPath() and getTwoAssetVersion() must reference the SAME relative path within one call, got: {$statement}"
+            );
         }
+    }
+
+    /**
+     * First string-literal argument (the register*() id) of each call
+     * statement, in order.
+     *
+     * @param array<int, string> $statements
+     *
+     * @return array<int, string>
+     */
+    private static function extractCallIds(array $statements): array
+    {
+        return array_map(function ($statement) {
+            TinyAssert::true(
+                preg_match("/\\(\\s*'([^']*)'/", $statement, $matches) === 1,
+                "could not extract a leading string-literal id from call statement: {$statement}"
+            );
+
+            return $matches[1];
+        }, $statements);
+    }
+
+    /**
+     * Every quoted argument passed to $functionName(...) within $statement,
+     * e.g. extractQuotedArgsAfter("...getTwoAssetVersion('views/css/two.css')...", 'getTwoAssetVersion')
+     * returns ['views/css/two.css'].
+     *
+     * @return array<int, string>
+     */
+    private static function extractQuotedArgsAfter(string $statement, string $functionName): array
+    {
+        preg_match_all("/" . preg_quote($functionName, '/') . "\\('([^']*)'\\)/", $statement, $matches);
+
+        return $matches[1];
     }
 
     /**
