@@ -70,6 +70,32 @@ final class TranslationCatalogueSpec
             ));
         }
 
+        // A tighter floor on the two segment shapes independently: the 300 floor
+        // above has 146 strings of slack versus the real 446, wide enough that a
+        // regex regression dropping a whole segment (e.g. every .tpl source)
+        // could still clear it.
+        $phpCount = 0;
+        foreach (array_keys($expected) as $key) {
+            if (strncmp($key, 'twopayment_', 11) === 0) {
+                ++$phpCount;
+            }
+        }
+        if ($phpCount < 330) {
+            throw new RuntimeException(sprintf(
+                'Extracted only %d twopayment_-segment (PHP ->l()) strings, expected north of 330. The PHP '
+                . 'extraction regex likely regressed.',
+                $phpCount
+            ));
+        }
+
+        if (count(self::$tplSources) < 9) {
+            throw new RuntimeException(sprintf(
+                'Extracted distinct template source segments from only %d .tpl file(s), expected at least 9. '
+                . 'The template extraction regex likely regressed.',
+                count(self::$tplSources)
+            ));
+        }
+
         // Before the per-locale checks: an nb.php would otherwise surface only as
         // a generic "missing translations/no.php", which does not say why.
         self::assertNorwegianUsesIsoCodeFilename();
@@ -79,6 +105,9 @@ final class TranslationCatalogueSpec
         }
     }
 
+    /** @var array<string, true> distinct .tpl source segments seen during extraction */
+    private static array $tplSources = [];
+
     /**
      * @return array<string, string> runtime lookup key (without prefix) => English source
      */
@@ -86,6 +115,14 @@ final class TranslationCatalogueSpec
     {
         $root = dirname(__DIR__);
         $keys = [];
+        self::$tplSources = [];
+
+        // Both quote styles are legal PHP/Smarty syntax and both appear in this
+        // module. Matching only ' silently drops any "->l("..."")" or
+        // "{l s=\"...\"}" call site — the catalogue then looks complete while a
+        // whole string quietly renders English forever.
+        $singleQuoted = '\'(?:[^\'\\\\]|\\\\.)*\'';
+        $doubleQuoted = '"(?:[^"\\\\]|\\\\.)*"';
 
         foreach (self::sourceFiles($root) as $path) {
             $contents = (string) file_get_contents($path);
@@ -94,24 +131,80 @@ final class TranslationCatalogueSpec
             if ($isPhp) {
                 // Every ->l() here routes through Module::l() with no $specific,
                 // so the source segment is the module name regardless of file.
-                $pattern = '/->l\(\s*\'((?:[^\'\\\\]|\\\\.)*)\'/';
+                $pattern = '/->l\(\s*(' . $singleQuoted . '|' . $doubleQuoted . ')/';
                 $source = 'twopayment';
+                // Only count openers whose argument actually starts with a
+                // quote — a handful of ->l() calls take a dynamic (non-literal)
+                // argument (e.g. a merchant-configured brand label) and were
+                // never extractable; those aren't a parity failure.
+                $callSiteCount = preg_match_all('/->l\(\s*[\'"]/', $contents);
             } else {
-                $pattern = '/\{l\s+s=\s*\'((?:[^\'\\\\]|\\\\.)*)\'/';
+                $pattern = '/\{l\s+s=\s*(' . $singleQuoted . '|' . $doubleQuoted . ')/';
                 $source = strtolower(basename($path, '.tpl'));
+                $callSiteCount = preg_match_all('/\{l\s+s=\s*[\'"]/', $contents);
             }
 
-            if (!preg_match_all($pattern, $contents, $matches)) {
+            $matchCount = preg_match_all($pattern, $contents, $matches);
+
+            // Parity check: every call-site opener must have produced exactly
+            // one captured literal. A mismatch means some call sites used a
+            // quoting shape (or had an unbalanced/odd quote count) the capture
+            // group didn't account for, and would otherwise be silently
+            // skipped rather than failing loud.
+            if ($matchCount !== $callSiteCount) {
+                throw new RuntimeException(sprintf(
+                    '%s has %d translatable call site(s) but only %d were extracted — a string literal '
+                    . 'shape (quoting) is not being captured. Fix the extraction regex rather than the count.',
+                    $path,
+                    $callSiteCount,
+                    $matchCount
+                ));
+            }
+
+            if ($matchCount === false || $matchCount === 0) {
                 continue;
             }
 
-            foreach ($matches[1] as $raw) {
-                $string = self::unescapeSingleQuoted($raw);
+            if (!$isPhp) {
+                self::$tplSources[$source] = true;
+            }
+
+            foreach ($matches[1] as $literal) {
+                $isDouble = $literal !== '' && $literal[0] === '"';
+                $raw = substr($literal, 1, -1);
+                $string = $isDouble ? self::unescapeDoubleQuoted($raw) : self::unescapeSingleQuoted($raw);
                 $keys[$source . '_' . self::hashSourceString($string)] = $string;
+            }
+
+            if ($isPhp) {
+                self::assertNoSpecificArgument($path, $contents);
             }
         }
 
         return $keys;
+    }
+
+    /**
+     * This module's whole key-derivation model depends on every ->l() call
+     * omitting the optional $specific second argument (source segment is
+     * always the module name). A call that passes one would still build a
+     * plausible-looking key, but the runtime would look up a different
+     * source segment than the one this spec assumes — following THIS spec's
+     * own "missing key" fix advice in that case makes it worse, not better.
+     * Enforce the invariant directly instead of relying on that symptom.
+     */
+    private static function assertNoSpecificArgument(string $path, string $contents): void
+    {
+        $pattern = '/->l\(\s*(?:\'(?:[^\'\\\\]|\\\\.)*\'|"(?:[^"\\\\]|\\\\.)*")\s*,/';
+
+        if (preg_match($pattern, $contents)) {
+            throw new RuntimeException(sprintf(
+                '%s has an ->l() call with a second ($specific) argument. This module\'s key derivation '
+                . 'assumes every ->l() call resolves its source segment to the module name; a $specific '
+                . 'argument breaks that assumption for that one call. Remove the argument.',
+                $path
+            ));
+        }
     }
 
     /**
@@ -164,6 +257,30 @@ final class TranslationCatalogueSpec
         }
 
         return $out;
+    }
+
+    /**
+     * Resolve a PHP double-quoted literal. This module's source strings don't
+     * rely on double-quote interpolation ($var, {$var}), so it is enough to
+     * unescape the small set of backslash escapes PHP recognises there; a
+     * literal \$ or \{ that slipped through unescaped would already have
+     * failed php -l.
+     */
+    private static function unescapeDoubleQuoted(string $raw): string
+    {
+        $map = ['\\\\' => '\\', '\\"' => '"', '\\n' => "\n", '\\t' => "\t", '\\r' => "\r", '\\$' => '$'];
+
+        return strtr($raw, $map);
+    }
+
+    /**
+     * @return list<string> ordered sprintf conversion tokens, e.g. ['%1$s', '%d']
+     */
+    private static function extractSprintfTokens(string $string): array
+    {
+        preg_match_all('/%(?:\d+\$)?[-+ 0\']*\d*(?:\.\d+)?[bcdeEufFgGosxX]|%%/', $string, $matches);
+
+        return $matches[0];
     }
 
     /** Mirrors the hashing in Translate::getModuleTranslation(). */
@@ -220,6 +337,29 @@ final class TranslationCatalogueSpec
                 ));
             }
         }
+
+        // A translation that drops, adds or reorders an English source's
+        // sprintf conversions (e.g. %s -> %d, or a %1$s/%2$s swap) renders a
+        // sprintf() warning or the wrong value at runtime, and neither the row
+        // count nor a plain string diff catches it.
+        foreach ($rows as $key => $value) {
+            if (!array_key_exists($key, $expected)) {
+                continue; // already reported as an orphan above
+            }
+
+            $expectedTokens = self::extractSprintfTokens($expected[$key]);
+            $actualTokens = self::extractSprintfTokens($value);
+
+            if ($expectedTokens !== $actualTokens) {
+                throw new RuntimeException(sprintf(
+                    'translations/%s.php row %s has sprintf tokens %s but the English source has %s.',
+                    $iso,
+                    $key,
+                    $actualTokens === [] ? '(none)' : implode(' ', $actualTokens),
+                    $expectedTokens === [] ? '(none)' : implode(' ', $expectedTokens)
+                ));
+            }
+        }
     }
 
     /**
@@ -234,15 +374,36 @@ final class TranslationCatalogueSpec
         foreach ($_MODULE as $key => $value) {
             if (strpos($key, self::PREFIX) !== 0) {
                 throw new RuntimeException(sprintf(
-                    'Row %s in %s does not carry the %s prefix, so no lookup can reach it.',
+                    'Row %s in %s does not carry the %s prefix. Translate::getModuleTranslation() checks a '
+                    . 'theme-scoped key ("<{twopayment}<theme>>...") before this one, so a row like this is '
+                    . 'reachable in general — just never for us, because this module ships exactly one '
+                    . 'catalogue shared by every theme, not a per-theme one. Prefix the row with %s.',
                     $key,
                     basename($path),
                     self::PREFIX
                 ));
             }
 
+            $raw = (string) $value;
+
+            // getModuleTranslation() applies stripslashes() on the way out, which
+            // silently eats ANY backslash, not just an intentional \' or \\
+            // escape. A stray literal backslash in a value would pass every
+            // check above (it is not '' or '0', it round-trips through the PHP
+            // parser fine) yet still render wrong, because stripslashes() would
+            // consume it and the character(s) after it. Catch it before that
+            // silent step, not after.
+            if (preg_match('/\\\\(?!\\\\|\')/', $raw)) {
+                throw new RuntimeException(sprintf(
+                    'Row %s in %s has a literal backslash outside a \\\' or \\\\ escape. '
+                    . 'stripslashes() will silently consume it (and the character after it) at lookup time.',
+                    $key,
+                    basename($path)
+                ));
+            }
+
             // stripslashes mirrors what getModuleTranslation applies on the way out.
-            $rows[substr($key, strlen(self::PREFIX))] = stripslashes((string) $value);
+            $rows[substr($key, strlen(self::PREFIX))] = stripslashes($raw);
         }
 
         return $rows;

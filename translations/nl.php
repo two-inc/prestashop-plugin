@@ -254,7 +254,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_693d87a10d7bf7577f44c12dfecb0559'] 
 $_MODULE['<{twopayment}prestashop>twopayment_696b031073e74bf2cb98e5ef201d4aa3'] = 'ONBEKEND';
 $_MODULE['<{twopayment}prestashop>twopayment_6a1e265f92087bb6dd18194833fe946b'] = 'E-mail:';
 $_MODULE['<{twopayment}prestashop>twopayment_6a648c4f50d265c66273e34fa2e561d0'] = 'Die btw-behandeling laat de toeslag in elk land onbelast en is niet langer beschikbaar. Maak in plaats daarvan een belastingregelgroep aan met een tarief van 0 procent en selecteer die.';
-$_MODULE['<{twopayment}prestashop>twopayment_6a980cd176fb2321da4ea77c9b8e1bd4'] = 'Btw toont 0%?';
+$_MODULE['<{twopayment}prestashop>twopayment_6a980cd176fb2321da4ea77c9b8e1bd4'] = 'Btw toont 0 %?';
 $_MODULE['<{twopayment}prestashop>twopayment_6adf97f83acf6453d4a6a4b1070f3754'] = 'Geen';
 $_MODULE['<{twopayment}prestashop>twopayment_6b6975991479cc2c6781be75b9a7e5ed'] = 'Wanneer de koper de bestelverificatie bij Two moet afronden voordat de betaalverwerking kan starten. Standaard: Bezig met voorbereiden';
 $_MODULE['<{twopayment}prestashop>twopayment_6be9e6c7a97ef6916df30b37dcd5985a'] = 'Two moet de koper goedkeuren voordat de bestelling kan worden geplaatst';

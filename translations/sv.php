@@ -249,7 +249,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_6735bd225a891660cc38b49f427acb08'] 
 $_MODULE['<{twopayment}prestashop>twopayment_67d805ed4bbf1baf8cd7a94badcb7bc1'] = 'Exklusive moms (netto)';
 $_MODULE['<{twopayment}prestashop>twopayment_67dd983768d27e0b7ca68a09c27d1cfd'] = 'Betalningsinställningarna är uppdaterade.';
 $_MODULE['<{twopayment}prestashop>twopayment_6825c19161f9f1b9a4047b08720ac98c'] = 'Ingen orderreferens från betalningsleverantören är angiven för denna order.';
-$_MODULE['<{twopayment}prestashop>twopayment_68fc97fb527fe6d18d12d02199710634'] = 'Kunde inte bekräfta avbrottet från betalningsleverantören. Försök genomföra kassan igen.';
+$_MODULE['<{twopayment}prestashop>twopayment_68fc97fb527fe6d18d12d02199710634'] = 'Kunde inte bekräfta att betalningen avbröts. Försök genomföra kassan igen.';
 $_MODULE['<{twopayment}prestashop>twopayment_693d87a10d7bf7577f44c12dfecb0559'] = 'Din order är avbruten.';
 $_MODULE['<{twopayment}prestashop>twopayment_696b031073e74bf2cb98e5ef201d4aa3'] = 'OKÄND';
 $_MODULE['<{twopayment}prestashop>twopayment_6a1e265f92087bb6dd18194833fe946b'] = 'E-post:';
