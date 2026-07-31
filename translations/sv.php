@@ -370,6 +370,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_bafd7322c6e97d25b6299b5d6fe8920b'] 
 $_MODULE['<{twopayment}prestashop>twopayment_bb1697a94fe9e88e0c4b2b0dd605eced'] = 'Konfigurerbara betalningsvillkor (7, 15, 20, 30, 45, 60, 90 dagar)';
 $_MODULE['<{twopayment}prestashop>twopayment_bbe9f9e95ce9e3ed2a173b373b381286'] = 'SSL-verifiering är avaktiverad i produktion. Aktivera den igen om inte ditt nätverk kräver en betrodd företagsproxy.';
 $_MODULE['<{twopayment}prestashop>twopayment_bc5e69470fb58f31cb12c7e95bede662'] = 'Kontroll av köparens behörighet i realtid (Order Intent) före köp';
+$_MODULE['<{twopayment}prestashop>twopayment_bcdcf1cfb578d4756265681317cb35e2'] = 'Sök efter ett annat företag';
 $_MODULE['<{twopayment}prestashop>twopayment_be89e29be0122074a933bea5d3813084'] = 'Vi kunde inte hitta ditt företag. Prova ett annat företagsnamn eller kontakta supporten.';
 $_MODULE['<{twopayment}prestashop>twopayment_c012e2a8b9e129403f8b93547086500a'] = 'För kort';
 $_MODULE['<{twopayment}prestashop>twopayment_c050bd52ad0af81cf819fbcf2863357f'] = 'Telefonnumret måste stämma med det valda landet';
