@@ -49,8 +49,16 @@ php -l path/to/file.php
 For every user-facing string change:
 - Update PHP/Smarty translation surfaces (`$this->l`, `{l ...}`)
 - Update JS i18n dictionary in `twopayment.php` when used by frontend modules
-- Update `translations/es.php` with natural Spanish
+- Update every locale in `translations/`: `es.php`, `nl.php`, `no.php`, `sv.php` — natural
+  phrasing, not literal machine output. Dutch uses the informal `je`/`jouw` register.
 - Avoid hardcoded English UI fallback where module i18n is available
+
+**Never regenerate a `translations/*.php` file from the PrestaShop back office**
+(Translations > Module translations). Its writer derives the key's source segment from the
+*filename* for `.php` files as well as templates, but at runtime every `->l()` here reaches
+`Module::l()` with no `$specific`, so the source segment is always the module name. Saving
+from the back office therefore rewrites the module's own strings to keys nothing looks up.
+Edit these files by hand. Norwegian is `no.php` (PrestaShop's `iso_code`), never `nb.php`.
 
 ## File Ownership Reference
 
