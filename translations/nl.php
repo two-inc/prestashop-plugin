@@ -370,6 +370,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_bafd7322c6e97d25b6299b5d6fe8920b'] 
 $_MODULE['<{twopayment}prestashop>twopayment_bb1697a94fe9e88e0c4b2b0dd605eced'] = 'Instelbare betaaltermijnen (7, 15, 20, 30, 45, 60, 90 dagen)';
 $_MODULE['<{twopayment}prestashop>twopayment_bbe9f9e95ce9e3ed2a173b373b381286'] = 'SSL-verificatie is uitgeschakeld in productie. Schakel deze weer in, tenzij je netwerk een vertrouwde bedrijfsproxy vereist.';
 $_MODULE['<{twopayment}prestashop>twopayment_bc5e69470fb58f31cb12c7e95bede662'] = 'Realtime geschiktheidscheck van de koper (Order Intent) vóór aankoop';
+$_MODULE['<{twopayment}prestashop>twopayment_bcdcf1cfb578d4756265681317cb35e2'] = 'Zoek naar een ander bedrijf';
 $_MODULE['<{twopayment}prestashop>twopayment_be89e29be0122074a933bea5d3813084'] = 'We konden je bedrijf niet vinden. Probeer een andere bedrijfsnaam of neem contact op met support.';
 $_MODULE['<{twopayment}prestashop>twopayment_c012e2a8b9e129403f8b93547086500a'] = 'Te kort';
 $_MODULE['<{twopayment}prestashop>twopayment_c050bd52ad0af81cf819fbcf2863357f'] = 'Het telefoonnummer moet bij het gekozen land horen';
