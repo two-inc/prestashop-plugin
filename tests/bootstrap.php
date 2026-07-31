@@ -534,6 +534,17 @@ namespace {
     class Tools
     {
         private static array $testValues = [];
+        private static bool $hasMediaServer = false;
+
+        public static function hasMediaServer(): bool
+        {
+            return self::$hasMediaServer;
+        }
+
+        public static function setTestHasMediaServer(bool $value): void
+        {
+            self::$hasMediaServer = $value;
+        }
 
         public static function substr($string, $start, $length = null)
         {
@@ -581,6 +592,7 @@ namespace {
         public static function resetTestValues(): void
         {
             self::$testValues = [];
+            self::$hasMediaServer = false;
         }
 
         public static function getToken($page = false): string

@@ -3468,6 +3468,15 @@ class Twopayment extends PaymentModule
      * this module's existing best-effort filemtime usage elsewhere
      * (getTwoDeployedAtLabel).
      *
+     * Skipped entirely when Tools::hasMediaServer() is active: PrestaShop's
+     * remote-media-server asset resolution (classes/controller/FrontController.php,
+     * legacy PS_MEDIA_SERVER_1/2/3 domain sharding) does a literal file_exists()
+     * on this same path string, which would fail once a "?v=..." query string
+     * is appended (it isn't a real file on disk). That legacy split-domain
+     * setup is rare and not something this module documents support for, so
+     * we fail back to the old, working, unversioned behaviour there rather
+     * than risk breaking asset loading on checkout.
+     *
      * @param string $relative_path path relative to this module's own directory,
      *                               e.g. 'views/js/twopayment.js'
      *
@@ -3476,13 +3485,29 @@ class Twopayment extends PaymentModule
     private function getTwoVersionedAssetPath($relative_path)
     {
         $module_relative_path = 'modules/' . $this->name . '/' . ltrim($relative_path, '/');
-        $mtime = @filemtime(rtrim($this->local_path, '/') . '/' . ltrim($relative_path, '/'));
 
-        if (!$mtime) {
+        if (method_exists('Tools', 'hasMediaServer') && Tools::hasMediaServer()) {
             return $module_relative_path;
         }
 
-        return $module_relative_path . '?v=' . $mtime;
+        return $module_relative_path . $this->getTwoAssetVersionQueryString($relative_path);
+    }
+
+    /**
+     * '?v=<filemtime>' for a module asset, or '' if the file can't be stat'd.
+     * Shared by getTwoVersionedAssetPath() and the legacy addCSS() fallback
+     * below, which needs the query string but not the 'modules/...' prefix
+     * (it builds its own URL from $this->_path).
+     *
+     * @param string $relative_path path relative to this module's own directory
+     *
+     * @return string '' or '?v=<mtime>'
+     */
+    private function getTwoAssetVersionQueryString($relative_path)
+    {
+        $mtime = @filemtime(rtrim($this->local_path, '/') . '/' . ltrim($relative_path, '/'));
+
+        return $mtime ? '?v=' . $mtime : '';
     }
 
     /**
@@ -3521,8 +3546,7 @@ class Twopayment extends PaymentModule
         }
 
         if (method_exists($controller, 'addCSS')) {
-            $mtime = @filemtime(rtrim($this->local_path, '/') . '/views/css/two.css');
-            $controller->addCSS($this->_path . 'views/css/two.css' . ($mtime ? '?v=' . $mtime : ''));
+            $controller->addCSS($this->_path . 'views/css/two.css' . $this->getTwoAssetVersionQueryString('views/css/two.css'));
         }
     }
 
