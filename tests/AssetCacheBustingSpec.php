@@ -20,6 +20,8 @@ final class AssetCacheBustingSpec
         self::testVersionChangesWhenFileMtimeChanges();
         self::testMissingFileFallsBackToUnversionedPath();
         self::testLeadingSlashOnRelativePathIsNormalised();
+        self::testHasMediaServerSkipsVersioning();
+        self::testAddCssFallbackAppendsVersionQueryString();
     }
 
     private static function callVersionedPath(string $relativePath)
@@ -90,5 +92,60 @@ final class AssetCacheBustingSpec
         $withSlash = self::callVersionedPath('/views/css/two.css');
         $withoutSlash = self::callVersionedPath('views/css/two.css');
         TinyAssert::same($withoutSlash, $withSlash);
+    }
+
+    /**
+     * Legacy PS_MEDIA_SERVER_1/2/3 domain-sharding mode: PrestaShop's own
+     * remote-media resolution (FrontController::registerStylesheet /
+     * registerJavascript) does a literal file_exists() on this same relative
+     * path, which would fail once "?v=..." is appended. Versioning must be
+     * skipped entirely in that mode rather than risk breaking asset loading.
+     */
+    private static function testHasMediaServerSkipsVersioning(): void
+    {
+        Tools::setTestHasMediaServer(true);
+        $path = self::callVersionedPath('views/css/two.css');
+        Tools::resetTestValues();
+
+        TinyAssert::same('modules/twopayment/views/css/two.css', $path);
+    }
+
+    /**
+     * Pre-1.7 admin controllers without registerStylesheet() fall back to the
+     * legacy addCSS($url) API. That branch builds its own URL from
+     * $this->_path rather than getTwoVersionedAssetPath()'s 'modules/...'
+     * prefix, but must still get the same "?v=<mtime>" cache-busting via the
+     * shared getTwoAssetVersionQueryString() helper.
+     */
+    private static function testAddCssFallbackAppendsVersionQueryString(): void
+    {
+        $module = new TwopaymentTestHarness();
+        $realMtime = @filemtime(rtrim($module->local_path, '/') . '/views/css/two.css');
+        TinyAssert::true($realMtime !== false, 'fixture file must exist for this assertion to be meaningful');
+
+        $controller = new class {
+            public $controller_name = 'AdminModules';
+            public $php_self = 'module';
+            public $addedCss = [];
+
+            public function addCSS($url)
+            {
+                $this->addedCss[] = $url;
+            }
+        };
+
+        $module->context->controller = $controller;
+        Tools::setTestValue('configure', 'twopayment');
+        Tools::setTestValue('controller', 'AdminModules');
+
+        $module->hookActionAdminControllerSetMedia();
+
+        Tools::resetTestValues();
+
+        TinyAssert::same(1, count($controller->addedCss));
+        TinyAssert::true(
+            strpos($controller->addedCss[0], '?v=' . $realMtime) !== false,
+            "expected version query string in: {$controller->addedCss[0]}"
+        );
     }
 }
