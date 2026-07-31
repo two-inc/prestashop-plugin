@@ -481,6 +481,67 @@ describe('regressions found in adversarial review', () => {
         expect(chipVisible()).toBe(false);
     });
 
+    test('a same-instance updatedAddressForm re-render while revealed disarms the pending restore too', () => {
+        // setupAutocomplete() re-resolves `this.companyField` to whatever
+        // field is live now - a `document.contains()` check alone cannot
+        // tell "detached" from "reassigned to a DIFFERENT, still-live field",
+        // so the reveal has to be disarmed explicitly before this handler
+        // calls setupAutocomplete(), the same way the country-select
+        // handler already is.
+        jest.useFakeTimers();
+        makeInstance();
+        selectFirstResult('exa', SEARCH_RESPONSE);
+
+        chip().trigger('click');
+        liveField().trigger('blur');
+
+        // PrestaShop re-renders the form (e.g. for an unrelated reason) while
+        // the 200ms restore is still pending, on this SAME instance.
+        replaceAddressForm({ country: 'GB' });
+        bus.emit('updatedAddressForm');
+
+        jest.advanceTimersByTime(250);
+
+        // The new, freshly-rendered field must not be silently overwritten
+        // with the OLD company that was open for search on the OLD field.
+        // (replaceAddressForm() builds a fresh form with no `companyid`
+        // hidden input at all until init() recreates one - a full
+        // getModel-and-recreate-instance re-render would carry that field
+        // forward the same way `seedConfirmedPair()` simulates elsewhere in
+        // this file; this lightweight same-instance path just needs to prove
+        // nothing got WRITTEN into whatever is there.)
+        expect(liveField().val()).toBe('');
+        expect($("input[name='companyid']").val() || '').toBe('');
+        expect(chipVisible()).toBe(false);
+    });
+
+    test('a deferred lookup does not overwrite the address fields either, once the buyer has moved on', async () => {
+        // The same stale-lookup hazard the organisation-number guard closes
+        // also applies to the address autofill the same response can carry -
+        // both must be gated by the same "still on the same company" check.
+        makeInstance();
+        selectFirstResult('exa', {
+            items: [{ name: 'Example Trading Ltd', lookup_id: 'lookup-abc' }]
+        });
+
+        const field = liveField();
+        field.val('Something Else Entirely');
+        field.trigger('input');
+
+        ajax.last().succeed({
+            national_identifier: { id: '87654321' },
+            addresses: [
+                { type: 'BUSINESS', street_address: '1 Example Street', postal_code: 'EX1 1EX', city: 'Exampleton' }
+            ]
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect($("input[name='address1']").val()).toBe('');
+        expect($("input[name='postcode']").val()).toBe('');
+        expect($("input[name='city']").val()).toBe('');
+    });
+
     test('a deferred (GB-style) organisation number is not adopted if the buyer has since typed a different search', async () => {
         // fetchCompanyDetails() resolves after a real network round trip;
         // adopting it blindly would tag whatever the buyer is NOW typing with
@@ -519,41 +580,30 @@ describe('regressions found in adversarial review', () => {
         expect(field.attr('aria-hidden')).toBeUndefined();
     });
 
-    test('two live company fields on the page each get their own chip, not one adopted from the other', () => {
-        // Simulates separate invoice/delivery address forms, each with its
-        // own input[name='company'] - createRevealChip()/removeRevealChip()
-        // must scope to THIS instance's own field, not a document-wide class
-        // lookup, or a second instance silently adopts the first's chip.
-        document.body.innerHTML = document.body.innerHTML.replace(
-            '</form>\n</div>',
-            '</form>\n</div><div class="js-address-form"><form><input type=\'text\' name=\'company2\' value=\'\' /></form></div>'
-        );
-        // Re-point the second form's field to the same selector this module
-        // reads, by giving the harness's makeInstance() a distinct selector.
-        const second = new TwoCompanySearch({
-            checkoutHost: CHECKOUT_HOST,
-            companyFieldSelector: "input[name='company2']"
-        });
-        makeInstance();
-        selectFirstResult('exa', SEARCH_RESPONSE);
-
-        second.companyField.val('Another Company Ltd');
-        second.organizationField.val('87654321');
-        second.organizationField.attr('data-two-company-name', 'Another Company Ltd');
-        second.updateRevealChip();
-
-        expect(chip()).toHaveLength(2);
-        expect(second.companyField.siblings('.two-company-search-reveal')).toHaveLength(1);
-        expect(liveField().siblings('.two-company-search-reveal')).toHaveLength(1);
-        expect(second.companyField.siblings('.two-company-search-reveal').get(0))
-            .not.toBe(liveField().siblings('.two-company-search-reveal').get(0));
-
-        second.destroy();
-
-        // The other field's chip must survive the second instance's teardown.
-        expect(chip()).toHaveLength(1);
-        expect(chipVisible()).toBe(true);
-    });
+    // NOTE on chip scoping: createRevealChip()/removeRevealChip() look up
+    // the chip via `this.companyField.siblings(...)` rather than a
+    // document-wide class selector, which is a strict improvement over a
+    // global lookup and is exercised by "a second instance on the same
+    // field does not leave two chips behind" below. An earlier version of
+    // this suite additionally claimed this fully solves "two independent
+    // company fields on the page at once" (e.g. separate invoice/delivery
+    // address forms), constructed via two TwoCompanySearch instances with
+    // hand-picked, distinct `companyFieldSelector` values. Adversarial
+    // review (round 2) correctly identified that as testing an architecture
+    // that does not exist in production: TwoCheckoutManager.initializeCompanySearch()
+    // is a page-wide SINGLETON that always uses the default
+    // `input[name='company']` selector, so if PrestaShop core ever renders
+    // two such inputs simultaneously, this class holds ONE instance whose
+    // `this.companyField` jQuery collection matches BOTH nodes - a
+    // pre-existing assumption throughout this whole file (organizationField,
+    // companyIdHintField, etc. are all resolved the same unscoped way, none
+    // of it introduced by TWO-25288 element 2), not something the chip
+    // scoping change touches or claims to fix. That test was removed rather
+    // than kept as false assurance; whether PrestaShop core can genuinely
+    // render two live company fields on one page is an open question for a
+    // separate ticket, not this one. The single-field case this scoping
+    // change DOES cover is exercised in the "teardown" block below ("a
+    // second instance on the same field does not leave two chips behind").
 });
 
 describe('teardown', () => {
