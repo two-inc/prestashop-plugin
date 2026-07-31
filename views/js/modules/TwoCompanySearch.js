@@ -293,6 +293,27 @@ class TwoCompanySearch {
         });
     }
 
+    /**
+     * Repaint the tile's read-only company summary (TWO-25288).
+     *
+     * Called at each point where this module changes the captured pair, because
+     * every one of those writes goes through jQuery's `.val()` / `.attr()`, which
+     * fire no event - so the summary module has nothing it could observe and has
+     * to be told. It re-reads the DOM itself; nothing is passed in.
+     *
+     * Guarded rather than assumed present: this module ships and runs on the
+     * address step, where the payment tile does not exist yet.
+     */
+    refreshCompanySummary() {
+        try {
+            if (window.TwoCompanySummary && typeof window.TwoCompanySummary.render === 'function') {
+                window.TwoCompanySummary.render();
+            }
+        } catch (e) {
+            // Display only. It must never break the capture it describes.
+        }
+    }
+
     setupAddressIdentifierSync() {
         if (!this.companyField || this.companyField.length === 0) {
             return;
@@ -325,7 +346,22 @@ class TwoCompanySearch {
         if (!orgNumber && dniValue) {
             orgNumber = dniValue;
             this.organizationField.val(orgNumber);
-            if (this.companyField && this.companyField.length > 0) {
+
+            // Tag it as a confirmed pairing ONLY if `dni` is genuinely the
+            // buyer's own value - i.e. not an untouched, lookup-written
+            // leftover from a PREVIOUS company (TWO-25288 tile review). A
+            // plain retype over a selection clears `companyid` and its tag
+            // but leaves a marked, lookup-written `dni` behind (documented
+            // residual on PR two-inc/prestashop-plugin#122); adopting that
+            // value here and tagging it with whatever name is now in the
+            // field would make the payment tile's stale-pairing check treat
+            // an unverified adoption as a confirmed one. Once the buyer has
+            // gone through proper manual entry (which clears lookup-written
+            // fields) or edited `dni` by hand, the marker no longer matches
+            // and the value is trustworthy again.
+            const dniMarker = dniField.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR);
+            const dniIsUntouchedLookupResidue = typeof dniMarker !== 'undefined' && dniMarker === dniValue;
+            if (!dniIsUntouchedLookupResidue && this.companyField && this.companyField.length > 0) {
                 this.organizationField.attr('data-two-company-name', this.companyField.val() || '');
             }
         }
@@ -852,6 +888,7 @@ class TwoCompanySearch {
         }
         this.clearLookupWrittenAddressIdentifiers();
         this.clearPersistedCompany();
+        this.refreshCompanySummary();
     }
 
     /**
@@ -1905,7 +1942,9 @@ class TwoCompanySearch {
         if (!shouldDeferIntentTrigger) {
             triggerOrderIntentRecheck();
         }
-        
+
+        this.refreshCompanySummary();
+
         return true;
     }
     
@@ -1959,6 +1998,10 @@ class TwoCompanySearch {
                         company: this.companyField ? this.companyField.val() : '',
                         companyid: natIdVal
                     });
+                    // The GB path: the selection carried no organisation number
+                    // and this is the first point one exists, so the summary
+                    // rendered at selection time showed a blank number slot.
+                    this.refreshCompanySummary();
                 }
             }
             // Find addresses list in various shapes
@@ -2141,6 +2184,13 @@ class TwoCompanySearch {
                 this.setCompanyIdHint('');
                 // Recreate autocomplete to ensure new country is used immediately
                 this.setupAutocomplete();
+                // The clears above go through `.val()` / `.removeAttr()` and
+                // fire no event, so the tile's summary would keep showing the
+                // company this country change has just discarded (TWO-25288). On
+                // core themes PrestaShop's own `updatedAddressForm` repaints it a
+                // few hundred ms later; a theme that does not re-render the
+                // address form on a country change never would.
+                this.refreshCompanySummary();
             };
             countryField.addEventListener('change', this.countryListener);
             this._boundCountrySelector = countryField;

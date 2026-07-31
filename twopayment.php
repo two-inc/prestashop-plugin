@@ -3427,6 +3427,17 @@ class Twopayment extends PaymentModule
         $this->context->controller->registerJavascript('two-order-intent', 'modules/twopayment/views/js/modules/TwoOrderIntent.js', array('priority' => 202, 'async' => false));
         $this->context->controller->registerJavascript('two-sole-trader', 'modules/twopayment/views/js/modules/TwoSoleTrader.js', array('priority' => 204, 'async' => false));
         $this->context->controller->registerJavascript('two-optional-fields', 'modules/twopayment/views/js/modules/TwoOptionalFields.js', array('priority' => 204, 'async' => false));
+        // Read-only company summary in the payment tile (TWO-25288).
+        //
+        // The priority is cosmetic, not a dependency guarantee, and it would be
+        // wrong to read it as one. TwoCompanySearch reaches this class only from
+        // handlers on an instance that views/js/twopayment.js builds inside
+        // `$(document).ready`, by which point every `async: false` script has
+        // already run - so any priority at or below the checkout manager's is
+        // equivalent. What actually makes the call safe is the `window
+        // .TwoCompanySummary && typeof ... === 'function'` guard at the call site,
+        // which also covers the address step, where the tile does not exist.
+        $this->context->controller->registerJavascript('two-company-summary', 'modules/twopayment/views/js/modules/TwoCompanySummary.js', array('priority' => 200, 'async' => false));
         // Phone validation removed - Two API handles phone number validation
         $this->context->controller->registerJavascript('two-checkout-manager', 'modules/twopayment/views/js/modules/TwoCheckoutManager.js', array('priority' => 205, 'async' => false));
         $this->context->controller->registerJavascript('two-script', 'modules/twopayment/views/js/twopayment.js', array('priority' => 206, 'async' => false));

@@ -58,6 +58,45 @@ load order a theme's `<script>` tags produce.
 
 ## What is covered
 
+`company-summary.test.js` — the read-only company display in the payment tile
+(`TwoCompanySummary`, TWO-25288):
+
+- the three capture modes onto the two slots: **search** and **sole trader** show name and
+  number, **manual entry** shows the name with the number slot blank. Blank and *present*,
+  asserted separately — a slot that disappears reads as a rendering fault rather than as an
+  answer.
+- a number whose `data-two-company-name` tag no longer matches the field is **not** shown
+  beside the new name.
+- the number arriving only with the company details (the GB shape) repaints the slot.
+- the display is not editable: **no** `input` / `select` / `textarea` / `button` /
+  `contenteditable` anywhere in the block, both slots are `SPAN`s with no `name`, and no part
+  of the block is inside a `form`.
+- the hidden `companyid` input still carries the number into the submission, inside the
+  address form, exactly one of it, unchanged by 25 renders — and a sole-trader push does not
+  invent one. The identifier mirroring the selection performs is re-pinned here too, because
+  this change added a call into the middle of `onCompanySelected()`.
+- the tile is repainted after a `updatedCart` re-render replaces the block, that the repaint
+  is **deferred** rather than synchronous with the event, and that a second instance does not
+  stack bus handlers (the bus has no `off`, so a per-instance registration leaks silently —
+  only one instance is built today, which is exactly what would have hidden it). `cleanup()`
+  stops the instance listening and is idempotent.
+- a **sole-trader enrolment never outranks a company captured in the form**: selecting or
+  typing one replaces it, and `TwoSoleTrader.setMode('business')` forgets it outright.
+- a **country change** clears the display along with the fields its listener clears.
+- values are written as **text, not markup**: a company name shaped like `<img onerror=...>`
+  from the register, and one typed by the buyer, both render as characters. This is the only
+  injection-relevant line in the module and it was unguarded until the review round asked.
+
+It builds its DOM from the **shipped** `views/templates/hook/paymentinfo.tpl` via
+`buildPaymentTile()`, which strips Smarty rather than copying the markup into the test. A
+hand-written fixture would keep passing after someone renamed a class or deleted a slot in
+the real template, which is the failure a tile test exists to catch — nothing else in the
+suite reads that file. It also constructs a real `TwoCompanySummary` **instance**: the
+document-level `input` listener that catches a hand-typed company name belongs to the
+instance, so a suite that only loaded the class would find the manual-entry path dead and
+still pass on the paths that call `render()` directly. That is not hypothetical — it is how
+this suite first failed.
+
 `company-search-resilience.test.js` — `searchCompanies()` and the class-static result
 cache:
 
