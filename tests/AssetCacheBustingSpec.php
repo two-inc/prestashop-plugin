@@ -123,6 +123,15 @@ final class AssetCacheBustingSpec
      * call site back to appending the version onto the path - the change that
      * broke checkout in PR #127/TWO-53PS - drops that call's contribution to
      * one or both counts, and this fails.
+     *
+     * Per-call-site, not body-wide aggregate counts (adversarial review
+     * finding): a whole-body substr_count() can be satisfied by padding -
+     * e.g. a stray comment repeating "getTwoModuleAssetPath(" or
+     * "'version' => $this->getTwoAssetVersion(" elsewhere in the body - while
+     * one real call site quietly reverts to the broken path-append pattern.
+     * Every register*() call line is matched and required to carry BOTH
+     * tokens on that same line, so a reverted call site fails on its own
+     * line rather than being masked by another line's tokens.
      */
     private static function testCheckoutHookUsesCleanPathAndVersionParamForEveryRegisteredAsset(): void
     {
@@ -143,13 +152,23 @@ final class AssetCacheBustingSpec
             . 'fails to resolve via file_exists() and drops the asset entirely (TWO-53PS regression).'
         );
 
-        $registerCallCount = substr_count($body, '->registerJavascript(') + substr_count($body, '->registerStylesheet(');
-        $cleanPathCount = substr_count($body, 'getTwoModuleAssetPath(');
-        $versionParamCount = substr_count($body, "'version' => \$this->getTwoAssetVersion(");
+        $lines = explode("\n", $body);
+        $registerLines = array_values(array_filter($lines, function ($line) {
+            return strpos($line, '->registerJavascript(') !== false || strpos($line, '->registerStylesheet(') !== false;
+        }));
 
-        TinyAssert::true($registerCallCount >= 7, "expected at least 7 register*() calls in the hook, found {$registerCallCount}");
-        TinyAssert::same($registerCallCount, $cleanPathCount, 'every register*() call must build its path via getTwoModuleAssetPath()');
-        TinyAssert::same($registerCallCount, $versionParamCount, "every register*() call must pass 'version' => \$this->getTwoAssetVersion(...)");
+        TinyAssert::true(count($registerLines) >= 7, 'expected at least 7 register*() call lines in the hook, found ' . count($registerLines));
+
+        foreach ($registerLines as $line) {
+            TinyAssert::true(
+                strpos($line, 'getTwoModuleAssetPath(') !== false,
+                "register*() call must build its path via getTwoModuleAssetPath() on its own line, got: {$line}"
+            );
+            TinyAssert::true(
+                strpos($line, "'version' => \$this->getTwoAssetVersion(") !== false,
+                "register*() call must pass 'version' => \$this->getTwoAssetVersion(...) on its own line, got: {$line}"
+            );
+        }
     }
 
     /**
