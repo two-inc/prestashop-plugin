@@ -287,24 +287,67 @@ final class AssetCacheBustingSpec
         // still exact on identity - Vader's delete-one/duplicate-another
         // mutation changes which ids are present regardless of ordering, so
         // it's still caught.
-        $expectedFrontIds = array(
-            'two-checkout-manager',
-            'two-company-search',
-            'two-company-summary',
-            'two-css',
-            'two-optional-fields',
-            'two-order-intent',
-            'two-script',
-            'two-sole-trader',
+        // Maps each id to the ONE relative path it must register (round-5
+        // adversarial review, Vader): round 4's checks only confirmed the
+        // right SET of ids is present and that each call is internally
+        // self-consistent (its own getTwoModuleAssetPath() and
+        // getTwoAssetVersion() arguments match each other) - neither catches
+        // a call whose id is left correct but whose backing file is swapped
+        // for a different one (e.g. 'two-order-intent' silently registering
+        // TwoCompanySearch.js instead of TwoOrderIntent.js): the id set is
+        // untouched and the call is still self-consistent, so both round-4
+        // assertions pass while checkout genuinely loses TwoOrderIntent.js.
+        // Binding id -> expected path closes that gap.
+        $expectedFrontPathsById = array(
+            'two-css' => 'views/css/two.css',
+            'two-company-search' => 'views/js/modules/TwoCompanySearch.js',
+            'two-order-intent' => 'views/js/modules/TwoOrderIntent.js',
+            'two-sole-trader' => 'views/js/modules/TwoSoleTrader.js',
+            'two-optional-fields' => 'views/js/modules/TwoOptionalFields.js',
+            'two-company-summary' => 'views/js/modules/TwoCompanySummary.js',
+            'two-checkout-manager' => 'views/js/modules/TwoCheckoutManager.js',
+            'two-script' => 'views/js/twopayment.js',
         );
-        $expectedAdminIds = array('module-twopayment-admin-css');
+        $expectedAdminPathsById = array(
+            'module-twopayment-admin-css' => 'views/css/two.css',
+        );
 
         $actualFrontIds = self::extractCallIds($frontStatements);
         sort($actualFrontIds);
-        TinyAssert::same($expectedFrontIds, $actualFrontIds, 'hookActionFrontControllerSetMedia() must register exactly this set of asset ids');
-        TinyAssert::same($expectedAdminIds, self::extractCallIds($adminStatements), 'hookActionAdminControllerSetMedia() must register exactly this set of asset ids');
+        TinyAssert::same(self::sortedKeys($expectedFrontPathsById), $actualFrontIds, 'hookActionFrontControllerSetMedia() must register exactly this set of asset ids');
+        TinyAssert::same(array_keys($expectedAdminPathsById), self::extractCallIds($adminStatements), 'hookActionAdminControllerSetMedia() must register exactly this set of asset ids');
 
-        foreach (array_merge($frontStatements, $adminStatements) as $statement) {
+        self::assertCallsMatchExpectedPaths($frontStatements, $expectedFrontPathsById);
+        self::assertCallsMatchExpectedPaths($adminStatements, $expectedAdminPathsById);
+    }
+
+    /**
+     * @param array<string, string> $map
+     *
+     * @return array<int, string>
+     */
+    private static function sortedKeys(array $map): array
+    {
+        $keys = array_keys($map);
+        sort($keys);
+
+        return $keys;
+    }
+
+    /**
+     * For each call statement: its getTwoModuleAssetPath(...) and
+     * getTwoAssetVersion(...) arguments must both equal the ONE relative
+     * path $expectedPathsById says its own id should register - not merely
+     * equal each other (see the docblock above
+     * testCheckoutHookUsesCleanPathAndVersionParamForEveryRegisteredAsset()
+     * for why "equal each other" alone is not enough).
+     *
+     * @param array<int, string>    $statements
+     * @param array<string, string> $expectedPathsById
+     */
+    private static function assertCallsMatchExpectedPaths(array $statements, array $expectedPathsById): void
+    {
+        foreach ($statements as $statement) {
             TinyAssert::true(
                 strpos($statement, 'getTwoModuleAssetPath(') !== false,
                 "register*() call must build its path via getTwoModuleAssetPath(), got: {$statement}"
@@ -314,15 +357,17 @@ final class AssetCacheBustingSpec
                 "register*() call must pass 'version' => \$this->getTwoAssetVersion(...), got: {$statement}"
             );
 
+            $ids = self::extractCallIds(array($statement));
+            $id = $ids[0];
+            TinyAssert::true(array_key_exists($id, $expectedPathsById), "no expected path registered for id '{$id}' - update \$expectedPathsById if this id is intentional");
+            $expectedPath = $expectedPathsById[$id];
+
             $modulePathArgs = self::extractQuotedArgsAfter($statement, 'getTwoModuleAssetPath');
             $versionArgs = self::extractQuotedArgsAfter($statement, 'getTwoAssetVersion');
             TinyAssert::same(1, count($modulePathArgs), "expected exactly one getTwoModuleAssetPath(...) argument, got: {$statement}");
             TinyAssert::same(1, count($versionArgs), "expected exactly one getTwoAssetVersion(...) argument, got: {$statement}");
-            TinyAssert::same(
-                $modulePathArgs[0],
-                $versionArgs[0],
-                "getTwoModuleAssetPath() and getTwoAssetVersion() must reference the SAME relative path within one call, got: {$statement}"
-            );
+            TinyAssert::same($expectedPath, $modulePathArgs[0], "id '{$id}' must build its path from '{$expectedPath}', got: {$statement}");
+            TinyAssert::same($expectedPath, $versionArgs[0], "id '{$id}' must version '{$expectedPath}', got: {$statement}");
         }
     }
 
