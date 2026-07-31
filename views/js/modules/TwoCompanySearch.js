@@ -283,11 +283,17 @@ class TwoCompanySearch {
      *
      * Checked among this field's OWN siblings, not by a document-wide class
      * lookup - unlike the passive org-id hint and the manual-entry reverse
-     * link, this chip is a focus-stealing, absolutely-positioned control, and
-     * PrestaShop can render more than one `input[name='company']` on the
-     * page at once (separate invoice/delivery address forms). A global
-     * lookup would let a second instance silently adopt the first instance's
-     * chip and cover the wrong field with it.
+     * link, this chip is a focus-stealing, absolutely-positioned control, so
+     * a global lookup would let a second, independently-constructed instance
+     * silently adopt the first instance's chip. This scoping does NOT by
+     * itself make the chip safe if PrestaShop core ever renders two live
+     * `input[name='company']` nodes at once under ONE instance - this class
+     * is a page-wide singleton (see TwoCheckoutManager.initializeCompanySearch())
+     * that resolves `this.companyField` from a bare selector with no
+     * `.first()`, the same pre-existing assumption every other method here
+     * (organizationField, companyIdHintField, ...) already makes and that
+     * this PR does not change. That is a separate, unresolved question about
+     * this class's single-field architecture, not something element 2 closes.
      */
     createRevealChip() {
         if (!this.companyField || !this.companyField.length) {
@@ -2356,9 +2362,13 @@ class TwoCompanySearch {
                     this.updateRevealChip();
                 }
             }
-            // Find addresses list in various shapes
+            // Find addresses list in various shapes. Gated by the SAME
+            // stillOnSameCompany check as the organisation number above - a
+            // stale deferred lookup overwriting street/city/postcode with an
+            // abandoned company's address is exactly the same hazard, just on
+            // different fields, and this response can carry both.
             const addresses = (details && (details.addresses || (details.company && details.company.addresses))) || [];
-            if (Array.isArray(addresses) && addresses.length > 0) {
+            if (Array.isArray(addresses) && addresses.length > 0 && stillOnSameCompany) {
                 this.autoFillAddress(addresses);
             }
         } catch (e) {
@@ -2600,6 +2610,20 @@ class TwoCompanySearch {
                 if (this._destroyed) {
                     return;
                 }
+                // Stand down an open reveal (TWO-25288 element 2) BEFORE
+                // re-resolving the field below. setupAutocomplete() reassigns
+                // `this.companyField` to whatever node is live now - if a
+                // reveal's blur-restore timer is still pending at that point,
+                // `document.contains()` alone cannot tell "detached" from
+                // "reassigned to a DIFFERENT, still-live field", and would
+                // write the pre-re-render snapshot into the wrong node.
+                // Same disarm setupCountryChangeListener()'s own change
+                // handler already does, and for the identical reason: this
+                // handler runs on the SAME instance, not through destroy().
+                clearTimeout(this._revealBlurTimerId);
+                this._revealBlurTimerId = null;
+                this._revealed = false;
+                this._revealSnapshot = null;
                 // Address form was re-rendered; re-bind country listener and autocomplete
                 this.setupCountryChangeListener(0);
                 this.setupAutocomplete();
