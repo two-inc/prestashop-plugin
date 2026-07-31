@@ -1331,10 +1331,20 @@
     white-space: nowrap;
 }
 
-.two-company-search-reveal:hover,
-.two-company-search-reveal:focus {
+.two-company-search-reveal:hover {
     border-color: #999;
-    outline: none;
+}
+
+/*
+ * A real focus outline, not `outline: none` - this is now the sole way to
+ * reopen the search, so a keyboard user has to be able to see where they
+ * are. Same treatment as .two-autocomplete-manual-entry:focus above, for the
+ * same reason: an interactive control with no visible focus state is worse
+ * than no keyboard support at all.
+ */
+.two-company-search-reveal:focus {
+    outline: 2px solid #1976d2;
+    outline-offset: -2px;
 }
 
 /* Clean up unused styles */

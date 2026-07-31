@@ -281,18 +281,20 @@ class TwoCompanySearch {
      * exactly the failure mode applyEmptyFieldHint() next to it already
      * guards against.
      *
-     * Checked by class name rather than by this instance's own reference, for
-     * the same reason removeBackToSearchLink() sweeps the whole document: a
-     * destroyed instance's chip is removed by destroy() below, but a second
-     * one existing alongside the live chip would be worse than a stale
-     * reference to a single one.
+     * Checked among this field's OWN siblings, not by a document-wide class
+     * lookup - unlike the passive org-id hint and the manual-entry reverse
+     * link, this chip is a focus-stealing, absolutely-positioned control, and
+     * PrestaShop can render more than one `input[name='company']` on the
+     * page at once (separate invoice/delivery address forms). A global
+     * lookup would let a second instance silently adopt the first instance's
+     * chip and cover the wrong field with it.
      */
     createRevealChip() {
         if (!this.companyField || !this.companyField.length) {
             return;
         }
 
-        let chip = $('.two-company-search-reveal');
+        let chip = this.companyField.siblings('.two-company-search-reveal').first();
         if (chip.length === 0) {
             chip = $('<button type="button" class="two-company-search-reveal"></button>');
             this.companyField.after(chip);
@@ -312,10 +314,15 @@ class TwoCompanySearch {
     }
 
     /**
-     * Remove the chip and unbind it. Sweeps every `.two-company-search-reveal`
-     * in the document, not only this instance's own reference, matching
-     * removeBackToSearchLink() next to it - a chip orphaned by a previous,
-     * destroyed instance must not sit alongside a fresh one.
+     * Remove the chip and unbind it.
+     *
+     * Also sweeps any `.two-company-search-reveal` orphaned among THIS
+     * field's own siblings (a previous, destroyed instance's chip on the
+     * SAME field) - the single-field case removeBackToSearchLink() guards
+     * against with a document-wide sweep. Deliberately scoped here rather
+     * than copying that global sweep: with more than one live company field
+     * on the page (see createRevealChip()), a global remove would delete
+     * another instance's still-in-use chip out from under it.
      */
     removeRevealChip() {
         if (this._revealChip) {
@@ -323,7 +330,9 @@ class TwoCompanySearch {
             this._revealChip.remove();
             this._revealChip = null;
         }
-        $('.two-company-search-reveal').off('.twoReveal').remove();
+        if (this.companyField && this.companyField.length) {
+            this.companyField.siblings('.two-company-search-reveal').off('.twoReveal').remove();
+        }
     }
 
     /**
@@ -348,16 +357,28 @@ class TwoCompanySearch {
         if (this._revealed || this._manualEntry || !this.hasConfirmedSelection()) {
             this._revealChip.hide().text('');
             if (this.companyField && this.companyField.length) {
-                this.companyField.removeAttr('tabindex');
+                // `tabindex="-1"` alone only removes the input from Tab
+                // order - it stays in the accessibility tree, so a screen
+                // reader jumping between form fields by their own shortcut
+                // (not Tab) would still land directly on a plain, editable
+                // text box holding the confirmed name, with no indication a
+                // button covers it. `aria-hidden` closes that gap; both are
+                // undone together here.
+                this.companyField.removeAttr('tabindex').removeAttr('aria-hidden');
             }
             return;
         }
+        // Trimmed for display, not the raw value: hasConfirmedSelection()
+        // compares through normalizeCompanyName(), which also trims, so a
+        // value like "  Example Trading Ltd  " can be confirmed while showing (and
+        // having read aloud) its own leading/trailing whitespace verbatim.
+        const displayName = String(this.companyField.val() || '').trim();
         this._revealChip
-            .text(this.companyField.val())
-            .attr('title', this.getEditCompanyText())
-            .attr('aria-label', this.getEditCompanyText() + ': ' + this.companyField.val())
+            .text(displayName)
+            .attr('title', this.getEditCompanyText() + ': ' + displayName)
+            .attr('aria-label', this.getEditCompanyText() + ': ' + displayName)
             .show();
-        this.companyField.attr('tabindex', '-1');
+        this.companyField.attr('tabindex', '-1').attr('aria-hidden', 'true');
     }
 
     /**
@@ -373,7 +394,14 @@ class TwoCompanySearch {
         if (this._destroyed || this._revealed) {
             return;
         }
-        if (!this.companyField || !this.companyField.length) {
+        // The chip's click handler can fire in the same tick PrestaShop
+        // replaces the address form (a country change racing the click) -
+        // this instance is not `_destroyed` yet in that instant, but the
+        // field it is holding is already detached. Blanking/focusing a
+        // detached node is a silent no-op the buyer would read as a dead
+        // click, so bail rather than act on a stale reference.
+        if (!this.companyField || !this.companyField.length
+            || !document.contains(this.companyField.get(0))) {
             return;
         }
         this._revealSnapshot = {
@@ -406,15 +434,20 @@ class TwoCompanySearch {
      * field without picking anything sees the same confirmed company they
      * started with.
      *
-     * Delayed 200ms, matching the fallback dropdown's own blur handling, so a
-     * click on a result - which keeps the field focused through
-     * preventDefault on mousedown, on both render paths - resolves and calls
-     * collapseReveal() FIRST. If `_revealed` is still true once the delay
-     * elapses, nothing claimed the open search.
+     * Delayed 200ms - deliberately a touch longer than the fallback
+     * dropdown's own 150ms close-on-blur, not matching it - so a click on a
+     * result (which keeps the field focused through preventDefault on
+     * mousedown, on both render paths) resolves and calls collapseReveal()
+     * FIRST. If `_revealed` is still true once the delay elapses, nothing
+     * claimed the open search.
      *
      * Guarded on `_manualEntry` too: entering manual entry mid-reveal must not
      * have this timer put the old company back seconds later out from under
-     * the buyer's own "not on the list" choice.
+     * the buyer's own "not on the list" choice. Also stood down explicitly by
+     * setupCountryChangeListener()'s own change handler, which - unlike a
+     * genuine `updatedAddressForm` re-render - runs on this SAME instance and
+     * would otherwise leave this timer armed against a snapshot captured
+     * under the previous country.
      */
     setupRevealBlurRestore() {
         if (!this.companyField || this.companyField.length === 0) {
@@ -422,27 +455,53 @@ class TwoCompanySearch {
         }
         this.companyField.off('blur.twoReveal');
         this.companyField.on('blur.twoReveal', () => {
-            clearTimeout(this._revealBlurTimerId);
-            this._revealBlurTimerId = setTimeout(() => {
-                if (this._destroyed || !this._revealed || this._manualEntry) {
-                    return;
-                }
-                const snap = this._revealSnapshot || {};
-                this.companyField.val(snap.company || '');
-                if (this.organizationField && this.organizationField.length) {
-                    this.organizationField.val(snap.orgId || '');
-                    if (snap.orgTag !== undefined) {
-                        this.organizationField.attr('data-two-company-name', snap.orgTag);
-                    } else {
-                        this.organizationField.removeAttr('data-two-company-name');
-                    }
-                }
-                this.setCompanyIdHint(snap.orgId || '');
-                this._revealed = false;
-                this._revealSnapshot = null;
-                this.updateRevealChip();
-            }, 200);
+            this.armRevealBlurRestore();
         });
+    }
+
+    /**
+     * (Re-)arm the deferred restore. A standalone method rather than logic
+     * inlined in setupRevealBlurRestore()'s handler, so the custom fallback
+     * path's manual-entry row - which blurs the field to move focus onto
+     * itself, then blurs AGAIN on the way out - can re-arm the same timer on
+     * its own `blur`, matching how it already re-arms the dropdown's own
+     * close timer. Without that, tabbing onto the row cancels this timer (see
+     * its `focus` handler) but leaving the row again would never re-cancel or
+     * re-fire it, silently disabling the abandoned-search restore for the
+     * rest of that visit.
+     */
+    armRevealBlurRestore() {
+        clearTimeout(this._revealBlurTimerId);
+        this._revealBlurTimerId = setTimeout(() => {
+            if (this._destroyed || !this._revealed || this._manualEntry) {
+                return;
+            }
+            // The field this instance held at reveal time may have been
+            // replaced or detached by an address-form re-render that
+            // happened without going through destroy() on THIS instance
+            // (it wouldn't be live to run this callback at all if it had
+            // been destroyed) - defensive rather than reachable today, but
+            // cheap, and consistent with the DOM-replacement guards this
+            // file uses everywhere else.
+            if (!this.companyField || !this.companyField.length
+                || !document.contains(this.companyField.get(0))) {
+                return;
+            }
+            const snap = this._revealSnapshot || {};
+            this.companyField.val(snap.company || '');
+            if (this.organizationField && this.organizationField.length) {
+                this.organizationField.val(snap.orgId || '');
+                if (snap.orgTag !== undefined) {
+                    this.organizationField.attr('data-two-company-name', snap.orgTag);
+                } else {
+                    this.organizationField.removeAttr('data-two-company-name');
+                }
+            }
+            this.setCompanyIdHint(snap.orgId || '');
+            this._revealed = false;
+            this._revealSnapshot = null;
+            this.updateRevealChip();
+        }, 200);
     }
 
     normalizeCompanyName(value) {
@@ -1576,9 +1635,17 @@ class TwoCompanySearch {
                 }
             });
             // Focus arriving here blurs the input; cancel the close it queued.
+            // Also cancel the reveal-restore timer (TWO-25288 element 2) for
+            // the same reason: that is a SEPARATE blur binding on the same
+            // field, and without this a buyer who tabs here and pauses more
+            // than 200ms - still navigating the open list, having picked
+            // nothing - would have their in-progress search silently
+            // overwritten underneath a dropdown they are still looking at.
             row.addEventListener('focus', () => {
                 clearTimeout(blurTimer.id);
                 blurTimer.id = null;
+                clearTimeout(this._revealBlurTimerId);
+                this._revealBlurTimerId = null;
             });
             // And re-arm it on the way out, or the list is left open for good.
             // The input is otherwise the only node that closes this list, and
@@ -1586,8 +1653,16 @@ class TwoCompanySearch {
             // is open - so tabbing onward, or clicking away, would leave the list
             // painted over the address form until the next keystroke. `onBlur` is
             // declared further down this same closure and is only ever reached
-            // from an event, long after setup has finished.
-            row.addEventListener('blur', () => onBlur());
+            // from an event, long after setup has finished. Also re-arms the
+            // reveal-restore timer its own `focus` handler above cancelled -
+            // leaving the row without doing so would silently disable the
+            // abandoned-search restore for the rest of this reveal.
+            row.addEventListener('blur', () => {
+                onBlur();
+                if (this._revealed) {
+                    this.armRevealBlurRestore();
+                }
+            });
             list.appendChild(row);
             return row;
         };
@@ -2171,9 +2246,10 @@ class TwoCompanySearch {
 
         // Optional: Fetch additional details for address auto-fill if lookup_id is available
         if (ui.item.lookup_id) {
+            const selectedName = ui.item.value;
             this.fetchCompanyDetails(ui.item.lookup_id)
                 .then(details => {
-                    this.autoFillAddressIfNeeded(details);
+                    this.autoFillAddressIfNeeded(details, selectedName);
                 })
                 .catch(error => {
                     // Silently fail - address auto-fill is not critical
@@ -2234,7 +2310,7 @@ class TwoCompanySearch {
     /**
      * Auto-fill address if needed (simplified version)
      */
-    autoFillAddressIfNeeded(details) {
+    autoFillAddressIfNeeded(details, selectedName) {
         try {
             // Update organization number if we have a more authoritative one
             const natId = (details && (details.national_identifier || details.nationalIdentifier)) ||
@@ -2245,7 +2321,19 @@ class TwoCompanySearch {
                 natIdVal = details.registration_number || details.company_number ||
                            (details.company && (details.company.registration_number || details.company.company_number)) || null;
             }
-            if (natIdVal) {
+            // This lookup was fired from the moment of selection and can
+            // resolve well after it (a real network round trip) - if the
+            // buyer has since typed a different search, the field's CURRENT
+            // value is no longer the company this number belongs to. Adopting
+            // it anyway would tag someone else's organisation number onto
+            // whatever the buyer is now typing, and - since that tag is
+            // exactly what hasConfirmedSelection() reads - cover the field
+            // they are actively using with the reveal chip and pull it out of
+            // the tab order underneath them. Bail rather than risk either.
+            const stillOnSameCompany = selectedName === undefined
+                || this.normalizeCompanyName(this.companyField ? this.companyField.val() : '')
+                    === this.normalizeCompanyName(selectedName);
+            if (natIdVal && stillOnSameCompany) {
                 const currentOrgNumber = this.organizationField.val();
                 if (!currentOrgNumber || currentOrgNumber !== natIdVal) {
                     this.organizationField.val(natIdVal);
@@ -2434,7 +2522,24 @@ class TwoCompanySearch {
             }
             this.countryListener = () => {
                 try { sessionStorage.setItem('two_country_changed', '1'); } catch (e) {}
-                
+
+                // Stand down an open reveal (TWO-25288 element 2) BEFORE
+                // blanking anything below. This runs on the SAME instance
+                // (unlike a genuine updatedAddressForm re-render, which
+                // destroy()s and replaces it) - so without this, a reveal
+                // opened just before a country change leaves `_revealed` true
+                // and its 200ms blur-restore timer armed. That timer's guard
+                // only checks `_destroyed`/`_manualEntry`, so it fires anyway
+                // and overwrites whatever this country change (or anything
+                // the buyer did after it) just put in the field with a
+                // snapshot captured under the PREVIOUS country - restoring an
+                // organisation number that no longer matches what is
+                // selected.
+                clearTimeout(this._revealBlurTimerId);
+                this._revealBlurTimerId = null;
+                this._revealed = false;
+                this._revealSnapshot = null;
+
                 if (this.companyField && this.companyField.length > 0) {
                     if (this.companyField.hasClass('ui-autocomplete-input')) {
                         this.companyField.autocomplete('close');
