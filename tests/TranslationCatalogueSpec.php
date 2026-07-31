@@ -161,6 +161,17 @@ final class TranslationCatalogueSpec
                 ));
             }
 
+            // Unconditional, regardless of whether this file had any literal
+            // (extractable) call site: a file whose ->l() calls are ALL
+            // dynamic-first-argument would otherwise skip this check entirely
+            // via the zero-match continue below, silently scoping the
+            // invariant to only files that happen to also have a literal call
+            // — exactly the "works because we got lucky" shape this spec
+            // exists to avoid.
+            if ($isPhp) {
+                self::assertNoSpecificArgument($path, $contents);
+            }
+
             if ($matchCount === false || $matchCount === 0) {
                 continue;
             }
@@ -174,10 +185,6 @@ final class TranslationCatalogueSpec
                 $raw = substr($literal, 1, -1);
                 $string = $isDouble ? self::unescapeDoubleQuoted($raw) : self::unescapeSingleQuoted($raw);
                 $keys[$source . '_' . self::hashSourceString($string)] = $string;
-            }
-
-            if ($isPhp) {
-                self::assertNoSpecificArgument($path, $contents);
             }
         }
 
