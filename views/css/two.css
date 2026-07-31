@@ -1302,6 +1302,51 @@
     cursor: pointer;
 }
 
+/*
+ * Click-to-reveal chip (TWO-25288 element 2). A sibling <button> absolutely
+ * positioned over the company field, standing in for select2's
+ * `.select2-selection__rendered` on the one surface where the address form's
+ * own input doubles as the search box. Shown only while a confirmed
+ * selection exists (see hasConfirmedSelection() in the companion JS), so
+ * typing into a freshly-revealed field never overwrites the name it was
+ * covering until a result is actually chosen.
+ */
+.two-company-search-reveal {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 6px 12px;
+    text-align: left;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    z-index: 2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.two-company-search-reveal:hover {
+    border-color: #999;
+}
+
+/*
+ * A real focus outline, not `outline: none` - this is now the sole way to
+ * reopen the search, so a keyboard user has to be able to see where they
+ * are. Same treatment as .two-autocomplete-manual-entry:focus above, for the
+ * same reason: an interactive control with no visible focus state is worse
+ * than no keyboard support at all.
+ */
+.two-company-search-reveal:focus {
+    outline: 2px solid #1976d2;
+    outline-offset: -2px;
+}
+
 /* Clean up unused styles */
 .two-payment-loading,
 .payment-option img[src*="TwoLogo.svg"],

@@ -3349,6 +3349,10 @@ class Twopayment extends PaymentModule
             // do not paraphrase either of these when translating.
             'company_search_manual_entry' => $this->l('My company is not on the list'),
             'company_search_back_to_search' => $this->l('Search for company'),
+            // Click-to-reveal chip (TWO-25288 element 2). Its visible text is
+            // the confirmed company name itself; this is the accessible name
+            // for the control, read instead of/alongside that text.
+            'company_search_edit' => $this->l('Search for a different company'),
             'sole_trader_registered_business' => $this->l('Registered business'),
             'sole_trader_label' => $this->l('Sole trader'),
         );
