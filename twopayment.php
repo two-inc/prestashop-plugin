@@ -3423,14 +3423,19 @@ class Twopayment extends PaymentModule
         )));
         
         // Register Two payment CSS and JavaScript files
-        $this->context->controller->registerStylesheet('two-css', 'modules/twopayment/views/css/two.css', array('priority' => 200, 'media' => 'all'));
-        
+        // Cache-busting: the versioned path (?v=<filemtime>) is what actually
+        // changes when a file changes, forcing both the browser cache and any
+        // CDN in front of it (e.g. Cloudflare) to fetch fresh content. See
+        // TWO-53PS - assets were previously served with no version/cache-busting
+        // at all, so a stale copy could be served for hours after deploy.
+        $this->context->controller->registerStylesheet('two-css', $this->getTwoVersionedAssetPath('views/css/two.css'), array('priority' => 200, 'media' => 'all'));
+
         // CRITICAL FIX: Remove async loading and ensure proper load order for reliable initialization
         // Ensures they load AFTER jQuery
-        $this->context->controller->registerJavascript('two-company-search', 'modules/twopayment/views/js/modules/TwoCompanySearch.js', array('priority' => 201, 'async' => false));
-        $this->context->controller->registerJavascript('two-order-intent', 'modules/twopayment/views/js/modules/TwoOrderIntent.js', array('priority' => 202, 'async' => false));
-        $this->context->controller->registerJavascript('two-sole-trader', 'modules/twopayment/views/js/modules/TwoSoleTrader.js', array('priority' => 204, 'async' => false));
-        $this->context->controller->registerJavascript('two-optional-fields', 'modules/twopayment/views/js/modules/TwoOptionalFields.js', array('priority' => 204, 'async' => false));
+        $this->context->controller->registerJavascript('two-company-search', $this->getTwoVersionedAssetPath('views/js/modules/TwoCompanySearch.js'), array('priority' => 201, 'async' => false));
+        $this->context->controller->registerJavascript('two-order-intent', $this->getTwoVersionedAssetPath('views/js/modules/TwoOrderIntent.js'), array('priority' => 202, 'async' => false));
+        $this->context->controller->registerJavascript('two-sole-trader', $this->getTwoVersionedAssetPath('views/js/modules/TwoSoleTrader.js'), array('priority' => 204, 'async' => false));
+        $this->context->controller->registerJavascript('two-optional-fields', $this->getTwoVersionedAssetPath('views/js/modules/TwoOptionalFields.js'), array('priority' => 204, 'async' => false));
         // Read-only company summary in the payment tile (TWO-25288).
         //
         // The priority is cosmetic, not a dependency guarantee, and it would be
@@ -3441,10 +3446,68 @@ class Twopayment extends PaymentModule
         // equivalent. What actually makes the call safe is the `window
         // .TwoCompanySummary && typeof ... === 'function'` guard at the call site,
         // which also covers the address step, where the tile does not exist.
-        $this->context->controller->registerJavascript('two-company-summary', 'modules/twopayment/views/js/modules/TwoCompanySummary.js', array('priority' => 200, 'async' => false));
+        $this->context->controller->registerJavascript('two-company-summary', $this->getTwoVersionedAssetPath('views/js/modules/TwoCompanySummary.js'), array('priority' => 200, 'async' => false));
         // Phone validation removed - Two API handles phone number validation
-        $this->context->controller->registerJavascript('two-checkout-manager', 'modules/twopayment/views/js/modules/TwoCheckoutManager.js', array('priority' => 205, 'async' => false));
-        $this->context->controller->registerJavascript('two-script', 'modules/twopayment/views/js/twopayment.js', array('priority' => 206, 'async' => false));
+        $this->context->controller->registerJavascript('two-checkout-manager', $this->getTwoVersionedAssetPath('views/js/modules/TwoCheckoutManager.js'), array('priority' => 205, 'async' => false));
+        $this->context->controller->registerJavascript('two-script', $this->getTwoVersionedAssetPath('views/js/twopayment.js'), array('priority' => 206, 'async' => false));
+    }
+
+    /**
+     * Build a cache-busted, module-relative asset path for register{Javascript,Stylesheet}().
+     *
+     * PrestaShop's register* methods accept a 'version' param on 8.0+ only
+     * (classes/controller/FrontController.php), so it is silently ignored on
+     * the 1.7.x versions this module still supports. Appending "?v=<mtime>"
+     * directly to the relative path instead works identically across every
+     * supported PrestaShop version (1.7.6 - 9.x), because register* passes
+     * the local ('server' => 'local', the default here) path straight through
+     * as a plain string with no filesystem re-resolution of it.
+     *
+     * Best-effort: if the file can't be stat'd (e.g. moved/missing), the
+     * unversioned relative path is returned rather than throwing, matching
+     * this module's existing best-effort filemtime usage elsewhere
+     * (getTwoDeployedAtLabel).
+     *
+     * Skipped entirely when Tools::hasMediaServer() is active: PrestaShop's
+     * remote-media-server asset resolution (classes/controller/FrontController.php,
+     * legacy PS_MEDIA_SERVER_1/2/3 domain sharding) does a literal file_exists()
+     * on this same path string, which would fail once a "?v=..." query string
+     * is appended (it isn't a real file on disk). That legacy split-domain
+     * setup is rare and not something this module documents support for, so
+     * we fail back to the old, working, unversioned behaviour there rather
+     * than risk breaking asset loading on checkout.
+     *
+     * @param string $relative_path path relative to this module's own directory,
+     *                               e.g. 'views/js/twopayment.js'
+     *
+     * @return string 'modules/twopayment/<relative_path>[?v=<mtime>]'
+     */
+    private function getTwoVersionedAssetPath($relative_path)
+    {
+        $module_relative_path = 'modules/' . $this->name . '/' . ltrim($relative_path, '/');
+
+        if (method_exists('Tools', 'hasMediaServer') && Tools::hasMediaServer()) {
+            return $module_relative_path;
+        }
+
+        return $module_relative_path . $this->getTwoAssetVersionQueryString($relative_path);
+    }
+
+    /**
+     * '?v=<filemtime>' for a module asset, or '' if the file can't be stat'd.
+     * Shared by getTwoVersionedAssetPath() and the legacy addCSS() fallback
+     * below, which needs the query string but not the 'modules/...' prefix
+     * (it builds its own URL from $this->_path).
+     *
+     * @param string $relative_path path relative to this module's own directory
+     *
+     * @return string '' or '?v=<mtime>'
+     */
+    private function getTwoAssetVersionQueryString($relative_path)
+    {
+        $mtime = @filemtime(rtrim($this->local_path, '/') . '/' . ltrim($relative_path, '/'));
+
+        return $mtime ? '?v=' . $mtime : '';
     }
 
     /**
@@ -3475,7 +3538,7 @@ class Twopayment extends PaymentModule
         if (method_exists($controller, 'registerStylesheet')) {
             $controller->registerStylesheet(
                 'module-twopayment-admin-css',
-                'modules/twopayment/views/css/two.css',
+                $this->getTwoVersionedAssetPath('views/css/two.css'),
                 array('media' => 'all', 'priority' => 200)
             );
 
@@ -3483,7 +3546,7 @@ class Twopayment extends PaymentModule
         }
 
         if (method_exists($controller, 'addCSS')) {
-            $controller->addCSS($this->_path . 'views/css/two.css');
+            $controller->addCSS($this->_path . 'views/css/two.css' . $this->getTwoAssetVersionQueryString('views/css/two.css'));
         }
     }
 

@@ -370,6 +370,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_bafd7322c6e97d25b6299b5d6fe8920b'] 
 $_MODULE['<{twopayment}prestashop>twopayment_bb1697a94fe9e88e0c4b2b0dd605eced'] = 'Konfigurerbare betalingsvilkår (7, 15, 20, 30, 45, 60, 90 dager)';
 $_MODULE['<{twopayment}prestashop>twopayment_bbe9f9e95ce9e3ed2a173b373b381286'] = 'SSL-verifisering er slått av i produksjon. Slå den på igjen med mindre nettverket ditt krever et oppsett med en klarert bedriftsproxy.';
 $_MODULE['<{twopayment}prestashop>twopayment_bc5e69470fb58f31cb12c7e95bede662'] = 'Sjekk av kjøperens kredittverdighet i sanntid (ordreintensjon) før kjøp';
+$_MODULE['<{twopayment}prestashop>twopayment_bcdcf1cfb578d4756265681317cb35e2'] = 'Søk etter et annet firma';
 $_MODULE['<{twopayment}prestashop>twopayment_be89e29be0122074a933bea5d3813084'] = 'Vi fant ikke firmaet ditt. Prøv et annet firmanavn eller kontakt kundestøtte.';
 $_MODULE['<{twopayment}prestashop>twopayment_c012e2a8b9e129403f8b93547086500a'] = 'For kort';
 $_MODULE['<{twopayment}prestashop>twopayment_c050bd52ad0af81cf819fbcf2863357f'] = 'Telefonnummeret må stemme med landet du har valgt';
