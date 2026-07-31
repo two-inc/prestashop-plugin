@@ -165,6 +165,20 @@
                 });
             }
 
+            // Read-only company summary in the tile (TWO-25288). Always
+            // constructed and unconditional: the block it paints into is in the
+            // tile template with no admin switch of its own, and with no company
+            // captured yet it simply renders nothing and stays hidden.
+            if (typeof TwoCompanySummary !== 'undefined') {
+                if (
+                    window.TwoCompanySummary_Instance &&
+                    typeof window.TwoCompanySummary_Instance.cleanup === 'function'
+                ) {
+                    window.TwoCompanySummary_Instance.cleanup();
+                }
+                window.TwoCompanySummary_Instance = new TwoCompanySummary();
+            }
+
         } catch (error) {
             console.error('Two Payment: Initialization failed:', error);
             
@@ -206,6 +220,9 @@
         }
         if (window.TwoOptionalFields_Instance && typeof window.TwoOptionalFields_Instance.cleanup === 'function') {
             window.TwoOptionalFields_Instance.cleanup();
+        }
+        if (window.TwoCompanySummary_Instance && typeof window.TwoCompanySummary_Instance.cleanup === 'function') {
+            window.TwoCompanySummary_Instance.cleanup();
         }
     });
         }); 
