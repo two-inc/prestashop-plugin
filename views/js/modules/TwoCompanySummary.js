@@ -29,6 +29,17 @@
  * render, for the reason TwoOptionalFields gives: PrestaShop re-renders the
  * payment step wholesale whenever the cart total changes, so a listener bound to
  * a tile element - or a value cached from one - does not survive.
+ *
+ * KNOWN RESIDUAL, and it is a limit of reading the page rather than a bug here:
+ * a surcharge-line sync does not re-render the payment step, it makes core
+ * FULLY RELOAD the checkout page. The reloaded address form carries the saved
+ * company name but the hidden organisation-number input is recreated empty - it
+ * is not one of PrestaShop's own address fields - so a search-mode buyer sees a
+ * name with a blank number, indistinguishable from manual entry, while the
+ * session still holds the number that will be credit-checked. Incomplete, never
+ * WRONG: the tag comparison in readState() still guarantees a number is only
+ * ever shown beside the name it was confirmed against. Closing it means seeding
+ * this block from the server-side session company, which is a server change.
  */
 
 class TwoCompanySummary {
@@ -39,11 +50,16 @@ class TwoCompanySummary {
     static SLOT_ATTR = 'data-two-company-summary';
 
     /**
-     * Set on the root while the number slot is deliberately blank, so the
-     * stylesheet can treat manual entry differently without this module having
-     * to know how it looks.
+     * True once any instance has registered on PrestaShop's event bus.
+     *
+     * That bus has no `off` - the same absence TwoCompanySearch defends itself
+     * against with a `_destroyed` flag - so a handler registered on it can never
+     * be taken back, and a second instance would leave two live handlers behind
+     * with `cleanup()` able to remove neither. Only one instance is constructed
+     * today, which is exactly why this is worth a flag rather than a comment:
+     * the leak would be invisible until something constructed a second one.
      */
-    static PENDING_CLASS = 'two-company-summary--number-pending';
+    static _busBound = false;
 
     /**
      * The enrolled sole trader's pair, once TwoSoleTrader has one.
@@ -57,8 +73,8 @@ class TwoCompanySummary {
     static _soleTrader = null;
 
     constructor() {
+        this._stopped = false;
         this.boundOnFieldChange = this.onFieldChange.bind(this);
-        this.boundRender = () => TwoCompanySummary.render();
         this.init();
     }
 
@@ -67,16 +83,23 @@ class TwoCompanySummary {
         document.addEventListener('change', this.boundOnFieldChange, true);
         // The tile is re-rendered by PrestaShop on these; re-render after it,
         // not during, or the block being written to is the one being replaced.
+        //
+        // Registered at most once per page, and the handler is a static call
+        // rather than a bound method: the bus cannot be unsubscribed from, so a
+        // handler that closed over `this` would pin every instance it ever saw
+        // for the life of the page.
         const bus = typeof window !== 'undefined' ? window.prestashop : null;
-        if (bus && typeof bus.on === 'function') {
+        if (bus && typeof bus.on === 'function' && !TwoCompanySummary._busBound) {
+            TwoCompanySummary._busBound = true;
             ['updatedAddressForm', 'updatedDeliveryForm', 'updatedPaymentForm', 'updatedCart'].forEach((event) => {
-                bus.on(event, () => setTimeout(this.boundRender, 0));
+                bus.on(event, () => setTimeout(() => TwoCompanySummary.render(), 0));
             });
         }
         TwoCompanySummary.render();
     }
 
     cleanup() {
+        this._stopped = true;
         document.removeEventListener('input', this.boundOnFieldChange, true);
         document.removeEventListener('change', this.boundOnFieldChange, true);
     }
@@ -88,10 +111,17 @@ class TwoCompanySummary {
      * buyer on this path, and TwoCompanySearch calls render() directly at each
      * of the points where it changes the number itself - a `.val()` write fires
      * no event, so there is nothing here that could observe those.
+     *
+     * CAPTURE phase, which puts this render BEFORE TwoCompanySearch's own
+     * `input` handler has cleared the disowned organisation number - that one is
+     * bound to the field and therefore bubbles. So this render sees the OLD
+     * number beside the NEW name, and the only reason it does not show that pair
+     * is readState()'s tag comparison. That restated staleness rule is
+     * load-bearing rather than defensive, and this is why.
      */
     onFieldChange(event) {
         const field = event ? event.target : null;
-        if (!field || !field.getAttribute || field.getAttribute('name') !== 'company') {
+        if (this._stopped || !field || !field.getAttribute || field.getAttribute('name') !== 'company') {
             return;
         }
         TwoCompanySummary.render();
@@ -131,21 +161,31 @@ class TwoCompanySummary {
      * this display must never do - so the number blanks and the mode degrades
      * to manual.
      *
+     * The sole-trader pair is consulted LAST, and only when the address form has
+     * nothing at all to say. Deliberately not first: switching the toggle back
+     * to `Registered business` and searching normally has to be able to replace
+     * an enrolled pair, and a short-circuit above the DOM read meant a stale
+     * enrolment outranked the company that would actually be credit-checked for
+     * the remaining life of the page. TwoSoleTrader.setMode() forgets the pair on
+     * that switch, and this ordering means the display is still right if some
+     * other path back to business mode forgets to.
+     *
      * @returns {{name: string, number: string}}
      */
     static readState() {
-        if (TwoCompanySummary._soleTrader) {
+        const companyField = document.querySelector("input[name='company']");
+        const name = companyField ? String(companyField.value == null ? '' : companyField.value).trim() : '';
+
+        const orgField = document.querySelector("input[name='companyid']");
+        const number = orgField ? String(orgField.value == null ? '' : orgField.value).trim() : '';
+
+        if (name === '' && number === '' && TwoCompanySummary._soleTrader) {
             return {
                 name: TwoCompanySummary._soleTrader.name,
                 number: TwoCompanySummary._soleTrader.number
             };
         }
 
-        const companyField = document.querySelector("input[name='company']");
-        const name = companyField ? String(companyField.value == null ? '' : companyField.value).trim() : '';
-
-        const orgField = document.querySelector("input[name='companyid']");
-        const number = orgField ? String(orgField.value == null ? '' : orgField.value).trim() : '';
         if (!number) {
             return { name: name, number: '' };
         }
@@ -155,7 +195,11 @@ class TwoCompanySummary {
             return { name: name, number: '' };
         }
 
-        return { name: taggedName, number: number };
+        // The FIELD's spelling of the name, not the tag's. They are the same
+        // name by the comparison just above, but only one of them is what the
+        // address form submits, and the tile should not show a different casing
+        // or spacing from the order.
+        return { name: name, number: number };
     }
 
     /**
@@ -173,13 +217,14 @@ class TwoCompanySummary {
         const nameSlot = root.querySelector('[' + TwoCompanySummary.SLOT_ATTR + '="name"]');
         const numberSlot = root.querySelector('[' + TwoCompanySummary.SLOT_ATTR + '="number"]');
 
+        // textContent, never innerHTML: the name comes from a third-party company
+        // register and the buyer's own keyboard, and neither is markup.
         if (nameSlot) {
             nameSlot.textContent = state.name;
         }
         if (numberSlot) {
             numberSlot.textContent = state.number;
         }
-        root.classList.toggle(TwoCompanySummary.PENDING_CLASS, state.number === '');
 
         // Nothing captured at all: the buyer has not named a company yet, and a
         // block of empty labels is worse than no block.
