@@ -303,7 +303,22 @@ class TwoCompanySearch {
         if (!orgNumber && dniValue) {
             orgNumber = dniValue;
             this.organizationField.val(orgNumber);
-            if (this.companyField && this.companyField.length > 0) {
+
+            // Tag it as a confirmed pairing ONLY if `dni` is genuinely the
+            // buyer's own value - i.e. not an untouched, lookup-written
+            // leftover from a PREVIOUS company (TWO-25288 tile review). A
+            // plain retype over a selection clears `companyid` and its tag
+            // but leaves a marked, lookup-written `dni` behind (documented
+            // residual on PR two-inc/prestashop-plugin#122); adopting that
+            // value here and tagging it with whatever name is now in the
+            // field would make the payment tile's stale-pairing check treat
+            // an unverified adoption as a confirmed one. Once the buyer has
+            // gone through proper manual entry (which clears lookup-written
+            // fields) or edited `dni` by hand, the marker no longer matches
+            // and the value is trustworthy again.
+            const dniMarker = dniField.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR);
+            const dniIsUntouchedLookupResidue = typeof dniMarker !== 'undefined' && dniMarker === dniValue;
+            if (!dniIsUntouchedLookupResidue && this.companyField && this.companyField.length > 0) {
                 this.organizationField.attr('data-two-company-name', this.companyField.val() || '');
             }
         }
