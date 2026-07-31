@@ -107,66 +107,134 @@ final class AssetCacheBustingSpec
     }
 
     /**
+     * Strips PHP comments before any token-matching below. Not a general PHP
+     * tokenizer - just enough to stop a decoy comment (block or trailing
+     * line-comment) from padding out the tokens a regression assertion greps
+     * for. Safe for the narrow slices this spec scans: none of the string
+     * literals in the register*() calls it guards contain "//" or "/*".
+     *
+     * Round-2 adversarial review (Vader) found the previous per-line version
+     * of this test could be defeated by a decoy TRAILING COMMENT on the same
+     * line as a reverted call - e.g. `...->registerJavascript('id', 'path' .
+     * '?v=' . @filemtime(...), [...]); // getTwoModuleAssetPath( 'version' =>
+     * $this->getTwoAssetVersion(` - which contains both guarded-for tokens
+     * without ever really calling either. Stripping comments first closes
+     * that gap.
+     */
+    private static function stripComments(string $php): string
+    {
+        $noBlockComments = preg_replace('#/\*.*?\*/#s', '', $php);
+        return preg_replace('#//[^\n]*#', '', $noBlockComments);
+    }
+
+    /**
+     * Extracts each `->$methodCall(...)` statement as its own string, from
+     * the method name through the matching (paren-depth-balanced) closing
+     * `)`. Round-2 adversarial review (Han/Vader) found the previous per-LINE
+     * version of this test both missed the admin hook's registerStylesheet()
+     * call (which spans several lines) and was fragile against any future
+     * legitimate line-wrap of a checkout-hook call. Matching the whole
+     * statement, wherever its parens close, fixes both: multi-line calls are
+     * captured whole, and a decoy elsewhere in the body can no longer stand
+     * in for tokens the call itself must carry.
+     *
+     * @return array<int, string> one entry per call site found
+     */
+    private static function extractCallStatements(string $source, string $methodCall): array
+    {
+        $statements = array();
+        $offset = 0;
+        $length = strlen($source);
+
+        while (($pos = strpos($source, $methodCall, $offset)) !== false) {
+            $parenStart = strpos($source, '(', $pos);
+            TinyAssert::true($parenStart !== false, "malformed call site for {$methodCall} - no opening paren found");
+
+            $depth = 0;
+            $i = $parenStart;
+            for (; $i < $length; $i++) {
+                if ($source[$i] === '(') {
+                    ++$depth;
+                } elseif ($source[$i] === ')') {
+                    --$depth;
+                    if ($depth === 0) {
+                        break;
+                    }
+                }
+            }
+            TinyAssert::true($depth === 0, "unbalanced parens for {$methodCall} call starting at offset {$pos}");
+
+            $statements[] = substr($source, $pos, $i - $pos + 1);
+            $offset = $i + 1;
+        }
+
+        return $statements;
+    }
+
+    /**
      * The regression test, done as a source-slice (this hook depends on
      * Country::getCountries() and live merchant-term/FX refreshes that the
      * test stubs don't model, so it can't safely be invoked end-to-end here -
      * same constraint CompanySearchCountrySourcingSpec works around for the
      * same hook).
      *
-     * Counts call sites rather than searching for the literal "?v=" text,
-     * because this very file's comments now say "?v=<mtime>" while explaining
-     * the bug the fix guards against - a text search would be fooled by its
-     * own documentation. Instead: every register{Javascript,Stylesheet}() call
-     * in the hook body must build its path via getTwoModuleAssetPath() (never
-     * the removed getTwoVersionedAssetPath()) and must pass a
-     * 'version' => $this->getTwoAssetVersion(...) option. Reverting any one
-     * call site back to appending the version onto the path - the change that
-     * broke checkout in PR #127/TWO-53PS - drops that call's contribution to
-     * one or both counts, and this fails.
-     *
-     * Per-call-site, not body-wide aggregate counts (adversarial review
-     * finding): a whole-body substr_count() can be satisfied by padding -
-     * e.g. a stray comment repeating "getTwoModuleAssetPath(" or
-     * "'version' => $this->getTwoAssetVersion(" elsewhere in the body - while
-     * one real call site quietly reverts to the broken path-append pattern.
-     * Every register*() call line is matched and required to carry BOTH
-     * tokens on that same line, so a reverted call site fails on its own
-     * line rather than being masked by another line's tokens.
+     * Every register{Javascript,Stylesheet}() call site - in BOTH
+     * hookActionFrontControllerSetMedia() (checkout) and
+     * hookActionAdminControllerSetMedia() (admin/order pages, TWO-53PS's
+     * registerStylesheet() call there uses the identical pattern) - must
+     * build its path via getTwoModuleAssetPath() (never the removed
+     * getTwoVersionedAssetPath()) and must pass a
+     * 'version' => $this->getTwoAssetVersion(...) option, checked against
+     * comment-stripped source and the whole paren-balanced call statement
+     * rather than a raw line - see stripComments() and
+     * extractCallStatements() for what each closes off. Reverting any one
+     * call site back to appending the version onto the path - the change
+     * that broke checkout in PR #127/TWO-53PS - drops that call's own
+     * statement text below both tokens, and this fails.
      */
     private static function testCheckoutHookUsesCleanPathAndVersionParamForEveryRegisteredAsset(): void
     {
         $source = file_get_contents(dirname(__DIR__) . '/twopayment.php');
         TinyAssert::true($source !== false, 'could not read twopayment.php');
 
-        $start = strpos($source, 'public function hookActionFrontControllerSetMedia()');
-        TinyAssert::true($start !== false, 'hookActionFrontControllerSetMedia() not found in twopayment.php');
-        $end = strpos($source, 'private function getTwoModuleAssetPath', $start);
-        TinyAssert::true($end !== false, 'getTwoModuleAssetPath() not found after the hook - has it moved or been removed?');
+        $frontStart = strpos($source, 'public function hookActionFrontControllerSetMedia()');
+        TinyAssert::true($frontStart !== false, 'hookActionFrontControllerSetMedia() not found in twopayment.php');
+        $frontEnd = strpos($source, 'private function getTwoModuleAssetPath', $frontStart);
+        TinyAssert::true($frontEnd !== false, 'getTwoModuleAssetPath() not found after the hook - has it moved or been removed?');
 
-        $body = substr($source, $start, $end - $start);
+        $adminStart = strpos($source, 'public function hookActionAdminControllerSetMedia()');
+        TinyAssert::true($adminStart !== false, 'hookActionAdminControllerSetMedia() not found in twopayment.php');
+        $adminEnd = strpos($source, 'public function hookPaymentOptions', $adminStart);
+        TinyAssert::true($adminEnd !== false, 'hookPaymentOptions() not found after the admin hook - has it moved?');
 
-        TinyAssert::false(
-            strpos($body, 'getTwoVersionedAssetPath') !== false,
-            'hookActionFrontControllerSetMedia() still references the removed getTwoVersionedAssetPath() - '
-            . 'that helper appended the cache-busting version onto the path itself, which core silently '
-            . 'fails to resolve via file_exists() and drops the asset entirely (TWO-53PS regression).'
+        $frontBody = self::stripComments(substr($source, $frontStart, $frontEnd - $frontStart));
+        $adminBody = self::stripComments(substr($source, $adminStart, $adminEnd - $adminStart));
+
+        foreach (array('hookActionFrontControllerSetMedia' => $frontBody, 'hookActionAdminControllerSetMedia' => $adminBody) as $hookName => $body) {
+            TinyAssert::false(
+                strpos($body, 'getTwoVersionedAssetPath') !== false,
+                "{$hookName}() still references the removed getTwoVersionedAssetPath() - that helper appended "
+                . 'the cache-busting version onto the path itself, which core silently fails to resolve via '
+                . 'file_exists() and drops the asset entirely (TWO-53PS regression).'
+            );
+        }
+
+        $callStatements = array_merge(
+            self::extractCallStatements($frontBody, '->registerJavascript('),
+            self::extractCallStatements($frontBody, '->registerStylesheet('),
+            self::extractCallStatements($adminBody, '->registerStylesheet(')
         );
 
-        $lines = explode("\n", $body);
-        $registerLines = array_values(array_filter($lines, function ($line) {
-            return strpos($line, '->registerJavascript(') !== false || strpos($line, '->registerStylesheet(') !== false;
-        }));
+        TinyAssert::true(count($callStatements) >= 8, 'expected at least 8 register*() call sites (7+ checkout, 1+ admin), found ' . count($callStatements));
 
-        TinyAssert::true(count($registerLines) >= 7, 'expected at least 7 register*() call lines in the hook, found ' . count($registerLines));
-
-        foreach ($registerLines as $line) {
+        foreach ($callStatements as $statement) {
             TinyAssert::true(
-                strpos($line, 'getTwoModuleAssetPath(') !== false,
-                "register*() call must build its path via getTwoModuleAssetPath() on its own line, got: {$line}"
+                strpos($statement, 'getTwoModuleAssetPath(') !== false,
+                "register*() call must build its path via getTwoModuleAssetPath(), got: {$statement}"
             );
             TinyAssert::true(
-                strpos($line, "'version' => \$this->getTwoAssetVersion(") !== false,
-                "register*() call must pass 'version' => \$this->getTwoAssetVersion(...) on its own line, got: {$line}"
+                strpos($statement, "'version' => \$this->getTwoAssetVersion(") !== false,
+                "register*() call must pass 'version' => \$this->getTwoAssetVersion(...), got: {$statement}"
             );
         }
     }
