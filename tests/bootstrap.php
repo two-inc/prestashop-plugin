@@ -1724,6 +1724,7 @@ namespace {
         }
     }
 
+    #[\AllowDynamicProperties]
     class TwopaymentTestHarness extends Twopayment
     {
         public function __construct()
@@ -1735,6 +1736,10 @@ namespace {
             $this->api_key = 'test-api-key';
             $this->languages = [['id_lang' => 1]];
             $this->active = true;
+            // Mirrors PrestaShop's real Module::$local_path: absolute path to
+            // this module's own directory, trailing slash included. Used by
+            // getTwoVersionedAssetPath() to filemtime() the real asset files.
+            $this->local_path = dirname(__DIR__) . '/';
         }
 
         public function l($string)
