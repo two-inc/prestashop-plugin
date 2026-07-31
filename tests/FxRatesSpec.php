@@ -34,12 +34,13 @@ declare(strict_types=1);
  *
  * The zero-cap case used to withhold the option, on the premise that a zero
  * cap reads downstream as NO cap and would therefore send an uncapped
- * percentage. TWO-25276 reverted that: the premise was false. The pricing API
- * applies a cap whenever one is present, and distinguishes that from an absent
- * cap, so a zero cap clamps the fee to zero - the surcharge is simply not
- * applied. See TWO-25276. The guard had a live cost: it looped every offered
- * term, so one term whose cap rounded away withheld Two from EVERY buyer on
- * the shop.
+ * percentage. TWO-25276 reverted that: the premise was false. The pricing
+ * service tests the cap for PRESENCE rather than truthiness and its own suite
+ * pins the result, so a zero cap bounds the fee at zero - the surcharge is
+ * simply not applied. (Source references live on TWO-25269, not here: this
+ * repository is public and that service's is not.) The guard
+ * had a live cost: it looped every offered term, so one term whose cap
+ * rounded away withheld Two from EVERY buyer on the shop.
  *
  * An ABSENT cap is a different configuration again - an uncapped percentage
  * surcharge - and must keep charging normally. See
@@ -67,6 +68,8 @@ final class FxRatesSpec
         // TWO-25269 - fail-closed reversal.
         self::testNoRateForCartCurrencyWithholdsPaymentOption();
         self::testPercentageOnlySurchargeNeverTripsTheGate();
+        self::testStoredZeroCapNeverTripsTheGateEvenWithNoFxRate();
+        self::testZeroCapDoesNotExemptANonZeroFixedSurchargeFromTheFxRequirement();
         self::testCapRoundingToZeroPassesThroughAndKeepsTheOption();
         self::testAbsentCapStillChargesAndOffersTheOption();
         self::testFixedSurchargeRoundingToZeroProceedsWithInfoLog();
@@ -695,7 +698,9 @@ final class FxRatesSpec
         Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
         Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '1.5');
         Configuration::updateValue('PS_TWO_SURCHARGE_FIXED_30', '0');
-        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', '0');
+        // Blank, not '0': a stored 0 is now a real cap of zero, and only a
+        // blank means "no cap" (TWO-25289).
+        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', '');
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
         StubStore::$currencies[4] = ['iso_code' => 'USD', 'conversion_rate' => 999.0, 'loaded' => true];
         self::tableWithoutUsd();
@@ -710,6 +715,81 @@ final class FxRatesSpec
     }
 
     /**
+     * A STORED cap of 0 must not trip the gate either, and this is a sharper
+     * case than the percentage-only one above.
+     *
+     * A zero cap is relayed rather than dropped now (TWO-25289), so it reaches
+     * convertTwoBuyerFeeShareCurrency() where it never used to. That method
+     * FAILS CLOSED on a missing FX rate, and isTwoSurchargeQuotableForCart()
+     * loops EVERY offered term - so without the zero short-circuit a single
+     * term carrying a zero cap withheld Two from every buyer on the shop, on a
+     * conversion with no work to do. That is the TWO-25276 regression shape,
+     * reached by a different route.
+     *
+     * Zero needs no rate: it is zero in every currency.
+     */
+    private static function testStoredZeroCapNeverTripsTheGateEvenWithNoFxRate(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '1.5');
+        Configuration::updateValue('PS_TWO_SURCHARGE_FIXED_30', '0');
+        // A real stored cap of zero - NOT a blank. This is the value the admin
+        // form now refuses, kept reachable here because the change deliberately
+        // does not migrate rows stored before that validation existed.
+        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', '0');
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+        StubStore::$currencies[4] = ['iso_code' => 'USD', 'conversion_rate' => 999.0, 'loaded' => true];
+        // No USD in the rate table, so any conversion this term needs fails.
+        self::tableWithoutUsd();
+
+        $module = self::gateModule(4);
+
+        TinyAssert::same(
+            1,
+            count($module->hookPaymentOptions([])),
+            'a stored zero cap needs no FX rate and must never withhold the option'
+        );
+        TinyAssert::false(
+            self::hasLog('failing closed', 3),
+            'a zero cap is not a fail-closed event: nothing may be logged at error level'
+        );
+    }
+
+    /**
+     * The zero exemption must be PER MEMBER, not per block. A zero cap needs
+     * no rate, but a non-zero fixed surcharge in the same block still does -
+     * and without a rate it must still fail closed and withhold the option.
+     * Skipping the whole block on account of the zero cap would quote a fixed
+     * fee denominated in the wrong currency, which is worse than the bug the
+     * exemption fixes.
+     */
+    private static function testZeroCapDoesNotExemptANonZeroFixedSurchargeFromTheFxRequirement(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'fixed_and_percentage');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '1.5');
+        // A healthy fixed fee beside the zero cap.
+        Configuration::updateValue('PS_TWO_SURCHARGE_FIXED_30', '10');
+        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', '0');
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+        StubStore::$currencies[4] = ['iso_code' => 'USD', 'conversion_rate' => 999.0, 'loaded' => true];
+        self::tableWithoutUsd();
+
+        $module = self::gateModule(4);
+
+        TinyAssert::same(
+            0,
+            count($module->hookPaymentOptions([])),
+            'a non-zero fixed surcharge with no FX rate must still withhold the option'
+        );
+        TinyAssert::true(
+            self::hasLog('failing closed', 3),
+            'the fail-closed reason must still be logged at error level'
+        );
+    }
+
+    /**
      * Case 2 of 3: a CONFIGURED CAP whose converted value rounds to 0.00 is
      * NOT a failure. It passes straight through as `cap => 0`, and the payment
      * option stays offered.
@@ -717,12 +797,13 @@ final class FxRatesSpec
      * TWO-25276 - this assertion is the OPPOSITE of what TWO-25269 shipped,
      * and TWO-25269 was wrong. It withheld the option on the premise that a
      * zero cap reads downstream as NO cap, i.e. an uncapped percentage. It
-     * does not: the pricing API applies a cap whenever one is present, and
-     * distinguishes that from an absent cap, so a zero cap clamps the fee to
-     * zero - the surcharge is simply not applied, which is exactly what a
-     * merchant capping at zero asked for. There is no overcharge to guard
-     * against. See TWO-25276.
-     *
+     * does not: the pricing service tests the cap for PRESENCE rather than
+     * truthiness, and its own suite pins the outcome. A zero cap bounds the
+     * fee at zero - the surcharge is simply not applied, which is exactly
+     * what a merchant capping at zero asked for. There is no overcharge to
+     * guard against. (Source references are recorded on TWO-25269 rather
+     * than quoted here - this repository is public and that service's is
+     * not.)     *
      * The guard was not merely redundant: isTwoSurchargeQuotableForCart loops
      * EVERY offered term, so a single term whose cap rounded away withheld Two
      * from every buyer on the shop.
@@ -786,8 +867,9 @@ final class FxRatesSpec
         Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'fixed_and_percentage');
         Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '1.5');
         Configuration::updateValue('PS_TWO_SURCHARGE_FIXED_30', '10');
-        // No cap configured at all.
-        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', '0');
+        // No cap configured at all - blank, not '0'. A stored 0 is a real
+        // cap of zero now; only a blank means "no cap" (TWO-25289).
+        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', '');
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
         StubStore::$currencies[2] = ['iso_code' => 'NOK', 'conversion_rate' => 999.0, 'loaded' => true];
         self::tableWithoutUsd();
