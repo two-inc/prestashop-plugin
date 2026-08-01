@@ -175,6 +175,7 @@ class TwoCompanySearch {
         }
         
         this.createOrganizationField();
+        this.ensureFieldWrapper();
         this.createCompanyIdHintField();
         this.clearStaleOrganizationSelection();
         this.setupCompanyInputSync();
@@ -184,6 +185,52 @@ class TwoCompanySearch {
         this.isInitialized = true;
     }
     
+    /**
+     * The marker class the `.ui-autocomplete` this field's widget builds gets,
+     * so the CSS below can clamp THIS field's dropdown without also clamping
+     * an unrelated jQuery UI autocomplete elsewhere on the same page (a native
+     * PrestaShop lookup, another module) to whatever width this field
+     * happens to be. `.ui-autocomplete` is jQuery UI's own un-namespaced
+     * default class - reviewed and confirmed live-review finding, TWO-30.x.10.
+     */
+    static AUTOCOMPLETE_MENU_CLASS = 'two-company-autocomplete-menu';
+
+    /**
+     * Publish the company field's current width as a CSS custom property, so
+     * `.ui-autocomplete.two-company-autocomplete-menu`'s `max-width`
+     * (views/css/two.css) can clamp jQuery UI's own dropdown to it
+     * (TWO-30.x.10 element 1).
+     *
+     * Set on `document.documentElement` rather than on the field or its
+     * wrapper: the menu is appended by jQuery UI to `<body>`, not nested
+     * inside this field's own markup, so a variable set anywhere under the
+     * field would not inherit down to it. A custom property inherits from
+     * any ancestor in the real DOM tree, and `<html>` is common to both.
+     * Reached through `element.style.setProperty()` rather than jQuery's
+     * `.css()` deliberately - jQuery's setter does its own property-name
+     * normalisation, which is not guaranteed to pass a custom property
+     * through unmangled across jQuery versions.
+     *
+     * A single shared variable is a page-wide singleton, matching every
+     * other assumption already documented in this class (see
+     * createRevealChip()) about there being one live company field at a
+     * time. Cleared on a falsy width and in destroy() (both TWO-30.x.10
+     * review findings) precisely because it IS a singleton: a stale value
+     * left behind by a field that has since gone hidden or been torn down
+     * must not silently keep clamping whatever field reads it next.
+     */
+    constrainAutocompleteMenuWidth() {
+        if (!this.companyField || !this.companyField.length) {
+            return;
+        }
+        const width = this.companyField.outerWidth();
+        if (width) {
+            document.documentElement.style.setProperty('--two-company-search-width', width + 'px');
+        } else {
+            document.documentElement.style.removeProperty('--two-company-search-width');
+        }
+    }
+
     /**
      * Create or ensure organization number field exists
      */
@@ -199,6 +246,117 @@ class TwoCompanySearch {
     }
 
     /**
+     * Wrap the company field in a tight-fitting positioned span, idempotently.
+     *
+     * TWO-30.x.10 element 2/3: the hint and the reveal chip used to position
+     * themselves absolutely against `this.companyField.parent()` - the
+     * field's THEME wrapper (a Bootstrap `.form-group`/column div), which
+     * commonly carries its own padding and therefore has a different width
+     * and left offset than the input it contains. A chip or hint positioned
+     * `inset: 0` / `right: 0` against THAT box renders wider than the field
+     * and offset from its edge, rather than matching it - exactly the
+     * too-wide result field and the occluded org-number hint Doug found live.
+     *
+     * A dedicated wrapper hugging only the input removes the dependency on
+     * whatever padding a theme's own wrapper happens to carry: a plain
+     * block-level element with no padding of its own stretches to the same
+     * width as the input it wraps, whatever that width is. This mirrors what
+     * select2/selectWoo already do on the Woo/Magento side - they replace the
+     * plain `<select>` with their own tightly-fitting container rather than
+     * positioning against the field's outer form markup.
+     *
+     * Re-run on every setupAutocomplete() call (not only init()), because
+     * that method re-resolves `this.companyField` against whatever node
+     * PrestaShop just put on the page on `updatedAddressForm` - a fresh node
+     * has no wrapper of ours yet.
+     *
+     * The wrapper's width is ALSO pinned explicitly here, in JS, on every
+     * call - not left to CSS block auto-sizing alone (TWO-30.x.10 review
+     * finding, Han + Vader convergent). A `display:block`/`inline-block` span
+     * with no padding of its own only ends up the SAME width as the input it
+     * wraps when the input already fills 100% of its container; on a theme
+     * where the field has its own narrower intrinsic width (a `size=`
+     * attribute, a non-Bootstrap layout, an input-group addon) that
+     * assumption silently fails and reproduces this PR's own bug one DOM
+     * level lower. Pinning the width directly to the input's own
+     * `outerWidth()` removes the assumption entirely, whatever the
+     * containing layout does.
+     */
+    ensureFieldWrapper() {
+        if (!this.companyField || !this.companyField.length) {
+            return;
+        }
+        let wrapper = this.companyField.parent();
+        if (!wrapper.length || !wrapper.hasClass('two-company-field-wrap')) {
+            this.companyField.wrap('<span class="two-company-field-wrap"></span>');
+            wrapper = this.companyField.parent();
+        }
+        const width = this.companyField.outerWidth();
+        if (width) {
+            wrapper.css('width', width + 'px');
+        } else {
+            // Cleared, not left stale: a wrapper created while the field was
+            // momentarily hidden/detached must not keep a previous, possibly
+            // wrong, pixel width once the field is measurable again - same
+            // staleness hazard as the CSS variable in
+            // constrainAutocompleteMenuWidth(), same fix.
+            wrapper.css('width', '');
+        }
+    }
+
+    /**
+     * Keep the wrapper width and the dropdown-clamp CSS variable current
+     * across a viewport change, not only on the next keystroke (TWO-30.x.10
+     * review finding, Han + Vader convergent).
+     *
+     * Both are otherwise only refreshed from the `source` callback, i.e. once
+     * per search. A buyer who rotates a tablet or resizes the window while
+     * the dropdown is already open, without typing again first, would
+     * otherwise see the wrapper/dropdown drift out of sync with the field
+     * until their next keystroke corrects it.
+     *
+     * Bound at most once per instance (`_widthRefreshBound` guards it): this
+     * method is called from setupAutocomplete(), which itself re-runs on
+     * every country change and address-form update, and `window` has no
+     * per-listener identity check the way jQuery delegation on a document
+     * node does - a second `.on('resize.twoCompanyWidth', ...)` call does
+     * not replace the first, it stacks.
+     *
+     * Unbound in destroy() by FUNCTION REFERENCE
+     * (`$(window).off(events, this._widthRefreshHandler)`), not by namespace
+     * alone (round-2 review finding, Vader). `window` is a genuine
+     * page-wide singleton, unlike the per-node sibling sweeps this file uses
+     * elsewhere (see createRevealChip()/removeRevealChip()) - a namespace-only
+     * `.off('.twoCompanyWidth')` would remove every instance's handler under
+     * that name, not just the one being destroyed. Not reachable today
+     * (TwoCheckoutManager.handleAddressFormUpdate() destroys the old instance
+     * and constructs the new one synchronously, so there is never a moment
+     * with two live instances of this listener at once), but binding/
+     * unbinding by reference costs nothing and removes the landmine outright
+     * rather than relying on that invariant holding forever.
+     */
+    setupWidthRefreshListener() {
+        if (this._widthRefreshBound) {
+            return;
+        }
+        this._widthRefreshBound = true;
+        this._widthRefreshHandler = () => {
+            if (this._destroyed) {
+                return;
+            }
+            clearTimeout(this._widthRefreshTimeoutId);
+            this._widthRefreshTimeoutId = setTimeout(() => {
+                if (this._destroyed) {
+                    return;
+                }
+                this.ensureFieldWrapper();
+                this.constrainAutocompleteMenuWidth();
+            }, 150);
+        };
+        $(window).on('resize.twoCompanyWidth orientationchange.twoCompanyWidth', this._widthRefreshHandler);
+    }
+
+    /**
      * Create or ensure the inline "selected company's org number" hint span
      * exists next to the company field (TWO-25288). Grey, informational
      * only - never a form field, never submitted.
@@ -209,16 +367,14 @@ class TwoCompanySearch {
         if (hintField.length === 0) {
             hintField = $('<span class="two-company-id-hint"></span>');
             this.companyField.after(hintField);
-
-            // The hint is positioned absolutely (see two.css), which needs a
-            // positioned ancestor. The company field's wrapper markup comes
-            // from theme/core PrestaShop templates this plugin does not own,
-            // so only force `relative` when the wrapper is still `static` -
-            // never override a wrapper that already has its own positioning.
-            const wrapper = this.companyField.parent();
-            if (wrapper.length && wrapper.css('position') === 'static') {
-                wrapper.css('position', 'relative');
-            }
+            // The hint is positioned absolutely (see two.css) against
+            // `.two-company-field-wrap`, which ensureFieldWrapper() - called
+            // before this method on every init()/setupAutocomplete() run -
+            // already guarantees exists and is `position: relative` on its
+            // own stylesheet rule. Nothing to force here any more: this used
+            // to reach into the field's THEME wrapper and set its position by
+            // hand, which is also what put the hint and chip outside the
+            // wrapper widths in TWO-30.x.10.
         }
 
         this.companyIdHintField = hintField;
@@ -271,9 +427,10 @@ class TwoCompanySearch {
     /**
      * Create the click-to-reveal chip (TWO-25288 element 2), idempotently.
      *
-     * A sibling `<button>`, absolutely positioned over the real input - the
-     * same wrapper createCompanyIdHintField() already forces to
-     * `position: relative` when it is still static. Called from
+     * A sibling `<button>`, absolutely positioned over the real input - inside
+     * the same `.two-company-field-wrap` ensureFieldWrapper() guarantees is
+     * already `position: relative` (see createCompanyIdHintField()). Called
+     * from
      * setupAutocomplete(), not only init(): that method is what re-runs on
      * every country change and `updatedAddressForm`, re-resolving whatever
      * field PrestaShop just put on the page, so the chip has to be rebuilt on
@@ -835,6 +992,11 @@ class TwoCompanySearch {
         // duplicate searches and two things fighting over one spinner.
         this.teardownCustomAutocomplete();
 
+        // Same re-run reasoning as the chip/hint below: a fresh field from an
+        // address-form re-render has no wrapper of ours yet.
+        this.ensureFieldWrapper();
+        this.setupWidthRefreshListener();
+
         // Marks the field for the in-field spinner CSS (views/css/two.css).
         this.companyField.addClass('two-company-search-input');
 
@@ -861,6 +1023,31 @@ class TwoCompanySearch {
         if ($.ui && $.ui.autocomplete && typeof $.fn.autocomplete === 'function') {
             this.companyField.autocomplete({
                 source: (request, response) => {
+                    // TWO-30.x.10 element 1: jQuery UI's own `_resizeMenu`
+                    // sizes the dropdown to whichever is WIDER, the field or
+                    // the longest rendered label - with up to 50 results plus
+                    // the manual-entry row, that reliably outgrows the field
+                    // by a large margin (625px against a 281px field, live).
+                    // Refreshed on every keystroke, before jQuery UI has a
+                    // chance to (re)compute its own inline width, so the CSS
+                    // rule below - `max-width: var(...)` - is already correct
+                    // by the time this request's response paints. A stylesheet
+                    // max-width caps the USED width regardless of what inline
+                    // `width` jQuery UI sets, with no `!important` required:
+                    // that is simply how the CSS width algorithm resolves
+                    // width against max-width.
+                    //
+                    // ensureFieldWrapper() refreshed alongside it (round-2
+                    // review finding, Vader): a field hidden behind a
+                    // collapsed checkout step at page load measures 0 width,
+                    // so the wrapper's pinned width is cleared rather than
+                    // set - and no `resize`/`orientationchange` fires just
+                    // because a later step reveals it. The first keystroke
+                    // once the buyer reaches it is the next point either
+                    // measurement can be trusted, so both are refreshed here,
+                    // not only the dropdown clamp.
+                    this.ensureFieldWrapper();
+                    this.constrainAutocompleteMenuWidth();
                     const term = String(request.term || '');
                     // Manual entry: the buyer has said their company is not in
                     // the register, so no dropdown at all - not results, not a
@@ -982,6 +1169,31 @@ class TwoCompanySearch {
                     }
                 }
             });
+
+            // Marker class for the CSS width clamp (TWO-30.x.10 element 1,
+            // Han review finding): `.ui-autocomplete` is jQuery UI's own
+            // un-namespaced default class, shared by any OTHER jQuery UI
+            // autocomplete that might be live on the same page (a native
+            // PrestaShop lookup, another module). Clamping every
+            // `.ui-autocomplete` on the page to THIS field's width would
+            // mis-size an unrelated one. `addClass` is idempotent, so this is
+            // safe to repeat on every setupAutocomplete() re-run.
+            //
+            // Wrapped in try/catch (round-2 review finding, Han): this is a
+            // cosmetic clamp, not core search functionality, and
+            // `autocomplete('widget')`/`autocomplete('instance')` right below
+            // it is ALREADY documented and guarded as capable of throwing on
+            // a non-standard jQuery UI build. Nothing here calls
+            // TwoCompanySearch's own constructor from inside a try, so an
+            // uncaught throw at this point would escape setupAutocomplete(),
+            // init(), and the constructor itself, aborting company search
+            // entirely over a failed width clamp - the opposite of this
+            // file's own risk posture everywhere else.
+            try {
+                this.companyField.autocomplete('widget').addClass(TwoCompanySearch.AUTOCOMPLETE_MENU_CLASS);
+            } catch (e) {
+                // Degrade to an unclamped (but still functional) dropdown.
+            }
 
             // Render the unavailable row as non-selectable. `ui-state-disabled`
             // is what jQuery UI's menu itself checks, so the row is skipped by
@@ -2696,6 +2908,25 @@ class TwoCompanySearch {
         // handler on a node that would otherwise outlive this instance.
         try {
             this.removeRevealChip();
+        } catch (e) {
+            // no-op
+        }
+        // Its own try for the same reason again: a live `window` listener
+        // outliving this instance, plus a page-wide CSS variable (TWO-30.x.10
+        // review finding) that must not keep clamping some LATER field's
+        // dropdown to a width this, now-dead, field last held.
+        try {
+            // By reference, not by namespace alone (round-2 review finding,
+            // Vader) - `window` is a genuine page-wide singleton, so a
+            // namespace-only `.off('.twoCompanyWidth')` would remove another
+            // still-live instance's handler too, were one ever to exist at
+            // the same time as this one's teardown.
+            if (this._widthRefreshHandler) {
+                $(window).off('resize.twoCompanyWidth orientationchange.twoCompanyWidth', this._widthRefreshHandler);
+            }
+            clearTimeout(this._widthRefreshTimeoutId);
+            this._widthRefreshTimeoutId = null;
+            document.documentElement.style.removeProperty('--two-company-search-width');
         } catch (e) {
             // no-op
         }
