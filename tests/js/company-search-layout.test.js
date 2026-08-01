@@ -137,8 +137,13 @@ describe('the dropdown width CSS variable (2.1)', () => {
             .toBe('281px');
     });
 
-    test('a falsy width (e.g. a detached/hidden field) leaves the property untouched', () => {
+    test('a falsy width (e.g. a detached/hidden field) CLEARS the property rather than leaving a stale value', () => {
+        // TWO-30.x.10 review finding (Han + Vader, convergent): this is a
+        // page-wide singleton variable. Leaving a stale value behind when a
+        // field goes hidden/detached would silently mis-clamp whatever
+        // dropdown reads the variable next.
         const instance = makeInstance();
+        document.documentElement.style.setProperty('--two-company-search-width', '999px');
         jest.spyOn($.fn, 'outerWidth').mockReturnValue(0);
 
         instance.constrainAutocompleteMenuWidth();
@@ -154,22 +159,111 @@ describe('the dropdown width CSS variable (2.1)', () => {
         expect(() => instance.constrainAutocompleteMenuWidth()).not.toThrow();
     });
 
-    test('the stylesheet clamps the dropdown via the custom property, not a fixed pixel value', () => {
+    test('destroy() clears the property so a later, differently-sized field is not mis-clamped', () => {
+        const instance = makeInstance();
+        document.documentElement.style.setProperty('--two-company-search-width', '281px');
+
+        instance.destroy();
+
+        expect(document.documentElement.style.getPropertyValue('--two-company-search-width'))
+            .toBe('');
+    });
+
+    test('the widget gets the scoping marker class, not left as bare .ui-autocomplete', () => {
+        // TWO-30.x.10 review finding (Han): `.ui-autocomplete` is jQuery UI's
+        // own un-namespaced default class - shared by any OTHER jQuery UI
+        // autocomplete the page might have live. The width clamp must be
+        // scoped to a marker THIS class controls, or it would mis-size an
+        // unrelated widget elsewhere on the page.
+        const instance = makeInstance();
+
+        const widget = liveField().autocomplete('widget');
+
+        expect(widget.hasClass('two-company-autocomplete-menu')).toBe(true);
+    });
+
+    test('the stylesheet clamps only the scoped marker class, never the bare .ui-autocomplete', () => {
         // jsdom's CSS engine does not resolve `var()` at getComputedStyle time
         // (it reports the raw value), so this cannot assert the resolved
         // pixel figure the way a real browser would - that is exactly what
         // the live verification against the staging shop covers instead.
         // What jsdom CAN prove is that the rule keys off the variable this
-        // class publishes, with a sane fallback, rather than a single fixed
-        // width that would be wrong for every field size but one.
+        // class publishes AND is scoped to the marker class, rather than a
+        // single fixed width applied to every jQuery UI autocomplete on the
+        // page.
         installStylesheet('views/css/two.css');
-        const ul = document.createElement('ul');
-        ul.className = 'ui-autocomplete';
-        document.body.appendChild(ul);
+        const bareUl = document.createElement('ul');
+        bareUl.className = 'ui-autocomplete';
+        document.body.appendChild(bareUl);
+        const scopedUl = document.createElement('ul');
+        scopedUl.className = 'ui-autocomplete two-company-autocomplete-menu';
+        document.body.appendChild(scopedUl);
 
-        const maxWidth = getComputedStyle(ul).maxWidth;
-        expect(maxWidth).toContain('var(--two-company-search-width');
-        expect(maxWidth).toContain('320px');
+        // jsdom reports an unmatched property as '' rather than the browser's
+        // 'none' initial value - a jsdom quirk, not a claim about real
+        // browsers. What matters here is that the two elements resolve
+        // DIFFERENTLY: the bare class gets nothing, the scoped one gets the
+        // clamp.
+        expect(getComputedStyle(bareUl).maxWidth).toBe('');
+        const scopedMaxWidth = getComputedStyle(scopedUl).maxWidth;
+        expect(scopedMaxWidth).toContain('var(--two-company-search-width');
+        expect(scopedMaxWidth).toContain('320px');
+    });
+});
+
+describe('the field wrapper width is pinned explicitly, not left to block auto-sizing (2.2 hardening)', () => {
+    test('ensureFieldWrapper() sets the wrapper width to the field\'s own outerWidth()', () => {
+        // TWO-30.x.10 review finding (Han + Vader, convergent): a
+        // `display:block` wrapper with no padding only matches the input's
+        // width when the input already fills its container - false on a
+        // theme where the field has its own narrower intrinsic width. Pin it
+        // explicitly instead of trusting block auto-sizing.
+        const instance = makeInstance();
+        jest.spyOn($.fn, 'outerWidth').mockReturnValue(240);
+
+        instance.ensureFieldWrapper();
+
+        expect(liveField().parent().css('width')).toBe('240px');
+    });
+
+    test('a falsy width clears a previously-set inline width rather than leaving it stale', () => {
+        // jQuery's `.css('width')` reads the COMPUTED style, which jsdom
+        // resolves to '0px' for an unset width regardless - the inline style
+        // itself is what proves whether a stale pixel value was left behind.
+        const instance = makeInstance();
+        liveField().parent().get(0).style.width = '999px';
+        jest.spyOn($.fn, 'outerWidth').mockReturnValue(0);
+
+        instance.ensureFieldWrapper();
+
+        expect(liveField().parent().get(0).style.width).toBe('');
+    });
+});
+
+describe('the width-refresh listener on resize/orientationchange (2.1/2.2 hardening)', () => {
+    test('is bound at most once per instance across repeated setupAutocomplete() calls', () => {
+        // makeInstance() itself already runs init() -> setupAutocomplete(),
+        // which is the FIRST bind - so the spy has to be in place before
+        // construction to see it, and two MORE explicit calls after should
+        // add no further binds.
+        const onSpy = jest.spyOn($.fn, 'on');
+        const instance = makeInstance();
+
+        instance.setupAutocomplete();
+        instance.setupAutocomplete();
+
+        const resizeBindCalls = onSpy.mock.calls.filter(
+            (call) => typeof call[0] === 'string' && call[0].includes('resize.twoCompanyWidth')
+        );
+        expect(resizeBindCalls).toHaveLength(1);
+    });
+
+    test('destroy() unbinds it (does not throw when a later resize fires)', () => {
+        const instance = makeInstance();
+
+        instance.destroy();
+
+        expect(() => $(window).trigger('resize')).not.toThrow();
     });
 });
 
