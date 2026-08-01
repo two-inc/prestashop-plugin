@@ -1211,16 +1211,32 @@
  * TwoCompanySearch.constrainAutocompleteMenuWidth(), refreshed on every
  * keystroke before jQuery UI redraws; the literal fallback only applies
  * before that has ever run.
+ *
+ * The clamp itself is scoped to `.two-company-autocomplete-menu` (added to
+ * the widget element by TwoCompanySearch, review finding) rather than the
+ * bare `.ui-autocomplete` every other rule in this section still targets:
+ * `.ui-autocomplete` is jQuery UI's own un-namespaced default class, shared
+ * by any OTHER jQuery UI autocomplete the page might have live (a native
+ * PrestaShop lookup, another module) - an unscoped max-width would clamp
+ * THAT one to this field's width too, which is a functional break, not
+ * cosmetic bleed. `box-sizing: border-box` keeps the clamp's target the
+ * same box model `outerWidth()` measures, so the dropdown's own
+ * `1px solid` border does not push it a couple of pixels past the field
+ * on a theme with no global border-box reset.
  */
 .ui-autocomplete {
     max-height: 200px;
-    max-width: var(--two-company-search-width, 320px);
     overflow-y: auto;
     border: 1px solid #ccc !important;
     border-radius: 4px !important;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
     background: white !important;
     z-index: 9999 !important;
+}
+
+.ui-autocomplete.two-company-autocomplete-menu {
+    max-width: var(--two-company-search-width, 320px);
+    box-sizing: border-box;
 }
 
 .ui-autocomplete .ui-menu-item {
@@ -1340,6 +1356,12 @@
 .two-autocomplete-manual-entry {
     cursor: pointer;
     border-top: 1px solid #e0e0e0;
+    /* -webkit-sticky first: an engine that only understands the prefixed
+       form ignores the unprefixed line below rather than the other way
+       round, and a browser that understands `sticky` also accepts (and
+       overrides with) the prefixed declaration that precedes it - so this
+       ordering is belt-and-braces, not a real fallback for either engine. */
+    position: -webkit-sticky;
     position: sticky;
     bottom: 0;
     background: #fff;
