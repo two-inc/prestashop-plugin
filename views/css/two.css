@@ -597,21 +597,37 @@
 }
 
 /*
- * Selected company's organisation number, shown inline next to the company
- * name field once a search result is chosen (TWO-25288). Reuses the plugin's
- * existing muted-grey token (see .two-info-label above) rather than a
- * one-off lighter grey, so it reads consistently with the other inline hints
- * already in this checkout instead of introducing a second shade of grey.
- * Positioned absolutely inside whatever field wrapper it lands in - the
- * companion JS makes that wrapper `position: relative` only if it is
- * currently static, since the wrapper markup comes from theme/core
- * PrestaShop templates this plugin does not own.
+ * Tight-fitting positioned wrapper around the company field (TWO-30.x.10),
+ * created once by TwoCompanySearch.ensureFieldWrapper(). A plain block
+ * element with no padding of its own stretches to exactly the input's width,
+ * whatever a theme's own `.form-group`/column wrapper happens to add - which
+ * is what lets the hint and the reveal chip below match the field's real
+ * width and edge instead of the wider, offset box the theme wrapper used to
+ * provide.
+ */
+.two-company-field-wrap {
+    display: block;
+    position: relative;
+}
+
+/*
+ * Selected company's organisation number, shown as a plain label BELOW the
+ * company name field once a search result is chosen (TWO-30.x.10, superseding
+ * the TWO-25288 in-field placement). Canonical design across all four
+ * platforms: never inside the search/name field itself, where it collided
+ * with long company names and - on this field specifically - ended up
+ * silently painted over by the reveal chip, invisible despite passing every
+ * DOM-visibility check. Right-aligned to the field's own right edge, which
+ * `.two-company-field-wrap` now guarantees matches the field exactly.
+ * Reuses the plugin's existing muted-grey token (see .two-info-label above)
+ * rather than a one-off lighter grey, so it reads consistently with the
+ * other inline hints already in this checkout.
  */
 .two-company-id-hint {
     position: absolute;
-    right: 12px;
-    top: 50%;
-    transform: translateY(-50%);
+    top: 100%;
+    right: 0;
+    margin-top: 2px;
     color: #6b7280;
     font-size: 11px;
     white-space: nowrap;
@@ -1180,8 +1196,25 @@
    the scoped rule at the top of this file is now the only one. */
 
 /* Autocomplete Dropdown Styling */
+/*
+ * TWO-30.x.10 element 1: a proper small, contained dropdown matching the
+ * field it belongs to, like WC/Magento's select2/selectWoo - not the
+ * auto-widening box jQuery UI produces on its own. jQuery UI's `_resizeMenu`
+ * sizes this element to whichever is WIDER: the field, or the longest
+ * rendered label. With up to 50 results plus the manual-entry row that
+ * reliably outgrows the field (625px against a 281px field, live).
+ *
+ * `max-width` here is what actually contains it: the CSS width-resolution
+ * algorithm clamps a used width to `max-width` regardless of what inline
+ * `width` jQuery UI sets on this same element, so no `!important` is needed
+ * to win against it. The variable is kept current by
+ * TwoCompanySearch.constrainAutocompleteMenuWidth(), refreshed on every
+ * keystroke before jQuery UI redraws; the literal fallback only applies
+ * before that has ever run.
+ */
 .ui-autocomplete {
     max-height: 200px;
+    max-width: var(--two-company-search-width, 320px);
     overflow-y: auto;
     border: 1px solid #ccc !important;
     border-radius: 4px !important;
@@ -1208,6 +1241,13 @@
     display: block !important;
     border: none !important;
     background: none !important;
+    /* A long company name must truncate rather than push the row (and with
+       it, jQuery UI's own width measurement) wider than the field - see the
+       `.ui-autocomplete` `max-width` comment above for why the row's natural
+       content width matters at all. */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .ui-autocomplete .ui-menu-item-wrapper:hover,
@@ -1276,9 +1316,34 @@
  * visible focus state is worse than no keyboard support at all - the buyer
  * cannot tell where they are.
  */
+/*
+ * TWO-30.x.10 element 4: live-verified undiscoverable as a plain last-`<li>`
+ * row - with up to 50 results ahead of it in a 200px-tall scrollable list, it
+ * sat roughly 1400px below the visible viewport (y=2041 in a panel whose
+ * visible area ends at 652), reachable only by scrolling past every company
+ * in the register first. `buildManualEntryItem()`/`withManualEntryRow()`
+ * (TwoCompanySearch.js) are UNCHANGED - the row is still the same DOM node,
+ * still last in the list, still built and selected exactly as before - only
+ * ITS OWN positioning changes. `position: sticky` on a direct child of a
+ * `overflow-y: auto` container keeps that child pinned at the named edge of
+ * the SCROLLING viewport rather than the full scrollable content, which is
+ * exactly the "always visible, no scrolling required" behaviour this needs -
+ * without restructuring the dropdown into a separate sibling control the way
+ * WC does (a `<select>`-backed select2 panel, which has a natural place
+ * outside its results `<ul>` for such a control; this field's own
+ * `<input>` doubles as the search box, so there is no equivalent seam to
+ * hang a sibling off). Shared with the custom (non-jQuery-UI) fallback
+ * path's `.two-autocomplete-list`, which is a plain `overflow-y: auto` div
+ * with the same last-child convention - the same one rule covers both
+ * render paths.
+ */
 .two-autocomplete-manual-entry {
     cursor: pointer;
     border-top: 1px solid #e0e0e0;
+    position: sticky;
+    bottom: 0;
+    background: #fff;
+    z-index: 1;
 }
 
 .two-autocomplete-manual-entry:focus {

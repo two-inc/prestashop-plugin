@@ -175,6 +175,7 @@ class TwoCompanySearch {
         }
         
         this.createOrganizationField();
+        this.ensureFieldWrapper();
         this.createCompanyIdHintField();
         this.clearStaleOrganizationSelection();
         this.setupCompanyInputSync();
@@ -184,6 +185,33 @@ class TwoCompanySearch {
         this.isInitialized = true;
     }
     
+    /**
+     * Publish the company field's current width as a CSS custom property, so
+     * `.ui-autocomplete`'s `max-width` (views/css/two.css) can clamp jQuery
+     * UI's own dropdown to it (TWO-30.x.10 element 1).
+     *
+     * Set on `document.documentElement` rather than on the field or its
+     * wrapper: `.ui-autocomplete` is appended by jQuery UI to `<body>`, not
+     * nested inside this field's own markup, so a variable set anywhere
+     * under the field would not inherit down to it. A custom property
+     * inherits from any ancestor in the real DOM tree, and `<html>` is
+     * common to both.
+     *
+     * A single shared variable is a page-wide singleton, matching every
+     * other assumption already documented in this class (see
+     * createRevealChip()) about there being one live company field at a
+     * time - not something this method changes or needs to solve.
+     */
+    constrainAutocompleteMenuWidth() {
+        if (!this.companyField || !this.companyField.length) {
+            return;
+        }
+        const width = this.companyField.outerWidth();
+        if (width) {
+            document.documentElement.style.setProperty('--two-company-search-width', width + 'px');
+        }
+    }
+
     /**
      * Create or ensure organization number field exists
      */
@@ -196,6 +224,42 @@ class TwoCompanySearch {
         }
         
         this.organizationField = orgField;
+    }
+
+    /**
+     * Wrap the company field in a tight-fitting positioned span, idempotently.
+     *
+     * TWO-30.x.10 element 2/3: the hint and the reveal chip used to position
+     * themselves absolutely against `this.companyField.parent()` - the
+     * field's THEME wrapper (a Bootstrap `.form-group`/column div), which
+     * commonly carries its own padding and therefore has a different width
+     * and left offset than the input it contains. A chip or hint positioned
+     * `inset: 0` / `right: 0` against THAT box renders wider than the field
+     * and offset from its edge, rather than matching it - exactly the
+     * too-wide result field and the occluded org-number hint Doug found live.
+     *
+     * A dedicated wrapper hugging only the input removes the dependency on
+     * whatever padding a theme's own wrapper happens to carry: a plain
+     * block-level element with no padding of its own stretches to the same
+     * width as the input it wraps, whatever that width is. This mirrors what
+     * select2/selectWoo already do on the Woo/Magento side - they replace the
+     * plain `<select>` with their own tightly-fitting container rather than
+     * positioning against the field's outer form markup.
+     *
+     * Re-run on every setupAutocomplete() call (not only init()), because
+     * that method re-resolves `this.companyField` against whatever node
+     * PrestaShop just put on the page on `updatedAddressForm` - a fresh node
+     * has no wrapper of ours yet.
+     */
+    ensureFieldWrapper() {
+        if (!this.companyField || !this.companyField.length) {
+            return;
+        }
+        const parent = this.companyField.parent();
+        if (parent.length && parent.hasClass('two-company-field-wrap')) {
+            return;
+        }
+        this.companyField.wrap('<span class="two-company-field-wrap"></span>');
     }
 
     /**
@@ -835,6 +899,10 @@ class TwoCompanySearch {
         // duplicate searches and two things fighting over one spinner.
         this.teardownCustomAutocomplete();
 
+        // Same re-run reasoning as the chip/hint below: a fresh field from an
+        // address-form re-render has no wrapper of ours yet.
+        this.ensureFieldWrapper();
+
         // Marks the field for the in-field spinner CSS (views/css/two.css).
         this.companyField.addClass('two-company-search-input');
 
@@ -861,6 +929,20 @@ class TwoCompanySearch {
         if ($.ui && $.ui.autocomplete && typeof $.fn.autocomplete === 'function') {
             this.companyField.autocomplete({
                 source: (request, response) => {
+                    // TWO-30.x.10 element 1: jQuery UI's own `_resizeMenu`
+                    // sizes the dropdown to whichever is WIDER, the field or
+                    // the longest rendered label - with up to 50 results plus
+                    // the manual-entry row, that reliably outgrows the field
+                    // by a large margin (625px against a 281px field, live).
+                    // Refreshed on every keystroke, before jQuery UI has a
+                    // chance to (re)compute its own inline width, so the CSS
+                    // rule below - `max-width: var(...)` - is already correct
+                    // by the time this request's response paints. A stylesheet
+                    // max-width caps the USED width regardless of what inline
+                    // `width` jQuery UI sets, with no `!important` required:
+                    // that is simply how the CSS width algorithm resolves
+                    // width against max-width.
+                    this.constrainAutocompleteMenuWidth();
                     const term = String(request.term || '');
                     // Manual entry: the buyer has said their company is not in
                     // the register, so no dropdown at all - not results, not a
