@@ -351,6 +351,28 @@ describe('the width-refresh listener on resize/orientationchange (2.1/2.2 harden
 
         expect(ensureSpy).toHaveBeenCalled();
     });
+
+    test('the geometry refresh also fires in manual-entry mode, not only normal search', () => {
+        // TWO-30.x.10 round-3 review finding (Vader): the manual-entry
+        // early-return (`response([])`, no dropdown at all while the buyer
+        // types their own company name) sits BELOW both geometry calls in
+        // `source`, not above them - confirmed correct by inspection, and
+        // pinned here so a future reordering that moved the early-return
+        // above them would fail this test rather than regress silently.
+        const instance = makeInstance();
+        const field = liveField();
+        instance._manualEntry = true;
+        const ensureSpy = jest.spyOn(instance, 'ensureFieldWrapper');
+        const widthSpy = jest.spyOn(instance, 'constrainAutocompleteMenuWidth');
+        ensureSpy.mockClear();
+        widthSpy.mockClear();
+
+        field.val('Some Manually Typed Name');
+        field.autocomplete('instance').search('Some Manually Typed Name');
+
+        expect(ensureSpy).toHaveBeenCalled();
+        expect(widthSpy).toHaveBeenCalled();
+    });
 });
 
 describe('the manual-entry row stays reachable without scrolling (2.4)', () => {
