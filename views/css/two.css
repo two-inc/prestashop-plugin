@@ -613,11 +613,20 @@
      * absolutely positioned (see `.two-company-id-hint`), so it takes no
      * space in normal flow and the next form field started immediately at
      * this wrapper's own bottom edge - touching the hint text with no gap.
-     * A small padding-bottom reserves room in the flow for the hint's own
-     * height without touching the wrapper's rendered width or the field's
-     * own box.
+     * `--two-company-hint-clearance` reserves room in the flow for it
+     * without touching the wrapper's rendered width or the field's own box.
+     *
+     * The value has to cover the hint's own real footprint, not just a
+     * cosmetic 4px (round-1 adversarial review finding, Han): that rule sets
+     * `font-size: 11px` with a `margin-top: 2px` of its own, which alone
+     * renders at roughly 15-16px tall - a bare 4px here left the hint
+     * overlapping the next field by most of its own height. One shared
+     * custom property, read by both rules below, so the wrapper's reserved
+     * space and the hint's real footprint cannot drift apart again the way
+     * the original 4px did.
      */
-    padding-bottom: 4px;
+    --two-company-hint-clearance: 18px;
+    padding-bottom: var(--two-company-hint-clearance);
 }
 
 /*
@@ -637,6 +646,13 @@
     position: absolute;
     top: 100%;
     right: 0;
+    /*
+     * If this margin, the font-size below, or the line-height they resolve
+     * to ever grows, re-check `--two-company-hint-clearance` on
+     * `.two-company-field-wrap` above still comfortably exceeds it (#30.x.14
+     * bug 2.2) - that variable is what stops this hint from overlapping the
+     * next form field, and the two are not otherwise tied together.
+     */
     margin-top: 2px;
     color: #6b7280;
     font-size: 11px;
