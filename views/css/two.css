@@ -608,6 +608,16 @@
 .two-company-field-wrap {
     display: block;
     position: relative;
+    /*
+     * #30.x.14 bug 2.2, live-verified: the org-number hint below is
+     * absolutely positioned (see `.two-company-id-hint`), so it takes no
+     * space in normal flow and the next form field started immediately at
+     * this wrapper's own bottom edge - touching the hint text with no gap.
+     * A small padding-bottom reserves room in the flow for the hint's own
+     * height without touching the wrapper's rendered width or the field's
+     * own box.
+     */
+    padding-bottom: 4px;
 }
 
 /*
@@ -1229,7 +1239,15 @@
     overflow-y: auto;
     border: 1px solid #ccc !important;
     border-radius: 4px !important;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
+    /*
+     * #30.x.14 bug 2.1, live-verified: with the previous shadow the panel's
+     * grey border sat flush against the field's own border (0px gap live),
+     * reading as one continuous control rather than a floating panel - on
+     * top of the JS `position` option now opening an 8px gap (see
+     * TwoCompanySearch.js), a visibly heavier shadow is what actually sells
+     * that gap as intentional rather than looking like a rendering seam.
+     */
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
     background: white !important;
     z-index: 9999 !important;
 }
@@ -1356,6 +1374,17 @@
 .two-autocomplete-manual-entry {
     cursor: pointer;
     border-top: 1px solid #e0e0e0;
+    /*
+     * #30.x.14 bug 2.3, live-verified: this row rendered in the same
+     * `rgb(34,34,34)` body-text colour as every ordinary company result, with
+     * nothing distinguishing it as the one actionable, non-company row in the
+     * list. Matches WC's `#search_company_btn` link-blue so the affordance
+     * reads as clickable across platforms. The `!important` override just
+     * below is what actually wins - jQuery UI's menu widget slaps its own
+     * `ui-menu-item-wrapper` class (styled `color: #333 !important` earlier
+     * in this file) onto whatever `_renderItem` returns, this row included.
+     */
+    color: #3043d1;
     /* -webkit-sticky first: an engine that only understands the prefixed
        form ignores the unprefixed line below rather than the other way
        round, and a browser that understands `sticky` also accepts (and
@@ -1374,6 +1403,22 @@
 }
 
 /*
+ * `!important` for the same reason the message-row override above needs it:
+ * jQuery UI's menu widget applies `ui-menu-item-wrapper` (coloured
+ * `#333 !important` near the top of this section) to this row's own
+ * `<div>` too, on top of whatever class `_renderItem` gave it. Covers
+ * hover/active/focus explicitly - the generic `.ui-menu-item-wrapper:hover`
+ * rule also re-asserts `#333 !important` on interaction, which would
+ * otherwise win back the moment the buyer points at or arrows onto this row.
+ */
+.ui-autocomplete .two-autocomplete-manual-entry.ui-menu-item > div,
+.ui-autocomplete .two-autocomplete-manual-entry.ui-menu-item > div:hover,
+.ui-autocomplete .two-autocomplete-manual-entry.ui-menu-item > div.ui-state-active,
+.ui-autocomplete .two-autocomplete-manual-entry.ui-menu-item > div.ui-state-focus {
+    color: #3043d1 !important;
+}
+
+/*
  * The way back out of manual entry. A real <button>, so every one of the
  * browser's button defaults has to be undone to make it read as a link.
  */
@@ -1385,7 +1430,8 @@
     background: none;
     font: inherit;
     color: #1976d2;
-    text-decoration: underline;
+    /* #30.x.14 bug 2.4, live-verified: Doug does not want this underlined. */
+    text-decoration: none;
     cursor: pointer;
 }
 
