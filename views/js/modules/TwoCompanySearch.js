@@ -320,15 +320,27 @@ class TwoCompanySearch {
      * every country change and address-form update, and `window` has no
      * per-listener identity check the way jQuery delegation on a document
      * node does - a second `.on('resize.twoCompanyWidth', ...)` call does
-     * not replace the first, it stacks. Namespaced anyway, so destroy() can
-     * unbind it precisely.
+     * not replace the first, it stacks.
+     *
+     * Unbound in destroy() by FUNCTION REFERENCE
+     * (`$(window).off(events, this._widthRefreshHandler)`), not by namespace
+     * alone (round-2 review finding, Vader). `window` is a genuine
+     * page-wide singleton, unlike the per-node sibling sweeps this file uses
+     * elsewhere (see createRevealChip()/removeRevealChip()) - a namespace-only
+     * `.off('.twoCompanyWidth')` would remove every instance's handler under
+     * that name, not just the one being destroyed. Not reachable today
+     * (TwoCheckoutManager.handleAddressFormUpdate() destroys the old instance
+     * and constructs the new one synchronously, so there is never a moment
+     * with two live instances of this listener at once), but binding/
+     * unbinding by reference costs nothing and removes the landmine outright
+     * rather than relying on that invariant holding forever.
      */
     setupWidthRefreshListener() {
         if (this._widthRefreshBound) {
             return;
         }
         this._widthRefreshBound = true;
-        $(window).on('resize.twoCompanyWidth orientationchange.twoCompanyWidth', () => {
+        this._widthRefreshHandler = () => {
             if (this._destroyed) {
                 return;
             }
@@ -340,7 +352,8 @@ class TwoCompanySearch {
                 this.ensureFieldWrapper();
                 this.constrainAutocompleteMenuWidth();
             }, 150);
-        });
+        };
+        $(window).on('resize.twoCompanyWidth orientationchange.twoCompanyWidth', this._widthRefreshHandler);
     }
 
     /**
@@ -1023,6 +1036,17 @@ class TwoCompanySearch {
                     // `width` jQuery UI sets, with no `!important` required:
                     // that is simply how the CSS width algorithm resolves
                     // width against max-width.
+                    //
+                    // ensureFieldWrapper() refreshed alongside it (round-2
+                    // review finding, Vader): a field hidden behind a
+                    // collapsed checkout step at page load measures 0 width,
+                    // so the wrapper's pinned width is cleared rather than
+                    // set - and no `resize`/`orientationchange` fires just
+                    // because a later step reveals it. The first keystroke
+                    // once the buyer reaches it is the next point either
+                    // measurement can be trusted, so both are refreshed here,
+                    // not only the dropdown clamp.
+                    this.ensureFieldWrapper();
                     this.constrainAutocompleteMenuWidth();
                     const term = String(request.term || '');
                     // Manual entry: the buyer has said their company is not in
@@ -1154,7 +1178,22 @@ class TwoCompanySearch {
             // `.ui-autocomplete` on the page to THIS field's width would
             // mis-size an unrelated one. `addClass` is idempotent, so this is
             // safe to repeat on every setupAutocomplete() re-run.
-            this.companyField.autocomplete('widget').addClass(TwoCompanySearch.AUTOCOMPLETE_MENU_CLASS);
+            //
+            // Wrapped in try/catch (round-2 review finding, Han): this is a
+            // cosmetic clamp, not core search functionality, and
+            // `autocomplete('widget')`/`autocomplete('instance')` right below
+            // it is ALREADY documented and guarded as capable of throwing on
+            // a non-standard jQuery UI build. Nothing here calls
+            // TwoCompanySearch's own constructor from inside a try, so an
+            // uncaught throw at this point would escape setupAutocomplete(),
+            // init(), and the constructor itself, aborting company search
+            // entirely over a failed width clamp - the opposite of this
+            // file's own risk posture everywhere else.
+            try {
+                this.companyField.autocomplete('widget').addClass(TwoCompanySearch.AUTOCOMPLETE_MENU_CLASS);
+            } catch (e) {
+                // Degrade to an unclamped (but still functional) dropdown.
+            }
 
             // Render the unavailable row as non-selectable. `ui-state-disabled`
             // is what jQuery UI's menu itself checks, so the row is skipped by
@@ -2877,7 +2916,14 @@ class TwoCompanySearch {
         // review finding) that must not keep clamping some LATER field's
         // dropdown to a width this, now-dead, field last held.
         try {
-            $(window).off('.twoCompanyWidth');
+            // By reference, not by namespace alone (round-2 review finding,
+            // Vader) - `window` is a genuine page-wide singleton, so a
+            // namespace-only `.off('.twoCompanyWidth')` would remove another
+            // still-live instance's handler too, were one ever to exist at
+            // the same time as this one's teardown.
+            if (this._widthRefreshHandler) {
+                $(window).off('resize.twoCompanyWidth orientationchange.twoCompanyWidth', this._widthRefreshHandler);
+            }
             clearTimeout(this._widthRefreshTimeoutId);
             this._widthRefreshTimeoutId = null;
             document.documentElement.style.removeProperty('--two-company-search-width');
