@@ -1056,10 +1056,21 @@ class TwoCompanySearch {
                         response([]);
                         return;
                     }
-                    // Empty field: the placeholder is already the hint for this
-                    // state, so opening a dropdown to repeat it would be noise.
+                    // Empty field, but a search WAS asked for (a click/focus
+                    // into the field, not a keystroke - see the `focus`
+                    // handler below). #30.x.14 bug 2.1, live-verified: with
+                    // `response([])` here, focusing an empty field opened
+                    // nothing at all - the field just accepted typed input,
+                    // with no visible control the buyer could point to as
+                    // "this is a search widget". A one-row hint gives that
+                    // click something to show, the same way Mag/WC's
+                    // select2/selectWoo combobox opens a panel on click before
+                    // a single character is typed. Goes through the same
+                    // `two_unavailable` message-row plumbing as
+                    // buildTooShortItem() below - reachable but unselectable,
+                    // keyboard-skipped, muted styling.
                     if (term.length === 0) {
-                        response([]);
+                        response([this.buildFocusHintItem()]);
                         return;
                     }
                     // Typed, but not enough to search on. Say so instead of
@@ -1124,6 +1135,16 @@ class TwoCompanySearch {
                 // 300ms matches the custom fallback path below and the
                 // Magento/WooCommerce plugins.
                 delay: 300,
+                // #30.x.14 bug 2.1, live-verified: jQuery UI's own default
+                // (`my: "left top"` against `at: "left bottom"`) butts the
+                // menu directly against the field with a zero-pixel seam - on
+                // screen it reads as one continuous control rather than a
+                // floating panel distinct from the input, which is exactly
+                // the "still just editing in the field" complaint. `top+8`
+                // opens a real gap so the two are visibly separate boxes, the
+                // same visual break Mag/WC's select2/selectWoo panel has
+                // below its own combobox.
+                position: { my: 'left top+8', at: 'left bottom', collision: 'none' },
                 select: (event, ui) => {
                     // The manual-entry row IS actionable, unlike the message
                     // rows: it runs its action and then returns false, which is
@@ -1286,6 +1307,32 @@ class TwoCompanySearch {
             } catch (e) {
                 // Older jQuery UI without `instance`; styling only, safe to skip.
             }
+
+            // #30.x.14 bug 2.1, live-verified: focusing an empty field opened
+            // nothing - jQuery UI only ever searches on `input`/keydown, never
+            // on plain focus, so a click into the field looked and behaved
+            // exactly like a plain text box until the buyer typed a
+            // character. Forcing a search on focus - which, for an empty
+            // term, now renders the hint row via buildFocusHintItem() above -
+            // is what gives that click something to open, matching Mag/WC's
+            // combobox opening its panel on click before any typing.
+            //
+            // Namespaced and unbound-then-rebound (not `.one()`): this runs on
+            // every setupAutocomplete() re-entry (country change,
+            // updatedAddressForm), which re-resolves `this.companyField`
+            // against a node that may not carry a previous binding, and a
+            // stale binding on an abandoned node is otherwise never cleaned
+            // up until that node is GC'd.
+            this.companyField.off('focus.twoCompanyOpen').on('focus.twoCompanyOpen', () => {
+                if (this._destroyed || this._manualEntry) {
+                    return;
+                }
+                try {
+                    this.companyField.autocomplete('search', this.companyField.val() || '');
+                } catch (e) {
+                    // Widget not ready/already torn down; nothing to open.
+                }
+            });
         } else {
             this.setupCustomAutocomplete();
         }
@@ -1575,6 +1622,17 @@ class TwoCompanySearch {
             .text(this.getBackToSearchText());
         link.on('click.twoManualEntry', (event) => {
             event.preventDefault();
+            // Stop the click here (#30.x.14 bug 2.5, live-verified): with no
+            // stopPropagation, this click bubbled up into whatever delegated
+            // accordion-toggle handler the checkout theme binds on the
+            // address step container, and that handler read the same click
+            // as "collapse this step" - closing the whole address section the
+            // buyer was in the middle of, rather than just switching this
+            // field back to search. This button is a plain sibling inside
+            // that step's markup, not something the accordion is meant to
+            // hear from at all, so the fix is to keep the click here rather
+            // than let it carry on up past a node that never asked for it.
+            event.stopPropagation();
             this.exitManualEntryMode();
         });
 
@@ -1707,6 +1765,25 @@ class TwoCompanySearch {
             value: '',
             two_unavailable: true,
             two_row_class: 'two-autocomplete-too-short'
+        };
+    }
+
+    /**
+     * Pseudo-result carrying the "click opened this" hint through jQuery UI's
+     * result-list plumbing (#30.x.14 bug 2.1). Reuses the same placeholder
+     * copy the empty field already shows, so the dropdown does not introduce
+     * a second, differently-worded hint for the same state - just makes the
+     * existing one visible in the one place a buyer who has already clicked
+     * in is looking.
+     *
+     * @returns {Object}
+     */
+    buildFocusHintItem() {
+        return {
+            label: TwoCompanySearch.getEmptyFieldHintText(),
+            value: '',
+            two_unavailable: true,
+            two_row_class: 'two-autocomplete-focus-hint'
         };
     }
 
@@ -2879,6 +2956,11 @@ class TwoCompanySearch {
                 this.companyField.removeClass(
                     'two-company-search-input two-company-search-loading ui-autocomplete-loading'
                 );
+                // Bound directly via jQuery, not through the widget - the
+                // `autocomplete('destroy')` call below only unwinds bindings
+                // the widget itself made, so this one has to go by hand or it
+                // outlives the instance on a field a fresh instance may reuse.
+                this.companyField.off('focus.twoCompanyOpen');
             }
             // Destroy autocomplete instance if present
             if (this.companyField && this.companyField.length && this.companyField.hasClass('ui-autocomplete-input')) {
