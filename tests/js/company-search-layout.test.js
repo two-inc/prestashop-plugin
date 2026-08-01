@@ -182,6 +182,27 @@ describe('the dropdown width CSS variable (2.1)', () => {
         expect(widget.hasClass('two-company-autocomplete-menu')).toBe(true);
     });
 
+    test('a throwing autocomplete("widget") degrades to an unclamped dropdown, not a dead company search', () => {
+        // TWO-30.x.10 round-2 review finding (Han): this is a cosmetic
+        // clamp, not core search functionality. `autocomplete('widget')`/
+        // `autocomplete('instance')` right below it in the source are
+        // already documented as capable of throwing on a non-standard
+        // jQuery UI build - an uncaught throw here would escape
+        // setupAutocomplete(), init() and the constructor itself, since
+        // TwoCheckoutManager.initializeCompanySearch() calls `new
+        // TwoCompanySearch(...)` with no surrounding try/catch.
+        buildAddressForm({ country: 'GB' });
+        const original = $.fn.autocomplete;
+        jest.spyOn($.fn, 'autocomplete').mockImplementation(function (...args) {
+            if (args[0] === 'widget') {
+                throw new Error('simulated non-standard jQuery UI build');
+            }
+            return original.apply(this, args);
+        });
+
+        expect(() => makeInstance()).not.toThrow();
+    });
+
     test('the stylesheet clamps only the scoped marker class, never the bare .ui-autocomplete', () => {
         // jsdom's CSS engine does not resolve `var()` at getComputedStyle time
         // (it reports the raw value), so this cannot assert the resolved
@@ -258,12 +279,77 @@ describe('the width-refresh listener on resize/orientationchange (2.1/2.2 harden
         expect(resizeBindCalls).toHaveLength(1);
     });
 
-    test('destroy() unbinds it (does not throw when a later resize fires)', () => {
+    test('destroy() actually unbinds the handler - a later resize no longer refreshes geometry', () => {
+        // TWO-30.x.10 round-2 review finding (Yoda): a bare "does not throw"
+        // assertion passes identically whether or not the listener was ever
+        // removed, since the handler itself never throws. Spy on the two
+        // methods the handler calls to prove the unbind actually happened.
+        jest.useFakeTimers();
         const instance = makeInstance();
+        const wrapperSpy = jest.spyOn(instance, 'ensureFieldWrapper');
+        const widthSpy = jest.spyOn(instance, 'constrainAutocompleteMenuWidth');
+
+        instance.destroy();
+        wrapperSpy.mockClear();
+        widthSpy.mockClear();
+
+        $(window).trigger('resize');
+        jest.advanceTimersByTime(200);
+
+        expect(wrapperSpy).not.toHaveBeenCalled();
+        expect(widthSpy).not.toHaveBeenCalled();
+    });
+
+    test('a resize DOES refresh geometry before destroy (sanity check the spy setup itself is meaningful)', () => {
+        jest.useFakeTimers();
+        const instance = makeInstance();
+        const wrapperSpy = jest.spyOn(instance, 'ensureFieldWrapper');
+        const widthSpy = jest.spyOn(instance, 'constrainAutocompleteMenuWidth');
+        wrapperSpy.mockClear();
+        widthSpy.mockClear();
+
+        $(window).trigger('resize');
+        jest.advanceTimersByTime(200);
+
+        expect(wrapperSpy).toHaveBeenCalled();
+        expect(widthSpy).toHaveBeenCalled();
+    });
+
+    test('unbinds by function reference, not by namespace alone, so a sibling instance is never at risk', () => {
+        // TWO-30.x.10 round-2 review finding (Vader): `window` is a genuine
+        // page-wide singleton; a namespace-only `.off('.twoCompanyWidth')`
+        // would remove ANY instance's handler under that name, not just the
+        // one being destroyed. Assert the actual call shape.
+        const instance = makeInstance();
+        const offSpy = jest.spyOn($.fn, 'off');
 
         instance.destroy();
 
-        expect(() => $(window).trigger('resize')).not.toThrow();
+        const call = offSpy.mock.calls.find(
+            (c) => typeof c[0] === 'string' && c[0].includes('twoCompanyWidth')
+        );
+        expect(call).toBeDefined();
+        expect(typeof call[1]).toBe('function');
+        expect(call[1]).toBe(instance._widthRefreshHandler);
+    });
+
+    test('the search source callback also refreshes the wrapper width, not just the CSS variable', () => {
+        // TWO-30.x.10 round-2 review finding (Vader): a field hidden behind a
+        // collapsed checkout step at page load measures 0 width, so its
+        // wrapper's pinned width is cleared at construction time - and no
+        // resize/orientationchange fires just because a later step reveals
+        // it. The first keystroke is the next point either measurement can
+        // be trusted, so ensureFieldWrapper() has to run alongside the CSS
+        // variable refresh already known to run there.
+        const instance = makeInstance();
+        const field = liveField();
+        const ensureSpy = jest.spyOn(instance, 'ensureFieldWrapper');
+        ensureSpy.mockClear();
+
+        field.val('Example');
+        field.autocomplete('instance').search('Example');
+
+        expect(ensureSpy).toHaveBeenCalled();
     });
 });
 
