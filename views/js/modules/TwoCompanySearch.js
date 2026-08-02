@@ -1135,6 +1135,50 @@ class TwoCompanySearch {
             this.companyField.removeAttr('aria-expanded');
             this.companyField.removeAttr('title');
         }
+        this.syncCompanyFieldPlaceholder(searchMode);
+    }
+
+    /**
+     * Keep the placeholder describing the mode the field is actually in.
+     *
+     * "Enter company name to search" is a search-mode instruction. In
+     * manual-entry mode the field no longer searches anything - it is the
+     * plain text input the buyer types their company into - so that wording
+     * tells them to do something the field will not do. Found on the staging
+     * shop in a real browser while verifying the manual-entry route.
+     *
+     * Only ever swaps a placeholder THIS class put there. applyEmptyFieldHint()
+     * declines to touch a placeholder a merchant theme or an address-form
+     * override already set, and undoing that here would take with one hand what
+     * that rule gives with the other - so a theme's own wording is left in both
+     * modes.
+     *
+     * @param {boolean} searchMode
+     */
+    syncCompanyFieldPlaceholder(searchMode) {
+        if (!this.companyField || !this.companyField.length) {
+            return;
+        }
+        const searchText = TwoCompanySearch.getEmptyFieldHintText();
+        const manualText = TwoCompanySearch.getManualEntryPlaceholderText();
+        const current = String(this.companyField.attr('placeholder') || '');
+        const wanted = searchMode ? searchText : manualText;
+        const ours = current === searchText || current === manualText;
+        if (!ours) {
+            return;
+        }
+        if (current !== wanted) {
+            this.companyField.attr('placeholder', wanted);
+        }
+    }
+
+    /**
+     * @returns {string} placeholder wording for manual-entry mode
+     */
+    static getManualEntryPlaceholderText() {
+        return (window.twopayment && window.twopayment.i18n
+            && window.twopayment.i18n.company_manual_placeholder)
+            || 'Enter your company name';
     }
 
     /**
