@@ -577,7 +577,28 @@ class TwoCompanySearch {
         this._revealed = true;
         this.companyField.val('');
         this.updateRevealChip();
+        // Cleared BEFORE `.trigger('focus')` below, not after (round-2
+        // adversarial review finding, Vader): `_pointerFocusPending` can be
+        // left stale `true` by an earlier mousedown that landed on an
+        // ALREADY-focused field (e.g. the buyer clicking again mid-typing to
+        // reposition the caret) - a real click that fires no paired `focus`
+        // to consume the flag, because focus does not change. If this field
+        // genuinely still held focus at that point and only lost it later
+        // when the chip itself was clicked, `.trigger('focus')` below is a
+        // REAL focus transition and the namespaced handler would read that
+        // stale `true` and call `openSearchForCurrentTerm()` on its own -
+        // stacking with the explicit call on the next line into two searches
+        // from one click. Clearing here first makes the explicit call below
+        // the only one that can ever fire from this method, regardless of
+        // whatever the flag was carrying in.
+        this._pointerFocusPending = false;
         this.companyField.trigger('focus');
+        // A real click (or key activation) on the chip got us here, so open
+        // directly rather than relying on the pointer-gated
+        // `focus.twoCompanyOpen` handler - the `.trigger('focus')` above
+        // fires no `mousedown` on this field, so that gate would otherwise
+        // never fire for this path (#30.x.14, see openSearchForCurrentTerm()).
+        this.openSearchForCurrentTerm();
     }
 
     /**
@@ -978,6 +999,14 @@ class TwoCompanySearch {
                 previousField.removeClass(
                     'two-company-search-input two-company-search-loading ui-autocomplete-loading'
                 );
+                // Bound directly via jQuery, not through the widget -
+                // `autocomplete('destroy')` above only unwinds bindings the
+                // widget itself made (review finding, Han: harmless today
+                // only because a detached node can never receive a native
+                // focus/mousedown event again, an invariant this method does
+                // not otherwise rely on and the next DOM-recycling path could
+                // break silently).
+                previousField.off('focus.twoCompanyOpen mousedown.twoCompanyOpen');
             }
             this.companyField = currentField;
         }
@@ -1056,10 +1085,21 @@ class TwoCompanySearch {
                         response([]);
                         return;
                     }
-                    // Empty field: the placeholder is already the hint for this
-                    // state, so opening a dropdown to repeat it would be noise.
+                    // Empty field, but a search WAS asked for (a click/focus
+                    // into the field, not a keystroke - see the `focus`
+                    // handler below). #30.x.14 bug 2.1, live-verified: with
+                    // `response([])` here, focusing an empty field opened
+                    // nothing at all - the field just accepted typed input,
+                    // with no visible control the buyer could point to as
+                    // "this is a search widget". A one-row hint gives that
+                    // click something to show, the same way Mag/WC's
+                    // select2/selectWoo combobox opens a panel on click before
+                    // a single character is typed. Goes through the same
+                    // `two_unavailable` message-row plumbing as
+                    // buildTooShortItem() below - reachable but unselectable,
+                    // keyboard-skipped, muted styling.
                     if (term.length === 0) {
-                        response([]);
+                        response([this.buildFocusHintItem()]);
                         return;
                     }
                     // Typed, but not enough to search on. Say so instead of
@@ -1124,6 +1164,16 @@ class TwoCompanySearch {
                 // 300ms matches the custom fallback path below and the
                 // Magento/WooCommerce plugins.
                 delay: 300,
+                // #30.x.14 bug 2.1, live-verified: jQuery UI's own default
+                // (`my: "left top"` against `at: "left bottom"`) butts the
+                // menu directly against the field with a zero-pixel seam - on
+                // screen it reads as one continuous control rather than a
+                // floating panel distinct from the input, which is exactly
+                // the "still just editing in the field" complaint. `top+8`
+                // opens a real gap so the two are visibly separate boxes, the
+                // same visual break Mag/WC's select2/selectWoo panel has
+                // below its own combobox.
+                position: { my: 'left top+8', at: 'left bottom', collision: 'none' },
                 select: (event, ui) => {
                     // The manual-entry row IS actionable, unlike the message
                     // rows: it runs its action and then returns false, which is
@@ -1286,6 +1336,45 @@ class TwoCompanySearch {
             } catch (e) {
                 // Older jQuery UI without `instance`; styling only, safe to skip.
             }
+
+            // #30.x.14 bug 2.1, live-verified: focusing an empty field opened
+            // nothing - jQuery UI only ever searches on `input`/keydown, never
+            // on plain focus, so a click into the field looked and behaved
+            // exactly like a plain text box until the buyer typed a
+            // character. Forcing a search on focus - which, for an empty
+            // term, now renders the hint row via buildFocusHintItem() above -
+            // is what gives that click something to open, matching Mag/WC's
+            // combobox opening its panel on click before any typing.
+            //
+            // Gated on a REAL pointer down, not on focus alone (round-1
+            // adversarial review finding, Vader): a plain `focus` fires for a
+            // keyboard user simply tabbing through the address form with no
+            // intent to search, and this hint row is deliberately
+            // `aria-disabled`/keyboard-skipped (see buildFocusHintItem()) - a
+            // screen reader would announce a result becoming available with
+            // nothing the buyer could actually arrow onto, which reads as a
+            // broken result set rather than a hint. `mousedown` fires on this
+            // field ONLY for a direct pointer interaction with it; Tab never
+            // fires it. Reset immediately after the one `focus` it gates -
+            // this is a one-shot signal for the NEXT focus, not a sticky mode.
+            this.companyField.off('mousedown.twoCompanyOpen').on('mousedown.twoCompanyOpen', () => {
+                this._pointerFocusPending = true;
+            });
+
+            // Namespaced and unbound-then-rebound (not `.one()`): this runs on
+            // every setupAutocomplete() re-entry (country change,
+            // updatedAddressForm), which re-resolves `this.companyField`
+            // against a node that may not carry a previous binding, and a
+            // stale binding on an abandoned node is otherwise never cleaned
+            // up until that node is GC'd.
+            this.companyField.off('focus.twoCompanyOpen').on('focus.twoCompanyOpen', () => {
+                const pointerFocus = this._pointerFocusPending;
+                this._pointerFocusPending = false;
+                if (this._destroyed || this._manualEntry || !pointerFocus) {
+                    return;
+                }
+                this.openSearchForCurrentTerm();
+            });
         } else {
             this.setupCustomAutocomplete();
         }
@@ -1539,15 +1628,24 @@ class TwoCompanySearch {
         if (!this.companyField || this.companyField.length === 0) {
             return;
         }
+        // Cleared before `.trigger('focus')`, same reasoning and same round-2
+        // adversarial review finding (Vader) as revealSearch() above: a
+        // stale `true` left by an earlier mousedown-on-an-already-focused-
+        // field must not let the namespaced handler fire its own extra
+        // `openSearchForCurrentTerm()` call on top of the explicit one below.
+        this._pointerFocusPending = false;
         this.companyField.trigger('focus');
 
-        const term = String(this.companyField.val() || '');
         if (this.companyField.hasClass('ui-autocomplete-input')) {
-            try {
-                this.companyField.autocomplete('search', term);
-            } catch (e) {
-                // no-op
-            }
+            // A real click (or Enter/Space) on this button got us here, so
+            // open directly rather than relying on the pointer-gated
+            // `focus.twoCompanyOpen` handler - same reasoning as
+            // revealSearch(). This ALSO removes a duplicate search a round-1
+            // adversarial review found (Vader): the old code both triggered
+            // `focus` (which the then-ungated handler treated as a fresh
+            // open) and made this same explicit call, firing the search
+            // twice on every "Search for company" click.
+            this.openSearchForCurrentTerm();
             return;
         }
         if (this._customAutocomplete && this._customAutocomplete.inputEl) {
@@ -1575,6 +1673,17 @@ class TwoCompanySearch {
             .text(this.getBackToSearchText());
         link.on('click.twoManualEntry', (event) => {
             event.preventDefault();
+            // Stop the click here (#30.x.14 bug 2.5, live-verified): with no
+            // stopPropagation, this click bubbled up into whatever delegated
+            // accordion-toggle handler the checkout theme binds on the
+            // address step container, and that handler read the same click
+            // as "collapse this step" - closing the whole address section the
+            // buyer was in the middle of, rather than just switching this
+            // field back to search. This button is a plain sibling inside
+            // that step's markup, not something the accordion is meant to
+            // hear from at all, so the fix is to keep the click here rather
+            // than let it carry on up past a node that never asked for it.
+            event.stopPropagation();
             this.exitManualEntryMode();
         });
 
@@ -1708,6 +1817,54 @@ class TwoCompanySearch {
             two_unavailable: true,
             two_row_class: 'two-autocomplete-too-short'
         };
+    }
+
+    /**
+     * Pseudo-result carrying the "click opened this" hint through jQuery UI's
+     * result-list plumbing (#30.x.14 bug 2.1). Reuses the same placeholder
+     * copy the empty field already shows, so the dropdown does not introduce
+     * a second, differently-worded hint for the same state - just makes the
+     * existing one visible in the one place a buyer who has already clicked
+     * in is looking.
+     *
+     * @returns {Object}
+     */
+    buildFocusHintItem() {
+        return {
+            label: TwoCompanySearch.getEmptyFieldHintText(),
+            value: '',
+            two_unavailable: true,
+            two_row_class: 'two-autocomplete-focus-hint'
+        };
+    }
+
+    /**
+     * Force the jQuery UI widget to (re-)search whatever the field currently
+     * holds, opening its menu (#30.x.14 bug 2.1).
+     *
+     * The ONE place that does this, called both from the pointer-gated
+     * `focus.twoCompanyOpen` handler in setupAutocomplete() AND directly from
+     * revealSearch() / exitManualEntryMode() below - those two already know a
+     * real user gesture (a click or key activation on the reveal chip / the
+     * back-to-search button) asked for the dropdown to reopen, so they call
+     * this directly rather than going through the pointer-on-THIS-field gate,
+     * which their own `.trigger('focus')` would never satisfy (it fires no
+     * `mousedown` on this field). Consolidating on one call site here is also
+     * what removes the double-search a round-1 adversarial review found
+     * (Vader): exitManualEntryMode() used to both `.trigger('focus')` - which
+     * the old, ungated handler treated as a fresh open - AND make its own
+     * explicit `autocomplete('search', term)` call, firing the search twice
+     * on every "Search for company" click.
+     */
+    openSearchForCurrentTerm() {
+        if (this._destroyed || !this.companyField || !this.companyField.length) {
+            return;
+        }
+        try {
+            this.companyField.autocomplete('search', this.companyField.val() || '');
+        } catch (e) {
+            // Widget not ready/already torn down; nothing to open.
+        }
     }
 
     /**
@@ -2879,6 +3036,11 @@ class TwoCompanySearch {
                 this.companyField.removeClass(
                     'two-company-search-input two-company-search-loading ui-autocomplete-loading'
                 );
+                // Bound directly via jQuery, not through the widget - the
+                // `autocomplete('destroy')` call below only unwinds bindings
+                // the widget itself made, so this one has to go by hand or it
+                // outlives the instance on a field a fresh instance may reuse.
+                this.companyField.off('focus.twoCompanyOpen mousedown.twoCompanyOpen');
             }
             // Destroy autocomplete instance if present
             if (this.companyField && this.companyField.length && this.companyField.hasClass('ui-autocomplete-input')) {
