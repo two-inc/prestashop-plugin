@@ -3336,6 +3336,14 @@ class Twopayment extends PaymentModule
             // renders its own address form, and what survives PrestaShop
             // replacing the input on an address-form update.
             'company_search_placeholder' => $this->l('Enter company name to search'),
+            // The same slot, reworded for manual entry. The search wording is
+            // an instruction the field stops honouring the moment the buyer
+            // chooses "my company is not on the list" - it no longer searches
+            // anything, it is the plain input they type into - so leaving it
+            // there tells them to do something that will not happen. Only ever
+            // swapped for the search wording above, never over a placeholder a
+            // theme supplied; see syncCompanyFieldPlaceholder().
+            'company_manual_placeholder' => $this->l('Enter your company name'),
             // `%d` is deliberately left UNRESOLVED here. The browser JS holds the
             // one threshold constant and interpolates it, so the number this
             // sentence claims cannot drift from the number the search enforces.
