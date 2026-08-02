@@ -261,6 +261,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_6cae7c7478f2d404dc69e4e355172166'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6d5cc1a38d6228cd43fb864b6c4d4b75'] = 'Kunde inte bekräfta svaret från betalningsleverantören. Försök genomföra kassan igen.';
 $_MODULE['<{twopayment}prestashop>twopayment_6f3455d187a23443796efdcbe044096b'] = 'Ingen moms';
 $_MODULE['<{twopayment}prestashop>twopayment_6fd95deaadec67e72965ee1c5a8d81cf'] = 'Ange företagsnamn för att söka';
+$_MODULE['<{twopayment}prestashop>twopayment_b880d635ee26e267ab68784bb47a0ad1'] = 'Ange ditt företagsnamn';
 $_MODULE['<{twopayment}prestashop>twopayment_70121086cdb2e52ce9ac069b1781dc76'] = 'Det uppstod ett tillfälligt problem när din betalning skulle verifieras. Försök igen eller välj en annan betalningsmetod.';
 $_MODULE['<{twopayment}prestashop>twopayment_701dfa446588bcb18e3a546249ca91a2'] = 'Dölj betalningsmetoden under detta ordervärde (butikens standardvaluta, på den momsbasis som väljs nedan). Lämna fältet tomt för inget minimum.';
 $_MODULE['<{twopayment}prestashop>twopayment_70a6512b8cd4822b0d2e390dfe6c0177'] = 'Kontrollen av order intent misslyckades';

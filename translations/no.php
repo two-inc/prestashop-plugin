@@ -261,6 +261,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_6cae7c7478f2d404dc69e4e355172166'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6d5cc1a38d6228cd43fb864b6c4d4b75'] = 'Kunne ikke bekrefte betalingen fra Two. Prøv utsjekken på nytt.';
 $_MODULE['<{twopayment}prestashop>twopayment_6f3455d187a23443796efdcbe044096b'] = 'Ingen avgift';
 $_MODULE['<{twopayment}prestashop>twopayment_6fd95deaadec67e72965ee1c5a8d81cf'] = 'Skriv inn firmanavn for å søke';
+$_MODULE['<{twopayment}prestashop>twopayment_b880d635ee26e267ab68784bb47a0ad1'] = 'Skriv inn firmanavnet ditt';
 $_MODULE['<{twopayment}prestashop>twopayment_70121086cdb2e52ce9ac069b1781dc76'] = 'Det oppsto et midlertidig problem med å verifisere betalingen din. Prøv igjen eller velg en annen betalingsmåte.';
 $_MODULE['<{twopayment}prestashop>twopayment_701dfa446588bcb18e3a546249ca91a2'] = 'Skjul betalingsmåten under denne ordreverdien (butikkens standardvaluta, på avgiftsgrunnlaget som er valgt nedenfor). La feltet stå tomt for ingen minsteverdi.';
 $_MODULE['<{twopayment}prestashop>twopayment_70a6512b8cd4822b0d2e390dfe6c0177'] = 'Sjekken av ordreintensjonen mislyktes';

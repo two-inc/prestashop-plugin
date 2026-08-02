@@ -396,6 +396,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_c86427e7020aa074399a2ecdb9c42a1d'] 
 $_MODULE['<{twopayment}prestashop>twopayment_7de934009c752b9208f359e4db589fa0'] = 'No tienes permiso para acceder a esta factura.';
 $_MODULE['<{twopayment}prestashop>twopayment_7aa0ef00af5612e50834b5bf969457e6'] = 'La búsqueda de empresas no está disponible temporalmente. Por favor, inténtalo de nuevo.';
 $_MODULE['<{twopayment}prestashop>twopayment_6fd95deaadec67e72965ee1c5a8d81cf'] = 'Introduce el nombre de la empresa para buscar';
+$_MODULE['<{twopayment}prestashop>twopayment_b880d635ee26e267ab68784bb47a0ad1'] = 'Introduce el nombre de tu empresa';
 $_MODULE['<{twopayment}prestashop>twopayment_11379daccc4d43380822ecb7bc5bc1b7'] = 'Introduce %d o más caracteres';
 $_MODULE['<{twopayment}prestashop>twopayment_a305be9a7fd5f6541e913ce81317976d'] = 'Mi empresa no está en la lista';
 $_MODULE['<{twopayment}prestashop>twopayment_070800fb9c7ae071aff6e63bded5c3c2'] = 'Buscar empresa';
