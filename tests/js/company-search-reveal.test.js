@@ -457,6 +457,35 @@ describe('the same chip works on the custom fallback path (jQuery UI absent)', (
 });
 
 describe('regressions found in adversarial review', () => {
+    test('#30.x.14 round-2 (Vader): a stale pointer-focus flag does not make revealSearch() double-dispatch', () => {
+        // `_pointerFocusPending` (TwoCompanySearch.js) is set by a `mousedown`
+        // on the field and consumed by the next `focus`. A real click INTO an
+        // already-focused field - e.g. the buyer clicking again mid-typing to
+        // reposition the caret - fires `mousedown` with no accompanying
+        // `focus` (the field was already focused, so focus does not change),
+        // leaving the flag stuck `true`. If the field then genuinely blurs
+        // (the reveal chip sits on top and clicking it moves real DOM focus
+        // to the chip) and revealSearch() later does `.trigger('focus')`,
+        // that stale `true` would make the namespaced handler fire its own
+        // extra `openSearchForCurrentTerm()` call on top of revealSearch()'s
+        // own explicit one - two searches from one chip click.
+        const instance = makeInstance();
+        selectFirstResult('exa', SEARCH_RESPONSE);
+        const field = liveField();
+
+        // Simulate the stale flag directly - reproducing the exact prior
+        // mousedown-while-focused gesture would need real browser focus
+        // semantics jsdom does not model, but the flag IS the mechanism
+        // under test.
+        instance._pointerFocusPending = true;
+
+        const spy = jest.spyOn(instance, 'openSearchForCurrentTerm');
+        chip().trigger('click');
+
+        expect(spy).toHaveBeenCalledTimes(1);
+        spy.mockRestore();
+    });
+
     test('a country change while revealed disarms the pending restore instead of resurrecting a stale pairing', () => {
         // The country <select>'s own change handler runs on this SAME
         // instance (unlike a genuine updatedAddressForm re-render, which

@@ -577,6 +577,21 @@ class TwoCompanySearch {
         this._revealed = true;
         this.companyField.val('');
         this.updateRevealChip();
+        // Cleared BEFORE `.trigger('focus')` below, not after (round-2
+        // adversarial review finding, Vader): `_pointerFocusPending` can be
+        // left stale `true` by an earlier mousedown that landed on an
+        // ALREADY-focused field (e.g. the buyer clicking again mid-typing to
+        // reposition the caret) - a real click that fires no paired `focus`
+        // to consume the flag, because focus does not change. If this field
+        // genuinely still held focus at that point and only lost it later
+        // when the chip itself was clicked, `.trigger('focus')` below is a
+        // REAL focus transition and the namespaced handler would read that
+        // stale `true` and call `openSearchForCurrentTerm()` on its own -
+        // stacking with the explicit call on the next line into two searches
+        // from one click. Clearing here first makes the explicit call below
+        // the only one that can ever fire from this method, regardless of
+        // whatever the flag was carrying in.
+        this._pointerFocusPending = false;
         this.companyField.trigger('focus');
         // A real click (or key activation) on the chip got us here, so open
         // directly rather than relying on the pointer-gated
@@ -1613,6 +1628,12 @@ class TwoCompanySearch {
         if (!this.companyField || this.companyField.length === 0) {
             return;
         }
+        // Cleared before `.trigger('focus')`, same reasoning and same round-2
+        // adversarial review finding (Vader) as revealSearch() above: a
+        // stale `true` left by an earlier mousedown-on-an-already-focused-
+        // field must not let the namespaced handler fire its own extra
+        // `openSearchForCurrentTerm()` call on top of the explicit one below.
+        this._pointerFocusPending = false;
         this.companyField.trigger('focus');
 
         if (this.companyField.hasClass('ui-autocomplete-input')) {
