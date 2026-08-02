@@ -87,10 +87,8 @@ $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_eca5a3449475f365c129
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_f23b2c9fe4875f2c3dbc61a4bd02705b'] = 'Two köparportal';
 $_MODULE['<{twopayment}prestashop>form_92fbf0e5d97b8afd7e73126b52bdc4bb'] = 'Välj en fil';
 $_MODULE['<{twopayment}prestashop>form_f2a6c498fb90ee345d997f888fce3b18'] = 'Ta bort';
-$_MODULE['<{twopayment}prestashop>paymentinfo_1c76cbfe21c6f44c1d1e59d54f3e4420'] = 'Företag';
 $_MODULE['<{twopayment}prestashop>paymentinfo_1ffcb4e0a351d5e143bec6362c0feaf8'] = 'Betalning förfaller vid månadsskiftet plus det valda antalet dagar räknat från när din order levereras';
 $_MODULE['<{twopayment}prestashop>paymentinfo_26615a6d6e63f2904432b8b425ee6e93'] = 'Kontrollerar tillgänglighet...';
-$_MODULE['<{twopayment}prestashop>paymentinfo_4e1d2b56da5ef5d0c57afc363cb790d8'] = 'Organisationsnummer';
 $_MODULE['<{twopayment}prestashop>paymentinfo_5aef0c6f737f3b7048b5e399e9d843a5'] = 'Företagsbetalningar gjorda enkla';
 $_MODULE['<{twopayment}prestashop>paymentinfo_5c920817023991f458e2a248e9367c67'] = 'Direkt kreditbedömning';
 $_MODULE['<{twopayment}prestashop>paymentinfo_6033e75a77783890ca9688763bf9adbb'] = 'Läs mer om Two';
@@ -394,6 +392,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_cd7cc8b6d9b6160db0e405bc2207b5fb'] 
 $_MODULE['<{twopayment}prestashop>twopayment_cdca48ec5dde79b84b395c0c557bb290'] = '%d dagar';
 $_MODULE['<{twopayment}prestashop>twopayment_cf30831a8831200d89309561f036c5a7'] = 'Välj vilken Two-API-miljö som ska användas. Produktion för skarpa transaktioner, Staging/Utveckling för test.';
 $_MODULE['<{twopayment}prestashop>twopayment_cf5f3091e30dee6597885d8c0e0c357f'] = 'Villkor';
+$_MODULE['<{twopayment}prestashop>twopayment_d132286ce060a9349df55de2808b4d5f'] = 'Inga träffar hittades';
 $_MODULE['<{twopayment}prestashop>twopayment_d2a7c39c5ec025981855847fed006923'] = 'Om du väljer JA skickas tax_subtotals i nyttolasten för /v1/order och /v1/order_intent. Om du väljer NEJ utesluts tax_subtotals från dessa nyttolaster.';
 $_MODULE['<{twopayment}prestashop>twopayment_d2f68faa84d4bab378419dae024f85f9'] = 'Betalningen är godkänd! Välj dina betalningsvillkor nedan.';
 $_MODULE['<{twopayment}prestashop>twopayment_d314a00556eb88a960abf8a0de8b45f8'] = 'Några av uppgifterna som angetts är ogiltiga. Kontrollera uppgifterna i din fakturaadress och försök igen.';

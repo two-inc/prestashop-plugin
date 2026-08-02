@@ -97,6 +97,34 @@ instance, so a suite that only loaded the class would find the manual-entry path
 still pass on the paths that call `render()` directly. That is not hypothetical — it is how
 this suite first failed.
 
+`company-search-dropdown.test.js` — TWO-25326 §1-§5 and §7, one test per bullet of the
+cross-platform regression script, worded so a failure names the *requirement* rather than
+the implementation. This is the suite that pins the anchored dropdown rework: that a click
+or a keypress (but **not** plain focus) opens a panel anchored to the field, that the panel
+carries its own query input and focus lands in it, that the company-name field is left
+untouched until a result is picked, the 300ms debounce, the spinner in the query field, the
+`type N more characters` hint being present from the moment the panel opens, the exact
+`No matches found` wording, Escape closing and returning focus, `My company is not on the
+list` as a real `<button>` outside the scroll container, and the org-number label sitting in
+normal flow where it cannot collide with the field below it.
+
+**Two jsdom limits are worked around explicitly, and both matter when reading a green run
+here:**
+
+- jsdom performs no layout, so `offsetWidth` is always `0` and jQuery's `:visible`/`:hidden`
+  answer "hidden" for the entire document. Every visibility assertion goes through the
+  harness's `shown()` helper, which walks computed `display` and the `hidden` attribute
+  instead. A test written on `:visible` passes or fails for reasons unrelated to the code.
+- jQuery UI's `_move` gates cursor-key navigation on `menu.element.is(":visible")`, which
+  therefore can never be true here. Selections are driven through the widget's own
+  `menu.focus()` + `menu.select()` rather than by dispatching Down/Enter, and tab order is
+  asserted **structurally** — on document order among focusable elements, which is the
+  property the browser derives tab order from, and which is the entire point of anchoring
+  the panel inside the field wrapper.
+
+Neither is a substitute for pressing the keys in a real browser, and TWO-25326 requires that
+separately.
+
 `company-search-resilience.test.js` — `searchCompanies()` and the class-static result
 cache:
 
@@ -227,26 +255,21 @@ form (which it does for something as ordinary as a country change):
   the white-box regression is pinned through `background-size` instead, which the removed
   rule's `background` shorthand resets to `auto`.
 
-- the **manual-entry affordance** (TWO-25288 element 5) — `My company is not on the list`
-  as the last row inside the dropdown, and the `Search for company` link that leads back
-  out of the manual entry it switches to. Pinned on **both** render paths, because the two
-  paths implement its keyboard reachability by completely different mechanisms and a change
-  pinned in one looks green while half the surface is untested.
+- the **manual-entry affordance** — `My company is not on the list`, and the
+  `Search for company` link that leads back out of the manual entry it switches to.
 
-  The assertions are aimed at the **inversion**, not at the row's presence. Every other
-  non-company row in this dropdown carries `ui-state-disabled` and `aria-disabled` so that
-  jQuery UI's own menu *skips* it; this one must be reachable and selectable, so the cases
-  assert it carries neither, that the widget counts it among the rows it navigates
-  (`ui-menu-item` on the row and `ui-menu-item-wrapper` on its child — our own class alone
-  would pass just as happily for a row the widget refuses to focus), that `focus` does not
-  refuse it *while still refusing a message row in the same test*, and that `select` runs
-  the action, returns `false`, and leaves the field holding what the buyer typed.
-
-  Position and threshold are asserted as such: last after real results, last after the
-  failure row, last after the country-not-chosen row, present with zero results, and
-  **absent** below the threshold and on an empty field. The raw results are what gets
-  cached, so a cache hit does not stack a second footer — pinned by searching the same term
-  twice with no new request.
+  **Rewritten by TWO-25326.** It used to be the last ROW inside the dropdown's `<ul>`,
+  carried through jQuery UI's item plumbing as a pseudo-result flagged `two_manual_entry`,
+  and the assertions here were aimed at the *inversion* that made it work: every other
+  non-company row carries `ui-state-disabled`/`aria-disabled` so the widget's menu skips
+  it, while that one had to be reachable and selectable. None of that applies any more.
+  It is now a real `<button>` and a sibling of the scroll container, so the properties
+  under test are structural instead: that it is a `<button>` and not an element with a
+  click handler bolted on, that it renders *outside* the scrollable results host, that it
+  is the next tab stop after the query field by plain document order, that the cursor keys
+  cannot reach it (it is not an item in the widget's menu at all), and that it is coloured
+  distinctly from the inert rows above it. Those live in `company-search-dropdown.test.js`,
+  below.
 
   **The key-event cases are the ones that matter most, and they must be driven
   through the real widget.** The widget's focus event fires *after* the menu has

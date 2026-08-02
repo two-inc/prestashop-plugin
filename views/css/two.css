@@ -4,34 +4,27 @@
  * @license Two Commercial License
  */
 
-/**
- * In-field company-search spinner.
+/*
+ * The in-field company-search spinner is GONE (TWO-25326 §1).
  *
- * Restored from the commented-out legacy rule. Two changes from that version:
- * it is scoped to the company field itself (`.two-company-search-input`, added
- * by TwoCompanySearch.setupAutocomplete) rather than to every autocomplete in
- * `.js-address-form`, and it sets only background-image/position rather than the
- * `background` shorthand, so it no longer forces a white background over
- * whatever the merchant's theme gives the input.
+ * It used to live on `input[name='company']`, because that input was the
+ * search box. It is not any more: the search happens in the panel's own query
+ * field, and §1 requires the spinner "within and at the right hand end of the
+ * query field" - which is `.two-company-dropdown__spinner`, further down this
+ * file.
  *
- * `ui-autocomplete-loading` is applied by jQuery UI on the live path;
- * `two-company-search-loading` is applied by hand on the custom fallback path,
- * where jQuery UI is absent.
+ * The rules that were here are removed rather than left in place, and the
+ * `padding-right: 32px` in particular is a §7 fix, not tidying: it was applied
+ * UNCONDITIONALLY to the company-name field to stop the field's text reflowing
+ * as the spinner came and went. With the spinner moved, that padding is 32px
+ * of dead space making the company-name field visibly different from every
+ * other input on the address form - which is exactly what §7's "field sizing
+ * and spacing is consistent across the entire address form" forbids.
+ *
+ * `.two-company-search-input` is still added to the field by
+ * setupAutocomplete() as a marker other code keys off; it simply carries no
+ * appearance of its own now.
  */
-/* Reserved unconditionally, not only while loading: toggling the padding with
-   the spinner reflowed the field's text in and out on every keystroke. */
-.two-company-search-input {
-    padding-right: 32px;
-}
-
-.two-company-search-input.ui-autocomplete-loading,
-.two-company-search-input.two-company-search-loading {
-    background-image: url("../img/loader.gif");
-    background-repeat: no-repeat;
-    background-position: right 8px center;
-    /* loader.gif is 16x16; pinned so a themed input cannot scale it. */
-    background-size: 16px 16px;
-}
 
 /* Remove custom styling that modifies core radio/checkbox visuals for consistency */
 .two-payment-option .custom-radio  {
@@ -601,63 +594,274 @@
  * created once by TwoCompanySearch.ensureFieldWrapper(). A plain block
  * element with no padding of its own stretches to exactly the input's width,
  * whatever a theme's own `.form-group`/column wrapper happens to add - which
- * is what lets the hint and the reveal chip below match the field's real
- * width and edge instead of the wider, offset box the theme wrapper used to
- * provide.
+ * is what lets the org-number label, the dropdown panel and the
+ * return-to-search link below all match the field's real width and edge
+ * instead of the wider, offset box the theme wrapper used to provide.
+ *
+ * `position: relative` is load-bearing: the dropdown panel is absolutely
+ * positioned against this box, so the panel tracks the input rather than
+ * whatever happens to be the nearest positioned ancestor in the theme.
+ *
+ * It carries NO padding of its own. It used to reserve `padding-bottom` for
+ * the org-number label, which could not work and is documented at
+ * `.two-company-id-hint` below (TWO-25326 §5/§7).
  */
 .two-company-field-wrap {
     display: block;
     position: relative;
-    /*
-     * #30.x.14 bug 2.2, live-verified: the org-number hint below is
-     * absolutely positioned (see `.two-company-id-hint`), so it takes no
-     * space in normal flow and the next form field started immediately at
-     * this wrapper's own bottom edge - touching the hint text with no gap.
-     * `--two-company-hint-clearance` reserves room in the flow for it
-     * without touching the wrapper's rendered width or the field's own box.
-     *
-     * The value has to cover the hint's own real footprint, not just a
-     * cosmetic 4px (round-1 adversarial review finding, Han): that rule sets
-     * `font-size: 11px` with a `margin-top: 2px` of its own, which alone
-     * renders at roughly 15-16px tall - a bare 4px here left the hint
-     * overlapping the next field by most of its own height. One shared
-     * custom property, read by both rules below, so the wrapper's reserved
-     * space and the hint's real footprint cannot drift apart again the way
-     * the original 4px did.
-     */
-    --two-company-hint-clearance: 18px;
-    padding-bottom: var(--two-company-hint-clearance);
 }
 
 /*
  * Selected company's organisation number, shown as a plain label BELOW the
- * company name field once a search result is chosen (TWO-30.x.10, superseding
- * the TWO-25288 in-field placement). Canonical design across all four
- * platforms: never inside the search/name field itself, where it collided
- * with long company names and - on this field specifically - ended up
- * silently painted over by the reveal chip, invisible despite passing every
- * DOM-visibility check. Right-aligned to the field's own right edge, which
- * `.two-company-field-wrap` now guarantees matches the field exactly.
- * Reuses the plugin's existing muted-grey token (see .two-info-label above)
- * rather than a one-off lighter grey, so it reads consistently with the
- * other inline hints already in this checkout.
+ * company-name field once a search result is chosen (TWO-25326 §5).
+ *
+ * NORMAL FLOW, not absolutely positioned - and that is the fix for the
+ * collision Doug found live, not a restyle. The previous rule pinned this to
+ * `top: 100%` of the wrapper and tried to reserve room for it with a
+ * `padding-bottom` on the wrapper itself. That could not work: for an
+ * absolutely positioned child, `top: 100%` resolves against the containing
+ * block's PADDING box, so the reserved padding pushed the hint further down
+ * instead of making room above it, and it landed on top of the VAT-number
+ * field below. An in-flow block cannot overlap anything by construction, and
+ * it takes exactly its own height - no shared clearance constant to keep in
+ * step with the font size, which is what drifted last time.
+ *
+ * `display: none` while empty (set by the companion JS clearing its text is
+ * not enough - an empty inline box still occupies a line box), so an
+ * unselected field gets no extra height at all. That is §7's "field sizing
+ * and spacing is consistent across the entire address form, allowing for
+ * additional space only when items such as the company number are visible".
+ *
+ * Right-aligned to the field's own right edge, which `.two-company-field-wrap`
+ * guarantees matches the input exactly. `text-align: end` rather than `right`
+ * so it follows the writing direction.
  */
 .two-company-id-hint {
-    position: absolute;
-    top: 100%;
-    right: 0;
-    /*
-     * If this margin, the font-size below, or the line-height they resolve
-     * to ever grows, re-check `--two-company-hint-clearance` on
-     * `.two-company-field-wrap` above still comfortably exceeds it (#30.x.14
-     * bug 2.2) - that variable is what stops this hint from overlapping the
-     * next form field, and the two are not otherwise tied together.
-     */
+    display: none;
     margin-top: 2px;
+    text-align: end;
     color: #6b7280;
     font-size: 11px;
     white-space: nowrap;
+}
+
+.two-company-id-hint.two-company-id-hint--visible {
+    display: block;
+}
+
+/*
+ * The anchored dropdown panel (TWO-25326 §1).
+ *
+ * Absolutely positioned so it floats over the form rather than shoving the
+ * rest of the address step down every time it opens, but a CHILD of the field
+ * wrapper, so DOM order (and therefore tab order) is
+ * company-name -> query -> results -> "not on the list" -> next form control.
+ * See buildDropdown() in the companion JS for why that placement is the whole
+ * keyboard contract.
+ *
+ * The 8px gap and the shadow are what make it read as a separate floating
+ * control rather than a continuation of the input - §1 requires visible
+ * separation from the field, and a zero-pixel seam is exactly the "it's just
+ * an in-field autocomplete" complaint.
+ */
+.two-company-dropdown {
+    position: absolute;
+    /*
+     * Anchored to the INPUT's own height, not to `100%` of the wrapper.
+     * The wrapper also holds the in-flow org-number label and, in manual
+     * mode, the return-to-search link - so `100%` grows once a company is
+     * selected, and reopening the panel would drop it 8px + the label's
+     * height below the field instead of the 8px §1 asks for. The custom
+     * property is refreshed by ensureFieldWrapper() alongside the wrapper's
+     * width; the `100%` fallback is what a pre-measurement first paint gets.
+     */
+    top: calc(var(--two-company-input-height, 100%) + 8px);
+    left: 0;
+    width: 100%;
+    /*
+     * Higher than the 1000 the body-appended jQuery UI menu used to sit at,
+     * because this panel is now a CHILD of the address form rather than a
+     * sibling of everything: it has to clear sticky headers, theme overlays
+     * and the checkout's own furniture from further down the stacking order.
+     *
+     * NOT a complete answer, and it cannot be one from CSS in this file: an
+     * ancestor with `overflow: hidden` will CLIP the panel, and an ancestor
+     * that creates a stacking context (`transform`, `opacity`, `filter`)
+     * will trap it below its own siblings whatever value is used here.
+     * Appending to `<body>` made both impossible and cost the tab order
+     * instead - see buildDropdown() for why that trade was made the other
+     * way. Both hazards are theme-specific and need a real browser to rule
+     * out.
+     */
+    z-index: 9999;
+    box-sizing: border-box;
+    padding: 8px;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+}
+
+/* `hidden` is set alongside `display:none` by the JS; this makes the
+   attribute authoritative even against a theme that resets `[hidden]`. */
+.two-company-dropdown[hidden] {
+    display: none;
+}
+
+.two-company-dropdown__search {
+    position: relative;
+}
+
+.two-company-dropdown__query {
+    box-sizing: border-box;
+    width: 100%;
+    /* Right padding reserves the spinner's lane so a long query never runs
+       underneath it. */
+    padding: 6px 30px 6px 10px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    font: inherit;
+}
+
+/*
+ * §1: "a spoke spinner GIF is displayed within and at the right hand end of
+ * the query field while a search query is in progress".
+ *
+ * A real element rather than a background-image on the input, so its position
+ * does not depend on whatever padding a theme has given text inputs.
+ * `ui-autocomplete-loading` is applied by jQuery UI on the live path;
+ * `two-company-search-loading` is applied by hand on the fallback path. Both
+ * land on the query field, so one rule covers both.
+ */
+.two-company-dropdown__spinner {
+    display: none;
+    position: absolute;
+    top: 50%;
+    right: 8px;
+    width: 16px;
+    height: 16px;
+    margin-top: -8px;
+    background: url('../img/loader.gif') no-repeat center center;
+    background-size: 16px 16px;
     pointer-events: none;
+}
+
+.two-company-dropdown__query.ui-autocomplete-loading ~ .two-company-dropdown__spinner,
+.two-company-dropdown__query.two-company-search-loading ~ .two-company-dropdown__spinner {
+    display: block;
+}
+
+/*
+ * The scroll container. The results list scrolls; the "not on the list"
+ * button below is its SIBLING and therefore never scrolls out of view (§2).
+ */
+.two-company-dropdown__results {
+    max-height: 240px;
+    overflow-y: auto;
+    margin-top: 8px;
+}
+
+/*
+ * jQuery UI appends its own `<ul class="ui-autocomplete">` into the results
+ * host and positions it absolutely against the document. Inside the panel it
+ * has to be an ordinary in-flow block filling the host, or it floats free of
+ * the control it belongs to. `!important` is required because those are
+ * inline styles the widget writes on every open.
+ */
+.two-company-dropdown__results .ui-autocomplete {
+    position: static !important;
+    top: auto !important;
+    left: auto !important;
+    width: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    display: block;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    /*
+     * `!important` is REQUIRED on these two, unlike the geometry above.
+     * The generic `.ui-autocomplete` rule further down this file declares
+     * `border`, `border-radius`, `box-shadow` and `background` with
+     * `!important` (it has to - it is fighting jQuery UI's own theme). An
+     * `!important` declaration beats a non-`!important` one whatever the
+     * specificity or source order, so without these the <ul> paints its own
+     * bordered, shadowed, rounded box INSIDE the panel's box - two nested
+     * popups, which is what this rule exists to prevent.
+     */
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+}
+
+/*
+ * §2: "My company is not on the list".
+ *
+ * A real <button>, rendered OUTSIDE the scrollable results container - a
+ * sibling of `.two-company-dropdown__results`, not a row inside its list. It
+ * is therefore visible without scrolling past up to 50 results, it is the
+ * next tab stop after the query field by plain DOM order, and the cursor keys
+ * cannot reach it because they only ever move within the widget's own list.
+ *
+ * Link-blue, matching WC's `#search_company_btn`, so it is visually
+ * distinguishable from the inert result rows above it (§2).
+ */
+/*
+ * Result rows.
+ *
+ * `.two-autocomplete-item` is the FALLBACK engine's row class. jQuery UI's own
+ * rows are styled separately, further down this file, through
+ * `.ui-autocomplete .ui-menu-item-wrapper` - they carry their own padding and
+ * hover and must keep it, so this rule deliberately does NOT list them.
+ * The fallback's rows previously matched nothing at all: no padding, no
+ * pointer, no hover, because every row rule in this file keys on
+ * jQuery-UI-only classes the fallback never produces.
+ */
+.two-company-dropdown__results .two-autocomplete-item {
+    padding: 6px 10px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/*
+ * Message rows on the FALLBACK path. They carry `two-autocomplete-message`
+ * and `ui-state-disabled` but not `ui-menu-item`/`ui-menu-item-wrapper`, so
+ * neither the row rule above nor the jQuery-UI-scoped message rule further
+ * down matches them - the "type 3 or more characters" hint rendered flush at
+ * zero padding next to properly padded results.
+ */
+.two-company-dropdown__results .two-autocomplete-message {
+    padding: 6px 10px;
+}
+
+.two-company-dropdown__results .two-autocomplete-item:hover,
+.two-company-dropdown__results .two-autocomplete-item.two-autocomplete-item--active {
+    background: #f0f2f5;
+}
+
+.two-company-not-listed {
+    display: block;
+    width: 100%;
+    margin-top: 8px;
+    padding: 6px 0 0;
+    border: none;
+    border-top: 1px solid #e0e0e0;
+    background: none;
+    font: inherit;
+    text-align: start;
+    color: #3043d1;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+/* An interactive control with no visible focus state is worse than no
+   keyboard support at all. */
+.two-company-not-listed:focus {
+    outline: 2px solid #1976d2;
+    outline-offset: -2px;
 }
 
 /*
@@ -1367,80 +1571,32 @@
  * cannot tell where they are.
  */
 /*
- * TWO-30.x.10 element 4: live-verified undiscoverable as a plain last-`<li>`
- * row - with up to 50 results ahead of it in a 200px-tall scrollable list, it
- * sat roughly 1400px below the visible viewport (y=2041 in a panel whose
- * visible area ends at 652), reachable only by scrolling past every company
- * in the register first. `buildManualEntryItem()`/`withManualEntryRow()`
- * (TwoCompanySearch.js) are UNCHANGED - the row is still the same DOM node,
- * still last in the list, still built and selected exactly as before - only
- * ITS OWN positioning changes. `position: sticky` on a direct child of a
- * `overflow-y: auto` container keeps that child pinned at the named edge of
- * the SCROLLING viewport rather than the full scrollable content, which is
- * exactly the "always visible, no scrolling required" behaviour this needs -
- * without restructuring the dropdown into a separate sibling control the way
- * WC does (a `<select>`-backed select2 panel, which has a natural place
- * outside its results `<ul>` for such a control; this field's own
- * `<input>` doubles as the search box, so there is no equivalent seam to
- * hang a sibling off). Shared with the custom (non-jQuery-UI) fallback
- * path's `.two-autocomplete-list`, which is a plain `overflow-y: auto` div
- * with the same last-child convention - the same one rule covers both
- * render paths.
- */
-.two-autocomplete-manual-entry {
-    cursor: pointer;
-    border-top: 1px solid #e0e0e0;
-    /*
-     * #30.x.14 bug 2.3, live-verified: this row rendered in the same
-     * `rgb(34,34,34)` body-text colour as every ordinary company result, with
-     * nothing distinguishing it as the one actionable, non-company row in the
-     * list. Matches WC's `#search_company_btn` link-blue so the affordance
-     * reads as clickable across platforms. The `!important` override just
-     * below is what actually wins - jQuery UI's menu widget slaps its own
-     * `ui-menu-item-wrapper` class (styled `color: #333 !important` earlier
-     * in this file) onto whatever `_renderItem` returns, this row included.
-     */
-    color: #3043d1;
-    /* -webkit-sticky first: an engine that only understands the prefixed
-       form ignores the unprefixed line below rather than the other way
-       round, and a browser that understands `sticky` also accepts (and
-       overrides with) the prefixed declaration that precedes it - so this
-       ordering is belt-and-braces, not a real fallback for either engine. */
-    position: -webkit-sticky;
-    position: sticky;
-    bottom: 0;
-    background: #fff;
-    z-index: 1;
-}
-
-.two-autocomplete-manual-entry:focus {
-    outline: 2px solid #1976d2;
-    outline-offset: -2px;
-}
-
-/*
- * `!important` for the same reason the message-row override above needs it:
- * jQuery UI's menu widget applies `ui-menu-item-wrapper` (coloured
- * `#333 !important` near the top of this section) to this row's own
- * `<div>` too, on top of whatever class `_renderItem` gave it. Covers
- * hover/active/focus explicitly - the generic `.ui-menu-item-wrapper:hover`
- * rule also re-asserts `#333 !important` on interaction, which would
- * otherwise win back the moment the buyer points at or arrows onto this row.
- */
-.ui-autocomplete .two-autocomplete-manual-entry.ui-menu-item > div,
-.ui-autocomplete .two-autocomplete-manual-entry.ui-menu-item > div:hover,
-.ui-autocomplete .two-autocomplete-manual-entry.ui-menu-item > div.ui-state-active,
-.ui-autocomplete .two-autocomplete-manual-entry.ui-menu-item > div.ui-state-focus {
-    color: #3043d1 !important;
-}
-
-/*
  * The way back out of manual entry. A real <button>, so every one of the
  * browser's button defaults has to be undone to make it read as a link.
  */
 .two-company-search-back {
-    display: inline-block;
+    /*
+     * §3: right-aligned under the company-name field. A block with
+     * `width: fit-content` and an auto inline-start margin, rather than a
+     * full-width block with `text-align: end` - the latter would make the
+     * whole row clickable, well beyond the visible text.
+     * `margin-left` first as the fallback for engines without logical
+     * properties; `margin-inline-start` wins where it is understood and is
+     * what makes this correct under RTL.
+     */
+    display: block;
+    width: -moz-fit-content;
+    width: fit-content;
+    margin-left: auto;
+    margin-inline-start: auto;
+    /*
+     * §7: no unwanted space between this control and the next field on the
+     * form. `margin-top` only - a bottom margin here is what produced the gap
+     * Doug found live, because the wrapper's own removed `padding-bottom`
+     * was stacking underneath it.
+     */
     margin-top: 6px;
+    margin-bottom: 0;
     padding: 0;
     border: none;
     background: none;
@@ -1451,49 +1607,9 @@
     cursor: pointer;
 }
 
-/*
- * Click-to-reveal chip (TWO-25288 element 2). A sibling <button> absolutely
- * positioned over the company field, standing in for select2's
- * `.select2-selection__rendered` on the one surface where the address form's
- * own input doubles as the search box. Shown only while a confirmed
- * selection exists (see hasConfirmedSelection() in the companion JS), so
- * typing into a freshly-revealed field never overwrites the name it was
- * covering until a result is actually chosen.
- */
-.two-company-search-reveal {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    margin: 0;
-    padding: 6px 12px;
-    text-align: left;
-    background: #fff;
-    border: 1px solid #ccc;
-    border-radius: 3px;
-    font: inherit;
-    color: inherit;
-    cursor: pointer;
-    z-index: 2;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.two-company-search-reveal:hover {
-    border-color: #999;
-}
-
-/*
- * A real focus outline, not `outline: none` - this is now the sole way to
- * reopen the search, so a keyboard user has to be able to see where they
- * are. Same treatment as .two-autocomplete-manual-entry:focus above, for the
- * same reason: an interactive control with no visible focus state is worse
- * than no keyboard support at all.
- */
-.two-company-search-reveal:focus {
+.two-company-search-back:focus {
     outline: 2px solid #1976d2;
-    outline-offset: -2px;
+    outline-offset: 2px;
 }
 
 /* Clean up unused styles */
@@ -1554,36 +1670,36 @@
     color: #b42318;
 }
 
-/* Read-only captured company in the payment tile (TWO-25288).
-   Label / value spans, matching the admin order tab's two-info-label +
-   two-info-value idiom rather than a readonly input - the buyer cannot change
-   either value from here. */
+/*
+ * Read-only captured company in the payment tile (TWO-25288, reshaped by
+ * TWO-25326 §7).
+ *
+ * §7 requires ONE text label in the form "<name> (<number>)", between the
+ * chips and the intent message / optional fields - not the two-row
+ * label + value block this used to be. Still spans and not inputs: the buyer
+ * cannot change either value from here.
+ */
 .two-company-summary {
     margin-top: 12px;
-    padding: 12px 16px;
-    background: #fafbfc;
-    border-radius: 6px;
-    border: 1px solid #f0f2f5;
-}
-
-.two-company-summary__row + .two-company-summary__row {
-    margin-top: 6px;
-}
-
-.two-company-summary__label {
-    display: block;
-    font-size: 12px;
-    font-weight: 600;
-    color: #667085;
+    font-size: 14px;
+    word-break: break-word;
 }
 
 .two-company-summary__value {
-    display: block;
-    font-size: 14px;
-    word-break: break-word;
-    /* An empty number slot still has to occupy its line, or the manual-entry
-       case collapses the row and reads as a missing element. */
-    min-height: 1.2em;
+    /* Inline, so the name, the space and the parenthesised number read as one
+       sentence rather than as a stack of fields. */
+    display: inline;
+}
+
+/* Hidden as a unit - parentheses included - when there is no number to show,
+   which is the manual-entry case (§5: manual entry shows no company number at
+   all). */
+.two-company-summary__number-wrap {
+    display: none;
+}
+
+.two-company-summary--has-number .two-company-summary__number-wrap {
+    display: inline;
 }
 
 /* Optional buyer reference fields in the payment tile (ABN-472) */
