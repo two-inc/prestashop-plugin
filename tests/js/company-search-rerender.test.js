@@ -3392,3 +3392,59 @@ describe('the inline grey company-id hint (TWO-25288)', () => {
         expect(hintText()).toBe('');
     });
 });
+
+describe('a panel the buyer opened survives a re-render (TWO-25326 §1)', () => {
+    // Found in a real browser, invisible to every test that existed.
+    //
+    // PrestaShop fires `updatedAddressForm` for ordinary interactions, and it
+    // can land AFTER the click that opened the panel rather than before it -
+    // measured against a real PrestaShop 8 at click +165ms, re-render +195ms.
+    // The handler closed the panel and rebuilt it shut, so the buyer clicked
+    // the company field, saw a dropdown appear and vanish, and had no route
+    // into manual entry at all. §1 requires the click to open the panel; a
+    // panel that reopens and then disappears on its own does not satisfy it.
+    test('an open panel is reopened after the address form is re-rendered', () => {
+        makeInstance();
+        openPanel();
+        expect(shown(panel())).toBe(true);
+
+        bus.emit('updatedAddressForm');
+
+        expect(shown(panel())).toBe(true);
+        // Rebuilt, not merely left alone - otherwise this passes on a build
+        // where the re-render never tore the panel down in the first place and
+        // proves nothing about the restore.
+        expect(searchInput().length).toBe(1);
+        expect(searchInput().hasClass('ui-autocomplete-input')).toBe(true);
+    });
+
+    test('a panel the buyer had CLOSED is not reopened by a re-render', () => {
+        // The restore must not resurrect a panel that was already shut, or a
+        // re-render becomes a way to force the dropdown open on a buyer who
+        // dismissed it.
+        const search = makeInstance();
+        openPanel();
+        search.closeDropdown(false);
+        expect(shown(panel())).toBe(false);
+
+        bus.emit('updatedAddressForm');
+
+        expect(shown(panel())).toBe(false);
+    });
+
+    test('a close after the re-render is not undone by a later rebuild', () => {
+        // The deadline is left armed across the double teardown one
+        // `updatedAddressForm` causes, so an explicit close inside that window
+        // has to clear it - otherwise the next rebuild reopens a panel the
+        // buyer just dismissed.
+        const search = makeInstance();
+        openPanel();
+        bus.emit('updatedAddressForm');
+        expect(shown(panel())).toBe(true);
+
+        search.closeDropdown(false);
+        bus.emit('updatedAddressForm');
+
+        expect(shown(panel())).toBe(false);
+    });
+});
