@@ -173,6 +173,12 @@ class TwoCompanySearch {
         // True between a mousedown on the panel and the matching mouseup -
         // a scrollbar drag, chiefly. See bindDropdownKeyboard().
         this._pointerInPanel = false;
+        // Set while the results area's height is pinned for the duration of a
+        // pointer press, so the "not on the list" button cannot slide out from
+        // under the pointer between mousedown and mouseup. See
+        // freezeResultsHeight().
+        this._resultsHeightFrozen = false;
+        this._resultsFreezeReleaseId = null;
         // Per-instance event namespace suffix. The `mouseup` guard has to be
         // bound on `document` (a drag can end anywhere, including outside the
         // panel), and `document` is a page-wide singleton - so unbinding by
@@ -602,6 +608,9 @@ class TwoCompanySearch {
         this._closeTimerId = null;
         this._dropdownOpen = false;
         this._pointerInPanel = false;
+        // Before the container reference below is dropped, or the pending
+        // release fires against a panel that no longer exists.
+        this.releaseResultsHeight();
         $(document).off('mouseup.twoDropdown' + this._instanceNs);
         $(window).off('blur.twoDropdown' + this._instanceNs);
         // Release the jQuery UI widget FIRST, while its element is still
@@ -778,6 +787,7 @@ class TwoCompanySearch {
         // using it; the close is re-evaluated when they let go.
         this._dropdown.on('mousedown.twoDropdown', () => {
             this._pointerInPanel = true;
+            this.freezeResultsHeight();
         });
         $(document).off('mouseup.twoDropdown' + this._instanceNs)
             .on('mouseup.twoDropdown' + this._instanceNs, () => {
@@ -785,6 +795,10 @@ class TwoCompanySearch {
                     return;
                 }
                 this._pointerInPanel = false;
+                // Release AFTER the browser has finished turning this
+                // mousedown/mouseup pair into a `click` - see
+                // freezeResultsHeight() for why the height was pinned at all.
+                this.releaseResultsHeightSoon();
                 if (!this._dropdownOpen || this._destroyed) {
                     return;
                 }
@@ -818,7 +832,92 @@ class TwoCompanySearch {
         $(window).off('blur.twoDropdown' + this._instanceNs)
             .on('blur.twoDropdown' + this._instanceNs, () => {
                 this._pointerInPanel = false;
+                this.releaseResultsHeight();
             });
+    }
+
+    /**
+     * Pin the results area's height for the duration of a pointer press.
+     *
+     * A `<button>` is only activated when the mousedown and the mouseup land
+     * on the SAME element - otherwise the browser dispatches `click` on the
+     * nearest common ancestor of the two, and the button's own handler never
+     * runs. The results area sits directly above "My company is not on the
+     * list", so anything that changes its height mid-press slides the button
+     * out from under the pointer and silently swallows the activation.
+     *
+     * That is exactly what happened, and it is why manual entry was
+     * unreachable by mouse. Pressing the button moves focus off the query
+     * field; the blur empties the results area (jQuery UI closes its menu on
+     * blur, and the too-short hint lives in that same container); the button
+     * jumps up by the height of whatever was showing; mouseup lands on the
+     * form behind the panel. Measured in real Chromium: results 30px -> 0px
+     * between mousedown and mouseup, button top 658 -> 627, `click` retargeted
+     * from the button to `<section class="form-fields">`.
+     *
+     * jsdom cannot see this - it has no layout, every rect is 0x0, and it
+     * dispatches `click` wherever it is told regardless of what moved. So the
+     * unit suite passed throughout while a real buyer could not reach manual
+     * entry at all. The regression test for this asserts the mechanism (the
+     * height is pinned for the press and released after) rather than the
+     * geometry, which is the most jsdom can honestly prove.
+     *
+     * Pinning rather than suppressing the emptying: the emptying itself is
+     * correct and comes from the widget, and the invariant that actually
+     * matters is narrower and engine-independent - nothing above the button
+     * may reflow between press and release. This also covers the fallback
+     * search engine, which renders that container itself.
+     */
+    freezeResultsHeight() {
+        if (this._destroyed || !this._resultsList || !this._resultsList.length) {
+            return;
+        }
+        const el = this._resultsList.get(0);
+        if (!el) {
+            return;
+        }
+        // Re-entrant presses must not re-pin to a height this method itself
+        // established, or a stale value outlives the gesture that set it.
+        if (this._resultsHeightFrozen) {
+            return;
+        }
+        clearTimeout(this._resultsFreezeReleaseId);
+        this._resultsFreezeReleaseId = null;
+        this._resultsHeightFrozen = true;
+        this._resultsList.css('min-height', el.getBoundingClientRect().height + 'px');
+    }
+
+    /**
+     * Drop the pinned height, letting the results area size to its content
+     * again. Safe to call when nothing is pinned.
+     */
+    releaseResultsHeight() {
+        clearTimeout(this._resultsFreezeReleaseId);
+        this._resultsFreezeReleaseId = null;
+        if (!this._resultsHeightFrozen) {
+            return;
+        }
+        this._resultsHeightFrozen = false;
+        if (this._resultsList && this._resultsList.length) {
+            this._resultsList.css('min-height', '');
+        }
+    }
+
+    /**
+     * Release on the next tick rather than immediately.
+     *
+     * This runs from a `mouseup` handler, and the `click` the browser
+     * synthesises from that press has not been dispatched yet. Un-pinning here
+     * and now would let the panel reflow before the button's own handler runs,
+     * which is the very failure this pins against - just moved one event
+     * later.
+     */
+    releaseResultsHeightSoon() {
+        clearTimeout(this._resultsFreezeReleaseId);
+        this._resultsFreezeReleaseId = setTimeout(() => {
+            this._resultsFreezeReleaseId = null;
+            this.releaseResultsHeight();
+        }, 0);
     }
 
     /**
