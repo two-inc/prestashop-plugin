@@ -931,3 +931,43 @@ describe('§5 the company number after selection', () => {
         expect(shown($('.two-company-id-hint'))).toBe(false);
     });
 });
+
+describe('the placeholder describes the mode the field is in (TWO-25326 §2)', () => {
+    // Found on the staging shop in a real browser: after switching to manual
+    // entry the field still read "Enter company name to search", instructing
+    // the buyer to do something the field no longer does.
+    test('manual entry swaps the search-mode placeholder', () => {
+        const search = makeInstance();
+        expect(companyField().attr('placeholder')).toBe('Enter company name to search');
+
+        openPanel();
+        panelParts().notListed.trigger('click');
+
+        expect(companyField().attr('placeholder')).toBe('Enter your company name');
+    });
+
+    test('returning to search puts the search wording back', () => {
+        const search = makeInstance();
+        openPanel();
+        panelParts().notListed.trigger('click');
+        expect(companyField().attr('placeholder')).toBe('Enter your company name');
+
+        search.exitManualEntryMode();
+
+        expect(companyField().attr('placeholder')).toBe('Enter company name to search');
+    });
+
+    test("a theme's own placeholder is left alone in both modes", () => {
+        // applyEmptyFieldHint() declines to overwrite a placeholder the theme
+        // set; this must not undo that from the other direction.
+        companyField().attr('placeholder', 'Firmennavn');
+        const search = makeInstance();
+
+        openPanel();
+        panelParts().notListed.trigger('click');
+        expect(companyField().attr('placeholder')).toBe('Firmennavn');
+
+        search.exitManualEntryMode();
+        expect(companyField().attr('placeholder')).toBe('Firmennavn');
+    });
+});
