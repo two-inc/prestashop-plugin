@@ -603,6 +603,7 @@ class TwoCompanySearch {
         this._dropdownOpen = false;
         this._pointerInPanel = false;
         $(document).off('mouseup.twoDropdown' + this._instanceNs);
+        $(window).off('blur.twoDropdown' + this._instanceNs);
         // Release the jQuery UI widget FIRST, while its element is still
         // attached. `_create` binds handlers on `document` that removing the
         // element does not unbind, so a panel dropped without this leaks one
@@ -748,6 +749,17 @@ class TwoCompanySearch {
                     this._queryField.trigger('focus');
                 }
             });
+
+        // A drag begun on the panel and released OUTSIDE the window fires no
+        // `mouseup` this document ever sees, so the flag above would stay
+        // `true` and suppress every subsequent focus-out close for the rest of
+        // the panel's life - the panel stays on screen with focus long gone.
+        // Losing the window is proof the pointer is no longer interacting with
+        // the panel, whatever happened to the button release.
+        $(window).off('blur.twoDropdown' + this._instanceNs)
+            .on('blur.twoDropdown' + this._instanceNs, () => {
+                this._pointerInPanel = false;
+            });
     }
 
     /**
@@ -829,6 +841,19 @@ class TwoCompanySearch {
         clearTimeout(this._closeTimerId);
         this._closeTimerId = null;
         this._dropdownOpen = false;
+        // State hygiene, and DEFENSIVE ONLY - deliberately not covered by a
+        // test, because no test can currently make it matter. The flag is only
+        // ever read by scheduleDropdownClose(), which runs solely while the
+        // panel is open, and every route back to open goes through
+        // openDropdown(), which already clears it. So a stale `true` surviving
+        // a close cannot be observed today. It is reset anyway because that
+        // reachability argument is a property of the current call graph rather
+        // than of this method, and "closed" plainly means nothing is pointing
+        // into the panel. The genuinely reachable stranding path - a drag
+        // released outside the window, which fires no `mouseup` at all - is
+        // handled by the `window blur` handler in bindDropdownHandlers(), and
+        // that one IS pinned by a test.
+        this._pointerInPanel = false;
         this.setDropdownExpandedState();
         if (this._dropdown && this._dropdown.length) {
             this._dropdown.hide().attr('hidden', 'hidden');
