@@ -640,3 +640,187 @@ describe('the hidden companyid input is untouched', () => {
         expect($("input[name='vat_number']").val()).toBe('12345678');
     });
 });
+
+describe('the payment tile is fed by the order-intent payload (TWO-25326 §7)', () => {
+    // The §7 failure recorded on TWO-25326 for PrestaShop: the tile label never
+    // rendered at all. Measured on a real PS 8 checkout - at the payment step
+    // PrestaShop marks the address step `-complete` and REMOVES the address
+    // form, so `input[name=company]` and the hidden `companyid` are both gone
+    // and readState() had nothing left to read. The block sat `display:none`
+    // with empty slots on every checkout.
+    //
+    // The pair now arrives from the module's own backend, on the same
+    // order-intent response that already feeds the intent message beside it.
+
+    /** Reproduce the payment step: PrestaShop has taken the address form away. */
+    function removeAddressForm() {
+        document.querySelectorAll("input[name='company'], input[name='companyid']")
+            .forEach((el) => el.remove());
+    }
+
+    test('the pushed pair paints the label once the address form is gone', () => {
+        removeAddressForm();
+        expect(shown()).toEqual({ name: '', number: '', hidden: true });
+
+        TwoCompanySummary.setIntentCompany({
+            name: 'Example Trading Ltd',
+            number: '12345678'
+        });
+
+        expect(shown()).toEqual({
+            name: 'Example Trading Ltd',
+            number: '12345678',
+            hidden: false
+        });
+    });
+
+    test('a name with no number shows the name alone', () => {
+        // §5: a manual-entry buyer supplies a name and no number, and
+        // "Example Ltd ()" is worse than "Example Ltd".
+        removeAddressForm();
+
+        TwoCompanySummary.setIntentCompany({ name: 'Example Trading Ltd', number: '' });
+
+        expect(shown()).toEqual({ name: 'Example Trading Ltd', number: '', hidden: false });
+        expect(root().classList.contains('two-company-summary--has-number')).toBe(false);
+    });
+
+    test('the pair outlives a re-render of the tile', () => {
+        // PrestaShop replaces the payment step wholesale on a cart change,
+        // which is why this is held on the class and not the instance.
+        removeAddressForm();
+        TwoCompanySummary.setIntentCompany({ name: 'Example Trading Ltd', number: '12345678' });
+
+        root().remove();
+        buildPaymentTile();
+        TwoCompanySummary.render();
+
+        expect(shown()).toEqual({
+            name: 'Example Trading Ltd',
+            number: '12345678',
+            hidden: false
+        });
+    });
+
+    test('a live address form still wins over the intent pair', () => {
+        // On the ADDRESS step both exist. The field the buyer is looking at is
+        // the truth; a stale intent pair from a company they have since moved
+        // off must not override it.
+        // A real instance, because it is what creates the hidden `companyid`
+        // input the DOM path reads.
+        makeInstance();
+        TwoCompanySummary.setIntentCompany({ name: 'Stale Holdings Ltd', number: '99999999' });
+
+        const nameField = document.querySelector("input[name='company']");
+        const idField = document.querySelector("input[name='companyid']");
+        nameField.value = 'Example Trading Ltd';
+        idField.value = '12345678';
+        idField.setAttribute('data-two-company-name', 'Example Trading Ltd');
+        TwoCompanySummary.render();
+
+        expect(shown()).toEqual({
+            name: 'Example Trading Ltd',
+            number: '12345678',
+            hidden: false
+        });
+    });
+
+    test('an enrolled sole trader outranks the intent pair', () => {
+        // The enrolment happened on this step, in front of the buyer; the
+        // intent pair may predate it.
+        removeAddressForm();
+        TwoCompanySummary.setIntentCompany({ name: 'Example Trading Ltd', number: '12345678' });
+        TwoCompanySummary.setSoleTrader({ name: 'Sole Trader AS', number: 'NO-999888777' });
+
+        expect(shown()).toEqual({
+            name: 'Sole Trader AS',
+            number: 'NO-999888777',
+            hidden: false
+        });
+    });
+
+    test('null forgets the pair', () => {
+        removeAddressForm();
+        TwoCompanySummary.setIntentCompany({ name: 'Example Trading Ltd', number: '12345678' });
+        expect(shown().hidden).toBe(false);
+
+        TwoCompanySummary.setIntentCompany(null);
+
+        expect(shown()).toEqual({ name: '', number: '', hidden: true });
+    });
+});
+
+describe('TwoOrderIntent publishes the payload company to the tile (TWO-25326 §7)', () => {
+    // The wiring, tested separately from the rendering. Without this, deleting
+    // the publish call in TwoOrderIntent leaves every test above green while
+    // the tile goes blank again on a real checkout - the defect this whole
+    // section exists to close.
+    let intent;
+
+    beforeEach(() => {
+        loadScript('views/js/modules/TwoOrderIntent.js');
+        intent = new window.TwoOrderIntent({});
+        document.querySelectorAll("input[name='company'], input[name='companyid']")
+            .forEach((el) => el.remove());
+    });
+
+    const payloadFor = (name, number) => ({
+        buyer: { company: { company_name: name, organization_number: number } }
+    });
+
+    test('a payload with both values paints the label', () => {
+        intent.publishPayloadCompany(payloadFor('Example Trading Ltd', '12345678'));
+
+        expect(shown()).toEqual({
+            name: 'Example Trading Ltd',
+            number: '12345678',
+            hidden: false
+        });
+        expect(intent.lastCompany).toBe('Example Trading Ltd');
+        expect(intent.lastCompanyNumber).toBe('12345678');
+    });
+
+    test('a payload with a name and no number shows the name alone', () => {
+        intent.publishPayloadCompany(payloadFor('Example Trading Ltd', ''));
+
+        expect(shown()).toEqual({ name: 'Example Trading Ltd', number: '', hidden: false });
+    });
+
+    test('a later name-only payload does not reuse the previous number', () => {
+        // The retained `lastCompanyNumber` is for the intent wording, not for
+        // the label. Pairing it with a different company's name would assert a
+        // company/number pairing that never existed - the one thing this block
+        // must never do.
+        intent.publishPayloadCompany(payloadFor('Example Trading Ltd', '12345678'));
+        expect(shown().number).toBe('12345678');
+
+        intent.publishPayloadCompany(payloadFor('Second Holdings Ltd', ''));
+
+        expect(shown()).toEqual({ name: 'Second Holdings Ltd', number: '', hidden: false });
+    });
+
+    test('a payload with no company touches nothing', () => {
+        intent.publishPayloadCompany(payloadFor('Example Trading Ltd', '12345678'));
+
+        intent.publishPayloadCompany({ buyer: {} });
+        intent.publishPayloadCompany(null);
+
+        // Still the last real company, not blanked: an intent call that failed
+        // to carry a company is not evidence the buyer lost theirs.
+        expect(shown()).toEqual({
+            name: 'Example Trading Ltd',
+            number: '12345678',
+            hidden: false
+        });
+    });
+
+    test('values are trimmed', () => {
+        intent.publishPayloadCompany(payloadFor('  Example Trading Ltd  ', '  12345678  '));
+
+        expect(shown()).toEqual({
+            name: 'Example Trading Ltd',
+            number: '12345678',
+            hidden: false
+        });
+    });
+});
