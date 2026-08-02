@@ -16,6 +16,9 @@ class TwoOrderIntent {
         this.isProcessing = false;
         this.checkIntervalId = null;
         this.lastCompany = null;
+        // Retained alongside lastCompany so the tile label survives a payload
+        // that omits the number; see publishPayloadCompany().
+        this.lastCompanyNumber = null;
     }
 
     t(key, fallback) {
@@ -91,6 +94,67 @@ class TwoOrderIntent {
         return true;
     }
     
+    /**
+     * Take the company out of the order-intent payload and publish it.
+     *
+     * Feeds two things: the company-aware intent wording, and the payment
+     * tile's company label (TWO-25326 §7).
+     *
+     * The tile is the reason this exists. That label used to be rendered by
+     * reading the address form's `company` and hidden `companyid` inputs, but
+     * by the time the payment step exists PrestaShop has marked the address
+     * step `-complete` and REMOVED that form - both inputs are gone, so the
+     * block rendered empty and stayed hidden on every PrestaShop checkout.
+     *
+     * The pair is already on its way here for another reason: this is the
+     * module's own backend answering with the payload it built server-side,
+     * from the session company that outlives the form. So the tile is fed from
+     * the same channel that feeds the intent message beside it, and the two
+     * cannot disagree about which company is being credit-checked.
+     *
+     * A method rather than an inline block in the promise chain so it can be
+     * tested without standing up the whole request pipeline.
+     *
+     * @param {?Object} payload Order-intent payload, as built by the backend.
+     * @returns {void}
+     */
+    publishPayloadCompany(payload) {
+        const company = (payload && payload.buyer && payload.buyer.company)
+            ? payload.buyer.company
+            : null;
+        const name = (company && company.company_name)
+            ? String(company.company_name).trim()
+            : '';
+        const number = (company && company.organization_number)
+            ? String(company.organization_number).trim()
+            : '';
+
+        if (name) {
+            this.lastCompany = name;
+        }
+        if (number) {
+            this.lastCompanyNumber = number;
+        }
+
+        if (!name) {
+            return;
+        }
+        if (typeof window === 'undefined'
+            || !window.TwoCompanySummary
+            || typeof window.TwoCompanySummary.setIntentCompany !== 'function') {
+            return;
+        }
+        window.TwoCompanySummary.setIntentCompany({
+            name: name,
+            // This payload's number, deliberately, and never the retained
+            // `lastCompanyNumber`: a payload carrying a name with no number
+            // must show the name alone, not pair it with a number left over
+            // from a company the buyer has moved off. readState()'s tag
+            // comparison guards the DOM path for the same reason.
+            number: number
+        });
+    }
+
     checkOrderIntent() {
         if (!this.shouldRunOrderIntent()) {
             return Promise.resolve(this.lastResult || { success: false, error: 'Order intent check skipped' });
@@ -111,15 +175,7 @@ class TwoOrderIntent {
             })
             .then(built => {
                 const payload = built ? built.payload : null;
-                const payloadCompany = (
-                    payload &&
-                    payload.buyer &&
-                    payload.buyer.company &&
-                    payload.buyer.company.company_name
-                ) ? String(payload.buyer.company.company_name).trim() : '';
-                if (payloadCompany) {
-                    this.lastCompany = payloadCompany;
-                }
+                this.publishPayloadCompany(payload);
                 // TWO-24799: the server recognised this exact decision snapshot
                 // and returned the decision it already has, so skip the 2.5-3s
                 // /v1/order_intent round trip. The server only does this when
@@ -729,6 +785,9 @@ class TwoOrderIntent {
     reset() {
         this.lastResult = null;
         this.lastCompany = null;
+        // Cleared with its name: a retained number outliving the reset could
+        // only ever be paired with a DIFFERENT company's name later.
+        this.lastCompanyNumber = null;
         this.isProcessing = false;
         this.stopMonitoring();
     }

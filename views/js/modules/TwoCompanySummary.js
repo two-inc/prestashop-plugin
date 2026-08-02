@@ -72,6 +72,14 @@ class TwoCompanySummary {
      */
     static _soleTrader = null;
 
+    /**
+     * The company the order-intent payload was built for, pushed by
+     * TwoOrderIntent. See setIntentCompany() for why this exists at all.
+     *
+     * @type {?{name: string, number: string}}
+     */
+    static _intentCompany = null;
+
     constructor() {
         this._stopped = false;
         this.boundOnFieldChange = this.onFieldChange.bind(this);
@@ -145,6 +153,40 @@ class TwoCompanySummary {
         TwoCompanySummary.render();
     }
 
+    /**
+     * Record the company the order-intent payload was built for.
+     *
+     * The tile label (§7) cannot be read off the address form on this step:
+     * PrestaShop marks the address step `-complete` and removes that form from
+     * the DOM, so `company` and `companyid` are both gone by the time the
+     * payment tile exists. The block therefore rendered empty and stayed
+     * hidden on every PrestaShop checkout - the §7 failure recorded on
+     * TWO-25326.
+     *
+     * TwoOrderIntent pushes the pair here from the module's own backend
+     * response, which builds it server-side from the session company that
+     * outlives the form. That is the same channel already feeding the intent
+     * message beside this label, so the two cannot disagree about which
+     * company the buyer is being credit-checked as.
+     *
+     * Static for the reason `_soleTrader` is: the payment step's DOM is
+     * replaced wholesale on the next cart update, and this has to outlive it.
+     *
+     * @param {?{name: ?string, number: ?string}} pair Null forgets it.
+     * @returns {void}
+     */
+    static setIntentCompany(pair) {
+        if (!pair) {
+            TwoCompanySummary._intentCompany = null;
+        } else {
+            TwoCompanySummary._intentCompany = {
+                name: String(pair.name == null ? '' : pair.name).trim(),
+                number: String(pair.number == null ? '' : pair.number).trim()
+            };
+        }
+        TwoCompanySummary.render();
+    }
+
     /** @returns {string} */
     static normalizeName(value) {
         return String(value == null ? '' : value).trim().toLowerCase().replace(/\s+/g, ' ');
@@ -183,6 +225,17 @@ class TwoCompanySummary {
             return {
                 name: TwoCompanySummary._soleTrader.name,
                 number: TwoCompanySummary._soleTrader.number
+            };
+        }
+
+        // Only once the DOM has nothing to say, and AFTER the sole trader: an
+        // enrolment the buyer completed on this very step outranks the company
+        // an earlier intent call was built for. On the payment step the address
+        // form is gone, so this is the branch that actually renders the label.
+        if (name === '' && number === '' && TwoCompanySummary._intentCompany) {
+            return {
+                name: TwoCompanySummary._intentCompany.name,
+                number: TwoCompanySummary._intentCompany.number
             };
         }
 
