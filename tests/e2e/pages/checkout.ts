@@ -74,8 +74,52 @@ async function fillCompanyName(page: Page, addr: Locator, company: string) {
     await field.click();
     const notListed = addr.locator("button.two-company-not-listed");
     await notListed.click();
-    // enterManualEntryMode() strips `readonly` and focuses the field.
-    await expect(field).not.toHaveAttribute("readonly", /.*/);
+
+    try {
+      // enterManualEntryMode() strips `readonly` and focuses the field.
+      await expect(field).not.toHaveAttribute("readonly", /.*/, {
+        timeout: 5000,
+      });
+    } catch (err) {
+      // The click landed (Playwright would have thrown otherwise) but the
+      // control did not switch modes. Dump what the page actually looks like
+      // before failing — this state is not reproducible outside a real
+      // browser, so a bare assertion failure here costs a whole CI cycle to
+      // learn nothing.
+      const diag = await page.evaluate(() => {
+        const panels = Array.from(
+          document.querySelectorAll(".two-company-dropdown"),
+        );
+        const buttons = Array.from(
+          document.querySelectorAll("button.two-company-not-listed"),
+        );
+        const fields = Array.from(
+          document.querySelectorAll('input[name="company"]'),
+        );
+        const jq = (window as any).jQuery;
+        return {
+          panelCount: panels.length,
+          panelHidden: panels.map((p) => p.hasAttribute("hidden")),
+          panelConnected: panels.map((p) => p.isConnected),
+          buttonCount: buttons.length,
+          buttonConnected: buttons.map((b) => b.isConnected),
+          buttonHandlers: buttons.map((b) => {
+            try {
+              const ev = jq && jq._data ? jq._data(b, "events") : null;
+              return ev ? Object.keys(ev).join(",") : "none";
+            } catch {
+              return "unreadable";
+            }
+          }),
+          fieldCount: fields.length,
+          fieldReadonly: fields.map((f) => f.hasAttribute("readonly")),
+          jqVersions: jq ? jq.fn.jquery : "no jQuery",
+        };
+      });
+      throw new Error(
+        `"not on the list" click did not enter manual entry. DOM state: ${JSON.stringify(diag)}\nOriginal: ${String(err)}`,
+      );
+    }
   }
 
   await field.fill(company);
