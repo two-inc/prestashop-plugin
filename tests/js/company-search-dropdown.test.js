@@ -601,6 +601,70 @@ describe('regressions found in adversarial review', () => {
         expect(seen).toEqual(['ArrowDown']);
     });
 
+    test('the results area cannot reflow while the pointer is pressed on the panel', () => {
+        // The bug this pins was invisible to this entire suite and cost a full
+        // CI cycle per guess to chase, so it is worth being explicit about
+        // what it was and what this can honestly prove.
+        //
+        // A `<button>` only activates when mousedown and mouseup land on the
+        // SAME element; otherwise the browser dispatches `click` on the two
+        // targets' nearest common ancestor and the button's handler never
+        // runs. The results area sits directly above "not on the list", and
+        // pressing that button blurs the query field, which empties the
+        // results area. Measured in real Chromium: results 30px -> 0px between
+        // mousedown and mouseup, button top 658 -> 627, `click` retargeted to
+        // `<section class="form-fields">`. Manual entry was unreachable by
+        // mouse, on every real browser, while every test here passed.
+        //
+        // jsdom has no layout - every rect is 0x0 and it will happily dispatch
+        // `click` on an element that moved - so the geometry itself is not
+        // assertable here. What IS assertable, and what the fix turns on, is
+        // the mechanism: the height is pinned for the duration of the press
+        // and released only after the click has been dispatched. A real-
+        // browser check of the resulting behaviour is in the e2e suite.
+        makeInstance();
+        openPanel();
+
+        const results = panelParts().results;
+        expect(results.length).toBe(1);
+        expect(results.get(0).style.minHeight).toBe('');
+
+        panelParts().panel.trigger('mousedown');
+        // Pinned to *something* for the duration of the press. The value is
+        // whatever jsdom measures (0px), so assert that it was set at all -
+        // asserting a pixel figure here would only be testing jsdom.
+        expect(results.get(0).style.minHeight).not.toBe('');
+
+        // Still pinned as the mouseup handler runs: releasing synchronously
+        // here would let the panel reflow before the browser dispatches the
+        // click, which is the original bug moved one event later.
+        $(document).trigger('mouseup');
+        expect(results.get(0).style.minHeight).not.toBe('');
+
+        // Released once the click has had its chance.
+        jest.advanceTimersByTime(1);
+        expect(results.get(0).style.minHeight).toBe('');
+    });
+
+    test('losing the window releases a pinned results height', () => {
+        // A press that ends outside the window fires no `mouseup` this
+        // document sees - the same hole the `_pointerInPanel` guard has - so
+        // the pin would otherwise outlive the gesture and freeze the results
+        // area at one row for the rest of the panel's life.
+        makeInstance();
+        openPanel();
+
+        const results = panelParts().results;
+        panelParts().panel.trigger('mousedown');
+        expect(results.get(0).style.minHeight).not.toBe('');
+
+        // `triggerHandler`, not `trigger`: jQuery's `trigger` also calls the
+        // native `window.blur()`, which jsdom does not implement and logs a
+        // "not implemented" stack for. Only the handler is under test.
+        $(window).triggerHandler('blur');
+        expect(results.get(0).style.minHeight).toBe('');
+    });
+
     test('a genuine click away still closes the panel', () => {
         // The guard above must not swallow the ordinary case: a pointer that
         // went down somewhere OTHER than the panel.
