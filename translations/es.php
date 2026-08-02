@@ -325,8 +325,6 @@ $_MODULE['<{twopayment}prestashop>paymentinfo_26615a6d6e63f2904432b8b425ee6e93']
 $_MODULE['<{twopayment}prestashop>paymentinfo_c1cf258d03ea6e7a7d9a004d3a017610'] = 'Elige la opción de Compra Ahora, Paga Después que mejor se adapte a ti';
 $_MODULE['<{twopayment}prestashop>paymentinfo_a002c8066738bc8f9d9394abdcef7ea8'] = 'Tu período de pago comienza cuando se cumple tu pedido';
 $_MODULE['<{twopayment}prestashop>paymentinfo_1ffcb4e0a351d5e143bec6362c0feaf8'] = 'El pago vence al final del mes actual más los días seleccionados desde que se cumple tu pedido';
-$_MODULE['<{twopayment}prestashop>paymentinfo_1c76cbfe21c6f44c1d1e59d54f3e4420'] = 'Empresa';
-$_MODULE['<{twopayment}prestashop>paymentinfo_4e1d2b56da5ef5d0c57afc363cb790d8'] = 'Número de empresa';
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_b9484b0275e32e5b1011b9e3a49ce19a'] = 'Pago con Two';
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_7de46cb469a9606c3f20c512df2519f3'] = 'Plazos de la factura';
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_cdca48ec5dde79b84b395c0c557bb290'] = '%d días';
@@ -405,3 +403,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_88d53497f4a92958c67c73a9f2f52df3'] 
 $_MODULE['<{twopayment}prestashop>twopayment_e1f3e840de378499e19505d283e4601d'] = 'El límite del recargo para el plazo de %d días no puede ser 0. Si no quieres cobrar nada en este plazo, establece el porcentaje y la cuota fija en 0 y deja el límite vacío.';
 $_MODULE['<{twopayment}prestashop>twopayment_128ce19a81ca82c86adfed35ed88578a'] = 'El límite se aplica a la totalidad de la cuota: el porcentaje y la cuota fija juntos, no solo el porcentaje. Déjalo vacío para no aplicar ningún límite.';
 $_MODULE['<{twopayment}prestashop>twopayment_822f646e52655f26a80e2b6d0c79f41c'] = 'No se permite un límite de 0. Si no quieres cobrar nada en un plazo, establece el porcentaje y la cuota fija de ese plazo en 0.';
+$_MODULE['<{twopayment}prestashop>twopayment_d132286ce060a9349df55de2808b4d5f'] = 'No se han encontrado coincidencias';

@@ -49,6 +49,31 @@ class TwoCompanySearch {
      * render. Only the cache is preserved, not the pending request.
      */
     static _resultCache = new Map();
+
+    /**
+     * Deadline (epoch ms) up to which a freshly built panel should reopen
+     * itself, because the panel it replaces was open when PrestaShop
+     * re-rendered the address form out from under the buyer.
+     *
+     * On the CLASS, and a deadline rather than a boolean, for two reasons.
+     *
+     * A single `updatedAddressForm` tears the control down TWICE: this
+     * module's own handler closes and rebuilds the panel on the SAME instance,
+     * and then TwoCheckoutManager destroy()s that instance and constructs a
+     * replacement. Instance state cannot cross the second of those, and a flag
+     * consumed by the first rebuild would be gone before the one the buyer
+     * actually ends up looking at.
+     *
+     * A deadline also fails safe. Nothing has to remember to clear it: if the
+     * rebuild never comes - the buyer left the step, the module was torn down
+     * for good - it simply expires, and the worst case is a panel that does
+     * not reopen. A boolean left set would reopen an unrelated panel the next
+     * time one happened to be built.
+     */
+    static _reopenPanelUntil = 0;
+
+    /** How long after a re-render a rebuilt panel may restore itself. */
+    static _REOPEN_WINDOW_MS = 1500;
     // A company registered mid-session stays absent from an already-searched
     // term until its entry expires. That staleness is deliberate: buyers search
     // for their own company, which is already registered, so nothing here busts
@@ -147,19 +172,46 @@ class TwoCompanySearch {
         this._manualEntry = false;
         this._backToSearchLink = null;
 
-        // Click-to-reveal (TWO-25288 element 2). Woo/Luma's select2 keeps a
-        // `.select2-selection__rendered` chip showing the confirmed name in
-        // front of a separate `.select2-search__field` the buyer actually
-        // types into, so typing never touches the displayed name until a
-        // result is chosen. This field has no such split - the address form's
-        // own `input[name='company']` IS the search box - so the same
-        // protection is built as a covering chip: shown only while
-        // hasConfirmedSelection() is true, hidden the moment the buyer opens
-        // it back up. See revealSearch() / collapseReveal().
-        this._revealChip = null;
-        this._revealed = false;
-        this._revealSnapshot = null;
-        this._revealBlurTimerId = null;
+        // The anchored dropdown panel (TWO-25326 §1). Supersedes the
+        // click-to-reveal chip TWO-25288 element 2 shipped.
+        //
+        // That chip existed for one stated reason: "this field has no split -
+        // the address form's own `input[name='company']` IS the search box",
+        // so it stood in for select2's `.select2-selection__rendered` by
+        // covering the field to stop typing overwriting a confirmed name.
+        // TWO-25326 §1 requires the split itself - a real popup control
+        // anchored to the field, carrying its OWN query input, with the
+        // company-name field left untouched until a result is picked. Once
+        // that exists the chip is not merely redundant, it is contradictory:
+        // its whole behaviour is to blank the company-name field on click,
+        // which is exactly what §1 forbids. So it is gone, and this panel is
+        // what replaces it.
+        this._dropdown = null;
+        this._queryField = null;
+        this._notListedButton = null;
+        this._resultsList = null;
+        this._dropdownOpen = false;
+        // Deferred close, so focus moving BETWEEN two controls inside the
+        // panel (query field -> "not on the list") does not read as leaving
+        // it. See scheduleDropdownClose().
+        this._closeTimerId = null;
+        // True between a mousedown on the panel and the matching mouseup -
+        // a scrollbar drag, chiefly. See bindDropdownKeyboard().
+        this._pointerInPanel = false;
+        // Set while the results area's height is pinned for the duration of a
+        // pointer press, so the "not on the list" button cannot slide out from
+        // under the pointer between mousedown and mouseup. See
+        // freezeResultsHeight().
+        this._resultsHeightFrozen = false;
+        this._resultsFreezeReleaseId = null;
+        // Per-instance event namespace suffix. The `mouseup` guard has to be
+        // bound on `document` (a drag can end anywhere, including outside the
+        // panel), and `document` is a page-wide singleton - so unbinding by
+        // the shared `.twoDropdown` namespace alone would tear off another
+        // live instance's handler too. Same reasoning as the by-reference
+        // unbind on the `window` resize listener below.
+        TwoCompanySearch._instanceSeq = (TwoCompanySearch._instanceSeq || 0) + 1;
+        this._instanceNs = 'i' + TwoCompanySearch._instanceSeq;
 
         this.init();
     }
@@ -211,9 +263,18 @@ class TwoCompanySearch {
      * normalisation, which is not guaranteed to pass a custom property
      * through unmangled across jQuery versions.
      *
+     * VESTIGIAL as of TWO-25326, kept because it is cheap and harmless. Its
+     * purpose was to clamp a menu jQuery UI appended to `<body>`, where
+     * nothing else could size it. The menu now renders inside a panel that is
+     * itself pinned to the field's width, and the stylesheet sets
+     * `max-width: none !important` on it - so this variable can no longer
+     * affect the dropdown. It is still cleared in destroy() for the reason it
+     * always was: it is a page-wide singleton, and a stale value must not
+     * outlive the field that set it.
+     *
      * A single shared variable is a page-wide singleton, matching every
      * other assumption already documented in this class (see
-     * createRevealChip()) about there being one live company field at a
+     * buildDropdown()) about there being one live company field at a
      * time. Cleared on a falsy width and in destroy() (both TWO-30.x.10
      * review findings) precisely because it IS a singleton: a stale value
      * left behind by a field that has since gone hidden or been torn down
@@ -248,8 +309,8 @@ class TwoCompanySearch {
     /**
      * Wrap the company field in a tight-fitting positioned span, idempotently.
      *
-     * TWO-30.x.10 element 2/3: the hint and the reveal chip used to position
-     * themselves absolutely against `this.companyField.parent()` - the
+     * TWO-30.x.10 element 2/3: the org-number hint used to position itself
+     * absolutely against `this.companyField.parent()` - the
      * field's THEME wrapper (a Bootstrap `.form-group`/column div), which
      * commonly carries its own padding and therefore has a different width
      * and left offset than the input it contains. A chip or hint positioned
@@ -291,6 +352,15 @@ class TwoCompanySearch {
             this.companyField.wrap('<span class="two-company-field-wrap"></span>');
             wrapper = this.companyField.parent();
         }
+        // Anchor height for the dropdown panel, refreshed alongside the width
+        // for the same reason: the panel is positioned against the INPUT, not
+        // against the wrapper, which also carries the org-number label.
+        const height = this.companyField.outerHeight();
+        if (height) {
+            wrapper.get(0).style.setProperty('--two-company-input-height', height + 'px');
+        } else {
+            wrapper.get(0).style.removeProperty('--two-company-input-height');
+        }
         const width = this.companyField.outerWidth();
         if (width) {
             wrapper.css('width', width + 'px');
@@ -326,7 +396,7 @@ class TwoCompanySearch {
      * (`$(window).off(events, this._widthRefreshHandler)`), not by namespace
      * alone (round-2 review finding, Vader). `window` is a genuine
      * page-wide singleton, unlike the per-node sibling sweeps this file uses
-     * elsewhere (see createRevealChip()/removeRevealChip()) - a namespace-only
+     * elsewhere (see buildDropdown()/removeDropdown()) - a namespace-only
      * `.off('.twoCompanyWidth')` would remove every instance's handler under
      * that name, not just the one being destroyed. Not reachable today
      * (TwoCheckoutManager.handleAddressFormUpdate() destroys the old instance
@@ -367,14 +437,13 @@ class TwoCompanySearch {
         if (hintField.length === 0) {
             hintField = $('<span class="two-company-id-hint"></span>');
             this.companyField.after(hintField);
-            // The hint is positioned absolutely (see two.css) against
-            // `.two-company-field-wrap`, which ensureFieldWrapper() - called
-            // before this method on every init()/setupAutocomplete() run -
-            // already guarantees exists and is `position: relative` on its
-            // own stylesheet rule. Nothing to force here any more: this used
-            // to reach into the field's THEME wrapper and set its position by
-            // hand, which is also what put the hint and chip outside the
-            // wrapper widths in TWO-30.x.10.
+            // The hint sits in NORMAL FLOW inside `.two-company-field-wrap`,
+            // immediately after the input (see two.css). It used to be
+            // absolutely positioned at `top: 100%`, which is what let it
+            // paint over the VAT-number field below - TWO-25326 §5. Nothing
+            // to position here: an in-flow block takes its own height and
+            // right-aligns to the wrapper's edge, and the wrapper already
+            // matches the input's width exactly.
         }
 
         this.companyIdHintField = hintField;
@@ -389,12 +458,23 @@ class TwoCompanySearch {
      */
     setCompanyIdHint(value) {
         if (this.companyIdHintField && this.companyIdHintField.length) {
-            this.companyIdHintField.text(value ? String(value) : '');
+            const text = value ? String(value) : '';
+            this.companyIdHintField.text(text);
+            // TWO-25326 §5/§7: the label takes space in normal flow now, so
+            // an EMPTY one still occupies a line box and adds height to an
+            // address form that should look identical to every other row
+            // until a company is actually selected. Toggling the class - not
+            // just the text - is what keeps "additional space only when the
+            // company number is visible" true.
+            this.companyIdHintField.toggleClass('two-company-id-hint--visible', text !== '');
         }
     }
 
     /**
-     * @returns {string} accessible name for the reveal chip
+     * @returns {string} accessible name for the company-name field while it
+     *   acts as the trigger that opens the search panel (TWO-25326 §1). Its
+     *   visible value is the confirmed company name; this says what
+     *   activating it does.
      */
     getEditCompanyText() {
         return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_edit)
@@ -425,296 +505,690 @@ class TwoCompanySearch {
     }
 
     /**
-     * Create the click-to-reveal chip (TWO-25288 element 2), idempotently.
+     * Build the anchored dropdown panel, idempotently (TWO-25326 §1/§2).
      *
-     * A sibling `<button>`, absolutely positioned over the real input - inside
-     * the same `.two-company-field-wrap` ensureFieldWrapper() guarantees is
-     * already `position: relative` (see createCompanyIdHintField()). Called
-     * from
-     * setupAutocomplete(), not only init(): that method is what re-runs on
-     * every country change and `updatedAddressForm`, re-resolving whatever
-     * field PrestaShop just put on the page, so the chip has to be rebuilt on
-     * the same schedule or it goes missing the moment the DOM is replaced -
-     * exactly the failure mode applyEmptyFieldHint() next to it already
-     * guards against.
+     * DOM ORDER IS THE DESIGN HERE, not an implementation detail. Every part
+     * lives inside the same `.two-company-field-wrap` as the company-name
+     * input, in this order:
      *
-     * Checked among this field's OWN siblings, not by a document-wide class
-     * lookup - unlike the passive org-id hint and the manual-entry reverse
-     * link, this chip is a focus-stealing, absolutely-positioned control, so
-     * a global lookup would let a second, independently-constructed instance
-     * silently adopt the first instance's chip. This scoping does NOT by
-     * itself make the chip safe if PrestaShop core ever renders two live
-     * `input[name='company']` nodes at once under ONE instance - this class
-     * is a page-wide singleton (see TwoCheckoutManager.initializeCompanySearch())
-     * that resolves `this.companyField` from a bare selector with no
-     * `.first()`, the same pre-existing assumption every other method here
-     * (organizationField, companyIdHintField, ...) already makes and that
-     * this PR does not change. That is a separate, unresolved question about
-     * this class's single-field architecture, not something element 2 closes.
+     *   input[name='company'] -> query field -> results host -> "not on the list"
+     *
+     * so the browser's OWN tab order already satisfies §1 ("the query field is
+     * the next tab stop after the company-name field"), §2 ("is the next tab
+     * stop after the query field") and §4 ("Tab from the not-on-the-list
+     * control moves to the next control in the tab order"), with no key
+     * handling whatsoever. That is deliberately the opposite of what WC ended
+     * up with: select2 appends its dropdown to the end of `<body>`, which is
+     * why Tab off its button lands on `<body>` rather than the next form
+     * control and has to be re-implemented by hand (see the WC §1 Tab notes on
+     * TWO-25326). Anchoring the panel inside the wrapper costs one
+     * absolutely-positioned box and buys the whole keyboard contract for free.
+     *
+     * The panel is `display: none` while closed, so none of it is a tab stop
+     * until the buyer opens it - which is also what makes §4's "no keyboard
+     * trap anywhere in this control" true by construction rather than by
+     * testing.
+     *
+     * The manual-entry control is a REAL `<button>` and a SIBLING of the
+     * results host, never a row inside it (§2): outside the scroll container,
+     * so it is reachable without scrolling past up to 50 results, and outside
+     * the list, so the cursor keys - which only ever move within the list -
+     * cannot reach it.
      */
-    createRevealChip() {
+    buildDropdown() {
         if (!this.companyField || !this.companyField.length) {
             return;
         }
+        const wrapper = this.companyField.parent();
+        if (!wrapper.length || !wrapper.hasClass('two-company-field-wrap')) {
+            return;
+        }
 
-        let chip = this.companyField.siblings('.two-company-search-reveal').first();
-        if (chip.length === 0) {
-            chip = $('<button type="button" class="two-company-search-reveal"></button>');
-            this.companyField.after(chip);
+        // Adopt an existing panel rather than building a second one. This
+        // method runs from setupAutocomplete(), which itself re-runs on every
+        // country change and `updatedAddressForm`.
+        let panel = wrapper.children('.two-company-dropdown').first();
+        if (panel.length) {
+            this._dropdown = panel;
+            this._queryField = panel.find('.two-company-dropdown__query').first();
+            this._resultsList = panel.find('.two-company-dropdown__results').first();
+            this._notListedButton = panel.find('.two-company-not-listed').first();
+            // RE-BIND, do not merely adopt the references.
+            //
+            // Every handler on an existing panel closes over the instance that
+            // built it, so adoption has to re-point them at this one. The
+            // reachable hazard today is not a stale instance - destroy() takes
+            // the panel with it, so a fresh instance always builds rather than
+            // adopts - it is DOUBLE binding: this method re-runs on every
+            // country change and address-form update, and without the
+            // `.off('.twoDropdown')` inside bindDropdownHandlers() each
+            // re-entry would stack another copy of the click handler, firing
+            // enterManualEntryMode() once per re-entry the buyer happened to
+            // trigger. That is pinned by a mutation-verified test.
+            //
+            // The re-point is kept as well, cheaply, because "the panel is
+            // always torn down with its builder" is an invariant of
+            // destroy()'s current implementation rather than anything this
+            // method can see.
+            this.bindDropdownHandlers();
+            return;
+        }
 
-            const wrapper = this.companyField.parent();
-            if (wrapper.length && wrapper.css('position') === 'static') {
-                wrapper.css('position', 'relative');
+        panel = $('<div class="two-company-dropdown" hidden></div>');
+
+        const searchRow = $('<div class="two-company-dropdown__search"></div>');
+        const query = $('<input type="text" class="two-company-dropdown__query" autocomplete="off" />')
+            .attr('placeholder', TwoCompanySearch.getEmptyFieldHintText())
+            .attr('aria-label', TwoCompanySearch.getEmptyFieldHintText())
+            // Combobox semantics, so the `aria-activedescendant` the fallback
+            // engine sets while arrowing through results means something. The
+            // jQuery UI path sets its own equivalents on this same input.
+            .attr('role', 'combobox')
+            .attr('aria-autocomplete', 'list')
+            .attr('aria-expanded', 'true');
+        // The spinner slot. Painted by CSS from the loading class the widget
+        // (or the fallback path) puts on the query field - see
+        // `.two-company-dropdown__query.ui-autocomplete-loading` in two.css.
+        // A real element rather than a background on the input itself so it
+        // sits at the right-hand END of the field (§1) regardless of how the
+        // theme has styled the input's own padding.
+        searchRow.append(query).append($('<span class="two-company-dropdown__spinner" aria-hidden="true"></span>'));
+
+        // jQuery UI appends its own `<ul class="ui-autocomplete">` into this
+        // host. The host is the scroll container; the `<ul>` inside it is
+        // flattened into normal flow by CSS. Keeping the scroll on the host
+        // rather than on the `<ul>` is what lets the button below sit outside
+        // it without restyling a widget-owned element.
+        const results = $('<div class="two-company-dropdown__results"></div>');
+
+        const notListed = $('<button type="button" class="two-company-not-listed"></button>')
+            .text(this.getManualEntryText());
+
+        panel.append(searchRow).append(results).append(notListed);
+        // After the company field, so DOM order === tab order (see above).
+        // `appendTo` the wrapper rather than `.after()` the input: the
+        // org-number hint is also a child of this wrapper and the panel must
+        // come after it, not between the input and its own hint.
+        wrapper.append(panel);
+
+        this._dropdown = panel;
+        this._queryField = query;
+        this._resultsList = results;
+        this._notListedButton = notListed;
+
+        this.bindDropdownHandlers();
+    }
+
+    /**
+     * Remove the panel and unbind everything on it.
+     *
+     * Scoped to THIS field's own wrapper rather than a document-wide class
+     * sweep: the panel carries focus-moving controls, so a global remove could
+     * delete a second, independently-constructed instance's still-live panel
+     * out from under it. The passive org-number hint and the return-to-search
+     * link can afford a document-wide sweep; a focus-moving control cannot.
+     */
+    removeDropdown() {
+        clearTimeout(this._closeTimerId);
+        this._closeTimerId = null;
+        this._dropdownOpen = false;
+        this._pointerInPanel = false;
+        // Before the container reference below is dropped, or the pending
+        // release fires against a panel that no longer exists.
+        this.releaseResultsHeight();
+        $(document).off('mouseup.twoDropdown' + this._instanceNs);
+        $(window).off('blur.twoDropdown' + this._instanceNs);
+        // Release the jQuery UI widget FIRST, while its element is still
+        // attached. `_create` binds handlers on `document` that removing the
+        // element does not unbind, so a panel dropped without this leaks one
+        // set of document-level handlers per address-form re-render - and
+        // PrestaShop fires that event for something as ordinary as a country
+        // change. Before TWO-25326 the widget lived on the company-name field
+        // and setupAutocomplete()'s own node-swap branch released it there;
+        // that call now guards a node which can never hold a widget, so the
+        // release has to happen here, where the query field is known.
+        if (this._queryField && this._queryField.length) {
+            try {
+                if (this._queryField.hasClass('ui-autocomplete-input')) {
+                    this._queryField.autocomplete('destroy');
+                }
+            } catch (e) {
+                // Foreign or half-initialised widget; the node goes either way.
             }
+        }
+        if (this._notListedButton && this._notListedButton.length) {
+            this._notListedButton.off('.twoDropdown');
+        }
+        if (this._dropdown && this._dropdown.length) {
+            // Native listener, so jQuery's namespace sweep above does not
+            // reach it - it has to come off by reference.
+            if (this._tabCaptureHandler && this._dropdown.get(0)) {
+                this._dropdown.get(0).removeEventListener('keydown', this._tabCaptureHandler, true);
+            }
+            this._tabCaptureHandler = null;
+            this._dropdown.off('.twoDropdown');
+            this._dropdown.remove();
+        }
+        if (this.companyField && this.companyField.length) {
+            this.companyField.parent().children('.two-company-dropdown').off('.twoDropdown').remove();
+        }
+        this._dropdown = null;
+        this._queryField = null;
+        this._resultsList = null;
+        this._notListedButton = null;
+    }
 
-            chip.on('click.twoReveal', (event) => {
+    /**
+     * Bind every handler the panel needs, to THIS instance.
+     *
+     * Called on build AND on adoption, and it unbinds the `.twoDropdown`
+     * namespace first so it is idempotent - see the adoption branch in
+     * buildDropdown() for why re-binding rather than adopting matters.
+     *
+     * Covers: activation of "My company is not on the list", Escape-to-close,
+     * and close-on-focus-leaving-the-panel (§1).
+     *
+     * Escape is bound to the panel rather than to the document: a document
+     * handler would swallow Escape for every other control on the checkout,
+     * which is precisely the "key events must only ever be tied to individual
+     * controls" rule in §4.
+     *
+     * The close-on-leave is a deferred `focusout`, not a `blur`. Focus moving
+     * from the query field to the "not on the list" button is two events - a
+     * `focusout` on the first and a `focusin` on the second - in that order,
+     * so an immediate close would tear the panel down mid-Tab and drop the
+     * buyer on `<body>`. Deferring one tick and cancelling on any `focusin`
+     * within the panel makes "left the panel" mean what it says.
+     */
+    bindDropdownHandlers() {
+        if (!this._dropdown || !this._dropdown.length) {
+            return;
+        }
+        this._dropdown.off('.twoDropdown');
+        if (this._notListedButton && this._notListedButton.length) {
+            this._notListedButton.off('.twoDropdown');
+            this._notListedButton.on('click.twoDropdown', (event) => {
                 event.preventDefault();
-                this.revealSearch();
+                // Same reasoning as renderBackToSearchLink()'s own
+                // stopPropagation (#30.x.14 bug 2.5, live-verified): this
+                // button sits inside the address step's markup and the theme
+                // binds a delegated accordion-toggle handler above it, which
+                // reads a stray click as "collapse this step".
+                event.stopPropagation();
+                this.enterManualEntryMode();
             });
         }
 
-        this._revealChip = chip;
-    }
-
-    /**
-     * Remove the chip and unbind it.
-     *
-     * Also sweeps any `.two-company-search-reveal` orphaned among THIS
-     * field's own siblings (a previous, destroyed instance's chip on the
-     * SAME field) - the single-field case removeBackToSearchLink() guards
-     * against with a document-wide sweep. Deliberately scoped here rather
-     * than copying that global sweep: with more than one live company field
-     * on the page (see createRevealChip()), a global remove would delete
-     * another instance's still-in-use chip out from under it.
-     */
-    removeRevealChip() {
-        if (this._revealChip) {
-            this._revealChip.off('.twoReveal');
-            this._revealChip.remove();
-            this._revealChip = null;
-        }
-        if (this.companyField && this.companyField.length) {
-            this.companyField.siblings('.two-company-search-reveal').off('.twoReveal').remove();
-        }
-    }
-
-    /**
-     * Sync the chip's visibility/text and the field's tab-reachability to the
-     * current state.
-     *
-     * Hidden while `_revealed` (the buyer has opened the search and typing
-     * must reach the real field directly) or `_manualEntry` (same reason),
-     * and whenever there is no confirmed selection to protect - an empty or
-     * manually-typed field is exactly the plain-input behaviour that shipped
-     * before this element and needs no cover.
-     *
-     * `tabindex="-1"` while the chip covers the field is deliberate, not
-     * decorative: without it a keyboard user tabs through TWO stops for what
-     * must read as one control - the chip button, then the input hiding
-     * behind it.
-     */
-    updateRevealChip() {
-        if (!this._revealChip || !this._revealChip.length) {
-            return;
-        }
-        if (this._revealed || this._manualEntry || !this.hasConfirmedSelection()) {
-            this._revealChip.hide().text('');
-            if (this.companyField && this.companyField.length) {
-                // `tabindex="-1"` alone only removes the input from Tab
-                // order - it stays in the accessibility tree, so a screen
-                // reader jumping between form fields by their own shortcut
-                // (not Tab) would still land directly on a plain, editable
-                // text box holding the confirmed name, with no indication a
-                // button covers it. `aria-hidden` closes that gap; both are
-                // undone together here.
-                this.companyField.removeAttr('tabindex').removeAttr('aria-hidden');
+        this._dropdown.on('keydown.twoDropdown', (event) => {
+            // Enter inside an OPEN panel never reaches the address form.
+            //
+            // This handler is on the panel, so it runs after the widget's own
+            // input handler has had the keystroke - jQuery UI only
+            // `preventDefault`s Enter when it has an active menu item, and the
+            // fallback engine only when it has an active row. In every other
+            // state (the too-short hint, "No matches found", results painted
+            // but nothing highlighted) Enter fell through to PrestaShop's
+            // `<form>` and triggered implicit submission: the buyer types a
+            // company name, presses Enter before the results land, and submits
+            // the address step.
+            //
+            // Scoped to the QUERY FIELD, not the whole panel. A `<button>`'s
+            // activation click IS the default action of the Enter keydown that
+            // triggered it, so cancelling Enter in a bubbling ancestor
+            // suppresses the click outright - which silently broke Enter on
+            // "My company is not on the list" (§2: click, Enter and Space must
+            // all activate it). Space was unaffected only by accident, because
+            // a button's Space activation fires on keyup, which this never
+            // saw. The form-submission this guard exists to stop can only come
+            // from the query field anyway.
+            if (event.key === 'Enter'
+                && this._queryField && this._queryField.length
+                && event.target === this._queryField.get(0)) {
+                event.preventDefault();
             }
-            return;
+            if (event.key === 'Escape' || event.key === 'Esc') {
+                event.preventDefault();
+                event.stopPropagation();
+                // §1: Escape reverts focus to the company-name field.
+                this.closeDropdown(true);
+            }
+        });
+
+        // Tab out of the query field must NOT pick the highlighted row (§4.1).
+        //
+        // jQuery UI's autocomplete treats Tab as "accept the active menu item"
+        // - its own keydown handler calls `menu.select(event)` whenever a row
+        // has been arrow-keyed onto. That runs our `select` option, which ends
+        // in closeDropdown(true) and puts focus back on the company-name
+        // field: precisely the two things §1.9 and §4.1 forbid Tab from doing.
+        // A buyer who arrows down to look at a result and then tabs would find
+        // it silently chosen for them.
+        //
+        // Native listener in the CAPTURE phase, deliberately. The widget binds
+        // its handler on the query input itself, and a jQuery handler added
+        // afterwards on the same element runs after it - too late. Capture on
+        // an ancestor runs before the target's own listeners, so
+        // stopPropagation() here means the widget never sees the keystroke.
+        //
+        // Only propagation is stopped, never the default: letting the browser
+        // perform its own Tab is what makes the next stop correct in both
+        // directions without this code choosing a destination. Forward, the
+        // next tabbable inside the panel is the "not on the list" button (the
+        // results list and the widget's `<ul>` both carry `tabindex="-1"`),
+        // which is the §4.1 shortcut; backward, focus leaves the panel and the
+        // focusout handler closes it.
+        const panelEl = this._dropdown.get(0);
+        if (panelEl) {
+            if (this._tabCaptureHandler) {
+                panelEl.removeEventListener('keydown', this._tabCaptureHandler, true);
+            }
+            this._tabCaptureHandler = (event) => {
+                if (event.key !== 'Tab') {
+                    return;
+                }
+                if (!this._queryField || !this._queryField.length
+                    || event.target !== this._queryField.get(0)) {
+                    return;
+                }
+                event.stopPropagation();
+            };
+            panelEl.addEventListener('keydown', this._tabCaptureHandler, true);
         }
-        // Trimmed for display, not the raw value: hasConfirmedSelection()
-        // compares through normalizeCompanyName(), which also trims, so a
-        // value like "  Example Trading Ltd  " can be confirmed while showing (and
-        // having read aloud) its own leading/trailing whitespace verbatim.
-        const displayName = String(this.companyField.val() || '').trim();
-        this._revealChip
-            .text(displayName)
-            .attr('title', this.getEditCompanyText() + ': ' + displayName)
-            .attr('aria-label', this.getEditCompanyText() + ': ' + displayName)
-            .show();
-        this.companyField.attr('tabindex', '-1').attr('aria-hidden', 'true');
+
+        this._dropdown.on('focusin.twoDropdown', () => {
+            clearTimeout(this._closeTimerId);
+            this._closeTimerId = null;
+        });
+
+        this._dropdown.on('focusout.twoDropdown', () => {
+            this.scheduleDropdownClose();
+        });
+
+        // Dragging the results scrollbar moves focus to `<body>` in Chrome -
+        // no element inside the panel is focused, so the focusout close above
+        // fires and the panel disappears mid-scroll. With up to 50 results
+        // that is the ordinary way to browse them. A pointer held down
+        // anywhere on the panel, scrollbar included, means the buyer is still
+        // using it; the close is re-evaluated when they let go.
+        this._dropdown.on('mousedown.twoDropdown', () => {
+            this._pointerInPanel = true;
+            this.freezeResultsHeight();
+        });
+        $(document).off('mouseup.twoDropdown' + this._instanceNs)
+            .on('mouseup.twoDropdown' + this._instanceNs, () => {
+                if (!this._pointerInPanel) {
+                    return;
+                }
+                this._pointerInPanel = false;
+                // Release AFTER the browser has finished turning this
+                // mousedown/mouseup pair into a `click` - see
+                // freezeResultsHeight() for why the height was pinned at all.
+                this.releaseResultsHeightSoon();
+                if (!this._dropdownOpen || this._destroyed) {
+                    return;
+                }
+                // Do NOT schedule a close here. That was the first attempt at
+                // this fix and it only moved the timing: after a scrollbar
+                // drag `document.activeElement` IS `<body>` - that is the
+                // premise of the bug - so the deferred close's
+                // "focus is outside the panel" test passes and the panel
+                // still disappears, just on mouseup instead of mousedown.
+                //
+                // The buyer dragged the panel's own scrollbar, which is a
+                // statement that they are still using it. Put focus back where
+                // it was before the drag stole it, and the panel simply stays
+                // open because nothing has left it.
+                const active = document.activeElement;
+                const panelEl = this._dropdown && this._dropdown.length ? this._dropdown.get(0) : null;
+                if (panelEl && active && panelEl.contains(active)) {
+                    return;
+                }
+                if (this._queryField && this._queryField.length) {
+                    this._queryField.trigger('focus');
+                }
+            });
+
+        // A drag begun on the panel and released OUTSIDE the window fires no
+        // `mouseup` this document ever sees, so the flag above would stay
+        // `true` and suppress every subsequent focus-out close for the rest of
+        // the panel's life - the panel stays on screen with focus long gone.
+        // Losing the window is proof the pointer is no longer interacting with
+        // the panel, whatever happened to the button release.
+        $(window).off('blur.twoDropdown' + this._instanceNs)
+            .on('blur.twoDropdown' + this._instanceNs, () => {
+                this._pointerInPanel = false;
+                this.releaseResultsHeight();
+            });
     }
 
     /**
-     * Reveal the search box. Snapshots the confirmed pairing the chip was
-     * covering - name, organisation number AND its tag - so an abandoned
-     * search (see setupRevealBlurRestore()) can put back exactly what was
-     * there, not merely the visible name. Restoring the name alone and
-     * leaving the organisation number cleared (clearStaleOrganizationSelection()
-     * runs on the very first keystroke into the now-empty field) would show a
-     * confirmed-looking company with nothing behind it.
+     * Pin the results area's height for the duration of a pointer press.
+     *
+     * A `<button>` is only activated when the mousedown and the mouseup land
+     * on the SAME element - otherwise the browser dispatches `click` on the
+     * nearest common ancestor of the two, and the button's own handler never
+     * runs. The results area sits directly above "My company is not on the
+     * list", so anything that changes its height mid-press slides the button
+     * out from under the pointer and silently swallows the activation.
+     *
+     * That is exactly what happened, and it is why manual entry was
+     * unreachable by mouse. Pressing the button moves focus off the query
+     * field; the blur empties the results area (jQuery UI closes its menu on
+     * blur, and the too-short hint lives in that same container); the button
+     * jumps up by the height of whatever was showing; mouseup lands on the
+     * form behind the panel. Measured in real Chromium: results 30px -> 0px
+     * between mousedown and mouseup, button top 658 -> 627, `click` retargeted
+     * from the button to `<section class="form-fields">`.
+     *
+     * jsdom cannot see this - it has no layout, every rect is 0x0, and it
+     * dispatches `click` wherever it is told regardless of what moved. So the
+     * unit suite passed throughout while a real buyer could not reach manual
+     * entry at all. The regression test for this asserts the mechanism (the
+     * height is pinned for the press and released after) rather than the
+     * geometry, which is the most jsdom can honestly prove.
+     *
+     * Pinning rather than suppressing the emptying: the emptying itself is
+     * correct and comes from the widget, and the invariant that actually
+     * matters is narrower and engine-independent - nothing above the button
+     * may reflow between press and release. This also covers the fallback
+     * search engine, which renders that container itself.
      */
-    revealSearch() {
-        if (this._destroyed || this._revealed) {
+    freezeResultsHeight() {
+        if (this._destroyed || !this._resultsList || !this._resultsList.length) {
             return;
         }
-        // The chip's click handler can fire in the same tick PrestaShop
-        // replaces the address form (a country change racing the click) -
-        // this instance is not `_destroyed` yet in that instant, but the
-        // field it is holding is already detached. Blanking/focusing a
-        // detached node is a silent no-op the buyer would read as a dead
-        // click, so bail rather than act on a stale reference.
-        if (!this.companyField || !this.companyField.length
-            || !document.contains(this.companyField.get(0))) {
+        const el = this._resultsList.get(0);
+        if (!el) {
             return;
         }
-        // Cancel any blur-restore timer already armed on THIS field before
-        // touching anything else (TWO-30.x.15, live bug found post-#130).
-        //
-        // A real mouse click on the chip fires a native `blur` on the
-        // company field BEFORE this method runs: the field can still hold
-        // focus at that point despite `tabindex="-1"`/`aria-hidden` (both are
-        // set by updateRevealChip() without forcing a blur), and mousedown on
-        // the chip button - a separate, focusable element - moves focus away
-        // from it in the browser's normal mousedown-then-click order. That
-        // blur is `setupRevealBlurRestore()`'s own trigger: it arms a 200ms
-        // timer via armRevealBlurRestore() whose only guard is `_revealed` AT
-        // FIRE TIME, not at arm time.
-        //
-        // Every other place in this file that can leave that timer stale
-        // (country change, `updatedAddressForm`, destroy()) clears it
-        // explicitly for exactly this reason - this method was the one gap.
-        // Here the gap is worse than "stale": the guard doesn't merely fail
-        // to protect, it actively fires. By the time the 200ms elapses,
-        // `_revealed` has already been set true a few lines below by THIS
-        // SAME click, so the stale timer's guard passes and it "restores"
-        // the snapshot this method just took - overwriting the freshly
-        // opened search with the very company the buyer clicked away from,
-        // silently re-showing the chip and wiping whatever the buyer had
-        // typed in the meantime. Live-verified: the field visibly reverted
-        // to the previously selected company ~200ms after a real click on
-        // the chip, with no console error and no event firing at the moment
-        // of revert - it was this timer, not a broken search.
-        clearTimeout(this._revealBlurTimerId);
-        this._revealBlurTimerId = null;
-        this._revealSnapshot = {
-            company: String(this.companyField.val() || ''),
-            orgId: this.organizationField && this.organizationField.length
-                ? String(this.organizationField.val() || '') : '',
-            orgTag: this.organizationField && this.organizationField.length
-                ? this.organizationField.attr('data-two-company-name') : undefined
-        };
-        this._revealed = true;
-        this.companyField.val('');
-        this.updateRevealChip();
-        // Cleared BEFORE `.trigger('focus')` below, not after (round-2
-        // adversarial review finding, Vader): `_pointerFocusPending` can be
-        // left stale `true` by an earlier mousedown that landed on an
-        // ALREADY-focused field (e.g. the buyer clicking again mid-typing to
-        // reposition the caret) - a real click that fires no paired `focus`
-        // to consume the flag, because focus does not change. If this field
-        // genuinely still held focus at that point and only lost it later
-        // when the chip itself was clicked, `.trigger('focus')` below is a
-        // REAL focus transition and the namespaced handler would read that
-        // stale `true` and call `openSearchForCurrentTerm()` on its own -
-        // stacking with the explicit call on the next line into two searches
-        // from one click. Clearing here first makes the explicit call below
-        // the only one that can ever fire from this method, regardless of
-        // whatever the flag was carrying in.
-        this._pointerFocusPending = false;
-        this.companyField.trigger('focus');
-        // A real click (or key activation) on the chip got us here, so open
-        // directly rather than relying on the pointer-gated
-        // `focus.twoCompanyOpen` handler - the `.trigger('focus')` above
-        // fires no `mousedown` on this field, so that gate would otherwise
-        // never fire for this path (#30.x.14, see openSearchForCurrentTerm()).
+        // Re-entrant presses must not re-pin to a height this method itself
+        // established, or a stale value outlives the gesture that set it.
+        if (this._resultsHeightFrozen) {
+            return;
+        }
+        clearTimeout(this._resultsFreezeReleaseId);
+        this._resultsFreezeReleaseId = null;
+        this._resultsHeightFrozen = true;
+        this._resultsList.css('min-height', el.getBoundingClientRect().height + 'px');
+    }
+
+    /**
+     * Drop the pinned height, letting the results area size to its content
+     * again. Safe to call when nothing is pinned.
+     */
+    releaseResultsHeight() {
+        clearTimeout(this._resultsFreezeReleaseId);
+        this._resultsFreezeReleaseId = null;
+        if (!this._resultsHeightFrozen) {
+            return;
+        }
+        this._resultsHeightFrozen = false;
+        if (this._resultsList && this._resultsList.length) {
+            this._resultsList.css('min-height', '');
+        }
+    }
+
+    /**
+     * Release on the next tick rather than immediately.
+     *
+     * This runs from a `mouseup` handler, and the `click` the browser
+     * synthesises from that press has not been dispatched yet. Un-pinning here
+     * and now would let the panel reflow before the button's own handler runs,
+     * which is the very failure this pins against - just moved one event
+     * later.
+     */
+    releaseResultsHeightSoon() {
+        clearTimeout(this._resultsFreezeReleaseId);
+        this._resultsFreezeReleaseId = setTimeout(() => {
+            this._resultsFreezeReleaseId = null;
+            this.releaseResultsHeight();
+        }, 0);
+    }
+
+    /**
+     * Close once focus has genuinely settled somewhere outside the panel.
+     *
+     * Deliberately does NOT move focus. This fires on the way OUT - a Tab off
+     * the "not on the list" button, or a click elsewhere on the form - and the
+     * browser has already chosen the destination. Pulling focus back to the
+     * company-name field here is exactly the keyboard trap §4 forbids.
+     */
+    scheduleDropdownClose() {
+        clearTimeout(this._closeTimerId);
+        this._closeTimerId = setTimeout(() => {
+            this._closeTimerId = null;
+            if (this._destroyed || !this._dropdown || !this._dropdown.length) {
+                return;
+            }
+            // Still being pointed at (a scrollbar drag) - not abandoned.
+            if (this._pointerInPanel) {
+                return;
+            }
+            const active = document.activeElement;
+            if (active && this._dropdown.get(0).contains(active)) {
+                return;
+            }
+            this.closeDropdown(false);
+        }, 0);
+    }
+
+    /**
+     * Open the panel and put focus in the query field (§1).
+     *
+     * The company-name field is NOT touched - not its value, not its
+     * selection. That is the entire point of the panel: §1 requires the
+     * company-name field to be left unchanged until the buyer picks a result.
+     *
+     * The query field starts EMPTY rather than seeded from the company-name
+     * field. Seeding it would re-run a search for a company the buyer has
+     * already confirmed, and the first thing they would see on reopening is a
+     * list containing only the company they are trying to move away from.
+     */
+    openDropdown() {
+        if (this._destroyed || this._manualEntry) {
+            return;
+        }
+        if (!this._dropdown || !this._dropdown.length
+            || !this._queryField || !this._queryField.length) {
+            return;
+        }
+        clearTimeout(this._closeTimerId);
+        this._closeTimerId = null;
+        // Cleared on every open: the flag is otherwise only reset by a
+        // matching `mouseup`, and a right-click on the panel or a drag
+        // released outside the window never produces one - leaving the
+        // focus-out close suppressed for the rest of the instance's life.
+        this._pointerInPanel = false;
+
+        this._dropdownOpen = true;
+        this._dropdown.removeAttr('hidden').show();
+        this.setDropdownExpandedState();
+        this.syncNotListedVisibility();
+        this._queryField.trigger('focus');
+        // Render the current state immediately - for an empty query that is
+        // the "type N more characters" hint (§1), not an empty or absent
+        // panel. Matches the requirement that the hint is visible as soon as
+        // the control opens, which is the Hyvä failure recorded on this
+        // ticket.
         this.openSearchForCurrentTerm();
     }
 
     /**
-     * Stand reveal state down because something else already decided what the
-     * field should show - a fresh selection (onCompanySelected) or manual
-     * entry. Does NOT touch the field's value; the caller has already set it.
+     * Close the panel.
+     *
+     * @param {boolean} returnFocus Put focus back on the company-name field.
+     *   True for Escape and for a completed selection (§1); false when the
+     *   browser has already moved focus somewhere else of its own accord.
      */
-    collapseReveal() {
-        this._revealed = false;
-        this._revealSnapshot = null;
-        this.updateRevealChip();
+    closeDropdown(returnFocus) {
+        clearTimeout(this._closeTimerId);
+        this._closeTimerId = null;
+        this._dropdownOpen = false;
+        // A closed panel must stay closed. The re-render path re-arms this
+        // immediately after calling here, which is the one case where a
+        // rebuild is allowed to reopen; every other close - Escape, a
+        // selection, focus leaving the panel, entering manual entry - is the
+        // buyer's own and outranks a deadline an earlier re-render set.
+        TwoCompanySearch._reopenPanelUntil = 0;
+        // State hygiene, and DEFENSIVE ONLY - deliberately not covered by a
+        // test, because no test can currently make it matter. The flag is only
+        // ever read by scheduleDropdownClose(), which runs solely while the
+        // panel is open, and every route back to open goes through
+        // openDropdown(), which already clears it. So a stale `true` surviving
+        // a close cannot be observed today. It is reset anyway because that
+        // reachability argument is a property of the current call graph rather
+        // than of this method, and "closed" plainly means nothing is pointing
+        // into the panel. The genuinely reachable stranding path - a drag
+        // released outside the window, which fires no `mouseup` at all - is
+        // handled by the `window blur` handler in bindDropdownHandlers(), and
+        // that one IS pinned by a test.
+        this._pointerInPanel = false;
+        this.setDropdownExpandedState();
+        if (this._dropdown && this._dropdown.length) {
+            this._dropdown.hide().attr('hidden', 'hidden');
+        }
+        if (this._queryField && this._queryField.length) {
+            this._queryField.val('');
+            this._queryField.removeClass('ui-autocomplete-loading two-company-search-loading');
+            try {
+                if (this._queryField.hasClass('ui-autocomplete-input')) {
+                    this._queryField.autocomplete('close');
+                }
+            } catch (e) {
+                // Widget absent or already released; the panel is hidden either way.
+            }
+        }
+        if (returnFocus && this.companyField && this.companyField.length
+            && document.contains(this.companyField.get(0))) {
+            this.companyField.trigger('focus');
+        }
     }
 
     /**
-     * Bind the blur handler that resolves an opened-but-abandoned search:
-     * restore the snapshot revealSearch() took, so the buyer leaving the
-     * field without picking anything sees the same confirmed company they
-     * started with.
+     * Keep `aria-expanded` on the company-name field honest.
      *
-     * Delayed 200ms - deliberately a touch longer than the fallback
-     * dropdown's own 150ms close-on-blur, not matching it - so a click on a
-     * result (which keeps the field focused through preventDefault on
-     * mousedown, on both render paths) resolves and calls collapseReveal()
-     * FIRST. If `_revealed` is still true once the delay elapses, nothing
-     * claimed the open search.
+     * Set on every open and close, not once at setup: the attribute is what
+     * tells a screen-reader user whether the popup this control advertises
+     * (`aria-haspopup="listbox"`) is currently showing, and a value written
+     * once is wrong from the first interaction onward.
      *
-     * Guarded on `_manualEntry` too: entering manual entry mid-reveal must not
-     * have this timer put the old company back seconds later out from under
-     * the buyer's own "not on the list" choice. Also stood down explicitly by
-     * setupCountryChangeListener()'s own change handler, which - unlike a
-     * genuine `updatedAddressForm` re-render - runs on this SAME instance and
-     * would otherwise leave this timer armed against a snapshot captured
-     * under the previous country.
+     * Only while the field is actually acting as the trigger - in manual-entry
+     * mode it is a plain text input and carries neither attribute.
      */
-    setupRevealBlurRestore() {
-        if (!this.companyField || this.companyField.length === 0) {
+    setDropdownExpandedState() {
+        if (!this.companyField || !this.companyField.length || this._manualEntry) {
             return;
         }
-        this.companyField.off('blur.twoReveal');
-        this.companyField.on('blur.twoReveal', () => {
-            this.armRevealBlurRestore();
-        });
+        if (this.companyField.attr('aria-haspopup')) {
+            this.companyField.attr('aria-expanded', this._dropdownOpen ? 'true' : 'false');
+        }
     }
 
     /**
-     * (Re-)arm the deferred restore. A standalone method rather than logic
-     * inlined in setupRevealBlurRestore()'s handler, so the custom fallback
-     * path's manual-entry row - which blurs the field to move focus onto
-     * itself, then blurs AGAIN on the way out - can re-arm the same timer on
-     * its own `blur`, matching how it already re-arms the dropdown's own
-     * close timer. Without that, tabbing onto the row cancels this timer (see
-     * its `focus` handler) but leaving the row again would never re-cancel or
-     * re-fire it, silently disabling the abandoned-search restore for the
-     * rest of that visit.
+     * §2 visibility gating for "My company is not on the list".
+     *
+     * "Search UI open and nothing captured yet" - NOT "the query is long
+     * enough to have searched". Doug's requirement is explicit that a buyer
+     * must have a route into manual entry without typing a doomed query
+     * first, and the WC regression recorded on TWO-25326 was exactly this:
+     * gating on the 3-character threshold removed the button from the DOM for
+     * a buyer who had typed nothing, which is the case the bullet is about.
      */
-    armRevealBlurRestore() {
-        clearTimeout(this._revealBlurTimerId);
-        this._revealBlurTimerId = setTimeout(() => {
-            if (this._destroyed || !this._revealed || this._manualEntry) {
+    syncNotListedVisibility() {
+        if (!this._notListedButton || !this._notListedButton.length) {
+            return;
+        }
+        const show = this._dropdownOpen && !this._manualEntry && !this.hasConfirmedSelection();
+        if (show) {
+            this._notListedButton.show();
+        } else {
+            this._notListedButton.hide();
+        }
+    }
+
+    /**
+     * Make the company-name field a search TRIGGER rather than a text box
+     * while search mode is active (§1).
+     *
+     * `readonly`, deliberately, and not `disabled`: a readonly input still
+     * submits its value, still takes focus, and is still a tab stop - all
+     * three of which this field needs, because it IS PrestaShop's own address
+     * field and its value is the company name that gets saved. What readonly
+     * removes is the one thing §1 forbids: the buyer typing into it and
+     * silently overwriting a confirmed name outside of a real selection.
+     *
+     * Removed again in manual-entry mode, where this field is the thing the
+     * buyer is supposed to type into.
+     */
+    setCompanyFieldSearchMode(searchMode) {
+        if (!this.companyField || !this.companyField.length) {
+            return;
+        }
+        if (searchMode) {
+            this.companyField.attr('readonly', 'readonly');
+            this.companyField.attr('aria-haspopup', 'listbox');
+            this.companyField.attr('aria-expanded', this._dropdownOpen ? 'true' : 'false');
+            this.companyField.attr('title', this.getEditCompanyText());
+        } else {
+            this.companyField.removeAttr('readonly');
+            this.companyField.removeAttr('aria-haspopup');
+            this.companyField.removeAttr('aria-expanded');
+            this.companyField.removeAttr('title');
+        }
+    }
+
+    /**
+     * What opens the panel (§1): a real click on the company-name field, or a
+     * keypress on it other than Tab.
+     *
+     * Focus ALONE does not open it, and that distinction is the requirement
+     * verbatim ("note that merely moving focus into it does not open the
+     * dropdown - only clicking or typing"). A keyboard buyer tabbing through
+     * the address form on their way somewhere else must not have a panel
+     * thrown open in front of them.
+     *
+     * Modifier-only keydowns are ignored for the same reason: Shift on its own
+     * is how a buyer starts Shift+Tab, and Shift+Tab is a Tab.
+     */
+    setupCompanyFieldOpeners() {
+        if (!this.companyField || !this.companyField.length) {
+            return;
+        }
+        this.companyField.off('.twoCompanyOpen');
+
+        this.companyField.on('mousedown.twoCompanyOpen', (event) => {
+            if (this._destroyed || this._manualEntry) {
                 return;
             }
-            // The field this instance held at reveal time may have been
-            // replaced or detached by an address-form re-render that
-            // happened without going through destroy() on THIS instance
-            // (it wouldn't be live to run this callback at all if it had
-            // been destroyed) - defensive rather than reachable today, but
-            // cheap, and consistent with the DOM-replacement guards this
-            // file uses everywhere else.
-            if (!this.companyField || !this.companyField.length
-                || !document.contains(this.companyField.get(0))) {
+            // preventDefault stops the browser placing a caret in (and
+            // selecting text of) the readonly field on the way past. Focus is
+            // moved into the query field by openDropdown() instead.
+            event.preventDefault();
+            this.openDropdown();
+        });
+
+        this.companyField.on('keydown.twoCompanyOpen', (event) => {
+            if (this._destroyed || this._manualEntry || this._dropdownOpen) {
                 return;
             }
-            const snap = this._revealSnapshot || {};
-            this.companyField.val(snap.company || '');
-            if (this.organizationField && this.organizationField.length) {
-                this.organizationField.val(snap.orgId || '');
-                if (snap.orgTag !== undefined) {
-                    this.organizationField.attr('data-two-company-name', snap.orgTag);
-                } else {
-                    this.organizationField.removeAttr('data-two-company-name');
-                }
+            const key = event.key;
+            if (key === 'Tab' || key === 'Shift' || key === 'Control' || key === 'Alt'
+                || key === 'Meta' || key === 'Escape' || key === 'Esc') {
+                return;
             }
-            this.setCompanyIdHint(snap.orgId || '');
-            this._revealed = false;
-            this._revealSnapshot = null;
-            this.updateRevealChip();
-        }, 200);
+            if (event.ctrlKey || event.metaKey || event.altKey) {
+                return;
+            }
+            event.preventDefault();
+            this.openDropdown();
+            // The character that opened the panel belongs in the query field,
+            // not lost. Only for a real printable character - `key` is a
+            // single code point exactly when the keypress produced text.
+            if (key && key.length === 1 && this._queryField && this._queryField.length) {
+                this._queryField.val(key);
+                this._queryField.trigger('input');
+            }
+        });
     }
 
     normalizeCompanyName(value) {
@@ -784,11 +1258,11 @@ class TwoCompanySearch {
         this.companyField.off('.twoCompanySync');
         this.companyField.on('input.twoCompanySync change.twoCompanySync', () => {
             this.clearStaleOrganizationSelection();
-            // Belt and braces alongside collapseReveal()/setupRevealBlurRestore()
-            // (TWO-25288 element 2): whatever just cleared the tag above must
-            // not leave the chip showing a name with nothing confirmed behind
-            // it, however the field's value ended up changing.
-            this.updateRevealChip();
+            // Whatever just cleared the tag above changes the answer to
+            // hasConfirmedSelection(), which is what §2 gates the "not on the
+            // list" button on - so re-evaluate it however the field's value
+            // ended up changing.
+            this.syncNotListedVisibility();
         });
     }
 
@@ -1018,13 +1492,23 @@ class TwoCompanySearch {
             // document.body rather than next to the input - with nothing left
             // holding a reference that could clean either up.
             if (isDifferentNode) {
-                try {
-                    if (previousField.hasClass('ui-autocomplete-input')) {
-                        previousField.autocomplete('destroy');
-                    }
-                } catch (e) {
-                    // Already gone or never initialised; nothing to release.
-                }
+                // Release the OUTGOING panel - widget included - before we
+                // stop pointing at it. This used to call
+                // `previousField.autocomplete('destroy')`, which was correct
+                // while the widget lived on the company-name field and is
+                // dead code now that it lives on the panel's query field:
+                // `previousField` can never carry `ui-autocomplete-input`, so
+                // the guard simply never fires and every re-render abandoned a
+                // live widget. removeDropdown() destroys the widget on the
+                // query field it can actually see, and is safe to call before
+                // `this.companyField` is reassigned - its own fallback sweep
+                // is scoped to the wrapper around the node being abandoned,
+                // which is exactly the subtree going away.
+                //
+                // The fallback engine is unbound separately, just below, and
+                // works from its own stored `inputEl` rather than from
+                // `_queryField`, so it is unaffected by the nulling here.
+                this.removeDropdown();
                 previousField.removeClass(
                     'two-company-search-input two-company-search-loading ui-autocomplete-loading'
                 );
@@ -1035,7 +1519,8 @@ class TwoCompanySearch {
                 // focus/mousedown event again, an invariant this method does
                 // not otherwise rely on and the next DOM-recycling path could
                 // break silently).
-                previousField.off('focus.twoCompanyOpen mousedown.twoCompanyOpen');
+                previousField.off('.twoCompanyOpen');
+                previousField.removeAttr('readonly aria-haspopup aria-expanded');
             }
             this.companyField = currentField;
         }
@@ -1055,8 +1540,6 @@ class TwoCompanySearch {
         this.ensureFieldWrapper();
         this.setupWidthRefreshListener();
 
-        // Marks the field for the in-field spinner CSS (views/css/two.css).
-        this.companyField.addClass('two-company-search-input');
 
         // Empty-field hint. Set here rather than only in the address-form
         // override so it survives PrestaShop replacing the input on
@@ -1065,21 +1548,64 @@ class TwoCompanySearch {
         // both render paths get it.
         this.applyEmptyFieldHint();
 
-        // Click-to-reveal chip (TWO-25288 element 2). Same reasoning as the
-        // hint above: this method is the one that re-runs against whatever
-        // field PrestaShop just put on the page, so the chip and its blur
-        // handling have to be rebuilt here, not only in init().
-        this.createRevealChip();
-        this.updateRevealChip();
-        this.setupRevealBlurRestore();
+        // The anchored panel and its query field (TWO-25326 §1). Same re-run
+        // reasoning as the hint above: this method is the one that runs
+        // against whatever field PrestaShop just put on the page, so the panel
+        // has to be rebuilt on the same schedule or it goes missing the moment
+        // the address form's DOM is replaced.
+        this.buildDropdown();
+
+        // Order matters. `setCompanyFieldSearchMode(true)` makes the
+        // company-name field readonly, and the ONLY route back to an editable
+        // field from there is the panel. So it must not be applied until the
+        // panel is known to exist: if buildDropdown() bailed (no wrapper to
+        // adopt, or an adopted panel missing its query input), a readonly
+        // field with no panel is a dead checkout - the buyer can neither type
+        // a company nor search for one. Fail back to a plain editable input,
+        // which is the pre-TWO-25288 behaviour and still submits.
+        if (!this._queryField || !this._queryField.length) {
+            this.setCompanyFieldSearchMode(false);
+            // Unbind the openers too, not just the readonly attribute. On a
+            // RE-ENTRY (a country change over a field that already carries
+            // them) the `mousedown.twoCompanyOpen` handler would otherwise
+            // survive and keep calling preventDefault() on a field that is now
+            // editable and has no panel to open - so the buyer cannot even
+            // place a caret in it.
+            this.companyField.off('.twoCompanyOpen');
+            // A manual-entry buyer must keep their way back, even here: the
+            // tail of this method is unreachable from this return.
+            if (this._manualEntry) {
+                this.renderBackToSearchLink();
+            }
+            return;
+        }
+
+        // Marker class, applied only once the panel is known to exist.
+        this.companyField.addClass('two-company-search-input');
+
+        this.setCompanyFieldSearchMode(!this._manualEntry);
+        this.setupCompanyFieldOpeners();
+        this.syncNotListedVisibility();
 
         // Use jQuery UI autocomplete if available; otherwise fallback to custom.
         // `$.fn.autocomplete` alone is not proof of jQuery UI - the older
         // bassistance jquery.autocomplete plugin claims the same name with an
         // incompatible signature, and feeding it this options object would leave
         // the field with no working search at all while skipping the fallback.
+        //
+        // TWO-25326 §1: the widget is bound to the PANEL'S QUERY FIELD, not to
+        // `input[name='company']` as it was through PR #131. That single change
+        // is what turns an in-field autocomplete into a real dropdown control:
+        // the company-name field stops being the search box, so it can be left
+        // untouched until a result is picked, and every keystroke, the 300ms
+        // debounce, the loading class the spinner is painted from, and the
+        // cursor-key navigation all belong to a control that lives inside the
+        // panel. `appendTo` keeps the widget's own `<ul>` inside the panel too,
+        // which is what stops it being appended to `<body>` and breaking Tab
+        // (the WC §1 defect recorded on this ticket).
         if ($.ui && $.ui.autocomplete && typeof $.fn.autocomplete === 'function') {
-            this.companyField.autocomplete({
+            this._queryField.autocomplete({
+                appendTo: this._resultsList,
                 source: (request, response) => {
                     // TWO-30.x.10 element 1: jQuery UI's own `_resizeMenu`
                     // sizes the dropdown to whichever is WIDER, the field or
@@ -1114,28 +1640,16 @@ class TwoCompanySearch {
                         response([]);
                         return;
                     }
-                    // Empty field, but a search WAS asked for (a click/focus
-                    // into the field, not a keystroke - see the `focus`
-                    // handler below). #30.x.14 bug 2.1, live-verified: with
-                    // `response([])` here, focusing an empty field opened
-                    // nothing at all - the field just accepted typed input,
-                    // with no visible control the buyer could point to as
-                    // "this is a search widget". A one-row hint gives that
-                    // click something to show, the same way Mag/WC's
-                    // select2/selectWoo combobox opens a panel on click before
-                    // a single character is typed. Goes through the same
-                    // `two_unavailable` message-row plumbing as
-                    // buildTooShortItem() below - reachable but unselectable,
-                    // keyboard-skipped, muted styling.
-                    if (term.length === 0) {
-                        response([this.buildFocusHintItem()]);
-                        return;
-                    }
-                    // Typed, but not enough to search on. Say so instead of
-                    // leaving the buyer with a field that appears to do nothing.
-                    // Trimmed: whitespace is not something the search can match
-                    // on, so "   " must be told to type more rather than put on
-                    // the wire while "  " is refused.
+                    // Too short to search on - INCLUDING the empty query the
+                    // panel opens with. TWO-25326 §1 requires the "type N more
+                    // characters" hint to be on screen as soon as the control
+                    // opens, not only once the buyer has typed a character
+                    // (that is the Hyva failure recorded on the ticket), so
+                    // the empty case is not special-cased into a hint of its
+                    // own any more - it IS the too-short case, and says the
+                    // same thing the buyer will keep reading until they have
+                    // typed enough. Trimmed: whitespace is not something the
+                    // search can match on.
                     if (term.trim().length < MIN_SEARCH_LENGTH) {
                         response([this.buildTooShortItem()]);
                         return;
@@ -1143,7 +1657,7 @@ class TwoCompanySearch {
                     const key = this.buildCacheKey(request.term);
                     const cached = TwoCompanySearch.cacheGet(key);
                     if (cached) {
-                        response(this.withManualEntryRow(cached));
+                        response(this.withNoMatchesRow(cached));
                         return;
                     }
                     this.searchCompanies(request.term, (results, meta) => {
@@ -1159,25 +1673,25 @@ class TwoCompanySearch {
                             // Not cached, and not an empty dropdown: an empty
                             // list here would read as "your company is not
                             // registered" when in fact no search was made.
-                            response(this.withManualEntryRow([this.buildSelectCountryItem()]));
+                            response([this.buildSelectCountryItem()]);
                             return;
                         }
                         if (meta && meta.unavailable) {
                             // Not cached: the service may well be healthy again
                             // by the buyer's next keystroke.
-                            response(this.withManualEntryRow([this.buildUnavailableItem()]));
+                            response([this.buildUnavailableItem()]);
                             return;
                         }
                         // A known-partial list is not worth pinning for 5 minutes.
                         //
-                        // The RAW results are cached, never the list with the
-                        // manual-entry row appended: the row is decoration owned
-                        // by this render, and caching it would put a second copy
-                        // in the list on the next cache hit.
+                        // The RAW results are cached, never the rendered list:
+                        // the zero-results row is decoration owned by this
+                        // render, and caching it would put a second copy in the
+                        // list on the next cache hit.
                         if (!(meta && meta.degraded)) {
                             TwoCompanySearch.cacheSet(key, results);
                         }
-                        response(this.withManualEntryRow(results));
+                        response(this.withNoMatchesRow(results));
                     });
                 },
                 // Deliberately 0, and NOT MIN_SEARCH_LENGTH: jQuery UI never
@@ -1204,48 +1718,46 @@ class TwoCompanySearch {
                 // below its own combobox.
                 position: { my: 'left top+8', at: 'left bottom', collision: 'none' },
                 select: (event, ui) => {
-                    // The manual-entry row IS actionable, unlike the message
-                    // rows: it runs its action and then returns false, which is
-                    // what stops jQuery UI writing its label into the company
-                    // field. `value: ''` is not what protects the field -
-                    // _normalize() has already rewritten that to the label.
-                    if (ui && ui.item && ui.item.two_manual_entry) {
-                        this.enterManualEntryMode();
-                        return false;
-                    }
+                    // "My company is not on the list" is no longer an item in
+                    // this list at all (TWO-25326 §2) - it is a real <button>
+                    // outside the scroll container, with its own click
+                    // handler. Nothing here has to special-case it.
                     // The "search unavailable" row is a message, not a company:
                     // returning false stops jQuery UI writing it into the field.
                     if (ui && ui.item && ui.item.two_unavailable) {
                         return false;
                     }
-                    return this.onCompanySelected(event, ui);
+                    this.onCompanySelected(event, ui);
+                    // A completed selection ends the search. Focus goes back
+                    // to the company-name field, which now holds the picked
+                    // name (§1: "on selection, the selected name replaces what
+                    // was previously in the company-name field").
+                    this.closeDropdown(true);
+                    // ALWAYS false, never the handler's own result. A truthy
+                    // return lets jQuery UI run its own `_value(item.value)`
+                    // and `this.term = this._value()` on the QUERY field after
+                    // we return - re-seeding the field closeDropdown() has
+                    // just cleared. The next open would then search for the
+                    // company the buyer has only just confirmed, and offer
+                    // them a list containing nothing but it. onCompanySelected()
+                    // writes the company-name field itself; the widget must
+                    // write nothing.
+                    return false;
                 },
                 focus: (event, ui) => {
-                    // Returning false here does NOT stop the row being focused -
-                    // jQuery UI's menu has already focused it by the time this
-                    // fires, and the return value gates ONLY the `_value()` write
-                    // that mirrors a key-navigated item into the input. So the
-                    // manual-entry row needs this guard exactly as much as the
-                    // message rows do, and it keeps its keyboard reachability.
+                    // ALWAYS false, for every item including real companies.
                     //
-                    // Without it, arrow-keying onto the row writes into the
-                    // company field, in one of two ways depending on what else is
-                    // in the list. _normalize() early-returns when the FIRST item
-                    // has both a label and a value, so alongside real companies
-                    // this row keeps `value: ''` and arrow-down BLANKS the term
-                    // the buyer typed; alongside a message row (zero results,
-                    // unavailable, country-not-chosen) the first value is falsy,
-                    // normalisation runs, and arrow-down writes the affordance
-                    // text itself into the field. Either way `_value()` writes
-                    // through .val(), which fires no `input` event, so
-                    // clearStaleOrganizationSelection() never runs and the
-                    // organisation number of the previously picked company stays
-                    // behind a field that now reads empty or nonsense. The
-                    // widget then adopts the field contents as its search term
-                    // after `select` returns, so the damage outlives the row.
-                    if (ui && ui.item && (ui.item.two_unavailable || ui.item.two_manual_entry)) {
-                        return false;
-                    }
+                    // The return value gates ONLY jQuery UI's `_value()`
+                    // write, which mirrors the key-navigated item's label back
+                    // into the input the widget is attached to. That input is
+                    // now the QUERY field, and overwriting the buyer's own
+                    // search term with "Some Company Ltd (123456789)" the
+                    // moment they press Down is both wrong to read and wrong
+                    // to search on if they then keep typing. Returning false
+                    // does NOT stop the row being highlighted - the menu has
+                    // already done that by the time this fires - so cursor-key
+                    // navigation and Enter (§1) are untouched.
+                    return false;
                 }
             });
 
@@ -1253,28 +1765,35 @@ class TwoCompanySearch {
             // Han review finding): `.ui-autocomplete` is jQuery UI's own
             // un-namespaced default class, shared by any OTHER jQuery UI
             // autocomplete that might be live on the same page (a native
-            // PrestaShop lookup, another module). Clamping every
-            // `.ui-autocomplete` on the page to THIS field's width would
-            // mis-size an unrelated one. `addClass` is idempotent, so this is
-            // safe to repeat on every setupAutocomplete() re-run.
+            // PrestaShop lookup, another module). `addClass` is idempotent, so
+            // this is safe to repeat on every setupAutocomplete() re-run.
             //
-            // Wrapped in try/catch (round-2 review finding, Han): this is a
-            // cosmetic clamp, not core search functionality, and
-            // `autocomplete('widget')`/`autocomplete('instance')` right below
-            // it is ALREADY documented and guarded as capable of throwing on
-            // a non-standard jQuery UI build. Nothing here calls
-            // TwoCompanySearch's own constructor from inside a try, so an
-            // uncaught throw at this point would escape setupAutocomplete(),
-            // init(), and the constructor itself, aborting company search
-            // entirely over a failed width clamp - the opposite of this
-            // file's own risk posture everywhere else.
+            // Wrapped in try/catch (round-2 review finding, Han): this is
+            // cosmetic, not core search functionality, and
+            // `autocomplete('widget')`/`autocomplete('instance')` below it is
+            // ALREADY documented as capable of throwing on a non-standard
+            // jQuery UI build. An uncaught throw here would escape
+            // setupAutocomplete(), init() and the constructor, aborting
+            // company search entirely over a failed style hook.
             try {
-                this.companyField.autocomplete('widget').addClass(TwoCompanySearch.AUTOCOMPLETE_MENU_CLASS);
+                const menu = this._queryField.autocomplete('widget');
+                menu.addClass(TwoCompanySearch.AUTOCOMPLETE_MENU_CLASS);
+                // TWO-25326 §2/§4: jQuery UI's menu widget puts `tabindex="0"`
+                // on its own `<ul>`, which makes the RESULTS LIST a tab stop
+                // in its own right - so Tab from the query field lands on the
+                // list container instead of on "My company is not on the
+                // list". That is the identical defect logged against Hyva on
+                // this ticket ("the scrollable div that contains the search
+                // results is itself a tabstop, which is unwanted"), and it is
+                // the widget's default rather than anything this file asked
+                // for. The list is navigated with the cursor keys from the
+                // query field; it never needs focus of its own.
+                menu.attr('tabindex', '-1');
             } catch (e) {
-                // Degrade to an unclamped (but still functional) dropdown.
+                // Degrade to an unstyled (but still functional) dropdown.
             }
 
-            // Render the unavailable row as non-selectable. `ui-state-disabled`
+            // Render the message rows as non-selectable. `ui-state-disabled`
             // is what jQuery UI's menu itself checks, so the row is skipped by
             // keyboard navigation rather than merely being refused on select.
             //
@@ -1284,8 +1803,8 @@ class TwoCompanySearch {
             //
             // Wrapped: `autocomplete('instance')` only exists from jQuery UI
             // 1.11, and an unknown-method call throws. A theme shipping an older
-            // jQuery UI must lose the styling of this row, not the whole company
-            // search - select/focus below already refuse the row without it.
+            // jQuery UI must lose the styling of these rows, not the whole
+            // company search - select/focus above already refuse them without it.
             //
             // Patched at most ONCE per widget instance. jQuery UI's widget
             // bridge does not build a fresh instance when `.autocomplete({...})`
@@ -1294,47 +1813,14 @@ class TwoCompanySearch {
             // every country change and address-form update. Without the guard
             // each call would capture the previous wrapper and wrap it again,
             // nesting one layer deeper every time until rendering a row blew the
-            // stack. A destroyed-and-recreated widget is a new instance and
-            // carries no flag, so it is patched again as intended.
+            // stack.
             try {
-                const instance = this.companyField.autocomplete('instance');
+                const instance = this._queryField.autocomplete('instance');
                 if (instance && typeof instance._renderItem === 'function'
                     && !instance._twoRenderItemPatched) {
                     instance._twoRenderItemPatched = true;
                     const defaultRenderItem = instance._renderItem.bind(instance);
                     instance._renderItem = (ul, item) => {
-                        // The manual-entry row (TWO-25288). The INVERSE of a
-                        // message row: no `ui-state-disabled` and no
-                        // `aria-disabled`, because this one has to be reachable
-                        // by arrow keys and announced as selectable. Rendered by
-                        // hand rather than through jQuery UI's own renderer so
-                        // it can carry its own class and never be mistaken for a
-                        // company in the DOM. .text() for the same reason every
-                        // other row uses it.
-                        //
-                        // `aria-label` is load-bearing, not belt and braces. The
-                        // widget announces a key-focused row through its live
-                        // region as `aria-label || item.value`, and this row's
-                        // value is '' whenever the list also holds real companies
-                        // (_normalize() early-returns in that case), so without an
-                        // explicit label the row is silently announced as nothing
-                        // to a screen reader while looking correct on screen.
-                        //
-                        // On a jQuery UI older than 1.12 this row gets no visible
-                        // highlight when key-focused: that line tags the active
-                        // item on an `<a>` child, which this hand-rendered
-                        // `<li><div>` does not have. The stylesheet's `:focus`
-                        // rule does not cover it either - the widget's focus is a
-                        // CLASS on the wrapper, not DOM focus, so `:focus` never
-                        // matches on this path. Reachable and announced there,
-                        // just not highlighted.
-                        if (item.two_manual_entry) {
-                            return $('<li>')
-                                .addClass('two-autocomplete-manual-entry')
-                                .attr('aria-label', item.label || '')
-                                .append($('<div>').text(item.label || ''))
-                                .appendTo(ul);
-                        }
                         // Normal companies go through jQuery UI's OWN renderer.
                         // Reimplementing it would hard-code one version's markup:
                         // 1.11 emits <li><a>, 1.12 emits <li><div>, and the theme
@@ -1348,12 +1834,9 @@ class TwoCompanySearch {
                         // merely refused on select. .text() (as jQuery UI's own
                         // renderer does) keeps markup out of the dropdown.
                         // `two_row_class` lets a message row be told apart in the
-                        // DOM (the too-short hint is not a failure) while keeping
-                        // the disabled/keyboard-skip behaviour identical.
-                        // `two-autocomplete-message` is emitted alongside it and
-                        // is what the stylesheet keys the muted colour, the
-                        // default cursor and the hover suppression on - so every
-                        // message row looks like a message whatever its cause.
+                        // DOM (the too-short hint is not a failure, and neither
+                        // is "No matches found") while keeping the
+                        // disabled/keyboard-skip behaviour identical.
                         return $('<li>')
                             .addClass('two-autocomplete-message '
                                 + (item.two_row_class || 'two-autocomplete-unavailable') + ' ui-state-disabled')
@@ -1365,45 +1848,6 @@ class TwoCompanySearch {
             } catch (e) {
                 // Older jQuery UI without `instance`; styling only, safe to skip.
             }
-
-            // #30.x.14 bug 2.1, live-verified: focusing an empty field opened
-            // nothing - jQuery UI only ever searches on `input`/keydown, never
-            // on plain focus, so a click into the field looked and behaved
-            // exactly like a plain text box until the buyer typed a
-            // character. Forcing a search on focus - which, for an empty
-            // term, now renders the hint row via buildFocusHintItem() above -
-            // is what gives that click something to open, matching Mag/WC's
-            // combobox opening its panel on click before any typing.
-            //
-            // Gated on a REAL pointer down, not on focus alone (round-1
-            // adversarial review finding, Vader): a plain `focus` fires for a
-            // keyboard user simply tabbing through the address form with no
-            // intent to search, and this hint row is deliberately
-            // `aria-disabled`/keyboard-skipped (see buildFocusHintItem()) - a
-            // screen reader would announce a result becoming available with
-            // nothing the buyer could actually arrow onto, which reads as a
-            // broken result set rather than a hint. `mousedown` fires on this
-            // field ONLY for a direct pointer interaction with it; Tab never
-            // fires it. Reset immediately after the one `focus` it gates -
-            // this is a one-shot signal for the NEXT focus, not a sticky mode.
-            this.companyField.off('mousedown.twoCompanyOpen').on('mousedown.twoCompanyOpen', () => {
-                this._pointerFocusPending = true;
-            });
-
-            // Namespaced and unbound-then-rebound (not `.one()`): this runs on
-            // every setupAutocomplete() re-entry (country change,
-            // updatedAddressForm), which re-resolves `this.companyField`
-            // against a node that may not carry a previous binding, and a
-            // stale binding on an abandoned node is otherwise never cleaned
-            // up until that node is GC'd.
-            this.companyField.off('focus.twoCompanyOpen').on('focus.twoCompanyOpen', () => {
-                const pointerFocus = this._pointerFocusPending;
-                this._pointerFocusPending = false;
-                if (this._destroyed || this._manualEntry || !pointerFocus) {
-                    return;
-                }
-                this.openSearchForCurrentTerm();
-            });
         } else {
             this.setupCustomAutocomplete();
         }
@@ -1428,25 +1872,99 @@ class TwoCompanySearch {
         if (this._manualEntry) {
             this.renderBackToSearchLink();
         }
+
+        this.restorePanelAfterRerender();
     }
 
     /**
-     * Append the manual-entry row to a result set (TWO-25288).
+     * Reopen a panel that a re-render closed on the buyer's behalf.
      *
-     * LAST, always: it is the escape from the list, so it belongs after
-     * everything the list has to offer. Applied to every rendered set at or
-     * above the threshold - real results, zero results, and the two
-     * no-search-was-made rows - because "my company is not on the list" is most
-     * useful in exactly the states where the list is unhelpful.
+     * PrestaShop re-renders the address form for ordinary interactions, and in
+     * a real browser that re-render can land tens of milliseconds AFTER the
+     * click that opened the panel - measured at click +165ms, re-render
+     * +195ms. The panel was torn down and rebuilt closed, so the buyer clicked
+     * the field, saw a dropdown appear and vanish, and had no way into manual
+     * entry at all. Nothing in the unit suite could see it: it needs
+     * PrestaShop's own event actually firing after a real click.
      *
-     * Not applied below the threshold: nothing has been searched for yet, so
-     * "not on the list" is a claim the buyer is in no position to make.
+     * Called at the very END of setupAutocomplete() on purpose - openDropdown()
+     * renders the current search state through the widget, so it cannot run
+     * until whichever engine this build uses has been wired up.
+     *
+     * Deliberately narrow. It restores only what the buyer already had, only
+     * while a re-render is plausibly responsible (see _reopenPanelUntil), and
+     * never in manual-entry mode, where an open search panel would contradict
+     * the mode the buyer chose.
+     */
+    restorePanelAfterRerender() {
+        if (this._destroyed || this._manualEntry) {
+            return;
+        }
+        if (Date.now() >= TwoCompanySearch._reopenPanelUntil) {
+            return;
+        }
+        if (!this._dropdown || !this._dropdown.length
+            || !this._queryField || !this._queryField.length) {
+            return;
+        }
+        // Left ARMED, not consumed. One `updatedAddressForm` rebuilds the
+        // control twice - this module's own handler rebuilds in place, then
+        // the checkout manager destroys the instance and constructs a
+        // replacement - and it is the second panel the buyer ends up looking
+        // at. Consuming the deadline here would restore the throwaway and
+        // leave the real one closed. The deadline expires on its own, and any
+        // close clears it.
+        const deadline = TwoCompanySearch._reopenPanelUntil;
+        this.openDropdown();
+        TwoCompanySearch._reopenPanelUntil = deadline;
+    }
+
+    /**
+     * Render a completed search that matched nothing as an explicit
+     * "No matches found" row (TWO-25326 §1).
+     *
+     * PrestaShop previously showed NOTHING at all here - jQuery UI simply
+     * declines to open a menu for an empty item list - which is
+     * indistinguishable from a search that never ran, and is the §1 failure
+     * recorded on the ticket.
+     *
+     * Only ever substituted for an EMPTY list; a real result set is passed
+     * straight through. The row is not appended alongside results, because
+     * "no matches" is false the moment there is one.
      *
      * @param {Array} items
      * @returns {Array}
      */
-    withManualEntryRow(items) {
-        return (items || []).concat([this.buildManualEntryItem()]);
+    withNoMatchesRow(items) {
+        const list = items || [];
+        return list.length ? list : [this.buildNoMatchesItem()];
+    }
+
+    /**
+     * @returns {string} EXACT zero-result wording required by TWO-25326 §1.
+     *   "No results found" is a different string and does not satisfy it.
+     */
+    getNoMatchesText() {
+        return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_no_matches)
+            || 'No matches found';
+    }
+
+    /**
+     * Pseudo-result carrying the zero-result message through jQuery UI's
+     * result-list plumbing. `two_unavailable` for the same reason
+     * buildTooShortItem() uses it: that flag means "not a company", so
+     * select / focus / _renderItem keep it out of the field and the keyboard
+     * skips it.
+     *
+     * @returns {Object}
+     */
+    buildNoMatchesItem() {
+        return {
+            label: this.getNoMatchesText(),
+            value: '',
+            two_unavailable: true,
+            two_row_class: 'two-autocomplete-no-matches'
+        };
     }
 
     /**
@@ -1463,29 +1981,6 @@ class TwoCompanySearch {
     getBackToSearchText() {
         return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_back_to_search)
             || 'Search for company';
-    }
-
-    /**
-     * Pseudo-result carrying the manual-entry affordance through jQuery UI's
-     * result-list plumbing.
-     *
-     * `two_manual_entry` is its OWN flag, deliberately not `two_unavailable`.
-     * That flag means "not a company, and keyboard-skipped"; this row is not a
-     * company either but must be keyboard-REACHABLE, so sharing the flag would
-     * give it the exact opposite of the treatment it needs.
-     *
-     * `value: ''` is cosmetic only. jQuery UI's _normalize() rewrites it to
-     * `value || label`, so what keeps the label out of the company field is the
-     * `select` handler returning false - nothing else.
-     *
-     * @returns {Object}
-     */
-    buildManualEntryItem() {
-        return {
-            label: this.getManualEntryText(),
-            value: '',
-            two_manual_entry: true
-        };
     }
 
     /**
@@ -1516,6 +2011,12 @@ class TwoCompanySearch {
             this.organizationField.val('');
             this.organizationField.removeAttr('data-two-company-name');
         }
+        // The visible label goes with the value behind it (TWO-25326 §5:
+        // "manual-entry mode shows NO company-number field/label at all").
+        // clearStaleOrganizationSelection() already pairs these two on every
+        // branch; this method dropped the number and left the label showing
+        // it, which is the same defect one method over.
+        this.setCompanyIdHint('');
         this.clearLookupWrittenAddressIdentifiers();
         this.clearPersistedCompany();
         this.refreshCompanySummary();
@@ -1576,12 +2077,6 @@ class TwoCompanySearch {
             return;
         }
         this._manualEntry = true;
-        // Stand down an open reveal (TWO-25288 element 2) explicitly. Its own
-        // blur handler already checks `_manualEntry` before restoring, but
-        // clearing the snapshot here too means nothing is left to restore
-        // even if that ordering ever changes.
-        this._revealed = false;
-        this._revealSnapshot = null;
 
         // Drop the previously selected company BEFORE anything else.
         //
@@ -1600,40 +2095,24 @@ class TwoCompanySearch {
         // directly under the results the buyer just chose from, so it cannot ship
         // relying on that.
         this.clearSelectedCompany();
-        // clearSelectedCompany() just dropped the org number and its tag, so
-        // hasConfirmedSelection() is now false - reflect that in the chip
-        // immediately rather than leaving it showing a name that no longer
-        // has a selection behind it.
-        this.updateRevealChip();
 
-        if (this.companyField && this.companyField.length) {
-            if (this.companyField.hasClass('ui-autocomplete-input')) {
-                try {
-                    this.companyField.autocomplete('close');
-                    // And hide the menu outright. jQuery UI's own `close` is
-                    // conditioned on the menu passing jQuery's `:visible`, which
-                    // is a LAYOUT test - so it is a no-op wherever layout is not
-                    // computed, and the dropdown stays on screen with the buyer
-                    // already switched to manual entry. Doing it unconditionally
-                    // costs nothing when `close` already did it.
-                    const instance = this.companyField.autocomplete('instance');
-                    if (instance && instance.menu && instance.menu.element) {
-                        instance.menu.element.hide();
-                    }
-                } catch (e) {
-                    // Older jQuery UI, or already released: the source guard
-                    // above keeps the list from reopening either way.
-                }
-            }
-        }
-        if (this._customAutocomplete && this._customAutocomplete.list) {
-            this._customAutocomplete.list.style.display = 'none';
-        }
+        // The panel closes WITHOUT returning focus itself - this method places
+        // focus deliberately, a few lines down, and §2 requires it to land in
+        // the manual company-name field. Letting closeDropdown() also focus
+        // that field would work by accident today and break the moment the
+        // close path changes.
+        this.closeDropdown(false);
+        this.syncNotListedVisibility();
+
+        // The company-name field stops being a search trigger and becomes the
+        // plain text input the buyer types their company into (§2/§5:
+        // manual entry captures a name and no number).
+        this.setCompanyFieldSearchMode(false);
 
         this.renderBackToSearchLink();
 
-        // Focus goes back to the field the buyer is now expected to type into,
-        // not left on a row that has just been removed from the document.
+        // §2: activating "My company is not on the list" places focus in the
+        // manual company name field. This is the one place that happens.
         if (this.companyField && this.companyField.length) {
             this.companyField.trigger('focus');
         }
@@ -1649,37 +2128,19 @@ class TwoCompanySearch {
         }
         this._manualEntry = false;
         this.removeBackToSearchLink();
-        // The field still holds whatever the buyer typed in manual entry, with
-        // no organisation number behind it - hasConfirmedSelection() is false,
-        // so this leaves the chip hidden rather than covering active typing.
-        this.updateRevealChip();
 
         if (!this.companyField || this.companyField.length === 0) {
             return;
         }
-        // Cleared before `.trigger('focus')`, same reasoning and same round-2
-        // adversarial review finding (Vader) as revealSearch() above: a
-        // stale `true` left by an earlier mousedown-on-an-already-focused-
-        // field must not let the namespaced handler fire its own extra
-        // `openSearchForCurrentTerm()` call on top of the explicit one below.
-        this._pointerFocusPending = false;
-        this.companyField.trigger('focus');
 
-        if (this.companyField.hasClass('ui-autocomplete-input')) {
-            // A real click (or Enter/Space) on this button got us here, so
-            // open directly rather than relying on the pointer-gated
-            // `focus.twoCompanyOpen` handler - same reasoning as
-            // revealSearch(). This ALSO removes a duplicate search a round-1
-            // adversarial review found (Vader): the old code both triggered
-            // `focus` (which the then-ungated handler treated as a fresh
-            // open) and made this same explicit call, firing the search
-            // twice on every "Search for company" click.
-            this.openSearchForCurrentTerm();
-            return;
-        }
-        if (this._customAutocomplete && this._customAutocomplete.inputEl) {
-            this._customAutocomplete.inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-        }
+        // Back to being the search trigger, not a text box.
+        this.setCompanyFieldSearchMode(true);
+
+        // §3: activating "Search for company" returns to search mode and sets
+        // focus to the QUERY field - which is exactly what openDropdown()
+        // does, so there is one code path for "the search is now open and
+        // focused" rather than two that can drift.
+        this.openDropdown();
     }
 
     /**
@@ -1716,12 +2177,18 @@ class TwoCompanySearch {
             this.exitManualEntryMode();
         });
 
-        // Below the fallback path's dropdown container when there is one, so the
-        // link does not land between the field and its own dropdown.
-        const anchor = (this._customAutocomplete && this._customAutocomplete.container)
-            ? $(this._customAutocomplete.container)
-            : this.companyField;
-        anchor.after(link);
+        // Appended to the field wrapper rather than inserted after the input,
+        // so it lands BELOW the org-number hint and the (hidden, in manual
+        // mode) dropdown panel that share that wrapper - §3 requires it in
+        // normal block flow below the company-name field, never overlapping
+        // it. Right-alignment is CSS (`.two-company-search-back`), not
+        // markup.
+        const wrapper = this.companyField.parent();
+        if (wrapper.length && wrapper.hasClass('two-company-field-wrap')) {
+            wrapper.append(link);
+        } else {
+            this.companyField.after(link);
+        }
         this._backToSearchLink = link;
     }
 
@@ -1849,51 +2316,33 @@ class TwoCompanySearch {
     }
 
     /**
-     * Pseudo-result carrying the "click opened this" hint through jQuery UI's
-     * result-list plumbing (#30.x.14 bug 2.1). Reuses the same placeholder
-     * copy the empty field already shows, so the dropdown does not introduce
-     * a second, differently-worded hint for the same state - just makes the
-     * existing one visible in the one place a buyer who has already clicked
-     * in is looking.
+     * Make the panel show the state of whatever the query field currently
+     * holds - results, the "type N more characters" hint, or "No matches
+     * found" (TWO-25326 §1).
      *
-     * @returns {Object}
-     */
-    buildFocusHintItem() {
-        return {
-            label: TwoCompanySearch.getEmptyFieldHintText(),
-            value: '',
-            two_unavailable: true,
-            two_row_class: 'two-autocomplete-focus-hint'
-        };
-    }
-
-    /**
-     * Force the jQuery UI widget to (re-)search whatever the field currently
-     * holds, opening its menu (#30.x.14 bug 2.1).
+     * Called from openDropdown() so the panel is never blank on open, and
+     * from exitManualEntryMode() when the buyer comes back to search.
      *
-     * The ONE place that does this, called both from the pointer-gated
-     * `focus.twoCompanyOpen` handler in setupAutocomplete() AND directly from
-     * revealSearch() / exitManualEntryMode() below - those two already know a
-     * real user gesture (a click or key activation on the reveal chip / the
-     * back-to-search button) asked for the dropdown to reopen, so they call
-     * this directly rather than going through the pointer-on-THIS-field gate,
-     * which their own `.trigger('focus')` would never satisfy (it fires no
-     * `mousedown` on this field). Consolidating on one call site here is also
-     * what removes the double-search a round-1 adversarial review found
-     * (Vader): exitManualEntryMode() used to both `.trigger('focus')` - which
-     * the old, ungated handler treated as a fresh open - AND make its own
-     * explicit `autocomplete('search', term)` call, firing the search twice
-     * on every "Search for company" click.
+     * Drives the QUERY field, which is what the widget is bound to. The
+     * company-name field is not a search box any more and must not be
+     * searched on: doing so is what made the old control re-offer the
+     * company the buyer had just confirmed.
      */
     openSearchForCurrentTerm() {
-        if (this._destroyed || !this.companyField || !this.companyField.length) {
+        if (this._destroyed || !this._queryField || !this._queryField.length) {
             return;
         }
-        try {
-            this.companyField.autocomplete('search', this.companyField.val() || '');
-        } catch (e) {
-            // Widget not ready/already torn down; nothing to open.
+        if (this._queryField.hasClass('ui-autocomplete-input')) {
+            try {
+                this._queryField.autocomplete('search', this._queryField.val() || '');
+            } catch (e) {
+                // Widget not ready/already torn down; nothing to open.
+            }
+            return;
         }
+        // Custom fallback path: its own `input` listener is the only entry
+        // point, and a programmatic `.val()` fires no event.
+        this._queryField.get(0).dispatchEvent(new Event('input', { bubbles: true }));
     }
 
     /**
@@ -1968,306 +2417,258 @@ class TwoCompanySearch {
         };
     }
 
+    /**
+     * Search engine for a theme that ships no jQuery UI (TWO-25326).
+     *
+     * ONLY the engine. The panel, the query field, the scrollable results host
+     * and the "not on the list" button are built by buildDropdown() and are
+     * identical on both paths - this method just supplies the debounce, the
+     * request and the row rendering that jQuery UI's widget would otherwise
+     * supply. That is the whole point of the rework: the previous code had two
+     * complete and divergent dropdown implementations, and every §1/§2 defect
+     * on this ticket had to be fixed (or was missed) twice.
+     */
     setupCustomAutocomplete() {
-        const inputEl = this.companyField.get(0);
-        if (!inputEl) return;
+        if (!this._queryField || !this._queryField.length || !this._resultsList || !this._resultsList.length) {
+            return;
+        }
+        const inputEl = this._queryField.get(0);
+        const list = this._resultsList.get(0);
 
-        // This runs again on every country change and address-form update, so
-        // without tearing the previous one down each call left an orphan
-        // dropdown behind whose input listener still fired - duplicate searches
-        // and duplicate spinner toggles on the one shared field, of which
-        // destroy() could only ever clean up the most recent.
+        // Re-entrant: this runs again on every country change and
+        // address-form update, and without tearing the previous one down each
+        // call left a listener behind that still fired - duplicate searches
+        // and duplicate spinner toggles on one shared field.
         this.teardownCustomAutocomplete();
 
-        // Create suggestion container
-        let container = document.createElement('div');
-        container.className = 'two-autocomplete-container';
-        container.style.position = 'relative';
-        inputEl.parentNode.insertBefore(container, inputEl.nextSibling);
-
-        let list = document.createElement('div');
-        list.className = 'two-autocomplete-list';
-        list.style.position = 'absolute';
-        list.style.zIndex = '1000';
-        list.style.background = '#fff';
-        list.style.border = '1px solid #ccc';
-        list.style.width = (inputEl.offsetWidth || 280) + 'px';
-        list.style.display = 'none';
-        list.style.maxHeight = '240px';
-        list.style.overflowY = 'auto';
-        container.appendChild(list);
-
-        // jQuery UI is absent on this path, so nothing toggles the loading class
-        // for us; do it by hand against the same CSS the live path uses.
+        // Nothing paints the loading class for us on this path.
         const setLoadingState = (isLoading) => {
-            this.companyField.toggleClass('two-company-search-loading', !!isLoading);
+            this._queryField.toggleClass('two-company-search-loading', !!isLoading);
         };
-
-        // Closing the list is deferred on blur so a click on a row still lands.
-        // Held in a mutable holder so the manual-entry row's focus handler can
-        // cancel it: without that, moving focus onto the row blurs the input and
-        // the list is gone 150ms later, before any key can reach the row.
-        const blurTimer = { id: null };
 
         /**
-         * The manual-entry footer row (TWO-25288).
+         * Render a set of rows into the shared results host.
          *
-         * This path has no keyboard model at all - the company rows are plain
-         * divs with `mousedown` handlers, no roles and no arrow keys - and
-         * retrofitting a full listbox is a different job. So this row carries its
-         * own: `role="button"`, `tabindex="0"`, its text content as its
-         * accessible name, and Enter/Space handled explicitly. Space is
-         * `preventDefault`ed because the default action on a focused button-role
-         * element is to scroll the page.
+         * `<ul>`/`<li>` with listbox roles, matching what jQuery UI emits on
+         * the other path, so one stylesheet and one set of keyboard rules
+         * cover both.
          */
-        const appendManualEntryRow = () => {
-            const row = document.createElement('div');
-            row.className = 'two-autocomplete-item two-autocomplete-manual-entry';
-            row.setAttribute('role', 'button');
-            row.setAttribute('tabindex', '0');
-            row.style.padding = '6px 10px';
-            row.style.cursor = 'pointer';
-            row.textContent = this.getManualEntryText();
-            row.addEventListener('mousedown', (e) => {
-                e.preventDefault();
-                this.enterManualEntryMode();
-            });
-            row.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
-                    e.preventDefault();
-                    this.enterManualEntryMode();
+        const renderRows = (rows) => {
+            // A repaint invalidates whatever was highlighted; the row at that
+            // index is a different company now, or gone.
+            nav.index = -1;
+            list.innerHTML = '';
+            const ul = document.createElement('ul');
+            ul.className = 'ui-autocomplete ' + TwoCompanySearch.AUTOCOMPLETE_MENU_CLASS;
+            ul.setAttribute('role', 'listbox');
+            rows.forEach((row) => {
+                const li = document.createElement('li');
+                if (row.message) {
+                    li.className = 'two-autocomplete-message '
+                        + (row.two_row_class || 'two-autocomplete-unavailable') + ' ui-state-disabled';
+                    li.setAttribute('aria-disabled', 'true');
+                } else {
+                    li.className = 'two-autocomplete-item';
+                    li.setAttribute('role', 'option');
+                    // One activation path for pointer and keyboard alike, so
+                    // the two cannot drift. `two:select` is dispatched by the
+                    // Enter branch of onQueryKeydown(), defined below.
+                    const activate = () => {
+                        this.onCompanySelected(null, {
+                            item: {
+                                value: row.value,
+                                lookup_id: row.lookup_id,
+                                organization_number: row.organization_number
+                            }
+                        });
+                        this.closeDropdown(true);
+                    };
+                    li.addEventListener('two:select', activate);
+                    li.addEventListener('mousedown', (e) => {
+                        // Keeps focus in the query field through the click, so
+                        // the panel's focusout close does not fire underneath
+                        // the selection it is about to make.
+                        e.preventDefault();
+                        activate();
+                    });
                 }
+                const inner = document.createElement('div');
+                // textContent, never innerHTML: company names come from a
+                // third-party register.
+                inner.textContent = row.label || row.value || '';
+                li.appendChild(inner);
+                ul.appendChild(li);
             });
-            // Focus arriving here blurs the input; cancel the close it queued.
-            // Also cancel the reveal-restore timer (TWO-25288 element 2) for
-            // the same reason: that is a SEPARATE blur binding on the same
-            // field, and without this a buyer who tabs here and pauses more
-            // than 200ms - still navigating the open list, having picked
-            // nothing - would have their in-progress search silently
-            // overwritten underneath a dropdown they are still looking at.
-            row.addEventListener('focus', () => {
-                clearTimeout(blurTimer.id);
-                blurTimer.id = null;
-                clearTimeout(this._revealBlurTimerId);
-                this._revealBlurTimerId = null;
-            });
-            // And re-arm it on the way out, or the list is left open for good.
-            // The input is otherwise the only node that closes this list, and
-            // this row is now the first tab stop after it whenever the dropdown
-            // is open - so tabbing onward, or clicking away, would leave the list
-            // painted over the address form until the next keystroke. `onBlur` is
-            // declared further down this same closure and is only ever reached
-            // from an event, long after setup has finished. Also re-arms the
-            // reveal-restore timer its own `focus` handler above cancelled -
-            // leaving the row without doing so would silently disable the
-            // abandoned-search restore for the rest of this reveal.
-            row.addEventListener('blur', () => {
-                onBlur();
-                if (this._revealed) {
-                    this.armRevealBlurRestore();
-                }
-            });
-            list.appendChild(row);
-            return row;
+            list.appendChild(ul);
         };
 
-        const renderResults = (items, withManualEntry) => {
-            setLoadingState(false);
-            list.innerHTML = '';
-            if ((!items || items.length === 0) && !withManualEntry) {
-                list.style.display = 'none';
+        const messageRow = (item) => ({
+            label: item.label,
+            message: true,
+            two_row_class: item.two_row_class
+        });
+
+        /**
+         * Cursor-key navigation over the fallback's own rows (TWO-25326 §1).
+         *
+         * The jQuery UI path gets this from the menu widget. This path had
+         * `mousedown` handlers and nothing else, so a keyboard buyer could
+         * open the panel, type a query, see results, and have no way at all to
+         * choose one. Message rows are skipped, matching `ui-state-disabled`
+         * on the other path.
+         *
+         * Bound to the QUERY FIELD, not to the document: §4 requires key
+         * handling to be tied to individual controls so ordinary navigation
+         * around the page is untouched.
+         */
+        const nav = { index: -1 };
+        const rows = () => Array.prototype.slice.call(
+            list.querySelectorAll('li.two-autocomplete-item')
+        );
+        const paintActive = (all) => {
+            all.forEach((row, i) => {
+                if (i === nav.index) {
+                    row.classList.add('two-autocomplete-item--active');
+                    row.setAttribute('aria-selected', 'true');
+                } else {
+                    row.classList.remove('two-autocomplete-item--active');
+                    row.removeAttribute('aria-selected');
+                }
+            });
+            const active = all[nav.index];
+            // The jQuery UI path gets this from the menu widget; without it
+            // the two paths diverge on exactly the accessibility contract §4
+            // is about.
+            if (active) {
+                if (!active.id) {
+                    active.id = 'two-company-row-' + this._instanceNs + '-' + nav.index;
+                }
+                this._queryField.attr('aria-activedescendant', active.id);
+            } else {
+                this._queryField.removeAttr('aria-activedescendant');
+            }
+            if (active && typeof active.scrollIntoView === 'function') {
+                // Keeps a key-navigated row inside the scroll container, the
+                // way the widget's menu does on the other path.
+                active.scrollIntoView({ block: 'nearest' });
+            }
+        };
+        const onQueryKeydown = (event) => {
+            const all = rows();
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                if (!all.length) {
+                    return;
+                }
+                event.preventDefault();
+                if (nav.index === -1) {
+                    // From "nothing highlighted", Down goes to the first row
+                    // and Up to the LAST. Falling through to the modulo below
+                    // would send Up to `(-1 - 1 + n) % n` = the second-to-last
+                    // row, silently skipping one.
+                    nav.index = event.key === 'ArrowDown' ? 0 : all.length - 1;
+                } else {
+                    const step = event.key === 'ArrowDown' ? 1 : -1;
+                    nav.index = (nav.index + step + all.length) % all.length;
+                }
+                paintActive(all);
                 return;
             }
-            items.forEach((item) => {
-                const row = document.createElement('div');
-                row.className = 'two-autocomplete-item';
-                row.style.padding = '6px 10px';
-                row.style.cursor = 'pointer';
-                row.style.whiteSpace = 'nowrap';
-                row.style.overflow = 'hidden';
-                row.style.textOverflow = 'ellipsis';
-                row.textContent = item.label || item.value || '';
-                row.addEventListener('mousedown', (e) => {
-                    e.preventDefault();
-                    const ui = { item: { value: item.value, lookup_id: item.lookup_id, organization_number: item.organization_number } };
-                    this.onCompanySelected(null, ui);
-                    list.style.display = 'none';
-                });
-                list.appendChild(row);
-            });
-            if (withManualEntry) {
-                appendManualEntryRow();
+            if (event.key === 'Enter') {
+                const active = all[nav.index];
+                if (!active) {
+                    return;
+                }
+                event.preventDefault();
+                active.dispatchEvent(new Event('two:select'));
             }
-            list.style.display = 'block';
         };
+        this._queryField.off('keydown.twoFallback').on('keydown.twoFallback', onQueryKeydown);
 
-        // Minimal loading indicator so a slow-but-alive request is visually
-        // distinguishable from a dead one (goal: no spinner component, just
-        // a text row matching the existing list rendering).
-        const searchingText = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_searching)
-            || 'Searching...';
-        const renderLoading = () => {
-            setLoadingState(true);
-            list.innerHTML = '';
-            const row = document.createElement('div');
-            row.className = 'two-autocomplete-item two-autocomplete-loading';
-            row.style.padding = '6px 10px';
-            row.style.color = '#888';
-            row.style.fontStyle = 'italic';
-            row.textContent = searchingText;
-            list.appendChild(row);
-            // Every one of these renderers wipes the list, so the footer has to
-            // be re-appended by each of them or it flickers out of existence the
-            // moment the state changes.
-            appendManualEntryRow();
-            list.style.display = 'block';
-        };
-
-        // Failure state for this path. Same reasoning as buildUnavailableItem():
-        // an empty list would read as "company not registered".
-        const renderUnavailable = () => {
-            setLoadingState(false);
-            list.innerHTML = '';
-            const row = document.createElement('div');
-            row.className = 'two-autocomplete-item two-autocomplete-message two-autocomplete-unavailable';
-            row.style.padding = '6px 10px';
-            row.style.color = '#888';
-            row.textContent = this.getSearchUnavailableText();
-            list.appendChild(row);
-            appendManualEntryRow();
-            list.style.display = 'block';
-        };
-
-        // Too short to search on. Not a failure, so it gets its own class - but
-        // it is rendered as a row on this path too, because the alternative is
-        // the empty dropdown this path used to show below the threshold.
-        const renderTooShort = () => {
-            setLoadingState(false);
-            list.innerHTML = '';
-            const row = document.createElement('div');
-            row.className = 'two-autocomplete-item two-autocomplete-message two-autocomplete-too-short';
-            row.style.padding = '6px 10px';
-            row.style.color = '#888';
-            row.textContent = this.getTooShortText();
-            list.appendChild(row);
-            list.style.display = 'block';
-        };
-
-        // Same reasoning, different cause: no search was made because the
-        // country is unknown, so point at the fix the buyer can apply.
-        const renderSelectCountry = () => {
-            setLoadingState(false);
-            list.innerHTML = '';
-            const row = document.createElement('div');
-            row.className = 'two-autocomplete-item two-autocomplete-message two-autocomplete-select-country';
-            row.style.padding = '6px 10px';
-            row.style.color = '#888';
-            row.textContent = this.getSelectCountryText();
-            list.appendChild(row);
-            appendManualEntryRow();
-            list.style.display = 'block';
-        };
-
-        // Debounced input. Held in a named ref so teardown can unbind it: the
-        // listener is on the shared company field, not on the container, so
-        // dropping the container would leave it firing.
-        // Mutable holder rather than a bare `let` so teardown can reach the
-        // pending timer. A debounce tick that survives teardown would call
-        // searchCompanies(), which bumps the sequence and aborts the NEW
-        // dropdown's in-flight request - that request then resolves as `silent`,
-        // so its spinner is never cleared and the buyer is left on a permanent
-        // "Searching..." row while the orphan renders into a removed list.
         const debounce = { id: null };
         const onInput = () => {
-            // Defence in depth: teardown unbinds this listener, but a destroyed
-            // instance must not search even if an unbind was somehow missed.
+            // Defence in depth: teardown unbinds this listener, but a
+            // destroyed instance must not search even if an unbind was missed.
             if (this._destroyed) {
                 return;
             }
             const term = inputEl.value || '';
             clearTimeout(debounce.id);
-            // Manual entry: no dropdown at all on this path either. Cancelling
-            // the pending tick as well as returning, or a debounce armed by the
-            // keystroke before the buyer chose manual entry would reopen it.
             if (this._manualEntry) {
                 debounce.id = null;
-                list.style.display = 'none';
+                return;
+            }
+            // Rendered SYNCHRONOUSLY, outside the debounce, and this is the
+            // point of it: openDropdown() reaches this path by dispatching an
+            // `input` event, so a too-short state deferred by 300ms leaves the
+            // panel blank for 300ms every time it opens. §1 wants the hint on
+            // screen as the control opens. There is no request to debounce in
+            // this branch anyway - the whole reason it exists is that no
+            // search will be made.
+            if (term.trim().length < MIN_SEARCH_LENGTH) {
+                debounce.id = null;
+                setLoadingState(false);
+                renderRows([messageRow(this.buildTooShortItem())]);
                 return;
             }
             debounce.id = setTimeout(() => {
-                // Empty field: the placeholder is the hint for this state, so
-                // close the list rather than repeat it in a row.
-                if (term.length === 0) {
-                    renderResults([], false);
-                    return;
-                }
-                // Trimmed, for the same reason as the jQuery UI guard above.
-                if (term.trim().length < MIN_SEARCH_LENGTH) {
-                    renderTooShort();
+                if (this._destroyed) {
                     return;
                 }
                 const key = this.buildCacheKey(term);
                 const cached = TwoCompanySearch.cacheGet(key);
                 if (cached) {
-                    renderResults(cached, true);
+                    setLoadingState(false);
+                    renderRows(this.withNoMatchesRow(cached).map(
+                        (r) => (r.two_unavailable ? messageRow(r) : r)
+                    ));
                     return;
                 }
-                renderLoading();
+                setLoadingState(true);
                 this.searchCompanies(term, (results, meta) => {
                     if (meta && meta.silent) {
-                        // Superseded or aborted. A newer request owns the UI and
-                        // has already re-armed the spinner, so leave the loading
-                        // state alone - clearing it here would kill the spinner
-                        // for the request still in flight.
+                        // Superseded or aborted. A newer request owns the UI
+                        // and has already re-armed the spinner, so leave the
+                        // loading state alone.
                         return;
                     }
-                    // Discard results if the input has moved on to a different
-                    // term since this request was fired (belt-and-braces on
-                    // top of the sequence/abort guard in searchCompanies()).
-                    // The spinner must still be cleared: this branch is reached
-                    // when the term changed WITHOUT a newer search superseding
-                    // it - a programmatic val('') on country change fires no
-                    // input event, so nothing else would ever clear it.
+                    // Term moved on without a newer search superseding it (a
+                    // programmatic clear fires no input event), so nothing
+                    // else would ever clear the spinner.
                     if ((inputEl.value || '') !== term) {
                         setLoadingState(false);
                         return;
                     }
+                    setLoadingState(false);
                     if (meta && meta.countryUnresolved) {
-                        renderSelectCountry();
+                        renderRows([messageRow(this.buildSelectCountryItem())]);
                         return;
                     }
                     if (meta && meta.unavailable) {
-                        renderUnavailable();
+                        renderRows([messageRow(this.buildUnavailableItem())]);
                         return;
                     }
                     if (!(meta && meta.degraded)) {
                         TwoCompanySearch.cacheSet(key, results);
                     }
-                    // `true` even for zero results: that is the state in which
-                    // "my company is not on the list" is the most useful thing
-                    // on the screen, so the list opens for the footer alone.
-                    renderResults(results, true);
+                    renderRows(this.withNoMatchesRow(results).map(
+                        (r) => (r.two_unavailable ? messageRow(r) : r)
+                    ));
                 });
             }, 300);
         };
 
-        const onBlur = () => {
-            clearTimeout(blurTimer.id);
-            blurTimer.id = setTimeout(() => { list.style.display = 'none'; }, 150);
-        };
-
         inputEl.addEventListener('input', onInput);
-        inputEl.addEventListener('blur', onBlur);
 
-        // Save for cleanup
-        this._customAutocomplete = { container, list, inputEl, onInput, onBlur, debounce, blurTimer };
+        this._customAutocomplete = { list, inputEl, onInput, debounce };
     }
 
     /**
-     * Remove the custom (non-jQuery-UI) dropdown and unbind its listeners.
+     * Unbind the fallback engine.
      *
      * Safe to call when nothing is set up, and idempotent - it is used both to
-     * make setupCustomAutocomplete() re-entrant and on destroy().
+     * make setupCustomAutocomplete() re-entrant and on destroy(). It does NOT
+     * remove the panel: the panel is owned by buildDropdown() and is shared
+     * with the jQuery UI path.
      */
     teardownCustomAutocomplete() {
         const existing = this._customAutocomplete;
@@ -2278,34 +2679,18 @@ class TwoCompanySearch {
             clearTimeout(existing.debounce.id);
             existing.debounce.id = null;
         }
-        // Same reasoning: a deferred close firing after teardown would reach into
-        // a removed list.
-        if (existing.blurTimer) {
-            clearTimeout(existing.blurTimer.id);
-            existing.blurTimer.id = null;
+        if (existing.inputEl && existing.onInput) {
+            existing.inputEl.removeEventListener('input', existing.onInput);
         }
-        // Clear the fallback path's spinner class here, not just in destroy().
-        // This method also runs when setup switches from the custom path to the
-        // jQuery-UI one (a theme that loads jQuery UI late), and that branch only
-        // ever touches `ui-autocomplete-loading` - so a spinner armed by the
-        // custom path would otherwise keep running on a field with no dropdown,
-        // which is the very failure this teardown exists to prevent.
-        if (this.companyField && this.companyField.length) {
-            this.companyField.removeClass('two-company-search-loading');
+        if (this._queryField && this._queryField.length) {
+            this._queryField.off('keydown.twoFallback');
         }
-        if (existing.inputEl) {
-            if (existing.onInput) {
-                existing.inputEl.removeEventListener('input', existing.onInput);
-            }
-            if (existing.onBlur) {
-                existing.inputEl.removeEventListener('blur', existing.onBlur);
-            }
-        }
-        if (existing.list && existing.list.parentNode) {
-            existing.list.parentNode.removeChild(existing.list);
-        }
-        if (existing.container && existing.container.parentNode) {
-            existing.container.parentNode.removeChild(existing.container);
+        // Clear this path's spinner class here, not just in destroy(): this
+        // method also runs when setup switches from the fallback path to the
+        // jQuery UI one (a theme that loads jQuery UI late), and that branch
+        // only ever touches `ui-autocomplete-loading`.
+        if (this._queryField && this._queryField.length) {
+            this._queryField.removeClass('two-company-search-loading');
         }
         this._customAutocomplete = null;
     }
@@ -2675,14 +3060,13 @@ class TwoCompanySearch {
 
         this.refreshCompanySummary();
 
-        // A fresh pick resolves whatever reveal state was open (TWO-25288
-        // element 2) - the chip re-covers the field with the new name rather
-        // than waiting for blur to notice. LAST, deliberately: the org number
-        // and its tag are what hasConfirmedSelection() reads, and both are
-        // already committed by this point on every branch above (immediate
-        // org number, or none at all - the deferred GB case resolves its own
-        // chip state from autoFillAddressIfNeeded() below).
-        this.collapseReveal();
+        // §2 gating: a company is now captured, so "My company is not on the
+        // list" must be hidden. LAST, deliberately - the org number and its
+        // tag are what hasConfirmedSelection() reads, and both are committed
+        // by this point on every branch above (immediate org number, or none
+        // at all, in which case the deferred GB path re-syncs from
+        // autoFillAddressIfNeeded() below).
+        this.syncNotListedVisibility();
 
         return true;
     }
@@ -2732,8 +3116,9 @@ class TwoCompanySearch {
             // it anyway would tag someone else's organisation number onto
             // whatever the buyer is now typing, and - since that tag is
             // exactly what hasConfirmedSelection() reads - cover the field
-            // they are actively using with the reveal chip and pull it out of
-            // the tab order underneath them. Bail rather than risk either.
+            // they are actively using, and hide the "not on the list" button
+            // from under a buyer who has in fact captured nothing. Bail
+            // rather than risk either.
             const stillOnSameCompany = selectedName === undefined
                 || this.normalizeCompanyName(this.companyField ? this.companyField.val() : '')
                     === this.normalizeCompanyName(selectedName);
@@ -2753,11 +3138,11 @@ class TwoCompanySearch {
                     // and this is the first point one exists, so the summary
                     // rendered at selection time showed a blank number slot.
                     this.refreshCompanySummary();
-                    // Same reason the reveal chip (TWO-25288 element 2) was left
-                    // uncovered by onCompanySelected() on this path - it reads
-                    // hasConfirmedSelection(), which only becomes true once the
-                    // tag written two lines up exists.
-                    this.updateRevealChip();
+                    // §2 gating reads hasConfirmedSelection(), which only
+                    // becomes true once the tag written two lines up exists -
+                    // so on the GB path this, not onCompanySelected(), is
+                    // where the "not on the list" button finally hides.
+                    this.syncNotListedVisibility();
                 }
             }
             // Find addresses list in various shapes. Gated by the SAME
@@ -2931,27 +3316,18 @@ class TwoCompanySearch {
             this.countryListener = () => {
                 try { sessionStorage.setItem('two_country_changed', '1'); } catch (e) {}
 
-                // Stand down an open reveal (TWO-25288 element 2) BEFORE
-                // blanking anything below. This runs on the SAME instance
-                // (unlike a genuine updatedAddressForm re-render, which
-                // destroy()s and replaces it) - so without this, a reveal
-                // opened just before a country change leaves `_revealed` true
-                // and its 200ms blur-restore timer armed. That timer's guard
-                // only checks `_destroyed`/`_manualEntry`, so it fires anyway
-                // and overwrites whatever this country change (or anything
-                // the buyer did after it) just put in the field with a
-                // snapshot captured under the PREVIOUS country - restoring an
-                // organisation number that no longer matches what is
-                // selected.
-                clearTimeout(this._revealBlurTimerId);
-                this._revealBlurTimerId = null;
-                this._revealed = false;
-                this._revealSnapshot = null;
+                // Close an open panel BEFORE blanking anything below. This
+                // runs on the SAME instance (unlike a genuine
+                // updatedAddressForm re-render, which destroy()s and replaces
+                // it), so a panel left open would keep showing results from
+                // the PREVIOUS country's register next to a field this
+                // handler is about to clear. Focus is deliberately not
+                // returned: the buyer is interacting with the country select,
+                // and yanking focus out of it mid-change is worse than
+                // leaving it be.
+                this.closeDropdown(false);
 
                 if (this.companyField && this.companyField.length > 0) {
-                    if (this.companyField.hasClass('ui-autocomplete-input')) {
-                        this.companyField.autocomplete('close');
-                    }
                     this.companyField.val('');
                 }
                 if (this.organizationField) {
@@ -3008,20 +3384,31 @@ class TwoCompanySearch {
                 if (this._destroyed) {
                     return;
                 }
-                // Stand down an open reveal (TWO-25288 element 2) BEFORE
-                // re-resolving the field below. setupAutocomplete() reassigns
-                // `this.companyField` to whatever node is live now - if a
-                // reveal's blur-restore timer is still pending at that point,
-                // `document.contains()` alone cannot tell "detached" from
-                // "reassigned to a DIFFERENT, still-live field", and would
-                // write the pre-re-render snapshot into the wrong node.
-                // Same disarm setupCountryChangeListener()'s own change
-                // handler already does, and for the identical reason: this
-                // handler runs on the SAME instance, not through destroy().
-                clearTimeout(this._revealBlurTimerId);
-                this._revealBlurTimerId = null;
-                this._revealed = false;
-                this._revealSnapshot = null;
+                // Close an open panel BEFORE re-resolving the field below. setupAutocomplete() reassigns
+                // `this.companyField` to whatever node is live now, and the
+                // panel that belonged to the OLD wrapper goes with the
+                // replaced DOM. Close (and drop the references) first, on the
+                // SAME instance, so a deferred close cannot fire against a
+                // detached panel afterwards - the same disarm
+                // setupCountryChangeListener()'s own change handler does, for
+                // the identical reason.
+                //
+                // The close is a mechanical consequence of the re-render, not
+                // something the buyer asked for, so remember an open panel and
+                // let the rebuilt one restore itself. PrestaShop fires this
+                // event for ordinary things - and, as seen in a real browser,
+                // it can land tens of milliseconds AFTER the click that opened
+                // the panel, so the buyer's open was being silently discarded
+                // and the control looked simply dead. See _reopenPanelUntil.
+                const wasOpen = this._dropdownOpen;
+                this.closeDropdown(false);
+                // AFTER the close, which clears the deadline itself so that a
+                // close the buyer did ask for cannot be undone by a later
+                // rebuild.
+                if (wasOpen) {
+                    TwoCompanySearch._reopenPanelUntil
+                        = Date.now() + TwoCompanySearch._REOPEN_WINDOW_MS;
+                }
                 // Address form was re-rendered; re-bind country listener and autocomplete
                 this.setupCountryChangeListener(0);
                 this.setupAutocomplete();
@@ -3042,10 +3429,10 @@ class TwoCompanySearch {
             // LIVE document and bind this dying instance's listener to it.
             clearTimeout(this._countryRetryTimeoutId);
             this._countryRetryTimeoutId = null;
-            // Same reason: a deferred reveal-restore firing after teardown
-            // would write into a detached field (TWO-25288 element 2).
-            clearTimeout(this._revealBlurTimerId);
-            this._revealBlurTimerId = null;
+            // Same reason: a deferred panel close firing after teardown would
+            // reach into a detached subtree.
+            clearTimeout(this._closeTimerId);
+            this._closeTimerId = null;
             // Unbind from the element actually bound. setupCountryChangeListener
             // picks the first of five fallback selectors, so re-querying only
             // `select[name='id_country']` here missed the listener entirely on a
@@ -3058,22 +3445,20 @@ class TwoCompanySearch {
                     countryField.removeEventListener('change', this.countryListener);
                 }
             }
-            // Drop the spinner classes. The abort above resolves no handler, so
-            // without this a teardown mid-search leaves a spinner running in a
-            // field that is no longer searching anything.
+            // Hand the company field back the way we found it. The openers
+            // and the readonly/aria attributes are ours, not PrestaShop's,
+            // and a fresh instance may reuse this very node.
             if (this.companyField && this.companyField.length) {
                 this.companyField.removeClass(
                     'two-company-search-input two-company-search-loading ui-autocomplete-loading'
                 );
-                // Bound directly via jQuery, not through the widget - the
-                // `autocomplete('destroy')` call below only unwinds bindings
-                // the widget itself made, so this one has to go by hand or it
-                // outlives the instance on a field a fresh instance may reuse.
-                this.companyField.off('focus.twoCompanyOpen mousedown.twoCompanyOpen');
+                this.companyField.off('.twoCompanyOpen');
+                this.companyField.removeAttr('readonly aria-haspopup aria-expanded');
             }
-            // Destroy autocomplete instance if present
-            if (this.companyField && this.companyField.length && this.companyField.hasClass('ui-autocomplete-input')) {
-                this.companyField.autocomplete('destroy');
+            // Destroy the widget - which now lives on the panel's query field,
+            // not on the company field.
+            if (this._queryField && this._queryField.length && this._queryField.hasClass('ui-autocomplete-input')) {
+                this._queryField.autocomplete('destroy');
             }
         } catch (e) {
             // no-op
@@ -3095,10 +3480,11 @@ class TwoCompanySearch {
         } catch (e) {
             // no-op
         }
-        // Its own try for the same reason as the reverse link: a live click
-        // handler on a node that would otherwise outlive this instance.
+        // Its own try for the same reason as the reverse link: the panel
+        // carries live click/keydown/focus handlers on nodes that would
+        // otherwise outlive this instance.
         try {
-            this.removeRevealChip();
+            this.removeDropdown();
         } catch (e) {
             // no-op
         }
