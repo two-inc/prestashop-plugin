@@ -567,6 +567,35 @@ class TwoCompanySearch {
             || !document.contains(this.companyField.get(0))) {
             return;
         }
+        // Cancel any blur-restore timer already armed on THIS field before
+        // touching anything else (TWO-30.x.15, live bug found post-#130).
+        //
+        // A real mouse click on the chip fires a native `blur` on the
+        // company field BEFORE this method runs: the field can still hold
+        // focus at that point despite `tabindex="-1"`/`aria-hidden` (both are
+        // set by updateRevealChip() without forcing a blur), and mousedown on
+        // the chip button - a separate, focusable element - moves focus away
+        // from it in the browser's normal mousedown-then-click order. That
+        // blur is `setupRevealBlurRestore()`'s own trigger: it arms a 200ms
+        // timer via armRevealBlurRestore() whose only guard is `_revealed` AT
+        // FIRE TIME, not at arm time.
+        //
+        // Every other place in this file that can leave that timer stale
+        // (country change, `updatedAddressForm`, destroy()) clears it
+        // explicitly for exactly this reason - this method was the one gap.
+        // Here the gap is worse than "stale": the guard doesn't merely fail
+        // to protect, it actively fires. By the time the 200ms elapses,
+        // `_revealed` has already been set true a few lines below by THIS
+        // SAME click, so the stale timer's guard passes and it "restores"
+        // the snapshot this method just took - overwriting the freshly
+        // opened search with the very company the buyer clicked away from,
+        // silently re-showing the chip and wiping whatever the buyer had
+        // typed in the meantime. Live-verified: the field visibly reverted
+        // to the previously selected company ~200ms after a real click on
+        // the chip, with no console error and no event firing at the moment
+        // of revert - it was this timer, not a broken search.
+        clearTimeout(this._revealBlurTimerId);
+        this._revealBlurTimerId = null;
         this._revealSnapshot = {
             company: String(this.companyField.val() || ''),
             orgId: this.organizationField && this.organizationField.length
