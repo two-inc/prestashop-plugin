@@ -45,6 +45,43 @@ export async function completeGuestStep(page: Page, email: string) {
  * widget, which needs a real merchant key; out of scope for this hermetic
  * suite (see seed-two-config.sh).
  */
+/**
+ * Put a company name into the address form.
+ *
+ * TWO-25326 made the company-name field a search TRIGGER rather than a text
+ * box: in search mode it carries `readonly`, clicking it opens the dropdown
+ * panel, and typing is routed into the panel's own query field so the buyer
+ * cannot overwrite a confirmed name by hand. A plain `.fill()` therefore times
+ * out with "element is not editable" — which is the control working as
+ * specified, not a regression.
+ *
+ * The route to an arbitrary, unverified name is manual entry, so that is what
+ * this drives: open the panel, take "My company is not on the list", then type
+ * into the now-editable field. That is also the flow these tests want — both
+ * callers supply a name that is deliberately NOT a real registered company.
+ *
+ * Falls back to a direct fill when the field is already editable, so the tests
+ * still work on a build where the module's checkout JS never ran (no
+ * `checkoutHost` configured, assets not registered). Without that fallback a
+ * genuine asset-loading regression would surface here as a confusing timeout
+ * rather than as the payment-option assertion these tests actually make.
+ */
+async function fillCompanyName(page: Page, addr: Locator, company: string) {
+  const field = addr.locator('input[name="company"]');
+  const isReadonly = await field.getAttribute("readonly");
+
+  if (isReadonly !== null) {
+    await field.click();
+    const notListed = addr.locator("button.two-company-not-listed");
+    await notListed.click();
+    // enterManualEntryMode() strips `readonly` and focuses the field.
+    await expect(field).not.toHaveAttribute("readonly", /.*/);
+  }
+
+  await field.fill(company);
+  await expect(field).toHaveValue(company);
+}
+
 export async function completeAddressStep(page: Page, company: string) {
   const addr = page.locator("#checkout-addresses-step");
   // PS 9's demo fixture defaults the address country to Norway, whose
@@ -62,7 +99,7 @@ export async function completeAddressStep(page: Page, company: string) {
   await page.waitForLoadState("networkidle");
   await addr.locator('input[name="firstname"]').fill("Test");
   await addr.locator('input[name="lastname"]').fill("Buyer");
-  await addr.locator('input[name="company"]').fill(company);
+  await fillCompanyName(page, addr, company);
   await addr.locator('input[name="address1"]').fill("123 Test Street");
   await addr.locator('input[name="city"]').fill("Testville");
   await addr.locator('input[name="postcode"]').fill("10001");

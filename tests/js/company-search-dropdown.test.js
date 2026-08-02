@@ -407,6 +407,17 @@ describe('§2 "My company is not on the list"', () => {
         expect(notListed.tagName).toBe('BUTTON');
         expect(notListed.getAttribute('role')).toBeNull();
         expect(notListed.disabled).toBe(false);
+
+        // The assertions above are what this test USED to stop at, and they
+        // could not fail while Enter was in fact broken: the panel's own
+        // keydown handler cancelled every Enter that bubbled through it, and a
+        // button's activation click is precisely the default action of that
+        // keydown - so Enter did nothing, with no role override and no
+        // disabled flag to show for it. jsdom does not synthesise the click,
+        // so the mechanism is what gets pinned here.
+        const enter = $.Event('keydown', { key: 'Enter', keyCode: 13 });
+        panelParts().notListed.trigger(enter);
+        expect(enter.isDefaultPrevented()).toBe(false);
     });
 
     test('is visible with the panel freshly open and nothing typed', () => {
@@ -547,6 +558,47 @@ describe('regressions found in adversarial review', () => {
         jest.advanceTimersByTime(10);
 
         expect(shown(panelParts().panel)).toBe(false);
+    });
+
+    test('Tab out of the query field does not let the widget pick the highlighted row', () => {
+        // jQuery UI's autocomplete accepts the active menu item on Tab. With a
+        // row arrow-keyed onto, that fired our `select` handler, which closes
+        // the panel and returns focus to company-name - so a buyer who arrowed
+        // down to read a result and then tabbed had it silently chosen for
+        // them, and focus went backwards instead of on to "not on the list".
+        //
+        // Asserted through the widget's own keydown path rather than by
+        // calling the guard: what matters is that the widget never SEES the
+        // keystroke, which is a propagation property, not a return value.
+        // Driving jQuery UI's menu itself is not possible here - jsdom does no
+        // layout, the widget never marks a row active under synthetic keys,
+        // and a test written that way passes whether the guard exists or not
+        // (confirmed: it did). So this pins the mechanism directly. A listener
+        // bound on the query input stands in for the widget's own, which is
+        // bound in exactly that position; if Tab reaches target phase at all,
+        // it reaches jQuery UI too.
+        makeInstance();
+        openPanel();
+        typeQuery('exa');
+        settleSearch();
+
+        const queryEl = panelParts().query.get(0);
+        const seen = [];
+        queryEl.addEventListener('keydown', (e) => seen.push(e.key));
+
+        // Dispatched natively, not via jQuery's `.trigger()`: that calls
+        // jQuery handlers directly and never runs a capture phase, so it
+        // cannot exercise this guard at all.
+        const press = (key) => queryEl.dispatchEvent(
+            new window.KeyboardEvent('keydown', { key: key, bubbles: true, cancelable: true })
+        );
+
+        press('Tab');
+        // A non-Tab key must still get through, or the guard is too broad and
+        // would break typing and arrow navigation.
+        press('ArrowDown');
+
+        expect(seen).toEqual(['ArrowDown']);
     });
 
     test('a genuine click away still closes the panel', () => {

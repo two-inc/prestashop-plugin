@@ -626,6 +626,12 @@ class TwoCompanySearch {
             this._notListedButton.off('.twoDropdown');
         }
         if (this._dropdown && this._dropdown.length) {
+            // Native listener, so jQuery's namespace sweep above does not
+            // reach it - it has to come off by reference.
+            if (this._tabCaptureHandler && this._dropdown.get(0)) {
+                this._dropdown.get(0).removeEventListener('keydown', this._tabCaptureHandler, true);
+            }
+            this._tabCaptureHandler = null;
             this._dropdown.off('.twoDropdown');
             this._dropdown.remove();
         }
@@ -691,7 +697,19 @@ class TwoCompanySearch {
             // `<form>` and triggered implicit submission: the buyer types a
             // company name, presses Enter before the results land, and submits
             // the address step.
-            if (event.key === 'Enter') {
+            //
+            // Scoped to the QUERY FIELD, not the whole panel. A `<button>`'s
+            // activation click IS the default action of the Enter keydown that
+            // triggered it, so cancelling Enter in a bubbling ancestor
+            // suppresses the click outright - which silently broke Enter on
+            // "My company is not on the list" (§2: click, Enter and Space must
+            // all activate it). Space was unaffected only by accident, because
+            // a button's Space activation fires on keyup, which this never
+            // saw. The form-submission this guard exists to stop can only come
+            // from the query field anyway.
+            if (event.key === 'Enter'
+                && this._queryField && this._queryField.length
+                && event.target === this._queryField.get(0)) {
                 event.preventDefault();
             }
             if (event.key === 'Escape' || event.key === 'Esc') {
@@ -701,6 +719,47 @@ class TwoCompanySearch {
                 this.closeDropdown(true);
             }
         });
+
+        // Tab out of the query field must NOT pick the highlighted row (§4.1).
+        //
+        // jQuery UI's autocomplete treats Tab as "accept the active menu item"
+        // - its own keydown handler calls `menu.select(event)` whenever a row
+        // has been arrow-keyed onto. That runs our `select` option, which ends
+        // in closeDropdown(true) and puts focus back on the company-name
+        // field: precisely the two things §1.9 and §4.1 forbid Tab from doing.
+        // A buyer who arrows down to look at a result and then tabs would find
+        // it silently chosen for them.
+        //
+        // Native listener in the CAPTURE phase, deliberately. The widget binds
+        // its handler on the query input itself, and a jQuery handler added
+        // afterwards on the same element runs after it - too late. Capture on
+        // an ancestor runs before the target's own listeners, so
+        // stopPropagation() here means the widget never sees the keystroke.
+        //
+        // Only propagation is stopped, never the default: letting the browser
+        // perform its own Tab is what makes the next stop correct in both
+        // directions without this code choosing a destination. Forward, the
+        // next tabbable inside the panel is the "not on the list" button (the
+        // results list and the widget's `<ul>` both carry `tabindex="-1"`),
+        // which is the §4.1 shortcut; backward, focus leaves the panel and the
+        // focusout handler closes it.
+        const panelEl = this._dropdown.get(0);
+        if (panelEl) {
+            if (this._tabCaptureHandler) {
+                panelEl.removeEventListener('keydown', this._tabCaptureHandler, true);
+            }
+            this._tabCaptureHandler = (event) => {
+                if (event.key !== 'Tab') {
+                    return;
+                }
+                if (!this._queryField || !this._queryField.length
+                    || event.target !== this._queryField.get(0)) {
+                    return;
+                }
+                event.stopPropagation();
+            };
+            panelEl.addEventListener('keydown', this._tabCaptureHandler, true);
+        }
 
         this._dropdown.on('focusin.twoDropdown', () => {
             clearTimeout(this._closeTimerId);
