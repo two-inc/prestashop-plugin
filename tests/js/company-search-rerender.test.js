@@ -94,6 +94,146 @@ describe('the real jQuery UI widget is what gets bound', () => {
         expect(liveField().autocomplete('option', 'minLength')).toBe(0);
         expect(liveField().autocomplete('option', 'delay')).toBe(300);
     });
+
+    test('#30.x.14 bug 2.1: the menu opens with a visible gap below the field, not flush against it', () => {
+        makeInstance();
+
+        // Live-verified: jQuery UI's own default (`my: "left top"` against
+        // `at: "left bottom"`) butted the menu directly against the field
+        // with zero pixels between them, reading as one continuous control.
+        // `top+8` is what actually opens a gap a buyer can see.
+        expect(liveField().autocomplete('option', 'position')).toEqual({
+            my: 'left top+8',
+            at: 'left bottom',
+            collision: 'none'
+        });
+    });
+});
+
+describe('#30.x.14 bug 2.1: a real click opens a control, plain keyboard focus does not', () => {
+    function menu() {
+        return $('ul.ui-autocomplete');
+    }
+
+    /** A real user click: mousedown fires before focus, in that order. */
+    function click(field) {
+        field.trigger('mousedown');
+        field.trigger('focus');
+    }
+
+    test('clicking into an EMPTY field opens the menu showing the hint row', () => {
+        makeInstance();
+        const field = liveField();
+
+        expect(menu().css('display')).toBe('none');
+
+        click(field);
+
+        expect(menu().css('display')).not.toBe('none');
+        expect(menu().find('li').hasClass('two-autocomplete-focus-hint')).toBe(true);
+    });
+
+    test('plain keyboard focus (Tab, no mousedown) opens nothing', () => {
+        // Round-1 adversarial review finding (Vader): the hint row is
+        // aria-disabled/keyboard-skipped by design, so opening it for a
+        // keyboard user with no signal of intent to search would announce a
+        // result becoming available with nothing they could actually select
+        // - a regression from the old, silent behaviour. Gating on a real
+        // `mousedown` (which Tab never fires) is what keeps Tab silent while
+        // still opening for an actual click.
+        makeInstance();
+        const field = liveField();
+
+        field.trigger('focus');
+
+        expect(menu().css('display')).toBe('none');
+    });
+
+    test('clicking a field already holding a searchable term re-opens its results, not the hint', () => {
+        const instance = makeInstance();
+        const field = liveField();
+        const atThreshold = 'a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH);
+
+        field.val(atThreshold);
+        click(field);
+        ajax.last().succeed(SEARCH_RESPONSE);
+
+        expect(menu().find('li.two-autocomplete-focus-hint')).toHaveLength(0);
+        expect(menu().find('li').not('.two-autocomplete-manual-entry')).toHaveLength(SEARCH_RESPONSE.items.length);
+        void instance;
+    });
+
+    test('clicking the field while in manual entry opens nothing', () => {
+        const instance = makeInstance();
+        const field = liveField();
+
+        instance.enterManualEntryMode();
+        click(field);
+
+        expect(menu().css('display')).toBe('none');
+    });
+
+    test('the pointer signal is one-shot: a second focus with no mousedown in between does not reopen it', () => {
+        makeInstance();
+        const field = liveField();
+
+        click(field);
+        expect(menu().css('display')).not.toBe('none');
+
+        // jQuery UI's own `close()` is conditioned on the menu passing
+        // jQuery's `:visible` check - a real layout test that jsdom never
+        // computes, so it is a no-op here (same reasoning documented on
+        // TwoCompanySearch.enterManualEntryMode(), which hides the menu
+        // element directly for the same reason). Doing the same here closes
+        // it deterministically so this test is about whether the SECOND
+        // focus below reopens it, not about jQuery UI's own blur/close
+        // timing.
+        field.autocomplete('instance').menu.element.hide();
+        expect(menu().css('display')).toBe('none');
+
+        field.trigger('focus');
+
+        expect(menu().css('display')).toBe('none');
+    });
+
+    test('a destroyed instance does not reopen the menu on click', () => {
+        const instance = makeInstance();
+        const field = liveField();
+
+        instance.destroy();
+        // destroy() unbinds both namespaced handlers; nothing left to throw
+        // or reopen the menu on a field the instance no longer owns. The
+        // widget itself is torn down too, so the menu element is gone
+        // outright rather than merely hidden.
+        expect(() => click(field)).not.toThrow();
+        expect(menu()).toHaveLength(0);
+    });
+
+    test('moving to a replaced field during setupAutocomplete() unbinds the old field\'s pointer/focus handlers', () => {
+        // Round-1 adversarial review finding (Han): setupAutocomplete()'s
+        // "moving to a replaced field" branch released the old field's
+        // jQuery UI widget but left `focus.twoCompanyOpen` /
+        // `mousedown.twoCompanyOpen` bound to it directly (they are bound
+        // via jQuery, not through the widget, so `autocomplete('destroy')`
+        // does not touch them).
+        const instance = makeInstance();
+        const oldField = liveField();
+
+        replaceAddressForm({ country: 'GB' });
+        instance.setupAutocomplete();
+
+        // The old node is detached, so it can never receive a REAL user
+        // mousedown/focus again - but a directly `.trigger()`ed one still
+        // reaches any handler still bound, which is exactly what a leaked
+        // binding would answer to.
+        expect(() => {
+            oldField.trigger('mousedown');
+            oldField.trigger('focus');
+        }).not.toThrow();
+        // No menu opens for the detached node - it has no widget any more -
+        // and the live field's own listener is unaffected.
+        expect($('ul.ui-autocomplete').filter((i, el) => $(el).css('display') !== 'none')).toHaveLength(0);
+    });
 });
 
 describe('the company-search hints (TWO-25288)', () => {
@@ -242,14 +382,21 @@ describe('the company-search hints (TWO-25288)', () => {
             expect($('ul.ui-autocomplete li.two-autocomplete-too-short')).toHaveLength(0);
         });
 
-        test('an empty field shows no row at all', () => {
+        test('an empty field shows exactly the focus-open hint row, no search made', () => {
             makeInstance();
 
             search('');
 
-            // The placeholder is already the hint for this state; a dropdown
-            // repeating it under an untouched field is noise.
-            expect(rows()).toHaveLength(0);
+            // #30.x.14 bug 2.1: a click/focus into an empty field must open
+            // something - a plain `response([])` here is indistinguishable
+            // from "not a dropdown at all", which was the live complaint.
+            // Still not a real search: no company can be searched for on an
+            // empty term, so no request goes out and the row is the same
+            // placeholder text repeated, not a live result.
+            expect(rows()).toHaveLength(1);
+            expect(rows().hasClass('two-autocomplete-focus-hint')).toBe(true);
+            expect(rows().hasClass('ui-state-disabled')).toBe(true);
+            expect(rows().attr('aria-disabled')).toBe('true');
             expect(ajax.calls).toHaveLength(0);
         });
 
@@ -479,7 +626,13 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25288)', () => 
 
         search('');
 
-        expect(rows()).toHaveLength(0);
+        // #30.x.14 bug 2.1: an empty field now shows the focus-open hint row
+        // instead of nothing, but the manual-entry row itself is still gated
+        // out here - "not on the list" is a claim about a search that has not
+        // happened yet, same reasoning as the below-threshold case above.
+        expect(rows()).toHaveLength(1);
+        expect(rows().hasClass('two-autocomplete-focus-hint')).toBe(true);
+        expect(manualRow()).toHaveLength(0);
     });
 
     test('it is NOT disabled and NOT aria-disabled, unlike every message row', () => {
@@ -664,6 +817,57 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25288)', () => 
         expect(menu().css('display')).not.toBe('none');
         expect(rows()).toHaveLength(2);
         expect(rows().last().hasClass('two-autocomplete-manual-entry')).toBe(true);
+    });
+
+    test('#30.x.14: clicking the reverse link fires exactly one search, not two', () => {
+        // Round-1 adversarial review finding (Vader): exitManualEntryMode()
+        // used to BOTH `.trigger('focus')` (which the then-ungated
+        // `focus.twoCompanyOpen` handler treated as a fresh open) AND make
+        // its own explicit `autocomplete('search', term)` call - firing the
+        // search twice on every click. A raw ajax-call count can't tell the
+        // two apart: the result cache created for this same term by the
+        // search below serves BOTH calls with zero network requests either
+        // way, whether the fix landed or not. Spying on the one shared call
+        // site (openSearchForCurrentTerm()) is what actually distinguishes
+        // them.
+        const instance = makeInstance();
+        const field = liveField();
+
+        search(AT_THRESHOLD);
+        ajax.last().succeed(SEARCH_RESPONSE);
+        field.autocomplete('option', 'select')(null, { item: instance.buildManualEntryItem() });
+
+        const spy = jest.spyOn(instance, 'openSearchForCurrentTerm');
+        $('.two-company-search-back').trigger('click');
+
+        expect(spy).toHaveBeenCalledTimes(1);
+        spy.mockRestore();
+    });
+
+    test('#30.x.14 bug 2.5: clicking it does not bubble into an ancestor handler (accordion-toggle regression)', () => {
+        const instance = makeInstance();
+        const field = liveField();
+
+        search(AT_THRESHOLD);
+        ajax.last().succeed(SEARCH_RESPONSE);
+        field.autocomplete('option', 'select')(null, { item: instance.buildManualEntryItem() });
+
+        const link = $('.two-company-search-back');
+        expect(link).toHaveLength(1);
+
+        // Stands in for the checkout theme's own delegated accordion-toggle
+        // handler on the address step container - live, this click bubbled up
+        // into whatever collapses that step and closed the whole address
+        // section the buyer was mid-edit in.
+        let ancestorClicks = 0;
+        link.closest('.js-address-form').on('click', () => { ancestorClicks += 1; });
+
+        link.trigger('click');
+
+        expect(ancestorClicks).toBe(0);
+        // The button's own behaviour must still run - this is stopPropagation,
+        // not a swallowed click.
+        expect(instance._manualEntry).toBe(false);
     });
 
     test('a country change while in manual entry does not strand the buyer', () => {
