@@ -169,6 +169,57 @@ describe('the chip is shown only for a confirmed selection', () => {
     });
 });
 
+describe('a real mouse click on the chip does not revert itself (TWO-30.x.15)', () => {
+    // A genuine mouse click on the chip button fires a native `blur` on the
+    // company field BEFORE the click handler runs - browser event order is
+    // mousedown -> blur (previously-focused element) -> focus (the chip,
+    // itself focusable) -> mouseup -> click. `chip().trigger('click')` used
+    // by every other test in this file skips straight to the click handler
+    // and never fires that leading blur, which is why this exact regression
+    // (live-verified against prestashop-dev.staging.two.inc) shipped past
+    // the existing suite: it only exercises the click handler in isolation.
+    test('a blur immediately before the click does not restore the covered company 200ms later', () => {
+        jest.useFakeTimers();
+        makeInstance();
+        const field = selectFirstResult('exa', SEARCH_RESPONSE);
+
+        // The field can still hold focus at this point despite the chip
+        // covering it (updateRevealChip() sets tabindex="-1"/aria-hidden
+        // without forcing a blur) - so the chip's own mousedown moves focus
+        // away from it first, exactly like a real click does.
+        field.trigger('blur');
+        chip().trigger('click');
+
+        // Before the fix, the blur above armed a 200ms restore timer whose
+        // guard only checks `_revealed` at FIRE time - by which point the
+        // click just above has already set `_revealed = true`, so the guard
+        // passes and it restores the very selection the click just opened a
+        // fresh search to replace.
+        jest.advanceTimersByTime(250);
+
+        expect(field.val()).toBe('');
+        expect($("input[name='companyid']").val()).toBe('12345678');
+        expect(chipVisible()).toBe(false);
+        expect(document.activeElement).toBe(field.get(0));
+    });
+
+    test('typing after that same blur-then-click sequence is not overwritten', () => {
+        jest.useFakeTimers();
+        makeInstance();
+        const field = selectFirstResult('exa', SEARCH_RESPONSE);
+
+        field.trigger('blur');
+        chip().trigger('click');
+        field.val('Different Corp');
+        field.trigger('input');
+
+        jest.advanceTimersByTime(250);
+
+        expect(field.val()).toBe('Different Corp');
+        expect(chipVisible()).toBe(false);
+    });
+});
+
 describe('clicking the chip reveals a fresh search box', () => {
     test('blanks the field, focuses it, and hides the chip', () => {
         makeInstance();
