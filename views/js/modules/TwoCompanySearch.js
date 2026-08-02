@@ -49,6 +49,31 @@ class TwoCompanySearch {
      * render. Only the cache is preserved, not the pending request.
      */
     static _resultCache = new Map();
+
+    /**
+     * Deadline (epoch ms) up to which a freshly built panel should reopen
+     * itself, because the panel it replaces was open when PrestaShop
+     * re-rendered the address form out from under the buyer.
+     *
+     * On the CLASS, and a deadline rather than a boolean, for two reasons.
+     *
+     * A single `updatedAddressForm` tears the control down TWICE: this
+     * module's own handler closes and rebuilds the panel on the SAME instance,
+     * and then TwoCheckoutManager destroy()s that instance and constructs a
+     * replacement. Instance state cannot cross the second of those, and a flag
+     * consumed by the first rebuild would be gone before the one the buyer
+     * actually ends up looking at.
+     *
+     * A deadline also fails safe. Nothing has to remember to clear it: if the
+     * rebuild never comes - the buyer left the step, the module was torn down
+     * for good - it simply expires, and the worst case is a panel that does
+     * not reopen. A boolean left set would reopen an unrelated panel the next
+     * time one happened to be built.
+     */
+    static _reopenPanelUntil = 0;
+
+    /** How long after a re-render a rebuilt panel may restore itself. */
+    static _REOPEN_WINDOW_MS = 1500;
     // A company registered mid-session stays absent from an already-searched
     // term until its entry expires. That staleness is deliberate: buyers search
     // for their own company, which is already registered, so nothing here busts
@@ -999,6 +1024,12 @@ class TwoCompanySearch {
         clearTimeout(this._closeTimerId);
         this._closeTimerId = null;
         this._dropdownOpen = false;
+        // A closed panel must stay closed. The re-render path re-arms this
+        // immediately after calling here, which is the one case where a
+        // rebuild is allowed to reopen; every other close - Escape, a
+        // selection, focus leaving the panel, entering manual entry - is the
+        // buyer's own and outranks a deadline an earlier re-render set.
+        TwoCompanySearch._reopenPanelUntil = 0;
         // State hygiene, and DEFENSIVE ONLY - deliberately not covered by a
         // test, because no test can currently make it matter. The flag is only
         // ever read by scheduleDropdownClose(), which runs solely while the
@@ -1841,6 +1872,51 @@ class TwoCompanySearch {
         if (this._manualEntry) {
             this.renderBackToSearchLink();
         }
+
+        this.restorePanelAfterRerender();
+    }
+
+    /**
+     * Reopen a panel that a re-render closed on the buyer's behalf.
+     *
+     * PrestaShop re-renders the address form for ordinary interactions, and in
+     * a real browser that re-render can land tens of milliseconds AFTER the
+     * click that opened the panel - measured at click +165ms, re-render
+     * +195ms. The panel was torn down and rebuilt closed, so the buyer clicked
+     * the field, saw a dropdown appear and vanish, and had no way into manual
+     * entry at all. Nothing in the unit suite could see it: it needs
+     * PrestaShop's own event actually firing after a real click.
+     *
+     * Called at the very END of setupAutocomplete() on purpose - openDropdown()
+     * renders the current search state through the widget, so it cannot run
+     * until whichever engine this build uses has been wired up.
+     *
+     * Deliberately narrow. It restores only what the buyer already had, only
+     * while a re-render is plausibly responsible (see _reopenPanelUntil), and
+     * never in manual-entry mode, where an open search panel would contradict
+     * the mode the buyer chose.
+     */
+    restorePanelAfterRerender() {
+        if (this._destroyed || this._manualEntry) {
+            return;
+        }
+        if (Date.now() >= TwoCompanySearch._reopenPanelUntil) {
+            return;
+        }
+        if (!this._dropdown || !this._dropdown.length
+            || !this._queryField || !this._queryField.length) {
+            return;
+        }
+        // Left ARMED, not consumed. One `updatedAddressForm` rebuilds the
+        // control twice - this module's own handler rebuilds in place, then
+        // the checkout manager destroys the instance and constructs a
+        // replacement - and it is the second panel the buyer ends up looking
+        // at. Consuming the deadline here would restore the throwaway and
+        // leave the real one closed. The deadline expires on its own, and any
+        // close clears it.
+        const deadline = TwoCompanySearch._reopenPanelUntil;
+        this.openDropdown();
+        TwoCompanySearch._reopenPanelUntil = deadline;
     }
 
     /**
@@ -3316,7 +3392,23 @@ class TwoCompanySearch {
                 // detached panel afterwards - the same disarm
                 // setupCountryChangeListener()'s own change handler does, for
                 // the identical reason.
+                //
+                // The close is a mechanical consequence of the re-render, not
+                // something the buyer asked for, so remember an open panel and
+                // let the rebuilt one restore itself. PrestaShop fires this
+                // event for ordinary things - and, as seen in a real browser,
+                // it can land tens of milliseconds AFTER the click that opened
+                // the panel, so the buyer's open was being silently discarded
+                // and the control looked simply dead. See _reopenPanelUntil.
+                const wasOpen = this._dropdownOpen;
                 this.closeDropdown(false);
+                // AFTER the close, which clears the deadline itself so that a
+                // close the buyer did ask for cannot be undone by a later
+                // rebuild.
+                if (wasOpen) {
+                    TwoCompanySearch._reopenPanelUntil
+                        = Date.now() + TwoCompanySearch._REOPEN_WINDOW_MS;
+                }
                 // Address form was re-rendered; re-bind country listener and autocomplete
                 this.setupCountryChangeListener(0);
                 this.setupAutocomplete();
