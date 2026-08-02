@@ -84,30 +84,23 @@
         </div>
     </div>
 
-    {* Captured company, read-only (TWO-25288). The buyer names their company in
-       the ADDRESS step; by the payment step neither the name nor the
-       organisation number is on screen, and the number was only ever carried in
-       the hidden `companyid` input. This block shows the pair back to them so
-       they can check which company is about to be credit-checked.
+    {* Captured company, read-only (TWO-25288; reshaped by TWO-25326 §7).
+
+       §7 requires the captured company to appear in the payment tile as a
+       single text label in the form "<name> (<number>)", positioned between
+       the term chips and the intent message / optional fields - which is
+       exactly where this sits.
 
        Deliberately <span>s and not inputs: the values are not editable and not
        removable here. Populated by TwoCompanySummary.js, which reads them from
        the address form and never writes to it - the hidden `companyid` input
        remains the sole carrier of the organisation number into the submission.
 
-       The number slot renders BLANK, not absent, for a manual-entry buyer who
-       has no number to give: a slot that disappears reads as a rendering fault
-       rather than as an answer. The block as a whole stays hidden until there is
-       something to show. *}
+       The number and its parentheses are one unit, hidden together when there
+       is no number: a manual-entry buyer supplies a name only (§5), and
+       "Example Ltd ()" is worse than "Example Ltd". *}
     <div class="two-company-summary" id="two-company-summary" style="display: none;">
-        <div class="two-company-summary__row">
-            <span class="two-company-summary__label">{l s='Company' mod='twopayment'}</span>
-            <span class="two-company-summary__value" data-two-company-summary="name"></span>
-        </div>
-        <div class="two-company-summary__row">
-            <span class="two-company-summary__label">{l s='Company number' mod='twopayment'}</span>
-            <span class="two-company-summary__value" data-two-company-summary="number"></span>
-        </div>
+        <span class="two-company-summary__value" data-two-company-summary="name"></span><span class="two-company-summary__number-wrap"> (<span class="two-company-summary__value" data-two-company-summary="number"></span>)</span>
     </div>
 
     {* Optional buyer reference fields (ABN-472). These live HERE, in the

@@ -87,10 +87,8 @@ $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_eca5a3449475f365c129
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_f23b2c9fe4875f2c3dbc61a4bd02705b'] = 'Two-kjøperportalen';
 $_MODULE['<{twopayment}prestashop>form_92fbf0e5d97b8afd7e73126b52bdc4bb'] = 'Velg en fil';
 $_MODULE['<{twopayment}prestashop>form_f2a6c498fb90ee345d997f888fce3b18'] = 'Slett';
-$_MODULE['<{twopayment}prestashop>paymentinfo_1c76cbfe21c6f44c1d1e59d54f3e4420'] = 'Firma';
 $_MODULE['<{twopayment}prestashop>paymentinfo_1ffcb4e0a351d5e143bec6362c0feaf8'] = 'Betalingsfristen er slutten av inneværende måned pluss valgt antall dager, regnet fra ordren er oppfylt';
 $_MODULE['<{twopayment}prestashop>paymentinfo_26615a6d6e63f2904432b8b425ee6e93'] = 'Sjekker tilgjengelighet ...';
-$_MODULE['<{twopayment}prestashop>paymentinfo_4e1d2b56da5ef5d0c57afc363cb790d8'] = 'Organisasjonsnummer';
 $_MODULE['<{twopayment}prestashop>paymentinfo_5aef0c6f737f3b7048b5e399e9d843a5'] = 'Bedriftsbetaling gjort enkelt';
 $_MODULE['<{twopayment}prestashop>paymentinfo_5c920817023991f458e2a248e9367c67'] = 'Umiddelbar kredittvurdering';
 $_MODULE['<{twopayment}prestashop>paymentinfo_6033e75a77783890ca9688763bf9adbb'] = 'Les mer om Two';
@@ -394,6 +392,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_cd7cc8b6d9b6160db0e405bc2207b5fb'] 
 $_MODULE['<{twopayment}prestashop>twopayment_cdca48ec5dde79b84b395c0c557bb290'] = '%d dager';
 $_MODULE['<{twopayment}prestashop>twopayment_cf30831a8831200d89309561f036c5a7'] = 'Velg hvilket Two-API-miljø som skal brukes. Produksjon for reelle transaksjoner, Staging/Utvikling for testing.';
 $_MODULE['<{twopayment}prestashop>twopayment_cf5f3091e30dee6597885d8c0e0c357f'] = 'Vilkår';
+$_MODULE['<{twopayment}prestashop>twopayment_d132286ce060a9349df55de2808b4d5f'] = 'Ingen treff funnet';
 $_MODULE['<{twopayment}prestashop>twopayment_d2a7c39c5ec025981855847fed006923'] = 'Hvis du velger JA, blir tax_subtotals sendt i datainnholdet til /v1/order og /v1/order_intent. Hvis du velger NEI, utelates tax_subtotals fra dette datainnholdet.';
 $_MODULE['<{twopayment}prestashop>twopayment_d2f68faa84d4bab378419dae024f85f9'] = 'Betalingen er godkjent! Velg betalingsvilkår nedenfor.';
 $_MODULE['<{twopayment}prestashop>twopayment_d314a00556eb88a960abf8a0de8b45f8'] = 'Noen av opplysningene som er oppgitt er ugyldige. Kontroller opplysningene i fakturaadressen din og prøv igjen.';

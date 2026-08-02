@@ -21,7 +21,8 @@ const {
     buildAddressForm,
     stubAjax,
     callbackRecorder,
-    releaseWidgets
+    releaseWidgets,
+    panelParts
 } = require('./ps-harness');
 
 const CHECKOUT_HOST = 'https://api.example.test';
@@ -59,6 +60,22 @@ function makeInstance(extraConfig) {
     return new TwoCompanySearch(
         Object.assign({ checkoutHost: CHECKOUT_HOST }, extraConfig || {})
     );
+}
+
+/**
+ * The autocomplete widget, wherever it currently lives.
+ *
+ * TWO-25326 §1 moved it off `input[name='company']` and onto the anchored
+ * panel's own query field: the company-name field stopped being the search box.
+ * The panel is built by setupAutocomplete(), so this resolves from the moment
+ * an instance exists - it does NOT need the panel to have been opened. Resolved
+ * from the live DOM on each call rather than cached, for the same reason
+ * panelParts() is: PrestaShop replaces the address form wholesale.
+ *
+ * @returns {Object} the jQuery UI autocomplete instance on the query field
+ */
+function widget() {
+    return panelParts().query.autocomplete('instance');
 }
 
 describe('exactly one callback per search', () => {
@@ -537,8 +554,8 @@ describe('class-static result cache', () => {
         // term. There must be no entry to serve.
         document.body.innerHTML = '';
         buildAddressForm({ country: null, countryId: '999' });
-        const search = makeInstance();
-        search.companyField.autocomplete('instance').search('exa');
+        makeInstance();
+        widget().search('exa');
 
         expect(ajax.calls).toHaveLength(0);
         expect(TwoCompanySearch.cacheGet('exa|')).toBeNull();
@@ -556,10 +573,10 @@ describe('class-static result cache', () => {
         try {
             const search = makeInstance();
             const rendered = [];
-            search.companyField.autocomplete('option', 'response', (event, ui) => {
+            panelParts().query.autocomplete('option', 'response', (event, ui) => {
                 ui.content.forEach((item) => rendered.push(item));
             });
-            search.companyField.autocomplete('instance').search('exa');
+            widget().search('exa');
 
             // `value` is the MESSAGE, not the '' the item was built with:
             // jQuery UI's _normalize() rewrites it as `value || label`. So the
@@ -573,18 +590,18 @@ describe('class-static result cache', () => {
                     // Its own row class: nothing is broken, so the row must not
                     // be identified in the DOM as the failure row.
                     two_row_class: 'two-autocomplete-select-country'
-                },
-                // The manual-entry footer (TWO-25288 element 5), last, on every
-                // rendered set at or above the threshold. Its own flag, NOT
-                // `two_unavailable`: that flag means "keyboard-skipped", and this
-                // row has to be reachable.
-                {
-                    label: 'My company is not on the list',
-                    value: 'My company is not on the list',
-                    two_manual_entry: true
                 }
+                // ...and NOTHING else. The manual-entry footer that used to be
+                // appended here as a second pseudo-row is gone: TWO-25326 §2
+                // made "My company is not on the list" a real <button> outside
+                // the scroll container, so it is no longer part of any rendered
+                // item set. Asserted immediately below rather than left implied,
+                // because "the route out is still offered" is the property that
+                // mattered about the old row.
             ]);
             expect(rendered[0].label).not.toBe(search.getSearchUnavailableText());
+            expect(panelParts().notListed.length).toBe(1);
+            expect(panelParts().notListed.get(0).tagName).toBe('BUTTON');
         } finally {
             delete window.twopayment;
         }
@@ -619,7 +636,7 @@ describe('class-static result cache', () => {
         // REQUEST carried, not the one now selected. It does, because both are
         // resolved in the same synchronous tick before the request goes out.
         const search = makeInstance();
-        search.companyField.autocomplete('instance').search('exa');
+        widget().search('exa');
         expect(new URL(ajax.last().url).searchParams.get('country')).toBe('GB');
 
         const inFlight = ajax.last();

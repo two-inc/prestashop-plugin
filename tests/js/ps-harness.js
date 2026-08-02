@@ -305,7 +305,11 @@ function callbackRecorder() {
  * @returns {void}
  */
 function releaseWidgets($) {
-    $("input[name='company']").each(function () {
+    // Both nodes the widget has ever been bound to: the company field on the
+    // pre-TWO-25326 architecture, and the panel's query field since. Sweeping
+    // both keeps this callable from every suite without each one having to
+    // know which era it is testing.
+    $("input[name='company'], .two-company-dropdown__query").each(function () {
         const field = $(this);
         if (field.hasClass('ui-autocomplete-input')) {
             field.autocomplete('destroy');
@@ -478,6 +482,111 @@ function loadCompanySummary() {
     return TwoCompanySummary;
 }
 
+
+/**
+ * The panel's own controls (TWO-25326 §1/§2).
+ *
+ * Every test that used to type into `input[name='company']` types HERE now:
+ * the company-name field stopped being the search box when the anchored
+ * dropdown grew a query field of its own.
+ *
+ * Resolved from the live DOM on each call, never cached - PrestaShop replaces
+ * the address form wholesale on `updatedAddressForm`, and a cached node is the
+ * exact staleness these tests exist to catch.
+ *
+ * @returns {{panel: Object, query: Object, results: Object, notListed: Object}}
+ *   jQuery objects; any may be empty if the panel has not been built.
+ */
+function panelParts() {
+    const $ = global.$;
+    return {
+        panel: $('.two-company-dropdown'),
+        query: $('.two-company-dropdown__query'),
+        results: $('.two-company-dropdown__results'),
+        notListed: $('.two-company-not-listed')
+    };
+}
+
+/**
+ * Is this element rendered?
+ *
+ * NOT `jQuery(':visible')`. jsdom performs no layout, so every element reports
+ * `offsetWidth === 0` and jQuery's `:visible`/`:hidden` therefore answer
+ * "hidden" for the entire document - a test written on them passes or fails
+ * for reasons unrelated to the code. Computed `display` IS resolved by jsdom,
+ * from both the stylesheet cascade and inline styles, so that is what these
+ * suites assert on.
+ *
+ * @param {Object|Element} el jQuery object or raw node
+ * @returns {boolean}
+ */
+function shown(el) {
+    const node = el && el.jquery ? el.get(0) : el;
+    if (!node || !global.document.contains(node)) {
+        return false;
+    }
+    let current = node;
+    while (current && current.nodeType === 1) {
+        if (current.hasAttribute('hidden')) {
+            return false;
+        }
+        if (global.window.getComputedStyle(current).display === 'none') {
+            return false;
+        }
+        current = current.parentElement;
+    }
+    return true;
+}
+
+/**
+ * Open the dropdown the way a buyer does: a real mousedown on the
+ * company-name field (§1 - focus alone must NOT open it).
+ *
+ * @returns {Object} the query field, as a jQuery object
+ */
+function openPanel() {
+    const $ = global.$;
+    $("input[name='company']").trigger('mousedown');
+    return panelParts().query;
+}
+
+/**
+ * Type into the panel's query field and run the widget's 300ms debounce out.
+ *
+ * Jest fake timers are NOT assumed: callers that want to observe the
+ * pre-debounce state install their own. This drives the real `input` event so
+ * both render paths (jQuery UI's widget and the fallback engine) see it.
+ *
+ * @param {string} value
+ * @returns {void}
+ */
+function typeQuery(value) {
+    const query = panelParts().query;
+    if (!query.length) {
+        throw new Error('harness: no query field - was the panel opened?');
+    }
+    query.val(value);
+    query.get(0).dispatchEvent(new global.window.Event('input', { bubbles: true }));
+}
+
+/**
+ * The rows currently rendered in the panel's results host, as plain text.
+ *
+ * Covers both render paths: jQuery UI appends its own `<ul>` into the host,
+ * and the fallback engine builds one with the same shape deliberately.
+ *
+ * @returns {Array<string>}
+ */
+function resultTexts() {
+    const host = panelParts().results;
+    if (!host.length) {
+        return [];
+    }
+    return host.find('li').map(function () {
+        return global.$(this).text();
+    }).get();
+}
+
 module.exports = {
     REPO_ROOT: REPO_ROOT,
     buildPaymentTile: buildPaymentTile,
@@ -491,5 +600,10 @@ module.exports = {
     buildAddressForm: buildAddressForm,
     replaceAddressForm: replaceAddressForm,
     stubAjax: stubAjax,
-    callbackRecorder: callbackRecorder
+    callbackRecorder: callbackRecorder,
+    panelParts: panelParts,
+    shown: shown,
+    openPanel: openPanel,
+    typeQuery: typeQuery,
+    resultTexts: resultTexts
 };

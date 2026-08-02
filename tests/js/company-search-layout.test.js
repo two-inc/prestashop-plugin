@@ -16,6 +16,26 @@
  *     other result first - with up to 50 companies ahead of it in a 200px
  *     scroll viewport, effectively never in practice.
  *
+ * RESHAPED BY TWO-25326, which changed what several of those bugs even mean:
+ *
+ *   - the reveal chip is gone outright (2.3), so nothing can paint over the
+ *     hint any more;
+ *   - the hint stopped being absolutely positioned and the wrapper stopped
+ *     reserving padding for it (§5/§7) - that pairing was itself the cause of
+ *     a second, worse collision with the VAT field, since `top: 100%` on an
+ *     absolutely positioned child resolves against the containing block's
+ *     PADDING box, so the reserved space pushed the hint DOWN rather than
+ *     making room for it;
+ *   - 2.4's manual-entry ROW is gone (§2): "My company is not on the list" is
+ *     a real <button> outside the scroll container now, so reachability is a
+ *     structural property rather than a sticky-positioning one, and it is
+ *     pinned as such in company-search-dropdown.test.js.
+ *
+ * The width work (2.1/2.2) survives all of that unchanged, and is still the
+ * bulk of this file. Its widget lives on the panel's query field now rather
+ * than on `input[name='company']` - the only mechanical change those tests
+ * needed.
+ *
  * jsdom computes no real layout (offsetWidth/getBoundingClientRect are 0
  * regardless of CSS), so these tests pin what jsdom CAN observe: the DOM
  * structure the width fix depends on, the exact value the CSS custom
@@ -34,7 +54,8 @@ const {
     replaceAddressForm,
     stubAjax,
     releaseWidgets,
-    installStylesheet
+    installStylesheet,
+    panelParts
 } = require('./ps-harness');
 
 const CHECKOUT_HOST = 'https://api.example.test';
@@ -71,6 +92,17 @@ function liveField() {
     return $("input[name='company']");
 }
 
+/**
+ * The field the autocomplete widget is actually bound to.
+ *
+ * TWO-25326 §1: the panel's query field, not `input[name='company']`. The panel
+ * is built by setupAutocomplete(), so this resolves as soon as an instance
+ * exists - it does not have to be opened first.
+ */
+function widgetField() {
+    return panelParts().query;
+}
+
 describe('the field wrapper (2.2/2.3)', () => {
     test('wraps the company field in a single tight-fitting wrapper', () => {
         makeInstance();
@@ -103,13 +135,20 @@ describe('the field wrapper (2.2/2.3)', () => {
         expect($('.two-company-field-wrap').length).toBe(1);
     });
 
-    test('the org-id hint and the reveal chip both land inside the field wrapper', () => {
+    test('the org-id hint lands inside the field wrapper, and nothing can cover it', () => {
+        // Was "the org-id hint and the reveal chip both land inside the field
+        // wrapper". TWO-25326 removed the chip: it existed to re-open the search
+        // over a confirmed selection, which the panel's own trigger now does,
+        // and its opaque background painted over the hint (2.3). Its absence is
+        // asserted rather than merely un-asserted, because "the hint cannot be
+        // occluded" is the property 2.3 was about and re-adding a chip is
+        // exactly how it would come back.
         makeInstance();
 
         const wrapper = liveField().parent();
 
         expect(wrapper.find('.two-company-id-hint').length).toBe(1);
-        expect(wrapper.find('.two-company-search-reveal').length).toBe(1);
+        expect($('.two-company-search-reveal')).toHaveLength(0);
     });
 
     test('the hidden organisation-number field is NOT pulled into the wrapper', () => {
@@ -175,9 +214,9 @@ describe('the dropdown width CSS variable (2.1)', () => {
         // autocomplete the page might have live. The width clamp must be
         // scoped to a marker THIS class controls, or it would mis-size an
         // unrelated widget elsewhere on the page.
-        const instance = makeInstance();
+        makeInstance();
 
-        const widget = liveField().autocomplete('widget');
+        const widget = widgetField().autocomplete('widget');
 
         expect(widget.hasClass('two-company-autocomplete-menu')).toBe(true);
     });
@@ -342,12 +381,12 @@ describe('the width-refresh listener on resize/orientationchange (2.1/2.2 harden
         // be trusted, so ensureFieldWrapper() has to run alongside the CSS
         // variable refresh already known to run there.
         const instance = makeInstance();
-        const field = liveField();
+        const query = widgetField();
         const ensureSpy = jest.spyOn(instance, 'ensureFieldWrapper');
         ensureSpy.mockClear();
 
-        field.val('Example');
-        field.autocomplete('instance').search('Example');
+        query.val('Example');
+        query.autocomplete('instance').search('Example');
 
         expect(ensureSpy).toHaveBeenCalled();
     });
@@ -360,58 +399,97 @@ describe('the width-refresh listener on resize/orientationchange (2.1/2.2 harden
         // pinned here so a future reordering that moved the early-return
         // above them would fail this test rather than regress silently.
         const instance = makeInstance();
-        const field = liveField();
+        const query = widgetField();
         instance._manualEntry = true;
         const ensureSpy = jest.spyOn(instance, 'ensureFieldWrapper');
         const widthSpy = jest.spyOn(instance, 'constrainAutocompleteMenuWidth');
         ensureSpy.mockClear();
         widthSpy.mockClear();
 
-        field.val('Some Manually Typed Name');
-        field.autocomplete('instance').search('Some Manually Typed Name');
+        query.val('Some Manually Typed Name');
+        query.autocomplete('instance').search('Some Manually Typed Name');
 
         expect(ensureSpy).toHaveBeenCalled();
         expect(widthSpy).toHaveBeenCalled();
     });
 });
 
-describe('the manual-entry row stays reachable without scrolling (2.4)', () => {
-    test('.two-autocomplete-manual-entry resolves to a sticky, opaque row', () => {
-        installStylesheet('views/css/two.css');
-        const ul = document.createElement('ul');
-        ul.className = 'ui-autocomplete';
-        const li = document.createElement('li');
-        li.className = 'two-autocomplete-manual-entry';
-        ul.appendChild(li);
-        document.body.appendChild(ul);
+describe('the manual-entry route stays reachable without scrolling (2.4, reshaped by TWO-25326 §2)', () => {
+    // DELETED with this reshaping, each because the thing it pinned no longer
+    // exists rather than because it became inconvenient:
+    //
+    //   - '.two-autocomplete-manual-entry resolves to a sticky, opaque row'
+    //   - 'the SAME rule covers the custom (non-jQuery-UI) fallback path's row'
+    //         The sticky-row CSS is gone. 2.4's answer was to pin the row to
+    //         the bottom of a scrolling list; §2's answer is to take it out of
+    //         the list entirely. There is no row left to make sticky.
+    //   - 'buildManualEntryItem() / withManualEntryRow() are unchanged'
+    //         Both methods are gone with the pseudo-row they built.
+    //
+    // What replaces all three is the structural property below: the route out
+    // is a SIBLING of the scroll container, so no amount of scrolling can move
+    // it. Its behaviour (real <button>, tab order, activation) is pinned in
+    // company-search-dropdown.test.js; what is asserted HERE is the layout
+    // half - that the CSS really does confine the scrolling to the results
+    // host, and gives the button none of it.
 
-        const style = getComputedStyle(li);
-        expect(style.position).toBe('sticky');
-        expect(style.bottom).toBe('0px');
-        // Opaque, not transparent/none - a sticky row over scrolling
-        // company names needs a real background or the names show through it.
-        expect(style.backgroundColor).not.toBe('');
-        expect(style.backgroundColor).not.toBe('transparent');
+    test('the scrolling is confined to the results host, which the route out sits outside', () => {
+        installStylesheet('views/css/two.css');
+        makeInstance();
+        const { panel, results, notListed } = panelParts();
+
+        // The panel's one scroll box, and a BOUNDED one: an unbounded height
+        // would push the button below the fold on a long result set, which is
+        // precisely where the old row was unreachable.
+        const resultsStyle = getComputedStyle(results.get(0));
+        expect(resultsStyle.overflowY).toBe('auto');
+        expect(resultsStyle.maxHeight).toBe('240px');
+
+        // The button is a sibling of that box, painted below it, so it cannot
+        // be scrolled away from.
+        expect(results.get(0).contains(notListed.get(0))).toBe(false);
+        expect(notListed.parent().is(panel)).toBe(true);
+        expect(getComputedStyle(notListed.get(0)).overflowY).not.toBe('auto');
+    });
+});
+
+describe('the org-number hint reserves no space until it has something to say (TWO-25326 §5/§7)', () => {
+    // Replaces the wrapper's `padding-bottom` / `--two-company-hint-clearance`
+    // pairing, which this file used to own. That mechanism was not merely
+    // redundant, it was the defect: the hint was absolutely positioned at
+    // `top: 100%`, which resolves against the containing block's PADDING box,
+    // so the reserved padding pushed the hint further down and onto the VAT
+    // field below rather than making room above it.
+
+    test('the wrapper reserves nothing and defines no clearance constant', () => {
+        installStylesheet('views/css/two.css');
+        makeInstance();
+        const wrapper = liveField().parent().get(0);
+        const style = getComputedStyle(wrapper);
+
+        // jsdom reports an unmatched property as '' rather than the browser's
+        // initial value, so both spellings of "nothing reserved" are accepted -
+        // what must not appear is a positive reservation.
+        expect(['', '0px']).toContain(style.paddingBottom);
+        expect(style.getPropertyValue('--two-company-hint-clearance')).toBe('');
     });
 
-    test('the SAME rule covers the custom (non-jQuery-UI) fallback path’s row', () => {
+    test('the hint takes its own height in normal flow, and none at all while empty', () => {
         installStylesheet('views/css/two.css');
-        const list = document.createElement('div');
-        list.className = 'two-autocomplete-list';
-        const row = document.createElement('div');
-        row.className = 'two-autocomplete-item two-autocomplete-manual-entry';
-        list.appendChild(row);
-        document.body.appendChild(list);
-
-        expect(getComputedStyle(row).position).toBe('sticky');
-    });
-
-    test('buildManualEntryItem() / withManualEntryRow() are unchanged - still the last row', () => {
         const instance = makeInstance();
-        const items = instance.withManualEntryRow([{ label: 'Example Trading Ltd', value: 'Example Trading Ltd' }]);
+        const hint = $('.two-company-id-hint');
 
-        expect(items).toHaveLength(2);
-        expect(items[1].two_manual_entry).toBe(true);
-        expect(items[1].label).toBe(instance.getManualEntryText());
+        // Empty: no line box, so an address form with nothing selected is the
+        // same height as every other row on it.
+        expect(getComputedStyle(hint.get(0)).display).toBe('none');
+
+        instance.setCompanyIdHint('12345678');
+
+        // Populated: an in-flow block, which cannot overlap the field below it
+        // by construction - the whole point of moving off `position: absolute`.
+        const style = getComputedStyle(hint.get(0));
+        expect(style.display).toBe('block');
+        expect(style.position).not.toBe('absolute');
+        expect(style.textAlign).toBe('end');
     });
 });
