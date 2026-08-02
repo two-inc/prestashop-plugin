@@ -526,6 +526,29 @@ describe('regressions found in adversarial review', () => {
         expect(document.activeElement).toBe(panelParts().query.get(0));
     });
 
+    test('a drag released outside the window cannot strand the panel open', () => {
+        // The pointer-in-panel guard above suppresses the focus-out close for
+        // as long as it believes a pointer is down on the panel, and the only
+        // thing that clears it is a matching `mouseup` on `document`. A drag
+        // begun on the panel and released outside the window fires no such
+        // event, so the flag stuck `true` and every later focus-out close
+        // early-returned - the panel stayed on screen with focus long gone,
+        // for the rest of its life. Losing the window clears it instead.
+        makeInstance();
+        openPanel();
+
+        panelParts().panel.trigger('mousedown');
+        // No `mouseup` - the button came up beyond the document.
+        $(window).trigger('blur');
+
+        const elsewhere = $("input[name='dni']").get(0);
+        elsewhere.focus();
+        panelParts().panel.trigger('focusout');
+        jest.advanceTimersByTime(10);
+
+        expect(shown(panelParts().panel)).toBe(false);
+    });
+
     test('a genuine click away still closes the panel', () => {
         // The guard above must not swallow the ordinary case: a pointer that
         // went down somewhere OTHER than the panel.
