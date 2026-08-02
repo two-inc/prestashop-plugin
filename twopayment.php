@@ -3343,15 +3343,20 @@ class Twopayment extends PaymentModule
             // in every translation catalogue. Same shape as
             // `end_of_month_plus_days` above.
             'company_search_too_short' => $this->l('Please enter %d or more characters'),
-            // The manual-entry affordance and its reverse link (TWO-25288). The
-            // last row inside the dropdown, and the way back out of the manual
-            // entry it switches to. Identical wording on every plugin surface -
-            // do not paraphrase either of these when translating.
+            // The manual-entry affordance and its reverse link (TWO-25288,
+            // reworked by TWO-25326). A real button below the results list,
+            // and the way back out of the manual entry it switches to.
+            // Identical wording on every plugin surface - do not paraphrase
+            // either of these when translating.
             'company_search_manual_entry' => $this->l('My company is not on the list'),
             'company_search_back_to_search' => $this->l('Search for company'),
-            // Click-to-reveal chip (TWO-25288 element 2). Its visible text is
-            // the confirmed company name itself; this is the accessible name
-            // for the control, read instead of/alongside that text.
+            // Zero-result wording (TWO-25326 §1). EXACT across all four
+            // plugins - "No results found" is a different string and the
+            // cross-platform test script checks for this one verbatim.
+            'company_search_no_matches' => $this->l('No matches found'),
+            // Accessible name for the company-name field once it acts as the
+            // trigger that opens the search panel (TWO-25326 §1). Its visible
+            // value is the confirmed company name itself.
             'company_search_edit' => $this->l('Search for a different company'),
             'sole_trader_registered_business' => $this->l('Registered business'),
             'sole_trader_label' => $this->l('Sole trader'),

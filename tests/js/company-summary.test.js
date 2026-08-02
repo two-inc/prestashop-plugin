@@ -20,10 +20,13 @@ const {
     loadCompanySummary,
     buildAddressForm,
     buildPaymentTile,
+    installStylesheet,
     loadScript,
     stubAjax,
     releaseWidgets,
-    flushPromises
+    flushPromises,
+    panelParts,
+    openPanel
 } = require('./ps-harness');
 
 const CHECKOUT_HOST = 'https://api.example.test';
@@ -42,6 +45,13 @@ let ajax;
 beforeEach(() => {
     buildAddressForm({ country: 'GB' });
     buildPaymentTile();
+    // The REAL stylesheet, because TWO-25326 §7 puts half of this block's
+    // behaviour in CSS: the number and its parentheses are hidden as a unit
+    // unless render() has put `two-company-summary--has-number` on the root.
+    // Without the cascade loaded, a suite asserting on the rendered label would
+    // read the parentheses of a manual-entry buyer as visible and pass on the
+    // exact defect §7 exists to prevent.
+    installStylesheet('views/css/two.css');
     const loaded = loadCompanySearch();
     TwoCompanySearch = loaded.TwoCompanySearch;
     $ = loaded.$;
@@ -61,6 +71,9 @@ afterEach(() => {
     releaseWidgets($);
     ajax.restore();
     document.body.innerHTML = '';
+    // The stylesheet is re-injected per test; without this the head accumulates
+    // one copy per test in the file.
+    document.head.innerHTML = '';
 });
 
 function makeInstance(extraConfig) {
@@ -88,11 +101,53 @@ function shown() {
     };
 }
 
-/** Search, settle, then pick the first row the way a buyer's click does. */
+/**
+ * The one line of text the tile actually renders (TWO-25326 §7).
+ *
+ * Read off the ROOT rather than assembled from the two slots, because the
+ * parentheses and the space between name and number are template text owned by
+ * neither slot - and hiding them with the number is the §7 behaviour that
+ * distinguishes "Example Ltd" from "Example Ltd ()".
+ *
+ * `.two-company-summary__number-wrap` is hidden by the stylesheet unless the
+ * root carries `two-company-summary--has-number`, and jsdom resolves that
+ * cascade but does NOT exclude `display:none` subtrees from `textContent`. So
+ * the hidden wrapper is dropped explicitly here, which is what makes this read
+ * what a buyer sees rather than what the DOM holds.
+ *
+ * @returns {string}
+ */
+function label() {
+    const text = Array.prototype.map.call(root().childNodes, (node) => {
+        if (node.nodeType === 1 && window.getComputedStyle(node).display === 'none') {
+            return '';
+        }
+        return node.textContent;
+    }).join('');
+    // The template's own indentation lands in the block as text nodes. A
+    // browser collapses that run of whitespace to nothing at the edges and to a
+    // single space between words; jsdom does no layout, so do it here rather
+    // than let template indentation decide whether this test passes.
+    return text.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Search, settle, then pick the first row the way a buyer's click does.
+ *
+ * TWO-25326 §1 moved the widget off `input[name='company']` and onto the
+ * anchored panel's query field, so the search is driven from THERE now and the
+ * company-name field only receives the picked name. Driven through the widget's
+ * own menu rather than by calling onCompanySelected() directly, so an unwired
+ * `select` option would fail these tests - and NOT by dispatching Down/Enter
+ * keydowns, because jQuery UI's `_move` gates on `:visible`, which jsdom
+ * performs no layout for and can never satisfy.
+ */
 function selectFirstResult(term, response) {
     const field = $("input[name='company']");
-    const instance = field.autocomplete('instance');
-    field.val(term);
+    openPanel();
+    const query = panelParts().query;
+    const instance = query.autocomplete('instance');
+    query.val(term);
     instance.search(term);
     ajax.last().succeed(response);
     const row = instance.menu.element.children('li').first();
@@ -141,6 +196,23 @@ describe('search mode shows the name and the number', () => {
             number: '12345678',
             hidden: false
         });
+    });
+
+    test('the tile reads as one label, "<name> (<number>)"', () => {
+        // TWO-25326 §7, replacing the two-row label/value block this used to
+        // render. Asserted on the rendered text of the whole block rather than
+        // on the two slots separately, because the parentheses and the space
+        // belong to neither slot - and they are exactly what a slot-only
+        // assertion would let a template edit drop silently.
+        makeInstance();
+
+        selectFirstResult('exa', SEARCH_RESPONSE);
+
+        expect(label()).toBe('Example Trading Ltd (12345678)');
+        expect(root().classList.contains('two-company-summary--has-number')).toBe(true);
+        // No label spans: §7 removed the "Company name:" / "Company number:"
+        // captions along with the rows that carried them.
+        expect(root().querySelectorAll('.two-company-summary__label')).toHaveLength(0);
     });
 
     test('a number that only arrives with the details repaints the slot', async () => {
@@ -198,19 +270,33 @@ describe('manual entry shows the name with a blank number', () => {
         });
     });
 
-    test('the blank number slot is present, not removed', () => {
+    test('the blank number slot is present in the DOM, not removed', () => {
         const search = makeInstance();
         search.enterManualEntryMode();
         typeCompanyName('Unlisted Trading Ltd');
 
         // Blank, not absent: a slot that disappears reads as a rendering fault
-        // rather than as "this buyer has no number".
+        // rather than as "this buyer has no number". It is HIDDEN rather than
+        // emptied-in-place now (see the label test below) - but the element
+        // itself still has to be there for the next render to paint into.
         expect(slot('number')).not.toBeNull();
         expect(root().contains(slot('number'))).toBe(true);
-        // The row keeps its height, so the blank reads as an empty answer rather
-        // than as a collapsed element. The stylesheet does that with a
-        // min-height on the value span; nothing needs a state class for it.
-        expect(root().querySelectorAll('.two-company-summary__row')).toHaveLength(2);
+    });
+
+    test('the label reads as the name alone - no empty parentheses', () => {
+        // TWO-25326 §7. The number and its brackets are one unit, hidden
+        // together: a manual-entry buyer supplies a name and no number (§5), and
+        // "Unlisted Trading Ltd ()" reads as a rendering fault. The state class
+        // is what governs it, so both the class and the resulting text are
+        // pinned - the class alone would pass against a stylesheet that had
+        // stopped acting on it.
+        const search = makeInstance();
+        search.enterManualEntryMode();
+        typeCompanyName('Unlisted Trading Ltd');
+
+        expect(root().classList.contains('two-company-summary--has-number')).toBe(false);
+        expect(label()).toBe('Unlisted Trading Ltd');
+        expect(label()).not.toContain('(');
     });
 
     test('choosing manual entry drops the number a previous selection showed', () => {

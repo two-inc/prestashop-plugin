@@ -226,6 +226,18 @@ class TwoCompanySummary {
             numberSlot.textContent = state.number;
         }
 
+        // TWO-25326 §7: the label reads "<name> (<number>)". The parentheses
+        // belong to the number and are hidden with it, so a manual-entry
+        // buyer - who supplies a name and no number (§5) - sees the name
+        // alone rather than a name followed by empty brackets.
+        //
+        // A class rather than an inline `style.display`, because the wrapper
+        // it governs is a `<span>` the stylesheet already has an opinion
+        // about, and one owner beats two.
+        if (root.classList) {
+            root.classList.toggle('two-company-summary--has-number', state.number !== '');
+        }
+
         // Nothing captured at all: the buyer has not named a company yet, and a
         // block of empty labels is worse than no block.
         const hasAnything = state.name !== '' || state.number !== '';
