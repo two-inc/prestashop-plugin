@@ -1150,3 +1150,111 @@ describe("the label rides on the intent message's visibility (TWO-25326 §7, rev
         }
     });
 });
+
+describe("TwoOrderIntent's own message drives the label on themes that render it (TWO-25326 §7)", () => {
+    // TwoOrderIntent.updateUI() appends `.two-order-intent-message` into
+    // `.payment-option-content, .payment-form, .additional-information` searched
+    // WITHIN the `.payment-option`. PS 8's classic theme provides none of those
+    // there, so on that theme the element never enters the DOM at all and this
+    // module's message is invisible - which is why the gate is anchored on
+    // TwoCheckoutManager's container instead.
+    //
+    // On a theme that DOES provide one, this module's message is the one the
+    // buyer reads, and the label has to track it. That is what this suite builds
+    // and pins. Without it, TwoOrderIntent's nudges are untested - confirmed by
+    // mutation: deleting them left every other test in this file green.
+    let intent;
+
+    /** A theme whose payment option contains the container updateUI looks for. */
+    function wrapTileAsPaymentOption() {
+        const container = document.querySelector('.two-payment-container');
+        const option = document.createElement('div');
+        option.className = 'payment-option';
+        const content = document.createElement('div');
+        content.className = 'payment-option-content';
+        const marker = document.createElement('div');
+        marker.setAttribute('data-module-name', 'twopayment');
+        option.appendChild(marker);
+        option.appendChild(content);
+        container.parentNode.insertBefore(option, container);
+        content.appendChild(container);
+        return option;
+    }
+
+    function ownMessageVisible() {
+        const msg = document.querySelector('.two-order-intent-message');
+        return !!msg && window.getComputedStyle(msg).display !== 'none';
+    }
+
+    beforeEach(() => {
+        loadScript('views/js/modules/TwoOrderIntent.js');
+        intent = new window.TwoOrderIntent({});
+        document.querySelectorAll("input[name='company'], input[name='companyid']")
+            .forEach((el) => el.remove());
+        wrapTileAsPaymentOption();
+        // Only this module's message is in play here, so take the template
+        // section out of the picture - otherwise the label could be riding on
+        // TwoCheckoutManager's container and these tests would prove nothing.
+        hideIntentMessage();
+        TwoCompanySummary.render();
+    });
+
+    afterEach(() => {
+        delete window.twopayment;
+    });
+
+    test('its message going up brings the label with it', () => {
+        window.twopayment = { intent_approved_notice_enabled: true };
+        TwoCompanySummary.setIntentCompany({ name: 'Example Trading Ltd', number: '12345678' });
+        expect(shown().hidden).toBe(true);
+
+        intent.updateUI({ approved: true, message: 'looks fine', rawResponse: {} });
+
+        expect(ownMessageVisible()).toBe(true);
+        expect(shown().hidden).toBe(false);
+        expect(label()).toBe('Example Trading Ltd (12345678)');
+    });
+
+    test('its message being removed takes the label down', () => {
+        // Driven as a transition, so the suppression is actually observed rather
+        // than the label merely being down already.
+        window.twopayment = { intent_approved_notice_enabled: false };
+        TwoCompanySummary.setIntentCompany({ name: 'Example Trading Ltd', number: '12345678' });
+
+        intent.updateUI({ approved: false, message: 'not yet', rawResponse: {} });
+        expect(ownMessageVisible()).toBe(true);
+        expect(shown().hidden).toBe(false);
+
+        intent.updateUI({ approved: true, message: '', rawResponse: {} });
+
+        expect(ownMessageVisible()).toBe(false);
+        expect(shown().hidden).toBe(true);
+    });
+
+    test('a blocked submit puts its message up, and the label with it', () => {
+        window.twopayment = { intent_approved_notice_enabled: false };
+        TwoCompanySummary.setIntentCompany({ name: 'Example Trading Ltd', number: '12345678' });
+        expect(shown().hidden).toBe(true);
+
+        intent.lastResult = { approved: false, message: 'resolve this first' };
+        intent.showOrderPreventionMessage();
+
+        expect(ownMessageVisible()).toBe(true);
+        expect(shown().hidden).toBe(false);
+    });
+
+    test('reset() takes the label down with the decision', () => {
+        window.twopayment = { intent_approved_notice_enabled: true };
+        TwoCompanySummary.setIntentCompany({ name: 'Example Trading Ltd', number: '12345678' });
+        intent.updateUI({ approved: true, message: 'looks fine', rawResponse: {} });
+        expect(shown().hidden).toBe(false);
+
+        // reset() forgets the decision; the message element it drew is removed
+        // with it on a real checkout by the re-render that follows, so the label
+        // must not be left announcing a company for a decision that is gone.
+        document.querySelectorAll('.two-order-intent-message').forEach((el) => el.remove());
+        intent.reset();
+
+        expect(shown().hidden).toBe(true);
+    });
+});
