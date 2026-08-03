@@ -98,8 +98,14 @@ function makeInstance(extraConfig) {
  * `.two-payment-info` is the section the shipped template carries, hidden inline
  * (`style="display: none"`) until an intent decision arrives - and it is the
  * container that actually renders on PrestaShop, so it is the one the label's
- * gate observes. Revealed by setting the same inline display TwoCheckoutManager
- * sets, not by deleting the attribute, so this reproduces the real mechanism.
+ * gate observes.
+ *
+ * BOTH halves of the real mechanism, because the stylesheet makes them both
+ * load-bearing: TwoCheckoutManager sets `display: block` AND adds `.show`, and
+ * `.two-payment-info` is `opacity: 0` until that class takes it to 1. Setting
+ * only the display would leave the section fully transparent - a state a buyer
+ * cannot read, so a suite that called it "shown" would be asserting against
+ * something invisible.
  *
  * @returns {Element} the message section
  */
@@ -109,16 +115,18 @@ function showIntentMessage() {
         throw new Error('the tile template carries no .two-payment-info section');
     }
     info.style.display = 'block';
+    info.classList.add('show');
     return info;
 }
 
-/** Take it back down, the way the notice-off branch does. */
+/** Take it back down, the way the notice-off branch does - display and class. */
 function hideIntentMessage() {
     const info = document.querySelector('.two-payment-info');
     if (!info) {
         throw new Error('the tile template carries no .two-payment-info section');
     }
     info.style.display = 'none';
+    info.classList.remove('show');
     return info;
 }
 
@@ -1022,6 +1030,43 @@ describe("the label rides on the intent message's visibility (TWO-25326 §7, rev
         TwoCompanySummary.render();
 
         expect(shown().hidden).toBe(true);
+    });
+
+    test('a message left fully transparent does not show the label', () => {
+        // `.two-payment-info` is `opacity: 0` in the stylesheet and is revealed
+        // by adding `.show`. A gate that only looked at `display` would read the
+        // displayed-but-un-shown section as visible and put the label beside a
+        // message the buyer cannot see. The real cascade is loaded by this
+        // suite's beforeEach, so this is the shipped rule doing the hiding.
+        TwoCompanySummary.setIntentCompany({ name: 'Example Trading Ltd', number: '12345678' });
+
+        const info = document.querySelector('.two-payment-info');
+        info.style.display = 'block';
+        info.classList.remove('show');
+        TwoCompanySummary.render();
+
+        expect(window.getComputedStyle(info).opacity).toBe('0');
+        expect(shown().hidden).toBe(true);
+
+        // And the class that reveals it brings the label with it.
+        info.classList.add('show');
+        TwoCompanySummary.render();
+
+        expect(shown().hidden).toBe(false);
+    });
+
+    test('a mid-fade message still counts as shown', () => {
+        // The same rule carries a 0.3s opacity transition, so a value between 0
+        // and 1 is a message arriving, not a hidden one. Pinned because the
+        // obvious "less than 1" test would blink the label off during every
+        // fade-in.
+        TwoCompanySummary.setIntentCompany({ name: 'Example Trading Ltd', number: '12345678' });
+
+        const info = showIntentMessage();
+        info.style.opacity = '0.4';
+        TwoCompanySummary.render();
+
+        expect(shown().hidden).toBe(false);
     });
 
     test("TwoOrderIntent's own message element counts as the message too", () => {

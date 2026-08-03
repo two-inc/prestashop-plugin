@@ -274,6 +274,18 @@ class TwoCompanySummary {
             if (style.display === 'none' || style.visibility === 'hidden') {
                 return false;
             }
+            // Fully transparent counts as hidden, and for this container that is
+            // not a defensive extra: `.two-payment-info` is `opacity: 0` in the
+            // stylesheet and is revealed by adding `.show`, which is what takes
+            // it to 1. Checking only `display` would read the un-shown section
+            // as visible and put the label beside a message nobody can see.
+            //
+            // Exactly zero, not "less than one": the same rule carries a 0.3s
+            // opacity transition, and a mid-fade value is a message on its way
+            // onto the screen rather than a hidden one.
+            if (parseFloat(style.opacity) === 0) {
+                return false;
+            }
             current = current.parentElement;
         }
         return true;
