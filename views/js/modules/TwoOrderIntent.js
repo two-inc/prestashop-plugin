@@ -155,6 +155,33 @@ class TwoOrderIntent {
         });
     }
 
+    /**
+     * Ask the payment tile's company label to re-read its gate.
+     *
+     * TWO-25326 §7, revised rule: the label is shown exactly when the
+     * order-intent message is shown and hidden exactly when it is hidden - it is
+     * no longer shown whenever a company happens to be captured. The case that
+     * motivated it is a brand running with the approval notice switched off
+     * (`intent_approved_notice_enabled`, TWO-25218): the tile is deliberately
+     * silent on approval, and the label was still naming the company beside it.
+     *
+     * No boolean is passed, deliberately. TwoCompanySummary works the answer out
+     * by looking at the message element, so this is only a nudge - "the message
+     * may have just changed, look again" - issued after this module has changed
+     * it. Passing a flag would put a second copy of the approved-notice rule in
+     * a second place; see TwoCompanySummary.isIntentMessageVisible().
+     *
+     * @returns {void}
+     */
+    refreshCompanyLabel() {
+        if (typeof window === 'undefined'
+            || !window.TwoCompanySummary
+            || typeof window.TwoCompanySummary.render !== 'function') {
+            return;
+        }
+        window.TwoCompanySummary.render();
+    }
+
     checkOrderIntent() {
         if (!this.shouldRunOrderIntent()) {
             return Promise.resolve(this.lastResult || { success: false, error: 'Order intent check skipped' });
@@ -635,6 +662,8 @@ class TwoOrderIntent {
         // approval. The functional part of an approval still runs below.
         if (result.approved && !this.approvedNoticeEnabled()) {
             $twoPaymentOption.find('.two-order-intent-message').remove();
+            // No message on screen, so no company label either (TWO-25326 §7).
+            this.refreshCompanyLabel();
             $twoPaymentOption.removeClass('disabled');
             $twoPaymentOption.find('input[type="radio"]').prop('disabled', false);
             return;
@@ -644,6 +673,9 @@ class TwoOrderIntent {
             $messageContainer = $('<div class="two-order-intent-message"></div>');
             $twoPaymentOption.find('.payment-option-content, .payment-form, .additional-information').append($messageContainer);
         }
+        // Past the suppression branch, so a message IS being rendered: the label
+        // travels with it (TWO-25326 §7).
+        this.refreshCompanyLabel();
         let messageText = result.message;
         // Only template in the company name for a real decision FROM Two's
         // API (processResult() always sets rawResponse). handleError()'s
@@ -739,6 +771,9 @@ class TwoOrderIntent {
             $twoPaymentOption.find('.payment-option-content, .payment-form, .additional-information').append($messageContainer);
         }
         $messageContainer.removeClass('approved loading').addClass('declined').text(message);
+        // This path always ends with a declined message on screen, so the label
+        // rides with it (TWO-25326 §7).
+        this.refreshCompanyLabel();
     }
 
     startMonitoring() {
@@ -762,6 +797,8 @@ class TwoOrderIntent {
                             'To pay with Two, go back to your billing address and search for your company name. Select your company from the results to verify your business.'
                         );
                         $msg.removeClass('approved declined loading').text(t).show();
+                        // Shown, so the label goes with it (TWO-25326 §7).
+                        this.refreshCompanyLabel();
                     }
                     return;
                 }
@@ -788,6 +825,9 @@ class TwoOrderIntent {
         // Cleared with its name: a retained number outliving the reset could
         // only ever be paired with a DIFFERENT company's name later.
         this.lastCompanyNumber = null;
+        // The message goes when the decision does, and the label follows it
+        // (TWO-25326 §7).
+        this.refreshCompanyLabel();
         this.isProcessing = false;
         this.stopMonitoring();
     }

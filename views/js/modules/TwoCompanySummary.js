@@ -80,6 +80,28 @@ class TwoCompanySummary {
      */
     static _intentCompany = null;
 
+    /**
+     * Every element any of the module's three renderers uses for the
+     * order-intent message, in no particular order.
+     *
+     *   .two-payment-info          the section in paymentinfo.tpl. This is the
+     *                              one that actually renders on PrestaShop -
+     *                              TwoCheckoutManager shows and hides it.
+     *   #two-order-intent-messages TwoCheckoutManager's fallback container,
+     *                              created only when the template section is
+     *                              missing.
+     *   .two-order-intent-message  TwoOrderIntent.updateUI()'s own element.
+     *
+     * All three are listed because the label's rule is about what the buyer can
+     * see, not about which module happened to draw it. See
+     * isIntentMessageVisible().
+     */
+    static INTENT_MESSAGE_SELECTORS = [
+        '.two-payment-info',
+        '#two-order-intent-messages',
+        '.two-order-intent-message'
+    ];
+
     constructor() {
         this._stopped = false;
         this.boundOnFieldChange = this.onFieldChange.bind(this);
@@ -185,6 +207,88 @@ class TwoCompanySummary {
             };
         }
         TwoCompanySummary.render();
+    }
+
+    /**
+     * Is the order-intent message currently on screen?
+     *
+     * TWO-25326 §7, superseding the rule this block shipped with: the label is
+     * no longer shown whenever a company happens to be captured. It is shown
+     * exactly when the order-intent message beside it is shown, and hidden
+     * exactly when that message is hidden.
+     *
+     * This OBSERVES the message rather than re-deriving the conditions that
+     * govern it, and that is the whole design. The alternative - copying the
+     * approved-notice rule (`intent_approved_notice_enabled`, TWO-25218) into
+     * this block, or having each renderer push a boolean - puts a second
+     * statement of the rule somewhere it can disagree with the first. There are
+     * THREE code paths that can draw or remove this message
+     * (TwoCheckoutManager's template section, its fallback container, and
+     * TwoOrderIntent.updateUI()'s own element), so a pushed flag would have to
+     * be maintained in all three and would be wrong the moment one of them
+     * changed. Asking the DOM what the buyer can see cannot drift from what the
+     * buyer can see.
+     *
+     * Computed style, not the inline attribute: the message is hidden inline in
+     * places and by the stylesheet in others.
+     *
+     * @returns {boolean}
+     */
+    static isIntentMessageVisible() {
+        if (typeof document === 'undefined' || !document.querySelectorAll) {
+            return false;
+        }
+        const nodes = document.querySelectorAll(
+            TwoCompanySummary.INTENT_MESSAGE_SELECTORS.join(', ')
+        );
+        for (let i = 0; i < nodes.length; i += 1) {
+            if (TwoCompanySummary.isRendered(nodes[i])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Is this element, and every ancestor of it, actually displayed?
+     *
+     * `getComputedStyle` reports an element's OWN `display`, which stays
+     * `block` on a node whose parent is hidden - so the element's own style is
+     * not enough to answer "can the buyer see it". The message containers sit
+     * inside wrappers the theme and the module both hide, which is exactly that
+     * case.
+     *
+     * @param {?Element} node
+     * @returns {boolean}
+     */
+    static isRendered(node) {
+        if (!node || typeof window === 'undefined' || !window.getComputedStyle) {
+            return false;
+        }
+        let current = node;
+        while (current && current.nodeType === 1) {
+            const style = window.getComputedStyle(current);
+            if (!style) {
+                return false;
+            }
+            if (style.display === 'none' || style.visibility === 'hidden') {
+                return false;
+            }
+            // Fully transparent counts as hidden, and for this container that is
+            // not a defensive extra: `.two-payment-info` is `opacity: 0` in the
+            // stylesheet and is revealed by adding `.show`, which is what takes
+            // it to 1. Checking only `display` would read the un-shown section
+            // as visible and put the label beside a message nobody can see.
+            //
+            // Exactly zero, not "less than one": the same rule carries a 0.3s
+            // opacity transition, and a mid-fade value is a message on its way
+            // onto the screen rather than a hidden one.
+            if (parseFloat(style.opacity) === 0) {
+                return false;
+            }
+            current = current.parentElement;
+        }
+        return true;
     }
 
     /** @returns {string} */
@@ -294,7 +398,22 @@ class TwoCompanySummary {
         // Nothing captured at all: the buyer has not named a company yet, and a
         // block of empty labels is worse than no block.
         const hasAnything = state.name !== '' || state.number !== '';
-        root.style.display = hasAnything ? '' : 'none';
+
+        // TWO-25326 §7, revised: the label rides on the order-intent message's
+        // visibility rather than on capture alone. A brand that runs with the
+        // approval notice switched off got a tile that was deliberately silent
+        // on approval but still announced the company beside it.
+        //
+        // Read off the message itself rather than re-derived from the config
+        // that governs it - see isIntentMessageVisible() for why observing beats
+        // copying the rule.
+        //
+        // `hasAnything` still applies on top: a decline with no company
+        // captured at all shows a message the label has nothing to accompany,
+        // and empty slots are worse than no block. So the message's visibility
+        // is a CEILING on the label's, never a floor.
+        const withMessage = hasAnything && TwoCompanySummary.isIntentMessageVisible();
+        root.style.display = withMessage ? '' : 'none';
     }
 }
 
