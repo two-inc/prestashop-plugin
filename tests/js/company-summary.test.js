@@ -58,6 +58,16 @@ beforeEach(() => {
     bus = loaded.bus;
     ajax = stubAjax($);
     TwoCompanySummary = loadCompanySummary();
+    // The label only renders while the order-intent message is on screen
+    // (TWO-25326 §7, revised). That is a precondition for every test below that
+    // asserts on CONTENT - which slot holds what - so it is established once
+    // here rather than restated in each, and the coupling itself is pinned
+    // separately in "the label rides on the intent message's visibility".
+    //
+    // Done BEFORE the instance is constructed, so init()'s own render() already
+    // sees it and the tests observe one consistent state rather than a block
+    // that was briefly hidden for reasons unrelated to what they assert.
+    showIntentMessage();
     // Constructed exactly as views/js/twopayment.js does. Load-bearing rather
     // than setup noise: the document-level input listener that catches a
     // hand-typed company name belongs to the INSTANCE, so a suite that only
@@ -80,6 +90,36 @@ function makeInstance(extraConfig) {
     return new TwoCompanySearch(
         Object.assign({ checkoutHost: CHECKOUT_HOST }, extraConfig || {})
     );
+}
+
+/**
+ * Put the order-intent message on screen, the way TwoCheckoutManager does.
+ *
+ * `.two-payment-info` is the section the shipped template carries, hidden inline
+ * (`style="display: none"`) until an intent decision arrives - and it is the
+ * container that actually renders on PrestaShop, so it is the one the label's
+ * gate observes. Revealed by setting the same inline display TwoCheckoutManager
+ * sets, not by deleting the attribute, so this reproduces the real mechanism.
+ *
+ * @returns {Element} the message section
+ */
+function showIntentMessage() {
+    const info = document.querySelector('.two-payment-info');
+    if (!info) {
+        throw new Error('the tile template carries no .two-payment-info section');
+    }
+    info.style.display = 'block';
+    return info;
+}
+
+/** Take it back down, the way the notice-off branch does. */
+function hideIntentMessage() {
+    const info = document.querySelector('.two-payment-info');
+    if (!info) {
+        throw new Error('the tile template carries no .two-payment-info section');
+    }
+    info.style.display = 'none';
+    return info;
 }
 
 /** The block under test. */
@@ -822,5 +862,246 @@ describe('TwoOrderIntent publishes the payload company to the tile (TWO-25326 §
             number: '12345678',
             hidden: false
         });
+    });
+});
+
+
+describe("the label rides on the intent message's visibility (TWO-25326 §7, revised)", () => {
+    // Revised rule (TWO-25326): the company label is not shown unconditionally
+    // once a company is captured. It is shown exactly when the order-intent
+    // message is shown and hidden exactly when that message is hidden.
+    //
+    // Driven through TwoCheckoutManager rather than TwoOrderIntent, because that
+    // is the module whose message the buyer actually sees on PrestaShop.
+    // `.two-payment-info` is a section of the shipped template and
+    // TwoCheckoutManager shows and hides it; TwoOrderIntent's own
+    // `.two-order-intent-message` is appended to
+    // `.payment-option-content, .payment-form, .additional-information` searched
+    // WITHIN the `.payment-option`, and on PS 8's classic theme none of those
+    // exist there - measured on a real PS 8 checkout, where that element never
+    // enters the DOM at all. Pinning the gate to the container that does render
+    // is the difference between this rule working and the label vanishing for
+    // good.
+    let manager;
+
+    /**
+     * A TwoCheckoutManager with no init().
+     *
+     * The constructor wires listeners, kicks off requests and reads config this
+     * suite has no interest in. Object.create gives the real prototype - so
+     * these are the shipped methods, not stubs - without any of that.
+     */
+    function makeManager() {
+        const instance = Object.create(window.TwoCheckoutManager.prototype);
+        instance.config = {};
+        instance.twoPaymentOption = document.querySelector('.two-payment-container');
+        instance.isLoadingUIShown = false;
+        return instance;
+    }
+
+    /** Is the message the buyer would read actually on screen? */
+    function messageVisible() {
+        const info = document.querySelector('.two-payment-info');
+        return !!info && window.getComputedStyle(info).display !== 'none';
+    }
+
+    /** Reproduce the payment step: PrestaShop has taken the address form away. */
+    function removeAddressForm() {
+        document.querySelectorAll("input[name='company'], input[name='companyid']")
+            .forEach((el) => el.remove());
+    }
+
+    beforeEach(() => {
+        loadScript('views/js/modules/TwoCheckoutManager.js');
+        manager = makeManager();
+        removeAddressForm();
+        // Undo the file-wide precondition: these tests are about how the
+        // visibility is ARRIVED at, so each drives it through the real code path
+        // instead of inheriting it from setup.
+        hideIntentMessage();
+        TwoCompanySummary.render();
+    });
+
+    afterEach(() => {
+        delete window.twopayment;
+    });
+
+    test('a captured company alone is not enough - no message, no label', () => {
+        // The superseded rule. This is the assertion that fails if the label goes
+        // back to being shown whenever a company is captured.
+        TwoCompanySummary.setIntentCompany({ name: 'Example Trading Ltd', number: '12345678' });
+
+        expect(messageVisible()).toBe(false);
+        expect(shown().hidden).toBe(true);
+        // The content is ready and waiting - it is the visibility that is gated,
+        // not the rendering. Distinguishes "gated" from "broken".
+        expect(slot('name').textContent).toBe('Example Trading Ltd');
+    });
+
+    test('the message going up takes the label with it', () => {
+        TwoCompanySummary.setIntentCompany({ name: 'Example Trading Ltd', number: '12345678' });
+        expect(shown().hidden).toBe(true);
+
+        // The real show path every decision funnels through.
+        manager.getOrCreateMessageContainer();
+
+        expect(messageVisible()).toBe(true);
+        expect(shown().hidden).toBe(false);
+        expect(label()).toBe('Example Trading Ltd (12345678)');
+    });
+
+    test('an approval with the notice OFF hides the message and the label', () => {
+        // The configuration that motivated this change: the tile is deliberately
+        // silent on approval, and the label was still naming the company beside
+        // it.
+        //
+        // Driven as a TRANSITION from a visible state rather than from the hidden
+        // default, and that is load-bearing: from hidden, this test would pass
+        // whether or not the suppression branch nudges anything, because the
+        // label was already down. A decline first is also the real sequence - a
+        // buyer is refused, fixes something, and is approved on a later poll.
+        window.twopayment = { intent_approved_notice_enabled: false };
+        TwoCompanySummary.setIntentCompany({ name: 'Example Trading Ltd', number: '12345678' });
+
+        manager.showOrderIntentDecline('not yet');
+        expect(messageVisible()).toBe(true);
+        expect(shown().hidden).toBe(false);
+
+        manager.showOrderIntentApproval('approved');
+
+        expect(messageVisible()).toBe(false);
+        expect(shown().hidden).toBe(true);
+    });
+
+    test('an approval with the notice ON shows the message and the label', () => {
+        window.twopayment = { intent_approved_notice_enabled: true };
+        TwoCompanySummary.setIntentCompany({ name: 'Example Trading Ltd', number: '12345678' });
+
+        manager.showOrderIntentApproval('approved');
+
+        expect(messageVisible()).toBe(true);
+        expect(shown().hidden).toBe(false);
+    });
+
+    test('the label agrees with the message in every state, one gate not two', () => {
+        // The anti-duplication test. Whatever the combination, the two answers are
+        // compared to EACH OTHER rather than to a hardcoded expectation, so a
+        // second copy of the approved-notice rule that disagreed with
+        // TwoCheckoutManager by even one case fails here.
+        const cases = [
+            { enabled: true, approved: true },
+            { enabled: false, approved: true },
+            { enabled: true, approved: false },
+            { enabled: false, approved: false }
+        ];
+
+        cases.forEach(({ enabled, approved }) => {
+            window.twopayment = { intent_approved_notice_enabled: enabled };
+            TwoCompanySummary.setIntentCompany({ name: 'Example Trading Ltd', number: '12345678' });
+
+            if (approved) {
+                manager.showOrderIntentApproval('approved');
+            } else {
+                manager.showOrderIntentDecline('declined');
+            }
+
+            expect(shown().hidden).toBe(!messageVisible());
+        });
+    });
+
+    test('a message hidden by an ancestor hides the label too', () => {
+        // The message's own `display` is not the question - the buyer cannot read
+        // it through a collapsed wrapper either, and on a real checkout this
+        // section sits inside containers both the theme and the module hide.
+        TwoCompanySummary.setIntentCompany({ name: 'Example Trading Ltd', number: '12345678' });
+        showIntentMessage();
+        TwoCompanySummary.render();
+        expect(shown().hidden).toBe(false);
+
+        document.querySelector('.two-payment-container').style.display = 'none';
+        TwoCompanySummary.render();
+
+        expect(shown().hidden).toBe(true);
+    });
+
+    test("TwoOrderIntent's own message element counts as the message too", () => {
+        // It does not render on PS 8's classic theme, but the gate is about what
+        // the buyer can see rather than about which module drew it - so if this
+        // element IS in the DOM and visible on some theme, the label belongs
+        // beside it.
+        TwoCompanySummary.setIntentCompany({ name: 'Example Trading Ltd', number: '12345678' });
+        expect(shown().hidden).toBe(true);
+
+        const msg = document.createElement('div');
+        msg.className = 'two-order-intent-message';
+        msg.textContent = 'declined';
+        document.querySelector('.two-payment-container').appendChild(msg);
+        TwoCompanySummary.render();
+
+        expect(shown().hidden).toBe(false);
+    });
+
+    test('clearing the intent UI takes the label down', () => {
+        TwoCompanySummary.setIntentCompany({ name: 'Example Trading Ltd', number: '12345678' });
+        window.twopayment = { intent_approved_notice_enabled: true };
+        manager.showOrderIntentDecline('declined');
+        expect(shown().hidden).toBe(false);
+
+        // clearOrderIntentUI() hides its fallback container; the template section
+        // is what is on screen here, so hide that the way the module does and
+        // confirm the label follows rather than being left behind.
+        hideIntentMessage();
+        manager.clearOrderIntentUI();
+
+        expect(messageVisible()).toBe(false);
+        expect(shown().hidden).toBe(true);
+    });
+
+    test('a visible message does not conjure a label out of nothing', () => {
+        // The ceiling, not a floor: a decline with no company captured at all
+        // shows a message the label has nothing to accompany, and two empty slots
+        // with a stray "()" are worse than no block.
+        window.twopayment = { intent_approved_notice_enabled: true };
+        manager.showOrderIntentDecline('no company found');
+
+        expect(messageVisible()).toBe(true);
+        expect(shown()).toEqual({ name: '', number: '', hidden: true });
+    });
+
+    test('the visibility survives a re-render of the tile', () => {
+        // PrestaShop replaces the payment step wholesale on a cart change. The
+        // captured pair is class-static for that reason, and the gate is re-read
+        // from the replacement DOM rather than remembered - so a tile rebuilt
+        // while the message is down must come back hidden.
+        TwoCompanySummary.setIntentCompany({ name: 'Example Trading Ltd', number: '12345678' });
+        showIntentMessage();
+        TwoCompanySummary.render();
+        expect(shown().hidden).toBe(false);
+
+        root().remove();
+        document.querySelector('.two-payment-container').remove();
+        buildPaymentTile();
+        showIntentMessage();
+        TwoCompanySummary.render();
+        expect(shown().hidden).toBe(false);
+
+        root().remove();
+        document.querySelector('.two-payment-container').remove();
+        buildPaymentTile();
+        hideIntentMessage();
+        TwoCompanySummary.render();
+        expect(shown().hidden).toBe(true);
+    });
+
+    test('the nudge tolerates the tile module being absent', () => {
+        // twopayment.js constructs these independently; a checkout running
+        // without the summary class must not throw.
+        const saved = window.TwoCompanySummary;
+        delete window.TwoCompanySummary;
+        try {
+            expect(() => manager.refreshCompanyLabel()).not.toThrow();
+        } finally {
+            window.TwoCompanySummary = saved;
+        }
     });
 });

@@ -474,6 +474,9 @@ function loadCompanySummary() {
         throw new Error('harness: TwoCompanySummary was not exported onto window');
     }
     TwoCompanySummary._soleTrader = null;
+    // Class-static like `_soleTrader`, and leaked across tests until now: a
+    // pair pushed by one test's intent payload stayed readable by the next.
+    TwoCompanySummary._intentCompany = null;
     // Also class-static, and for the same reason: the bus it guards cannot be
     // unsubscribed from, so the flag has to survive instances. It must not
     // survive tests, or the first test in a file is the only one whose instance
