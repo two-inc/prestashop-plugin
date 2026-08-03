@@ -175,7 +175,8 @@ cache:
 form (which it does for something as ordinary as a country change):
 
 - a company selected through the real widget (menu focus + select, not a direct
-  `onCompanySelected()` call) lands in `company`, `companyid`, `dni` and `vat_number`; a
+  `onCompanySelected()` call) lands in `company`, `companyid` and `dni` — and never in
+  `vat_number`, because an organisation number is not a VAT number; a
   lookup-id-only company gets its number and address from the detail endpoint; the
   address-lookup toggle stops the address fill without stopping `companyid`; and selecting
   the unavailable row writes nothing.
@@ -198,7 +199,7 @@ form (which it does for something as ordinary as a country change):
 - a stale organisation number is cleared across a re-render: a matching pair survives,
   a differing name or an absent selection marker clears it, and the comparison ignores
   case and whitespace because themes and server round-trips both reflow them.
-- the submit hook restores `dni`/`vat_number` from `companyid` without overwriting a value
+- the submit hook restores `dni` from `companyid` without overwriting a value
   the buyer typed, and a buyer-typed DNI becomes the organisation number when none was
   selected.
 - the company-detail fill: the request carries `withCredentials: false` in its own right
@@ -295,8 +296,8 @@ form (which it does for something as ordinary as a country change):
   are dropped; the session company is cleared through its own endpoint action,
   asserted to be a POST carrying the token and asserted *not* to be the save
   action, which rejects an empty company id and would therefore clear nothing; and
-  the address step's `dni` / `vat_number` are dropped, which is the pair the server
-  reads off the saved address independently of the session company.
+  the address step's `dni` is dropped, which the server reads off the saved address
+  independently of the session company.
 
   Two things about those cases are deliberate. The selection is completed **through
   jQuery UI's own menu**, not by setting the hidden field by hand: a hand-set
