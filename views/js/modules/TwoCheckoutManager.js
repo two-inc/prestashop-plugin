@@ -947,6 +947,9 @@ class TwoCheckoutManager {
                 existing.classList.remove('approved', 'declined', 'loading', 'show');
                 existing.style.display = 'none';
             }
+            // Hidden, so the company label goes with it (TWO-25326 §7): this is
+            // the notice-off case the revised rule exists for.
+            this.refreshCompanyLabel();
             this.clearLoadingState();
             this.hideLoadingOverlay();
             this.showPaymentTerms();
@@ -1212,6 +1215,8 @@ class TwoCheckoutManager {
             messageContainer.style.display = 'none';
             messageContainer.innerHTML = '';
         }
+        // The message is down, so the company label is too (TWO-25326 §7).
+        this.refreshCompanyLabel();
         
         // Also clear payment terms
         this.hidePaymentTerms();
@@ -1237,6 +1242,31 @@ class TwoCheckoutManager {
     /**
      * Get or create message container for order intent feedback (uses existing payment card structure)
      */
+    /**
+     * Ask the payment tile's company label to re-read its gate (TWO-25326 §7).
+     *
+     * The label is shown exactly when the order-intent message is shown and
+     * hidden exactly when it is hidden - no longer whenever a company happens to
+     * be captured. TwoCompanySummary decides that by LOOKING at the message
+     * container, so this passes no state; it only says "the message may have
+     * just changed, look again", and is called from the points in this module
+     * that change it.
+     *
+     * This module is where it matters on PrestaShop: `.two-payment-info` is the
+     * container the shipped template carries and the one the buyer actually
+     * sees.
+     *
+     * @returns {void}
+     */
+    refreshCompanyLabel() {
+        if (typeof window === 'undefined'
+            || !window.TwoCompanySummary
+            || typeof window.TwoCompanySummary.render !== 'function') {
+            return;
+        }
+        window.TwoCompanySummary.render();
+    }
+
     getOrCreateMessageContainer() {
         // First try to use the existing payment info section from the template
         let container = document.querySelector('.two-payment-info');
@@ -1245,6 +1275,8 @@ class TwoCheckoutManager {
             // Use existing payment info section and make it visible
             container.style.display = 'block';
             container.classList.add('show');
+            // Now visible, so the company label may need to come with it.
+            this.refreshCompanyLabel();
             return container;
         }
         
@@ -1273,6 +1305,7 @@ class TwoCheckoutManager {
                 }
             }
         }
+        this.refreshCompanyLabel();
         return container;
     }
     
