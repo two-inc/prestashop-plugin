@@ -685,7 +685,9 @@ describe('the hidden companyid input is untouched', () => {
         // Pinned here as well as in the company-search suite, because this
         // change added a call into the middle of onCompanySelected().
         expect($("input[name='dni']").val()).toBe('12345678');
-        expect($("input[name='vat_number']").val()).toBe('12345678');
+        // And still never the VAT field: an organisation number is not a VAT
+        // number, so a selection must leave that field alone.
+        expect($("input[name='vat_number']").val()).toBe('');
     });
 });
 

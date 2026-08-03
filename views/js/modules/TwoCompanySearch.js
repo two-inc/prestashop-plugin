@@ -1404,7 +1404,7 @@ class TwoCompanySearch {
     }
 
     /**
-     * Single gate for the DNI / vat_number writes the lookup performs - the
+     * Single gate for the `dni` writes the lookup performs - the
      * selection handler, the company-details refinement, and the pre-submit
      * sync all go through here rather than each carrying its own condition.
      *
@@ -1437,21 +1437,35 @@ class TwoCompanySearch {
     }
 
     /**
-     * The two address inputs a company selection mirrors its organisation number
+     * The address inputs a company selection mirrors its organisation number
      * into.
      *
-     * One list rather than the selector pair written twice, because the clear has
-     * to walk exactly the fields the write walks. A field present in one list and
+     * `dni` ("Identification number") only. **`vat_number` is deliberately NOT
+     * in this list and must never be added back.** An organisation number is
+     * not a VAT number: the two identifiers have different formats, different
+     * issuing registers, and a company can hold the first without ever holding
+     * the second. Writing the org number into the VAT field puts a value the
+     * buyer never gave into a field the buyer is answerable for, and it is
+     * wrong even when the two strings happen to coincide.
+     *
+     * It also has a silent side effect on tax. The shop reads a non-empty
+     * `vat_number` on a foreign address as a B2B reverse-charge exemption -
+     * the same condition core's price calculation switches tax off with - so a
+     * mirrored org number can zero the resolved VAT rate on an order whose
+     * buyer is not VAT-registered at all.
+     *
+     * One list rather than the selector written twice, because the clear has to
+     * walk exactly the fields the write walks. A field present in one list and
      * absent from the other is a disowned organisation number left in the form.
      *
      * @returns {Array<Object>} jQuery objects, any of which may be empty
      */
     addressIdentifierFields() {
-        return [$("input[name='dni']"), $("input[name='vat_number']")];
+        return [$("input[name='dni']")];
     }
 
     /**
-     * Drop the identification / VAT numbers, but ONLY the ones the lookup itself
+     * Drop the identification numbers, but ONLY the ones the lookup itself
      * wrote and the buyer has not since changed.
      *
      * Not a blanket clear, and that constraint is what makes this method
@@ -2037,8 +2051,8 @@ class TwoCompanySearch {
      * carries the old company.
      *
      * THREE halves, in truth. The selection also mirrors the organisation number
-     * into the address form's identification-number and VAT-number inputs, and
-     * the server reads those off the saved address on a path of their own,
+     * into the address form's identification-number input, and the server reads
+     * that off the saved address on a path of its own,
      * independently of the session company. Worse, the pre-submit sync adopts an
      * identification number with no organisation number beside it AS the
      * organisation number - so a `dni` left behind here is re-adopted at submit
@@ -3062,7 +3076,7 @@ class TwoCompanySearch {
                 companyid: ui.item.organization_number
             });
 
-            // Also sync to the DNI / VAT fields - gated on the address-lookup
+            // Also sync to the DNI field - gated on the address-lookup
             // toggle inside the writer (TWO-25203). Unconditional overwrite so
             // a re-search replaces the previous company's number.
             this.writeOrganizationToAddressIdentifiers(ui.item.organization_number);

@@ -984,11 +984,11 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
          * own menu and therefore through onCompanySelected().
          *
          * Deliberately NOT `organizationField.val(...)` by hand. A selection
-         * writes THREE places - the hidden organisation field, `dni` and
-         * `vat_number` - and a hand-set stand-in reaches only the first, so the
-         * two address identifiers stay empty and every assertion about what a
-         * clear does to them passes vacuously. That is exactly how the disowned
-         * organisation number survived into the order payload unnoticed.
+         * writes TWO places - the hidden organisation field and `dni` - and a
+         * hand-set stand-in reaches only the first, so the address identifier
+         * stays empty and every assertion about what a clear does to it passes
+         * vacuously. That is exactly how the disowned organisation number
+         * survived into the order payload unnoticed.
          */
         function selectFirstCompany() {
             const widget = searchInput().autocomplete('instance');
@@ -1032,21 +1032,20 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
          * The organisation number is what decides WHO gets credit-checked and
          * invoiced, so a buyer who disowns a company and types their own name
          * must not leave that company's number anywhere the server can read it.
-         * `dni` and `vat_number` are read off the saved address by the server's
-         * own resolver, independently of the session company, so leaving them
-         * behind makes the typed name cosmetic.
+         * `dni` is read off the saved address by the server's own resolver,
+         * independently of the session company, so leaving it behind makes the
+         * typed name cosmetic.
          */
-        test('the identification and VAT numbers the lookup wrote are dropped too', () => {
+        test('the identification number the lookup wrote is dropped too', () => {
             withEndpoint(() => {
                 const instance = makeInstance();
                 search(AT_THRESHOLD);
                 ajax.last().succeed(SEARCH_RESPONSE);
 
                 selectFirstCompany();
-                // Bootstrapped-guard: with these empty the assertions below could
+                // Bootstrapped-guard: with this empty the assertion below could
                 // not fail whatever the clear does.
                 expect($("input[name='dni']").val()).toBe('12345678');
-                expect($("input[name='vat_number']").val()).toBe('12345678');
 
                 // Driven through the API rather than by clicking the button:
                 // §2 HIDES that button once hasConfirmedSelection() is true, which
@@ -1055,7 +1054,6 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
                 instance.enterManualEntryMode();
 
                 expect($("input[name='dni']").val()).toBe('');
-                expect($("input[name='vat_number']").val()).toBe('');
             });
         });
 
@@ -1087,7 +1085,6 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
                 expect(instance.organizationField.val()).toBe('');
                 expect(instance.organizationField.attr('data-two-company-name')).toBeUndefined();
                 expect($("input[name='dni']").val()).toBe('');
-                expect($("input[name='vat_number']").val()).toBe('');
             });
         });
 
@@ -1120,7 +1117,7 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
                 instance.enterManualEntryMode();
 
                 expect($("input[name='dni']").val()).toBe('55554444');
-                // The one they did NOT touch is still the lookup's and still goes.
+                // And the VAT field was never the lookup's to write or clear.
                 expect($("input[name='vat_number']").val()).toBe('');
             });
         });
@@ -1482,7 +1479,40 @@ describe('selecting a company through the real widget', () => {
             'Example Trading Ltd'
         );
         expect($("input[name='dni']").val()).toBe('12345678');
-        expect($("input[name='vat_number']").val()).toBe('12345678');
+        // An organisation number is NOT a VAT number, so the selection must
+        // leave the VAT field exactly as it found it.
+        expect($("input[name='vat_number']").val()).toBe('');
+        expect(
+            $("input[name='vat_number']").attr('data-two-autofilled-value')
+        ).toBeUndefined();
+    });
+
+    test('a company selection never writes into the VAT-number field', () => {
+        makeInstance();
+        // The buyer's own VAT number, already in the form. The selection path
+        // overwrites the identifiers it owns unconditionally (a re-search has to
+        // replace the previous company's number), so if the VAT field were still
+        // on that list this value would be destroyed as well as falsified.
+        $("input[name='vat_number']").val('GB123456789');
+
+        selectFirstResult('exa', SEARCH_RESPONSE);
+
+        expect($("input[name='dni']").val()).toBe('12345678');
+        expect($("input[name='vat_number']").val()).toBe('GB123456789');
+    });
+
+    test('the pre-submit sync never writes into the VAT-number field', () => {
+        const instance = makeInstance();
+        selectFirstResult('exa', SEARCH_RESPONSE);
+        // A re-render between selection and submit blanks the address inputs;
+        // the submit hook restores what it owns, which is `dni` and nothing else.
+        $("input[name='dni']").val('');
+        $("input[name='vat_number']").val('');
+
+        instance.syncOrganizationToAddressIdentifiers();
+
+        expect($("input[name='dni']").val()).toBe('12345678');
+        expect($("input[name='vat_number']").val()).toBe('');
     });
 
     test('selecting the unavailable row writes nothing into the field', () => {
@@ -1780,10 +1810,11 @@ describe('the organisation number reaches the address identifiers on submit', ()
 
         submitForm();
 
-        // The selection writes these too, but a re-render between selection and
-        // submit can blank them; the submit hook is the last chance to restore.
+        // The selection writes this too, but a re-render between selection and
+        // submit can blank it; the submit hook is the last chance to restore.
         expect($("input[name='dni']").val()).toBe('12345678');
-        expect($("input[name='vat_number']").val()).toBe('12345678');
+        // Never the VAT field - an organisation number is not a VAT number.
+        expect($("input[name='vat_number']").val()).toBe('');
     });
 
     test('a value the buyer typed is not overwritten on submit', () => {
@@ -2224,7 +2255,7 @@ describe('a destroyed instance cannot act on the live DOM', () => {
         expect($("input[name='dni']").val()).toBe('12345678');
     });
 
-    test('the address-lookup toggle gates the dni/vat writes but not companyid', () => {
+    test('the address-lookup toggle gates the dni write but not companyid', () => {
         const live = makeInstance({ addressLookupEnabled: false });
 
         live.onCompanySelected(null, {
