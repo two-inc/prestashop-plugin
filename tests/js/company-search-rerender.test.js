@@ -1831,6 +1831,26 @@ describe('the organisation number reaches the address identifiers on submit', ()
         expect($("input[name='dni']").val()).toBe('buyer-typed');
     });
 
+    test('selecting a result with no organization_number and no lookup_id clears a PREVIOUS selection\'s number, not just its hint (adversarial review round 4, TWO-25326)', () => {
+        // First selection: a real org number captured.
+        const search = makeInstance();
+        search.onCompanySelected(null, {
+            item: { value: 'Example Trading Ltd', organization_number: '12345678' }
+        });
+        expect($("input[name='companyid']").val()).toBe('12345678');
+
+        // Second selection: a DIFFERENT company, this result carries no
+        // organization_number and no lookup_id (the else-branch previously
+        // cleared only the visual hint, leaving the field itself - and its
+        // data-two-company-name tag - holding the FIRST company's number).
+        search.onCompanySelected(null, {
+            item: { value: 'Second Company Ltd' }
+        });
+
+        expect($("input[name='companyid']").val()).toBe('');
+        expect($("input[name='companyid']").attr('data-two-company-name')).toBeUndefined();
+    });
+
     test('a DNI the buyer typed becomes the org number when none was selected', () => {
         makeInstance();
         $("input[name='dni']").val('99999999');
