@@ -72,6 +72,43 @@
                 $(this).addClass('active');
             });
             
+            // Address lookup is only meaningful while the company search is in
+            // the address area (TWO-25326 §7.1 follow-up). When "Enable
+            // company search in address entry" is "No" the search has moved
+            // into the payment tile and there is no address-area lookup left
+            // to govern, so the switch is unchecked and disabled rather than
+            // left independently settable. Mirrors woocommerce-plugin's
+            // admin.js toggleChildrenFields() for the same pair of settings.
+            //
+            // Server-side counterpart in twopayment.php
+            // (isAddressLookupSettingAvailable): a disabled radio posts
+            // nothing, but a hand-crafted POST can still carry a ticked box
+            // and the save refuses it there. This half is presentation only.
+            function updateAddressLookupAvailability() {
+                var inAddressArea = $('input[name="PS_TWO_ENABLE_COMPANY_NAME"]:checked').val();
+                var lookupInputs = $('input[name="PS_TWO_ADDRESS_LOOKUP"]');
+                if (!lookupInputs.length) {
+                    return;
+                }
+                // The whole row, so the label and the help text grey out with
+                // the control rather than the control alone looking broken.
+                var row = lookupInputs.closest('.form-group');
+                if (String(inAddressArea) === '1') {
+                    lookupInputs.prop('disabled', false);
+                    row.removeClass('two-setting-unavailable');
+                    return;
+                }
+                // Force the "No" position on screen as well as disabling it:
+                // the merchant must not read a ticked box the module is
+                // ignoring. This is exactly what the server will store.
+                lookupInputs.prop('disabled', true);
+                lookupInputs.filter('[value="0"]').prop('checked', true);
+                lookupInputs.filter('[value="1"]').prop('checked', false);
+                row.addClass('two-setting-unavailable');
+            }
+            updateAddressLookupAvailability();
+            $('input[name="PS_TWO_ENABLE_COMPANY_NAME"]').on('change', updateAddressLookupAvailability);
+
             // Payment Term Type - Dynamic show/hide of term options
             // PHP 7.1+ compatible: Using ES5 syntax (no arrow functions)
             function updatePaymentTermsVisibility() {
