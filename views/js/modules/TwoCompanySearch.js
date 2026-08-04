@@ -3060,17 +3060,17 @@ class TwoCompanySearch {
             this.writeOrganizationToAddressIdentifiers(ui.item.organization_number);
         } else {
             // No org number on this result (e.g. GB, resolved later via
-            // fetchCompanyDetails/lookup_id). Adversarial review round 4
-            // (TWO-25326): clearing only the visual hint here left
-            // `this.organizationField` (and its `data-two-company-name` tag)
-            // holding the PREVIOUS company's number - and when there is also
-            // no `lookup_id` to defer on, `triggerOrderIntentRecheck()` below
-            // fires immediately, shipping that stale number paired with the
-            // NEW company's name. Clear the real field atomically with the
-            // hint, same pattern as clearSelectedCompany().
-            this.organizationField.val('');
-            this.organizationField.removeAttr('data-two-company-name');
-            this.setCompanyIdHint('');
+            // fetchCompanyDetails/lookup_id). Adversarial review rounds 4-5
+            // (TWO-25326): clearing only organizationField+hint (round 4)
+            // still left the DNI/VAT identifier fields holding the PREVIOUS
+            // company's number, with their autofill marker intact - so
+            // setupAddressIdentifierSync()'s submit-time sync would adopt
+            // that leftover DNI value as this NEW company's org number,
+            // shipping a mismatched pair to the actual credit-check payload.
+            // The session cookie (persistCompanyToCookie) needed the same
+            // treatment. clearSelectedCompany() already does all of this
+            // atomically - use it instead of a partial hand-rolled clear.
+            this.clearSelectedCompany();
         }
 
         // For some countries (e.g. GB), org number may only be present in company details.
@@ -3368,11 +3368,12 @@ class TwoCompanySearch {
                 if (this.companyField && this.companyField.length > 0) {
                     this.companyField.val('');
                 }
-                if (this.organizationField) {
-                    this.organizationField.val('');
-                    this.organizationField.removeAttr('data-two-company-name');
-                }
-                this.setCompanyIdHint('');
+                // Adversarial review round 5 (TWO-25326): a manual
+                // organizationField+hint clear here left the DNI/VAT
+                // identifier fields and the session cookie holding the
+                // PREVIOUS country's company - same gap as the
+                // onCompanySelected() no-org-number branch, same fix.
+                this.clearSelectedCompany();
                 // Recreate autocomplete to ensure new country is used immediately
                 this.setupAutocomplete();
             };
