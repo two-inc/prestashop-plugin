@@ -103,7 +103,6 @@ $_MODULE['<{twopayment}prestashop>paymentinfo_febf12cea5e88ba5b9b5e26e0aac0f3a']
 $_MODULE['<{twopayment}prestashop>twopayment_00589e3bb6d7bbb598f17fe9bfe70052'] = 'Ugyldig telefonnummer';
 $_MODULE['<{twopayment}prestashop>twopayment_00a48186e87d34e1df0a6484f553bafc'] = 'Plattformens minimum er %1$s, %2$s avgift. En verdi her tolkes i butikkens standardvaluta på avgiftsgrunnlaget som er valgt nedenfor, og må være minst plattformens minimum.';
 $_MODULE['<{twopayment}prestashop>twopayment_00d23a76e43b46dae9ec7aa9dcbebb32'] = 'Aktivert';
-$_MODULE['<{twopayment}prestashop>twopayment_00e5b2dde8ad9cb156f29075ac73e47b'] = 'Styrer oppslag av firmaadresse i ADRESSE-steget i utsjekken. Når dette er aktivert, vil valg av et firma i firmasøket overskrive adressefeltene (gate, postnummer, sted) og feltene for organisasjonsnummer (DNI / MVA-nummer) med registerdata for firmaet – også ved nytt søk, der valg av et annet firma erstatter verdiene fra det forrige firmaet. Når det er deaktivert, fungerer firmasøket fortsatt og lagrer fortsatt firmanavn og organisasjonsnummer, men ingenting skrives inn i adresse- eller identifikasjonsfeltene, og kunden fyller dem ut selv. Dette slår ikke av selve firmasøket – bruk «Aktiver autofullføring av firmanavn» for det.';
 $_MODULE['<{twopayment}prestashop>twopayment_00f301094c777099ef21325f575d1c3d'] = 'Avgiftsregelgruppen som brukes på gebyret for betalingsvilkår – de samme avgiftsregelgruppene som du tilordner produkter. Land- og delstatsregler, kombinerte satser og nullsats gjelder på nøyaktig samme måte som for et produkt. Hvis gebyret skal være uten avgift, oppretter du en avgiftsregelgruppe med en sats på 0 prosent og velger den her. Et valg er påkrevd så lenge tillegg er aktivert.';
 $_MODULE['<{twopayment}prestashop>twopayment_016e561b39ff316fdf1b182819189cdb'] = 'Skriv inn en undertittel.';
 $_MODULE['<{twopayment}prestashop>twopayment_0283fa93feb690f8b3537e18ed6bb4ab'] = 'For å betale med Two må du gå tilbake til fakturaadressen og søke opp firmanavnet ditt. Velg firmaet ditt fra resultatene for å verifisere virksomheten.';
@@ -118,7 +117,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_07a191ba1057c66e89f847c3e51dcc75'] 
 $_MODULE['<{twopayment}prestashop>twopayment_07b18d92f97de5262310e8d5493d05a9'] = 'Denne utvidelsen gjør det mulig for bedriftskunder å betale mot faktura med umiddelbare kredittbeslutninger.';
 $_MODULE['<{twopayment}prestashop>twopayment_07eeb6914d9dc4155aa125610140c9ea'] = 'Avgiftsgrunnlag for minste ordreverdi må være enten inkludert eller eksklusiv avgift.';
 $_MODULE['<{twopayment}prestashop>twopayment_08a38277b0309070706f6652eeae9a53'] = 'Ned';
-$_MODULE['<{twopayment}prestashop>twopayment_0aae3a1846a03baeeb16f67ed8b20507'] = 'Hvis du velger JA, kan kundene bruke søke-API-et for å finne firmanavnet sitt.';
 $_MODULE['<{twopayment}prestashop>twopayment_0ad05b9020f4d78e45efdacdb76e734b'] = 'Kunne ikke laste kunden for ordren.';
 $_MODULE['<{twopayment}prestashop>twopayment_0ba29c6a1afacf586b03a26162c72274'] = 'Miljø';
 $_MODULE['<{twopayment}prestashop>twopayment_0d8dfbcfe22598503672351254cbe691'] = 'Betalingen må godkjennes før du kan gå videre';
@@ -195,7 +193,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_3d9e53b91d8ee1425fc4ef4d94dd460b'] 
 $_MODULE['<{twopayment}prestashop>twopayment_3ef2ad2a1483fd9861c50152ef58e38b'] = 'Ordre oppfylt → Sendt';
 $_MODULE['<{twopayment}prestashop>twopayment_3f1053a1e16052b90a9049cca0371bb0'] = 'Two: Verifisert – klar for oppfyllelse';
 $_MODULE['<{twopayment}prestashop>twopayment_3f68e67dc6c397aaa9d1c24c356f754f'] = 'Verifisert';
-$_MODULE['<{twopayment}prestashop>twopayment_416f2bd5af6ca907eda0985adcd634fe'] = 'Aktiver autofullføring av firmanavn';
 $_MODULE['<{twopayment}prestashop>twopayment_4296fd320beaf61dcf979ff634cf2f2d'] = 'Handling påkrevd:';
 $_MODULE['<{twopayment}prestashop>twopayment_42a0b2617336488a5a5f2d3286c4ed40'] = 'Minste ordreverdi, %s';
 $_MODULE['<{twopayment}prestashop>twopayment_43183e955e3019bf7f8c942e016b7b13'] = 'MVA';
@@ -448,10 +445,9 @@ $_MODULE['<{twopayment}prestashop>twopayment_fa8a347b2b0ab6e45116e184b464fe5c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_fb9c6bde479f74937d885d4984147a84'] = 'Versjon av utvidelsen:';
 $_MODULE['<{twopayment}prestashop>twopayment_fd43783f3df5a22e0c07cc6de74db303'] = 'Metode for kjøpertillegg';
 $_MODULE['<{twopayment}prestashop>twopayment_fe24567972432f23380c0c9ced6566a4'] = '-- Ikke satt: avvis ordren i stedet --';
-$_MODULE['<{twopayment}prestashop>twopayment_05f941f1bc258935779dd8002187ed0c'] = 'Plassering av bedriftssøk';
-$_MODULE['<{twopayment}prestashop>twopayment_42ecff9e5e5dfa679e0a1fcd85dbb65f'] = 'Hvor kontrollen for bedriftssøk (nedtrekksliste / søkefelt / manuell inntasting) vises i kassen. «Nei» (standard): i faktureringsadresseområdet, akkurat som i dag. «Ja»: den SAMME kontrollen vises i stedet inne i Two-betalingsflisen, og adresseområdet viser da ikke noe bedriftsfelt i det hele tatt. Dette slår aldri av bedriftssøket - det avgjør bare hvor den ene kontrollen befinner seg.';
-$_MODULE['<{twopayment}prestashop>twopayment_c0497d19000e3b89dea5c3d65b0d2ca7'] = 'Adresseområde (standard)';
-$_MODULE['<{twopayment}prestashop>twopayment_b8be99833b3c4cbb693ca00df66f476a'] = 'Betalingsflis';
+$_MODULE['<{twopayment}prestashop>twopayment_0c7a60a608833b888818520f32f852bc'] = 'Aktiver bedriftssøk i adresseregistrering';
+$_MODULE['<{twopayment}prestashop>twopayment_2852c6fd4acf9a38f0ec0510586926d1'] = 'Når aktivert kan kjøperen søke etter bedriften sin i adresseregistreringsdelen av kassen. Hvis ikke, vil bedriftssøket vises i betalingsmetoden.';
+$_MODULE['<{twopayment}prestashop>twopayment_844bf42708989b65f7eea134791d4775'] = 'Styrer oppslaget av bedriftsadressen kun i ADRESSE-trinnet av kassen. Når aktivert, overskriver valg av en bedrift fra bedriftssøket adressefeltene (gate, postnummer, by) og organisasjonsnummerfeltene (DNI / MVA-nummer) med registerdataene for den bedriften - også ved nytt søk, der valg av en annen bedrift erstatter den forrige bedriftens verdier. Når deaktivert, fungerer bedriftssøket fortsatt og registrerer fortsatt bedriftsnavnet og organisasjonsnummeret, men ingenting skrives til adresse- eller identifikasjonsfeltene, og kunden fyller dem ut selv. Dette har ingen effekt når «Aktiver bedriftssøk i adresseregistrering» er satt til «Nei» - det er ikke noe adresseområde-oppslag å styre når søket selv har flyttet til betalingsflisen.';
 $_MODULE['<{twopayment}prestashop>twopayment_6d818b8b22700d2a99440ee017b0a4e8'] = 'Denne bestillingen fra %s (%s) vil sannsynligvis bli godkjent av Two';
 $_MODULE['<{twopayment}prestashop>twopayment_2541a3eb94a103e88a8090ac10b1276b'] = 'Two er ikke tilgjengelig for denne bestillingen fra %s (%s)';
 $_MODULE['<{twopayment}prestashop>twopayment_1ec613a214555191e9ebf229eed7ecf4'] = 'Denne bestillingen fra %s vil sannsynligvis bli godkjent av Two';

@@ -103,7 +103,6 @@ $_MODULE['<{twopayment}prestashop>paymentinfo_febf12cea5e88ba5b9b5e26e0aac0f3a']
 $_MODULE['<{twopayment}prestashop>twopayment_00589e3bb6d7bbb598f17fe9bfe70052'] = 'Ogiltigt telefonnummer';
 $_MODULE['<{twopayment}prestashop>twopayment_00a48186e87d34e1df0a6484f553bafc'] = 'Plattformens minimum %1$s, %2$s moms. Ett värde här tolkas i butikens standardvaluta på den momsbasis som väljs nedan och måste vara minst plattformens minimum.';
 $_MODULE['<{twopayment}prestashop>twopayment_00d23a76e43b46dae9ec7aa9dcbebb32'] = 'Aktiverad';
-$_MODULE['<{twopayment}prestashop>twopayment_00e5b2dde8ad9cb156f29075ac73e47b'] = 'Gäller endast uppslagningen av företagsadress i kassans ADRESS-steg. När funktionen är aktiverad skriver valet av ett företag i företagssökningen över adressfälten (gatuadress, postnummer, ort) och fälten för organisationsnummer (DNI/momsnummer) med registeruppgifterna för det företaget - även vid en ny sökning, där valet av ett annat företag ersätter det tidigare företagets värden. När funktionen är avaktiverad fungerar företagssökningen fortfarande och registrerar fortfarande företagsnamn och organisationsnummer, men inget skrivs in i adress- eller identifieringsfälten och kunden fyller i dem själv. Detta stänger inte av själva företagssökningen - använd "Aktivera automatisk komplettering av företagsnamn" för det.';
 $_MODULE['<{twopayment}prestashop>twopayment_00f301094c777099ef21325f575d1c3d'] = 'Momsregelgrupp som tillämpas på avgiften för betalningsvillkor - samma momsregelgrupper som du tilldelar produkter. Land- och delstatsregler, kombinerade satser och nollsats gäller precis som för vilken produkt som helst. Om du vill lämna avgiften obeskattad, skapa och välj här en momsregelgrupp med satsen 0 %. Ett val krävs så länge tilläggsavgifter är aktiverade.';
 $_MODULE['<{twopayment}prestashop>twopayment_016e561b39ff316fdf1b182819189cdb'] = 'Ange en underrubrik.';
 $_MODULE['<{twopayment}prestashop>twopayment_0283fa93feb690f8b3537e18ed6bb4ab'] = 'För att betala med Two, gå tillbaka till din fakturaadress och sök efter ditt företagsnamn. Välj ditt företag bland resultaten för att verifiera din verksamhet.';
@@ -118,7 +117,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_07a191ba1057c66e89f847c3e51dcc75'] 
 $_MODULE['<{twopayment}prestashop>twopayment_07b18d92f97de5262310e8d5493d05a9'] = 'Denna modul gör det möjligt för företagskunder att betala mot faktura med omedelbara kreditbeslut.';
 $_MODULE['<{twopayment}prestashop>twopayment_07eeb6914d9dc4155aa125610140c9ea'] = 'Momsbasis för minsta ordervärde måste vara antingen inklusive eller exklusive moms.';
 $_MODULE['<{twopayment}prestashop>twopayment_08a38277b0309070706f6652eeae9a53'] = 'Nedåt';
-$_MODULE['<{twopayment}prestashop>twopayment_0aae3a1846a03baeeb16f67ed8b20507'] = 'Om du väljer JA kan kunderna använda sök-API:et för att hitta sina företagsnamn.';
 $_MODULE['<{twopayment}prestashop>twopayment_0ad05b9020f4d78e45efdacdb76e734b'] = 'Kunde inte läsa in orderns kund.';
 $_MODULE['<{twopayment}prestashop>twopayment_0ba29c6a1afacf586b03a26162c72274'] = 'Miljö';
 $_MODULE['<{twopayment}prestashop>twopayment_0d8dfbcfe22598503672351254cbe691'] = 'Betalningen måste godkännas innan du kan gå vidare';
@@ -195,7 +193,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_3d9e53b91d8ee1425fc4ef4d94dd460b'] 
 $_MODULE['<{twopayment}prestashop>twopayment_3ef2ad2a1483fd9861c50152ef58e38b'] = 'Order levererad → Skickad';
 $_MODULE['<{twopayment}prestashop>twopayment_3f1053a1e16052b90a9049cca0371bb0'] = 'Two: Verifierad - klar för leverans';
 $_MODULE['<{twopayment}prestashop>twopayment_3f68e67dc6c397aaa9d1c24c356f754f'] = 'Verifierad';
-$_MODULE['<{twopayment}prestashop>twopayment_416f2bd5af6ca907eda0985adcd634fe'] = 'Aktivera automatisk komplettering av företagsnamn';
 $_MODULE['<{twopayment}prestashop>twopayment_4296fd320beaf61dcf979ff634cf2f2d'] = 'Åtgärd krävs:';
 $_MODULE['<{twopayment}prestashop>twopayment_42a0b2617336488a5a5f2d3286c4ed40'] = 'Minsta ordervärde, %s';
 $_MODULE['<{twopayment}prestashop>twopayment_43183e955e3019bf7f8c942e016b7b13'] = 'Moms';
@@ -448,10 +445,9 @@ $_MODULE['<{twopayment}prestashop>twopayment_fa8a347b2b0ab6e45116e184b464fe5c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_fb9c6bde479f74937d885d4984147a84'] = 'Modulversion:';
 $_MODULE['<{twopayment}prestashop>twopayment_fd43783f3df5a22e0c07cc6de74db303'] = 'Metod för köparens tilläggsavgift';
 $_MODULE['<{twopayment}prestashop>twopayment_fe24567972432f23380c0c9ced6566a4'] = '-- Inte angivet: neka ordern i stället --';
-$_MODULE['<{twopayment}prestashop>twopayment_05f941f1bc258935779dd8002187ed0c'] = 'Plats för företagssökning';
-$_MODULE['<{twopayment}prestashop>twopayment_42ecff9e5e5dfa679e0a1fcd85dbb65f'] = 'Var kontrollen för företagssökning (rullgardinsmeny / sökfält / manuell inmatning) visas i kassan. "Nej" (standard): i faktureringsadressområdet, precis som idag. "Ja": SAMMA kontroll visas istället inuti Two-betalningsrutan, och adressområdet visar då inget företagsfält alls. Detta stänger aldrig av företagssökningen - det avgör bara var den enda kontrollen finns.';
-$_MODULE['<{twopayment}prestashop>twopayment_c0497d19000e3b89dea5c3d65b0d2ca7'] = 'Adressområde (standard)';
-$_MODULE['<{twopayment}prestashop>twopayment_b8be99833b3c4cbb693ca00df66f476a'] = 'Betalningsruta';
+$_MODULE['<{twopayment}prestashop>twopayment_0c7a60a608833b888818520f32f852bc'] = 'Aktivera företagssökning i adressregistrering';
+$_MODULE['<{twopayment}prestashop>twopayment_2852c6fd4acf9a38f0ec0510586926d1'] = 'Om aktiverad kan köparen söka efter sitt företag inom adressregistreringsdelen av kassan. Annars kommer företagssökningen att visas inom betalningsmetoden.';
+$_MODULE['<{twopayment}prestashop>twopayment_844bf42708989b65f7eea134791d4775'] = 'Styr uppslaget av företagsadressen endast i ADRESS-steget av kassan. Om aktiverad skriver ett val av företag från företagssökningen över adressfälten (gata, postnummer, stad) och organisationsnummerfälten (DNI / momsregistreringsnummer) med registerdata för det företaget - även vid en ny sökning, där val av ett annat företag ersätter det tidigare företagets värden. Om inaktiverad fungerar företagssökningen fortfarande och registrerar fortfarande företagsnamnet och organisationsnumret, men ingenting skrivs till adress- eller identifieringsfälten, och kunden fyller i dem själv. Detta har ingen effekt när "Aktivera företagssökning i adressregistrering" är satt till "Nej" - det finns inget adressområde-uppslag att styra när sökningen själv har flyttat till betalningsrutan.';
 $_MODULE['<{twopayment}prestashop>twopayment_6d818b8b22700d2a99440ee017b0a4e8'] = 'Den här beställningen från %s (%s) kommer sannolikt att godkännas av Two';
 $_MODULE['<{twopayment}prestashop>twopayment_2541a3eb94a103e88a8090ac10b1276b'] = 'Two är inte tillgängligt för den här beställningen från %s (%s)';
 $_MODULE['<{twopayment}prestashop>twopayment_1ec613a214555191e9ebf229eed7ecf4'] = 'Den här beställningen från %s kommer sannolikt att godkännas av Two';

@@ -474,7 +474,6 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_ENABLE_PO_NUMBER', 1);
         Configuration::updateValue('PS_TWO_ENABLE_INVOICE_EMAIL', 1);
         Configuration::updateValue('PS_TWO_ADDRESS_LOOKUP', 1); // Default: address lookup fills the address step, matching every other plugin
-        Configuration::updateValue('PS_TWO_COMPANY_SEARCH_TILE', 0); // Default: company search stays in the address area (TWO-25326 §7.1)
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', 1);
         Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', 'STANDARD'); // Default: Standard payment terms (not EOM)
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1); // Default: 30 days enabled
@@ -708,7 +707,6 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_DISABLE_SSL_VERIFY');
         Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_NAME');
         Configuration::deleteByName('PS_TWO_ADDRESS_LOOKUP');
-        Configuration::deleteByName('PS_TWO_COMPANY_SEARCH_TILE');
         // Retired admin toggle (TWO-25190) - the org.id auto-complete switch
         // was rendered and stored but no JavaScript ever read the
         // `company_id_search` variable it fed. upgrade-2.6.5 deletes the row;
@@ -1540,10 +1538,24 @@ class Twopayment extends PaymentModule
                 'input' => array(
                     array(
                         'type' => 'switch',
-                        'label' => $this->l('Activate company name auto-complete'),
+                        'label' => $this->l('Enable Company Search In Address Entry'),
                         'name' => 'PS_TWO_ENABLE_COMPANY_NAME',
                         'is_bool' => true,
-                        'desc' => $this->l('If you choose YES then customers to use search api to find their company names.'),
+                        // TWO-25326 §7.1 (2026-08-03 design ruling): this switch now
+                        // governs WHERE the one company-search control (dropdown /
+                        // query field / manual entry) renders, not whether it exists
+                        // - the control is never off. Wording matches
+                        // woocommerce-plugin/magento-plugin word-for-word for
+                        // cross-platform consistency (Doug's exact wording, not a
+                        // PS-house-style paraphrase).
+                        //
+                        // BEHAVIOUR CHANGE for shops that already have this switched
+                        // OFF: before this ticket, "No" turned company search off
+                        // entirely (a plain, unsearched text field). It now instead
+                        // relocates the search into the payment tile - those shops
+                        // will see company search appear for the first time, just
+                        // not in the address area.
+                        'desc' => $this->l('When enabled, the buyer may search for their company within the address entry section of the checkout. Otherwise, company search will be visible within the payment method.'),
                         'required' => true,
                         'values' => array(
                             array(
@@ -1563,7 +1575,7 @@ class Twopayment extends PaymentModule
                         'label' => $this->l('Auto-fill the address from the selected company'),
                         'name' => 'PS_TWO_ADDRESS_LOOKUP',
                         'is_bool' => true,
-                        'desc' => $this->l('Governs the company address lookup on the checkout ADDRESS step only. When enabled, picking a company from the company search overwrites the address fields (street, postcode, city) and the organisation-number fields (DNI / VAT number) with the registry data for that company - including on a re-search, where picking a different company replaces the previous company\'s values. When disabled, the company search still works and still records the company name and organisation number, but nothing is written into the address or identifier fields and the customer fills them in themselves. This does not turn the company search itself off - use "Activate company name auto-complete" for that.'),
+                        'desc' => $this->l('Governs the company address lookup on the checkout ADDRESS step only. When enabled, picking a company from the company search overwrites the address fields (street, postcode, city) and the organisation-number fields (DNI / VAT number) with the registry data for that company - including on a re-search, where picking a different company replaces the previous company\'s values. When disabled, the company search still works and still records the company name and organisation number, but nothing is written into the address or identifier fields and the customer fills them in themselves. This has no effect when "Enable Company Search In Address Entry" is set to "No" - there is no address-area lookup to govern once the search itself has moved to the payment tile.'),
                         'required' => true,
                         'values' => array(
                             array(
@@ -1575,26 +1587,6 @@ class Twopayment extends PaymentModule
                                 'id' => 'PS_TWO_ADDRESS_LOOKUP_OFF',
                                 'value' => 0,
                                 'label' => $this->l('No')
-                            ),
-                        ),
-                    ),
-                    array(
-                        'type' => 'switch',
-                        'label' => $this->l('Company search location'),
-                        'name' => 'PS_TWO_COMPANY_SEARCH_TILE',
-                        'is_bool' => true,
-                        'desc' => $this->l('Where the company search control (dropdown / query field / manual entry) renders on checkout. "No" (default): in the billing address area, exactly as today. "Yes": the SAME control instead renders inside the Two payment tile, and the address area shows no company field at all. This never turns the company search off - it only decides where the one control lives.'),
-                        'required' => true,
-                        'values' => array(
-                            array(
-                                'id' => 'PS_TWO_COMPANY_SEARCH_TILE_OFF',
-                                'value' => 0,
-                                'label' => $this->l('Address area (default)')
-                            ),
-                            array(
-                                'id' => 'PS_TWO_COMPANY_SEARCH_TILE_ON',
-                                'value' => 1,
-                                'label' => $this->l('Payment tile')
                             ),
                         ),
                     ),
@@ -1708,22 +1700,30 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Whether the company-search control renders in the payment tile instead
-     * of the address area (TWO-25326 §7.1, 2026-08-03 design ruling). This is
-     * "here vs there" for the ONE shared control, never "on vs off" - the
-     * control always exists.
+     * Effective value of PS_TWO_ENABLE_COMPANY_NAME, as the '1'/'0' string
+     * the checkout JS compares against - '1' means the company-search
+     * control renders in the address area, '0' means it has relocated to
+     * the payment tile (TWO-25326 §7.1, 2026-08-03 design ruling).
      *
-     * An absent row (pre-upgrade install) resolves to '0' - PrestaShop had no
-     * such setting before this ticket, and was always address-area.
+     * This is "here vs there" for the ONE shared control (TwoCompanySearch.js),
+     * never "on vs off" - the control always exists somewhere. Reusing this
+     * existing switch rather than adding a new one is a deliberate BEHAVIOUR
+     * CHANGE for shops that already have it set to "No": that used to turn
+     * company search off entirely, and now relocates it to the payment tile
+     * instead (see the switch's own 'desc' in getTwoOtherForm()).
      *
-     * @return string '1' if the tile location is active, else '0'
+     * An absent row resolves to '1' (address area) - the install default,
+     * and the only behaviour that ever existed before this switch could mean
+     * anything else.
+     *
+     * @return string
      */
-    protected function getCompanySearchTileEnabled()
+    protected function isCompanySearchInAddressArea()
     {
-        $value = Configuration::get('PS_TWO_COMPANY_SEARCH_TILE');
+        $value = Configuration::get('PS_TWO_ENABLE_COMPANY_NAME');
 
         if ($value === false || $value === null || $value === '') {
-            return '0';
+            return '1';
         }
 
         return ((int) $value) === 1 ? '1' : '0';
@@ -1786,12 +1786,12 @@ class Twopayment extends PaymentModule
     protected function getTwoOtherFormValues()
     {
         $fields_values = array();
-        $fields_values['PS_TWO_ENABLE_COMPANY_NAME'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME', Configuration::get('PS_TWO_ENABLE_COMPANY_NAME'));
         // Read through the same default-on resolver the checkout uses, so an
         // install whose upgrade script has not run yet renders the switch in
-        // the position it is actually behaving in.
+        // the position it is actually behaving in (TWO-25326 §7.1: this is
+        // also the address-area/payment-tile location switch now).
+        $fields_values['PS_TWO_ENABLE_COMPANY_NAME'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME', $this->isCompanySearchInAddressArea());
         $fields_values['PS_TWO_ADDRESS_LOOKUP'] = Tools::getValue('PS_TWO_ADDRESS_LOOKUP', $this->getAddressLookupEnabled());
-        $fields_values['PS_TWO_COMPANY_SEARCH_TILE'] = Tools::getValue('PS_TWO_COMPANY_SEARCH_TILE', $this->getCompanySearchTileEnabled());
         $fields_values['PS_TWO_FINALIZE_PURCHASE'] = Tools::getValue('PS_TWO_FINALIZE_PURCHASE', Configuration::get('PS_TWO_FINALIZE_PURCHASE'));
         $fields_values['PS_TWO_ENABLE_TAX_SUBTOTALS'] = Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
@@ -1831,7 +1831,6 @@ class Twopayment extends PaymentModule
     {
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME'));
         Configuration::updateValue('PS_TWO_ADDRESS_LOOKUP', (int) Tools::getValue('PS_TWO_ADDRESS_LOOKUP', 1));
-        Configuration::updateValue('PS_TWO_COMPANY_SEARCH_TILE', (int) Tools::getValue('PS_TWO_COMPANY_SEARCH_TILE', 0));
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', Tools::getValue('PS_TWO_FINALIZE_PURCHASE'));
         Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', (int) Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
@@ -3438,15 +3437,18 @@ class Twopayment extends PaymentModule
         Media::addJsDef(array('twopayment' => array(
                 'search_empty_text' => $this->l('No result found'),
                 'checkout_host' => $this->getTwoCheckoutHostUrl(),
-                'company_name_search' => $this->enable_company_name,
-                // Separate from company_name_search: that gates the search
-                // widget itself, this gates only what a selection writes into
-                // the address step (TWO-25203).
+                // TWO-25326 §7.1 (2026-08-03 ruling): this used to gate the
+                // search widget's existence (on/off). It now decides WHERE
+                // the one control renders instead: '1' = address area
+                // (default, unchanged behaviour), '0' = the same control
+                // relocates into the payment tile. Never a second control,
+                // never fully off.
+                'company_name_search' => $this->isCompanySearchInAddressArea(),
+                // Separate from company_name_search: that (now) gates only
+                // WHERE the search widget renders, this gates only what a
+                // selection writes into the address step (TWO-25203) - and
+                // only matters at all when the control is in the address area.
                 'address_lookup' => $this->getAddressLookupEnabled(),
-                // TWO-25326 §7.1 (2026-08-03 ruling): '1' relocates the SAME
-                // company-search control into the payment tile instead of the
-                // address area. Never a second control, never on/off.
-                'company_search_tile' => $this->getCompanySearchTileEnabled(),
                 // Deliberately NOT handing the optional-field switches to the
                 // JS (ABN-472). Nothing ever read `enable_department` /
                 // `enable_project` here - the gate is server-side and total:
@@ -3708,10 +3710,12 @@ class Twopayment extends PaymentModule
             // than in the billing address block (ABN-472).
             'two_optional_fields' => $optional_fields,
             // TWO-25326 §7.1 (2026-08-03 ruling): "here vs there" for the ONE
-            // company-search control (TwoCompanySearch.js). When true, the
-            // tile renders its own mount point for that control and the
-            // address-area control is suppressed client-side.
-            'company_search_tile' => $this->getCompanySearchTileEnabled() === '1',
+            // company-search control (TwoCompanySearch.js), driven by the
+            // EXISTING PS_TWO_ENABLE_COMPANY_NAME switch rather than a new
+            // setting. When true, the tile renders its own mount point for
+            // that control and the address-area control is suppressed
+            // client-side.
+            'company_search_tile' => $this->isCompanySearchInAddressArea() !== '1',
         ));
 
         $inputs = ['token' => ['name' => 'token', 'type' => 'hidden', 'value' => Tools::getToken(false)]];

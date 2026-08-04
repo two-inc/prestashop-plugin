@@ -107,16 +107,19 @@
 
             // Initialize the checkout manager with configuration
             const checkoutManager = new TwoCheckoutManager({
-                companySearchEnabled: twopayment.company_name_search === '1',
-                // Separate toggle from companySearchEnabled (TWO-25203): the
-                // search widget can be on while the address / DNI / VAT fill
-                // is off. Absent reads as enabled, matching the server-side
-                // default-on resolver.
+                // TWO-25326 §7.1 (2026-08-03 ruling): this switch used to be
+                // on/off for the search widget's existence. It now decides
+                // WHERE the one control renders: '1' (default) = address
+                // area, unchanged from before this ticket; '0' = the same
+                // control relocates into the payment tile instead. Absent
+                // reads as address-area, matching the server-side resolver.
+                companySearchInAddressArea: twopayment.company_name_search !== '0',
+                // Separate toggle from companySearchInAddressArea (TWO-25203):
+                // the address / DNI / VAT fill can be on or off independent of
+                // where the search widget itself renders, and only matters at
+                // all when the control is in the address area. Absent reads
+                // as enabled, matching the server-side default-on resolver.
                 addressLookupEnabled: twopayment.address_lookup !== '0',
-                // TWO-25326 §7.1 (2026-08-03 ruling): '1' relocates the
-                // company-search control into the payment tile instead of
-                // the address area (default).
-                companySearchTileEnabled: twopayment.company_search_tile === '1',
                 orderIntentEnabled: true,
                 checkoutHost: twopayment.checkout_host,
                 orderIntentUrl: twopayment.order_intent_url,
@@ -185,13 +188,9 @@
                         }
 
                         const checkoutManager = new TwoCheckoutManager({
-                            companySearchEnabled: twopayment.company_name_search === '1',
-                            // Keep in step with the primary config object above (TWO-25203).
+                            // Keep in step with the primary config object above (TWO-25203, TWO-25326 §7.1).
+                            companySearchInAddressArea: twopayment.company_name_search !== '0',
                             addressLookupEnabled: twopayment.address_lookup !== '0',
-                // TWO-25326 §7.1 (2026-08-03 ruling): '1' relocates the
-                // company-search control into the payment tile instead of
-                // the address area (default).
-                companySearchTileEnabled: twopayment.company_search_tile === '1',
                             orderIntentEnabled: true,
                             checkoutHost: twopayment.checkout_host,
                             orderIntentUrl: twopayment.order_intent_url,

@@ -85,13 +85,15 @@
     </div>
 
     {* Company search, payment-tile location (TWO-25326 §7.1, 2026-08-03
-       design ruling). The admin setting "Company search location" picks
-       WHERE the one shared control (TwoCompanySearch.js - same dropdown /
-       query-field / manual-entry code as the address-area control, never a
-       second implementation) renders: address area (default) or here.
+       design ruling). The EXISTING "Enable Company Search In Address Entry"
+       switch (PS_TWO_ENABLE_COMPANY_NAME) now picks WHERE the one shared
+       control (TwoCompanySearch.js - same dropdown / query-field /
+       manual-entry code as the address-area control, never a second
+       implementation) renders: address area (default, switch = Yes) or
+       here (switch = No). No new setting was added for this.
 
-       Only rendered at all when the setting is "Payment tile" - the
-       address-area control stays exactly as-is (§1-§5) when it isn't.
+       Only rendered at all when the switch is "No" - the address-area
+       control stays exactly as-is (§1-§5) when it is "Yes".
        TwoCheckoutManager.js mounts TwoCompanySearch on this field instead of
        the address form's, and the selection is persisted the same way
        either way (TwoCompanySearch.persistCompanyToCookie -> the session

@@ -103,7 +103,6 @@ $_MODULE['<{twopayment}prestashop>paymentinfo_febf12cea5e88ba5b9b5e26e0aac0f3a']
 $_MODULE['<{twopayment}prestashop>twopayment_00589e3bb6d7bbb598f17fe9bfe70052'] = 'Ongeldig telefoonnummer';
 $_MODULE['<{twopayment}prestashop>twopayment_00a48186e87d34e1df0a6484f553bafc'] = 'Platformminimum %1$s, %2$s btw. Een waarde hier wordt geïnterpreteerd in de standaardvaluta van de winkel op de hieronder gekozen belastinggrondslag en moet minimaal het platformminimum zijn.';
 $_MODULE['<{twopayment}prestashop>twopayment_00d23a76e43b46dae9ec7aa9dcbebb32'] = 'Ingeschakeld';
-$_MODULE['<{twopayment}prestashop>twopayment_00e5b2dde8ad9cb156f29075ac73e47b'] = 'Geldt alleen voor het opzoeken van het bedrijfsadres in de ADRES-stap van het afrekenen. Als dit is ingeschakeld, overschrijft het kiezen van een bedrijf uit de bedrijvenzoekfunctie de adresvelden (straat, postcode, plaats) en de velden met het organisatienummer (DNI / btw-nummer) met de registergegevens van dat bedrijf - ook bij een nieuwe zoekopdracht, waarbij het kiezen van een ander bedrijf de eerdere waarden vervangt. Als dit is uitgeschakeld, werkt de bedrijvenzoekfunctie nog steeds en worden de bedrijfsnaam en het organisatienummer nog steeds vastgelegd, maar wordt er niets in de adres- of identificatievelden geschreven en vult de klant deze zelf in. Hiermee schakel je de bedrijvenzoekfunctie zelf niet uit - gebruik daarvoor "Autocomplete voor bedrijfsnaam activeren".';
 $_MODULE['<{twopayment}prestashop>twopayment_00f301094c777099ef21325f575d1c3d'] = 'De belastingregelgroep die op de vergoeding voor de betaaltermijn wordt toegepast - dezelfde belastingregelgroepen die je aan producten toewijst. Regels per land en staat, gecombineerde tarieven en nultarief werken precies zoals bij elk product. Wil je de vergoeding onbelast laten, maak dan een belastingregelgroep aan met een tarief van 0 procent en selecteer die hier. Zolang toeslagen zijn ingeschakeld, is een keuze verplicht.';
 $_MODULE['<{twopayment}prestashop>twopayment_016e561b39ff316fdf1b182819189cdb'] = 'Vul een subtitel in.';
 $_MODULE['<{twopayment}prestashop>twopayment_0283fa93feb690f8b3537e18ed6bb4ab'] = 'Wil je met Two betalen? Ga dan terug naar je factuuradres en zoek op je bedrijfsnaam. Selecteer je bedrijf uit de resultaten om je onderneming te verifiëren.';
@@ -118,7 +117,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_07a191ba1057c66e89f847c3e51dcc75'] 
 $_MODULE['<{twopayment}prestashop>twopayment_07b18d92f97de5262310e8d5493d05a9'] = 'Deze plug-in stelt zakelijke klanten in staat om op factuur te betalen met directe kredietbeslissingen.';
 $_MODULE['<{twopayment}prestashop>twopayment_07eeb6914d9dc4155aa125610140c9ea'] = 'De belastinggrondslag voor de minimale orderwaarde moet inclusief of exclusief btw zijn.';
 $_MODULE['<{twopayment}prestashop>twopayment_08a38277b0309070706f6652eeae9a53'] = 'Naar beneden';
-$_MODULE['<{twopayment}prestashop>twopayment_0aae3a1846a03baeeb16f67ed8b20507'] = 'Als je JA kiest, kunnen klanten de zoek-API gebruiken om hun bedrijfsnaam te vinden.';
 $_MODULE['<{twopayment}prestashop>twopayment_0ad05b9020f4d78e45efdacdb76e734b'] = 'De klant van de bestelling kan niet worden geladen.';
 $_MODULE['<{twopayment}prestashop>twopayment_0ba29c6a1afacf586b03a26162c72274'] = 'Omgeving';
 $_MODULE['<{twopayment}prestashop>twopayment_0d8dfbcfe22598503672351254cbe691'] = 'Betaalgoedkeuring vereist voordat je verdergaat';
@@ -195,7 +193,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_3d9e53b91d8ee1425fc4ef4d94dd460b'] 
 $_MODULE['<{twopayment}prestashop>twopayment_3ef2ad2a1483fd9861c50152ef58e38b'] = 'Bestelling uitgeleverd → Verzonden';
 $_MODULE['<{twopayment}prestashop>twopayment_3f1053a1e16052b90a9049cca0371bb0'] = 'Two: Geverifieerd - Klaar voor uitlevering';
 $_MODULE['<{twopayment}prestashop>twopayment_3f68e67dc6c397aaa9d1c24c356f754f'] = 'Geverifieerd';
-$_MODULE['<{twopayment}prestashop>twopayment_416f2bd5af6ca907eda0985adcd634fe'] = 'Autocomplete voor bedrijfsnaam activeren';
 $_MODULE['<{twopayment}prestashop>twopayment_4296fd320beaf61dcf979ff634cf2f2d'] = 'Actie vereist:';
 $_MODULE['<{twopayment}prestashop>twopayment_42a0b2617336488a5a5f2d3286c4ed40'] = 'Minimale orderwaarde, %s';
 $_MODULE['<{twopayment}prestashop>twopayment_43183e955e3019bf7f8c942e016b7b13'] = 'Btw';
@@ -448,10 +445,9 @@ $_MODULE['<{twopayment}prestashop>twopayment_fa8a347b2b0ab6e45116e184b464fe5c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_fb9c6bde479f74937d885d4984147a84'] = 'Plug-inversie:';
 $_MODULE['<{twopayment}prestashop>twopayment_fd43783f3df5a22e0c07cc6de74db303'] = 'Toeslagmethode koper';
 $_MODULE['<{twopayment}prestashop>twopayment_fe24567972432f23380c0c9ced6566a4'] = '-- Niet ingesteld: bestelling weigeren --';
-$_MODULE['<{twopayment}prestashop>twopayment_05f941f1bc258935779dd8002187ed0c'] = 'Locatie van bedrijfszoekfunctie';
-$_MODULE['<{twopayment}prestashop>twopayment_42ecff9e5e5dfa679e0a1fcd85dbb65f'] = 'Waar de bedrijfszoekfunctie (vervolgkeuzelijst / zoekveld / handmatige invoer) wordt weergegeven tijdens het afrekenen. "Nee" (standaard): in het factuuradresgebied, precies zoals vandaag. "Ja": hetzelfde element wordt in plaats daarvan weergegeven in de Two-betaaltegel, en het adresgebied toont dan helemaal geen bedrijfsveld. Dit schakelt de bedrijfszoekfunctie nooit uit - het bepaalt alleen waar dat ene element zich bevindt.';
-$_MODULE['<{twopayment}prestashop>twopayment_c0497d19000e3b89dea5c3d65b0d2ca7'] = 'Adresgebied (standaard)';
-$_MODULE['<{twopayment}prestashop>twopayment_b8be99833b3c4cbb693ca00df66f476a'] = 'Betaaltegel';
+$_MODULE['<{twopayment}prestashop>twopayment_0c7a60a608833b888818520f32f852bc'] = 'Bedrijfszoekfunctie in adresinvoer inschakelen';
+$_MODULE['<{twopayment}prestashop>twopayment_2852c6fd4acf9a38f0ec0510586926d1'] = 'Indien ingeschakeld, kan de koper zijn bedrijf opzoeken binnen het adresinvoergedeelte van het afrekenen. Zo niet, dan is de bedrijfszoekfunctie zichtbaar binnen de betaalmethode.';
+$_MODULE['<{twopayment}prestashop>twopayment_844bf42708989b65f7eea134791d4775'] = 'Regelt het opzoeken van het bedrijfsadres tijdens de ADRES-stap van het afrekenen. Indien ingeschakeld, overschrijft het kiezen van een bedrijf uit de bedrijvenzoekfunctie de adresvelden (straat, postcode, plaats) en de velden met het organisatienummer (DNI / btw-nummer) met de registergegevens van dat bedrijf - ook bij een nieuwe zoekopdracht, waarbij het kiezen van een ander bedrijf de eerdere waarden vervangt. Indien uitgeschakeld, werkt de bedrijvenzoekfunctie nog steeds en worden de bedrijfsnaam en het organisatienummer nog steeds vastgelegd, maar wordt er niets in de adres- of identificatievelden geschreven en vult de klant deze zelf in. Dit heeft geen effect wanneer "Bedrijfszoekfunctie in adresinvoer inschakelen" op "Nee" staat - er is geen adresgebied-opzoeking om te regelen zodra de zoekfunctie zelf naar de betaaltegel is verplaatst.';
 $_MODULE['<{twopayment}prestashop>twopayment_6d818b8b22700d2a99440ee017b0a4e8'] = 'Deze bestelling van %s (%s) wordt waarschijnlijk geaccepteerd door Two';
 $_MODULE['<{twopayment}prestashop>twopayment_2541a3eb94a103e88a8090ac10b1276b'] = 'Two is niet beschikbaar voor deze bestelling van %s (%s)';
 $_MODULE['<{twopayment}prestashop>twopayment_1ec613a214555191e9ebf229eed7ecf4'] = 'Deze bestelling van %s wordt waarschijnlijk geaccepteerd door Two';

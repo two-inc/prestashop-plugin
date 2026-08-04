@@ -5,15 +5,17 @@
 class TwoCheckoutManager {
     constructor(config) {
         this.config = {
-            companySearchEnabled: false,
             // Default-on, mirroring the server-side resolver: the address
             // lookup was unconditional before the toggle existed (TWO-25203),
             // so an omitted value must not turn it off.
             addressLookupEnabled: true,
-            // TWO-25326 §7.1 (2026-08-03 ruling): '1'/true relocates the ONE
-            // shared company-search control into the payment tile instead of
-            // the address area (default, false).
-            companySearchTileEnabled: false,
+            // TWO-25326 §7.1 (2026-08-03 ruling): the EXISTING
+            // PS_TWO_ENABLE_COMPANY_NAME switch now decides WHERE the ONE
+            // company-search control renders, not whether it exists - the
+            // control is never off. true (default): address area, unchanged
+            // from before this ticket. false: the same control relocates
+            // into the payment tile instead.
+            companySearchInAddressArea: true,
             orderIntentEnabled: false,
             checkoutHost: '',
             orderIntentUrl: '',
@@ -1844,8 +1846,14 @@ class TwoCheckoutManager {
         this.detectCheckoutStep();
         this.detectAccountType();
 
-        // Re-initialize company search when address form updates
-        if (this.config.companySearchEnabled) {
+        // Re-initialize company search when address form updates. Tile mode
+        // (TWO-25326 §7.1) does nothing here deliberately: the address
+        // area's native `company` field stays a plain, unenhanced, typeable
+        // text input in that mode (never hidden, never removed - confirmed
+        // bug on woocommerce-plugin, checked not to recur here) and is never
+        // the search's mount point, so an address-form re-render has nothing
+        // for this module to redo.
+        if (this.config.companySearchInAddressArea) {
             if (this.companySearch && this.companySearch.destroy) {
                 this.companySearch.destroy();
                 this.companySearch = null;
@@ -1953,12 +1961,29 @@ class TwoCheckoutManager {
      */
     initializeModules() {
         // Always initialize field validation (for address step)
-        
-        // Initialize company search for address step
-        if (this.config.companySearchEnabled && this.currentStep === 'address') {
+
+        // TWO-25326 §7.1: company search is never off - only WHERE it
+        // renders varies (this.config.companySearchInAddressArea). In tile
+        // mode the address-area's native `company` field is left exactly
+        // alone - plain, unenhanced, still typeable - never hidden or
+        // removed (confirmed bug on woocommerce-plugin, checked not to
+        // recur here).
+        if (this.config.companySearchInAddressArea) {
+            if (this.currentStep === 'address') {
+                this.initializeCompanySearch();
+            }
+        } else {
+            // Try to mount on the tile field every time this runs (idempotent
+            // - initializeCompanySearch() no-ops once this.companySearch is
+            // set, and again if the tile field isn't in the DOM yet, since
+            // PrestaShop loads payment options via a later AJAX call). The
+            // call that actually succeeds is the one after
+            // handleDynamicContentChange() detects the payment option first
+            // appearing (same re-init edge the rest of this module already
+            // relies on for AJAX-loaded payment options).
             this.initializeCompanySearch();
         }
-        
+
         // Phone validation removed - Two API handles validation
 
         // Initialize order intent for payment step with business accounts
@@ -1985,39 +2010,34 @@ class TwoCheckoutManager {
      * copy of the control is ever interactive at a time.
      */
     initializeCompanySearch() {
-        if (!this.companySearch && window.TwoCompanySearch) {
-            const tileField = this.config.companySearchTileEnabled
-                ? document.getElementById('two_tile_company')
-                : null;
-            if (tileField) {
-                this.hideAddressAreaCompanyField();
+        if (this.companySearch || !window.TwoCompanySearch) {
+            return;
+        }
+        if (!this.config.companySearchInAddressArea) {
+            // The tile mount point renders later than the address step
+            // (PrestaShop loads payment options via AJAX) - if it is not in
+            // the DOM yet, do nothing rather than falling back to the
+            // address-area field. initializeModules() calls this again on
+            // every subsequent re-init edge (see its own comment) until this
+            // succeeds.
+            const tileField = document.getElementById('two_tile_company');
+            if (!tileField) {
+                return;
             }
             this.companySearch = new TwoCompanySearch({
                 checkoutHost: this.config.checkoutHost,
                 addressLookupEnabled: this.config.addressLookupEnabled !== false,
-                companyFieldSelector: tileField ? '#two_tile_company' : "input[name='company']"
+                companyFieldSelector: '#two_tile_company'
             });
+            return;
         }
+        this.companySearch = new TwoCompanySearch({
+            checkoutHost: this.config.checkoutHost,
+            addressLookupEnabled: this.config.addressLookupEnabled !== false,
+            companyFieldSelector: "input[name='company']"
+        });
     }
 
-    /**
-     * Hide the address area's native PrestaShop company field when the
-     * company-search control has relocated to the payment tile (TWO-25326
-     * §7.1) - the setting is "here vs there" for ONE control, so the
-     * address-area field must not sit there uncontrolled once the tile owns
-     * the interactive search.
-     */
-    hideAddressAreaCompanyField() {
-        try {
-            const realField = document.querySelector("input[name='company']");
-            if (!realField) {
-                return;
-            }
-            const wrapper = realField.closest('.form-group') || realField;
-            wrapper.style.display = 'none';
-        } catch (e) { /* noop */ }
-    }
-    
     /**
      * Initialize field validation module
      */
