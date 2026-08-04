@@ -85,7 +85,7 @@
     </div>
 
     {* Company search, payment-tile location (TWO-25326 §7.1, 2026-08-03
-       design ruling). The EXISTING "Enable Company Search In Address Entry"
+       design ruling). The EXISTING "Enable company search in address entry"
        switch (PS_TWO_ENABLE_COMPANY_NAME) now picks WHERE the one shared
        control (TwoCompanySearch.js - same dropdown / query-field /
        manual-entry code as the address-area control, never a second

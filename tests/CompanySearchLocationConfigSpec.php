@@ -7,7 +7,7 @@ declare(strict_types=1);
  * - TWO-25326 §7.1 (2026-08-03 design ruling).
  *
  * No new setting was added. Doug's explicit correction: reuse the EXISTING
- * "Enable Company Search In Address Entry" switch (label/desc rebadged,
+ * "Enable company search in address entry" switch (label/desc rebadged,
  * same Configuration key) to decide WHERE the one shared company-search
  * control renders, rather than whether it exists at all:
  *
