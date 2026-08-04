@@ -1671,35 +1671,32 @@
 }
 
 /*
- * Read-only captured company in the payment tile (TWO-25288, reshaped by
- * TWO-25326 §7).
+ * Company search, payment-tile location (TWO-25326 §7.1, 2026-08-03 ruling).
  *
- * §7 requires ONE text label in the form "<name> (<number>)", between the
- * chips and the intent message / optional fields - not the two-row
- * label + value block this used to be. Still spans and not inputs: the buyer
- * cannot change either value from here.
+ * Replaces the read-only captured-company label (TWO-25288, then TWO-25326
+ * §7) that used to render here - §7.3 supersedes that label entirely, folding
+ * name/number into the intent-message sentence instead. This wraps the same
+ * TwoCompanySearch.js control the address area uses, just mounted here when
+ * the admin setting is "Payment tile".
  */
-.two-company-summary {
+.two-tile-company-search {
     margin-top: 12px;
-    font-size: 14px;
-    word-break: break-word;
 }
 
-.two-company-summary__value {
-    /* Inline, so the name, the space and the parenthesised number read as one
-       sentence rather than as a stack of fields. */
-    display: inline;
+.two-tile-company-search .form-group {
+    margin-bottom: 0;
 }
 
-/* Hidden as a unit - parentheses included - when there is no number to show,
-   which is the manual-entry case (§5: manual entry shows no company number at
-   all). */
-.two-company-summary__number-wrap {
-    display: none;
+.two-tile-company-search label {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 13px;
+    font-weight: 600;
 }
 
-.two-company-summary--has-number .two-company-summary__number-wrap {
-    display: inline;
+.two-tile-company-search input {
+    width: 100%;
+    box-sizing: border-box;
 }
 
 /* Optional buyer reference fields in the payment tile (ABN-472) */
