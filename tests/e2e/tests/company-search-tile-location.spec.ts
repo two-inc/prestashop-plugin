@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { test, expect } from "@playwright/test";
 
 import { addFirstProductToCartAndGoToCheckout } from "../pages/store.js";
-import { completeGuestStep } from "../pages/checkout.js";
+import { completeGuestStep, twoPaymentOption } from "../pages/checkout.js";
 
 /**
  * TWO-25326 §7.1 (2026-08-03 design ruling, with two follow-up corrections
@@ -111,6 +111,14 @@ test.describe("TWO-25326 §7.1 company-search location", () => {
       await delivery.locator('button[name="confirmDeliveryOption"]').click();
       await page.waitForLoadState("networkidle");
     }
+
+    // The tile's "additionalInformation" content (which carries the tile
+    // mount, per PrestaShop's own PaymentOption rendering) is only visible
+    // for the SELECTED payment method - selecting Two here is what a real
+    // buyer does before it ever becomes visible, matching
+    // selectTwoPaymentAndPlaceOrder()'s own use of this same locator.
+    await twoPaymentOption(page).check({ force: true });
+    await page.waitForLoadState("networkidle");
 
     // The tile mount: rendered only because PS_TWO_ENABLE_COMPANY_NAME=0,
     // per paymentinfo.tpl's {if $company_search_tile}.
