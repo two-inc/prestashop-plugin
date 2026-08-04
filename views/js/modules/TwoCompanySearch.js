@@ -1375,7 +1375,7 @@ class TwoCompanySearch {
      *
      * This gates only what a company selection *writes* into the address step.
      * Company search itself, and the hidden organisation-number field the Two
-     * flow needs, are governed by companySearchEnabled and stay live either
+     * flow needs, are governed by companySearchInAddressArea and stay live either
      * way.
      */
     isAddressLookupEnabled() {

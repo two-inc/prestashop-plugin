@@ -804,9 +804,15 @@ class TwoCheckoutManager {
             if (this.orderIntent && this.orderIntent.lastCompany) {
                 return this.orderIntent.lastCompany;
             }
-            const companyField = document.querySelector("input[name='company']");
-            if (companyField && companyField.value && companyField.value.trim().length > 0) {
-                return companyField.value.trim();
+            // TWO-25326 §7.1: the address-area field is only a trustworthy
+            // fallback when the search control actually lives there - in
+            // tile mode it stays visible/typeable by design (never hidden)
+            // but is not the field the buyer's real selection came from.
+            if (this.config.companySearchInAddressArea !== false) {
+                const companyField = document.querySelector("input[name='company']");
+                if (companyField && companyField.value && companyField.value.trim().length > 0) {
+                    return companyField.value.trim();
+                }
             }
         } catch (e) {}
         return '';
@@ -1818,6 +1824,16 @@ class TwoCheckoutManager {
         if (!previousPaymentOption && this.twoPaymentOption) {
             this.initializeModules();
         }
+
+        // TWO-25326 §7.1: unconditionally, not just on the edge above - a
+        // payment-fragment REPLACEMENT (twoPaymentOption non-null both
+        // before and after) never satisfies the edge check, but can still
+        // swap out the mounted #two_tile_company node. initializeCompanySearch()
+        // is cheap to call repeatedly: it no-ops unless the previously
+        // mounted field has actually been detached (see its own comment).
+        if (!this.config.companySearchInAddressArea) {
+            this.initializeCompanySearch();
+        }
         
         // Re-setup payment listeners (idempotent, won't duplicate)
         this._paymentListenersAttached = false;
@@ -2006,10 +2022,35 @@ class TwoCheckoutManager {
      * setting is on) is present, TwoCompanySearch attaches to THAT field
      * instead of the address form's `input[name='company']` - same class,
      * same dropdown/query-field/manual-entry behaviour, never a second
-     * implementation. The address-area native field is hidden so only one
-     * copy of the control is ever interactive at a time.
+     * implementation. The address-area native field is deliberately left
+     * ALONE in this mode - never hidden, never disabled, still a plain
+     * typeable text input (a real regression on woocommerce-plugin;
+     * checked not to recur here, see the e2e coverage for this file).
      */
     initializeCompanySearch() {
+        // TWO-25326 §7.1: in tile mode, PrestaShop can replace the whole
+        // payment-options fragment (a surcharge/cart-line sync, a payment-
+        // form refresh) with a FRESH #two_tile_company node. The re-init
+        // trigger elsewhere in this module (handleDynamicContentChange) only
+        // reacts to `this.twoPaymentOption` going from absent to present, a
+        // one-shot edge - a same-instant swap of an already-present option
+        // never fires it. Detect a stale mount directly instead: if the
+        // field this.companySearch actually attached to is no longer in the
+        // document, drop the instance so the code below creates a fresh one
+        // against whatever #two_tile_company exists now.
+        if (this.companySearch && !this.config.companySearchInAddressArea) {
+            const mountedField = this.companySearch.companyField && this.companySearch.companyField.get
+                ? this.companySearch.companyField.get(0)
+                : null;
+            if (!mountedField || !mountedField.isConnected) {
+                if (typeof this.companySearch.destroy === 'function') {
+                    try {
+                        this.companySearch.destroy();
+                    } catch (e) { /* noop */ }
+                }
+                this.companySearch = null;
+            }
+        }
         if (this.companySearch || !window.TwoCompanySearch) {
             return;
         }
@@ -2055,7 +2096,11 @@ class TwoCheckoutManager {
                 enabled: true,
                 orderIntentUrl: this.config.orderIntentUrl,
                 ajaxToken: this.config.ajaxToken,
-                enablePaymentPreventionOnDecline: true
+                enablePaymentPreventionOnDecline: true,
+                // TWO-25326 §7.1: so collectFormData() knows not to trust the
+                // address-area company/companyid DOM fields once search has
+                // relocated to the tile.
+                companySearchInAddressArea: this.config.companySearchInAddressArea !== false
             });
         }
     }
