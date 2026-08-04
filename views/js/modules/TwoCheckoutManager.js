@@ -740,6 +740,9 @@ class TwoCheckoutManager {
             
             if (errLower.includes('skipped')) {
                 // Generic skip - show company selection prompt
+                if (this.suppressCompanyRelocationPrompt()) {
+                    return;
+                }
                 const messageContainer = this.getOrCreateMessageContainer();
                 const requiredMsg = this.t(
                     'select_company_to_use_two',
@@ -867,11 +870,55 @@ class TwoCheckoutManager {
     }
 
     /**
+     * Swallow the "go back to your billing address and search for your company
+     * name" family of prompts when the company-search control is mounted in
+     * the payment tile (TWO-25326 §7.1 follow-up).
+     *
+     * Every one of those prompts - and the "Buy now, pay later - instant
+     * credit" subtitle they render underneath, which is the same
+     * `.two-payment-info` block - tells the buyer to go somewhere else and do
+     * something there. That is correct while the search lives in the address
+     * area, and simply wrong once the switch has moved it into the tile: the
+     * control the buyer is being sent away to find is the one they are looking
+     * at. There is nothing to reword it to, because the instruction itself is
+     * the thing that no longer applies, so the block is not rendered at all.
+     *
+     * Deliberately NOT routed through getOrCreateMessageContainer(): that
+     * method's side effect is to reveal `.two-payment-info`, which is exactly
+     * what is being suppressed. Only an ALREADY-rendered container is touched,
+     * and only to clear a prompt an earlier check left on screen.
+     *
+     * @returns {boolean} true when the prompt was suppressed and the caller
+     *          must render nothing
+     */
+    suppressCompanyRelocationPrompt() {
+        if (this.config.companySearchInAddressArea !== false) {
+            return false;
+        }
+        const container = document.querySelector('.two-payment-info')
+            || document.querySelector('#two-order-intent-messages');
+        if (container) {
+            const messageElement = container.querySelector('.two-payment-message');
+            if (messageElement) {
+                messageElement.textContent = '';
+            }
+            container.classList.remove('show', 'approved', 'loading', 'declined', 'action-required');
+            container.style.display = 'none';
+        }
+        this.clearLoadingState();
+        this.hideLoadingOverlay();
+        return true;
+    }
+
+    /**
      * Show company required message with clear guidance (theme-independent)
      * @param {string} message - The error message from backend
      * @param {string} status - The status code: 'no_company' or 'incomplete_company'
      */
     showCompanyRequiredMessage(message, status) {
+        if (this.suppressCompanyRelocationPrompt()) {
+            return;
+        }
         const messageContainer = this.getOrCreateMessageContainer();
         const actionTitle = this.t('action_required_title', 'Action Required');
         
@@ -1062,6 +1109,14 @@ class TwoCheckoutManager {
         
         let userFriendlyError;
         if (companyMissing) {
+            // The only thing this branch has to say is "go and search for your
+            // company" - which is the tile's own search control's job to
+            // prompt for once that control lives here, so there is nothing
+            // left to render. Checked before the generic branch on purpose: a
+            // real error with company data present still surfaces below.
+            if (this.suppressCompanyRelocationPrompt()) {
+                return;
+            }
             // Company data is incomplete - show specific guidance
             userFriendlyError = this.t(
                 'select_company_to_use_two',

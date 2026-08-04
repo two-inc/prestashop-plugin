@@ -131,5 +131,25 @@ test.describe("TWO-25326 §7.1 company-search location", () => {
     await tileField.click();
     await expect(page.locator(".two-company-dropdown")).toBeVisible({ timeout: 10_000 });
     await expect(page.locator("button.two-company-not-listed")).toBeVisible();
+
+    // And it SEARCHES, not merely opens (TWO-25326 §7.1 follow-up). The
+    // control opened correctly while being completely unable to search: on
+    // this step PrestaShop renders an address selector rather than the address
+    // form, so `select[name='id_country']` - the only country source the
+    // browser side had - does not exist, and every keystroke resolved no
+    // country and declined to search. The buyer-visible symptom is this row,
+    // pointing at a country control that is not on the page.
+    //
+    // Asserted as the absence of that row rather than on results, so it needs
+    // no live company register and cannot flake on one: typing enough
+    // characters to pass the search threshold has to get past the "no country"
+    // state, whatever the register then answers.
+    const queryField = page.locator(".two-company-dropdown__query");
+    await queryField.fill("Example");
+    await expect(
+      page.locator(".two-company-dropdown__results", {
+        hasText: "Select your country above to search for your company."
+      })
+    ).toHaveCount(0, { timeout: 10_000 });
   });
 });

@@ -52,6 +52,9 @@ final class CompanySearchCountrySourcingSpec
     public static function runAll(): void
     {
         self::testCountryIsoMapIsInjectedByTheMediaHook();
+        self::testBillingCountryIsInjectedByTheMediaHook();
+        self::testBillingCountryResolvesFromTheCartsInvoiceAddress();
+        self::testJsReadsTheInjectedBillingCountry();
         self::testDropdownCopyKeysMatchTheKeysTheJsReads();
         self::testClearCompanyActionSeam();
         self::testJsNoLongerGuessesTheCountry();
@@ -223,6 +226,95 @@ final class CompanySearchCountrySourcingSpec
             strpos($body_text, "registerJavascript('two-company-search'") !== false,
             'The company search script is no longer registered by ' . $hook
             . '(), so it no longer shares the gate that injects its country map'
+        );
+    }
+
+    /**
+     * The cart's billing-address country must be injected by the SAME hook,
+     * behind the SAME early-return gate, as the search script that reads it -
+     * TWO-25326 §7.1 follow-up.
+     *
+     * Same reasoning as the countries map above, and for a sharper reason:
+     * this is the ONLY country source available to the company search once the
+     * control has moved into the payment tile. PrestaShop renders the address
+     * FORM - and therefore `select[name='id_country']`, everything
+     * getCurrentCountry() could otherwise read - only while the buyer is
+     * editing an address; on the payment step it renders an address SELECTOR
+     * instead. Drop this key, or move it out from behind this gate, and the
+     * tile-mounted search silently stops searching on every keystroke, which
+     * is exactly the state Doug found live.
+     */
+    private static function testBillingCountryIsInjectedByTheMediaHook(): void
+    {
+        $hook = 'hookActionFrontControllerSetMedia';
+        $body = self::functionBody(
+            self::codeLines(self::moduleSource()),
+            'public function ' . $hook . '()',
+            'twopayment.php'
+        );
+        $body_text = implode("\n", $body);
+
+        TinyAssert::true(
+            strpos($body_text, "'billing_country' => \$this->getCheckoutBillingCountryIso()") !== false,
+            'The billing-address country is no longer injected by ' . $hook
+            . '() - the payment-tile company search has no country to search with'
+        );
+    }
+
+    /**
+     * And the resolver behind that key answers from the cart's own invoice
+     * address, or not at all.
+     *
+     * "Or not at all" is the load-bearing half: a shop-country or geolocation
+     * fallback here would search a register the buyer's company is not in,
+     * with nothing on screen saying which one was used - the same defect the
+     * removed `navigator.language` / `'GB'` guesses had, one layer down.
+     */
+    private static function testBillingCountryResolvesFromTheCartsInvoiceAddress(): void
+    {
+        StubStore::reset();
+        Tools::resetTestValues();
+        $module = new TwopaymentTestHarness();
+        $method = new ReflectionMethod(Twopayment::class, 'getCheckoutBillingCountryIso');
+
+        $cart = Context::getContext()->cart;
+
+        // No billing address yet: resolves to empty, never to a fallback.
+        $cart->id_address_invoice = 0;
+        TinyAssert::same('', $method->invoke($module));
+
+        // A billing address whose country the shop knows.
+        StubStore::$addresses[8801] = ['id_country' => 44];
+        StubStore::$countries[44] = 'gb';
+        $cart->id_address_invoice = 8801;
+        // Upper-cased: the API wants the ISO code upper, and PrestaShop's own
+        // country table stores it lower.
+        TinyAssert::same('GB', $method->invoke($module));
+
+        // An address row that does not exist, and a country id the shop's
+        // table does not carry: both resolve to empty rather than guessing.
+        $cart->id_address_invoice = 9999;
+        TinyAssert::same('', $method->invoke($module));
+
+        StubStore::$addresses[8802] = ['id_country' => 4242];
+        $cart->id_address_invoice = 8802;
+        TinyAssert::same('', $method->invoke($module));
+    }
+
+    /**
+     * And the browser side reads that exact key. A rename on either side is
+     * invisible at runtime - the JS simply resolves no country and stops
+     * searching, which reads as a broken search rather than as a broken
+     * contract. Same class of silent failure as the i18n-key check below.
+     */
+    private static function testJsReadsTheInjectedBillingCountry(): void
+    {
+        $js = implode("\n", self::codeLines(self::searchJsSource()));
+
+        TinyAssert::true(
+            strpos($js, 'window.twopayment.billing_country') !== false,
+            'TwoCompanySearch no longer reads window.twopayment.billing_country, so the '
+            . 'payment-tile search has no country source at all'
         );
     }
 
