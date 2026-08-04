@@ -1273,24 +1273,26 @@ class TwoCompanySearch {
             return;
         }
 
+        // Adversarial review round 6 (TWO-25326): all three branches below
+        // used to hand-roll a partial clear (organizationField + tag + hint
+        // only), the exact shape rounds 4-5 fixed elsewhere in this file -
+        // missing the DNI/VAT residue (clearLookupWrittenAddressIdentifiers)
+        // and the server session (clearPersistedCompany). Routed through the
+        // same clearSelectedCompany() the other fixed call sites use, so
+        // this method cannot drift back into that pattern independently.
         if (!company) {
-            this.organizationField.val('');
-            this.organizationField.removeAttr('data-two-company-name');
-            this.setCompanyIdHint('');
+            this.clearSelectedCompany();
             return;
         }
 
         // If companyid exists but has no selection marker, treat it as stale after address/form re-renders.
         if (!taggedCompany) {
-            this.organizationField.val('');
-            this.setCompanyIdHint('');
+            this.clearSelectedCompany();
             return;
         }
 
         if (this.normalizeCompanyName(company) !== this.normalizeCompanyName(taggedCompany)) {
-            this.organizationField.val('');
-            this.organizationField.removeAttr('data-two-company-name');
-            this.setCompanyIdHint('');
+            this.clearSelectedCompany();
         }
     }
 
