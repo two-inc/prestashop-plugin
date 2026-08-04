@@ -113,6 +113,10 @@
                 // is off. Absent reads as enabled, matching the server-side
                 // default-on resolver.
                 addressLookupEnabled: twopayment.address_lookup !== '0',
+                // TWO-25326 §7.1 (2026-08-03 ruling): '1' relocates the
+                // company-search control into the payment tile instead of
+                // the address area (default).
+                companySearchTileEnabled: twopayment.company_search_tile === '1',
                 orderIntentEnabled: true,
                 checkoutHost: twopayment.checkout_host,
                 orderIntentUrl: twopayment.order_intent_url,
@@ -165,19 +169,9 @@
                 });
             }
 
-            // Read-only company summary in the tile (TWO-25288). Always
-            // constructed and unconditional: the block it paints into is in the
-            // tile template with no admin switch of its own, and with no company
-            // captured yet it simply renders nothing and stays hidden.
-            if (typeof TwoCompanySummary !== 'undefined') {
-                if (
-                    window.TwoCompanySummary_Instance &&
-                    typeof window.TwoCompanySummary_Instance.cleanup === 'function'
-                ) {
-                    window.TwoCompanySummary_Instance.cleanup();
-                }
-                window.TwoCompanySummary_Instance = new TwoCompanySummary();
-            }
+            // TwoCompanySummary (read-only tile label, TWO-25288) REMOVED by
+            // TWO-25326 §7.3 (2026-08-03 ruling) - the captured company now
+            // lives only inside the intent-message sentence.
 
         } catch (error) {
             console.error('Two Payment: Initialization failed:', error);
@@ -194,6 +188,10 @@
                             companySearchEnabled: twopayment.company_name_search === '1',
                             // Keep in step with the primary config object above (TWO-25203).
                             addressLookupEnabled: twopayment.address_lookup !== '0',
+                // TWO-25326 §7.1 (2026-08-03 ruling): '1' relocates the
+                // company-search control into the payment tile instead of
+                // the address area (default).
+                companySearchTileEnabled: twopayment.company_search_tile === '1',
                             orderIntentEnabled: true,
                             checkoutHost: twopayment.checkout_host,
                             orderIntentUrl: twopayment.order_intent_url,
@@ -220,9 +218,6 @@
         }
         if (window.TwoOptionalFields_Instance && typeof window.TwoOptionalFields_Instance.cleanup === 'function') {
             window.TwoOptionalFields_Instance.cleanup();
-        }
-        if (window.TwoCompanySummary_Instance && typeof window.TwoCompanySummary_Instance.cleanup === 'function') {
-            window.TwoCompanySummary_Instance.cleanup();
         }
     });
         }); 

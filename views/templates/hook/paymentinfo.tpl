@@ -84,24 +84,34 @@
         </div>
     </div>
 
-    {* Captured company, read-only (TWO-25288; reshaped by TWO-25326 §7).
+    {* Company search, payment-tile location (TWO-25326 §7.1, 2026-08-03
+       design ruling). The admin setting "Company search location" picks
+       WHERE the one shared control (TwoCompanySearch.js - same dropdown /
+       query-field / manual-entry code as the address-area control, never a
+       second implementation) renders: address area (default) or here.
 
-       §7 requires the captured company to appear in the payment tile as a
-       single text label in the form "<name> (<number>)", positioned between
-       the term chips and the intent message / optional fields - which is
-       exactly where this sits.
-
-       Deliberately <span>s and not inputs: the values are not editable and not
-       removable here. Populated by TwoCompanySummary.js, which reads them from
-       the address form and never writes to it - the hidden `companyid` input
-       remains the sole carrier of the organisation number into the submission.
-
-       The number and its parentheses are one unit, hidden together when there
-       is no number: a manual-entry buyer supplies a name only (§5), and
-       "Example Ltd ()" is worse than "Example Ltd". *}
-    <div class="two-company-summary" id="two-company-summary" style="display: none;">
-        <span class="two-company-summary__value" data-two-company-summary="name"></span><span class="two-company-summary__number-wrap"> (<span class="two-company-summary__value" data-two-company-summary="number"></span>)</span>
+       Only rendered at all when the setting is "Payment tile" - the
+       address-area control stays exactly as-is (§1-§5) when it isn't.
+       TwoCheckoutManager.js mounts TwoCompanySearch on this field instead of
+       the address form's, and the selection is persisted the same way
+       either way (TwoCompanySearch.persistCompanyToCookie -> the session
+       company both the order-intent check and order creation already read
+       ahead of the address, so relocating the visible control does not
+       depend on the address form's own `company`/`companyid` inputs at all). *}
+    {if $company_search_tile}
+    <div class="two-tile-company-search" id="two-tile-company-search">
+        <div class="form-group">
+            <label for="two_tile_company">{l s='Company' mod='twopayment'}</label>
+            <input type="text" class="form-control" id="two_tile_company" name="two_tile_company" autocomplete="off" />
+        </div>
     </div>
+    {/if}
+
+    {* Captured company name/number are NOT shown as a separate label here
+       (TWO-25326 §7.3, 2026-08-03 ruling supersedes the earlier standalone
+       label this module used to render via TwoCompanySummary.js). They are
+       folded directly into the intent-message sentence in `.two-payment-message`
+       above instead - see TwoOrderIntent.buildCompanyIntentMessage(). *}
 
     {* Optional buyer reference fields (ABN-472). These live HERE, in the
        payment tile, and not in the billing address block: PrestaShop asks for

@@ -1310,27 +1310,6 @@ class TwoCompanySearch {
         });
     }
 
-    /**
-     * Repaint the tile's read-only company summary (TWO-25288).
-     *
-     * Called at each point where this module changes the captured pair, because
-     * every one of those writes goes through jQuery's `.val()` / `.attr()`, which
-     * fire no event - so the summary module has nothing it could observe and has
-     * to be told. It re-reads the DOM itself; nothing is passed in.
-     *
-     * Guarded rather than assumed present: this module ships and runs on the
-     * address step, where the payment tile does not exist yet.
-     */
-    refreshCompanySummary() {
-        try {
-            if (window.TwoCompanySummary && typeof window.TwoCompanySummary.render === 'function') {
-                window.TwoCompanySummary.render();
-            }
-        } catch (e) {
-            // Display only. It must never break the capture it describes.
-        }
-    }
-
     setupAddressIdentifierSync() {
         if (!this.companyField || this.companyField.length === 0) {
             return;
@@ -2077,7 +2056,6 @@ class TwoCompanySearch {
         this.setCompanyIdHint('');
         this.clearLookupWrittenAddressIdentifiers();
         this.clearPersistedCompany();
-        this.refreshCompanySummary();
     }
 
     /**
@@ -3116,8 +3094,6 @@ class TwoCompanySearch {
             triggerOrderIntentRecheck();
         }
 
-        this.refreshCompanySummary();
-
         // §2 gating: a company is now captured, so "My company is not on the
         // list" must be hidden. LAST, deliberately - the org number and its
         // tag are what hasConfirmedSelection() reads, and both are committed
@@ -3192,10 +3168,6 @@ class TwoCompanySearch {
                         company: this.companyField ? this.companyField.val() : '',
                         companyid: natIdVal
                     });
-                    // The GB path: the selection carried no organisation number
-                    // and this is the first point one exists, so the summary
-                    // rendered at selection time showed a blank number slot.
-                    this.refreshCompanySummary();
                     // §2 gating reads hasConfirmedSelection(), which only
                     // becomes true once the tag written two lines up exists -
                     // so on the GB path this, not onCompanySelected(), is
@@ -3395,13 +3367,6 @@ class TwoCompanySearch {
                 this.setCompanyIdHint('');
                 // Recreate autocomplete to ensure new country is used immediately
                 this.setupAutocomplete();
-                // The clears above go through `.val()` / `.removeAttr()` and
-                // fire no event, so the tile's summary would keep showing the
-                // company this country change has just discarded (TWO-25288). On
-                // core themes PrestaShop's own `updatedAddressForm` repaints it a
-                // few hundred ms later; a theme that does not re-render the
-                // address form on a country change never would.
-                this.refreshCompanySummary();
             };
             countryField.addEventListener('change', this.countryListener);
             this._boundCountrySelector = countryField;

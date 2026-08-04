@@ -5533,6 +5533,7 @@ require __DIR__ . '/AjaxCheckoutFailureSpec.php';
 require __DIR__ . '/CheckoutLatencySpec.php';
 require __DIR__ . '/FulfilledStatusMappingSpec.php';
 require __DIR__ . '/AddressLookupConfigSpec.php';
+require __DIR__ . '/CompanySearchTileConfigSpec.php';
 require __DIR__ . '/OrgNumberPreVerificationSpec.php';
 require __DIR__ . '/IntentApprovedNoticeSpec.php';
 require __DIR__ . '/UpgradeScriptVersionSpec.php';
@@ -5570,6 +5571,7 @@ $tests = [
     'CheckoutLatencySpec::runAll' => [CheckoutLatencySpec::class, 'runAll'],
     'FulfilledStatusMappingSpec::runAll' => [FulfilledStatusMappingSpec::class, 'runAll'],
     'AddressLookupConfigSpec::runAll' => [AddressLookupConfigSpec::class, 'runAll'],
+    'CompanySearchTileConfigSpec::runAll' => [CompanySearchTileConfigSpec::class, 'runAll'],
     'OrgNumberPreVerificationSpec::runAll' => [OrgNumberPreVerificationSpec::class, 'runAll'],
     'IntentApprovedNoticeSpec::runAll' => [IntentApprovedNoticeSpec::class, 'runAll'],
     'UpgradeScriptVersionSpec::runAll' => [UpgradeScriptVersionSpec::class, 'runAll'],

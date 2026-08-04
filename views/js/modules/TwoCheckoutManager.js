@@ -10,6 +10,10 @@ class TwoCheckoutManager {
             // lookup was unconditional before the toggle existed (TWO-25203),
             // so an omitted value must not turn it off.
             addressLookupEnabled: true,
+            // TWO-25326 §7.1 (2026-08-03 ruling): '1'/true relocates the ONE
+            // shared company-search control into the payment tile instead of
+            // the address area (default, false).
+            companySearchTileEnabled: false,
             orderIntentEnabled: false,
             checkoutHost: '',
             orderIntentUrl: '',
@@ -762,24 +766,24 @@ class TwoCheckoutManager {
         // This prevents bypassing client-side blocking by disabling JavaScript
         this.saveOrderIntentResultToServer(result.approved);
 
-        // Build company-aware message for display (translated)
+        // Build company-aware message for display (translated). Sentence
+        // built by TwoOrderIntent.buildCompanyIntentMessage() (TWO-25326
+        // §7.3) - the single place that templates name/number into the
+        // wording, shared with this module's own updateUI()/processResult().
         const companyName = this.getSelectedCompanyName();
+        const companyNumber = this.getSelectedCompanyNumber();
         if (result.approved) {
-            const approvedNotice = this.approvedNoticeOverride();
             let approvedMsg = result.message || this.t('payment_approved_message', 'Payment approved! Choose your payment terms below.');
-            if (companyName && approvedNotice !== null) {
-                // Brand override replaces only the company variant.
-                approvedMsg = approvedNotice.replace('%s', companyName);
-            } else if (companyName && window.twopayment && window.twopayment.i18n && window.twopayment.i18n.invoice_likely_accepted_for) {
-                approvedMsg = window.twopayment.i18n.invoice_likely_accepted_for.replace('%s', companyName);
+            if (companyName && this.orderIntent && typeof this.orderIntent.buildCompanyIntentMessage === 'function') {
+                approvedMsg = this.orderIntent.buildCompanyIntentMessage(true, companyName, companyNumber);
             }
             this.showOrderIntentApproval(approvedMsg);
         } else {
             // For declined results, also check if the decline reason should be treated as an error
             const baseDecline = result.message || this.t('payment_not_available_message', 'Two payment is not available for this order.');
             let declineMessage = baseDecline;
-            if (companyName && window.twopayment && window.twopayment.i18n && window.twopayment.i18n.invoice_cannot_be_approved_for) {
-                declineMessage = window.twopayment.i18n.invoice_cannot_be_approved_for.replace('%s', companyName);
+            if (companyName && this.orderIntent && typeof this.orderIntent.buildCompanyIntentMessage === 'function') {
+                declineMessage = this.orderIntent.buildCompanyIntentMessage(false, companyName, companyNumber);
             }
             if (this.isDeclineReasonAnError(baseDecline)) {
                 this.showOrderIntentError(declineMessage);
@@ -801,6 +805,24 @@ class TwoCheckoutManager {
             const companyField = document.querySelector("input[name='company']");
             if (companyField && companyField.value && companyField.value.trim().length > 0) {
                 return companyField.value.trim();
+            }
+        } catch (e) {}
+        return '';
+    }
+
+    /**
+     * Get selected company organisation number from latest intent state or
+     * the hidden address-form field (TWO-25326 §7.3 - folded into the intent
+     * sentence, never shown as its own label).
+     */
+    getSelectedCompanyNumber() {
+        try {
+            if (this.orderIntent && this.orderIntent.lastCompanyNumber) {
+                return this.orderIntent.lastCompanyNumber;
+            }
+            const companyIdField = document.querySelector("input[name='companyid']");
+            if (companyIdField && companyIdField.value && companyIdField.value.trim().length > 0) {
+                return companyIdField.value.trim();
             }
         } catch (e) {}
         return '';
@@ -947,9 +969,6 @@ class TwoCheckoutManager {
                 existing.classList.remove('approved', 'declined', 'loading', 'show');
                 existing.style.display = 'none';
             }
-            // Hidden, so the company label goes with it (TWO-25326 §7): this is
-            // the notice-off case the revised rule exists for.
-            this.refreshCompanyLabel();
             this.clearLoadingState();
             this.hideLoadingOverlay();
             this.showPaymentTerms();
@@ -1215,9 +1234,6 @@ class TwoCheckoutManager {
             messageContainer.style.display = 'none';
             messageContainer.innerHTML = '';
         }
-        // The message is down, so the company label is too (TWO-25326 §7).
-        this.refreshCompanyLabel();
-        
         // Also clear payment terms
         this.hidePaymentTerms();
         
@@ -1242,41 +1258,14 @@ class TwoCheckoutManager {
     /**
      * Get or create message container for order intent feedback (uses existing payment card structure)
      */
-    /**
-     * Ask the payment tile's company label to re-read its gate (TWO-25326 §7).
-     *
-     * The label is shown exactly when the order-intent message is shown and
-     * hidden exactly when it is hidden - no longer whenever a company happens to
-     * be captured. TwoCompanySummary decides that by LOOKING at the message
-     * container, so this passes no state; it only says "the message may have
-     * just changed, look again", and is called from the points in this module
-     * that change it.
-     *
-     * This module is where it matters on PrestaShop: `.two-payment-info` is the
-     * container the shipped template carries and the one the buyer actually
-     * sees.
-     *
-     * @returns {void}
-     */
-    refreshCompanyLabel() {
-        if (typeof window === 'undefined'
-            || !window.TwoCompanySummary
-            || typeof window.TwoCompanySummary.render !== 'function') {
-            return;
-        }
-        window.TwoCompanySummary.render();
-    }
-
     getOrCreateMessageContainer() {
         // First try to use the existing payment info section from the template
         let container = document.querySelector('.two-payment-info');
-        
+
         if (container) {
             // Use existing payment info section and make it visible
             container.style.display = 'block';
             container.classList.add('show');
-            // Now visible, so the company label may need to come with it.
-            this.refreshCompanyLabel();
             return container;
         }
         
@@ -1305,10 +1294,9 @@ class TwoCheckoutManager {
                 }
             }
         }
-        this.refreshCompanyLabel();
         return container;
     }
-    
+
     /**
      * ENHANCED: Show payment terms selector with robust fallback for different themes
      */
@@ -1986,14 +1974,48 @@ class TwoCheckoutManager {
     
     /**
      * Initialize company search module
+     *
+     * TWO-25326 §7.1 (2026-08-03 ruling): the admin setting decides WHERE the
+     * one shared control mounts, never whether it exists. When the tile mount
+     * point (`#two_tile_company`, rendered by paymentinfo.tpl only when the
+     * setting is on) is present, TwoCompanySearch attaches to THAT field
+     * instead of the address form's `input[name='company']` - same class,
+     * same dropdown/query-field/manual-entry behaviour, never a second
+     * implementation. The address-area native field is hidden so only one
+     * copy of the control is ever interactive at a time.
      */
     initializeCompanySearch() {
         if (!this.companySearch && window.TwoCompanySearch) {
+            const tileField = this.config.companySearchTileEnabled
+                ? document.getElementById('two_tile_company')
+                : null;
+            if (tileField) {
+                this.hideAddressAreaCompanyField();
+            }
             this.companySearch = new TwoCompanySearch({
                 checkoutHost: this.config.checkoutHost,
-                addressLookupEnabled: this.config.addressLookupEnabled !== false
+                addressLookupEnabled: this.config.addressLookupEnabled !== false,
+                companyFieldSelector: tileField ? '#two_tile_company' : "input[name='company']"
             });
         }
+    }
+
+    /**
+     * Hide the address area's native PrestaShop company field when the
+     * company-search control has relocated to the payment tile (TWO-25326
+     * §7.1) - the setting is "here vs there" for ONE control, so the
+     * address-area field must not sit there uncontrolled once the tile owns
+     * the interactive search.
+     */
+    hideAddressAreaCompanyField() {
+        try {
+            const realField = document.querySelector("input[name='company']");
+            if (!realField) {
+                return;
+            }
+            const wrapper = realField.closest('.form-group') || realField;
+            wrapper.style.display = 'none';
+        } catch (e) { /* noop */ }
     }
     
     /**
