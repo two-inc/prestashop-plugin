@@ -9,6 +9,12 @@ class TwoOrderIntent {
             orderIntentUrl: '',
             ajaxToken: '',
             enablePaymentPreventionOnDecline: true,
+            // TWO-25326 §7.1: whether the company-search control is in the
+            // address area (true, default) or has relocated to the payment
+            // tile (false). Gates whether collectFormData() may trust the
+            // address form's `company`/`companyid` DOM fields at all - see
+            // its own comment.
+            companySearchInAddressArea: true,
             ...config
         };
         
@@ -66,6 +72,82 @@ class TwoOrderIntent {
         return this.approvedNoticeEnabled() === false;
     }
 
+    /**
+     * Build the company-aware intent sentence (TWO-25326 §7.3, 2026-08-03
+     * design ruling). Company name and number are folded directly into the
+     * sentence - this is the single place that does it, so every caller
+     * (this module's own processResult()/updateUI(), and
+     * TwoCheckoutManager.handleOrderIntentResult()) renders identical wording.
+     *
+     * Omits the parenthesised number when none is known, matching the
+     * "Example Ltd" over "Example Ltd ()" rule that governed the standalone
+     * tile label this sentence replaces - that label is gone, not
+     * supplemented.
+     *
+     * A brand override (`intent_approved_notice`, TWO-25218) stays name-only:
+     * no PrestaShop brand overlay defines its own template today, so
+     * extending the override format is out of scope here (see §7.4, which
+     * does not apply to PS).
+     *
+     * @param {boolean} approved
+     * @param {string} name
+     * @param {string} number
+     * @returns {string}
+     */
+    buildCompanyIntentMessage(approved, name, number) {
+        const hasNumber = typeof number === 'string' && number.trim().length > 0;
+        if (approved) {
+            const override = this.approvedNoticeOverride();
+            if (override !== null) {
+                return TwoOrderIntent.fillTemplate(override, [name]);
+            }
+            const template = hasNumber
+                ? this.t('invoice_likely_accepted_for', 'This order by %s (%s) is likely to be accepted by Two')
+                : this.t('invoice_likely_accepted_for_no_number', 'This order by %s is likely to be accepted by Two');
+            return TwoOrderIntent.fillTemplate(template, hasNumber ? [name, number] : [name]);
+        }
+        const template = hasNumber
+            ? this.t('invoice_cannot_be_approved_for', 'Two is not available for this order by %s (%s)')
+            : this.t('invoice_cannot_be_approved_for_no_number', 'Two is not available for this order by %s');
+        return TwoOrderIntent.fillTemplate(template, hasNumber ? [name, number] : [name]);
+    }
+
+    /**
+     * Fill `%s` placeholders in `template` from `values`, in order, by
+     * position rather than by repeated `.replace()`.
+     *
+     * A sequential `template.replace('%s', a).replace('%s', b)` is unsafe the
+     * moment `a` itself contains the literal text "%s": the first `.replace`
+     * inserts a fresh "%s" into the string, and the second call's `.replace`
+     * (which always matches the LEFTMOST occurrence) finds that one instead
+     * of the real second placeholder - silently pairing `b` with the wrong
+     * slot. Splitting the template up front and joining values back in
+     * cannot re-match text that came from a substituted value, because the
+     * split happens before any value is ever inserted.
+     *
+     * @param {string} template
+     * @param {Array<string>} values
+     * @returns {string}
+     */
+    static fillTemplate(template, values) {
+        const parts = String(template).split('%s');
+        let result = parts[0];
+        const consumed = Math.min(values.length, parts.length - 1);
+        for (let i = 0; i < consumed; i++) {
+            result += values[i] + parts[i + 1];
+        }
+        // A template with MORE `%s` placeholders than supplied values (e.g. a
+        // misconfigured brand override, TWO-25218, meant to carry one
+        // placeholder but written with two) must not silently drop the rest
+        // of the sentence - the leftover placeholders degrade to their
+        // literal "%s" text instead of vanishing along with everything after
+        // them.
+        if (consumed < parts.length - 1) {
+            result += '%s' + parts.slice(consumed + 1).join('%s');
+        }
+        return result;
+    }
+
     buildPublicApiBeforeSend() {
         return function (xhr) {
             const blockedHeaders = {
@@ -97,20 +179,17 @@ class TwoOrderIntent {
     /**
      * Take the company out of the order-intent payload and publish it.
      *
-     * Feeds two things: the company-aware intent wording, and the payment
-     * tile's company label (TWO-25326 §7).
+     * Feeds the company-aware intent wording (TWO-25326 §7.3): the intent
+     * message is the ONLY place the captured company appears in the tile as
+     * of the 2026-08-03 design ruling - there is no separate label left to
+     * feed.
      *
-     * The tile is the reason this exists. That label used to be rendered by
-     * reading the address form's `company` and hidden `companyid` inputs, but
+     * This is the module's own backend answering with the payload it built
+     * server-side, from the session company that outlives the address form -
      * by the time the payment step exists PrestaShop has marked the address
-     * step `-complete` and REMOVED that form - both inputs are gone, so the
-     * block rendered empty and stayed hidden on every PrestaShop checkout.
-     *
-     * The pair is already on its way here for another reason: this is the
-     * module's own backend answering with the payload it built server-side,
-     * from the session company that outlives the form. So the tile is fed from
-     * the same channel that feeds the intent message beside it, and the two
-     * cannot disagree about which company is being credit-checked.
+     * step `-complete` and REMOVED that form, so reading `lastCompany`/
+     * `lastCompanyNumber` from here rather than the (long gone) form inputs is
+     * the only reliable source once the buyer has reached the payment step.
      *
      * A method rather than an inline block in the promise chain so it can be
      * tested without standing up the whole request pipeline.
@@ -131,55 +210,17 @@ class TwoOrderIntent {
 
         if (name) {
             this.lastCompany = name;
+            // This payload's number, deliberately, and never a retained
+            // earlier value: a payload carrying a name with no number (a
+            // manual/sole-trader entry, name-only by design) must show the
+            // name alone in the sentence, never pair it with a number left
+            // over from a company the buyer has since moved off. Adversarial
+            // review round 2 (TWO-25326): this was a real bug reintroduced
+            // here - the two assignments used to be independent `if`s, which
+            // is exactly the failure mode the deleted TwoCompanySummary.js's
+            // own setIntentCompany() call was written to avoid.
+            this.lastCompanyNumber = number || null;
         }
-        if (number) {
-            this.lastCompanyNumber = number;
-        }
-
-        if (!name) {
-            return;
-        }
-        if (typeof window === 'undefined'
-            || !window.TwoCompanySummary
-            || typeof window.TwoCompanySummary.setIntentCompany !== 'function') {
-            return;
-        }
-        window.TwoCompanySummary.setIntentCompany({
-            name: name,
-            // This payload's number, deliberately, and never the retained
-            // `lastCompanyNumber`: a payload carrying a name with no number
-            // must show the name alone, not pair it with a number left over
-            // from a company the buyer has moved off. readState()'s tag
-            // comparison guards the DOM path for the same reason.
-            number: number
-        });
-    }
-
-    /**
-     * Ask the payment tile's company label to re-read its gate.
-     *
-     * TWO-25326 §7, revised rule: the label is shown exactly when the
-     * order-intent message is shown and hidden exactly when it is hidden - it is
-     * no longer shown whenever a company happens to be captured. The case that
-     * motivated it is a brand running with the approval notice switched off
-     * (`intent_approved_notice_enabled`, TWO-25218): the tile is deliberately
-     * silent on approval, and the label was still naming the company beside it.
-     *
-     * No boolean is passed, deliberately. TwoCompanySummary works the answer out
-     * by looking at the message element, so this is only a nudge - "the message
-     * may have just changed, look again" - issued after this module has changed
-     * it. Passing a flag would put a second copy of the approved-notice rule in
-     * a second place; see TwoCompanySummary.isIntentMessageVisible().
-     *
-     * @returns {void}
-     */
-    refreshCompanyLabel() {
-        if (typeof window === 'undefined'
-            || !window.TwoCompanySummary
-            || typeof window.TwoCompanySummary.render !== 'function') {
-            return;
-        }
-        window.TwoCompanySummary.render();
     }
 
     checkOrderIntent() {
@@ -232,10 +273,27 @@ class TwoOrderIntent {
                 action: 'checkOrderIntent',
                 token: this.config.ajaxToken
             };
-            const companyField = document.querySelector("input[name='company']");
-            const companyIdField = document.querySelector("input[name='companyid']");
-            let company = companyField ? (companyField.value || '') : '';
-            let companyid = companyIdField ? (companyIdField.value || '') : '';
+            let company = '';
+            let companyid = '';
+            // TWO-25326 §7.1: the address-area `company`/`companyid` DOM
+            // fields are only a trustworthy source when the search control
+            // actually lives there. In tile mode, `company` stays visible
+            // and typeable BY DESIGN (never hidden - a real regression on
+            // woocommerce-plugin) while `companyid` is the tile's OWN hidden
+            // field elsewhere in the DOM - reading them here would let
+            // whatever the buyer typed (or left blank) in that unrelated,
+            // uncontrolled field silently override or mismatch-pair with
+            // the company the buyer actually picked via the tile, since the
+            // server's own resolver (getCompanyDataWithFallbacks()) treats
+            // posted form data as HIGHER priority than the session the tile
+            // selection persists. Leave both empty so the fallback below
+            // always reaches for the session/cookie value instead.
+            if (this.config.companySearchInAddressArea !== false) {
+                const companyField = document.querySelector("input[name='company']");
+                const companyIdField = document.querySelector("input[name='companyid']");
+                company = companyField ? (companyField.value || '') : '';
+                companyid = companyIdField ? (companyIdField.value || '') : '';
+            }
 
             // If country changed since last selection, invalidate any existing values until a new selection is made
             let countryChanged = false;
@@ -281,8 +339,14 @@ class TwoOrderIntent {
                             formData.company = '';
                             formData.companyid = '';
                         }
-                        // Persist last company for messaging
+                        // Persist last company for messaging - name and number
+                        // reassigned TOGETHER, from the SAME source (this
+                        // session-fetch response), so the visible sentence
+                        // (buildCompanyIntentMessage) can never pair a fresh
+                        // name with a stale number left over from a
+                        // different company.
                         this.lastCompany = formData.company;
+                        this.lastCompanyNumber = formData.companyid || null;
                     } else {
                         formData.company = company;
                         formData.companyid = companyid;
@@ -307,7 +371,10 @@ class TwoOrderIntent {
             }
             formData.company = company;
             formData.companyid = companyid;
+            // Reassigned together, from the SAME (address-area DOM) read
+            // above, for the same reason as the session-fetch branch above.
             this.lastCompany = company;
+            this.lastCompanyNumber = companyid || null;
             const selectedAddressId = this.getCurrentAddressId();
             if (selectedAddressId > 0) {
                 formData.id_address_invoice = selectedAddressId;
@@ -509,7 +576,6 @@ class TwoOrderIntent {
         if (!response || typeof response !== 'object') {
             return { success: false, approved: false, message: this.t('invalid_response_from_server', 'Invalid response from server') };
         }
-        const approvedNotice = this.approvedNoticeOverride();
         const approvedSuppressed = !this.approvedNoticeEnabled();
         const result = {
             success: !!response.success,
@@ -525,22 +591,34 @@ class TwoOrderIntent {
         if (result.approved && approvedSuppressed) {
             result.message = '';
         }
-        const companyField = document.querySelector("input[name='company']");
-        if (!this.lastCompany || (companyField && companyField.value)) {
-            this.lastCompany = companyField && companyField.value ? companyField.value : this.lastCompany;
+        // TWO-25326 §7.1: same reasoning as collectFormData() - the
+        // address-area field is not a trustworthy source once search has
+        // relocated to the tile (stays visible/typeable by design, but
+        // uncontrolled). Only re-read it here in address-area mode.
+        if (this.config.companySearchInAddressArea !== false) {
+            const companyField = document.querySelector("input[name='company']");
+            const fieldValue = companyField && companyField.value ? companyField.value : null;
+            if (!this.lastCompany || fieldValue) {
+                // Adversarial review round 2 (TWO-25326): a field value that
+                // differs from what lastCompany already held means the buyer
+                // retyped the name since that number was captured - clear
+                // lastCompanyNumber too, rather than risk pairing a fresh
+                // name with a stale number in the rendered sentence. An
+                // unchanged value (the common case: this field is read-only
+                // once a real search result is confirmed) is a no-op either
+                // way, so this never discards a still-valid number.
+                if (fieldValue && fieldValue !== this.lastCompany) {
+                    this.lastCompanyNumber = null;
+                }
+                this.lastCompany = fieldValue || this.lastCompany;
+            }
         }
         // Inject company into message immediately to ensure UI gets the contextual string
         if (this.lastCompany && typeof this.lastCompany === 'string' && this.lastCompany.trim().length > 0) {
             if (!result.approved) {
-                const declinedTemplate = this.t('invoice_cannot_be_approved_for', 'Your invoice with Two cannot be approved at this time for %s');
-                result.message = declinedTemplate.replace('%s', this.lastCompany);
+                result.message = this.buildCompanyIntentMessage(false, this.lastCompany, this.lastCompanyNumber);
             } else if (!approvedSuppressed) {
-                // A brand override replaces only the company variant; the
-                // no-company copy above stays the platform default.
-                const approvedTemplate = approvedNotice !== null
-                    ? approvedNotice
-                    : this.t('invoice_likely_accepted_for', 'Your invoice with Two is likely to be accepted for %s, subject to additional checks.');
-                result.message = approvedTemplate.replace('%s', this.lastCompany);
+                result.message = this.buildCompanyIntentMessage(true, this.lastCompany, this.lastCompanyNumber);
             }
         }
         this.lastResult = result;
@@ -655,15 +733,12 @@ class TwoOrderIntent {
             return $(element).find('[data-module-name="twopayment"]').length > 0;
         });
         if ($twoPaymentOption.length === 0) return;
-        const approvedNotice = this.approvedNoticeOverride();
         // Notice switched off for this brand (TWO-25218): render no element at
         // all - not even an empty wrapper - and drop any element left over
         // from an earlier decline so a stale message cannot outlive an
         // approval. The functional part of an approval still runs below.
         if (result.approved && !this.approvedNoticeEnabled()) {
             $twoPaymentOption.find('.two-order-intent-message').remove();
-            // No message on screen, so no company label either (TWO-25326 §7).
-            this.refreshCompanyLabel();
             $twoPaymentOption.removeClass('disabled');
             $twoPaymentOption.find('input[type="radio"]').prop('disabled', false);
             return;
@@ -673,9 +748,6 @@ class TwoOrderIntent {
             $messageContainer = $('<div class="two-order-intent-message"></div>');
             $twoPaymentOption.find('.payment-option-content, .payment-form, .additional-information').append($messageContainer);
         }
-        // Past the suppression branch, so a message IS being rendered: the label
-        // travels with it (TWO-25326 §7).
-        this.refreshCompanyLabel();
         let messageText = result.message;
         // Only template in the company name for a real decision FROM Two's
         // API (processResult() always sets rawResponse). handleError()'s
@@ -691,15 +763,7 @@ class TwoOrderIntent {
             typeof this.lastCompany === 'string' &&
             this.lastCompany.trim().length > 0
         ) {
-            if (result.approved) {
-                const t = approvedNotice !== null
-                    ? approvedNotice
-                    : this.t('invoice_likely_accepted_for', 'Your invoice with Two is likely to be accepted for %s, subject to additional checks.');
-                messageText = t.replace('%s', this.lastCompany);
-            } else {
-                const t = this.t('invoice_cannot_be_approved_for', 'Your invoice with Two cannot be approved at this time for %s');
-                messageText = t.replace('%s', this.lastCompany);
-            }
+            messageText = this.buildCompanyIntentMessage(!!result.approved, this.lastCompany, this.lastCompanyNumber);
         }
 
         $messageContainer
@@ -771,9 +835,6 @@ class TwoOrderIntent {
             $twoPaymentOption.find('.payment-option-content, .payment-form, .additional-information').append($messageContainer);
         }
         $messageContainer.removeClass('approved loading').addClass('declined').text(message);
-        // This path always ends with a declined message on screen, so the label
-        // rides with it (TWO-25326 §7).
-        this.refreshCompanyLabel();
     }
 
     startMonitoring() {
@@ -797,8 +858,6 @@ class TwoOrderIntent {
                             'To pay with Two, go back to your billing address and search for your company name. Select your company from the results to verify your business.'
                         );
                         $msg.removeClass('approved declined loading').text(t).show();
-                        // Shown, so the label goes with it (TWO-25326 §7).
-                        this.refreshCompanyLabel();
                     }
                     return;
                 }
@@ -825,9 +884,6 @@ class TwoOrderIntent {
         // Cleared with its name: a retained number outliving the reset could
         // only ever be paired with a DIFFERENT company's name later.
         this.lastCompanyNumber = null;
-        // The message goes when the decision does, and the label follows it
-        // (TWO-25326 §7).
-        this.refreshCompanyLabel();
         this.isProcessing = false;
         this.stopMonitoring();
     }

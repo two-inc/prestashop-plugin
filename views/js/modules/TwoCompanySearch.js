@@ -1273,24 +1273,26 @@ class TwoCompanySearch {
             return;
         }
 
+        // Adversarial review round 6 (TWO-25326): all three branches below
+        // used to hand-roll a partial clear (organizationField + tag + hint
+        // only), the exact shape rounds 4-5 fixed elsewhere in this file -
+        // missing the DNI/VAT residue (clearLookupWrittenAddressIdentifiers)
+        // and the server session (clearPersistedCompany). Routed through the
+        // same clearSelectedCompany() the other fixed call sites use, so
+        // this method cannot drift back into that pattern independently.
         if (!company) {
-            this.organizationField.val('');
-            this.organizationField.removeAttr('data-two-company-name');
-            this.setCompanyIdHint('');
+            this.clearSelectedCompany();
             return;
         }
 
         // If companyid exists but has no selection marker, treat it as stale after address/form re-renders.
         if (!taggedCompany) {
-            this.organizationField.val('');
-            this.setCompanyIdHint('');
+            this.clearSelectedCompany();
             return;
         }
 
         if (this.normalizeCompanyName(company) !== this.normalizeCompanyName(taggedCompany)) {
-            this.organizationField.val('');
-            this.organizationField.removeAttr('data-two-company-name');
-            this.setCompanyIdHint('');
+            this.clearSelectedCompany();
         }
     }
 
@@ -1308,27 +1310,6 @@ class TwoCompanySearch {
             // ended up changing.
             this.syncNotListedVisibility();
         });
-    }
-
-    /**
-     * Repaint the tile's read-only company summary (TWO-25288).
-     *
-     * Called at each point where this module changes the captured pair, because
-     * every one of those writes goes through jQuery's `.val()` / `.attr()`, which
-     * fire no event - so the summary module has nothing it could observe and has
-     * to be told. It re-reads the DOM itself; nothing is passed in.
-     *
-     * Guarded rather than assumed present: this module ships and runs on the
-     * address step, where the payment tile does not exist yet.
-     */
-    refreshCompanySummary() {
-        try {
-            if (window.TwoCompanySummary && typeof window.TwoCompanySummary.render === 'function') {
-                window.TwoCompanySummary.render();
-            }
-        } catch (e) {
-            // Display only. It must never break the capture it describes.
-        }
     }
 
     setupAddressIdentifierSync() {
@@ -1396,7 +1377,7 @@ class TwoCompanySearch {
      *
      * This gates only what a company selection *writes* into the address step.
      * Company search itself, and the hidden organisation-number field the Two
-     * flow needs, are governed by companySearchEnabled and stay live either
+     * flow needs, are governed by companySearchInAddressArea and stay live either
      * way.
      */
     isAddressLookupEnabled() {
@@ -2077,7 +2058,6 @@ class TwoCompanySearch {
         this.setCompanyIdHint('');
         this.clearLookupWrittenAddressIdentifiers();
         this.clearPersistedCompany();
-        this.refreshCompanySummary();
     }
 
     /**
@@ -3082,9 +3062,17 @@ class TwoCompanySearch {
             this.writeOrganizationToAddressIdentifiers(ui.item.organization_number);
         } else {
             // No org number on this result (e.g. GB, resolved later via
-            // fetchCompanyDetails/lookup_id) - don't show a stale hint from a
-            // previous selection in the meantime.
-            this.setCompanyIdHint('');
+            // fetchCompanyDetails/lookup_id). Adversarial review rounds 4-5
+            // (TWO-25326): clearing only organizationField+hint (round 4)
+            // still left the DNI/VAT identifier fields holding the PREVIOUS
+            // company's number, with their autofill marker intact - so
+            // setupAddressIdentifierSync()'s submit-time sync would adopt
+            // that leftover DNI value as this NEW company's org number,
+            // shipping a mismatched pair to the actual credit-check payload.
+            // The session cookie (persistCompanyToCookie) needed the same
+            // treatment. clearSelectedCompany() already does all of this
+            // atomically - use it instead of a partial hand-rolled clear.
+            this.clearSelectedCompany();
         }
 
         // For some countries (e.g. GB), org number may only be present in company details.
@@ -3115,8 +3103,6 @@ class TwoCompanySearch {
         if (!shouldDeferIntentTrigger) {
             triggerOrderIntentRecheck();
         }
-
-        this.refreshCompanySummary();
 
         // §2 gating: a company is now captured, so "My company is not on the
         // list" must be hidden. LAST, deliberately - the org number and its
@@ -3192,10 +3178,6 @@ class TwoCompanySearch {
                         company: this.companyField ? this.companyField.val() : '',
                         companyid: natIdVal
                     });
-                    // The GB path: the selection carried no organisation number
-                    // and this is the first point one exists, so the summary
-                    // rendered at selection time showed a blank number slot.
-                    this.refreshCompanySummary();
                     // §2 gating reads hasConfirmedSelection(), which only
                     // becomes true once the tag written two lines up exists -
                     // so on the GB path this, not onCompanySelected(), is
@@ -3388,20 +3370,14 @@ class TwoCompanySearch {
                 if (this.companyField && this.companyField.length > 0) {
                     this.companyField.val('');
                 }
-                if (this.organizationField) {
-                    this.organizationField.val('');
-                    this.organizationField.removeAttr('data-two-company-name');
-                }
-                this.setCompanyIdHint('');
+                // Adversarial review round 5 (TWO-25326): a manual
+                // organizationField+hint clear here left the DNI/VAT
+                // identifier fields and the session cookie holding the
+                // PREVIOUS country's company - same gap as the
+                // onCompanySelected() no-org-number branch, same fix.
+                this.clearSelectedCompany();
                 // Recreate autocomplete to ensure new country is used immediately
                 this.setupAutocomplete();
-                // The clears above go through `.val()` / `.removeAttr()` and
-                // fire no event, so the tile's summary would keep showing the
-                // company this country change has just discarded (TWO-25288). On
-                // core themes PrestaShop's own `updatedAddressForm` repaints it a
-                // few hundred ms later; a theme that does not re-render the
-                // address form on a country change never would.
-                this.refreshCompanySummary();
             };
             countryField.addEventListener('change', this.countryListener);
             this._boundCountrySelector = countryField;

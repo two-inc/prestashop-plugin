@@ -5,11 +5,17 @@
 class TwoCheckoutManager {
     constructor(config) {
         this.config = {
-            companySearchEnabled: false,
             // Default-on, mirroring the server-side resolver: the address
             // lookup was unconditional before the toggle existed (TWO-25203),
             // so an omitted value must not turn it off.
             addressLookupEnabled: true,
+            // TWO-25326 §7.1 (2026-08-03 ruling): the EXISTING
+            // PS_TWO_ENABLE_COMPANY_NAME switch now decides WHERE the ONE
+            // company-search control renders, not whether it exists - the
+            // control is never off. true (default): address area, unchanged
+            // from before this ticket. false: the same control relocates
+            // into the payment tile instead.
+            companySearchInAddressArea: true,
             orderIntentEnabled: false,
             checkoutHost: '',
             orderIntentUrl: '',
@@ -762,24 +768,25 @@ class TwoCheckoutManager {
         // This prevents bypassing client-side blocking by disabling JavaScript
         this.saveOrderIntentResultToServer(result.approved);
 
-        // Build company-aware message for display (translated)
-        const companyName = this.getSelectedCompanyName();
+        // Build company-aware message for display (translated). Sentence
+        // built by TwoOrderIntent.buildCompanyIntentMessage() (TWO-25326
+        // §7.3) - the single place that templates name/number into the
+        // wording, shared with this module's own updateUI()/processResult().
+        const selectedCompany = this.getSelectedCompany();
+        const companyName = selectedCompany.name;
+        const companyNumber = selectedCompany.number;
         if (result.approved) {
-            const approvedNotice = this.approvedNoticeOverride();
             let approvedMsg = result.message || this.t('payment_approved_message', 'Payment approved! Choose your payment terms below.');
-            if (companyName && approvedNotice !== null) {
-                // Brand override replaces only the company variant.
-                approvedMsg = approvedNotice.replace('%s', companyName);
-            } else if (companyName && window.twopayment && window.twopayment.i18n && window.twopayment.i18n.invoice_likely_accepted_for) {
-                approvedMsg = window.twopayment.i18n.invoice_likely_accepted_for.replace('%s', companyName);
+            if (companyName && this.orderIntent && typeof this.orderIntent.buildCompanyIntentMessage === 'function') {
+                approvedMsg = this.orderIntent.buildCompanyIntentMessage(true, companyName, companyNumber);
             }
             this.showOrderIntentApproval(approvedMsg);
         } else {
             // For declined results, also check if the decline reason should be treated as an error
             const baseDecline = result.message || this.t('payment_not_available_message', 'Two payment is not available for this order.');
             let declineMessage = baseDecline;
-            if (companyName && window.twopayment && window.twopayment.i18n && window.twopayment.i18n.invoice_cannot_be_approved_for) {
-                declineMessage = window.twopayment.i18n.invoice_cannot_be_approved_for.replace('%s', companyName);
+            if (companyName && this.orderIntent && typeof this.orderIntent.buildCompanyIntentMessage === 'function') {
+                declineMessage = this.orderIntent.buildCompanyIntentMessage(false, companyName, companyNumber);
             }
             if (this.isDeclineReasonAnError(baseDecline)) {
                 this.showOrderIntentError(declineMessage);
@@ -791,19 +798,54 @@ class TwoCheckoutManager {
     }
 
     /**
-     * Get selected company name from latest intent state or input field
+     * Get the selected company name+number as ONE atomic pair, for the
+     * customer-visible intent sentence (TWO-25326 §7.3).
+     *
+     * Adversarial review round 3: this used to be two separate methods
+     * (getSelectedCompanyName/getSelectedCompanyNumber), each independently
+     * falling back to a DOM field when its own `this.orderIntent` value was
+     * falsy. That defeated TwoOrderIntent's own joint-reassignment
+     * guarantee (round 2's fix) from one layer up - a falsy
+     * `lastCompanyNumber` (a genuine, valid "no number" case, e.g. manual
+     * entry) would fall through to whatever `input[name='companyid']`
+     * happened to still hold from an EARLIER, unrelated company selection,
+     * silently re-pairing it with the current name.
+     *
+     * `this.orderIntent` is the authoritative, already-paired source
+     * whenever it has ANY answer at all (including "name with no number" -
+     * checked via `hasOwnProperty`-style truthiness on `lastCompany` alone,
+     * never gated on `lastCompanyNumber` too). The DOM fallback below is
+     * only for the case orderIntent hasn't run yet at all, and reads both
+     * fields together, from the same location, in one pass - never one
+     * from orderIntent and the other from the DOM.
+     *
+     * @returns {{name: string, number: string}}
      */
-    getSelectedCompanyName() {
+    getSelectedCompany() {
         try {
             if (this.orderIntent && this.orderIntent.lastCompany) {
-                return this.orderIntent.lastCompany;
+                return {
+                    name: this.orderIntent.lastCompany,
+                    number: this.orderIntent.lastCompanyNumber || ''
+                };
             }
-            const companyField = document.querySelector("input[name='company']");
-            if (companyField && companyField.value && companyField.value.trim().length > 0) {
-                return companyField.value.trim();
+            // TWO-25326 §7.1: the address-area fields are only a
+            // trustworthy fallback when the search control actually lives
+            // there - in tile mode `company` stays visible/typeable by
+            // design (never hidden) but is not where the buyer's real
+            // selection came from, and `companyid` is the TILE's own hidden
+            // field, unrelated to whatever the address field currently holds.
+            if (this.config.companySearchInAddressArea !== false) {
+                const companyField = document.querySelector("input[name='company']");
+                const companyIdField = document.querySelector("input[name='companyid']");
+                const name = companyField && companyField.value ? companyField.value.trim() : '';
+                const number = companyIdField && companyIdField.value ? companyIdField.value.trim() : '';
+                if (name) {
+                    return { name: name, number: number };
+                }
             }
         } catch (e) {}
-        return '';
+        return { name: '', number: '' };
     }
 
     /**
@@ -947,9 +989,6 @@ class TwoCheckoutManager {
                 existing.classList.remove('approved', 'declined', 'loading', 'show');
                 existing.style.display = 'none';
             }
-            // Hidden, so the company label goes with it (TWO-25326 §7): this is
-            // the notice-off case the revised rule exists for.
-            this.refreshCompanyLabel();
             this.clearLoadingState();
             this.hideLoadingOverlay();
             this.showPaymentTerms();
@@ -1215,9 +1254,6 @@ class TwoCheckoutManager {
             messageContainer.style.display = 'none';
             messageContainer.innerHTML = '';
         }
-        // The message is down, so the company label is too (TWO-25326 §7).
-        this.refreshCompanyLabel();
-        
         // Also clear payment terms
         this.hidePaymentTerms();
         
@@ -1242,41 +1278,14 @@ class TwoCheckoutManager {
     /**
      * Get or create message container for order intent feedback (uses existing payment card structure)
      */
-    /**
-     * Ask the payment tile's company label to re-read its gate (TWO-25326 §7).
-     *
-     * The label is shown exactly when the order-intent message is shown and
-     * hidden exactly when it is hidden - no longer whenever a company happens to
-     * be captured. TwoCompanySummary decides that by LOOKING at the message
-     * container, so this passes no state; it only says "the message may have
-     * just changed, look again", and is called from the points in this module
-     * that change it.
-     *
-     * This module is where it matters on PrestaShop: `.two-payment-info` is the
-     * container the shipped template carries and the one the buyer actually
-     * sees.
-     *
-     * @returns {void}
-     */
-    refreshCompanyLabel() {
-        if (typeof window === 'undefined'
-            || !window.TwoCompanySummary
-            || typeof window.TwoCompanySummary.render !== 'function') {
-            return;
-        }
-        window.TwoCompanySummary.render();
-    }
-
     getOrCreateMessageContainer() {
         // First try to use the existing payment info section from the template
         let container = document.querySelector('.two-payment-info');
-        
+
         if (container) {
             // Use existing payment info section and make it visible
             container.style.display = 'block';
             container.classList.add('show');
-            // Now visible, so the company label may need to come with it.
-            this.refreshCompanyLabel();
             return container;
         }
         
@@ -1305,10 +1314,9 @@ class TwoCheckoutManager {
                 }
             }
         }
-        this.refreshCompanyLabel();
         return container;
     }
-    
+
     /**
      * ENHANCED: Show payment terms selector with robust fallback for different themes
      */
@@ -1828,6 +1836,16 @@ class TwoCheckoutManager {
         if (!previousPaymentOption && this.twoPaymentOption) {
             this.initializeModules();
         }
+
+        // TWO-25326 §7.1: unconditionally, not just on the edge above - a
+        // payment-fragment REPLACEMENT (twoPaymentOption non-null both
+        // before and after) never satisfies the edge check, but can still
+        // swap out the mounted #two_tile_company node. initializeCompanySearch()
+        // is cheap to call repeatedly: it no-ops unless the previously
+        // mounted field has actually been detached (see its own comment).
+        if (!this.config.companySearchInAddressArea) {
+            this.initializeCompanySearch();
+        }
         
         // Re-setup payment listeners (idempotent, won't duplicate)
         this._paymentListenersAttached = false;
@@ -1856,8 +1874,14 @@ class TwoCheckoutManager {
         this.detectCheckoutStep();
         this.detectAccountType();
 
-        // Re-initialize company search when address form updates
-        if (this.config.companySearchEnabled) {
+        // Re-initialize company search when address form updates. Tile mode
+        // (TWO-25326 §7.1) does nothing here deliberately: the address
+        // area's native `company` field stays a plain, unenhanced, typeable
+        // text input in that mode (never hidden, never removed - confirmed
+        // bug on woocommerce-plugin, checked not to recur here) and is never
+        // the search's mount point, so an address-form re-render has nothing
+        // for this module to redo.
+        if (this.config.companySearchInAddressArea) {
             if (this.companySearch && this.companySearch.destroy) {
                 this.companySearch.destroy();
                 this.companySearch = null;
@@ -1965,12 +1989,29 @@ class TwoCheckoutManager {
      */
     initializeModules() {
         // Always initialize field validation (for address step)
-        
-        // Initialize company search for address step
-        if (this.config.companySearchEnabled && this.currentStep === 'address') {
+
+        // TWO-25326 §7.1: company search is never off - only WHERE it
+        // renders varies (this.config.companySearchInAddressArea). In tile
+        // mode the address-area's native `company` field is left exactly
+        // alone - plain, unenhanced, still typeable - never hidden or
+        // removed (confirmed bug on woocommerce-plugin, checked not to
+        // recur here).
+        if (this.config.companySearchInAddressArea) {
+            if (this.currentStep === 'address') {
+                this.initializeCompanySearch();
+            }
+        } else {
+            // Try to mount on the tile field every time this runs (idempotent
+            // - initializeCompanySearch() no-ops once this.companySearch is
+            // set, and again if the tile field isn't in the DOM yet, since
+            // PrestaShop loads payment options via a later AJAX call). The
+            // call that actually succeeds is the one after
+            // handleDynamicContentChange() detects the payment option first
+            // appearing (same re-init edge the rest of this module already
+            // relies on for AJAX-loaded payment options).
             this.initializeCompanySearch();
         }
-        
+
         // Phone validation removed - Two API handles validation
 
         // Initialize order intent for payment step with business accounts
@@ -1986,16 +2027,70 @@ class TwoCheckoutManager {
     
     /**
      * Initialize company search module
+     *
+     * TWO-25326 §7.1 (2026-08-03 ruling): the admin setting decides WHERE the
+     * one shared control mounts, never whether it exists. When the tile mount
+     * point (`#two_tile_company`, rendered by paymentinfo.tpl only when the
+     * setting is on) is present, TwoCompanySearch attaches to THAT field
+     * instead of the address form's `input[name='company']` - same class,
+     * same dropdown/query-field/manual-entry behaviour, never a second
+     * implementation. The address-area native field is deliberately left
+     * ALONE in this mode - never hidden, never disabled, still a plain
+     * typeable text input (a real regression on woocommerce-plugin;
+     * checked not to recur here, see the e2e coverage for this file).
      */
     initializeCompanySearch() {
-        if (!this.companySearch && window.TwoCompanySearch) {
+        // TWO-25326 §7.1: in tile mode, PrestaShop can replace the whole
+        // payment-options fragment (a surcharge/cart-line sync, a payment-
+        // form refresh) with a FRESH #two_tile_company node. The re-init
+        // trigger elsewhere in this module (handleDynamicContentChange) only
+        // reacts to `this.twoPaymentOption` going from absent to present, a
+        // one-shot edge - a same-instant swap of an already-present option
+        // never fires it. Detect a stale mount directly instead: if the
+        // field this.companySearch actually attached to is no longer in the
+        // document, drop the instance so the code below creates a fresh one
+        // against whatever #two_tile_company exists now.
+        if (this.companySearch && !this.config.companySearchInAddressArea) {
+            const mountedField = this.companySearch.companyField && this.companySearch.companyField.get
+                ? this.companySearch.companyField.get(0)
+                : null;
+            if (!mountedField || !mountedField.isConnected) {
+                if (typeof this.companySearch.destroy === 'function') {
+                    try {
+                        this.companySearch.destroy();
+                    } catch (e) { /* noop */ }
+                }
+                this.companySearch = null;
+            }
+        }
+        if (this.companySearch || !window.TwoCompanySearch) {
+            return;
+        }
+        if (!this.config.companySearchInAddressArea) {
+            // The tile mount point renders later than the address step
+            // (PrestaShop loads payment options via AJAX) - if it is not in
+            // the DOM yet, do nothing rather than falling back to the
+            // address-area field. initializeModules() calls this again on
+            // every subsequent re-init edge (see its own comment) until this
+            // succeeds.
+            const tileField = document.getElementById('two_tile_company');
+            if (!tileField) {
+                return;
+            }
             this.companySearch = new TwoCompanySearch({
                 checkoutHost: this.config.checkoutHost,
-                addressLookupEnabled: this.config.addressLookupEnabled !== false
+                addressLookupEnabled: this.config.addressLookupEnabled !== false,
+                companyFieldSelector: '#two_tile_company'
             });
+            return;
         }
+        this.companySearch = new TwoCompanySearch({
+            checkoutHost: this.config.checkoutHost,
+            addressLookupEnabled: this.config.addressLookupEnabled !== false,
+            companyFieldSelector: "input[name='company']"
+        });
     }
-    
+
     /**
      * Initialize field validation module
      */
@@ -2013,7 +2108,11 @@ class TwoCheckoutManager {
                 enabled: true,
                 orderIntentUrl: this.config.orderIntentUrl,
                 ajaxToken: this.config.ajaxToken,
-                enablePaymentPreventionOnDecline: true
+                enablePaymentPreventionOnDecline: true,
+                // TWO-25326 §7.1: so collectFormData() knows not to trust the
+                // address-area company/companyid DOM fields once search has
+                // relocated to the tile.
+                companySearchInAddressArea: this.config.companySearchInAddressArea !== false
             });
         }
     }
