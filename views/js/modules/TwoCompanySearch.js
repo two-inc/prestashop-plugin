@@ -3060,8 +3060,16 @@ class TwoCompanySearch {
             this.writeOrganizationToAddressIdentifiers(ui.item.organization_number);
         } else {
             // No org number on this result (e.g. GB, resolved later via
-            // fetchCompanyDetails/lookup_id) - don't show a stale hint from a
-            // previous selection in the meantime.
+            // fetchCompanyDetails/lookup_id). Adversarial review round 4
+            // (TWO-25326): clearing only the visual hint here left
+            // `this.organizationField` (and its `data-two-company-name` tag)
+            // holding the PREVIOUS company's number - and when there is also
+            // no `lookup_id` to defer on, `triggerOrderIntentRecheck()` below
+            // fires immediately, shipping that stale number paired with the
+            // NEW company's name. Clear the real field atomically with the
+            // hint, same pattern as clearSelectedCompany().
+            this.organizationField.val('');
+            this.organizationField.removeAttr('data-two-company-name');
             this.setCompanyIdHint('');
         }
 
