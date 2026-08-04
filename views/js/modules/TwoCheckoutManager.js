@@ -35,6 +35,13 @@ class TwoCheckoutManager {
         this._intentCooldownMs = 800;
         this._lastIntentRunAt = 0;
         this._initialIntentTriggered = false;
+        // TWO-25326: in tile mode, has the buyer actually picked (or
+        // manually entered) a company yet? Set true by
+        // TwoCompanySearch.onCompanySelected() the moment a search result is
+        // picked - see canAutoTriggerOrderIntent(). Irrelevant in address
+        // mode, where company capture already happened at the address step,
+        // well before the payment tile (and this flag) exist.
+        this._tileCompanySelected = false;
         // Monotonic sequence for surcharge cart-line syncs: only the LATEST
         // selection's response may drive the UI (last-wins against re-ordered
         // AJAX responses when the buyer clicks between options quickly), and
@@ -376,7 +383,7 @@ class TwoCheckoutManager {
             if (this.currentStep !== 'payment') {
                 return;
             }
-            if (this.isTwoPaymentSelected() && this.config.orderIntentEnabled) {
+            if (this.isTwoPaymentSelected() && this.config.orderIntentEnabled && this.canAutoTriggerOrderIntent()) {
                 // Only trigger if we haven't processed this selection recently AND we don't have a result yet
                 const hasResult = this.orderIntent && this.orderIntent.lastResult;
                 const recentlyChecked = this._lastSelectionCheck && (Date.now() - this._lastSelectionCheck < 5000);
@@ -406,7 +413,7 @@ class TwoCheckoutManager {
         // is idempotent, so repeated change events are harmless.
         this.syncSurchargeCartLine(isTwoSelected);
 
-        if (isTwoSelected && this.config.orderIntentEnabled) {
+        if (isTwoSelected && this.config.orderIntentEnabled && this.canAutoTriggerOrderIntent()) {
             // Ensure orderIntent is initialized even after dynamic DOM changes
             if (!this.orderIntent && window.TwoOrderIntent) {
                 this.initializeOrderIntent();
@@ -426,7 +433,7 @@ class TwoCheckoutManager {
             this.clearOrderIntentResultFromServer();
         }
     }
-    
+
     /**
      * Reconcile the cart's hidden surcharge line with the current payment
      * selection via the syncSurchargeLine AJAX action, then - only when the
@@ -636,8 +643,8 @@ class TwoCheckoutManager {
      */
     handleTwoPaymentSelection() {
         const isTwoSelected = this.isTwoPaymentSelected();
-        
-        if (isTwoSelected && this.config.orderIntentEnabled) {
+
+        if (isTwoSelected && this.config.orderIntentEnabled && this.canAutoTriggerOrderIntent()) {
             if (!this.orderIntent && window.TwoOrderIntent) {
                 this.initializeOrderIntent();
             }
@@ -655,6 +662,44 @@ class TwoCheckoutManager {
         }
     }
     
+    /**
+     * TWO-25326: is it safe to auto-fire the order-intent check off a generic
+     * "Two payment selected/mounted/re-rendered" signal, as opposed to an
+     * actual company selection?
+     *
+     * In address mode this is always true: by the time the payment step (and
+     * this generic signal) exists, address-step company capture - or its
+     * deliberate absence - is already resolved, well before the payment tile
+     * even renders.
+     *
+     * In tile mode the company control lives INSIDE the tile, so the same
+     * generic signal fires the instant the tile mounts or Two is
+     * auto-selected as the only payment method - before the buyer has picked
+     * anything. Gate it on an actual selection (or manual entry - "My
+     * company is not on the list" is a choice too, just not one made through
+     * search results) having happened first.
+     *
+     * Deliberately NOT applied to triggerOrderIntentForSelection() callers
+     * that ARE the selection event itself (TwoCompanySearch's own
+     * onCompanySelected callback) or the payment-confirmation submit-time
+     * check (handlePaymentConfirmation) - the latter is the last-resort
+     * safety net that must still run and block submission if the buyer never
+     * selected anything.
+     *
+     * @returns {boolean}
+     */
+    canAutoTriggerOrderIntent() {
+        if (this.config.companySearchInAddressArea) {
+            return true;
+        }
+        if (this._tileCompanySelected) {
+            return true;
+        }
+        return !!(this.companySearch
+            && typeof this.companySearch.isManualEntry === 'function'
+            && this.companySearch.isManualEntry());
+    }
+
     /**
      * Trigger order intent specifically for payment selection
      */
@@ -1912,7 +1957,7 @@ class TwoCheckoutManager {
         }
         
         // If on payment step and Two is selected, trigger order intent
-        if (this.currentStep === 'payment' && this.isTwoPaymentSelected() && this.config.orderIntentEnabled) {
+        if (this.currentStep === 'payment' && this.isTwoPaymentSelected() && this.config.orderIntentEnabled && this.canAutoTriggerOrderIntent()) {
             setTimeout(() => {
                 if (this.orderIntent && !this.isLoadingUIShown) {
                     this.triggerOrderIntentForSelection();
@@ -1920,7 +1965,8 @@ class TwoCheckoutManager {
             }, 500);
         }
     }
-    
+
+
     /**
      * Handle PrestaShop address form updates
      */
@@ -1982,7 +2028,7 @@ class TwoCheckoutManager {
             }
             
             // Only trigger once per form update - no retry loop
-            if (this.isTwoPaymentSelected() && this.orderIntent) {
+            if (this.isTwoPaymentSelected() && this.orderIntent && this.canAutoTriggerOrderIntent()) {
                 // Small delay to let DOM settle
                 setTimeout(() => {
                     this.triggerOrderIntentForSelection();
@@ -2072,8 +2118,11 @@ class TwoCheckoutManager {
         // Initialize order intent for payment step with business accounts
         if (this.config.orderIntentEnabled && this.currentStep === 'payment' && this.isBusinessAccount) {
             this.initializeOrderIntent();
-            // If Two is already selected by default (only payment method), trigger intent once
-            if (this.isTwoPaymentSelected() && !this._initialIntentTriggered) {
+            // If Two is already selected by default (only payment method), trigger intent once.
+            // TWO-25326: gated on canAutoTriggerOrderIntent() - in tile mode this method runs
+            // on the tile's initial mount, before the buyer has picked a company from the
+            // search results it contains, so firing unconditionally here was the bug.
+            if (this.isTwoPaymentSelected() && !this._initialIntentTriggered && this.canAutoTriggerOrderIntent()) {
                 this._initialIntentTriggered = true;
                 this.triggerOrderIntentForSelection();
             }
