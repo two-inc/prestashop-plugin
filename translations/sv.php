@@ -87,6 +87,7 @@ $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_eca5a3449475f365c129
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_f23b2c9fe4875f2c3dbc61a4bd02705b'] = 'Two köparportal';
 $_MODULE['<{twopayment}prestashop>form_92fbf0e5d97b8afd7e73126b52bdc4bb'] = 'Välj en fil';
 $_MODULE['<{twopayment}prestashop>form_f2a6c498fb90ee345d997f888fce3b18'] = 'Ta bort';
+$_MODULE['<{twopayment}prestashop>paymentinfo_1c76cbfe21c6f44c1d1e59d54f3e4420'] = 'Företag';
 $_MODULE['<{twopayment}prestashop>paymentinfo_1ffcb4e0a351d5e143bec6362c0feaf8'] = 'Betalning förfaller vid månadsskiftet plus det valda antalet dagar räknat från när din order levereras';
 $_MODULE['<{twopayment}prestashop>paymentinfo_26615a6d6e63f2904432b8b425ee6e93'] = 'Kontrollerar tillgänglighet...';
 $_MODULE['<{twopayment}prestashop>paymentinfo_5aef0c6f737f3b7048b5e399e9d843a5'] = 'Företagsbetalningar gjorda enkla';
@@ -323,7 +324,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_980d43b4b58ff388e0f1c3c5ff253d1d'] 
 $_MODULE['<{twopayment}prestashop>twopayment_98ec681d588dc0fae27ac945915ffe5e'] = 'Felsökningstips';
 $_MODULE['<{twopayment}prestashop>twopayment_990f982c41ce66c911e505fb58fa8e46'] = 'Kunde inte behandla din order med Two-betalning.';
 $_MODULE['<{twopayment}prestashop>twopayment_99315aa41524d1a9a67fb031b473be73'] = 'Vad modulen KAN göra';
-$_MODULE['<{twopayment}prestashop>twopayment_9963aaf1a29f894206b4e6fd7febae61'] = 'Din faktura hos Two kan inte godkännas just nu för %s';
 $_MODULE['<{twopayment}prestashop>twopayment_9af4c01d9a1ebe24c5ae45e7b07024c3'] = 'Skicka momsdelsummor i förfrågningarnas nyttolast';
 $_MODULE['<{twopayment}prestashop>twopayment_9bc4151431237fc71bc676000348f622'] = 'Vad modulen INTE kan göra';
 $_MODULE['<{twopayment}prestashop>twopayment_9c1ea2aae30722194e5694db3057fb7f'] = 'Two kunde inte skapa denna order från din varukorg.';
@@ -399,7 +399,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_d2f68faa84d4bab378419dae024f85f9'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d314a00556eb88a960abf8a0de8b45f8'] = 'Några av uppgifterna som angetts är ogiltiga. Kontrollera uppgifterna i din fakturaadress och försök igen.';
 $_MODULE['<{twopayment}prestashop>twopayment_d32e67e619603fc5368d087716b1afb4'] = 'Företagsuppgifterna som angetts är ogiltiga. Gå tillbaka till din fakturaadress och sök efter ditt företagsnamn för att välja ett giltigt företag.';
 $_MODULE['<{twopayment}prestashop>twopayment_d34347a5f791b2cecfda204f7a0b575d'] = 'Ange en titel som visas i kassan som betalningsmetodens titel.';
-$_MODULE['<{twopayment}prestashop>twopayment_d39e2cdd713cb99830d198b85787bf64'] = 'Din faktura hos Two kommer sannolikt att godkännas för %s, med förbehåll för ytterligare kontroller.';
 $_MODULE['<{twopayment}prestashop>twopayment_d40f2c2b7a99b454ace5554f91e54c8c'] = 'Fast belopp och procent';
 $_MODULE['<{twopayment}prestashop>twopayment_d417918cd6fea0a0d40a394dc3826e44'] = 'Two - BNPL för företag';
 $_MODULE['<{twopayment}prestashop>twopayment_d4b644ceb41c3a19d874ee330ac45f97'] = 'Ingen avrundning';
@@ -449,3 +448,11 @@ $_MODULE['<{twopayment}prestashop>twopayment_fa8a347b2b0ab6e45116e184b464fe5c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_fb9c6bde479f74937d885d4984147a84'] = 'Modulversion:';
 $_MODULE['<{twopayment}prestashop>twopayment_fd43783f3df5a22e0c07cc6de74db303'] = 'Metod för köparens tilläggsavgift';
 $_MODULE['<{twopayment}prestashop>twopayment_fe24567972432f23380c0c9ced6566a4'] = '-- Inte angivet: neka ordern i stället --';
+$_MODULE['<{twopayment}prestashop>twopayment_05f941f1bc258935779dd8002187ed0c'] = 'Plats för företagssökning';
+$_MODULE['<{twopayment}prestashop>twopayment_42ecff9e5e5dfa679e0a1fcd85dbb65f'] = 'Var kontrollen för företagssökning (rullgardinsmeny / sökfält / manuell inmatning) visas i kassan. "Nej" (standard): i faktureringsadressområdet, precis som idag. "Ja": SAMMA kontroll visas istället inuti Two-betalningsrutan, och adressområdet visar då inget företagsfält alls. Detta stänger aldrig av företagssökningen - det avgör bara var den enda kontrollen finns.';
+$_MODULE['<{twopayment}prestashop>twopayment_c0497d19000e3b89dea5c3d65b0d2ca7'] = 'Adressområde (standard)';
+$_MODULE['<{twopayment}prestashop>twopayment_b8be99833b3c4cbb693ca00df66f476a'] = 'Betalningsruta';
+$_MODULE['<{twopayment}prestashop>twopayment_6d818b8b22700d2a99440ee017b0a4e8'] = 'Den här beställningen från %s (%s) kommer sannolikt att godkännas av Two';
+$_MODULE['<{twopayment}prestashop>twopayment_2541a3eb94a103e88a8090ac10b1276b'] = 'Two är inte tillgängligt för den här beställningen från %s (%s)';
+$_MODULE['<{twopayment}prestashop>twopayment_1ec613a214555191e9ebf229eed7ecf4'] = 'Den här beställningen från %s kommer sannolikt att godkännas av Two';
+$_MODULE['<{twopayment}prestashop>twopayment_25aae1c9462dc158b23f4ae8a621faae'] = 'Two är inte tillgängligt för den här beställningen från %s';

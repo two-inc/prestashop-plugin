@@ -164,6 +164,24 @@ function loadCompanySearch() {
 }
 
 /**
+ * Load TwoOrderIntent as a <script> tag would.
+ *
+ * No jQuery/bus setup like loadCompanySearch(): buildCompanyIntentMessage()
+ * (TWO-25326 §7.3) only reads window.twopayment, so a bare load is enough for
+ * testing the sentence-building logic in isolation.
+ *
+ * @returns {Function} the TwoOrderIntent class
+ */
+function loadOrderIntent() {
+    loadScript('views/js/modules/TwoOrderIntent.js');
+    const TwoOrderIntent = global.window.TwoOrderIntent;
+    if (typeof TwoOrderIntent !== 'function') {
+        throw new Error('harness: TwoOrderIntent was not exported onto window');
+    }
+    return TwoOrderIntent;
+}
+
+/**
  * The subset of the PrestaShop address form the module reads and writes.
  *
  * `id_country` carries `data-iso-code`, which is the first of getCurrentCountry()'s
@@ -447,44 +465,13 @@ function buildPaymentTile() {
     if (!container) {
         throw new Error('harness: paymentinfo.tpl produced no .two-payment-container');
     }
-    // The `{if}` strip is non-greedy and the template's only such block
-    // currently sits BELOW the summary. An `{if}` added above it, closing below,
-    // would swallow the summary block - so check for it here rather than letting
-    // a suite fail somewhere unrelated with a null dereference.
-    if (!container.querySelector('.two-company-summary')) {
-        throw new Error('harness: the Smarty strip removed .two-company-summary from the tile');
-    }
+    // The `{if}` strip is non-greedy, so each `{if}...{/if}` block in the
+    // template (the tile-location company-search mount, TWO-25326 §7.1, and
+    // the optional-fields block below it) is stripped independently as long
+    // as they do not nest or overlap.
     global.document.body.appendChild(container);
     return container;
 }
-
-/**
- * Load TwoCompanySummary as a <script> tag would, with its static state reset.
- *
- * The sole-trader pair is class-static by design - it has to outlive the tile
- * DOM - so it must not outlive a TEST. Reset by assignment rather than through
- * setSoleTrader(null), which would render as a side effect of loading.
- *
- * @returns {Function} the TwoCompanySummary class
- */
-function loadCompanySummary() {
-    loadScript('views/js/modules/TwoCompanySummary.js');
-    const TwoCompanySummary = global.window.TwoCompanySummary;
-    if (typeof TwoCompanySummary !== 'function') {
-        throw new Error('harness: TwoCompanySummary was not exported onto window');
-    }
-    TwoCompanySummary._soleTrader = null;
-    // Class-static like `_soleTrader`, and leaked across tests until now: a
-    // pair pushed by one test's intent payload stayed readable by the next.
-    TwoCompanySummary._intentCompany = null;
-    // Also class-static, and for the same reason: the bus it guards cannot be
-    // unsubscribed from, so the flag has to survive instances. It must not
-    // survive tests, or the first test in a file is the only one whose instance
-    // ever registers.
-    TwoCompanySummary._busBound = false;
-    return TwoCompanySummary;
-}
-
 
 /**
  * The panel's own controls (TWO-25326 §1/§2).
@@ -593,11 +580,11 @@ function resultTexts() {
 module.exports = {
     REPO_ROOT: REPO_ROOT,
     buildPaymentTile: buildPaymentTile,
-    loadCompanySummary: loadCompanySummary,
     countGifFrames: countGifFrames,
     releaseWidgets: releaseWidgets,
     flushPromises: flushPromises,
     loadCompanySearch: loadCompanySearch,
+    loadOrderIntent: loadOrderIntent,
     loadScript: loadScript,
     installStylesheet: installStylesheet,
     buildAddressForm: buildAddressForm,

@@ -474,6 +474,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_ENABLE_PO_NUMBER', 1);
         Configuration::updateValue('PS_TWO_ENABLE_INVOICE_EMAIL', 1);
         Configuration::updateValue('PS_TWO_ADDRESS_LOOKUP', 1); // Default: address lookup fills the address step, matching every other plugin
+        Configuration::updateValue('PS_TWO_COMPANY_SEARCH_TILE', 0); // Default: company search stays in the address area (TWO-25326 §7.1)
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', 1);
         Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', 'STANDARD'); // Default: Standard payment terms (not EOM)
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1); // Default: 30 days enabled
@@ -707,6 +708,7 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_DISABLE_SSL_VERIFY');
         Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_NAME');
         Configuration::deleteByName('PS_TWO_ADDRESS_LOOKUP');
+        Configuration::deleteByName('PS_TWO_COMPANY_SEARCH_TILE');
         // Retired admin toggle (TWO-25190) - the org.id auto-complete switch
         // was rendered and stored but no JavaScript ever read the
         // `company_id_search` variable it fed. upgrade-2.6.5 deletes the row;
@@ -1578,6 +1580,26 @@ class Twopayment extends PaymentModule
                     ),
                     array(
                         'type' => 'switch',
+                        'label' => $this->l('Company search location'),
+                        'name' => 'PS_TWO_COMPANY_SEARCH_TILE',
+                        'is_bool' => true,
+                        'desc' => $this->l('Where the company search control (dropdown / query field / manual entry) renders on checkout. "No" (default): in the billing address area, exactly as today. "Yes": the SAME control instead renders inside the Two payment tile, and the address area shows no company field at all. This never turns the company search off - it only decides where the one control lives.'),
+                        'required' => true,
+                        'values' => array(
+                            array(
+                                'id' => 'PS_TWO_COMPANY_SEARCH_TILE_OFF',
+                                'value' => 0,
+                                'label' => $this->l('Address area (default)')
+                            ),
+                            array(
+                                'id' => 'PS_TWO_COMPANY_SEARCH_TILE_ON',
+                                'value' => 1,
+                                'label' => $this->l('Payment tile')
+                            ),
+                        ),
+                    ),
+                    array(
+                        'type' => 'switch',
                         'label' => $this->l('Automatically fulfill orders with Two'),
                         'name' => 'PS_TWO_FINALIZE_PURCHASE',
                         'is_bool' => true,
@@ -1686,6 +1708,28 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Whether the company-search control renders in the payment tile instead
+     * of the address area (TWO-25326 §7.1, 2026-08-03 design ruling). This is
+     * "here vs there" for the ONE shared control, never "on vs off" - the
+     * control always exists.
+     *
+     * An absent row (pre-upgrade install) resolves to '0' - PrestaShop had no
+     * such setting before this ticket, and was always address-area.
+     *
+     * @return string '1' if the tile location is active, else '0'
+     */
+    protected function getCompanySearchTileEnabled()
+    {
+        $value = Configuration::get('PS_TWO_COMPANY_SEARCH_TILE');
+
+        if ($value === false || $value === null || $value === '') {
+            return '0';
+        }
+
+        return ((int) $value) === 1 ? '1' : '0';
+    }
+
+    /**
      * Dropdown options for the default shipping tax code. Same construction
      * as getTwoSurchargeTaxRulesGroupOptions() - string ids so PHP 7's loose
      * `'' == 0` cannot conflate the unselected placeholder with "No tax", and
@@ -1747,6 +1791,7 @@ class Twopayment extends PaymentModule
         // install whose upgrade script has not run yet renders the switch in
         // the position it is actually behaving in.
         $fields_values['PS_TWO_ADDRESS_LOOKUP'] = Tools::getValue('PS_TWO_ADDRESS_LOOKUP', $this->getAddressLookupEnabled());
+        $fields_values['PS_TWO_COMPANY_SEARCH_TILE'] = Tools::getValue('PS_TWO_COMPANY_SEARCH_TILE', $this->getCompanySearchTileEnabled());
         $fields_values['PS_TWO_FINALIZE_PURCHASE'] = Tools::getValue('PS_TWO_FINALIZE_PURCHASE', Configuration::get('PS_TWO_FINALIZE_PURCHASE'));
         $fields_values['PS_TWO_ENABLE_TAX_SUBTOTALS'] = Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
@@ -1786,6 +1831,7 @@ class Twopayment extends PaymentModule
     {
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME'));
         Configuration::updateValue('PS_TWO_ADDRESS_LOOKUP', (int) Tools::getValue('PS_TWO_ADDRESS_LOOKUP', 1));
+        Configuration::updateValue('PS_TWO_COMPANY_SEARCH_TILE', (int) Tools::getValue('PS_TWO_COMPANY_SEARCH_TILE', 0));
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', Tools::getValue('PS_TWO_FINALIZE_PURCHASE'));
         Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', (int) Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
@@ -3296,8 +3342,18 @@ class Twopayment extends PaymentModule
             'invalid_response_from_server' => $this->l('Invalid response from server'),
             'choose_payment_terms' => $this->l('Choose the Buy Now, Pay Later option that works best for you'),
             'payment_period_starts' => $this->l('Your payment period starts when your order is fulfilled'),
-            'invoice_likely_accepted_for' => $this->l('Your invoice with Two is likely to be accepted for %s, subject to additional checks.'),
-            'invoice_cannot_be_approved_for' => $this->l('Your invoice with Two cannot be approved at this time for %s'),
+            // TWO-25326 §7.3 (2026-08-03 design ruling): the tile is
+            // text-only when the address-area control is active - no
+            // separate company name/number label, just these two sentences
+            // with the company folded straight in. Exact wording, matched
+            // by the cross-platform test script - do not paraphrase.
+            'invoice_likely_accepted_for' => $this->l('This order by %s (%s) is likely to be accepted by Two'),
+            'invoice_cannot_be_approved_for' => $this->l('Two is not available for this order by %s (%s)'),
+            // Name-only fallback: a company captured without an organisation
+            // number (should not occur once §6 gating is enforced, but kept
+            // so a stray no-number case never renders "Example Ltd ()").
+            'invoice_likely_accepted_for_no_number' => $this->l('This order by %s is likely to be accepted by Two'),
+            'invoice_cannot_be_approved_for_no_number' => $this->l('Two is not available for this order by %s'),
             'invoice_likely_accepted' => $this->l('Your invoice with Two is likely to be accepted, subject to additional checks.'),
             'invoice_cannot_be_approved' => $this->l('Your invoice with Two cannot be approved at this time'),
             'invalid_phone_number' => $this->l('The phone number in your billing address appears to be invalid. Please go back and ensure you have entered a valid phone number for your country.'),
@@ -3387,6 +3443,10 @@ class Twopayment extends PaymentModule
                 // widget itself, this gates only what a selection writes into
                 // the address step (TWO-25203).
                 'address_lookup' => $this->getAddressLookupEnabled(),
+                // TWO-25326 §7.1 (2026-08-03 ruling): '1' relocates the SAME
+                // company-search control into the payment tile instead of the
+                // address area. Never a second control, never on/off.
+                'company_search_tile' => $this->getCompanySearchTileEnabled(),
                 // Deliberately NOT handing the optional-field switches to the
                 // JS (ABN-472). Nothing ever read `enable_department` /
                 // `enable_project` here - the gate is server-side and total:
@@ -3460,17 +3520,9 @@ class Twopayment extends PaymentModule
         $this->context->controller->registerJavascript('two-order-intent', $this->getTwoModuleAssetPath('views/js/modules/TwoOrderIntent.js'), array('priority' => 202, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoOrderIntent.js')));
         $this->context->controller->registerJavascript('two-sole-trader', $this->getTwoModuleAssetPath('views/js/modules/TwoSoleTrader.js'), array('priority' => 204, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoSoleTrader.js')));
         $this->context->controller->registerJavascript('two-optional-fields', $this->getTwoModuleAssetPath('views/js/modules/TwoOptionalFields.js'), array('priority' => 204, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoOptionalFields.js')));
-        // Read-only company summary in the payment tile (TWO-25288).
-        //
-        // The priority is cosmetic, not a dependency guarantee, and it would be
-        // wrong to read it as one. TwoCompanySearch reaches this class only from
-        // handlers on an instance that views/js/twopayment.js builds inside
-        // `$(document).ready`, by which point every `async: false` script has
-        // already run - so any priority at or below the checkout manager's is
-        // equivalent. What actually makes the call safe is the `window
-        // .TwoCompanySummary && typeof ... === 'function'` guard at the call site,
-        // which also covers the address step, where the tile does not exist.
-        $this->context->controller->registerJavascript('two-company-summary', $this->getTwoModuleAssetPath('views/js/modules/TwoCompanySummary.js'), array('priority' => 200, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoCompanySummary.js')));
+        // TwoCompanySummary.js (read-only tile label, TWO-25288) REMOVED by
+        // TWO-25326 §7.3 (2026-08-03 ruling): the captured company now lives
+        // only inside the intent-message sentence, never a separate label.
         // Phone validation removed - Two API handles phone number validation
         $this->context->controller->registerJavascript('two-checkout-manager', $this->getTwoModuleAssetPath('views/js/modules/TwoCheckoutManager.js'), array('priority' => 205, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoCheckoutManager.js')));
         $this->context->controller->registerJavascript('two-script', $this->getTwoModuleAssetPath('views/js/twopayment.js'), array('priority' => 206, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/twopayment.js')));
@@ -3655,6 +3707,11 @@ class Twopayment extends PaymentModule
             // Optional buyer reference fields, rendered inside the tile rather
             // than in the billing address block (ABN-472).
             'two_optional_fields' => $optional_fields,
+            // TWO-25326 §7.1 (2026-08-03 ruling): "here vs there" for the ONE
+            // company-search control (TwoCompanySearch.js). When true, the
+            // tile renders its own mount point for that control and the
+            // address-area control is suppressed client-side.
+            'company_search_tile' => $this->getCompanySearchTileEnabled() === '1',
         ));
 
         $inputs = ['token' => ['name' => 'token', 'type' => 'hidden', 'value' => Tools::getToken(false)]];

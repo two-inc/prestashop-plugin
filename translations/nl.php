@@ -87,6 +87,7 @@ $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_eca5a3449475f365c129
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_f23b2c9fe4875f2c3dbc61a4bd02705b'] = 'Two-koperportaal';
 $_MODULE['<{twopayment}prestashop>form_92fbf0e5d97b8afd7e73126b52bdc4bb'] = 'Kies een bestand';
 $_MODULE['<{twopayment}prestashop>form_f2a6c498fb90ee345d997f888fce3b18'] = 'Verwijderen';
+$_MODULE['<{twopayment}prestashop>paymentinfo_1c76cbfe21c6f44c1d1e59d54f3e4420'] = 'Bedrijf';
 $_MODULE['<{twopayment}prestashop>paymentinfo_1ffcb4e0a351d5e143bec6362c0feaf8'] = 'Betaling vervalt aan het einde van de maand waarin je bestelling wordt uitgeleverd, plus het gekozen aantal dagen';
 $_MODULE['<{twopayment}prestashop>paymentinfo_26615a6d6e63f2904432b8b425ee6e93'] = 'Beschikbaarheid controleren...';
 $_MODULE['<{twopayment}prestashop>paymentinfo_5aef0c6f737f3b7048b5e399e9d843a5'] = 'Zakelijk betalen, eenvoudig gemaakt';
@@ -323,7 +324,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_980d43b4b58ff388e0f1c3c5ff253d1d'] 
 $_MODULE['<{twopayment}prestashop>twopayment_98ec681d588dc0fae27ac945915ffe5e'] = 'Tips voor probleemoplossing';
 $_MODULE['<{twopayment}prestashop>twopayment_990f982c41ce66c911e505fb58fa8e46'] = 'Je bestelling kan niet worden verwerkt met Two-betaling.';
 $_MODULE['<{twopayment}prestashop>twopayment_99315aa41524d1a9a67fb031b473be73'] = 'Wat de plug-in WEL kan';
-$_MODULE['<{twopayment}prestashop>twopayment_9963aaf1a29f894206b4e6fd7febae61'] = 'Je factuur bij Two kan op dit moment niet worden goedgekeurd voor %s';
 $_MODULE['<{twopayment}prestashop>twopayment_9af4c01d9a1ebe24c5ae45e7b07024c3'] = 'Btw-subtotalen meesturen in request-payloads';
 $_MODULE['<{twopayment}prestashop>twopayment_9bc4151431237fc71bc676000348f622'] = 'Wat de plug-in NIET kan';
 $_MODULE['<{twopayment}prestashop>twopayment_9c1ea2aae30722194e5694db3057fb7f'] = 'Two kon deze bestelling niet opbouwen uit je winkelwagen.';
@@ -399,7 +399,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_d2f68faa84d4bab378419dae024f85f9'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d314a00556eb88a960abf8a0de8b45f8'] = 'Een deel van de opgegeven informatie is ongeldig. Controleer de gegevens van je factuuradres en probeer het opnieuw.';
 $_MODULE['<{twopayment}prestashop>twopayment_d32e67e619603fc5368d087716b1afb4'] = 'De opgegeven bedrijfsgegevens zijn ongeldig. Ga terug naar je factuuradres en zoek op je bedrijfsnaam om een geldig bedrijf te selecteren.';
 $_MODULE['<{twopayment}prestashop>twopayment_d34347a5f791b2cecfda204f7a0b575d'] = 'Vul een titel in die op de afrekenpagina wordt weergegeven als titel van de betaalmethode.';
-$_MODULE['<{twopayment}prestashop>twopayment_d39e2cdd713cb99830d198b85787bf64'] = 'Je factuur bij Two wordt waarschijnlijk geaccepteerd voor %s, onder voorbehoud van aanvullende controles.';
 $_MODULE['<{twopayment}prestashop>twopayment_d40f2c2b7a99b454ace5554f91e54c8c'] = 'Vast bedrag en percentage';
 $_MODULE['<{twopayment}prestashop>twopayment_d417918cd6fea0a0d40a394dc3826e44'] = 'Two - BNPL voor bedrijven';
 $_MODULE['<{twopayment}prestashop>twopayment_d4b644ceb41c3a19d874ee330ac45f97'] = 'Geen afronding';
@@ -449,3 +448,11 @@ $_MODULE['<{twopayment}prestashop>twopayment_fa8a347b2b0ab6e45116e184b464fe5c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_fb9c6bde479f74937d885d4984147a84'] = 'Plug-inversie:';
 $_MODULE['<{twopayment}prestashop>twopayment_fd43783f3df5a22e0c07cc6de74db303'] = 'Toeslagmethode koper';
 $_MODULE['<{twopayment}prestashop>twopayment_fe24567972432f23380c0c9ced6566a4'] = '-- Niet ingesteld: bestelling weigeren --';
+$_MODULE['<{twopayment}prestashop>twopayment_05f941f1bc258935779dd8002187ed0c'] = 'Locatie van bedrijfszoekfunctie';
+$_MODULE['<{twopayment}prestashop>twopayment_42ecff9e5e5dfa679e0a1fcd85dbb65f'] = 'Waar de bedrijfszoekfunctie (vervolgkeuzelijst / zoekveld / handmatige invoer) wordt weergegeven tijdens het afrekenen. "Nee" (standaard): in het factuuradresgebied, precies zoals vandaag. "Ja": hetzelfde element wordt in plaats daarvan weergegeven in de Two-betaaltegel, en het adresgebied toont dan helemaal geen bedrijfsveld. Dit schakelt de bedrijfszoekfunctie nooit uit - het bepaalt alleen waar dat ene element zich bevindt.';
+$_MODULE['<{twopayment}prestashop>twopayment_c0497d19000e3b89dea5c3d65b0d2ca7'] = 'Adresgebied (standaard)';
+$_MODULE['<{twopayment}prestashop>twopayment_b8be99833b3c4cbb693ca00df66f476a'] = 'Betaaltegel';
+$_MODULE['<{twopayment}prestashop>twopayment_6d818b8b22700d2a99440ee017b0a4e8'] = 'Deze bestelling van %s (%s) wordt waarschijnlijk geaccepteerd door Two';
+$_MODULE['<{twopayment}prestashop>twopayment_2541a3eb94a103e88a8090ac10b1276b'] = 'Two is niet beschikbaar voor deze bestelling van %s (%s)';
+$_MODULE['<{twopayment}prestashop>twopayment_1ec613a214555191e9ebf229eed7ecf4'] = 'Deze bestelling van %s wordt waarschijnlijk geaccepteerd door Two';
+$_MODULE['<{twopayment}prestashop>twopayment_25aae1c9462dc158b23f4ae8a621faae'] = 'Two is niet beschikbaar voor deze bestelling van %s';
