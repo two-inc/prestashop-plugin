@@ -62,6 +62,17 @@ describe('TwoOrderIntent.buildCompanyIntentMessage', () => {
         expect(message).toBe('This order by %s Ltd (123) is likely to be accepted by Two');
     });
 
+    test('a brand override with an extra %s placeholder degrades to literal text rather than truncating the sentence', () => {
+        // Adversarial review finding: fillTemplate() must not silently drop
+        // everything after the last placeholder it has a value for. A
+        // misconfigured override with two %s tokens (only one value is ever
+        // passed for the approved-override path) must keep the tail of the
+        // sentence, even if the second token itself can't be substituted.
+        global.window.twopayment.intent_approved_notice = 'Approved for %s, ref %s, thanks';
+        const message = intent.buildCompanyIntentMessage(true, 'Example Ltd', '556677-8899');
+        expect(message).toBe('Approved for Example Ltd, ref %s, thanks');
+    });
+
     test('brand override (TWO-25218) is honoured for approved messages, name-only', () => {
         global.window.twopayment.intent_approved_notice = 'Zakelijk krediet voor %s is beschikbaar';
         const message = intent.buildCompanyIntentMessage(true, 'Example Ltd', '556677-8899');

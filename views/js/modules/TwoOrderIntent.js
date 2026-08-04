@@ -9,6 +9,12 @@ class TwoOrderIntent {
             orderIntentUrl: '',
             ajaxToken: '',
             enablePaymentPreventionOnDecline: true,
+            // TWO-25326 §7.1: whether the company-search control is in the
+            // address area (true, default) or has relocated to the payment
+            // tile (false). Gates whether collectFormData() may trust the
+            // address form's `company`/`companyid` DOM fields at all - see
+            // its own comment.
+            companySearchInAddressArea: true,
             ...config
         };
         
@@ -126,8 +132,18 @@ class TwoOrderIntent {
     static fillTemplate(template, values) {
         const parts = String(template).split('%s');
         let result = parts[0];
-        for (let i = 0; i < values.length && i + 1 < parts.length; i++) {
+        const consumed = Math.min(values.length, parts.length - 1);
+        for (let i = 0; i < consumed; i++) {
             result += values[i] + parts[i + 1];
+        }
+        // A template with MORE `%s` placeholders than supplied values (e.g. a
+        // misconfigured brand override, TWO-25218, meant to carry one
+        // placeholder but written with two) must not silently drop the rest
+        // of the sentence - the leftover placeholders degrade to their
+        // literal "%s" text instead of vanishing along with everything after
+        // them.
+        if (consumed < parts.length - 1) {
+            result += '%s' + parts.slice(consumed + 1).join('%s');
         }
         return result;
     }
@@ -250,10 +266,27 @@ class TwoOrderIntent {
                 action: 'checkOrderIntent',
                 token: this.config.ajaxToken
             };
-            const companyField = document.querySelector("input[name='company']");
-            const companyIdField = document.querySelector("input[name='companyid']");
-            let company = companyField ? (companyField.value || '') : '';
-            let companyid = companyIdField ? (companyIdField.value || '') : '';
+            let company = '';
+            let companyid = '';
+            // TWO-25326 §7.1: the address-area `company`/`companyid` DOM
+            // fields are only a trustworthy source when the search control
+            // actually lives there. In tile mode, `company` stays visible
+            // and typeable BY DESIGN (never hidden - a real regression on
+            // woocommerce-plugin) while `companyid` is the tile's OWN hidden
+            // field elsewhere in the DOM - reading them here would let
+            // whatever the buyer typed (or left blank) in that unrelated,
+            // uncontrolled field silently override or mismatch-pair with
+            // the company the buyer actually picked via the tile, since the
+            // server's own resolver (getCompanyDataWithFallbacks()) treats
+            // posted form data as HIGHER priority than the session the tile
+            // selection persists. Leave both empty so the fallback below
+            // always reaches for the session/cookie value instead.
+            if (this.config.companySearchInAddressArea !== false) {
+                const companyField = document.querySelector("input[name='company']");
+                const companyIdField = document.querySelector("input[name='companyid']");
+                company = companyField ? (companyField.value || '') : '';
+                companyid = companyIdField ? (companyIdField.value || '') : '';
+            }
 
             // If country changed since last selection, invalidate any existing values until a new selection is made
             let countryChanged = false;
@@ -299,8 +332,14 @@ class TwoOrderIntent {
                             formData.company = '';
                             formData.companyid = '';
                         }
-                        // Persist last company for messaging
+                        // Persist last company for messaging - name and number
+                        // reassigned TOGETHER, from the SAME source (this
+                        // session-fetch response), so the visible sentence
+                        // (buildCompanyIntentMessage) can never pair a fresh
+                        // name with a stale number left over from a
+                        // different company.
                         this.lastCompany = formData.company;
+                        this.lastCompanyNumber = formData.companyid || null;
                     } else {
                         formData.company = company;
                         formData.companyid = companyid;
@@ -325,7 +364,10 @@ class TwoOrderIntent {
             }
             formData.company = company;
             formData.companyid = companyid;
+            // Reassigned together, from the SAME (address-area DOM) read
+            // above, for the same reason as the session-fetch branch above.
             this.lastCompany = company;
+            this.lastCompanyNumber = companyid || null;
             const selectedAddressId = this.getCurrentAddressId();
             if (selectedAddressId > 0) {
                 formData.id_address_invoice = selectedAddressId;
@@ -542,9 +584,15 @@ class TwoOrderIntent {
         if (result.approved && approvedSuppressed) {
             result.message = '';
         }
-        const companyField = document.querySelector("input[name='company']");
-        if (!this.lastCompany || (companyField && companyField.value)) {
-            this.lastCompany = companyField && companyField.value ? companyField.value : this.lastCompany;
+        // TWO-25326 §7.1: same reasoning as collectFormData() - the
+        // address-area field is not a trustworthy source once search has
+        // relocated to the tile (stays visible/typeable by design, but
+        // uncontrolled). Only re-read it here in address-area mode.
+        if (this.config.companySearchInAddressArea !== false) {
+            const companyField = document.querySelector("input[name='company']");
+            if (!this.lastCompany || (companyField && companyField.value)) {
+                this.lastCompany = companyField && companyField.value ? companyField.value : this.lastCompany;
+            }
         }
         // Inject company into message immediately to ensure UI gets the contextual string
         if (this.lastCompany && typeof this.lastCompany === 'string' && this.lastCompany.trim().length > 0) {
