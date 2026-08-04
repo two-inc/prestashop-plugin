@@ -210,9 +210,16 @@ class TwoOrderIntent {
 
         if (name) {
             this.lastCompany = name;
-        }
-        if (number) {
-            this.lastCompanyNumber = number;
+            // This payload's number, deliberately, and never a retained
+            // earlier value: a payload carrying a name with no number (a
+            // manual/sole-trader entry, name-only by design) must show the
+            // name alone in the sentence, never pair it with a number left
+            // over from a company the buyer has since moved off. Adversarial
+            // review round 2 (TWO-25326): this was a real bug reintroduced
+            // here - the two assignments used to be independent `if`s, which
+            // is exactly the failure mode the deleted TwoCompanySummary.js's
+            // own setIntentCompany() call was written to avoid.
+            this.lastCompanyNumber = number || null;
         }
     }
 
@@ -590,8 +597,20 @@ class TwoOrderIntent {
         // uncontrolled). Only re-read it here in address-area mode.
         if (this.config.companySearchInAddressArea !== false) {
             const companyField = document.querySelector("input[name='company']");
-            if (!this.lastCompany || (companyField && companyField.value)) {
-                this.lastCompany = companyField && companyField.value ? companyField.value : this.lastCompany;
+            const fieldValue = companyField && companyField.value ? companyField.value : null;
+            if (!this.lastCompany || fieldValue) {
+                // Adversarial review round 2 (TWO-25326): a field value that
+                // differs from what lastCompany already held means the buyer
+                // retyped the name since that number was captured - clear
+                // lastCompanyNumber too, rather than risk pairing a fresh
+                // name with a stale number in the rendered sentence. An
+                // unchanged value (the common case: this field is read-only
+                // once a real search result is confirmed) is a no-op either
+                // way, so this never discards a still-valid number.
+                if (fieldValue && fieldValue !== this.lastCompany) {
+                    this.lastCompanyNumber = null;
+                }
+                this.lastCompany = fieldValue || this.lastCompany;
             }
         }
         // Inject company into message immediately to ensure UI gets the contextual string

@@ -102,3 +102,47 @@ describe('TwoOrderIntent.buildCompanyIntentMessage', () => {
             .toBe('Translated declined for Example Ltd (123)');
     });
 });
+
+describe('TwoOrderIntent.publishPayloadCompany - name/number pairing (adversarial review round 2)', () => {
+    let TwoOrderIntent;
+    let intent;
+
+    beforeEach(() => {
+        jest.resetModules();
+        delete global.window.TwoOrderIntent;
+        global.window.twopayment = { i18n: {} };
+        TwoOrderIntent = loadOrderIntent();
+        intent = new TwoOrderIntent({ enabled: true });
+    });
+
+    afterEach(() => {
+        delete global.window.twopayment;
+    });
+
+    test('a name+number payload sets both together', () => {
+        intent.publishPayloadCompany({ buyer: { company: { company_name: 'Example Ltd', organization_number: '556677-8899' } } });
+        expect(intent.lastCompany).toBe('Example Ltd');
+        expect(intent.lastCompanyNumber).toBe('556677-8899');
+    });
+
+    test('a later name-only payload (manual/sole-trader entry) clears the PREVIOUS company\'s retained number rather than pairing it with the new name', () => {
+        // Mutation guard for the exact bug the deleted TwoCompanySummary.js
+        // was written to avoid: reassigning lastCompany and lastCompanyNumber
+        // as two INDEPENDENT `if`s (rather than one joint reassignment) lets
+        // a stale number from a company the buyer has moved off survive
+        // alongside a completely different, freshly-selected name.
+        intent.publishPayloadCompany({ buyer: { company: { company_name: 'First Holdings Ltd', organization_number: '111111-1111' } } });
+        expect(intent.lastCompanyNumber).toBe('111111-1111');
+
+        intent.publishPayloadCompany({ buyer: { company: { company_name: 'Second Holdings Ltd', organization_number: '' } } });
+        expect(intent.lastCompany).toBe('Second Holdings Ltd');
+        expect(intent.lastCompanyNumber).toBeNull();
+    });
+
+    test('an empty payload (no buyer/company) leaves both untouched', () => {
+        intent.publishPayloadCompany({ buyer: { company: { company_name: 'Example Ltd', organization_number: '556677-8899' } } });
+        intent.publishPayloadCompany({});
+        expect(intent.lastCompany).toBe('Example Ltd');
+        expect(intent.lastCompanyNumber).toBe('556677-8899');
+    });
+});
