@@ -772,8 +772,9 @@ class TwoCheckoutManager {
         // built by TwoOrderIntent.buildCompanyIntentMessage() (TWO-25326
         // §7.3) - the single place that templates name/number into the
         // wording, shared with this module's own updateUI()/processResult().
-        const companyName = this.getSelectedCompanyName();
-        const companyNumber = this.getSelectedCompanyNumber();
+        const selectedCompany = this.getSelectedCompany();
+        const companyName = selectedCompany.name;
+        const companyNumber = selectedCompany.number;
         if (result.approved) {
             let approvedMsg = result.message || this.t('payment_approved_message', 'Payment approved! Choose your payment terms below.');
             if (companyName && this.orderIntent && typeof this.orderIntent.buildCompanyIntentMessage === 'function') {
@@ -797,43 +798,54 @@ class TwoCheckoutManager {
     }
 
     /**
-     * Get selected company name from latest intent state or input field
+     * Get the selected company name+number as ONE atomic pair, for the
+     * customer-visible intent sentence (TWO-25326 §7.3).
+     *
+     * Adversarial review round 3: this used to be two separate methods
+     * (getSelectedCompanyName/getSelectedCompanyNumber), each independently
+     * falling back to a DOM field when its own `this.orderIntent` value was
+     * falsy. That defeated TwoOrderIntent's own joint-reassignment
+     * guarantee (round 2's fix) from one layer up - a falsy
+     * `lastCompanyNumber` (a genuine, valid "no number" case, e.g. manual
+     * entry) would fall through to whatever `input[name='companyid']`
+     * happened to still hold from an EARLIER, unrelated company selection,
+     * silently re-pairing it with the current name.
+     *
+     * `this.orderIntent` is the authoritative, already-paired source
+     * whenever it has ANY answer at all (including "name with no number" -
+     * checked via `hasOwnProperty`-style truthiness on `lastCompany` alone,
+     * never gated on `lastCompanyNumber` too). The DOM fallback below is
+     * only for the case orderIntent hasn't run yet at all, and reads both
+     * fields together, from the same location, in one pass - never one
+     * from orderIntent and the other from the DOM.
+     *
+     * @returns {{name: string, number: string}}
      */
-    getSelectedCompanyName() {
+    getSelectedCompany() {
         try {
             if (this.orderIntent && this.orderIntent.lastCompany) {
-                return this.orderIntent.lastCompany;
+                return {
+                    name: this.orderIntent.lastCompany,
+                    number: this.orderIntent.lastCompanyNumber || ''
+                };
             }
-            // TWO-25326 §7.1: the address-area field is only a trustworthy
-            // fallback when the search control actually lives there - in
-            // tile mode it stays visible/typeable by design (never hidden)
-            // but is not the field the buyer's real selection came from.
+            // TWO-25326 §7.1: the address-area fields are only a
+            // trustworthy fallback when the search control actually lives
+            // there - in tile mode `company` stays visible/typeable by
+            // design (never hidden) but is not where the buyer's real
+            // selection came from, and `companyid` is the TILE's own hidden
+            // field, unrelated to whatever the address field currently holds.
             if (this.config.companySearchInAddressArea !== false) {
                 const companyField = document.querySelector("input[name='company']");
-                if (companyField && companyField.value && companyField.value.trim().length > 0) {
-                    return companyField.value.trim();
+                const companyIdField = document.querySelector("input[name='companyid']");
+                const name = companyField && companyField.value ? companyField.value.trim() : '';
+                const number = companyIdField && companyIdField.value ? companyIdField.value.trim() : '';
+                if (name) {
+                    return { name: name, number: number };
                 }
             }
         } catch (e) {}
-        return '';
-    }
-
-    /**
-     * Get selected company organisation number from latest intent state or
-     * the hidden address-form field (TWO-25326 §7.3 - folded into the intent
-     * sentence, never shown as its own label).
-     */
-    getSelectedCompanyNumber() {
-        try {
-            if (this.orderIntent && this.orderIntent.lastCompanyNumber) {
-                return this.orderIntent.lastCompanyNumber;
-            }
-            const companyIdField = document.querySelector("input[name='companyid']");
-            if (companyIdField && companyIdField.value && companyIdField.value.trim().length > 0) {
-                return companyIdField.value.trim();
-            }
-        } catch (e) {}
-        return '';
+        return { name: '', number: '' };
     }
 
     /**
