@@ -505,6 +505,19 @@ class TwoCompanySearch {
     }
 
     /**
+     * Whether the buyer is currently in "My company is not on the list" mode,
+     * typing a company name directly rather than picking one from search
+     * results. TwoCheckoutManager's tile-mode order-intent gate
+     * (canAutoTriggerOrderIntent()) treats this as a selection too - the
+     * buyer has made their choice, just not through the search results.
+     *
+     * @returns {boolean}
+     */
+    isManualEntry() {
+        return !!this._manualEntry;
+    }
+
+    /**
      * Build the anchored dropdown panel, idempotently (TWO-25326 §1/§2).
      *
      * DOM ORDER IS THE DESIGN HERE, not an implementation detail. Every part
@@ -3052,6 +3065,23 @@ class TwoCompanySearch {
         }
         if (!ui.item) {
             return false;
+        }
+
+        // TWO-25326: the buyer has now actually picked a company from the
+        // search results - the moment TwoCheckoutManager's tile-mode gate
+        // (canAutoTriggerOrderIntent()) is waiting for, as opposed to the
+        // tile merely being displayed/mounted/selected as a payment option.
+        // Set unconditionally, regardless of whether this result carries an
+        // organisation number yet (GB resolves it later via lookup_id) -
+        // hasConfirmedSelection() is the wrong test here because it can stay
+        // false forever for a name-only company, which would wedge this gate
+        // shut for a buyer who really did select something.
+        try {
+            if (window.TwoCheckoutManager_Instance) {
+                window.TwoCheckoutManager_Instance._tileCompanySelected = true;
+            }
+        } catch (e) {
+            // noop
         }
 
         const triggerOrderIntentRecheck = () => {
