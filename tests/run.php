@@ -5533,6 +5533,7 @@ require __DIR__ . '/AjaxCheckoutFailureSpec.php';
 require __DIR__ . '/CheckoutLatencySpec.php';
 require __DIR__ . '/FulfilledStatusMappingSpec.php';
 require __DIR__ . '/AddressLookupConfigSpec.php';
+require __DIR__ . '/AddressLookupGatingSpec.php';
 require __DIR__ . '/CompanySearchLocationConfigSpec.php';
 require __DIR__ . '/OrgNumberPreVerificationSpec.php';
 require __DIR__ . '/IntentApprovedNoticeSpec.php';
@@ -5571,6 +5572,7 @@ $tests = [
     'CheckoutLatencySpec::runAll' => [CheckoutLatencySpec::class, 'runAll'],
     'FulfilledStatusMappingSpec::runAll' => [FulfilledStatusMappingSpec::class, 'runAll'],
     'AddressLookupConfigSpec::runAll' => [AddressLookupConfigSpec::class, 'runAll'],
+    'AddressLookupGatingSpec::runAll' => [AddressLookupGatingSpec::class, 'runAll'],
     'CompanySearchLocationConfigSpec::runAll' => [CompanySearchLocationConfigSpec::class, 'runAll'],
     'OrgNumberPreVerificationSpec::runAll' => [OrgNumberPreVerificationSpec::class, 'runAll'],
     'IntentApprovedNoticeSpec::runAll' => [IntentApprovedNoticeSpec::class, 'runAll'],

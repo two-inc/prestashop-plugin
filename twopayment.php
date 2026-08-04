@@ -1538,16 +1538,22 @@ class Twopayment extends PaymentModule
                 'input' => array(
                     array(
                         'type' => 'switch',
-                        'label' => $this->l('Enable Company Search In Address Entry'),
+                        'label' => $this->l('Enable company search in address entry'),
                         'name' => 'PS_TWO_ENABLE_COMPANY_NAME',
                         'is_bool' => true,
                         // TWO-25326 §7.1 (2026-08-03 design ruling): this switch now
                         // governs WHERE the one company-search control (dropdown /
                         // query field / manual entry) renders, not whether it exists
-                        // - the control is never off. Wording matches
-                        // woocommerce-plugin/magento-plugin word-for-word for
-                        // cross-platform consistency (Doug's exact wording, not a
-                        // PS-house-style paraphrase).
+                        // - the control is never off.
+                        //
+                        // SENTENCE CASE, matching every other label on this
+                        // page ("Auto-fill the address from the selected
+                        // company", "Automatically fulfill orders with Two",
+                        // "Send tax subtotals in request payloads"). This was
+                        // Title Case for cross-platform word-for-word parity
+                        // with woocommerce-plugin/magento-plugin; house style
+                        // on this page wins, so the capitalisation - and ONLY
+                        // the capitalisation - now differs from those plugins.
                         //
                         // BEHAVIOUR CHANGE for shops that already have this switched
                         // OFF: before this ticket, "No" turned company search off
@@ -1575,7 +1581,7 @@ class Twopayment extends PaymentModule
                         'label' => $this->l('Auto-fill the address from the selected company'),
                         'name' => 'PS_TWO_ADDRESS_LOOKUP',
                         'is_bool' => true,
-                        'desc' => $this->l('Governs the company address lookup on the checkout ADDRESS step only. When enabled, picking a company from the company search overwrites the address fields (street, postcode, city) and the organisation-number fields (DNI / VAT number) with the registry data for that company - including on a re-search, where picking a different company replaces the previous company\'s values. When disabled, the company search still works and still records the company name and organisation number, but nothing is written into the address or identifier fields and the customer fills them in themselves. This has no effect when "Enable Company Search In Address Entry" is set to "No" - there is no address-area lookup to govern once the search itself has moved to the payment tile.'),
+                        'desc' => $this->l('Governs the company address lookup on the checkout ADDRESS step only. When enabled, picking a company from the company search overwrites the address fields (street, postcode, city) and the organisation-number fields (DNI / VAT number) with the registry data for that company - including on a re-search, where picking a different company replaces the previous company\'s values. When disabled, the company search still works and still records the company name and organisation number, but nothing is written into the address or identifier fields and the customer fills them in themselves. This setting is unavailable and forced off when "Enable company search in address entry" is set to "No" - there is no address-area lookup to govern once the search itself has moved to the payment tile.'),
                         'required' => true,
                         'values' => array(
                             array(
@@ -1690,6 +1696,20 @@ class Twopayment extends PaymentModule
      */
     protected function getAddressLookupEnabled()
     {
+        // Forced off while the company search is not in the address area
+        // (TWO-25326 §7.1 follow-up). Derived from the STORED position rather
+        // than through isAddressLookupSettingAvailable(), which also consults
+        // the request: this method is read on the front office, and a resolver
+        // the checkout runs must not be steerable by a query parameter.
+        //
+        // Gating the READ as well as the save is what keeps the admin form,
+        // the stored row and the value handed to the checkout JS from
+        // disagreeing on an install that has not re-saved its advanced
+        // settings since the search moved into the payment tile.
+        if ($this->isCompanySearchInAddressArea() !== '1') {
+            return '0';
+        }
+
         $value = Configuration::get('PS_TWO_ADDRESS_LOOKUP');
 
         if ($value === false || $value === null || $value === '') {
@@ -1727,6 +1747,66 @@ class Twopayment extends PaymentModule
         }
 
         return ((int) $value) === 1 ? '1' : '0';
+    }
+
+    /**
+     * Is the address-lookup switch (PS_TWO_ADDRESS_LOOKUP) available at all?
+     *
+     * It governs what a company selection writes into the checkout ADDRESS
+     * step, so it means nothing once the company search itself has moved out
+     * of the address step and into the payment tile - there is no address-area
+     * lookup left to govern (TWO-25326 §7.1). In that state it is not merely
+     * inert, it is forced off: greyed out in the admin form by the config
+     * page's JS, rendered as "No", and refused on save however it was posted.
+     * Mirrors woocommerce-plugin's admin.js, which disables and unchecks its
+     * `enable_address_lookup` field whenever company search is off.
+     *
+     * Reads the SUBMITTED company-search position where there is one, falling
+     * back to the stored one, so the same POST that turns the search into a
+     * tile control also disables the lookup - rather than leaving it enabled
+     * for one save cycle.
+     *
+     * @return bool
+     */
+    protected function isAddressLookupSettingAvailable()
+    {
+        $posted = Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME', $this->isCompanySearchInAddressArea());
+
+        return (string) $posted === '1';
+    }
+
+    /**
+     * ISO 3166-1 alpha-2 country of the cart's billing address, or '' when
+     * there is no usable one yet.
+     *
+     * Handed to the checkout JS so the company search can establish which
+     * company register to query when the address form - and with it the
+     * country select the browser side reads - is not on the page. That is the
+     * normal state of the payment step, and therefore the normal state of the
+     * payment-tile-mounted search control (TWO-25326 §7.1).
+     *
+     * Resolves or returns empty, exactly like the browser-side chain it feeds:
+     * no shop-country fallback, no geolocation. A wrong register is worse than
+     * no register, because the buyer is shown companies from a country their
+     * company is not registered in with nothing on screen saying so.
+     *
+     * @return string uppercase ISO code, or '' when unresolvable
+     */
+    protected function getCheckoutBillingCountryIso()
+    {
+        $cart = isset($this->context->cart) ? $this->context->cart : null;
+        if (!Validate::isLoadedObject($cart) || (int) $cart->id_address_invoice === 0) {
+            return '';
+        }
+
+        $address = new Address((int) $cart->id_address_invoice);
+        if (!Validate::isLoadedObject($address)) {
+            return '';
+        }
+
+        $iso = Country::getIsoById((int) $address->id_country);
+
+        return is_string($iso) ? Tools::strtoupper($iso) : '';
     }
 
     /**
@@ -1791,7 +1871,16 @@ class Twopayment extends PaymentModule
         // the position it is actually behaving in (TWO-25326 §7.1: this is
         // also the address-area/payment-tile location switch now).
         $fields_values['PS_TWO_ENABLE_COMPANY_NAME'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME', $this->isCompanySearchInAddressArea());
-        $fields_values['PS_TWO_ADDRESS_LOOKUP'] = Tools::getValue('PS_TWO_ADDRESS_LOOKUP', $this->getAddressLookupEnabled());
+        // Rendered through the same gate the save enforces, so the switch is
+        // never drawn in a position the module will not honour: the
+        // address-area lookup is unavailable, and shown off, whenever the
+        // company search itself is not in the address area. The gate reads the
+        // POSTED company-search value where there is one, so a failed-
+        // validation re-render agrees with what the merchant just submitted
+        // rather than with the stored row.
+        $fields_values['PS_TWO_ADDRESS_LOOKUP'] = $this->isAddressLookupSettingAvailable()
+            ? Tools::getValue('PS_TWO_ADDRESS_LOOKUP', $this->getAddressLookupEnabled())
+            : '0';
         $fields_values['PS_TWO_FINALIZE_PURCHASE'] = Tools::getValue('PS_TWO_FINALIZE_PURCHASE', Configuration::get('PS_TWO_FINALIZE_PURCHASE'));
         $fields_values['PS_TWO_ENABLE_TAX_SUBTOTALS'] = Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
@@ -1829,8 +1918,24 @@ class Twopayment extends PaymentModule
 
     protected function saveTwoOtherFormValues()
     {
+        // BEFORE the writes below: the gate reads the submitted (or, absent a
+        // submission, the currently stored) company-search position, and
+        // updateValue() would otherwise have already overwritten the stored
+        // row this falls back to.
+        $address_lookup_available = $this->isAddressLookupSettingAvailable();
+
         Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME'));
-        Configuration::updateValue('PS_TWO_ADDRESS_LOOKUP', (int) Tools::getValue('PS_TWO_ADDRESS_LOOKUP', 1));
+        // Server-side half of the "unavailable when the search is not in the
+        // address area" gate (TWO-25326 §7.1 follow-up). The admin JS greys
+        // the switch out, and a disabled control posts nothing - but a
+        // hand-crafted or replayed POST can still carry a ticked box, and it
+        // must not take effect. Matched by the same gate in
+        // getTwoOtherFormValues() so the rendered position never disagrees
+        // with what is stored.
+        Configuration::updateValue(
+            'PS_TWO_ADDRESS_LOOKUP',
+            $address_lookup_available ? (int) Tools::getValue('PS_TWO_ADDRESS_LOOKUP', 1) : 0
+        );
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', Tools::getValue('PS_TWO_FINALIZE_PURCHASE'));
         Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', (int) Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
@@ -3459,6 +3564,26 @@ class Twopayment extends PaymentModule
                 // already-dead keys would just have grown the dead set.
                 'enable_order_intent' => $this->enable_order_intent,
                 'shop_country' => (string) Context::getContext()->country->iso_code,
+                // The country of the cart's OWN billing address, resolved
+                // server-side (TWO-25326 §7.1 follow-up). This is what makes
+                // the company search work at all once the control has moved
+                // into the payment tile: PrestaShop only renders the address
+                // FORM - and therefore `select[name='id_country']`, the only
+                // thing TwoCompanySearch.getCurrentCountry() could read -
+                // while the buyer is actually editing an address
+                // (checkout/_partials/steps/addresses.tpl renders
+                // address-form.tpl behind `$show_delivery_address_form`).
+                // On the payment step that form is gone and the step shows an
+                // address SELECTOR instead, so the tile-mounted control could
+                // never resolve a country and declined to search on every
+                // keystroke.
+                //
+                // Not a guess and not a substitute for the select: it is the
+                // country of the address the order will actually be billed
+                // to, and getCurrentCountry() still prefers the live select
+                // whenever one is on the page (a buyer mid-edit may have
+                // picked a country that is not saved yet).
+                'billing_country' => $this->getCheckoutBillingCountryIso(),
                 'order_intent_url' => $this->context->link->getModuleLink($this->name, 'orderintent'),
                 'ajax_token' => Tools::getToken(false),
                 'module_dir' => $this->_path,

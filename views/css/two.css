@@ -1681,6 +1681,18 @@
  */
 .two-tile-company-search {
     margin-top: 12px;
+    /*
+     * The SAME horizontal inset as `.two-optional-fields` below (TWO-25326
+     * §7.1 follow-up). Both blocks are direct children of
+     * `.two-payment-container`, and both their inputs are `width: 100%` of
+     * whatever box contains them - so with no padding here this control
+     * rendered 32px wider than every other field in the tile, flush with the
+     * tile's own edges while the optional fields sat inset. Doug found it
+     * live. The two values have to stay in step; they are the same inset, not
+     * a coincidence.
+     */
+    padding-left: 16px;
+    padding-right: 16px;
 }
 
 .two-tile-company-search .form-group {
@@ -1697,6 +1709,26 @@
 .two-tile-company-search input {
     width: 100%;
     box-sizing: border-box;
+}
+
+/*
+ * ADMIN config page: a setting that is unavailable because another setting
+ * turned it off (TWO-25326 §7.1 follow-up - the address-lookup switch, which
+ * means nothing once the company search has moved into the payment tile).
+ *
+ * Applied by views/templates/admin/configuration.tpl to the whole
+ * `.form-group`, so the label and the help text fade with the control. The
+ * radios are separately `disabled`, so this is appearance only - it is not
+ * what stops the value being submitted, and `pointer-events` is set so the
+ * PrestaShop switch's own `<a class="slide-button">` overlay cannot be clicked
+ * either (a disabled radio underneath does not disable the anchor over it).
+ */
+.two-setting-unavailable {
+    opacity: 0.5;
+}
+
+.two-setting-unavailable .prestashop-switch {
+    pointer-events: none;
 }
 
 /* Optional buyer reference fields in the payment tile (ABN-472) */
