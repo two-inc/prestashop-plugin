@@ -2948,6 +2948,25 @@ class TwoCompanySearch {
      * `data-iso-code` is the ISO code itself, and the option-text map only
      * resolves on a full country-name match. Either fails closed.
      *
+     * A FOURTH strategy sits after all three, and it is the only one that can
+     * resolve anything when there is no country select on the page at all:
+     * `window.twopayment.billing_country`, the ISO code of the cart's own
+     * billing address, resolved server-side. That case is not an edge - it is
+     * the payment step, where PrestaShop shows an address SELECTOR rather than
+     * the address FORM (checkout/_partials/steps/addresses.tpl only renders
+     * address-form.tpl behind `$show_delivery_address_form`), so
+     * `select[name='id_country']` does not exist. Without it the control
+     * TWO-25326 §7.1 relocated INTO the payment tile could never resolve a
+     * country and declined to search on every keystroke - the search looked
+     * simply dead.
+     *
+     * It is deliberately LAST, not first: a buyer who is mid-edit on the
+     * address step has a country selected in the form that is not saved on any
+     * address yet, and the register they are typing against has to be that
+     * one. It is also not a guess - it is the country of the address the order
+     * will be billed to - which is why it is allowed to exist here at all
+     * while `navigator.language` and a literal 'GB' are not.
+     *
      * @returns {string} uppercase ISO code, or '' when unresolvable
      */
     getCurrentCountry() {
@@ -2979,6 +2998,19 @@ class TwoCompanySearch {
             if (countryFromText) {
                 return countryFromText;
             }
+        }
+
+        // 4. The cart's billing-address country, resolved server-side. The
+        // only source available on a page with no country select - i.e. the
+        // payment step, where the tile-mounted control lives. Shape-checked
+        // rather than trusted: anything that is not exactly two letters is
+        // treated as absent, so a malformed payload cannot put junk on the
+        // wire as a `country` parameter.
+        const billingCountry = (window.twopayment && window.twopayment.billing_country)
+            ? String(window.twopayment.billing_country).trim().toUpperCase()
+            : '';
+        if (/^[A-Z]{2}$/.test(billingCountry)) {
+            return billingCountry;
         }
 
         // Unresolvable. searchCompanies() declines to search rather than
