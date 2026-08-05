@@ -24,8 +24,35 @@ namespace {
 }
 
 namespace PrestaShop\PrestaShop\Core\Payment {
+    /**
+     * Core's fluent payment-option value object. The setters were previously
+     * absent, which was fine while nothing invoked getTwoPaymentOption() - it is
+     * exercised now (TWO-25326 bug 9, round 3, for the server-rendered
+     * sole-trader answer it assigns), and a fluent builder is unusable without
+     * them: the first call fatals rather than failing an assertion.
+     *
+     * Records rather than validates - the specs that use this care about what the
+     * module hands the TEMPLATE, and core's own contract for these values is not
+     * something a stub can meaningfully assert.
+     */
     class PaymentOption
     {
+        /** @var array<string, mixed> */
+        public $recorded = [];
+
+        public function __call($name, $arguments)
+        {
+            if (strpos($name, 'set') === 0) {
+                $this->recorded[lcfirst(substr($name, 3))] = $arguments[0] ?? null;
+
+                return $this;
+            }
+            if (strpos($name, 'get') === 0) {
+                return $this->recorded[lcfirst(substr($name, 3))] ?? null;
+            }
+
+            throw new \BadMethodCallException('PaymentOption stub has no ' . $name . '()');
+        }
     }
 }
 
