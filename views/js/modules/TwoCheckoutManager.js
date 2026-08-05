@@ -1947,10 +1947,28 @@ class TwoCheckoutManager {
             this.initializeCompanySearch();
         }
         
-        // Re-setup payment listeners (idempotent, won't duplicate)
-        this._paymentListenersAttached = false;
-        this.setupPaymentOptionSelectionListener();
-        
+        // Deliberately NOT re-running setupPaymentOptionSelectionListener()
+        // here (TWO-25326 render-loop bug: it used to force
+        // `_paymentListenersAttached = false` and call it again on every
+        // debounced MutationObserver firing - i.e. every time PrestaShop
+        // replaced the `.payment-options` fragment while the checkout step
+        // settled). Every listener that method binds is delegated to
+        // `document`, not to any node inside that fragment, so it keeps
+        // matching the tile's radio/click/submit events across any number
+        // of DOM replacements without ever being re-attached. Re-running it
+        // anyway added a fresh, permanent set of duplicate document-level
+        // listeners (plus another Method-5 setInterval, never cleared) on
+        // every firing - so a single click could invoke
+        // handlePaymentOptionChange() several times concurrently, each
+        // independently racing syncSurchargeCartLine() -> a full payment-
+        // step reload (triggerNativeCartRefresh()), which is what Doug saw
+        // as the tile rendering and being removed several times in a row.
+        // cleanup() has no matching removeEventListener calls (the handlers
+        // are anonymous closures, never kept), so nothing this module does
+        // can safely undo the duplicates once bound - the fix is to never
+        // create them, not to fight the guard that already existed to
+        // prevent exactly this.
+
         // Initialize modules if needed
         if (this.isBusinessAccount && this.config.orderIntentEnabled && !this.orderIntent) {
             this.initializeOrderIntent();
