@@ -4,7 +4,7 @@
 # release. Without this, `make patch/minor/major` on any branch would push a
 # version-bump commit + tag straight to origin.
 [tool.bumpver]
-current_version = "2.7.2"
+current_version = "2.7.3"
 version_pattern = "MAJOR.MINOR.PATCH[-TAGNUM]"
 commit_message = "chore: Bump version {old_version} -> {new_version}"
 commit = true
