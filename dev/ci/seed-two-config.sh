@@ -41,6 +41,11 @@ Configuration::updateValue("PS_TWO_ENVIRONMENT", "development");
 Configuration::updateValue("PS_TWO_MERCHANT_SHORT_NAME", "E2E Test Merchant");
 Configuration::updateValue("PS_TWO_MERCHANT_ID", "e2e-merchant-id");
 Configuration::updateValue("PS_TWO_API_KEY_VERIFIED", 1);
+// Any cached verification verdict for a previous seed belongs to a previous run
+// (TWO-25326). A stale FAILED verdict here would start the suite with no payment
+// tile for 60 seconds, for reasons that have nothing to do with the specs.
+Configuration::deleteByName("PS_TWO_API_KEY_STATUS");
+Configuration::deleteByName("PS_TWO_API_KEY_STATUS_TS");
 echo "Two config seeded (hermetic — no live verify_api_key call)\n";
 '
 docker exec "ps-$SFX" bash -c "rm -rf /var/www/html/var/cache/*"

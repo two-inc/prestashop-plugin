@@ -21,6 +21,14 @@
  *
  * The merchant identity returned matches what seed-two-config.sh writes into
  * Configuration, so the two cannot disagree.
+ *
+ * WHAT THIS STUB STOPS THE SUITE FROM COVERING. It answers 200 for ANY API key
+ * and ignores the X-API-Key header entirely, so the e2e suite can no longer
+ * catch a regression in how the key is sent, nor anything in the REJECT
+ * direction. That is deliberate - the suite's subject is checkout UI, and a
+ * secret-free CI cannot exercise a real credential either way - but it means the
+ * category logic and the header contract are pinned by the PHP suite
+ * (tests/ApiKeyVerificationSpec.php) and by nothing here.
  */
 
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
@@ -34,7 +42,15 @@ if ($path === '/v1/merchant/verify_api_key') {
     return true;
 }
 
-// Anything else: refuse, promptly. Same outcome the dead port produced.
+// Anything else: refuse, promptly. NOT identical to the dead port this replaced,
+// and the difference is worth stating: a dead port produced a cURL TRANSPORT
+// failure, while this produces an HTTP 503. The module distinguishes the two
+// (transport -> 'unreachable', 5xx -> 'service_error'), so the e2e suite's
+// "declined gracefully" assertion now travels the 5xx branch rather than the
+// transport one. Both are decline paths and the assertion is about the decline
+// being graceful, not about which branch produced it; the branch-level
+// distinction is covered by tests/ApiKeyVerificationSpec.php, which drives every
+// category directly.
 http_response_code(503);
 header('Content-Type: application/json');
 echo json_encode(array('error' => 'not stubbed'));

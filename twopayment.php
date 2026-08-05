@@ -85,7 +85,12 @@ class Twopayment extends PaymentModule
     const FX_RATES_RETRY_BACKOFF = 300; // 5 minutes
 
     // Cached, categorised outcome of GET /v1/merchant/verify_api_key for the
-    // STORED key (TWO-25326): JSON {status, code, key_hash}. Read by the
+    // STORED key (TWO-25326): JSON {status, code, key_hash, claim}.
+    // Shop scoping is Configuration's own, exactly as for the FX table and the
+    // merchant record - deliberately not hand-scoped here. The slot is bound to
+    // the key AND environment it was reached for, so the worst a multistore
+    // context can produce is a MISS (a re-verification) on a shop holding a
+    // different key, never another shop's verdict applied to this one. Read by the
     // checkout gates, which must not fire a live HTTP call per render, and
     // written by both the cache-miss path and the config-page save. key_hash
     // binds the verdict to the key it was reached for, so pasting a new key
@@ -120,6 +125,13 @@ class Twopayment extends PaymentModule
     const API_KEY_STATUS_UNREACHABLE = 'unreachable'; // no response at all: DNS/TLS/route/timeout
     const API_KEY_STATUS_ERROR = 'error';             // any other non-200, or an unreadable 200 body
     const API_KEY_STATUS_NOT_CONFIGURED = 'not_configured'; // no key stored yet
+    // Not a verdict: the marker a request writes while it is still asking, when
+    // there is no previous verdict to serve meanwhile. Gates treat it like any
+    // other non-ok status (Two withheld) - the alternative is offering Two for
+    // the length of the claim window on a shop nobody has verified yet - but the
+    // merchant-facing notice stays silent for it, because "still asking" is not
+    // a diagnosis.
+    const API_KEY_STATUS_VERIFYING = 'verifying';
 
     // Constants for API timeouts (seconds)
     const API_TIMEOUT_SHORT = 30; // Standard API timeout
@@ -1121,6 +1133,14 @@ class Twopayment extends PaymentModule
             // a bad environment - in which case nothing is stored and this
             // verdict describes a key the shop does not have.
             $this->verifiedApiKeyResult = $verify;
+            // Unless the key being validated IS the stored one, in which case the
+            // verdict describes the live shop whatever happens to the rest of the
+            // form - and is the only way a FAILING verdict ever gets published
+            // from this page, since a failing key adds an error and the save
+            // never runs (review round 2).
+            if ((string) $apiKey === (string) Configuration::get('PS_TWO_MERCHANT_API_KEY')) {
+                $this->cacheTwoApiKeyVerificationStatus($apiKey, $verify);
+            }
             if ($verify['status'] !== self::API_KEY_STATUS_OK) {
                 // Category-specific, so the merchant is not left choosing
                 // between "my key is wrong" and "Two is down" (TWO-25326).
@@ -8118,7 +8138,7 @@ class Twopayment extends PaymentModule
      *
      * @return array{status:string,code:int|null}
      */
-    public function getTwoApiKeyVerificationStatus()
+    public function getTwoApiKeyVerificationStatus($allowLiveCheck = true)
     {
         // The memo first: a verdict already reached in THIS request is the
         // answer, whatever the stored configuration says now (the config-page
@@ -8138,20 +8158,37 @@ class Twopayment extends PaymentModule
             return $cached;
         }
 
-        // Anti-stampede, same discipline as refreshTwoFxRates(): claim the
-        // clock BEFORE the wire call, so concurrent renders on a cold cache
-        // read a fresh-looking slot and stand down instead of each firing
-        // their own verification. Without this, an unreachable API costs every
-        // concurrent shopper the full timeout, once per failure TTL, for as
-        // long as the outage lasts. The claim carries the PREVIOUS verdict's
-        // status (or 'ok' when there is none to carry) rather than a made-up
-        // failure: a claim is not a verdict, and a shop that was healthy a
-        // moment ago must not be reported broken by a request that has not
-        // finished asking.
+        // Callers that must not pay for a verification: a payment POST (a 10s
+        // stall there is a stall in the buyer's submit) and the address-form
+        // override, which also renders on my-account pages. They get "not
+        // verified yet" and decide what that is worth to them - see
+        // isTwoApiKeyDefinitelyUnusable().
+        if (!$allowLiveCheck) {
+            return array('status' => self::API_KEY_STATUS_VERIFYING, 'code' => null);
+        }
+
+        // Anti-stampede, same discipline as refreshTwoFxRates(): claim the slot
+        // BEFORE the wire call, so concurrent renders on a cold cache read a
+        // fresh-looking slot and stand down instead of each firing their own
+        // verification. Without this, an unreachable API costs every concurrent
+        // shopper the full timeout, once per failure TTL, for as long as the
+        // outage lasts.
+        //
+        // What the claim CARRIES is the load-bearing part. A previous verdict
+        // for this same key rides along (serve-stale: a shop that was healthy a
+        // moment ago is not reported broken by a request that has not finished
+        // asking - and, just as importantly, a re-verification every TTL does
+        // not blink Two off a working shop). With NO previous verdict there is
+        // nothing to serve, and the claim says exactly that rather than
+        // guessing 'ok': guessing would offer Two - and let the payment POST
+        // through - for the whole claim window on a shop whose key has never
+        // verified, which is the failure this whole change exists to remove.
+        // That state is reachable without a config-page save: install seeding, a
+        // DB clone, direct SQL.
         $previous = $this->readStoredTwoApiKeyStatus();
-        $carry = ($previous !== null && $previous['key_hash'] === md5($apiKey))
+        $carry = ($previous !== null && $previous['key_hash'] === self::verificationSlotKey($apiKey) && $previous['status'] !== self::API_KEY_STATUS_VERIFYING)
             ? $previous
-            : array('status' => self::API_KEY_STATUS_OK, 'code' => null);
+            : array('status' => self::API_KEY_STATUS_VERIFYING, 'code' => null);
         $this->writeTwoApiKeyStatusSlot($apiKey, $carry['status'], $carry['code'], true);
 
         // Tight timeout: on a cold cache this runs inline in a shopper's
@@ -8173,9 +8210,32 @@ class Twopayment extends PaymentModule
      *
      * @return bool
      */
-    public function isTwoApiKeyVerified()
+    public function isTwoApiKeyVerified($allowLiveCheck = true)
     {
-        return $this->getTwoApiKeyVerificationStatus()['status'] === self::API_KEY_STATUS_OK;
+        return $this->getTwoApiKeyVerificationStatus($allowLiveCheck)['status'] === self::API_KEY_STATUS_OK;
+    }
+
+    /**
+     * Whether the stored key is known to be unusable, as opposed to merely
+     * unconfirmed (TWO-25326, review round 2). Only the two DEFINITIVE
+     * categories count: a key Two rejected, and no key at all. A 5xx, a network
+     * blip or a cache miss are all "ask again", not "refuse".
+     *
+     * This is the question the payment POST asks, and it is deliberately a
+     * different question from the one the render paths ask. Withholding the
+     * payment option from a page not yet rendered costs a buyer nothing; turning
+     * a submitted order into "this payment method is not available" over one
+     * transient blip costs them the order - and the order-creation call they
+     * would otherwise have reached has its own longer timeout and its own
+     * decline handling. Consulted cache-only for the same reason.
+     *
+     * @return bool
+     */
+    public function isTwoApiKeyDefinitelyUnusable()
+    {
+        $status = $this->getTwoApiKeyVerificationStatus(false)['status'];
+
+        return $status === self::API_KEY_STATUS_INVALID || $status === self::API_KEY_STATUS_NOT_CONFIGURED;
     }
 
     /**
@@ -8212,11 +8272,12 @@ class Twopayment extends PaymentModule
      * @param string   $apiKey
      * @param string   $status
      * @param int|null $code
-     * @param bool     $asClaim when true the clock is back-dated so the slot
-     *   expires after API_KEY_STATUS_CLAIM_WINDOW instead of a full TTL - see
-     *   getTwoApiKeyVerificationStatus()'s anti-stampede claim. A claim that
-     *   is never superseded (the claiming process died mid-call) must not go
-     *   on standing in for a real verdict.
+     * @param bool     $asClaim marks the slot as a claim rather than a verdict:
+     *   it then expires after API_KEY_STATUS_CLAIM_WINDOW instead of a full TTL,
+     *   so a claim whose process died mid-call stops standing in for a verdict
+     *   within seconds. Recorded as a flag rather than by back-dating the clock,
+     *   which would write a future-dated timestamp the moment any TTL was
+     *   shortened below the claim window.
      */
     private function writeTwoApiKeyStatusSlot($apiKey, $status, $code, $asClaim = false)
     {
@@ -8227,14 +8288,26 @@ class Twopayment extends PaymentModule
         Configuration::updateValue(self::CONFIG_API_KEY_STATUS, json_encode(array(
             'status' => (string) $status,
             'code' => $code === null ? null : (int) $code,
-            'key_hash' => md5((string) $apiKey),
+            'key_hash' => self::verificationSlotKey($apiKey),
+            'claim' => (bool) $asClaim,
         )));
+        Configuration::updateValue(self::CONFIG_API_KEY_STATUS_TS, time());
+    }
 
-        $stamp = time();
-        if ($asClaim) {
-            $stamp = $stamp - self::statusTtlFor((string) $status) + self::API_KEY_STATUS_CLAIM_WINDOW;
-        }
-        Configuration::updateValue(self::CONFIG_API_KEY_STATUS_TS, $stamp);
+    /**
+     * Slot identity: the API key AND the environment it was verified against. A
+     * key is only valid for one environment, so an environment change by any
+     * route that does not go through the config-page save (an upgrade script,
+     * dev/configure.php, direct SQL) must miss the cache rather than carry the
+     * other environment's verdict for a full TTL.
+     *
+     * @param string $apiKey
+     *
+     * @return string
+     */
+    private static function verificationSlotKey($apiKey)
+    {
+        return md5((string) $apiKey . '|' . Tools::strtolower((string) Configuration::get('PS_TWO_ENVIRONMENT')));
     }
 
     /**
@@ -8276,6 +8349,7 @@ class Twopayment extends PaymentModule
             'status' => (string) $decoded['status'],
             'code' => isset($decoded['code']) && $decoded['code'] !== null ? (int) $decoded['code'] : null,
             'key_hash' => (string) $decoded['key_hash'],
+            'claim' => !empty($decoded['claim']),
             'checked_on' => (int) Configuration::get(self::CONFIG_API_KEY_STATUS_TS),
         );
     }
@@ -8295,10 +8369,11 @@ class Twopayment extends PaymentModule
         }
 
         $stored = $this->readStoredTwoApiKeyStatus();
-        if ($stored === null || $stored['key_hash'] !== md5((string) $apiKey)) {
+        if ($stored === null || $stored['key_hash'] !== self::verificationSlotKey($apiKey)) {
             return null;
         }
-        if ($stored['checked_on'] <= 0 || ($stored['checked_on'] + self::statusTtlFor($stored['status'])) <= time()) {
+        $ttl = $stored['claim'] ? self::API_KEY_STATUS_CLAIM_WINDOW : self::statusTtlFor($stored['status']);
+        if ($stored['checked_on'] <= 0 || ($stored['checked_on'] + $ttl) <= time()) {
             return null;
         }
 
@@ -8350,6 +8425,7 @@ class Twopayment extends PaymentModule
     {
         $status = $this->getTwoApiKeyVerificationStatus();
         if ($status['status'] === self::API_KEY_STATUS_OK
+            || $status['status'] === self::API_KEY_STATUS_VERIFYING
             || $status['status'] === self::API_KEY_STATUS_NOT_CONFIGURED) {
             // No stored key at all is what the form's own "Enter an API key"
             // validation is for - two notices saying it is noise.

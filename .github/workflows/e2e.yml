@@ -63,6 +63,9 @@ jobs:
       # the checkout-media priming calls (merchant terms / FX-rate refresh,
       # fired on every checkout page view) still fail fast exactly as they did
       # when this pointed at a dead port.
+      # One source for the port: the stub script requires this variable and
+      # refuses to default it, so the URL below and the listener cannot drift.
+      TWO_API_STUB_PORT: "8099"
       TWO_API_BASE_URL: "http://127.0.0.1:8099"
     steps:
       - uses: actions/checkout@v4
