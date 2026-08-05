@@ -21,6 +21,7 @@
 const {
     loadCompanySearch,
     loadOrderIntent,
+    loadSoleTrader,
     stubAjax,
     releaseWidgets,
     openPanel,
@@ -212,5 +213,89 @@ describe('site (c): the order-intent sentence', () => {
                 expect(intent.buildCompanyIntentMessage(approved, 'Example Ltd', number)).not.toContain('()');
             });
         });
+    });
+});
+
+/**
+ * A FOURTH display site (review round 2): TwoSoleTrader.applyBuyer() falls
+ * back to `buyer.organization_number` as its status LABEL when
+ * `buyer.company_name` is blank - and blank company_name is exactly when a
+ * sole trader's organisation number is the synthetic `TWO:`-prefixed one this
+ * whole requirement exists to hide (it stands in for a buyer with no name or
+ * number of their own). Missed by the "three display sites" this requirement
+ * was scoped to, because this one is a STATUS label, not a company/number pair
+ * being formatted - but it renders the same forbidden value to the buyer.
+ */
+describe('a fourth site: the sole-trader status label', () => {
+    function buildSoleTrader() {
+        const TwoSoleTrader = loadSoleTrader();
+        const soleTrader = Object.create(TwoSoleTrader.prototype);
+        soleTrader.config = {
+            orderIntentUrl: 'https://shop.example.test/module/twopayment/orderintent',
+            ajaxToken: 'test-token',
+            i18n: {}
+        };
+        soleTrader.tokens = { country: 'NO' };
+        soleTrader.hidePrompt = () => {};
+        soleTrader.stopObserving = () => {};
+        global.window.fetch = () => Promise.resolve({ json: () => Promise.resolve({ success: true }) });
+        global.fetch = global.window.fetch;
+        return soleTrader;
+    }
+
+    afterEach(() => {
+        delete global.window.fetch;
+        delete global.fetch;
+    });
+
+    test('a real company name is shown as-is', async () => {
+        const soleTrader = buildSoleTrader();
+        let shown = null;
+        soleTrader.showStatus = (label) => { shown = label; };
+
+        soleTrader.applyBuyer({ company_name: 'Sole Trader AS', organization_number: '923456789' });
+        await flushPromises();
+
+        expect(shown).toBe('Sole Trader AS');
+    });
+
+    test('a blank name falling back to a TWO: number shows a generic label, never the number', async () => {
+        const soleTrader = buildSoleTrader();
+        let shown = null;
+        soleTrader.showStatus = (label) => { shown = label; };
+
+        soleTrader.applyBuyer({ company_name: '', organization_number: 'TWO:ST777' });
+        await flushPromises();
+
+        expect(shown).not.toBe('TWO:ST777');
+        expect(shown).not.toContain('TWO:');
+        expect(shown).toBe('Sole trader');
+    });
+
+    test('a blank name falling back to a REAL number still shows it - only TWO: is suppressed', async () => {
+        const soleTrader = buildSoleTrader();
+        let shown = null;
+        soleTrader.showStatus = (label) => { shown = label; };
+
+        soleTrader.applyBuyer({ company_name: '', organization_number: '923456789' });
+        await flushPromises();
+
+        expect(shown).toBe('923456789');
+    });
+
+    test('the PERSISTED company field still carries the TWO: number - only the on-screen status is filtered', async () => {
+        const soleTrader = buildSoleTrader();
+        soleTrader.showStatus = () => {};
+        let posted = null;
+        global.window.fetch = (url, opts) => {
+            posted = opts.body;
+            return Promise.resolve({ json: () => Promise.resolve({ success: true }) });
+        };
+        global.fetch = global.window.fetch;
+
+        soleTrader.applyBuyer({ company_name: '', organization_number: 'TWO:ST777' });
+        await flushPromises();
+
+        expect(posted).toContain('TWO%3AST777');
     });
 });

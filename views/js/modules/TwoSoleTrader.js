@@ -490,7 +490,15 @@ class TwoSoleTrader {
                     // the in-memory copy and the cookie agreeing on which
                     // entity the buyer is.
                     self.publishConfirmedSelection(companyLabel, buyer.organization_number || '');
-                    self.showStatus(companyLabel);
+                    // TWO-25326 §12, review round 2: companyLabel falls back to
+                    // buyer.organization_number when company_name is blank
+                    // (see the comment above applyBuyer) - and that is exactly
+                    // where the synthetic `TWO:`-prefixed identifier shows up,
+                    // since it exists to stand in for a buyer with no name or
+                    // number of their own. The persisted `company` field above
+                    // still carries it (server semantics depend on it, per the
+                    // comment above); only this on-screen status must not.
+                    self.showStatus(window.TwoCompanyNumber.forDisplay(companyLabel) || self.text('sole_trader', 'Sole trader'));
                     self.hidePrompt();
                     self.stopObserving();
                     document.dispatchEvent(new CustomEvent('two:sole-trader-ready'));
