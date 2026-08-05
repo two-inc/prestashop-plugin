@@ -64,6 +64,8 @@ final class TwoSoleTraderSpec
             'testRegistryLookupUsesTheTightCheckoutTimeout',
             'testFailedRegistryLookupIsAttemptedOncePerRequest',
             'testPaymentOptionStubRefusesASetterCoreDoesNotHave',
+            'testAvailabilityEndpointPersistsTheRegistryAnswer',
+            'testAvailabilityEndpointWritesNothingWhenTheTokenIsRejected',
         ];
         foreach ($tests as $test) {
             self::reset();
@@ -571,6 +573,103 @@ final class TwoSoleTraderSpec
                 return strpos($endpoint, '/registry/v1/supported-company-types/') === 0;
             })),
             'the payment-step render must never resolve availability over the network'
+        );
+    }
+
+    /**
+     * Build the order-intent controller for the availability action, with a
+     * response that unwinds instead of exiting. Same pattern as
+     * SessionCompanyClearSpec/OrgNumberPreVerificationSpec.
+     */
+    private static function makeAvailabilityController(string $token, string $country)
+    {
+        Tools::resetTestValues();
+        Tools::setTestValue('ajax', 1);
+        Tools::setTestValue('action', 'soleTraderAvailability');
+        Tools::setTestValue('country', $country);
+        if ($token !== '') {
+            Tools::setTestValue('token', $token);
+        }
+
+        $controller = new class extends TwopaymentOrderintentModuleFrontController {
+            /** @var array<int,array> */
+            public array $emitted = array();
+            /** @var int cookie writes seen at the moment the response was sent */
+            public int $writesAtResponse = -1;
+
+            public function sendJsonResponse($content)
+            {
+                $decoded = json_decode((string) $content, true);
+                $this->emitted[] = is_array($decoded) ? $decoded : array('raw' => $content);
+                $this->writesAtResponse = Context::getContext()->cookie->writes;
+
+                throw new StubOrderIntentResponded('order intent response sent');
+            }
+        };
+        $controller->context = Context::getContext();
+        $controller->module = self::harness([], array(
+            '/registry/v1/supported-company-types/' => self::registryOk(array('SOLE_TRADER')),
+        ));
+
+        return $controller;
+    }
+
+    /**
+     * The availability endpoint must PERSIST the registry answer it just cached,
+     * explicitly, before it ends the request.
+     *
+     * This is load-bearing, not hygiene (TWO-25326 round 4/5): the payment tile
+     * renders the sole-trader toggle from that cookie and never resolves the
+     * registry itself, so without this write the server-rendered toggle can never
+     * appear and the chip flicker this ticket fixes comes straight back. It used
+     * to rely on PrestaShop's Cookie destructor, which only writes while headers
+     * are unsent - contingent on output buffering, an ini setting.
+     *
+     * Asserted at the moment the response is sent, not afterwards, because a write
+     * that happens after the headers are out is exactly the failure mode.
+     */
+    private static function testAvailabilityEndpointPersistsTheRegistryAnswer(): void
+    {
+        $controller = self::makeAvailabilityController(Tools::getToken(false), 'GB');
+        $before = Context::getContext()->cookie->writes;
+
+        try {
+            $controller->displayAjax();
+        } catch (StubOrderIntentResponded $e) {
+            // expected: the response unwinds instead of exiting
+        }
+
+        TinyAssert::same(
+            array(array('success' => true, 'available' => true)),
+            $controller->emitted,
+            'the endpoint must still answer the availability question'
+        );
+        TinyAssert::true(
+            $controller->writesAtResponse > $before,
+            'the registry answer must be written to the cookie BEFORE the response ends the request - '
+            . 'the payment tile renders the toggle from that cookie and never resolves the registry itself'
+        );
+    }
+
+    /**
+     * And nothing is written when the token is rejected: that path returns before
+     * any lookup, so there is no answer to persist and no session to touch.
+     */
+    private static function testAvailabilityEndpointWritesNothingWhenTheTokenIsRejected(): void
+    {
+        $controller = self::makeAvailabilityController('not-the-token', 'GB');
+        $before = Context::getContext()->cookie->writes;
+
+        try {
+            $controller->displayAjax();
+        } catch (StubOrderIntentResponded $e) {
+            // expected
+        }
+
+        TinyAssert::same($before, Context::getContext()->cookie->writes);
+        TinyAssert::true(
+            isset($controller->emitted[0]['success']) && $controller->emitted[0]['success'] === false,
+            'a rejected token must be refused'
         );
     }
 

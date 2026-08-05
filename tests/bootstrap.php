@@ -496,12 +496,24 @@ namespace {
     #[\AllowDynamicProperties]
     class Cookie
     {
+        /**
+         * How many times write() was called. Recorded because at least one
+         * endpoint's correctness depends on writing the cookie explicitly before
+         * it ends the request (TWO-25326: the payment tile renders the sole-trader
+         * toggle from that cookie and never resolves it itself), and a stub that
+         * silently swallows write() cannot tell that apart from not writing.
+         *
+         * @var int
+         */
+        public int $writes = 0;
+
         public function setExpire(int $timestamp): void
         {
         }
 
         public function write(): void
         {
+            ++$this->writes;
         }
     }
 

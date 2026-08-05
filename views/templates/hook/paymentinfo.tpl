@@ -21,8 +21,10 @@
        on every payment-option change.
 
        The answer is the same registry answer the module's soleTraderAvailability
-       endpoint returns (TwoSoleTrader::resolveAvailability), resolved for the
-       cart's own billing country, so the markup and the JS cannot disagree. The
+       endpoint returns (TwoSoleTrader::isAvailable), read here from the cache that
+       endpoint fills (TwoSoleTrader::resolveAvailabilityFromCache) and resolved
+       for the cart's own billing country - so the markup and the JS cannot
+       disagree. The
        two data- attributes are the handover:
        TwoSoleTrader.adoptServerRenderedToggle() takes this as its settled state
        and issues no request at all, and still re-resolves normally if the buyer
