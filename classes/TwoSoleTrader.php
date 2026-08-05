@@ -220,7 +220,6 @@ class TwoSoleTrader
             // spends at most one timeout on it. See $failed_lookups.
             self::$failed_lookups[$countryIso] = true;
 
-            self::$types_cache[$countryIso] = array();
             return null;
         }
 
