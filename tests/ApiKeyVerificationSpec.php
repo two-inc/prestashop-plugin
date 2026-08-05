@@ -82,7 +82,7 @@ final class ApiKeyVerificationSpec
         self::testAnEnvironmentChangeInvalidatesTheVerdict();
         self::testAnAncientVerdictIsNotCarriedForever();
         self::testAClaimCarriesTheVerdictsOriginalAgeNotAFreshOne();
-        self::testALegacySlotWithoutAVerdictClockIsStillCarryable();
+        self::testASlotWithoutAVerdictClockIsStillCarryable();
         self::testSwitchingEnvironmentAloneNeverPublishesAVerdict();
         self::testChangedKeyNeverInheritsThePreviousVerdict();
     }
@@ -959,6 +959,24 @@ final class ApiKeyVerificationSpec
             Media::$jsDef['twopayment']['api_key_verified'],
             'and hands the browser a real boolean'
         );
+
+        // The flag must be the SAME predicate the address-form override asks
+        // (review round 5): these are two halves of one affordance, and the flag
+        // has exactly one reader. Asking "verified?" here diverged from
+        // "warranted?" on a claim in flight, which is where a shop with a
+        // back-office translation of the core placeholder kept the hint on a dead
+        // field.
+        $claimInFlight = self::mediaHookModule('order');
+        $claimInFlight->primeTwoApiKeyStatus(Twopayment::API_KEY_STATUS_VERIFYING, null);
+        Media::reset();
+
+        $claimInFlight->hookActionFrontControllerSetMedia();
+
+        TinyAssert::same(
+            $claimInFlight->isTwoCompanySearchAffordanceWarranted(),
+            Media::$jsDef['twopayment']['api_key_verified'],
+            'the browser flag and the server-side affordance question must be the same question'
+        );
     }
 
     /** A module with the front-office media hook reachable for $phpSelf. */
@@ -1372,15 +1390,21 @@ final class ApiKeyVerificationSpec
     }
 
     /**
-     * A slot written before the verdict clock existed (an upgraded shop) is not
-     * ageless (review round 4). Read as age zero, it was never carryable, so the
-     * first re-verification after an upgrade withheld Two for the length of a
-     * claim window on every existing shop.
+     * A slot written before the verdict clock existed is not ageless (review
+     * round 4). Read as age zero it was never carryable, so the first
+     * re-verification against such a slot withheld Two for the length of a claim
+     * window. No released version ever wrote this slot, so the shops in that
+     * state are the ones running an intermediate build of this branch - the
+     * reader still may not assume the shape of what it reads back out of
+     * Configuration.
      */
-    private static function testALegacySlotWithoutAVerdictClockIsStillCarryable(): void
+    private static function testASlotWithoutAVerdictClockIsStillCarryable(): void
     {
         $module = self::module(self::okOutcome());
-        // Exactly what 2.7.2 left behind: no 'verified_on' key at all.
+        // A slot with no 'verified_on' key at all. No released version ever wrote
+        // this slot - it arrives with this change - so in practice this is a slot
+        // left by an intermediate build of this branch; the point is that the
+        // reader must not assume the shape of JSON it finds in Configuration.
         Configuration::updateValue(Twopayment::CONFIG_API_KEY_STATUS, json_encode(array(
             'status' => Twopayment::API_KEY_STATUS_OK,
             'code' => 200,
@@ -1412,7 +1436,7 @@ final class ApiKeyVerificationSpec
         TinyAssert::same(
             Twopayment::API_KEY_STATUS_OK,
             (string) $seen,
-            'an upgraded shop must not lose Two for a claim window on its first re-verification'
+            'a slot with no verdict clock must still be carryable, not read as ageless'
         );
 
         // And the fallback is the slot's own clock, not "now": a legacy slot older

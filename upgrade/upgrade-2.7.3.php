@@ -57,6 +57,15 @@
  * guarded and this function returns true unconditionally, because a shop that
  * cannot be tidied must still finish upgrading.
  *
+ * NOTE FOR SHOPS RUNNING AN INTERMEDIATE BUILD OF THIS CHANGE (dev/staging
+ * shops that git-sync the branch): TwoOverrideMigrator classifies staleness by
+ * version STAMP, so a shop that already installed 2.7.3 from an earlier commit
+ * has a shop-level copy stamped 2.7.3, is classified CURRENT, and is NOT
+ * refreshed by this script - it keeps running that earlier copy of the
+ * override. Force it with a module reset (or by deleting the shop-level copy)
+ * before live-testing this behaviour. No merchant is in that position: 2.7.3 is
+ * unreleased.
+ *
  * Created: 2026-08-05
  *
  * @param Twopayment $module

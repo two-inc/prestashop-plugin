@@ -57,10 +57,11 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
         // the search is authenticated with that key, so no search control is
         // mounted in that state and the field is a plain text input - a hint
         // telling the buyer to search it would be instructing them to do
-        // something that cannot happen. Same condition the checkout JS gate uses,
-        // so the two halves of the affordance agree; an as-yet-unknown verdict
-        // leaves the form untouched, since a cold cache is not evidence of a
-        // broken shop and this render may not go to the network to find out.
+        // something that cannot happen. Same predicate the checkout JS gate is
+        // handed, so the two halves of the affordance cannot disagree; an
+        // as-yet-unknown verdict leaves the form untouched, since a cold cache is
+        // not evidence of a broken shop and this render may not go to the network
+        // to find out.
         // The browser strips the wording too, for a page rendered before the
         // verdict changed; this is the half that survives a back-office
         // translation of the core string, which the browser cannot recognise as
