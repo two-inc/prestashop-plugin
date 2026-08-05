@@ -531,9 +531,21 @@ class TwoCheckoutManager {
                 // document's currently-checked radio and so cannot be asked
                 // about a specific node.
                 const twoOption = this.twoPaymentOption || document.querySelector('[data-module-name="twopayment"]');
+                // Containment first; the radio's own identity as a fallback when
+                // there is no Two option ELEMENT to contain it (round 3 review,
+                // finding 9). Containment alone would answer "not Two" on a theme
+                // that renders no `data-module-name`, and the guard would then hide
+                // the tile through the first paint of a load that is on its way to
+                // SELECTING Two - inventing exactly the flash it exists to remove.
+                // Mirrors isTwoPaymentSelected()'s own value-based fallback.
+                const isTwoRadio = twoOption
+                    ? twoOption.contains(checkedRadio)
+                    : (checkedRadio.value === 'twopayment'
+                        || checkedRadio.id === 'payment-option-twopayment'
+                        || String(checkedRadio.value || '').includes('twopayment'));
                 sessionStorage.setItem(this._surchargeRestoreKey, JSON.stringify({
                     id: checkedRadio.id,
-                    two: !!(twoOption && twoOption.contains(checkedRadio))
+                    two: !!isTwoRadio
                 }));
             }
         } catch (e) {

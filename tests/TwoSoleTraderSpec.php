@@ -59,7 +59,8 @@ final class TwoSoleTraderSpec
             'testSignupUrlFollowsEnvironment',
             'testFormatterHasNoAccountTypeField',
             'testPaymentTileCarriesTheServerResolvedToggleAnswer',
-            'testPaymentTileReportsAnUnresolvedRegistryAsNoAnswer',
+            'testPaymentTileWithAnUnknownAnswerAsksNothingAndClaimsNothing',
+            'testPaymentTileReportsAFailedLookupAsNoAnswer',
             'testPaymentTileWithNoBillingCountryAsksTheRegistryNothing',
             'testRegistryLookupUsesTheRenderPathTimeout',
             'testFailedRegistryLookupIsAttemptedOncePerRequest',
@@ -456,7 +457,18 @@ final class TwoSoleTraderSpec
             [],
             ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
         );
+        // The tile reads CACHE-ONLY (round 3 review, finding 2), so the answer has
+        // to already be known - which on a real shop is what the browser's own
+        // availability request arranges, through the endpoint that writes the
+        // cookie. This stands in for that having happened.
+        TwoSoleTrader::isAvailable($module, 'GB');
+        $requestsBefore = count($module->requests);
         $available = self::captureTileVars($module);
+        TinyAssert::same(
+            $requestsBefore,
+            count($module->requests),
+            'rendering the tile must not make a registry request of its own'
+        );
         TinyAssert::same(true, $available['vars']['sole_trader_available']);
         TinyAssert::same('1', $available['vars']['sole_trader_answer']);
         TinyAssert::same('GB', $available['vars']['sole_trader_country']);
@@ -468,10 +480,12 @@ final class TwoSoleTraderSpec
         StubStore::$addresses[8811] = ['id_country' => 44];
         StubStore::$countries[44] = 'gb';
         Context::getContext()->cart->id_address_invoice = 8811;
-        $businessOnly = self::captureTileVars(self::harness(
+        $businessOnlyModule = self::harness(
             [],
             ['/registry/v1/supported-company-types/' => self::registryOk([])]
-        ));
+        );
+        TwoSoleTrader::isAvailable($businessOnlyModule, 'GB');
+        $businessOnly = self::captureTileVars($businessOnlyModule);
         TinyAssert::same(false, $businessOnly['vars']['sole_trader_available']);
         // '0' is a real answer and must be distinguishable from '' below - it is
         // what lets the browser adopt "business-only country" and stop asking.
@@ -519,28 +533,65 @@ final class TwoSoleTraderSpec
     }
 
     /**
-     * A registry that did not answer is reported as NO answer, not as "no".
+     * An answer that is not already known is reported as NO answer, and costs the
+     * render no request at all.
      *
-     * isAvailable() flattens the two, which is right for a capability gate and
-     * wrong for markup the browser adopts as settled and never re-asks: one
-     * timeout would become a cached "business-only country" for the rest of the
-     * page's life, defeating the no-caching-of-errors rule the class and the
-     * client fetch each keep on their own.
+     * Two properties in one, and both matter:
+     *  - it must not be "no" (isAvailable() flattens the two, which is right for a
+     *    capability gate and wrong for markup the browser adopts as settled and
+     *    never re-asks - one timeout would become a cached "business-only country"
+     *    for the rest of the page's life);
+     *  - it must not be resolved HERE. This runs in a shopper's checkout render,
+     *    and a payment-option change reloads that page, so a live call meant every
+     *    payment-step render on a shop that cannot reach the registry paid the
+     *    timeout again (round 3 review, finding 2).
      */
-    private static function testPaymentTileReportsAnUnresolvedRegistryAsNoAnswer(): void
+    private static function testPaymentTileWithAnUnknownAnswerAsksNothingAndClaimsNothing(): void
     {
         StubStore::$addresses[8811] = ['id_country' => 44];
         StubStore::$countries[44] = 'gb';
         Context::getContext()->cart->id_address_invoice = 8811;
 
-        // No canned response for the registry prefix: the harness returns false,
-        // which is the shape a transport failure has.
-        $captured = self::captureTileVars(self::harness([], []));
+        // A registry that WOULD answer, and a cold cache. The tile must still not
+        // call it - that is the whole point, and a canned success here is what
+        // makes the assertion about the render rather than about the transport.
+        $module = self::harness(
+            [],
+            ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
+        );
+        $captured = self::captureTileVars($module);
 
         TinyAssert::same('', $captured['vars']['sole_trader_answer']);
         // Still fail-soft in what it DRAWS - the toggle does not render.
         TinyAssert::same(false, $captured['vars']['sole_trader_available']);
         TinyAssert::same('GB', $captured['vars']['sole_trader_country']);
+        TinyAssert::same(
+            array(),
+            array_values(array_filter($module->requests, function ($endpoint) {
+                return strpos($endpoint, '/registry/v1/supported-company-types/') === 0;
+            })),
+            'the payment-step render must never resolve availability over the network'
+        );
+    }
+
+    /**
+     * And a registry FAILURE that the browser already hit is still no answer -
+     * never cached as "business-only country" (see resolveAvailability()).
+     */
+    private static function testPaymentTileReportsAFailedLookupAsNoAnswer(): void
+    {
+        StubStore::$addresses[8811] = ['id_country' => 44];
+        StubStore::$countries[44] = 'gb';
+        Context::getContext()->cart->id_address_invoice = 8811;
+
+        // No canned response: the harness returns false, the shape of a transport
+        // failure. This is the browser's request failing, before the render.
+        $module = self::harness([], []);
+        TinyAssert::same(null, TwoSoleTrader::resolveAvailability($module, 'GB'));
+
+        $captured = self::captureTileVars($module);
+        TinyAssert::same('', $captured['vars']['sole_trader_answer']);
+        TinyAssert::same(false, $captured['vars']['sole_trader_available']);
     }
 
     /**

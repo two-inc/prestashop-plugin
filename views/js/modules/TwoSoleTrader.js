@@ -60,9 +60,20 @@ class TwoSoleTrader {
         // "already rendered" from "rendered into a node that no longer exists".
         this.renderedContainer = null;
         this.observer = null;
-        // Both page-level subscriptions this instance owns, held so
-        // stopObserving() can detach both. See init().
+        // The country-change subscription, held so destroy() can detach it.
+        // stopObserving() deliberately does NOT - see both methods.
         this._countryChangeHandler = null;
+        // Bumped every time a SERVER-rendered answer is adopted (TWO-25326 bug 9,
+        // round 3 review, finding 1). An availability request captures it before
+        // it starts and drops its own result if it has moved: the server's answer
+        // arrived later than the request did, so the request is stale however
+        // in-order it looked when it was issued. Without this, a request already
+        // in flight when PrestaShop replaced the fragment could overwrite the
+        // answer that replacement carried - and because a failed request applies
+        // "not available" while availabilityByCountry still held the adopted
+        // `true`, the settled-check then agreed the toggle was correct and the
+        // toggle stayed hidden for the rest of the page's life.
+        this._adoptGeneration = 0;
         // TWO-25326 bug 9: the country an availability request is currently out
         // for, and the debounce handle for the MutationObserver. See init() and
         // refreshAvailability() for what each prevents.
@@ -135,6 +146,7 @@ class TwoSoleTrader {
         this.availabilityByCountry[country] = (answer === '1');
         this.renderedForCountry = country;
         this.renderedContainer = container;
+        this._adoptGeneration += 1;
         // The chips exist but carry no behaviour yet - they were serialised by
         // Smarty, not built by render(). Binding is what makes the server-
         // rendered markup equivalent to a client-rendered toggle; without it the
@@ -148,11 +160,10 @@ class TwoSoleTrader {
         // The payment box and the billing country can both re-render
         // across checkout step transitions; re-evaluate availability on
         // each change.
-        // Kept on the instance so stopObserving() can detach it (TWO-25326 bug 9,
+        // Kept on the instance so destroy() can detach it (TWO-25326 bug 9,
         // round 3). It used to be an anonymous closure with no reference kept, so
-        // there was no way to detach it at all - a disposed instance stayed a live
-        // second writer to the toggle container for the rest of the page's life.
-        // destroy() is what detaches it; stopObserving() deliberately does not.
+        // there was no way to detach it at all. stopObserving() deliberately does
+        // NOT detach it - see both methods for why the two are separate.
         this._countryChangeHandler = function (event) {
             if (event.target && event.target.matches("select[name='id_country'], select[name='country']")) {
                 self.refreshAvailability();
@@ -172,9 +183,12 @@ class TwoSoleTrader {
             // fragment now arrives WITH server-rendered chips, and those chips
             // carry no listeners until this instance binds them - so waiting out
             // the 100ms debounce left a toggle that looked correct and did
-            // nothing. Re-adopting is pure DOM work with no request in it, and it
-            // terminates on the first pass: once adopted, the container matches
-            // and the check is a no-op however many mutations follow.
+            // nothing. Re-adopting is pure DOM work with no request in it. Once a
+            // container IS adopted the check is a no-op however many mutations
+            // follow; when the replacement carries no parseable answer nothing is
+            // adopted, so the check keeps re-running - one querySelector and two
+            // attribute reads per observer batch, which is the price of the
+            // fallback path rather than a loop.
             self.adoptReplacedContainer();
             self.scheduleRefresh();
         });
@@ -352,12 +366,25 @@ class TwoSoleTrader {
         }
         this.pendingCountry = country;
         const self = this;
+        // Captured BEFORE the request starts (TWO-25326 bug 9, round 3 review,
+        // finding 1). If a server-rendered answer is adopted while this is in
+        // flight - which happens whenever PrestaShop replaces the payment
+        // fragment, the thing this module is built around - then the server has
+        // answered more recently than this request was even issued, and this
+        // result must be discarded rather than applied over it.
+        const generation = this._adoptGeneration;
+        const superseded = function () {
+            return self._adoptGeneration !== generation;
+        };
         fetch(this.moduleUrl('soleTraderAvailability') + '&country=' + encodeURIComponent(country), { method: 'GET' })
             .then(function (response) { return response.json(); })
             .then(function (json) {
+                self.releasePending(country);
+                if (superseded()) {
+                    return;
+                }
                 const available = !!(json && json.success && json.available);
                 self.availabilityByCountry[country] = available;
-                self.releasePending(country);
                 // The buyer may have changed country mid-request; only
                 // apply if the answer is still for the current one.
                 if (self.billingCountry() === country) {
@@ -370,6 +397,9 @@ class TwoSoleTrader {
                 // rest of the page's life. Only the pending marker clears, so a
                 // later mutation or country change can ask again.
                 self.releasePending(country);
+                if (superseded()) {
+                    return;
+                }
                 if (self.billingCountry() === country) {
                     self.apply(country, false);
                 }

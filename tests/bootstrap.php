@@ -40,9 +40,31 @@ namespace PrestaShop\PrestaShop\Core\Payment {
         /** @var array<string, mixed> */
         public $recorded = [];
 
+        /**
+         * The setters PrestaShop core's PaymentOption actually has. An
+         * allowlist, not a `strpos($name, 'set') === 0` catch-all: a catch-all
+         * records ANY setter and returns $this, so a module change calling a
+         * setter core does NOT have passes every spec here and fatals in
+         * production - which is precisely the class of mismatch a stub of a core
+         * value object exists to catch.
+         *
+         * @var string[]
+         */
+        private const CORE_SETTERS = array(
+            'setCallToActionText',
+            'setAction',
+            'setForm',
+            'setInputs',
+            'setAdditionalInformation',
+            'setLogo',
+            'setModuleName',
+            'setBinary',
+            'setModuleFullName',
+        );
+
         public function __call($name, $arguments)
         {
-            if (strpos($name, 'set') === 0) {
+            if (in_array($name, self::CORE_SETTERS, true)) {
                 $this->recorded[lcfirst(substr($name, 3))] = $arguments[0] ?? null;
 
                 return $this;
@@ -51,7 +73,9 @@ namespace PrestaShop\PrestaShop\Core\Payment {
                 return $this->recorded[lcfirst(substr($name, 3))] ?? null;
             }
 
-            throw new \BadMethodCallException('PaymentOption stub has no ' . $name . '()');
+            throw new \BadMethodCallException(
+                'PaymentOption stub has no ' . $name . '() - if PrestaShop core really does, add it to CORE_SETTERS'
+            );
         }
     }
 }

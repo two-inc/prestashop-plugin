@@ -197,15 +197,18 @@ describe('the guard suppresses the first paint only when all three conditions ho
         // lifts first, the tile paints expanded, and the restore collapses it
         // later - a LONGER flash than the one this file removes.
         jest.useFakeTimers();
-        const readyState = Object.getOwnPropertyDescriptor(Document.prototype, 'readyState');
+        // Own property on the instance, which is what shadows the prototype
+        // getter jsdom provides - and `delete` on the instance is what undoes it.
+        // (An earlier version also saved and restored the PROTOTYPE descriptor,
+        // which it never touched: a no-op that read as the real restore.)
         Object.defineProperty(document, 'readyState', { value: 'loading', configurable: true });
         try {
             sessionStorage.setItem(KEY, JSON.stringify({ id: 'payment-option-2', two: false }));
             loadGuard();
 
-            // Well past the post-ready grace period, but DOM-ready has not
-            // happened yet, so the suppression must still hold.
-            jest.advanceTimersByTime(2000);
+            // Past the post-ready grace period, but DOM-ready has not happened
+            // yet, so the suppression must still hold.
+            jest.advanceTimersByTime(1000);
             expect(guardActive()).toBe(true);
 
             document.dispatchEvent(new window.Event('DOMContentLoaded'));
@@ -215,28 +218,26 @@ describe('the guard suppresses the first paint only when all three conditions ho
             expect(guardActive()).toBe(false);
         } finally {
             delete document.readyState;
-            if (readyState) {
-                Object.defineProperty(Document.prototype, 'readyState', readyState);
-            }
             jest.useRealTimers();
         }
+        expect(document.readyState).toBe('complete');
     });
 
     test('an absolute cap still lifts it on a document that never reaches DOM-ready', () => {
         jest.useFakeTimers();
-        const readyState = Object.getOwnPropertyDescriptor(Document.prototype, 'readyState');
         Object.defineProperty(document, 'readyState', { value: 'loading', configurable: true });
         try {
             sessionStorage.setItem(KEY, JSON.stringify({ id: 'payment-option-2', two: false }));
             loadGuard();
 
-            jest.advanceTimersByTime(6000);
+            // Still held at the grace period's own length, so this asserts the CAP
+            // rather than the DOM-ready path having fired early.
+            jest.advanceTimersByTime(600);
+            expect(guardActive()).toBe(true);
+            jest.advanceTimersByTime(1500);
             expect(guardActive()).toBe(false);
         } finally {
             delete document.readyState;
-            if (readyState) {
-                Object.defineProperty(Document.prototype, 'readyState', readyState);
-            }
             jest.useRealTimers();
         }
     });
@@ -336,6 +337,24 @@ describe('the payload the guard reads', () => {
         buildPaymentStep();
         const manager = makeManager();
         document.getElementById('payment-option-1').checked = true;
+
+        manager.triggerNativeCartRefresh();
+
+        expect(JSON.parse(sessionStorage.getItem(KEY))).toEqual({ id: 'payment-option-1', two: true });
+    });
+
+    test("Two's selection is recorded as two: true even with no data-module-name element", () => {
+        // A theme that renders no `data-module-name` leaves containment unable to
+        // answer. Recording `two: false` there would make the guard hide the tile
+        // through the first paint of a load on its way to SELECTING Two - the very
+        // flash the guard exists to remove, invented by the guard.
+        document.body.innerHTML = [
+            '<div class="payment-options">',
+            "  <input type='radio' name='payment-option' value='twopayment' id='payment-option-1' checked />",
+            "  <input type='radio' name='payment-option' value='othermethod' id='payment-option-2' />",
+            '</div>'
+        ].join('\n');
+        const manager = makeManager();
 
         manager.triggerNativeCartRefresh();
 
