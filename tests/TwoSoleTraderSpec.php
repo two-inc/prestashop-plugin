@@ -634,7 +634,7 @@ final class TwoSoleTraderSpec
         $before = Context::getContext()->cookie->writes;
 
         try {
-            $controller->displayAjax();
+            $controller->postProcess();
         } catch (StubOrderIntentResponded $e) {
             // expected: the response unwinds instead of exiting
         }
@@ -657,19 +657,33 @@ final class TwoSoleTraderSpec
      */
     private static function testAvailabilityEndpointWritesNothingWhenTheTokenIsRejected(): void
     {
-        $controller = self::makeAvailabilityController('not-the-token', 'GB');
+        $controller = self::makeAvailabilityController('wrongtoken', 'GB');
         $before = Context::getContext()->cookie->writes;
 
         try {
-            $controller->displayAjax();
+            $controller->postProcess();
         } catch (StubOrderIntentResponded $e) {
             // expected
         }
 
         TinyAssert::same($before, Context::getContext()->cookie->writes);
-        TinyAssert::true(
-            isset($controller->emitted[0]['success']) && $controller->emitted[0]['success'] === false,
-            'a rejected token must be refused'
+        // Not merely `success === false`: the controller's unknown-action branch
+        // emits exactly that and also writes nothing, so this test would pass with
+        // the availability case removed entirely. Assert the refusal is the TOKEN
+        // refusal.
+        TinyAssert::same(
+            array(array('success' => false, 'error' => 'Invalid token')),
+            $controller->emitted,
+            'a rejected token must be refused as a token, not silently as an unknown action'
+        );
+        // And that the refusal happens BEFORE any lookup - the half the docblock
+        // claims and nothing asserted. Without this, moving the token check below
+        // the registry call (an unauthenticated request triggering a live outbound
+        // call) passes.
+        TinyAssert::same(
+            array(),
+            $controller->module->requests,
+            'an unauthenticated request must not reach the registry at all'
         );
     }
 

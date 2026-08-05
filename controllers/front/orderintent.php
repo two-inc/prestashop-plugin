@@ -116,12 +116,13 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         // unsent - i.e. contingent on output buffering, which is an ini setting
         // and not something this endpoint should depend on.
         //
-        // SEVERAL other cookie-mutating actions here already write explicitly, so
-        // this is the established pattern rather than a new one - but not ALL of
-        // them do: ajaxProcessSavePaymentTerm and ajaxProcessSaveCompany still
-        // rely on the destructor. That is the same latent dependence, noted rather
-        // than changed here because neither is what this ticket is about and
-        // neither has ever been reported failing.
+        // Several other cookie-mutating actions here already write explicitly, so
+        // this is the established pattern rather than a new one - though not all of
+        // them do, and some only on part of their paths. Those are the same latent
+        // dependence, noted rather than changed because none of them is what this
+        // ticket is about and none has ever been reported failing. Deliberately not
+        // enumerated: a list of which actions do and do not is exactly the comment
+        // that goes stale, and has already been wrong twice on this branch.
         if ($this->context->cookie) {
             $this->context->cookie->write();
         }
