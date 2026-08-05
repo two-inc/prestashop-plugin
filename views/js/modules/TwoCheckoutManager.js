@@ -48,6 +48,10 @@ class TwoCheckoutManager {
         // mode, where company capture already happened at the address step,
         // well before the payment tile (and this flag) exist.
         this._tileCompanySelected = false;
+        // TWO-25326 bug 8: the company the buyer has actually picked, held for
+        // the page's lifetime rather than on the search instance that a
+        // re-render replaces. See getConfirmedCompanySelection().
+        this._confirmedCompanySelection = null;
         // Monotonic sequence for surcharge cart-line syncs: only the LATEST
         // selection's response may drive the UI (last-wins against re-ordered
         // AJAX responses when the buyer clicks between options quickly), and
@@ -2014,6 +2018,31 @@ class TwoCheckoutManager {
             this.initializeCompanySearch();
         }
 
+        // TWO-25326 bug 8, review round 1: the buyer is in the address form, so
+        // the in-memory confirmed selection stops being trustworthy and must
+        // stop out-ranking the session cookie.
+        //
+        // Both guards on that selection (address id, country ISO) compare a
+        // value captured when it was made against one resolved when it is used
+        // - and in tile mode BOTH are unresolvable at the payment step, because
+        // PrestaShop has removed the address form. So a buyer who selects a
+        // company in the tile, goes back, changes the address country and
+        // returns has changed nothing either guard can see. In tile mode the
+        // module also does not rebuild the search instance here, so
+        // TwoCompanySearch's own country-change listener - which clears the
+        // selection - is never bound to the re-rendered select either.
+        //
+        // Gated on a country select actually being in the DOM, deliberately:
+        // PrestaShop emits `updatedAddressForm` for ordinary things and it can
+        // land tens of milliseconds after an unrelated click (see
+        // TwoCompanySearch's own note on this event), so an unconditional clear
+        // here could wipe a selection the buyer had just made and put bug 8
+        // straight back. A country select being present means an address form is
+        // genuinely rendered, which is the only case this needs to cover.
+        if (document.querySelector("select[name='id_country'], select[name='country']")) {
+            this.clearConfirmedCompanySelection();
+        }
+
         // Clear cached intent state when address is edited so a new selection can trigger intent
         if (this.orderIntent && this.orderIntent.reset) {
             this.orderIntent.reset();
@@ -2283,9 +2312,158 @@ class TwoCheckoutManager {
                 // TWO-25326 §7.1: so collectFormData() knows not to trust the
                 // address-area company/companyid DOM fields once search has
                 // relocated to the tile.
-                companySearchInAddressArea: this.config.companySearchInAddressArea !== false
+                companySearchInAddressArea: this.config.companySearchInAddressArea !== false,
+                // TWO-25326 bug 8: read through a getter rather than passed by
+                // value, so the module always sees the CURRENT selection - this
+                // instance is built once, on the first Two selection, and long
+                // outlives any individual company choice.
+                getConfirmedCompany: () => this.getConfirmedCompanySelection()
             });
         }
+    }
+
+    /**
+     * The company the buyer has actually picked from the search results, as
+     * published by TwoCompanySearch.onCompanySelected().
+     *
+     * Held HERE, not on the search instance, because the search instance does
+     * not survive what the selection has to survive: PrestaShop replaces the
+     * payment fragment (and with it the mounted search field) repeatedly while
+     * the step settles, and handleAddressFormUpdate() destroys and rebuilds the
+     * instance outright. This manager is a page-lifetime singleton
+     * (window.TwoCheckoutManager_Instance), so a selection recorded here
+     * outlives every re-render between the buyer's click and the intent check
+     * it triggers.
+     *
+     * @returns {?{company: string, companyid: string, addressId: number}}
+     */
+    getConfirmedCompanySelection() {
+        return this._confirmedCompanySelection || null;
+    }
+
+    /**
+     * Record the buyer's confirmed company selection. Called from
+     * TwoCompanySearch at the moment a result is picked and its organisation
+     * number is known - including the deferred (GB) path, where the number only
+     * arrives with the company-details lookup.
+     *
+     * The address currently selected at capture time is recorded alongside, so
+     * TwoOrderIntent can drop the selection if the buyer later switches
+     * address rather than credit-checking one address's company against
+     * another.
+     *
+     * @param {?{company: string, companyid: string}} selection
+     * @returns {void}
+     */
+    setConfirmedCompanySelection(selection) {
+        const company = (selection && selection.company) ? String(selection.company).trim() : '';
+        const companyid = (selection && selection.companyid) ? String(selection.companyid).trim() : '';
+        if (!company || !companyid) {
+            // Not a usable pair: forget any earlier one rather than leaving it
+            // to be paired with a company the buyer has since moved off.
+            this.clearConfirmedCompanySelection();
+            return;
+        }
+        this._confirmedCompanySelection = {
+            company: company,
+            companyid: companyid,
+            addressId: this.getSelectedAddressId(),
+            countryIso: this.getSelectedCountryIso()
+        };
+    }
+
+    /**
+     * Forget the confirmed selection - manual entry, a cleared selection, or an
+     * address edit, all of which mean the previously captured company can no
+     * longer be assumed to be the buyer's.
+     *
+     * @returns {void}
+     */
+    clearConfirmedCompanySelection() {
+        this._confirmedCompanySelection = null;
+    }
+
+    /**
+     * The checkout address currently selected, or 0 when unknown.
+     *
+     * DELEGATES to TwoOrderIntent.getCurrentAddressId() whenever that module
+     * exists (review round 1). The value captured here is compared against the
+     * value THAT method resolves, so two independent resolutions with different
+     * fallback orders would disagree on a page where both a hidden
+     * `id_address_invoice` input and an open edit form are present - and a
+     * disagreement reads as "the buyer switched address", silently throwing away
+     * a valid selection and falling back to the very cookie path this exists to
+     * avoid. The local fallback below is a byte-for-byte mirror of that method's
+     * order for the case where the intent module has not been built yet.
+     *
+     * @returns {number}
+     */
+    getSelectedAddressId() {
+        if (this.orderIntent && typeof this.orderIntent.getCurrentAddressId === 'function') {
+            return this.orderIntent.getCurrentAddressId();
+        }
+        const checkedSelectors = [
+            "input[name='id_address_invoice']:checked",
+            "input[name='id_address_delivery']:checked"
+        ];
+        for (const selector of checkedSelectors) {
+            const field = document.querySelector(selector);
+            if (field && field.value) {
+                const parsed = parseInt(field.value, 10);
+                if (parsed > 0) {
+                    return parsed;
+                }
+            }
+        }
+        const addressForm = document.querySelector('.js-address-form form[data-id-address]');
+        if (addressForm) {
+            const parsed = parseInt(addressForm.getAttribute('data-id-address') || '0', 10);
+            if (parsed > 0) {
+                return parsed;
+            }
+        }
+        const selectors = [
+            "input[name='id_address_invoice']",
+            "input[name='id_address_delivery']",
+            "input[name='id_address']"
+        ];
+        for (const selector of selectors) {
+            const field = document.querySelector(selector);
+            if (field && field.value) {
+                const parsed = parseInt(field.value, 10);
+                if (parsed > 0) {
+                    return parsed;
+                }
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * The billing country currently selected, as an ISO code, or '' when it
+     * cannot be resolved - which at the payment step in tile mode is the norm,
+     * because PrestaShop has removed the address form by then.
+     *
+     * Recorded alongside a confirmed selection so TwoOrderIntent can apply the
+     * same country invalidation the session-cookie path applies.
+     *
+     * @returns {string}
+     */
+    getSelectedCountryIso() {
+        if (this.orderIntent && typeof this.orderIntent.getCurrentAddressCountryISO === 'function') {
+            return String(this.orderIntent.getCurrentAddressCountryISO() || '').toUpperCase();
+        }
+        const field = document.querySelector("select[name='id_country'], select[name='country']");
+        if (field && field.selectedOptions && field.selectedOptions.length) {
+            const option = field.selectedOptions[0];
+            const iso = option.getAttribute('data-iso-code')
+                || option.getAttribute('data-iso')
+                || option.getAttribute('data-country-iso');
+            if (iso) {
+                return String(iso).toUpperCase();
+            }
+        }
+        return '';
     }
     
     /**
