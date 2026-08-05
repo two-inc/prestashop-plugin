@@ -107,12 +107,14 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
     {
         try {
             $module = Module::getInstanceByName('twopayment');
-            if (is_object($module) && method_exists($module, 'getTwoApiKeyVerificationStatus')) {
-                $status = $module->getTwoApiKeyVerificationStatus(false);
-                $status = isset($status['status']) ? (string) $status['status'] : '';
-                // Only a DEFINITIVE failure withholds the hint. An unconfirmed
-                // verdict (nothing cached yet) leaves the form exactly as it was.
-                return !in_array($status, array('invalid_key', 'not_configured'), true);
+            // Only a DEFINITIVE failure withholds the hint; an unconfirmed verdict
+            // (nothing cached yet, a transient service or network failure) leaves
+            // the form exactly as it was. Asked THROUGH the module rather than by
+            // re-listing the categories here, so there is one definition of that
+            // set (review round 3) - and that method is cache-only by contract,
+            // which is what keeps an address-form render off the network.
+            if (is_object($module) && method_exists($module, 'isTwoApiKeyDefinitelyUnusable')) {
+                return !$module->isTwoApiKeyDefinitelyUnusable();
             }
         } catch (Throwable $e) {
             // Fall through to fail-open below.

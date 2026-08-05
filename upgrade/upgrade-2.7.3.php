@@ -69,15 +69,22 @@ if (!defined('_PS_VERSION_')) {
 
 function upgrade_module_2_7_3($module)
 {
-    require_once rtrim($module->getLocalPath(), '/') . '/classes/TwoOverrideMigrator.php';
-
     try {
+        // Inside the try, not before it: resolving the path and loading the class
+        // are as capable of raising as the refresh itself (a missing file, an odd
+        // install), and this function's whole contract is that nothing it does can
+        // fail the upgrade.
+        require_once rtrim($module->getLocalPath(), '/') . '/classes/TwoOverrideMigrator.php';
+
         $notes = TwoOverrideMigrator::refresh($module);
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
         // Deliberately broad, same reasoning as the 2.7.1/2.7.2 scripts: this is
-        // housekeeping on top of an upgrade that has already succeeded, and a
-        // thrown exception here leaves the module version un-bumped and the shop
-        // in a state no later script can reason about.
+        // housekeeping on top of an upgrade that has already succeeded, and
+        // anything thrown here leaves the module version un-bumped and the shop in
+        // a state no later script can reason about. Throwable rather than
+        // Exception: an Error (a TypeError inside the migrator, a missing class on
+        // an odd install) has exactly that consequence and would otherwise not be
+        // caught at all.
         PrestaShopLogger::addLog(
             'Two Payment v2.7.3 upgrade: shop-level override refresh raised "' . $e->getMessage()
             . '" and was skipped. The shop may still be running a stale override, in which case the '

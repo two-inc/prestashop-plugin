@@ -63,6 +63,7 @@ final class CustomerAddressFormatterOverrideSpec
         self::testCompanyPlaceholderIsWithheldWhenTheApiKeyIsRejected();
         self::testCompanyPlaceholderSurvivesAnUnconfirmedVerdict();
         self::testCompanyPlaceholderSurvivesAnUnreachableModuleInstance();
+        self::testCompanyPlaceholderSurvivesAThrowingModuleInstance();
     }
 
     /**
@@ -257,6 +258,46 @@ final class CustomerAddressFormatterOverrideSpec
         TinyAssert::true(
             array_key_exists('placeholder', $format['company']->getAvailableValues()),
             'an unreachable module instance must not cost the hint'
+        );
+    }
+
+
+    /**
+     * ...and survives an instance that THROWS, not merely one that is absent
+     * (review round 3 survivor). A TypeError or any other Error out of the
+     * module - a fatal in its construction, a missing class on an odd install -
+     * would otherwise escape into address-form rendering and break the address
+     * step outright, on every page that renders one. Catching Exception alone
+     * does not cover that, and nothing else in the suite noticed the difference.
+     */
+    private static function testCompanyPlaceholderSurvivesAThrowingModuleInstance(): void
+    {
+        $overridePath = dirname(__DIR__) . '/override/classes/form/CustomerAddressFormatter.php';
+        if (!class_exists('CustomerAddressFormatter', false)) {
+            require_once $overridePath;
+        }
+
+        StubStore::$moduleInstances['twopayment'] = new class extends TwopaymentTestHarness {
+            public function isTwoApiKeyDefinitelyUnusable()
+            {
+                throw new TypeError('module blew up while answering');
+            }
+        };
+
+        $translator = new class {
+            public function trans($message, array $params = [], $domain = null): string
+            {
+                return (string) $message;
+            }
+        };
+
+        $formatter = new CustomerAddressFormatter(new Country(), $translator, []);
+        $format = $formatter->getFormat();
+        StubStore::$moduleInstances = [];
+
+        TinyAssert::true(
+            array_key_exists('placeholder', $format['company']->getAvailableValues()),
+            'a throwing module instance must not cost the hint - or the address form'
         );
     }
 

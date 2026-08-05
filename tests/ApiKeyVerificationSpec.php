@@ -53,6 +53,7 @@ final class ApiKeyVerificationSpec
         self::testEachCategoryGetsItsOwnWording();
         self::testNoticeNeverLeaksTheResponseBody();
         self::testNoticeIsSilentWhenVerifiedOrUnconfigured();
+        self::testNoticeSaysNothingWhileAVerificationIsStillRunning();
         self::testSaveReportsTheCategoryAndPublishesTheVerdict();
         self::testVerifiedPanelFollowsTheLiveVerdict();
 
@@ -63,6 +64,8 @@ final class ApiKeyVerificationSpec
         self::testWithholdReasonIsLoggedOncePerRequestNotPerCall();
         self::testPaymentSubmissionIsRefusedWhenTheKeyDoesNotVerify();
         self::testPaymentSubmissionSurvivesATransientFailure();
+        self::testPaymentControllerAsksTheDefinitiveQuestionNotTheRenderOne();
+        self::testAStaleRejectedKeyStillRefusesASubmission();
 
         // Company-search gate.
         self::testCheckoutConfigCarriesTheVerdictAsABoolean();
@@ -75,6 +78,8 @@ final class ApiKeyVerificationSpec
         self::testAClaimWithNoPriorVerdictKeepsTheGatesClosed();
         self::testAClaimCarriesAPriorVerdictSoReVerificationDoesNotBlinkTwoOff();
         self::testAnEnvironmentChangeInvalidatesTheVerdict();
+        self::testAnAncientVerdictIsNotCarriedForever();
+        self::testSwitchingEnvironmentAloneNeverPublishesAVerdict();
         self::testChangedKeyNeverInheritsThePreviousVerdict();
     }
 
@@ -212,15 +217,78 @@ final class ApiKeyVerificationSpec
     }
 
     /** Writes a stored verdict for $apiKey, stamped $age seconds ago. */
-    private static function storeVerdict(string $status, ?int $code, string $apiKey, int $age = 0, bool $claim = false): void
-    {
+    private static function storeVerdict(
+        string $status,
+        ?int $code,
+        string $apiKey,
+        int $age = 0,
+        bool $claim = false,
+        ?int $verifiedAge = null
+    ): void {
         Configuration::updateValue(Twopayment::CONFIG_API_KEY_STATUS, json_encode(array(
             'status' => $status,
             'code' => $code,
             'key_hash' => self::slotKey($apiKey),
             'claim' => $claim,
+            // How old the VERDICT is, which is what bounds serve-stale on a claim -
+            // as distinct from how old the slot write is. Defaults to the same age.
+            'verified_on' => time() - ($verifiedAge === null ? $age : $verifiedAge),
         )));
         Configuration::updateValue(Twopayment::CONFIG_API_KEY_STATUS_TS, time() - $age);
+    }
+
+    /**
+     * Drives the real payment controller over a submittable cart and reports
+     * whether THIS gate refused, read from its own log line.
+     *
+     * Deliberately not "did anything redirect": every other guard on that path
+     * (the checkout token, the currency, the module state) also ends in a
+     * redirect, so a redirect proves nothing about which check fired - and one of
+     * them fires on this fixture. The log line is the gate's signature.
+     */
+    private static function gateRefusedTheSubmission(object $module): bool
+    {
+        self::submittableCart($module);
+        Tools::setTestValue('token', Tools::getToken(false));
+        PrestaShopLogger::reset();
+
+        $controller = new TwopaymentPaymentModuleFrontController();
+        $controller->module = $module;
+
+        try {
+            $controller->postProcess();
+        } catch (Exception $e) {
+            // Any guard on this path ends in a redirect the stub core raises, and
+            // anything past them all reaches provider plumbing this harness does
+            // not stub. Either way the log below is what decides.
+        }
+
+        foreach (PrestaShopLogger::$logs as $entry) {
+            if (strpos($entry['message'], 'API key does not verify') !== false) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** Cart/customer/address fixtures a payment POST needs to get as far as the gate. */
+    private static function submittableCart(object $module): void
+    {
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$countries[33] = 'FR';
+        StubStore::$addresses[9201] = ['id_country' => 33, 'company' => 'Acme FR SAS', 'loaded' => true];
+        StubStore::$customers[9001] = ['email' => 'buyer@example.com', 'loaded' => true];
+        StubStore::$carts[9601] = [
+            'id_customer' => 9001,
+            'id_currency' => 978,
+            'id_address_invoice' => 9201,
+            'id_address_delivery' => 9201,
+            'id_carrier' => 0,
+            'id_lang' => 1,
+        ];
+        $module->context->cart = new Cart(9601);
+        Context::getContext()->cart = $module->context->cart;
     }
 
     /** A cart that clears every OTHER hookPaymentOptions gate. */
@@ -409,6 +477,21 @@ final class ApiKeyVerificationSpec
         $fresh = self::module(self::okOutcome());
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', '');
         TinyAssert::same('', $fresh->noticeForTest());
+    }
+
+
+    /**
+     * A verification another request is still making is not a diagnosis. Without
+     * this, the notice falls through to the generic "could not be verified"
+     * wording while the key is in the middle of being verified (review round 3
+     * survivor).
+     */
+    private static function testNoticeSaysNothingWhileAVerificationIsStillRunning(): void
+    {
+        $module = self::module(self::okOutcome());
+        $module->primeTwoApiKeyStatus(Twopayment::API_KEY_STATUS_VERIFYING, null);
+
+        TinyAssert::same('', $module->noticeForTest(), 'a verification in flight must not be reported as a failure');
     }
 
     /**
@@ -617,44 +700,12 @@ final class ApiKeyVerificationSpec
     {
         $module = self::module(self::okOutcome());
         $module->primeTwoApiKeyStatus(Twopayment::API_KEY_STATUS_INVALID, 401);
+        self::submittableCart($module);
 
-        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
-        StubStore::$countries[33] = 'FR';
-        StubStore::$addresses[9201] = ['id_country' => 33, 'company' => 'Acme FR SAS', 'loaded' => true];
-        StubStore::$customers[9001] = ['email' => 'buyer@example.com', 'loaded' => true];
-        StubStore::$carts[9601] = [
-            'id_customer' => 9001,
-            'id_currency' => 978,
-            'id_address_invoice' => 9201,
-            'id_address_delivery' => 9201,
-            'id_carrier' => 0,
-            'id_lang' => 1,
-        ];
-
-        $context = Context::getContext();
-        $context->cart = new Cart(9601);
-
-        $controller = new TwopaymentPaymentModuleFrontController();
-        $controller->module = $module;
-        PrestaShopLogger::reset();
-
-        // The refusal path ends in redirectWithNotifications(), which the stub
-        // core raises instead of redirecting.
-        $refused = false;
-        try {
-            $controller->postProcess();
-        } catch (StubRedirect $e) {
-            $refused = true;
-        }
-
-        TinyAssert::true($refused, 'a submission on an unverifiable key must be refused, not processed');
-        $logged = false;
-        foreach (PrestaShopLogger::$logs as $entry) {
-            if (strpos($entry['message'], 'API key does not verify') !== false) {
-                $logged = true;
-            }
-        }
-        TinyAssert::true($logged, 'the refusal must be logged');
+        TinyAssert::true(
+            self::gateRefusedTheSubmission($module),
+            'a submission on an unverifiable key must be refused, not processed'
+        );
     }
 
 
@@ -698,6 +749,84 @@ final class ApiKeyVerificationSpec
         $cold = self::module(self::httpOutcome(401));
         $cold->isTwoApiKeyDefinitelyUnusable();
         TinyAssert::same(0, $cold->verifyCalls, 'the payment POST must not pay for a verification');
+    }
+
+
+    /**
+     * The controller's CALL SITE, not just the module method it should be using
+     * (review round 3 survivor): swapping in the render path's question -
+     * "verified?" rather than "definitively unusable?" - reinstates exactly the
+     * fail-closed-on-a-blip behaviour that was removed, and every
+     * category-level assertion elsewhere still passes.
+     */
+    private static function testPaymentControllerAsksTheDefinitiveQuestionNotTheRenderOne(): void
+    {
+        $module = self::module(self::okOutcome());
+        $module->primeTwoApiKeyStatus(Twopayment::API_KEY_STATUS_SERVICE_ERROR, 503);
+        self::submittableCart($module);
+
+        TinyAssert::false(
+            self::gateRefusedTheSubmission($module),
+            'a transient failure must not refuse a submitted order'
+        );
+        TinyAssert::same(0, $module->verifyCalls, 'and the POST must not pay for a verification either');
+    }
+
+    /**
+     * ...while a REJECTED key still refuses, however old the verdict is. The gate
+     * exists for the buyer who was already on the payment step when the verdict
+     * changed - minutes later, by definition - and it may not make the call
+     * itself, so a TTL-fresh verdict is precisely what it does not have (review
+     * round 3).
+     */
+    private static function testAStaleRejectedKeyStillRefusesASubmission(): void
+    {
+        $module = self::module(self::okOutcome());
+        self::storeVerdict(
+            Twopayment::API_KEY_STATUS_INVALID,
+            401,
+            'stored-key',
+            Twopayment::API_KEY_STATUS_TTL * 10
+        );
+        self::submittableCart($module);
+
+        TinyAssert::true(
+            self::gateRefusedTheSubmission($module),
+            'a rejected key refuses a submission however stale the verdict is'
+        );
+        TinyAssert::same(0, $module->verifyCalls, 'cache-only, still');
+
+        // A stale TRANSIENT verdict must not gain the same power.
+        $transient = self::module(self::okOutcome());
+        self::storeVerdict(
+            Twopayment::API_KEY_STATUS_SERVICE_ERROR,
+            503,
+            'stored-key',
+            Twopayment::API_KEY_STATUS_TTL * 10
+        );
+        TinyAssert::false(
+            $transient->isTwoApiKeyDefinitelyUnusable(),
+            'an old transient failure must not become definitive by ageing'
+        );
+
+        // A claim in flight is a different case again, and the distinction is
+        // worth pinning: a claim only ever CARRIES a real previous verdict (it
+        // carries 'verifying' when there is none), so a claim carrying
+        // 'invalid_key' is the last real verdict and refuses like any other. A
+        // claim carrying nothing refuses nothing.
+        $carrying = self::module(self::okOutcome());
+        self::storeVerdict(Twopayment::API_KEY_STATUS_INVALID, 401, 'stored-key', 0, true);
+        TinyAssert::true(
+            $carrying->isTwoApiKeyDefinitelyUnusable(),
+            'a claim carrying a rejected-key verdict is still carrying that verdict'
+        );
+
+        $empty = self::module(self::okOutcome());
+        self::storeVerdict(Twopayment::API_KEY_STATUS_VERIFYING, null, 'stored-key', 0, true);
+        TinyAssert::false(
+            $empty->isTwoApiKeyDefinitelyUnusable(),
+            'a claim with no verdict to carry must not refuse a submitted order'
+        );
     }
 
     /* ===================================================================
@@ -978,6 +1107,77 @@ final class ApiKeyVerificationSpec
             'the same key against a different environment must be verified afresh'
         );
         TinyAssert::same(1, $module->verifyCalls);
+    }
+
+
+    /**
+     * A claim re-stamps the slot's clock, so serve-stale is bounded by the age of
+     * the VERDICT rather than of the last write - otherwise a shop whose
+     * verification never completes (a fatal, a killed worker) re-carries and
+     * re-freshens the same ancient 'ok' indefinitely (review round 3).
+     */
+    private static function testAnAncientVerdictIsNotCarriedForever(): void
+    {
+        $module = self::module(self::okOutcome());
+        // Slot written moments ago (as a claim would leave it), but the verdict it
+        // carries was reached long ago.
+        self::storeVerdict(
+            Twopayment::API_KEY_STATUS_OK,
+            200,
+            'stored-key',
+            Twopayment::API_KEY_STATUS_TTL + 1,
+            false,
+            Twopayment::API_KEY_STATUS_CARRY_MAX_AGE + 1
+        );
+        $seenByConcurrentRequest = null;
+
+        $module->onWireCall(function () use (&$seenByConcurrentRequest) {
+            $concurrent = new class extends TwopaymentTestHarness {
+                public function __construct()
+                {
+                    parent::__construct();
+                    $this->primeTwoApiKeyStatus(null);
+                }
+
+                protected function requestTwoApiKeyVerification($apiKey, $environment, $timeout = null)
+                {
+                    throw new RuntimeException('a concurrent request must stand down, not verify');
+                }
+            };
+            $seenByConcurrentRequest = $concurrent->getTwoApiKeyVerificationStatus()['status'];
+        });
+
+        $module->getTwoApiKeyVerificationStatus();
+
+        TinyAssert::same(
+            Twopayment::API_KEY_STATUS_VERIFYING,
+            (string) $seenByConcurrentRequest,
+            'a verdict older than the carry cap must not ride along on a claim'
+        );
+    }
+
+    /**
+     * Switching only the ENVIRONMENT dropdown to one this key is not valid for
+     * must not publish anything against the shop's stored configuration (review
+     * round 3). The check runs against the submitted environment while the slot is
+     * keyed to the stored one, and a failing key makes PrestaShop skip the save -
+     * so publishing here took Two off a healthy checkout over a save that never
+     * happened.
+     */
+    private static function testSwitchingEnvironmentAloneNeverPublishesAVerdict(): void
+    {
+        $module = self::module(self::httpOutcome(401));
+        self::generalFormPost('stored-key');
+        Tools::setTestValue('PS_TWO_ENVIRONMENT', 'staging');
+
+        $errors = $module->validateGeneralFormForTest();
+
+        TinyAssert::same(1, count($errors), 'the merchant is still told the key was rejected there');
+        TinyAssert::same(
+            '',
+            (string) Configuration::get(Twopayment::CONFIG_API_KEY_STATUS),
+            'but nothing is published against the configuration the shop is still running'
+        );
     }
 
     /**
