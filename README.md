@@ -61,7 +61,8 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 2. **Environment Selection**: Choose Sandbox (testing) or Production environment
 3. **API Key**: Enter your Two API key for the selected environment
    - The module validates the API key on save
-   - Invalid keys will show an error message
+   - A key that does not verify is reported by category, so a rejected key, a Two service error and a shop that cannot reach Two at all read differently. The HTTP status is shown; the response body is only ever logged
+   - While a stored key does not verify, Two is withheld from checkout entirely (payment option and company search alike) and the config page says so. The verdict is re-checked automatically - about once a minute while it is failing - so a fixed key or a resolved outage takes effect without a re-save
 4. **Payment Terms**: Configure payment term type and available terms
    - **Term Type**: Choose Standard or End-of-Month (EOM) terms
      - **Standard**: Payment due X days from fulfillment date (all durations available)
@@ -602,6 +603,16 @@ The module builds order payloads that exactly match PrestaShop invoices:
   - Verify JavaScript loaded correctly
   - Check browser console for errors
   - Ensure company is selected (not just typed) - search and click a result
+
+### Two Missing from Checkout Entirely
+- **Symptom**: The Two payment option (and the company search) do not appear at all, on a shop where they used to
+- **Solutions**:
+  - Open the module configuration: a stored API key that cannot currently be verified is reported there, with its category and HTTP status. Two is withheld from checkout for as long as that notice shows
+  - `invalid_key` means Two rejected the key - re-copy it from the Two portal for the environment selected above it
+  - `service_error` means Two answered with a 5xx: nothing to fix on the shop, check Two's status and retry
+  - `unreachable` means this shop could not reach the Two API at all - check outbound network, DNS and firewall rules. The key itself has not been judged
+  - Search the PrestaShop logs for `API key verification status` - the withholding is always logged with its category
+  - Also check the plainer causes: the module disabled, no payment terms enabled, cart below the minimum order value, or an unsupported cart currency (each of which logs its own line)
 
 ### "Invalid Phone Number" Error
 - **Symptom**: Order fails with phone validation error

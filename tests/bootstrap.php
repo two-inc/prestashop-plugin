@@ -1752,6 +1752,27 @@ namespace {
             // this module's own directory, trailing slash included. Used by
             // getTwoVersionedAssetPath() to filemtime() the real asset files.
             $this->local_path = dirname(__DIR__) . '/';
+            // A verified API key by default (TWO-25326). Every checkout gate
+            // now consults that verdict, and a harness without one would
+            // either take the whole suite to the network on a cache miss or
+            // silently hide the payment option from every unrelated spec.
+            // ApiKeyVerificationSpec drives the real thing by clearing this
+            // and stubbing the wire call.
+            $this->primeTwoApiKeyStatus(Twopayment::API_KEY_STATUS_OK, 200);
+        }
+
+        /**
+         * Sets (or, with null, clears) the request-scoped verification memo the
+         * checkout gates read, without going near the network.
+         *
+         * @param string|null $status
+         * @param int|null    $code
+         */
+        public function primeTwoApiKeyStatus($status, $code = null): void
+        {
+            $this->twoApiKeyStatusMemo = $status === null
+                ? null
+                : array('status' => (string) $status, 'code' => $code);
         }
 
         public function l($string)

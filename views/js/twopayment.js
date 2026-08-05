@@ -120,6 +120,11 @@
                 // all when the control is in the address area. Absent reads
                 // as enabled, matching the server-side default-on resolver.
                 addressLookupEnabled: twopayment.address_lookup !== '0',
+                // TWO-25326: only an explicit false disables the company
+                // search. The server sends a real boolean; an absent key (an
+                // older cached config payload) must read as verified rather
+                // than take the search away from a working shop.
+                apiKeyVerified: twopayment.api_key_verified !== false,
                 orderIntentEnabled: true,
                 checkoutHost: twopayment.checkout_host,
                 orderIntentUrl: twopayment.order_intent_url,
@@ -191,6 +196,7 @@
                             // Keep in step with the primary config object above (TWO-25203, TWO-25326 §7.1).
                             companySearchInAddressArea: twopayment.company_name_search !== '0',
                             addressLookupEnabled: twopayment.address_lookup !== '0',
+                            apiKeyVerified: twopayment.api_key_verified !== false,
                             orderIntentEnabled: true,
                             checkoutHost: twopayment.checkout_host,
                             orderIntentUrl: twopayment.order_intent_url,

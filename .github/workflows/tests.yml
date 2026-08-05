@@ -49,6 +49,7 @@ jobs:
           php -l tests/DeployVersionInfoSpec.php
           php -l tests/UpgradeScriptVersionSpec.php
           php -l tests/OverrideMigrationSpec.php
+          php -l tests/ApiKeyVerificationSpec.php
           php -l classes/TwoOverrideMigrator.php
           php -l upgrade/upgrade-2.7.1.php
           php -l tests/run.php
