@@ -634,6 +634,12 @@ function resultTexts() {
  * @returns {Function} the TwoSoleTrader class
  */
 function loadSoleTrader() {
+    // TWO-25326 §12, review round 2: applyBuyer()'s status display now calls
+    // window.TwoCompanyNumber.forDisplay() unguarded, exactly as the real page
+    // does (twopayment.php loads it at a lower priority than every module that
+    // renders a number, TwoSoleTrader included) - so it must be in place
+    // before this module loads here too.
+    loadCompanyNumber();
     loadScript('views/js/modules/TwoSoleTrader.js');
     const TwoSoleTrader = global.window.TwoSoleTrader;
     if (typeof TwoSoleTrader !== 'function') {
