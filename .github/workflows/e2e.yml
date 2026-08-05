@@ -15,11 +15,13 @@ name: E2E (Playwright checkout flow)
 # no live Two credentials, matching this repo's existing no-secrets CI
 # convention). It asserts the Two payment option renders correctly, and that
 # attempting to place an order without a company verified through Two's live
-# search widget is declined
-# gracefully (no fatal, no order silently created) — the deterministic,
-# secret-free outcome any unverified/dummy merchant key produces. It does
-# not exercise a real approved order end to end; that needs live Two
-# sandbox credentials, which this repo does not wire into CI for any job.
+# search widget is declined gracefully (no fatal, no order silently created).
+# That decline is deterministic and secret-free because the stub answers only
+# the API-key verification call and refuses everything else, so the order call
+# itself always fails — it is no longer attributable to the dummy key being
+# unverified, since the stub verifies any key. It does not exercise a real
+# approved order end to end; that needs live Two sandbox credentials, which this
+# repo does not wire into CI for any job.
 
 on:
   pull_request:
@@ -61,8 +63,9 @@ jobs:
       # /v1/merchant/verify_api_key - which the module now requires before it
       # will offer Two at all (TWO-25326) - and refuses everything else, so
       # the checkout-media priming calls (merchant terms / FX-rate refresh,
-      # fired on every checkout page view) still fail fast exactly as they did
-      # when this pointed at a dead port.
+      # fired on every checkout page view) still fail fast - now as an HTTP 503
+      # rather than the transport failure a dead port produced, a difference
+      # dev/ci/two-api-stub.php spells out.
       # One source for the port: the stub script requires this variable and
       # refuses to default it, so the URL below and the listener cannot drift.
       TWO_API_STUB_PORT: "8099"

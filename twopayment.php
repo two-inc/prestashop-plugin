@@ -8468,7 +8468,7 @@ class Twopayment extends PaymentModule
      * belongs to - callers decide what to do with both. Null when nothing
      * usable is stored.
      *
-     * @return array{status:string,code:int|null,key_hash:string,checked_on:int}|null
+     * @return array{status:string,code:int|null,key_hash:string,claim:bool,verified_on:int,checked_on:int}|null
      */
     private function readStoredTwoApiKeyStatus()
     {
