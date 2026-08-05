@@ -94,6 +94,26 @@ describe('company search under an unverified API key', () => {
         expect(companyField().getAttribute('placeholder')).toBe('Firmenname (optional)');
     });
 
+    test('every company field is neutralised, not just the first', () => {
+        // PrestaShop renders a SECOND address form, with its own
+        // name='company', the moment the buyer ticks "billing address differs
+        // from shipping address" - and the override places the hint on both.
+        document.body.insertAdjacentHTML(
+            'beforeend',
+            "<div class='js-address-form'><form data-id-address='9'>" +
+                "<input type='text' name='company' value='' placeholder='" + SEARCH_PLACEHOLDER + "' />" +
+                '</form></div>'
+        );
+        const fields = document.querySelectorAll("input[name='company']");
+        expect(fields.length).toBe(2);
+
+        new TwoCheckoutManager(managerConfig({ apiKeyVerified: false }));
+
+        fields.forEach((field) => {
+            expect(field.getAttribute('placeholder')).toBeNull();
+        });
+    });
+
     test('the gate also holds in tile mode, where the mount point is in the payment tile', () => {
         document.body.insertAdjacentHTML(
             'beforeend',

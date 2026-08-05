@@ -52,7 +52,16 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
         // buyer has not touched yet is noise. The browser JS applies the same
         // wording when this slot is empty, which covers a theme rendering its
         // own address form.
-        if (isset($format['company']) && $format['company'] instanceof FormField) {
+        //
+        // Not applied at all when the shop's API key does not currently verify
+        // (TWO-25326): the search is authenticated with that key, so no search
+        // control is mounted in that state and the field is a plain text input -
+        // a hint telling the buyer to search it would be instructing them to do
+        // something that cannot happen. The browser strips the wording too, for
+        // a page rendered before the verdict changed; this is the half that
+        // survives a back-office translation of the core string, which the
+        // browser cannot recognise as ours.
+        if (isset($format['company']) && $format['company'] instanceof FormField && $this->twoCompanySearchAvailable()) {
             $format['company']->addAvailableValue('placeholder', $this->translator->trans('Enter company name to search', [], 'Shop.Forms.Labels'));
         }
 
@@ -74,6 +83,30 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
         // regardless. Do not re-add them here.
 
         return $format;
+    }
+
+    /**
+     * Whether the company search will actually run on this shop right now
+     * (TWO-25326) - i.e. whether the module's stored API key currently
+     * verifies. Best-effort and fail-OPEN: an override that cannot reach the
+     * module instance must keep rendering the address form it has always
+     * rendered, never take a hint away on a shop that is fine. The verdict is
+     * cached module-side, so this costs a config read on a warm cache.
+     *
+     * @return bool
+     */
+    private function twoCompanySearchAvailable()
+    {
+        try {
+            $module = Module::getInstanceByName('twopayment');
+            if (is_object($module) && method_exists($module, 'isTwoApiKeyVerified')) {
+                return (bool) $module->isTwoApiKeyVerified();
+            }
+        } catch (Exception $e) {
+            // Fall through to fail-open below.
+        }
+
+        return true;
     }
 
     private function moveFieldBefore(array $format, $fieldKey, $beforeKey)

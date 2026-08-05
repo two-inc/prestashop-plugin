@@ -48,6 +48,14 @@ namespace {
          * @var array<int,array<string,mixed>>
          */
         public static array $cartMessages = [];
+        /**
+         * Module instances Module::getInstanceByName() should hand back, keyed
+         * by module name (TWO-25326 - the address-form override asks the module
+         * whether the company search is available at all).
+         *
+         * @var array<string,object>
+         */
+        public static array $moduleInstances = [];
         public static array $cartTotals = [];
         public static array $cartShipping = [];
         public static array $cartRules = [];
@@ -180,6 +188,7 @@ namespace {
             self::$carriers = [];
             self::$cartProducts = [];
             self::$cartMessages = [];
+            self::$moduleInstances = [];
             self::$cartTotals = [];
             self::$cartShipping = [];
             self::$cartRules = [];
@@ -314,6 +323,16 @@ namespace {
         public static function getPaymentModules(): array
         {
             return [['name' => 'twopayment']];
+        }
+
+        /**
+         * Core's instance lookup, as the address-form override uses it
+         * (TWO-25326). Null unless a spec registers an instance, which is the
+         * override's fail-open path.
+         */
+        public static function getInstanceByName($name)
+        {
+            return StubStore::$moduleInstances[(string) $name] ?? null;
         }
     }
     }
