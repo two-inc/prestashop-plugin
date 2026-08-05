@@ -61,6 +61,24 @@ class TwoSoleTrader
     /** @var array<string, string[]> request-scoped cache, keyed by country */
     private static $types_cache = array();
 
+    /**
+     * Countries whose lookup FAILED during this request, so it is attempted at
+     * most once per request per country (TWO-25326 bug 9, round 3).
+     *
+     * Deliberately separate from $types_cache: the two caches answer different
+     * questions and have different lifetimes. A failure must not become an
+     * ANSWER (that is what flattened a registry blip into a cached
+     * "business-only country", and it is why $types_cache no longer stores one),
+     * and it must not survive the request (that is what the cookie is for, and
+     * why the cookie still never records one). But re-attempting it several times
+     * WITHIN one request is not caution, it is a multiple of the timeout on a
+     * page a shopper is waiting for - and this call is now on the checkout render
+     * path. One attempt, null every time after it, error never persisted.
+     *
+     * @var array<string, bool>
+     */
+    private static $failed_lookups = array();
+
     /** @var callable|null test seam for postCapturingHeaders */
     public static $transport = null;
 
@@ -171,6 +189,9 @@ class TwoSoleTrader
         if (array_key_exists($countryIso, self::$types_cache)) {
             return self::$types_cache[$countryIso];
         }
+        if (isset(self::$failed_lookups[$countryIso])) {
+            return null;
+        }
 
         $cookie = Context::getContext()->cookie;
         if ($cookie && !empty($cookie->{self::COOKIE_KEY})) {
@@ -188,13 +209,18 @@ class TwoSoleTrader
 
         $types = self::fetchSupportedCompanyTypes($module, $countryIso);
         if ($types === null) {
-            // NOT memoised either (TWO-25326 bug 9, round 3 adversarial review).
+            // Recorded as a FAILURE, not as an answer (TWO-25326 bug 9, round 3).
             // The class comment above has always said a fetch error is not cached,
-            // and the COOKIE was already exempt - but the request-scoped cache
-            // below used to store the flattened empty list, so within one request
-            // a blip WAS cached, as a definite "business-only country". That was
-            // invisible while every caller re-asked over AJAX; it is not once the
-            // answer is rendered into markup the browser adopts and never re-asks.
+            // and the cookie was already exempt - but $types_cache used to store
+            // the flattened empty list, so within one request a blip WAS cached,
+            // as a definite "business-only country". Invisible while every caller
+            // re-asked over AJAX; not once the answer is rendered into markup the
+            // browser adopts and never re-asks. The separate marker keeps both
+            // properties: the caller is told "unresolved", and the request still
+            // spends at most one timeout on it. See $failed_lookups.
+            self::$failed_lookups[$countryIso] = true;
+
+            self::$types_cache[$countryIso] = array();
             return null;
         }
 
@@ -361,6 +387,7 @@ class TwoSoleTrader
     public static function resetCache()
     {
         self::$types_cache = array();
+        self::$failed_lookups = array();
         self::$transport = null;
     }
 }
