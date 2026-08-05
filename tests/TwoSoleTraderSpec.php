@@ -22,10 +22,13 @@ final class TwoSoleTraderTestHarness extends TwopaymentTestHarness
     public $cannedResponses = [];
     /** @var string[] */
     public $requests = [];
+    /** @var array<string, int|null> endpoint prefix -> timeout it was called with */
+    public $timeouts = [];
 
     public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
     {
         $this->requests[] = $endpoint;
+        $this->timeouts[$endpoint] = $timeout;
         foreach ($this->cannedResponses as $prefix => $response) {
             if (strpos($endpoint, $prefix) === 0) {
                 return $response;
@@ -56,7 +59,9 @@ final class TwoSoleTraderSpec
             'testSignupUrlFollowsEnvironment',
             'testFormatterHasNoAccountTypeField',
             'testPaymentTileCarriesTheServerResolvedToggleAnswer',
+            'testPaymentTileReportsAnUnresolvedRegistryAsNoAnswer',
             'testPaymentTileWithNoBillingCountryAsksTheRegistryNothing',
+            'testRegistryLookupUsesTheRenderPathTimeout',
         ];
         foreach ($tests as $test) {
             self::reset();
@@ -452,6 +457,7 @@ final class TwoSoleTraderSpec
         );
         $available = self::captureTileVars($module);
         TinyAssert::same(true, $available['vars']['sole_trader_available']);
+        TinyAssert::same('1', $available['vars']['sole_trader_answer']);
         TinyAssert::same('GB', $available['vars']['sole_trader_country']);
 
         // The other answer, from the same source: a country the registry does
@@ -466,13 +472,69 @@ final class TwoSoleTraderSpec
             ['/registry/v1/supported-company-types/' => self::registryOk([])]
         ));
         TinyAssert::same(false, $businessOnly['vars']['sole_trader_available']);
+        // '0' is a real answer and must be distinguishable from '' below - it is
+        // what lets the browser adopt "business-only country" and stop asking.
+        TinyAssert::same('0', $businessOnly['vars']['sole_trader_answer']);
         TinyAssert::same('GB', $businessOnly['vars']['sole_trader_country']);
+    }
+
+    /**
+     * A registry that did not answer is reported as NO answer, not as "no".
+     *
+     * isAvailable() flattens the two, which is right for a capability gate and
+     * wrong for markup the browser adopts as settled and never re-asks: one
+     * timeout would become a cached "business-only country" for the rest of the
+     * page's life, defeating the no-caching-of-errors rule the class and the
+     * client fetch each keep on their own.
+     */
+    private static function testPaymentTileReportsAnUnresolvedRegistryAsNoAnswer(): void
+    {
+        StubStore::$addresses[8811] = ['id_country' => 44];
+        StubStore::$countries[44] = 'gb';
+        Context::getContext()->cart->id_address_invoice = 8811;
+
+        // No canned response for the registry prefix: the harness returns false,
+        // which is the shape a transport failure has.
+        $captured = self::captureTileVars(self::harness([], []));
+
+        TinyAssert::same('', $captured['vars']['sole_trader_answer']);
+        // Still fail-soft in what it DRAWS - the toggle does not render.
+        TinyAssert::same(false, $captured['vars']['sole_trader_available']);
+        TinyAssert::same('GB', $captured['vars']['sole_trader_country']);
+    }
+
+    /**
+     * The registry lookup runs inline in a shopper's payment-step render now, so
+     * it must carry the tight render-path timeout rather than the 30s default it
+     * inherited when it was only ever reached from the module's own AJAX
+     * controller, after the buyer's page had already painted.
+     */
+    private static function testRegistryLookupUsesTheRenderPathTimeout(): void
+    {
+        $module = self::harness(
+            [],
+            ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
+        );
+        TwoSoleTrader::isAvailable($module, 'GB');
+
+        TinyAssert::same(
+            Twopayment::API_TIMEOUT_STATE_CHECK,
+            $module->timeouts['/registry/v1/supported-company-types/GB'] ?? null,
+            'the registry lookup is on the checkout render path and must not inherit the 30s default'
+        );
     }
 
     /**
      * No billing address yet means no country, and a country is the registry
      * call's only argument - so there is nothing to ask and the tile must say
-     * "not available" without spending a request on it.
+     * "not available", definitively, without spending a request on it.
+     *
+     * The caller-side `!== ''` guard is defence in depth rather than the only
+     * thing standing between here and an HTTP call: getSupportedCompanyTypes()
+     * rejects a non-ISO country before any request of its own. What this test
+     * genuinely pins is the ANSWER - '0', a definite no, not '' - because an
+     * empty country is not an unresolved registry, and telling the browser it was
+     * would make it keep asking about a country it does not have.
      */
     private static function testPaymentTileWithNoBillingCountryAsksTheRegistryNothing(): void
     {
@@ -485,6 +547,7 @@ final class TwoSoleTraderSpec
         $captured = self::captureTileVars($module);
 
         TinyAssert::same(false, $captured['vars']['sole_trader_available']);
+        TinyAssert::same('0', $captured['vars']['sole_trader_answer']);
         TinyAssert::same('', $captured['vars']['sole_trader_country']);
         TinyAssert::same(
             array(),

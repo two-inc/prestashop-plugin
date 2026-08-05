@@ -36,6 +36,9 @@ class TwoSoleTrader {
             checkoutHost: '',
             orderIntentUrl: '',
             ajaxToken: '',
+            // The country of the cart's OWN billing address, resolved server-side
+            // (TWO-25326 bug 9, round 3 adversarial review). See billingCountry().
+            billingCountry: '',
             shopCountry: '',
             i18n: {},
             ...config
@@ -146,12 +149,10 @@ class TwoSoleTrader {
         // across checkout step transitions; re-evaluate availability on
         // each change.
         // Kept on the instance so stopObserving() can detach it (TWO-25326 bug 9,
-        // round 3). It used to be an anonymous closure, i.e. permanently bound:
-        // an instance that had finished its flow and disconnected its observer
-        // still answered every country change on the page for the rest of the
-        // page's life, re-resolving availability and re-rendering a toggle it had
-        // deliberately stopped maintaining. Harmless-looking, but it is a second
-        // writer to the same container.
+        // round 3). It used to be an anonymous closure with no reference kept, so
+        // there was no way to detach it at all - a disposed instance stayed a live
+        // second writer to the toggle container for the rest of the page's life.
+        // destroy() is what detaches it; stopObserving() deliberately does not.
         this._countryChangeHandler = function (event) {
             if (event.target && event.target.matches("select[name='id_country'], select[name='country']")) {
                 self.refreshAvailability();
@@ -166,10 +167,40 @@ class TwoSoleTrader {
         // render -> observe -> render path terminate on the first pass instead
         // of being throttled only by the settled-checks downstream of it.
         this.observer = new MutationObserver(function () {
+            // Container-identity check runs UNDEBOUNCED, the availability refresh
+            // does not (TWO-25326 bug 9, round 3 adversarial review). A replaced
+            // fragment now arrives WITH server-rendered chips, and those chips
+            // carry no listeners until this instance binds them - so waiting out
+            // the 100ms debounce left a toggle that looked correct and did
+            // nothing. Re-adopting is pure DOM work with no request in it, and it
+            // terminates on the first pass: once adopted, the container matches
+            // and the check is a no-op however many mutations follow.
+            self.adoptReplacedContainer();
             self.scheduleRefresh();
         });
         this.observer.observe(document.body, { childList: true, subtree: true });
         this.refreshAvailability();
+    }
+
+    /**
+     * Re-adopt when PrestaShop has swapped the toggle container for a fresh one.
+     *
+     * Two things this closes (TWO-25326 bug 9, round 3 adversarial review), both
+     * consequences of the markup now carrying the answer:
+     *  - the replacement's chips are real chips with no behaviour until they are
+     *    bound, and waiting out the refresh debounce left them inert;
+     *  - the replacement carries a FRESHER answer than this instance's cache. A
+     *    container rendered `data-two-available="0"` while the cache still says
+     *    true for the same country used to be re-rendered as available, i.e. the
+     *    stale client answer overwrote the current server one.
+     *
+     * @returns {void}
+     */
+    adoptReplacedContainer() {
+        const container = this.container();
+        if (container && container !== this.renderedContainer) {
+            this.adoptServerRenderedToggle();
+        }
     }
 
     /**
@@ -190,22 +221,42 @@ class TwoSoleTrader {
      * nothing left for this instance to react to; stop observing rather
      * than running a body-wide observer for the rest of checkout.
      *
-     * Detaches EVERY page-level subscription, not just the observer
-     * (TWO-25326 bug 9, round 3) - the country-change listener included. "This
-     * instance is done" has to mean it, or a resolved instance stays a live
-     * writer to the toggle container through the other subscription.
+     * Deliberately leaves the country-change listener attached - see destroy().
+     * An enrolled buyer who then changes to a business-only country must still
+     * have the toggle taken away and the mode reset, and refreshAvailability() ->
+     * hide() is what does that.
      */
     stopObserving() {
         if (this.observer) {
             this.observer.disconnect();
             this.observer = null;
         }
+        clearTimeout(this._refreshTimeoutId);
+        this._refreshTimeoutId = null;
+    }
+
+    /**
+     * Detach EVERY page-level subscription this instance owns.
+     *
+     * Separate from stopObserving() on purpose (TWO-25326 bug 9, round 3
+     * adversarial review). stopObserving() means "this flow is resolved", which is
+     * NOT the same as "this instance is gone" - a resolved instance must still
+     * react to a country change (see above), and folding the two together
+     * silently dropped that. This is the "gone" one: nothing left bound, for a
+     * teardown or a test that must not leave a second writer behind.
+     *
+     * The country-change handler is held on the instance for exactly this reason;
+     * it used to be an anonymous closure with no reference kept, so there was no
+     * way to detach it at all.
+     *
+     * @returns {void}
+     */
+    destroy() {
+        this.stopObserving();
         if (this._countryChangeHandler) {
             document.removeEventListener('change', this._countryChangeHandler);
             this._countryChangeHandler = null;
         }
-        clearTimeout(this._refreshTimeoutId);
-        this._refreshTimeoutId = null;
     }
 
     container() {
@@ -237,7 +288,20 @@ class TwoSoleTrader {
                 return iso.toUpperCase();
             }
         }
-        return (this.config.shopCountry || '').toUpperCase();
+        // The cart's billing country BEFORE the shop's own country (TWO-25326 bug
+        // 9, round 3 adversarial review). PrestaShop only renders the address FORM
+        // - and therefore the select read above - while the buyer is editing an
+        // address; on the payment step there is no select at all. So this fallback
+        // is what the payment step actually uses, and `shopCountry` is the wrong
+        // answer there: it is the visitor/shop country, not the country the order
+        // will be billed to. On any cart where the two differ that silently
+        // re-resolved availability for the WRONG country and applied it over the
+        // server-rendered answer - reintroducing the very flicker the server
+        // render exists to remove, with a wrong-country answer on the end of it.
+        // Same value the server rendered the toggle from, so they agree by
+        // construction; shopCountry stays as a last resort for a payload that
+        // predates this key.
+        return (this.config.billingCountry || this.config.shopCountry || '').toUpperCase();
     }
 
     /**
@@ -250,6 +314,10 @@ class TwoSoleTrader {
         if (!container) {
             return;
         }
+        // Also here, not only in the observer callback: this method is reached
+        // from the country-change listener too, which can fire after a fragment
+        // replacement the observer's debounce has not drained yet. Idempotent.
+        this.adoptReplacedContainer();
         const country = this.billingCountry();
         if (!country) {
             this.hide();

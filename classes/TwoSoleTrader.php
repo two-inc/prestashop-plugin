@@ -95,6 +95,37 @@ class TwoSoleTrader
     }
 
     /**
+     * The same answer, but able to say "I do not know" (TWO-25326 bug 9, round 3
+     * adversarial review). Returns true, false, or NULL when the registry did not
+     * answer at all.
+     *
+     * isAvailable() cannot express that, and must not: every existing caller gates
+     * a capability on it and has to fail soft to "no sole trader" rather than
+     * block checkout. But the payment tile now RENDERS the answer into markup the
+     * browser adopts as settled and never re-asks (paymentinfo.tpl ->
+     * TwoSoleTrader.adoptServerRenderedToggle), so collapsing a transport failure
+     * into "no" there would launder one blip into a cached "no" for the rest of
+     * the page's life. Both layers already refuse to do that on their own - see
+     * getSupportedCompanyTypesOrNull() below and the client fetch's own catch -
+     * and this is what lets the handover refuse to as well: an unresolved answer
+     * is rendered as no answer, and the client's retrying path stays live.
+     *
+     * @param Twopayment $module
+     * @param string $countryIso
+     *
+     * @return bool|null
+     */
+    public static function resolveAvailability($module, $countryIso)
+    {
+        $types = self::getSupportedCompanyTypesOrNull($module, $countryIso);
+        if ($types === null) {
+            return null;
+        }
+
+        return in_array(self::SOLE_TRADER, $types, true);
+    }
+
+    /**
      * The buyer company types the Two registry supports for a country,
      * from GET /registry/v1/supported-company-types/<ISO> — only the
      * types that need registry enrollment before they can buy (sole
@@ -114,6 +145,23 @@ class TwoSoleTrader
      * @return string[]
      */
     public static function getSupportedCompanyTypes($module, $countryIso)
+    {
+        return self::getSupportedCompanyTypesOrNull($module, $countryIso) ?? array();
+    }
+
+    /**
+     * @see getSupportedCompanyTypes() - identical, except that a registry FAILURE
+     *   is reported as null instead of being flattened into the empty list that a
+     *   business-only country legitimately returns. Split out for
+     *   resolveAvailability(); see its comment for why the distinction has to
+     *   survive as far as the payment tile.
+     *
+     * @param Twopayment $module
+     * @param string $countryIso
+     *
+     * @return string[]|null
+     */
+    public static function getSupportedCompanyTypesOrNull($module, $countryIso)
     {
         $countryIso = strtoupper(trim((string) $countryIso));
         if (!preg_match('/^[A-Z]{2}$/', $countryIso)) {
@@ -139,15 +187,25 @@ class TwoSoleTrader
         }
 
         $types = self::fetchSupportedCompanyTypes($module, $countryIso);
+        if ($types === null) {
+            // NOT memoised either (TWO-25326 bug 9, round 3 adversarial review).
+            // The class comment above has always said a fetch error is not cached,
+            // and the COOKIE was already exempt - but the request-scoped cache
+            // below used to store the flattened empty list, so within one request
+            // a blip WAS cached, as a definite "business-only country". That was
+            // invisible while every caller re-asked over AJAX; it is not once the
+            // answer is rendered into markup the browser adopts and never re-asks.
+            return null;
+        }
 
-        if ($cookie && $types !== null) {
+        if ($cookie) {
             $cookie->{self::COOKIE_KEY} = json_encode(array(
                 'country' => $countryIso,
                 'types' => $types,
                 'fetched_at' => time(),
             ));
         }
-        return self::$types_cache[$countryIso] = ($types ?? array());
+        return self::$types_cache[$countryIso] = $types;
     }
 
     /**
@@ -164,7 +222,15 @@ class TwoSoleTrader
         $response = $module->setTwoPaymentRequest(
             '/registry/v1/supported-company-types/' . $countryIso,
             null,
-            'GET'
+            'GET',
+            array(),
+            // Tight timeout, not the 30s default (TWO-25326 bug 9, round 3
+            // adversarial review). This call used to be reachable only from the
+            // module's own AJAX controller, i.e. always after the buyer's page had
+            // painted. The payment tile now resolves it INLINE in the checkout
+            // render, so on a cold cache it is on the critical path of a shopper's
+            // page - which is exactly the set of calls this constant exists for.
+            Twopayment::API_TIMEOUT_STATE_CHECK
         );
         if (
             !is_array($response)

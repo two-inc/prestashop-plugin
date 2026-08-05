@@ -512,17 +512,20 @@ function buildPaymentTile() {
  * data- attributes set. Rendered FROM the template rather than hand-written in
  * the test, so a template change that breaks the handover breaks these tests.
  *
- * @param {boolean} available the registry answer Smarty was given
+ * @param {string} answer the value Smarty rendered into `data-two-available`:
+ *        '1' available, '0' business-only, '' the registry did not answer.
+ *        Arbitrary strings are accepted deliberately - a theme or a future
+ *        template can emit one, and rejecting it is behaviour under test.
  * @param {string} countryIso the country that answer is about
  *
  * @returns {HTMLElement} the `.two-payment-container` that was appended
  */
-function buildPaymentTileWithSoleTraderAnswer(available, countryIso) {
-    return renderPaymentTile({ available: !!available, country: countryIso });
+function buildPaymentTileWithSoleTraderAnswer(answer, countryIso) {
+    return renderPaymentTile({ answer: String(answer), country: countryIso });
 }
 
 /**
- * @param {{available: boolean, country: string}|null} soleTrader null = leave
+ * @param {{answer: string, country: string}|null} soleTrader null = leave
  *        the sole-trader `{if}` blocks unevaluated, as buildPaymentTile() does
  * @returns {HTMLElement}
  */
@@ -533,18 +536,23 @@ function renderPaymentTile(soleTrader) {
     );
     let html = tpl.replace(/\{\*[\s\S]*?\*\}/g, '');
     if (soleTrader) {
+        // `$sole_trader_available` is what the template DRAWS from; it is true
+        // only for the '1' answer, exactly as twopayment.php resolves it (an
+        // unresolved answer draws as not-available).
+        const available = soleTrader.answer === '1';
         // Both shapes the template uses, if/else first: an if/else block's own
         // `{/if}` would otherwise terminate the plain-`{if}` pattern early and
         // leave `{else}...` in the output.
         html = html
             .replace(
                 /\{if \$sole_trader_available\}([\s\S]*?)\{else\}([\s\S]*?)\{\/if\}/g,
-                soleTrader.available ? '$1' : '$2'
+                available ? '$1' : '$2'
             )
             .replace(
                 /\{if \$sole_trader_available\}([\s\S]*?)\{\/if\}/g,
-                soleTrader.available ? '$1' : ''
+                available ? '$1' : ''
             )
+            .replace(/\{\$sole_trader_answer\|[^}]*\}/g, soleTrader.answer)
             .replace(/\{\$sole_trader_country\|[^}]*\}/g, soleTrader.country);
     }
     html = html

@@ -50,7 +50,15 @@
 
     var KEY = 'two_restore_payment_selection';
     var CLASS = 'two-restoring-payment-selection';
-    var FAILSAFE_MS = 1500;
+    // Failsafe timing (round 3 adversarial review). A flat wall-clock timer was
+    // wrong: on a slow connection or a large combined bundle, DOM-ready can land
+    // AFTER it, in which case the suppression lifted first, the tile painted
+    // expanded, and the restore collapsed it later - a LONGER flash than the ~34ms
+    // one this file exists to remove. So the failsafe is anchored to DOM-ready
+    // (which the restore runs just after) with a small grace period, and the flat
+    // timer is kept only as an absolute cap for a document that never gets there.
+    var FAILSAFE_AFTER_READY_MS = 500;
+    var ABSOLUTE_CAP_MS = 5000;
 
     var root = document.documentElement;
 
@@ -106,5 +114,14 @@
     }
 
     root.classList.add(CLASS);
-    setTimeout(release, FAILSAFE_MS);
+
+    var scheduleReadyFailsafe = function () {
+        setTimeout(release, FAILSAFE_AFTER_READY_MS);
+    };
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', scheduleReadyFailsafe);
+    } else {
+        scheduleReadyFailsafe();
+    }
+    setTimeout(release, ABSOLUTE_CAP_MS);
 })();

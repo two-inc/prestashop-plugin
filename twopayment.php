@@ -3800,9 +3800,6 @@ class Twopayment extends PaymentModule
 
         // CRITICAL FIX: Remove async loading and ensure proper load order for reliable initialization
         // Ensures they load AFTER jQuery
-        // Shared company-number DISPLAY rule (TWO-25326 §12), used by both the
-        // search control and the order-intent sentence - so it has to be in
-        // place before either of them, hence a priority below both.
         // Payment-step first-paint guard (TWO-25326 bug 11). The ONLY asset this
         // module puts in the HEAD, and deliberately so: it exists to run before
         // the payment-options markup is parsed, which is the only moment at which
@@ -3814,6 +3811,9 @@ class Twopayment extends PaymentModule
         // document (see the file's own SCOPE note), so a future change to this
         // position degrades to "no improvement" rather than to a new flicker.
         $this->context->controller->registerJavascript('two-payment-step-flash-guard', $this->getTwoModuleAssetPath('views/js/modules/TwoPaymentStepFlashGuard.js'), array('position' => 'head', 'priority' => 199, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoPaymentStepFlashGuard.js')));
+        // Shared company-number DISPLAY rule (TWO-25326 §12), used by both the
+        // search control and the order-intent sentence - so it has to be in
+        // place before either of them, hence a priority below both.
         $this->context->controller->registerJavascript('two-company-number', $this->getTwoModuleAssetPath('views/js/modules/TwoCompanyNumber.js'), array('priority' => 200, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoCompanyNumber.js')));
         $this->context->controller->registerJavascript('two-company-search', $this->getTwoModuleAssetPath('views/js/modules/TwoCompanySearch.js'), array('priority' => 201, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoCompanySearch.js')));
         $this->context->controller->registerJavascript('two-order-intent', $this->getTwoModuleAssetPath('views/js/modules/TwoOrderIntent.js'), array('priority' => 202, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoOrderIntent.js')));
@@ -4037,19 +4037,36 @@ class Twopayment extends PaymentModule
         // have been told. Cost is bounded: that answer is memoised per request
         // and cached in the context cookie for the endpoint's own max-age, and
         // it REPLACES the per-page-load AJAX call rather than adding to it.
-        // Fail-soft by construction - isAvailable() resolves to false on any
-        // transport failure and the toggle simply does not render, exactly as
-        // when the answer is a genuine "business-only country".
+        // THREE-state, not two (round 3 adversarial review). isAvailable() is
+        // fail-soft: a registry timeout and a genuine business-only country both
+        // come back as false. That is right for a capability gate, and wrong here,
+        // because the browser adopts this answer as settled and never re-asks - so
+        // flattening a blip into "no" would launder it into a cached "no" for the
+        // rest of the page's life, defeating the no-caching-of-errors rule both
+        // the server class and the client fetch keep on their own.
+        // resolveAvailability() can say "unresolved"; that renders as NO answer,
+        // and the client's retrying path stays live.
         $sole_trader_country = $this->getCheckoutBillingCountryIso();
-        $sole_trader_available = $sole_trader_country !== ''
-            && TwoSoleTrader::isAvailable($this, $sole_trader_country);
+        $sole_trader_resolved = $sole_trader_country === ''
+            ? false
+            : TwoSoleTrader::resolveAvailability($this, $sole_trader_country);
+        $sole_trader_available = $sole_trader_resolved === true;
 
         // Order intent is now handled on frontend via AJAX
         $this->context->smarty->assign(array(
-            // The two halves of the handover to
-            // TwoSoleTrader.adoptServerRenderedToggle(): the answer, and the
-            // country it is an answer ABOUT (so a later country change is still
-            // re-resolved client-side rather than trusting a stale render).
+            // The handover to TwoSoleTrader.adoptServerRenderedToggle(). Three
+            // vars, each doing one job:
+            //  - `sole_trader_answer` is what the BROWSER adopts: '1', '0', or ''
+            //    for unresolved. A pre-rendered string rather than a nested {if},
+            //    so the template stays one condition deep.
+            //  - `sole_trader_available` drives what the template DRAWS (chips and
+            //    the container's visibility). Unresolved draws as not-available,
+            //    which is the same fail-soft outcome as before - the difference is
+            //    only that the browser is told it was not an answer.
+            //  - `sole_trader_country` is the country the answer is ABOUT, so a
+            //    later or different country is re-resolved client-side rather than
+            //    trusting a stale render.
+            'sole_trader_answer' => $sole_trader_resolved === null ? '' : ($sole_trader_resolved ? '1' : '0'),
             'sole_trader_available' => $sole_trader_available,
             'sole_trader_country' => $sole_trader_country,
             'subtitle' => $subtitle,

@@ -66,13 +66,17 @@ async function settle() {
     await flushPromises();
 }
 
-function build() {
-    return new TwoSoleTrader({
+function build(overrides) {
+    return new TwoSoleTrader(Object.assign({
         orderIntentUrl: 'https://shop.example.test/module/twopayment/orderintent',
         ajaxToken: 'test-token',
-        shopCountry: 'GB',
+        // Deliberately DIFFERENT from the fixtures' country, so any test that
+        // resolves the country from this rather than from the cart's billing
+        // country or the live select shows up as a wrong-country request.
+        shopCountry: 'ZZ',
+        billingCountry: 'GB',
         i18n: { registered_business: 'Registered business', sole_trader: 'Sole trader' }
-    });
+    }, overrides || {}));
 }
 
 beforeEach(() => {
@@ -99,7 +103,7 @@ afterEach(() => {
 
 describe('a server-rendered toggle is adopted, not rebuilt', () => {
     test('the chips are present and visible with no request at all', async () => {
-        buildPaymentTileWithSoleTraderAnswer(true, 'GB');
+        buildPaymentTileWithSoleTraderAnswer('1', 'GB');
         buildCountry('GB');
         TwoSoleTrader = loadSoleTrader();
 
@@ -115,11 +119,11 @@ describe('a server-rendered toggle is adopted, not rebuilt', () => {
         // Still there, still visible - and not a single availability request.
         expect(chipTexts()).toEqual(['Registered business', 'Sole trader']);
         expect(fetchCalls).toEqual([]);
-        instance.stopObserving();
+        instance.destroy();
     });
 
     test('the adopted chips actually switch mode when clicked', async () => {
-        buildPaymentTileWithSoleTraderAnswer(true, 'GB');
+        buildPaymentTileWithSoleTraderAnswer('1', 'GB');
         buildCountry('GB');
         TwoSoleTrader = loadSoleTrader();
         const instance = build();
@@ -135,11 +139,11 @@ describe('a server-rendered toggle is adopted, not rebuilt', () => {
 
         expect(instance.mode).toBe('sole_trader');
         expect(selectedChipModes()).toEqual(['sole_trader']);
-        instance.stopObserving();
+        instance.destroy();
     });
 
     test('keyboard activation works on the adopted chips too', async () => {
-        buildPaymentTileWithSoleTraderAnswer(true, 'GB');
+        buildPaymentTileWithSoleTraderAnswer('1', 'GB');
         buildCountry('GB');
         TwoSoleTrader = loadSoleTrader();
         const instance = build();
@@ -152,11 +156,11 @@ describe('a server-rendered toggle is adopted, not rebuilt', () => {
         await flushPromises();
 
         expect(instance.mode).toBe('sole_trader');
-        instance.stopObserving();
+        instance.destroy();
     });
 
     test('a server answer of "not available" is adopted as hidden, with no request', async () => {
-        buildPaymentTileWithSoleTraderAnswer(false, 'GB');
+        buildPaymentTileWithSoleTraderAnswer('0', 'GB');
         buildCountry('GB');
         TwoSoleTrader = loadSoleTrader();
 
@@ -168,11 +172,11 @@ describe('a server-rendered toggle is adopted, not rebuilt', () => {
 
         expect(chipTexts()).toEqual([]);
         expect(fetchCalls).toEqual([]);
-        instance.stopObserving();
+        instance.destroy();
     });
 
     test('the chips are bound exactly once, however many renders happen', async () => {
-        buildPaymentTileWithSoleTraderAnswer(true, 'GB');
+        buildPaymentTileWithSoleTraderAnswer('1', 'GB');
         buildCountry('GB');
         TwoSoleTrader = loadSoleTrader();
         const instance = build();
@@ -190,13 +194,13 @@ describe('a server-rendered toggle is adopted, not rebuilt', () => {
             .dispatchEvent(new window.Event('click', { bubbles: true }));
 
         expect(calls).toEqual(['sole_trader']);
-        instance.stopObserving();
+        instance.destroy();
     });
 });
 
 describe('the adopted answer is trusted exactly as far as it goes', () => {
     test('a different billing country still resolves over the network', async () => {
-        buildPaymentTileWithSoleTraderAnswer(true, 'GB');
+        buildPaymentTileWithSoleTraderAnswer('1', 'GB');
         // The buyer's billing country is NOT the one the server rendered for -
         // e.g. the address was changed in a tab the payment step outlived.
         buildCountry('NO');
@@ -206,11 +210,11 @@ describe('the adopted answer is trusted exactly as far as it goes', () => {
 
         expect(fetchCalls).toHaveLength(1);
         expect(fetchCalls[0]).toContain('country=NO');
-        instance.stopObserving();
+        instance.destroy();
     });
 
     test('a country change after adoption is resolved for the new country', async () => {
-        buildPaymentTileWithSoleTraderAnswer(true, 'GB');
+        buildPaymentTileWithSoleTraderAnswer('1', 'GB');
         const select = buildCountry('GB');
         TwoSoleTrader = loadSoleTrader();
         const instance = build();
@@ -223,13 +227,50 @@ describe('the adopted answer is trusted exactly as far as it goes', () => {
 
         expect(fetchCalls).toHaveLength(1);
         expect(fetchCalls[0]).toContain('country=SE');
-        instance.stopObserving();
+        instance.destroy();
     });
 
-    test('markup with no server answer falls back to the request', async () => {
+    test('an UNRESOLVED answer falls back to the request rather than caching a "no"', async () => {
+        // The registry did not answer. The container is drawn hidden and
+        // chipless - fail-soft is unchanged - but the browser must NOT record
+        // that as "business-only country", or one blip becomes permanent for the
+        // page: adoption never re-asks.
+        buildPaymentTileWithSoleTraderAnswer('', 'GB');
+        buildCountry('GB');
+        TwoSoleTrader = loadSoleTrader();
+        const instance = build();
+        expect(instance.renderedForCountry).toBeNull();
+        expect(instance.availabilityByCountry).toEqual({});
+
+        await settle();
+
+        expect(fetchCalls).toHaveLength(1);
+        expect(chipTexts()).toEqual(['Registered business', 'Sole trader']);
+        instance.destroy();
+    });
+
+    test('an answer that is neither "1" nor "0" is not adopted', async () => {
+        // A theme or a future template emitting e.g. "true". Adopting it would
+        // read as `false` - toggle hidden, no request, sole trader silently
+        // unavailable. The country here is VALID on purpose: with a bad country
+        // too, the country guard rejects first and this guard is never the
+        // deciding branch.
+        buildPaymentTileWithSoleTraderAnswer('yes', 'GB');
+        buildCountry('GB');
+        TwoSoleTrader = loadSoleTrader();
+        const instance = build();
+        expect(instance.renderedForCountry).toBeNull();
+        expect(instance.availabilityByCountry).toEqual({});
+
+        await settle();
+
+        expect(fetchCalls).toHaveLength(1);
+        instance.destroy();
+    });
+
+    test('markup with no server answer at all falls back to the request, and those chips work', async () => {
         // buildPaymentTile() leaves the sole-trader blocks unevaluated, which is
-        // what an older cached template or a theme-rebuilt tile looks like: the
-        // data- attributes are empty rather than "1"/"0".
+        // what an older cached template or a theme-rebuilt tile looks like.
         buildPaymentTile();
         buildCountry('GB');
         TwoSoleTrader = loadSoleTrader();
@@ -238,37 +279,202 @@ describe('the adopted answer is trusted exactly as far as it goes', () => {
 
         expect(fetchCalls).toHaveLength(1);
         expect(chipTexts()).toEqual(['Registered business', 'Sole trader']);
-        instance.stopObserving();
-    });
 
-    test('a stopped instance no longer answers a country change', async () => {
-        buildPaymentTileWithSoleTraderAnswer(true, 'GB');
-        const select = buildCountry('GB');
-        TwoSoleTrader = loadSoleTrader();
-        const instance = build();
-        await settle();
+        // And they must WORK. This PR moved the chip listeners out of the
+        // chip-building loop into bindChips(), so the client-rendered path has
+        // its own way of shipping chips that look right and do nothing - and
+        // every other click test in this file exercises the adopt path.
+        document.querySelector('.two-sole-trader__mode[data-mode="sole_trader"]')
+            .dispatchEvent(new window.Event('click', { bubbles: true }));
+        await flushPromises();
 
-        instance.stopObserving();
-        select.querySelector('option').setAttribute('data-iso-code', 'SE');
-        select.dispatchEvent(new window.Event('change', { bubbles: true }));
-        await settle();
-
-        // The country-change listener used to be an anonymous closure with no
-        // way to remove it, so an instance that had finished its flow kept
-        // re-resolving availability and re-rendering the toggle it had
-        // deliberately stopped maintaining.
-        expect(fetchCalls).toEqual([]);
+        expect(instance.mode).toBe('sole_trader');
+        instance.destroy();
     });
 
     test('a malformed country attribute is not adopted', async () => {
-        buildPaymentTileWithSoleTraderAnswer(true, 'not-an-iso');
+        buildPaymentTileWithSoleTraderAnswer('1', 'not-an-iso');
+        buildCountry('GB');
+        TwoSoleTrader = loadSoleTrader();
+        const instance = build();
+
+        // Asserted on the adoption state directly, not on "a request happened":
+        // the answer would be filed under the bogus key, which the DOM country
+        // never matches, so a request happens under BOTH branches and that
+        // assertion alone proves nothing.
+        expect(instance.renderedForCountry).toBeNull();
+        expect(instance.availabilityByCountry).toEqual({});
+
+        await settle();
+        expect(fetchCalls).toHaveLength(1);
+        instance.destroy();
+    });
+});
+
+describe('which country the answer is resolved for', () => {
+    test('with no country select on the page, the CART billing country is used', async () => {
+        // The real payment step: PrestaShop renders no address form there, so
+        // there is no `select[name=id_country]` to read. Falling back to the
+        // shop/visitor country resolved availability for the wrong country and
+        // applied it over the server-rendered answer.
+        buildPaymentTileWithSoleTraderAnswer('', 'NO');
+        TwoSoleTrader = loadSoleTrader();
+        const instance = build({ billingCountry: 'NO', shopCountry: 'ZZ' });
+        await settle();
+
+        expect(fetchCalls).toHaveLength(1);
+        expect(fetchCalls[0]).toContain('country=NO');
+        instance.destroy();
+    });
+
+    test('the shop country is only a last resort', async () => {
+        buildPaymentTileWithSoleTraderAnswer('', 'GB');
+        TwoSoleTrader = loadSoleTrader();
+        const instance = build({ billingCountry: '', shopCountry: 'SE' });
+        await settle();
+
+        expect(fetchCalls).toHaveLength(1);
+        expect(fetchCalls[0]).toContain('country=SE');
+        instance.destroy();
+    });
+
+    test('a live country select still outranks both', async () => {
+        buildPaymentTileWithSoleTraderAnswer('', 'GB');
+        buildCountry('DK');
+        TwoSoleTrader = loadSoleTrader();
+        const instance = build({ billingCountry: 'NO', shopCountry: 'SE' });
+        await settle();
+
+        // A buyer mid-edit may have picked a country that is not saved yet.
+        expect(fetchCalls).toHaveLength(1);
+        expect(fetchCalls[0]).toContain('country=DK');
+        instance.destroy();
+    });
+});
+
+describe('a replaced container is re-adopted from its own markup', () => {
+    /** Replace the container with a fresh SERVER-rendered copy, as PS does. */
+    function replaceWithServerRendered(answer, countryIso) {
+        const old = container();
+        const holder = document.createElement('div');
+        holder.innerHTML = '<div class="two-sole-trader" data-two-country="' + countryIso + '"'
+            + ' data-two-available="' + answer + '" style="display: '
+            + (answer === '1' ? 'block' : 'none') + ';">'
+            + '<div class="two-sole-trader__toggle"' + (answer === '1' ? ' data-two-built="1"' : '') + '>'
+            + (answer === '1'
+                ? '<span class="two-sole-trader__mode two-sole-trader__mode--selected" role="button" tabindex="0" data-mode="business">Registered business</span>'
+                + '<span class="two-sole-trader__mode" role="button" tabindex="0" data-mode="sole_trader">Sole trader</span>'
+                : '')
+            + '</div>'
+            + '<a href="#" class="two-sole-trader__prompt" style="display: none;"></a>'
+            + '<span class="two-sole-trader__status" style="display: none;"></span>'
+            + '<span class="two-sole-trader__error" style="display: none;"></span>'
+            + '</div>';
+        const fresh = holder.querySelector('.two-sole-trader');
+        old.parentNode.replaceChild(fresh, old);
+        return fresh;
+    }
+
+    test("the replacement's chips are bound without waiting out the refresh debounce", async () => {
+        buildPaymentTileWithSoleTraderAnswer('1', 'GB');
         buildCountry('GB');
         TwoSoleTrader = loadSoleTrader();
         const instance = build();
         await settle();
 
-        // The answer cannot be filed against a country, so it is no answer.
-        expect(fetchCalls).toHaveLength(1);
+        replaceWithServerRendered('1', 'GB');
+        // NO timer advance: the container-identity check is deliberately not
+        // debounced, because until it runs the replacement's chips are real
+        // chips with no behaviour on them.
+        await flushPromises();
+
+        document.querySelector('.two-sole-trader__mode[data-mode="sole_trader"]')
+            .dispatchEvent(new window.Event('click', { bubbles: true }));
+        await flushPromises();
+
+        expect(instance.mode).toBe('sole_trader');
+        instance.destroy();
+    });
+
+    test("a fresher server answer in the replacement is not overwritten by the stale cache", async () => {
+        buildPaymentTileWithSoleTraderAnswer('1', 'GB');
+        buildCountry('GB');
+        TwoSoleTrader = loadSoleTrader();
+        const instance = build();
+        await settle();
+        expect(container().getAttribute('style')).toContain('display: block');
+
+        // Same country, but the server now says business-only. The cached `true`
+        // used to win and re-render the toggle as available.
+        replaceWithServerRendered('0', 'GB');
+        await settle();
+
+        expect(container().style.display).toBe('none');
+        expect(chipTexts()).toEqual([]);
+        expect(fetchCalls).toEqual([]);
+        instance.destroy();
+    });
+    test('the country-change path re-adopts too, not only the observer', async () => {
+        buildPaymentTileWithSoleTraderAnswer('1', 'GB');
+        const select = buildCountry('GB');
+        TwoSoleTrader = loadSoleTrader();
+        const instance = build();
+        await settle();
+
+        // Observer off, so the ONLY route into refreshAvailability() is the
+        // country-change listener. That listener can fire after a fragment
+        // replacement whose mutations the observer never saw or has not drained,
+        // so it has to re-adopt as well - otherwise the stale cache re-renders
+        // the toggle over the replacement's own, fresher answer.
         instance.stopObserving();
+        replaceWithServerRendered('0', 'GB');
+        select.dispatchEvent(new window.Event('change', { bubbles: true }));
+        await flushPromises();
+
+        expect(container().style.display).toBe('none');
+        expect(chipTexts()).toEqual([]);
+        expect(fetchCalls).toEqual([]);
+        instance.destroy();
+    });
+});
+
+describe('lifecycle', () => {
+    test('stopObserving() still lets a country change hide a now-ineligible toggle', async () => {
+        buildPaymentTileWithSoleTraderAnswer('1', 'GB');
+        const select = buildCountry('GB');
+        TwoSoleTrader = loadSoleTrader();
+        const instance = build();
+        await settle();
+
+        // stopObserving() means "this flow is resolved", not "this instance is
+        // gone". An enrolled buyer who then switches to a business-only country
+        // must still have the toggle taken away.
+        instance.stopObserving();
+        answer.available = false;
+        select.querySelector('option').setAttribute('data-iso-code', 'SE');
+        select.dispatchEvent(new window.Event('change', { bubbles: true }));
+        await settle();
+
+        expect(fetchCalls).toHaveLength(1);
+        expect(container().style.display).toBe('none');
+        instance.destroy();
+    });
+
+    test('destroy() detaches the country-change listener too', async () => {
+        buildPaymentTileWithSoleTraderAnswer('1', 'GB');
+        const select = buildCountry('GB');
+        TwoSoleTrader = loadSoleTrader();
+        const instance = build();
+        await settle();
+
+        instance.destroy();
+        select.querySelector('option').setAttribute('data-iso-code', 'SE');
+        select.dispatchEvent(new window.Event('change', { bubbles: true }));
+        await settle();
+
+        // The handler used to be an anonymous closure with no reference kept, so
+        // there was no way to detach it at all - a disposed instance stayed a
+        // live second writer to the toggle container.
+        expect(fetchCalls).toEqual([]);
     });
 });

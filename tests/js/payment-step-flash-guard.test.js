@@ -37,7 +37,8 @@ const {
     releaseWidgets,
     stubAjax,
     flushPromises,
-    installStylesheet
+    installStylesheet,
+    buildPaymentTile
 } = require('./ps-harness');
 
 const CHECKOUT_HOST = 'https://api.example.test';
@@ -49,19 +50,27 @@ let TwoCheckoutManager;
 let $;
 let ajax;
 
-function buildPaymentStep(options) {
-    const withTile = !options || options.withTile !== false;
+/**
+ * The payment step, with the Two tile built from the REAL template
+ * (paymentinfo.tpl) rather than from a literal `.two-payment-container` written
+ * here. The guard's early-return selector, the two.css rule and the template's
+ * root class all have to agree on that class name, and a hand-written fixture
+ * would keep this suite green if the template renamed it.
+ */
+function buildPaymentStep() {
     document.body.innerHTML = [
         '<div class="payment-options">',
         '  <div class="payment-option" data-module-name="twopayment">',
         "    <input type='radio' name='payment-option' value='twopayment' id='payment-option-1' />",
-        withTile ? '    <div class="two-payment-container"></div>' : '',
         '  </div>',
         '  <div class="payment-option" data-module-name="othermethod">',
         "    <input type='radio' name='payment-option' value='othermethod' id='payment-option-2' />",
         '  </div>',
         '</div>'
     ].join('\n');
+    const tile = buildPaymentTile();
+    document.querySelector('.payment-option[data-module-name="twopayment"]').appendChild(tile);
+    return tile;
 }
 
 /** Load the head-time guard, as a <script> in <head> would. */
@@ -182,6 +191,55 @@ describe('the guard suppresses the first paint only when all three conditions ho
             jest.useRealTimers();
         }
     });
+
+    test('the failsafe is anchored to DOM-ready, not to the wall clock', () => {
+        // A flat timer is wrong: if DOM-ready lands after it, the suppression
+        // lifts first, the tile paints expanded, and the restore collapses it
+        // later - a LONGER flash than the one this file removes.
+        jest.useFakeTimers();
+        const readyState = Object.getOwnPropertyDescriptor(Document.prototype, 'readyState');
+        Object.defineProperty(document, 'readyState', { value: 'loading', configurable: true });
+        try {
+            sessionStorage.setItem(KEY, JSON.stringify({ id: 'payment-option-2', two: false }));
+            loadGuard();
+
+            // Well past the post-ready grace period, but DOM-ready has not
+            // happened yet, so the suppression must still hold.
+            jest.advanceTimersByTime(2000);
+            expect(guardActive()).toBe(true);
+
+            document.dispatchEvent(new window.Event('DOMContentLoaded'));
+            jest.advanceTimersByTime(100);
+            expect(guardActive()).toBe(true);
+            jest.advanceTimersByTime(600);
+            expect(guardActive()).toBe(false);
+        } finally {
+            delete document.readyState;
+            if (readyState) {
+                Object.defineProperty(Document.prototype, 'readyState', readyState);
+            }
+            jest.useRealTimers();
+        }
+    });
+
+    test('an absolute cap still lifts it on a document that never reaches DOM-ready', () => {
+        jest.useFakeTimers();
+        const readyState = Object.getOwnPropertyDescriptor(Document.prototype, 'readyState');
+        Object.defineProperty(document, 'readyState', { value: 'loading', configurable: true });
+        try {
+            sessionStorage.setItem(KEY, JSON.stringify({ id: 'payment-option-2', two: false }));
+            loadGuard();
+
+            jest.advanceTimersByTime(6000);
+            expect(guardActive()).toBe(false);
+        } finally {
+            delete document.readyState;
+            if (readyState) {
+                Object.defineProperty(Document.prototype, 'readyState', readyState);
+            }
+            jest.useRealTimers();
+        }
+    });
 });
 
 describe('the class and the shipped stylesheet actually agree', () => {
@@ -193,8 +251,7 @@ describe('the class and the shipped stylesheet actually agree', () => {
         try {
             sessionStorage.setItem(KEY, JSON.stringify({ id: 'payment-option-2', two: false }));
             loadGuard();
-            buildPaymentStep();
-            const tile = document.querySelector('.two-payment-container');
+            const tile = buildPaymentStep();
 
             expect(window.getComputedStyle(tile).display).toBe('none');
 
