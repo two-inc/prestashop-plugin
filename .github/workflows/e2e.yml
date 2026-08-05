@@ -16,10 +16,12 @@ name: E2E (Playwright checkout flow)
 # convention). It asserts the Two payment option renders correctly, and that
 # attempting to place an order without a company verified through Two's live
 # search widget is declined gracefully (no fatal, no order silently created).
-# That decline is deterministic and secret-free because the stub answers only
-# the API-key verification call and refuses everything else, so the order call
-# itself always fails — it is no longer attributable to the dummy key being
-# unverified, since the stub verifies any key. It does not exercise a real
+# That decline is deterministic and secret-free because the module refuses the
+# submission LOCALLY when no company was resolved through the search widget —
+# controllers/front/orderintent.php answers `incomplete_company` before building
+# any request, and controllers/front/payment.php refuses on the same condition if
+# the click wins the race — so no Two call is reached at all. It is in particular
+# not attributable to the dummy key being unverified: the stub verifies any key. It does not exercise a real
 # approved order end to end; that needs live Two sandbox credentials, which this
 # repo does not wire into CI for any job.
 
