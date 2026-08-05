@@ -967,15 +967,36 @@ final class ApiKeyVerificationSpec
         // back-office translation of the core placeholder kept the hint on a dead
         // field.
         $claimInFlight = self::mediaHookModule('order');
-        $claimInFlight->primeTwoApiKeyStatus(Twopayment::API_KEY_STATUS_VERIFYING, null);
+        // A REAL claim slot, not a primed memo: this is the state the two halves
+        // used to disagree on, so it is the state worth asserting through.
+        $claimInFlight->primeTwoApiKeyStatus(null);
+        self::storeVerdict(Twopayment::API_KEY_STATUS_VERIFYING, null, 'stored-key', 0, true);
         Media::reset();
 
         $claimInFlight->hookActionFrontControllerSetMedia();
 
         TinyAssert::same(
+            true,
+            Media::$jsDef['twopayment']['api_key_verified'],
+            'a claim in flight must not take the affordance away - the verdict is not in yet'
+        );
+        TinyAssert::same(
             $claimInFlight->isTwoCompanySearchAffordanceWarranted(),
             Media::$jsDef['twopayment']['api_key_verified'],
             'the browser flag and the server-side affordance question must be the same question'
+        );
+
+        // ...and a KNOWN failure does take it away, on the same page.
+        $failing = self::mediaHookModule('order');
+        $failing->primeTwoApiKeyStatus(Twopayment::API_KEY_STATUS_SERVICE_ERROR, 503);
+        Media::reset();
+
+        $failing->hookActionFrontControllerSetMedia();
+
+        TinyAssert::same(
+            false,
+            Media::$jsDef['twopayment']['api_key_verified'],
+            'a known failure withholds the affordance from the browser'
         );
     }
 

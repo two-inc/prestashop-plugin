@@ -2,10 +2,11 @@
  * TWO-25326. The company-search control must stand down on a shop whose Two
  * API key does not currently verify.
  *
- * The search itself is authenticated with that key, so on such a shop every
- * keystroke can only fail - and the payment option is withheld server-side on
- * the same verdict, so there is nothing a captured company could be used for
- * anyway. Two things have to happen, and only the first is obvious: no search
+ * The payment option is withheld server-side on the same verdict, so there is
+ * nothing a captured company can be used for - the search would still function
+ * (that endpoint is called unauthenticated), it just leads nowhere, and a
+ * "verify your company" journey that cannot complete is worse than a plain
+ * field. Two things have to happen, and only the first is obvious: no search
  * control is constructed, AND the search-mode placeholder the address-form
  * override applied SERVER-side is taken back off the field. That placeholder
  * survives the control never existing, so without the second half the buyer is

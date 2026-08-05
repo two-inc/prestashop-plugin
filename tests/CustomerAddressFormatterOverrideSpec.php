@@ -65,6 +65,8 @@ final class CustomerAddressFormatterOverrideSpec
         self::testCompanyPlaceholderSurvivesAnUnconfirmedVerdict();
         self::testCompanyPlaceholderSurvivesAnUnreachableModuleInstance();
         self::testCompanyPlaceholderSurvivesAThrowingModuleInstance();
+        self::testCompanyPlaceholderSurvivesAModuleThatCannotAnswerAtAll();
+        self::testTheOverrideNeverGoesToTheNetwork();
     }
 
     /**
@@ -303,7 +305,12 @@ final class CustomerAddressFormatterOverrideSpec
         }
 
         StubStore::$moduleInstances['twopayment'] = new class extends TwopaymentTestHarness {
-            public function isTwoApiKeyDefinitelyUnusable()
+            // The method the override ACTUALLY calls. Round 4 renamed the
+            // question and this stub kept throwing from the old one, so it threw
+            // nothing and the test passed down the cold-cache path instead -
+            // proven when `catch (Throwable)` could be narrowed to
+            // `catch (Exception)` with the whole suite still green (round 6).
+            public function isTwoCompanySearchAffordanceWarranted($allowLiveCheck = false)
             {
                 throw new TypeError('module blew up while answering');
             }
@@ -323,6 +330,98 @@ final class CustomerAddressFormatterOverrideSpec
         TinyAssert::true(
             array_key_exists('placeholder', $format['company']->getAvailableValues()),
             'a throwing module instance must not cost the hint - or the address form'
+        );
+    }
+
+
+    /**
+     * An instance that does not answer this question at all - a shop mid-upgrade,
+     * where the class on disk is older than the override copied into the shop
+     * tree (which is exactly the staleness TwoOverrideMigrator exists for). The
+     * guard that covers it was unpinned (round 6).
+     */
+    private static function testCompanyPlaceholderSurvivesAModuleThatCannotAnswerAtAll(): void
+    {
+        $overridePath = dirname(__DIR__) . '/override/classes/form/CustomerAddressFormatter.php';
+        if (!class_exists('CustomerAddressFormatter', false)) {
+            require_once $overridePath;
+        }
+
+        // Deliberately NOT a Twopayment: an object with none of the module's
+        // methods stands in for a version that predates this one.
+        StubStore::$moduleInstances['twopayment'] = new class {
+        };
+
+        $translator = new class {
+            public function trans($message, array $params = [], $domain = null): string
+            {
+                return (string) $message;
+            }
+        };
+
+        $formatter = new CustomerAddressFormatter(new Country(), $translator, []);
+        $format = $formatter->getFormat();
+        StubStore::$moduleInstances = [];
+
+        TinyAssert::true(
+            array_key_exists('placeholder', $format['company']->getAvailableValues()),
+            'a module that cannot answer must not cost the hint'
+        );
+    }
+
+    /**
+     * The override renders inside address forms - on my-account pages as well as
+     * checkout - so it must never be the thing that makes the verification call.
+     * The cache-only default on isTwoCompanySearchAffordanceWarranted() is the
+     * whole mechanism, and flipping that default left every suite green (round 6).
+     */
+    private static function testTheOverrideNeverGoesToTheNetwork(): void
+    {
+        $overridePath = dirname(__DIR__) . '/override/classes/form/CustomerAddressFormatter.php';
+        if (!class_exists('CustomerAddressFormatter', false)) {
+            require_once $overridePath;
+        }
+
+        StubStore::reset();
+        Tools::resetTestValues();
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'stored-key');
+        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'development');
+
+        // A COLD cache: nothing stored, no memo. Anything that consults the
+        // network would do it here.
+        $module = new class extends TwopaymentTestHarness {
+            public int $wireCalls = 0;
+
+            public function __construct()
+            {
+                parent::__construct();
+                $this->primeTwoApiKeyStatus(null);
+            }
+
+            protected function requestTwoApiKeyVerification($apiKey, $environment, $timeout = null)
+            {
+                $this->wireCalls++;
+                return array('response' => json_encode(array('id' => 'm', 'short_name' => 's')), 'code' => 200, 'error' => '');
+            }
+        };
+        StubStore::$moduleInstances['twopayment'] = $module;
+
+        $translator = new class {
+            public function trans($message, array $params = [], $domain = null): string
+            {
+                return (string) $message;
+            }
+        };
+
+        $formatter = new CustomerAddressFormatter(new Country(), $translator, []);
+        $format = $formatter->getFormat();
+        StubStore::$moduleInstances = [];
+
+        TinyAssert::same(0, $module->wireCalls, 'an address-form render must not make the verification call');
+        // And an unresolved verdict leaves the form as it was.
+        TinyAssert::true(
+            array_key_exists('placeholder', $format['company']->getAvailableValues()),
+            'a cold cache is not evidence of a broken shop'
         );
     }
 
