@@ -66,9 +66,11 @@ final class ApiKeyVerificationSpec
         self::testPaymentSubmissionSurvivesATransientFailure();
         self::testPaymentControllerAsksTheDefinitiveQuestionNotTheRenderOne();
         self::testAStaleRejectedKeyStillRefusesASubmission();
+        self::testAStaleRejectionNeverFollowsAReplacedKeyOrEnvironment();
 
         // Company-search gate.
         self::testCheckoutConfigCarriesTheVerdictAsABoolean();
+        self::testOnlyTheCheckoutPageMayPayForAVerification();
 
         // Cache.
         self::testCheckoutRendersReuseOneVerification();
@@ -79,6 +81,8 @@ final class ApiKeyVerificationSpec
         self::testAClaimCarriesAPriorVerdictSoReVerificationDoesNotBlinkTwoOff();
         self::testAnEnvironmentChangeInvalidatesTheVerdict();
         self::testAnAncientVerdictIsNotCarriedForever();
+        self::testAClaimCarriesTheVerdictsOriginalAgeNotAFreshOne();
+        self::testALegacySlotWithoutAVerdictClockIsStillCarryable();
         self::testSwitchingEnvironmentAloneNeverPublishesAVerdict();
         self::testChangedKeyNeverInheritsThePreviousVerdict();
     }
@@ -128,6 +132,21 @@ final class ApiKeyVerificationSpec
                     call_user_func($this->duringWireCall);
                 }
                 return $this->outcome;
+            }
+
+            public function setPathForTest(string $path): void
+            {
+                $this->_path = $path;
+            }
+
+            /**
+             * The merchant-record and FX refreshes the checkout media hook makes
+             * are not this spec's subject and must not reach the network stub for
+             * the API key.
+             */
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+            {
+                return array('http_status' => 500);
             }
 
             /** @return array{status:string,code:int|null,body:array|null} */
@@ -829,6 +848,64 @@ final class ApiKeyVerificationSpec
         );
     }
 
+
+    /**
+     * The past-TTL read is bound to the key AND environment the shop holds NOW
+     * (review round 4 survivor). Without that binding, a merchant who has just
+     * replaced a rejected key - or pointed the same key at another environment -
+     * has their buyers' submissions refused by the OLD key's rejection, which is
+     * the "I fixed it and it still says unavailable" failure in its worst form:
+     * at the submit button, on an order.
+     */
+    private static function testAStaleRejectionNeverFollowsAReplacedKeyOrEnvironment(): void
+    {
+        // Rejected verdict for the key the shop USED to hold, well past its TTL.
+        $replaced = self::module(self::okOutcome());
+        self::storeVerdict(
+            Twopayment::API_KEY_STATUS_INVALID,
+            401,
+            'the-old-key',
+            Twopayment::API_KEY_STATUS_TTL * 10
+        );
+
+        TinyAssert::false(
+            $replaced->isTwoApiKeyDefinitelyUnusable(),
+            'a replacement key must not inherit the old key\'s rejection at the submit'
+        );
+
+        // Same key, but the verdict was reached against a different environment.
+        $moved = self::module(self::okOutcome());
+        self::storeVerdict(
+            Twopayment::API_KEY_STATUS_INVALID,
+            401,
+            'stored-key',
+            Twopayment::API_KEY_STATUS_TTL * 10
+        );
+        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'production');
+
+        TinyAssert::false(
+            $moved->isTwoApiKeyDefinitelyUnusable(),
+            'a rejection reached against another environment must not refuse submissions here'
+        );
+
+        // An EXPIRED claim is not a verdict either, however definitive what it
+        // carries looks: the request that made it never finished, so nothing
+        // confirmed that verdict. Fail-open, and pinned so it stays deliberate.
+        $abandoned = self::module(self::okOutcome());
+        self::storeVerdict(
+            Twopayment::API_KEY_STATUS_INVALID,
+            401,
+            'stored-key',
+            Twopayment::API_KEY_STATUS_CLAIM_WINDOW + 1,
+            true
+        );
+
+        TinyAssert::false(
+            $abandoned->isTwoApiKeyDefinitelyUnusable(),
+            'an abandoned claim must not refuse a submitted order'
+        );
+    }
+
     /* ===================================================================
      * Company-search gate (server side of it)
      * =================================================================== */
@@ -849,6 +926,76 @@ final class ApiKeyVerificationSpec
             TinyAssert::true(is_bool($verified), 'the verdict handed to the JS must be a real boolean');
             TinyAssert::same($expected, $verified, 'status "' . $status . '" verified?');
         }
+    }
+
+
+    /**
+     * The media hook runs on the module's OWN front controllers too - and one of
+     * those is the payment POST, where the verification gate deliberately refuses
+     * to make an HTTP call because a stall there is a stall in the buyer's submit
+     * (review round 4). Letting this hook make the call on that same request
+     * handed back exactly the stall the gate had just declined. Those pages render
+     * no company-search control, so a cache-only answer costs them nothing.
+     */
+    private static function testOnlyTheCheckoutPageMayPayForAVerification(): void
+    {
+        $module = self::mediaHookModule('module-twopayment-payment');
+        Media::reset();
+
+        $module->hookActionFrontControllerSetMedia();
+
+        TinyAssert::same(0, $module->verifyCalls, 'a module front controller must not pay for a verification');
+
+        // The real checkout page still may: it is the page whose company-search
+        // control the verdict decides, and it is a page render, not a submit.
+        $checkout = self::mediaHookModule('order');
+        Media::reset();
+
+        $checkout->hookActionFrontControllerSetMedia();
+
+        TinyAssert::same(1, $checkout->verifyCalls, 'the checkout page resolves the verdict for real');
+        TinyAssert::same(
+            true,
+            Media::$jsDef['twopayment']['api_key_verified'],
+            'and hands the browser a real boolean'
+        );
+    }
+
+    /** A module with the front-office media hook reachable for $phpSelf. */
+    private static function mediaHookModule(string $phpSelf): object
+    {
+        $module = self::module(self::okOutcome());
+        $module->setPathForTest('/modules/twopayment/');
+
+        $controller = new class extends ModuleFrontController {
+            public $php_self = '';
+            public $controller_name = '';
+
+            public function registerStylesheet($id, $path, $options = [])
+            {
+            }
+
+            public function registerJavascript($id, $path, $options = [])
+            {
+            }
+
+            public function addJquery()
+            {
+            }
+
+            public function addJqueryUI($component)
+            {
+            }
+        };
+        $controller->php_self = $phpSelf;
+        $controller->module = $module;
+        $module->context->controller = $controller;
+        $module->context->country = new class {
+            public $iso_code = 'NO';
+        };
+        StubStore::$countries[578] = 'NO';
+
+        return $module;
     }
 
     /* ===================================================================
@@ -1177,6 +1324,131 @@ final class ApiKeyVerificationSpec
             '',
             (string) Configuration::get(Twopayment::CONFIG_API_KEY_STATUS),
             'but nothing is published against the configuration the shop is still running'
+        );
+    }
+
+
+    /**
+     * The actual mechanism of the carry cap (review round 4 survivor): a claim
+     * carries the verdict's ORIGINAL age, it does not re-stamp it. Without that,
+     * every claim refreshes the same ancient verdict and serve-stale never ends -
+     * the loop the cap exists to break - and no assertion noticed, because
+     * observing one claim cycle cannot tell a preserved clock from a reset one.
+     *
+     * Asserted on the slot as written mid-claim, which is the one observable
+     * moment the distinction exists: wall-clock ageing is not something a test
+     * can wait out.
+     */
+    private static function testAClaimCarriesTheVerdictsOriginalAgeNotAFreshOne(): void
+    {
+        $verdictAge = 120;
+        $module = self::module(self::transportOutcome());
+        self::storeVerdict(
+            Twopayment::API_KEY_STATUS_OK,
+            200,
+            'stored-key',
+            Twopayment::API_KEY_STATUS_TTL + 1,
+            false,
+            $verdictAge
+        );
+        $expectedVerifiedOn = time() - $verdictAge;
+        $claimed = null;
+
+        $module->onWireCall(function () use (&$claimed) {
+            $claimed = json_decode((string) Configuration::get(Twopayment::CONFIG_API_KEY_STATUS), true);
+        });
+        $module->getTwoApiKeyVerificationStatus();
+
+        TinyAssert::true(is_array($claimed), 'the claim must be written before the wire call');
+        TinyAssert::true(!empty($claimed['claim']), 'and be marked as a claim');
+        TinyAssert::same(Twopayment::API_KEY_STATUS_OK, (string) $claimed['status'], 'carrying the previous verdict');
+        // Within a second of the ORIGINAL verdict's clock, not of now. A reset
+        // would land ~120s later and this suite would otherwise never know.
+        TinyAssert::true(
+            abs((int) $claimed['verified_on'] - $expectedVerifiedOn) <= 1,
+            'a claim must carry the verdict\'s original age (expected ~' . $expectedVerifiedOn
+                . ', got ' . (int) $claimed['verified_on'] . ')'
+        );
+    }
+
+    /**
+     * A slot written before the verdict clock existed (an upgraded shop) is not
+     * ageless (review round 4). Read as age zero, it was never carryable, so the
+     * first re-verification after an upgrade withheld Two for the length of a
+     * claim window on every existing shop.
+     */
+    private static function testALegacySlotWithoutAVerdictClockIsStillCarryable(): void
+    {
+        $module = self::module(self::okOutcome());
+        // Exactly what 2.7.2 left behind: no 'verified_on' key at all.
+        Configuration::updateValue(Twopayment::CONFIG_API_KEY_STATUS, json_encode(array(
+            'status' => Twopayment::API_KEY_STATUS_OK,
+            'code' => 200,
+            'key_hash' => self::slotKey('stored-key'),
+        )));
+        Configuration::updateValue(
+            Twopayment::CONFIG_API_KEY_STATUS_TS,
+            time() - (Twopayment::API_KEY_STATUS_TTL + 1)
+        );
+        $seen = null;
+
+        $module->onWireCall(function () use (&$seen) {
+            $concurrent = new class extends TwopaymentTestHarness {
+                public function __construct()
+                {
+                    parent::__construct();
+                    $this->primeTwoApiKeyStatus(null);
+                }
+
+                protected function requestTwoApiKeyVerification($apiKey, $environment, $timeout = null)
+                {
+                    throw new RuntimeException('a concurrent request must stand down');
+                }
+            };
+            $seen = $concurrent->getTwoApiKeyVerificationStatus()['status'];
+        });
+        $module->getTwoApiKeyVerificationStatus();
+
+        TinyAssert::same(
+            Twopayment::API_KEY_STATUS_OK,
+            (string) $seen,
+            'an upgraded shop must not lose Two for a claim window on its first re-verification'
+        );
+
+        // And the fallback is the slot's own clock, not "now": a legacy slot older
+        // than the carry cap is still too old to carry.
+        $ancient = self::module(self::okOutcome());
+        Configuration::updateValue(Twopayment::CONFIG_API_KEY_STATUS, json_encode(array(
+            'status' => Twopayment::API_KEY_STATUS_OK,
+            'code' => 200,
+            'key_hash' => self::slotKey('stored-key'),
+        )));
+        Configuration::updateValue(
+            Twopayment::CONFIG_API_KEY_STATUS_TS,
+            time() - (Twopayment::API_KEY_STATUS_CARRY_MAX_AGE + 1)
+        );
+        $seenAncient = null;
+        $ancient->onWireCall(function () use (&$seenAncient) {
+            $concurrent = new class extends TwopaymentTestHarness {
+                public function __construct()
+                {
+                    parent::__construct();
+                    $this->primeTwoApiKeyStatus(null);
+                }
+
+                protected function requestTwoApiKeyVerification($apiKey, $environment, $timeout = null)
+                {
+                    throw new RuntimeException('a concurrent request must stand down');
+                }
+            };
+            $seenAncient = $concurrent->getTwoApiKeyVerificationStatus()['status'];
+        });
+        $ancient->getTwoApiKeyVerificationStatus();
+
+        TinyAssert::same(
+            Twopayment::API_KEY_STATUS_VERIFYING,
+            (string) $seenAncient,
+            'a legacy slot must age from its own clock, not from now'
         );
     }
 

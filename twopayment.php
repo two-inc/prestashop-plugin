@@ -3673,7 +3673,17 @@ class Twopayment extends PaymentModule
                 // payment option, but the ADDRESS-step control lives on the
                 // address form and would otherwise keep searching (and
                 // failing) on a shop where Two is not available at all.
-                'api_key_verified' => $this->isTwoApiKeyVerified(),
+                //
+                // A live check ONLY on the real checkout page (review round 4).
+                // This hook also runs on the module's own front controllers, and
+                // one of those is the payment POST - where the verification gate
+                // deliberately refuses to make an HTTP call, because a stall
+                // there is a stall in the buyer's submit. Letting the media hook
+                // make it on the same request handed back exactly the stall the
+                // gate had just declined to take. Those pages render no
+                // company-search control anyway, so a cache-only answer costs
+                // them nothing.
+                'api_key_verified' => $this->isTwoApiKeyVerified($is_checkout_page),
                 // Separate from company_name_search: that (now) gates only
                 // WHERE the search widget renders, this gates only what a
                 // selection writes into the address step (TWO-25203) - and
@@ -8205,7 +8215,9 @@ class Twopayment extends PaymentModule
         $carryable = $previous !== null
             && $previous['key_hash'] === self::verificationSlotKey($apiKey)
             && $previous['status'] !== self::API_KEY_STATUS_VERIFYING
-            && $previous['verified_on'] > 0
+            // Age of the VERDICT, not of the slot write. A zero here (a slot
+            // with neither field readable) fails this comparison on its own, so
+            // it needs no separate guard.
             && ($previous['verified_on'] + self::API_KEY_STATUS_CARRY_MAX_AGE) > time();
         $carry = $carryable
             ? $previous
@@ -8269,6 +8281,17 @@ class Twopayment extends PaymentModule
         // information available. Transient categories are still ignored here, so
         // no blip can refuse an order however long it sits in the slot, and a
         // claim in flight is not a verdict at all.
+        // key_hash: the slot must belong to the key AND environment the shop
+        // holds NOW. Without it a stale rejection would refuse submissions on a
+        // replacement key - a merchant fixing their key and immediately being
+        // told the method is unavailable.
+        //
+        // claim: an EXPIRED claim is not read as a verdict here even though it
+        // carries one. Fail-open, deliberately: a claim outliving its window
+        // means the request that made it never finished, so nothing confirmed
+        // that carried verdict, and refusing a submitted order needs firmer
+        // ground than that. A claim still inside its window is served by the
+        // branch above, where the carried verdict does count.
         $stored = $this->readStoredTwoApiKeyStatus();
         if ($stored === null || $stored['claim'] || $stored['key_hash'] !== self::verificationSlotKey((string) Configuration::get('PS_TWO_MERCHANT_API_KEY'))) {
             return false;
@@ -8278,9 +8301,31 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Whether the search-mode affordances the module adds to the address form
+     * are warranted right now (TWO-25326, review round 4). Distinct from
+     * isTwoApiKeyDefinitelyUnusable(): a placeholder is not an order, so this
+     * side may fail closed on ANY known failure - which is also what the
+     * checkout JS gate does with the same verdict, and the two acting on ONE UI
+     * element under different policies is a disagreement a merchant can see.
+     *
+     * Cache-only, and 'verifying' (nothing known yet) counts as warranted: an
+     * address form must not be able to block on an HTTP call, and a cold cache
+     * is not evidence of a broken shop. The browser's own strip covers that
+     * window on any shop whose placeholder came from this module's catalogue.
+     *
+     * @return bool
+     */
+    public function isTwoCompanySearchAffordanceWarranted()
+    {
+        $status = $this->getTwoApiKeyVerificationStatus(false)['status'];
+
+        return $status === self::API_KEY_STATUS_OK || $status === self::API_KEY_STATUS_VERIFYING;
+    }
+
+    /**
      * The categories that mean "this integration cannot take an order", as
      * opposed to "ask again later". The ONE definition of that set - the
-     * address-form override asks through this too, so the two cannot drift.
+     * payment POST's gate asks through this, so nothing re-lists it.
      *
      * @param string $status
      *
@@ -8407,7 +8452,15 @@ class Twopayment extends PaymentModule
             'code' => isset($decoded['code']) && $decoded['code'] !== null ? (int) $decoded['code'] : null,
             'key_hash' => (string) $decoded['key_hash'],
             'claim' => !empty($decoded['claim']),
-            'verified_on' => isset($decoded['verified_on']) ? (int) $decoded['verified_on'] : 0,
+            // A slot written before this field existed (an upgraded shop) is not
+            // ageless: fall back to the slot's own clock, which for a verdict IS
+            // when it was reached. Reading it as 0 made the first
+            // re-verification after an upgrade uncarryable, so every upgraded
+            // shop withheld Two for the length of one claim window (review
+            // round 4).
+            'verified_on' => isset($decoded['verified_on'])
+                ? (int) $decoded['verified_on']
+                : (int) Configuration::get(self::CONFIG_API_KEY_STATUS_TS),
             'checked_on' => (int) Configuration::get(self::CONFIG_API_KEY_STATUS_TS),
         );
     }
