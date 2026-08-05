@@ -62,10 +62,15 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
         // as-yet-unknown verdict leaves the form untouched, since a cold cache is
         // not evidence of a broken shop and this render may not go to the network
         // to find out.
-        // The browser strips the wording too, for a page rendered before the
-        // verdict changed; this is the half that survives a back-office
-        // translation of the core string, which the browser cannot recognise as
-        // ours.
+        // The browser strips the wording too, but not as a second line of defence
+        // against this render: both halves read the same verdict in the same
+        // request, so a render that applied the hint also told the browser the
+        // affordance was warranted. The strip is for a shop running a STALE
+        // shop-level copy of this file, which applies the hint unconditionally -
+        // and this server-side half is in turn what covers the cases the strip
+        // cannot reach: a back-office translation of the core string, which the
+        // browser will not recognise as ours, and my-account address forms, where
+        // the module's JS is not loaded at all.
         if (isset($format['company']) && $format['company'] instanceof FormField && $this->twoCompanySearchAvailable()) {
             $format['company']->addAvailableValue('placeholder', $this->translator->trans('Enter company name to search', [], 'Shop.Forms.Labels'));
         }
