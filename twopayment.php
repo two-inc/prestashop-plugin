@@ -3668,10 +3668,12 @@ class Twopayment extends PaymentModule
                 // TWO-25326: may the company-search affordance render? A real
                 // PHP bool, so addJsDef emits a real JS boolean.
                 //
-                // Withheld on a known verification failure because the ONLY
-                // thing a captured company feeds is a Two order, and Two is not
-                // offered at all in that state (hookPaymentOptions withholds it
-                // on any non-ok verdict). What is left is a Two-branded search
+                // Withheld on a known verification failure because the only
+                // thing that NEEDS a captured company is a Two order, and Two is
+                // not offered at all in that state (hookPaymentOptions withholds
+                // it on any non-ok verdict). The selection does still write the
+                // shop's own address record - which is the cost noted below, not
+                // a reason to keep the affordance. What is left is a Two-branded search
                 // whose result nothing consumes, and a "verify your company"
                 // journey that cannot complete - in tile mode the tile is
                 // already gone with the payment option, and the ADDRESS-step

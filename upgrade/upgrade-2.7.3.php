@@ -25,9 +25,13 @@
  *
  * So without this script the module reports 2.7.3, the files on disk are 2.7.3,
  * the deploy is green, and every existing shop goes on running the 2.7.2 copy of
- * `CustomerAddressFormatter` - which keeps telling buyers to search a field that
- * will not search. Exactly the silent staleness TWO-25265 found on a live shop,
- * in this same file.
+ * `CustomerAddressFormatter` - which keeps applying the search hint on a shop
+ * where the search leads nowhere. The browser half strips that hint whenever it
+ * recognises the wording, so what the stale copy actually costs is the one case
+ * the server-side half exists for: a shop whose placeholder was translated in
+ * the back office, where the browser cannot recognise the string as the
+ * module's. Exactly the silent staleness TWO-25265 found on a live shop, in this
+ * same file.
  *
  * WHY A NEW VERSION RATHER THAN AN EDIT TO upgrade-2.7.2.php
  *
@@ -97,8 +101,8 @@ function upgrade_module_2_7_3($module)
         PrestaShopLogger::addLog(
             'Two Payment v2.7.3 upgrade: shop-level override refresh raised "' . $e->getMessage()
             . '" and was skipped. The shop may still be running a stale override, in which case the '
-            . 'company field keeps offering a search that cannot run while the API key does not verify; '
-            . 'check override/classes/form/ against the module version (TWO-25326)',
+            . 'company field keeps offering a search whose result nothing consumes while the API key '
+            . 'does not verify; check override/classes/form/ against the module version (TWO-25326)',
             2,
             null,
             'Module',
