@@ -48,6 +48,14 @@ namespace {
          * @var array<int,array<string,mixed>>
          */
         public static array $cartMessages = [];
+        /**
+         * Module instances Module::getInstanceByName() should hand back, keyed
+         * by module name (TWO-25326 - the address-form override asks the module
+         * whether the company search is available at all).
+         *
+         * @var array<string,object>
+         */
+        public static array $moduleInstances = [];
         public static array $cartTotals = [];
         public static array $cartShipping = [];
         public static array $cartRules = [];
@@ -180,6 +188,7 @@ namespace {
             self::$carriers = [];
             self::$cartProducts = [];
             self::$cartMessages = [];
+            self::$moduleInstances = [];
             self::$cartTotals = [];
             self::$cartShipping = [];
             self::$cartRules = [];
@@ -315,6 +324,16 @@ namespace {
         {
             return [['name' => 'twopayment']];
         }
+
+        /**
+         * Core's instance lookup, as the address-form override uses it
+         * (TWO-25326). Null unless a spec registers an instance, which is the
+         * override's fail-open path.
+         */
+        public static function getInstanceByName($name)
+        {
+            return StubStore::$moduleInstances[(string) $name] ?? null;
+        }
     }
     }
 
@@ -392,6 +411,11 @@ namespace {
         public $currency;
         public $language;
         public $smarty;
+        // Core has one; the checkout media hook reads its iso_code (TWO-25326).
+        // Declared rather than left to a dynamic property, which PHP 8.2+
+        // deprecates - and a deprecation notice on every suite run is noise the
+        // next real one hides in.
+        public $country;
 
         private static ?self $instance = null;
 
@@ -621,6 +645,41 @@ namespace {
         public static function getIsoById($id)
         {
             return StubStore::$countries[(int) $id] ?? false;
+        }
+
+        /**
+         * Core's shape: one row per country, with the module only ever reading
+         * id_country and iso_code out of it (see the checkout media hook).
+         *
+         * @return array<int,array{id_country:int,iso_code:string}>
+         */
+        public static function getCountries($idLang = null, $active = false, $containStates = false, $listStates = true): array
+        {
+            $rows = [];
+            foreach (StubStore::$countries as $id => $iso) {
+                // Keyed by id_country, as core keys it: the only consumer reads the
+                // id out of the row, but a stub that keys sequentially would let a
+                // future caller pass here and fail in production.
+                $rows[(int) $id] = ['id_country' => (int) $id, 'iso_code' => (string) $iso];
+            }
+
+            return $rows;
+        }
+    }
+
+    class Media
+    {
+        /** @var array<string,mixed> the last payload handed to the browser */
+        public static array $jsDef = [];
+
+        public static function addJsDef($vars): void
+        {
+            self::$jsDef = array_merge(self::$jsDef, (array) $vars);
+        }
+
+        public static function reset(): void
+        {
+            self::$jsDef = [];
         }
     }
 
@@ -1752,6 +1811,27 @@ namespace {
             // this module's own directory, trailing slash included. Used by
             // getTwoVersionedAssetPath() to filemtime() the real asset files.
             $this->local_path = dirname(__DIR__) . '/';
+            // A verified API key by default (TWO-25326). Every checkout gate
+            // now consults that verdict, and a harness without one would
+            // either take the whole suite to the network on a cache miss or
+            // silently hide the payment option from every unrelated spec.
+            // ApiKeyVerificationSpec drives the real thing by clearing this
+            // and stubbing the wire call.
+            $this->primeTwoApiKeyStatus(Twopayment::API_KEY_STATUS_OK, 200);
+        }
+
+        /**
+         * Sets (or, with null, clears) the request-scoped verification memo the
+         * checkout gates read, without going near the network.
+         *
+         * @param string|null $status
+         * @param int|null    $code
+         */
+        public function primeTwoApiKeyStatus($status, $code = null): void
+        {
+            $this->twoApiKeyStatusMemo = $status === null
+                ? null
+                : array('status' => (string) $status, 'code' => $code);
         }
 
         public function l($string)

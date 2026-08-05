@@ -11,14 +11,19 @@ name: E2E (Playwright checkout flow)
 # Scope (see tests/e2e/pages/checkout.ts and the spec file for the full
 # reasoning): this suite drives a real guest checkout — cart, address,
 # delivery, payment — against an ephemeral, hermetically-configured PS
-# container (dev/ci/seed-two-config.sh, no live Two credentials, matching
-# this repo's existing no-secrets CI convention). It asserts the Two
-# payment option renders correctly, and that attempting to place an order
-# without a company verified through Two's live search widget is declined
-# gracefully (no fatal, no order silently created) — the deterministic,
-# secret-free outcome any unverified/dummy merchant key produces. It does
-# not exercise a real approved order end to end; that needs live Two
-# sandbox credentials, which this repo does not wire into CI for any job.
+# container (dev/ci/seed-two-config.sh plus dev/ci/start-two-api-stub.sh,
+# no live Two credentials, matching this repo's existing no-secrets CI
+# convention). It asserts the Two payment option renders correctly, and that
+# attempting to place an order without a company verified through Two's live
+# search widget is declined gracefully (no fatal, no order silently created).
+# That decline is deterministic and secret-free because the module refuses the
+# submission LOCALLY when no company was resolved through the search widget —
+# controllers/front/orderintent.php answers `incomplete_company` before building
+# any request, and controllers/front/payment.php refuses on the same condition if
+# the click wins the race — so no Two call is reached at all. It is in particular
+# not attributable to the dummy key being unverified: the stub verifies any key. It does not exercise a real
+# approved order end to end; that needs live Two sandbox credentials, which this
+# repo does not wire into CI for any job.
 
 on:
   pull_request:
@@ -54,12 +59,19 @@ jobs:
       SFX: e2e-${{ matrix.ps-version }}-${{ github.run_id }}
       PS_IMAGE: prestashop/prestashop:${{ matrix.ps-version }}-apache
       PS_HOST_PORT: ${{ matrix.host-port }}
-      # Points the module's checkout-media priming calls (merchant terms /
-      # FX-rate refresh, fired on every checkout page view - see
-      # boot-prestashop.sh's TWO_API_BASE_URL comment) at a port nothing
-      # listens on, so they fail fast (connection refused) instead of
-      # making live calls to Two's real sandbox from public CI.
-      TWO_API_BASE_URL: "http://127.0.0.1:1"
+      # Points the module at an in-container stub (dev/ci/two-api-stub.php,
+      # started below) rather than at Two's real sandbox: this repo is public
+      # and its CI holds no merchant key. The stub answers ONLY
+      # /v1/merchant/verify_api_key - which the module now requires before it
+      # will offer Two at all (TWO-25326) - and refuses everything else, so
+      # the checkout-media priming calls (merchant terms / FX-rate refresh,
+      # fired on every checkout page view) still fail fast - now as an HTTP 503
+      # rather than the transport failure a dead port produced, a difference
+      # dev/ci/two-api-stub.php spells out.
+      # One source for the port: the stub script requires this variable and
+      # refuses to default it, so the URL below and the listener cannot drift.
+      TWO_API_STUB_PORT: "8099"
+      TWO_API_BASE_URL: "http://127.0.0.1:8099"
     steps:
       - uses: actions/checkout@v4
 
@@ -74,6 +86,9 @@ jobs:
 
       - name: Install module from HEAD
         run: dev/ci/install-module.sh /tmp/head-module
+
+      - name: Start hermetic Two API stub (verification endpoint only)
+        run: dev/ci/start-two-api-stub.sh
 
       - name: Seed Two config (hermetic — no live merchant key)
         run: dev/ci/seed-two-config.sh

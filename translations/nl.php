@@ -172,6 +172,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_31a1931b5703e90cf392686134f4aae1'] 
 $_MODULE['<{twopayment}prestashop>twopayment_3279954443b449a5be560a0be578e6c2'] = 'Belastingregelgroep die UITSLUITEND VOOR VERZENDING wordt aangenomen wanneer het btw-tarief van de vervoerder niet voor de bestelling kan worden bepaald - bijvoorbeeld wanneer de verzendkosten buiten de vervoerderstabel van PrestaShop worden bepaald, zodat geen enkele vervoerder een belastingregelgroep opgeeft. Deze wordt nooit gebruikt als een vervoerder er wél een opgeeft: de eigen groep van de vervoerder gaat altijd voor. Laat leeg om dergelijke bestellingen te blijven weigeren in plaats van een tarief aan te nemen.';
 $_MODULE['<{twopayment}prestashop>twopayment_329aa8486f4fde54cc4c9965faea9aa9'] = '(op prijs)';
 $_MODULE['<{twopayment}prestashop>twopayment_330f49df8243756a8a4dc7f7f7ee6dfe'] = 'Ontwikkeling';
+$_MODULE['<{twopayment}prestashop>twopayment_336d4f49452554bc13e4ed9dd2603300'] = 'Deze webshop kon de Two API helemaal niet bereiken (netwerk, DNS of firewall). De API-sleutel zelf is niet beoordeeld.';
 $_MODULE['<{twopayment}prestashop>twopayment_3438dbc5b197844ab4cb01ab14af8a7b'] = 'Standaardtermijnen (bijv. 30 dagen na uitlevering)';
 $_MODULE['<{twopayment}prestashop>twopayment_34d4c5b4f293f3953b9f1cea4ada6a1d'] = 'Selecteer welke betaaltermijnen je wilt aanbieden. Standaardtermijnen worden berekend vanaf de uitleverdatum.';
 $_MODULE['<{twopayment}prestashop>twopayment_35e20456c7fa8d5e53e003d7f6675d84'] = 'Huidige configuratiestatus';
@@ -213,6 +214,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_4e48eb7b84e6418738c6548b3c826d94'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4f40188f22dbc3f6b5f5ea06152782ca'] = 'De payload voor de order intent kon niet worden opgebouwd';
 $_MODULE['<{twopayment}prestashop>twopayment_526f52140844e831b1965500d17c26d8'] = 'Einde-van-de-maand (EOM) termijnen:';
 $_MODULE['<{twopayment}prestashop>twopayment_52f4393e1b52ba63e27310ca92ba098c'] = 'Algemene instellingen';
+$_MODULE['<{twopayment}prestashop>twopayment_53943134b629b65e0a320b7dd6ed92a8'] = 'Deze API-sleutel is geweigerd door Two. Mogelijk is de sleutel ongeldig of verlopen - controleer de sleutel in je Two-portaal.';
 $_MODULE['<{twopayment}prestashop>twopayment_539de410a9a131c0e925dc8e248a29d2'] = 'Betaling vervalt aan het einde van de maand plus X dagen, gerekend vanaf de uitleverdatum. Voorbeeld: lever je een bestelling uit op 15 januari met EOM+30, dan vervalt de betaling op 28 februari (einde januari + 30 dagen). Dit is gebruikelijk bij B2B-facturatie.';
 $_MODULE['<{twopayment}prestashop>twopayment_545e6db228f47336669130f1068a519e'] = 'Je bestelling kan niet worden verwerkt met Two-betaling. Kies een andere betaalmethode of neem contact op met de winkel.';
 $_MODULE['<{twopayment}prestashop>twopayment_547b272d62ed4ca5d2cd83e8b7b463da'] = 'Belangrijke vereisten';
@@ -259,6 +261,9 @@ $_MODULE['<{twopayment}prestashop>twopayment_6cae7c7478f2d404dc69e4e355172166'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6d5cc1a38d6228cd43fb864b6c4d4b75'] = 'Deze betaalcallback kan niet worden gevalideerd. Probeer het afrekenen opnieuw.';
 $_MODULE['<{twopayment}prestashop>twopayment_6f3455d187a23443796efdcbe044096b'] = 'Geen btw';
 $_MODULE['<{twopayment}prestashop>twopayment_6fd95deaadec67e72965ee1c5a8d81cf'] = 'Voer bedrijfsnaam in om te zoeken';
+$_MODULE['<{twopayment}prestashop>twopayment_8effea9a4ab719b4272d74ad33f5b897'] = 'De API-sleutel kon niet worden geverifieerd.';
+$_MODULE['<{twopayment}prestashop>twopayment_943ecf14953e769ec88faeeccfd31cad'] = 'Two gaf een onverwacht antwoord bij het verifiëren van de API-sleutel (HTTP %d).';
+$_MODULE['<{twopayment}prestashop>twopayment_9f403283660172ddd88e719a34a37692'] = 'Voer je Two API-sleutel in om Two te activeren.';
 $_MODULE['<{twopayment}prestashop>twopayment_b880d635ee26e267ab68784bb47a0ad1'] = 'Voer uw bedrijfsnaam in';
 $_MODULE['<{twopayment}prestashop>twopayment_70121086cdb2e52ce9ac069b1781dc76'] = 'Er was een tijdelijk probleem bij het verifiëren van je betaling. Probeer het opnieuw of kies een andere betaalmethode.';
 $_MODULE['<{twopayment}prestashop>twopayment_701dfa446588bcb18e3a546249ca91a2'] = 'Verberg de betaalmethode onder deze orderwaarde (standaardvaluta van de winkel, op de hieronder gekozen belastinggrondslag). Laat leeg voor geen minimum.';
@@ -343,7 +348,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_a58a88e252eae380cbcff6421cd5d08c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_a7ae6fbd75c4968e5b9c92b908fe824e'] = 'Het telefoonnummer in je factuuradres lijkt ongeldig. Ga terug en controleer of je een geldig telefoonnummer voor jouw land hebt ingevuld.';
 $_MODULE['<{twopayment}prestashop>twopayment_ab63d3168928b8331551047a81e5dd32'] = 'Selecteer hierboven je land om je bedrijf te zoeken.';
 $_MODULE['<{twopayment}prestashop>twopayment_ac0aea4e2a54e5ce025bec4b58fd7ca3'] = 'Basis voor toeslagberekening';
-$_MODULE['<{twopayment}prestashop>twopayment_ac7209cfe48af2c99afc2be9ce19d71b'] = 'Verificatie van de API-sleutel is mislukt. Controleer je API-sleutel.';
 $_MODULE['<{twopayment}prestashop>twopayment_ad390087f94a9a17adaf0b81ad83b2e7'] = 'vanaf einde van de maand';
 $_MODULE['<{twopayment}prestashop>twopayment_ad920804afec4822b0d006452fce3929'] = 'Ongeldig verificatieantwoord van Two.';
 $_MODULE['<{twopayment}prestashop>twopayment_b1021ae56c3544e96ea36a7d80e48145'] = 'Klanten moeten hun bedrijfsnaam invullen in het factuuradres';
@@ -392,6 +396,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_cf30831a8831200d89309561f036c5a7'] 
 $_MODULE['<{twopayment}prestashop>twopayment_cf5f3091e30dee6597885d8c0e0c357f'] = 'Termijn';
 $_MODULE['<{twopayment}prestashop>twopayment_d132286ce060a9349df55de2808b4d5f'] = 'Geen overeenkomsten gevonden';
 $_MODULE['<{twopayment}prestashop>twopayment_d2a7c39c5ec025981855847fed006923'] = 'Als je JA kiest, worden tax_subtotals meegestuurd in de payloads van /v1/order en /v1/order_intent. Als je NEE kiest, worden tax_subtotals uit die payloads weggelaten.';
+$_MODULE['<{twopayment}prestashop>twopayment_d2b8b622af4e9432f62dc6e3bea9d3d1'] = 'Two kon de API-sleutel op dit moment niet verifiëren (HTTP %d). Dit is meestal tijdelijk - probeer het straks opnieuw.';
 $_MODULE['<{twopayment}prestashop>twopayment_d2f68faa84d4bab378419dae024f85f9'] = 'Betaling goedgekeurd! Kies hieronder je betaaltermijn.';
 $_MODULE['<{twopayment}prestashop>twopayment_d314a00556eb88a960abf8a0de8b45f8'] = 'Een deel van de opgegeven informatie is ongeldig. Controleer de gegevens van je factuuradres en probeer het opnieuw.';
 $_MODULE['<{twopayment}prestashop>twopayment_d32e67e619603fc5368d087716b1afb4'] = 'De opgegeven bedrijfsgegevens zijn ongeldig. Ga terug naar je factuuradres en zoek op je bedrijfsnaam om een geldig bedrijf te selecteren.';
@@ -407,6 +412,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_d74f5295cfbc83c79a5737ed01bc13d3'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d7763ceb9a0400fe241b0d5e6f0b5b21'] = 'Standaardtermijnen:';
 $_MODULE['<{twopayment}prestashop>twopayment_d801910356f73cbb407fe5d320c581d7'] = 'Betaling vervalt X dagen na de uitleverdatum. Voorbeeld: lever je een bestelling uit op 15 januari met een termijn van 30 dagen, dan vervalt de betaling op 14 februari.';
 $_MODULE['<{twopayment}prestashop>twopayment_d83e9ff3f8fd11e651a6f27f40dcf82b'] = 'Configuratiefout in de betaalmethode. Neem contact op met de winkel.';
+$_MODULE['<{twopayment}prestashop>twopayment_d9fe698b79530af9334d5d6f590843cb'] = 'Two wordt verborgen in de checkout totdat de sleutel is geverifieerd.';
 $_MODULE['<{twopayment}prestashop>twopayment_da26328af93752b0b89478bfd90627ce'] = 'Bestelling terugbetaald → Terugbetaald';
 $_MODULE['<{twopayment}prestashop>twopayment_da26aecbab950874dc37e7b30d82b40d'] = 'De minimale orderwaarde is %1$s%2$s %3$s btw.';
 $_MODULE['<{twopayment}prestashop>twopayment_dc01133f318ab68ac223d3e362927266'] = 'Debugmodus inschakelen';

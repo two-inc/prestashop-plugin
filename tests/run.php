@@ -5543,6 +5543,7 @@ require __DIR__ . '/SessionCompanyClearSpec.php';
 require __DIR__ . '/OverrideMigrationSpec.php';
 require __DIR__ . '/TranslationCatalogueSpec.php';
 require __DIR__ . '/AssetCacheBustingSpec.php';
+require __DIR__ . '/ApiKeyVerificationSpec.php';
 // LAST, deliberately: DefaultShippingTaxCodeSpec defines
 // _TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_ partway through its own run, and a
 // PHP constant cannot be undefined again. ShippingCostSourcingSpec asserts the
@@ -5582,6 +5583,7 @@ $tests = [
     'OverrideMigrationSpec::runAll' => [OverrideMigrationSpec::class, 'runAll'],
     'TranslationCatalogueSpec::runAll' => [TranslationCatalogueSpec::class, 'runAll'],
     'AssetCacheBustingSpec::runAll' => [AssetCacheBustingSpec::class, 'runAll'],
+    'ApiKeyVerificationSpec::runAll' => [ApiKeyVerificationSpec::class, 'runAll'],
     // Keep last - see the require above.
     'DefaultShippingTaxCodeSpec::runAll' => [DefaultShippingTaxCodeSpec::class, 'runAll'],
 ];

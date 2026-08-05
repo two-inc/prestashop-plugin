@@ -8,6 +8,51 @@
     'use strict';
     let localFallbackAttempted = false;
 
+    // ONE translation of the server config payload into TwoCheckoutManager's
+    // config, used by both construction sites below (TWO-25326 review round 2:
+    // they were duplicated, so the retry copy could silently drift from the
+    // primary one, and neither was reachable from a test). Exposed on `window`
+    // for the Jest suite - the module's scripts are plain classic scripts with
+    // nothing to require(), so this is how the mapping gets covered at all.
+    //
+    // The switches arrive in two different shapes on purpose and must be read
+    // accordingly: the location/lookup switches are Configuration STRINGS
+    // ('0'/'1'), the verification verdict is a real boolean. Every one of them
+    // is written so that only an explicit "off" value turns anything off - an
+    // absent key (an older cached config payload, a theme that rebuilds the
+    // payload) must never read as "disabled".
+    function buildCheckoutManagerConfig(config) {
+        return {
+            // TWO-25326 §7.1 (2026-08-03 ruling): this switch used to be
+            // on/off for the search widget's existence. It now decides WHERE
+            // the one control renders: '1' (default) = address area, unchanged
+            // from before this ticket; '0' = the same control relocates into
+            // the payment tile instead. Absent reads as address-area, matching
+            // the server-side resolver.
+            companySearchInAddressArea: config.company_name_search !== '0',
+            // Separate toggle from companySearchInAddressArea (TWO-25203):
+            // the address / DNI / VAT fill can be on or off independent of
+            // where the search widget itself renders, and only matters at
+            // all when the control is in the address area. Absent reads
+            // as enabled, matching the server-side default-on resolver.
+            addressLookupEnabled: config.address_lookup !== '0',
+            // TWO-25326: only an explicit false disables the company search.
+            // The server sends a real boolean; an absent key must read as
+            // verified rather than take the search away from a working shop.
+            apiKeyVerified: config.api_key_verified !== false,
+            orderIntentEnabled: true,
+            checkoutHost: config.checkout_host,
+            orderIntentUrl: config.order_intent_url,
+            ajaxToken: config.ajax_token,
+            available_payment_terms: config.available_payment_terms || [30],
+            default_payment_term: config.default_payment_term || 30,
+            payment_term_type: config.payment_term_type
+        };
+    }
+
+    window.twoBuildCheckoutManagerConfig = buildCheckoutManagerConfig;
+
+
     function getLocalJQueryCandidates() {
         const candidates = [];
         const base = (
@@ -106,28 +151,7 @@
             }
 
             // Initialize the checkout manager with configuration
-            const checkoutManager = new TwoCheckoutManager({
-                // TWO-25326 §7.1 (2026-08-03 ruling): this switch used to be
-                // on/off for the search widget's existence. It now decides
-                // WHERE the one control renders: '1' (default) = address
-                // area, unchanged from before this ticket; '0' = the same
-                // control relocates into the payment tile instead. Absent
-                // reads as address-area, matching the server-side resolver.
-                companySearchInAddressArea: twopayment.company_name_search !== '0',
-                // Separate toggle from companySearchInAddressArea (TWO-25203):
-                // the address / DNI / VAT fill can be on or off independent of
-                // where the search widget itself renders, and only matters at
-                // all when the control is in the address area. Absent reads
-                // as enabled, matching the server-side default-on resolver.
-                addressLookupEnabled: twopayment.address_lookup !== '0',
-                orderIntentEnabled: true,
-                checkoutHost: twopayment.checkout_host,
-                orderIntentUrl: twopayment.order_intent_url,
-                ajaxToken: twopayment.ajax_token,
-                available_payment_terms: twopayment.available_payment_terms || [30],
-                default_payment_term: twopayment.default_payment_term || 30,
-                payment_term_type: twopayment.payment_term_type
-            });
+            const checkoutManager = new TwoCheckoutManager(buildCheckoutManagerConfig(twopayment));
             
             // Store global reference for modules
             window.TwoCheckoutManager_Instance = checkoutManager;
@@ -187,18 +211,7 @@
                             window.TwoCheckoutManager_Instance.cleanup();
                         }
 
-                        const checkoutManager = new TwoCheckoutManager({
-                            // Keep in step with the primary config object above (TWO-25203, TWO-25326 §7.1).
-                            companySearchInAddressArea: twopayment.company_name_search !== '0',
-                            addressLookupEnabled: twopayment.address_lookup !== '0',
-                            orderIntentEnabled: true,
-                            checkoutHost: twopayment.checkout_host,
-                            orderIntentUrl: twopayment.order_intent_url,
-                            ajaxToken: twopayment.ajax_token,
-                            available_payment_terms: twopayment.available_payment_terms || [30],
-                            default_payment_term: twopayment.default_payment_term || 30,
-                            payment_term_type: twopayment.payment_term_type
-                        });
+                        const checkoutManager = new TwoCheckoutManager(buildCheckoutManagerConfig(twopayment));
                         window.TwoCheckoutManager_Instance = checkoutManager;
                     }
                 } catch (retryError) {

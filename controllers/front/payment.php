@@ -57,6 +57,28 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             return;
         }
 
+        // API-key verification gate (TWO-25326). hookPaymentOptions() withholds
+        // Two whenever the stored key does not verify, but a buyer holding a
+        // page rendered while it still did can post here afterwards - and
+        // without this that submission proceeds and fails deeper in, at order
+        // creation, as an opaque error. Refuse it here, in the same shape as
+        // every other unavailability on this path.
+        //
+        // DEFINITIVELY unusable only, and cache-only (review round 2): a
+        // rejected key or no key at all is worth refusing a submission over, a
+        // 5xx or a network blip at this exact instant is not - that would turn a
+        // good order into "not available" and cache the refusal for a minute,
+        // where proceeding would have reached order creation with its own longer
+        // timeout and its own decline handling.
+        if ($this->module->isTwoApiKeyDefinitelyUnusable()) {
+            $this->failCheckout(
+                $this->module->l('This payment method is not available.'),
+                'TwoPayment: Payment attempt while the API key does not verify - cart ' . (int) $cart->id,
+                2
+            );
+            return;
+        }
+
         if (!$this->module->isCartCurrencySupportedByTwo($cart)) {
             $this->failCheckout(
                 $this->module->l('This payment method is not available for your selected currency.'),

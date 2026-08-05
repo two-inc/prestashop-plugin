@@ -84,6 +84,62 @@ class Twopayment extends PaymentModule
     // merchant-record cache).
     const FX_RATES_RETRY_BACKOFF = 300; // 5 minutes
 
+    // Cached, categorised outcome of GET /v1/merchant/verify_api_key for the
+    // STORED key (TWO-25326): JSON {status, code, key_hash, claim}.
+    // Shop scoping is Configuration's own, exactly as for the FX table and the
+    // merchant record - deliberately not hand-scoped here. The slot is bound to
+    // the key AND environment it was reached for, so the worst a multistore
+    // context can produce is a MISS (a re-verification) on a shop holding a
+    // different key, never another shop's verdict applied to this one. Read by the
+    // checkout gates, which must not fire a live HTTP call per render, and
+    // written by both the cache-miss path and the config-page save. key_hash
+    // binds the verdict to the key it was reached for, so pasting a new key
+    // never inherits the old key's verdict.
+    const CONFIG_API_KEY_STATUS = 'PS_TWO_API_KEY_STATUS';
+    const CONFIG_API_KEY_STATUS_TS = 'PS_TWO_API_KEY_STATUS_TS';
+    // A verified key is re-checked every 5 minutes; a FAILING one every
+    // minute, so recovery (or a rotated key) reaches checkout quickly while a
+    // healthy shop is not re-verified for nothing. Both are far shorter than
+    // the FX/merchant-record TTLs: this verdict decides whether Two is offered
+    // at all, so lag here is lost orders in one direction and broken checkouts
+    // in the other.
+    const API_KEY_STATUS_TTL = 300;
+    const API_KEY_STATUS_FAILURE_TTL = 60;
+    // How long the anti-stampede claim (written BEFORE the wire call, so
+    // concurrent renders on a cold cache do not each fire their own
+    // verification) stands in for a real verdict. Short, because a claim that
+    // is never superseded means the claiming process died mid-call, and the
+    // right recovery there is to ask again - not to keep serving a guess for a
+    // whole TTL. Must comfortably exceed API_TIMEOUT_STATE_CHECK so the claim
+    // does not expire while the call it is covering is still in flight.
+    const API_KEY_STATUS_CLAIM_WINDOW = 15;
+    // Oldest a verdict may be and still ride along on a claim (serve-stale). A
+    // claim re-stamps the slot's clock, so without a cap on the age of the
+    // VERDICT itself, a shop whose verification never completes - a fatal, a
+    // killed worker - could re-carry and re-freshen the same ancient 'ok'
+    // indefinitely (review round 3). Past this, a claim carries nothing and the
+    // gates close until a call actually finishes.
+    const API_KEY_STATUS_CARRY_MAX_AGE = 900;
+
+    // Verification outcome categories (TWO-25326). Held apart because the
+    // merchant's remedy differs per category: fix the key, wait for Two, or
+    // fix this shop's outbound connectivity. Every non-OK status withholds Two
+    // from checkout - the categories only ever change what the merchant is
+    // TOLD, never whether Two is served.
+    const API_KEY_STATUS_OK = 'ok';
+    const API_KEY_STATUS_INVALID = 'invalid_key';     // 401/403 - the key itself was rejected
+    const API_KEY_STATUS_SERVICE_ERROR = 'service_error'; // 5xx - Two answered, badly
+    const API_KEY_STATUS_UNREACHABLE = 'unreachable'; // no response at all: DNS/TLS/route/timeout
+    const API_KEY_STATUS_ERROR = 'error';             // any other non-200, or an unreadable 200 body
+    const API_KEY_STATUS_NOT_CONFIGURED = 'not_configured'; // no key stored yet
+    // Not a verdict: the marker a request writes while it is still asking, when
+    // there is no previous verdict to serve meanwhile. Gates treat it like any
+    // other non-ok status (Two withheld) - the alternative is offering Two for
+    // the length of the claim window on a shop nobody has verified yet - but the
+    // merchant-facing notice stays silent for it, because "still asking" is not
+    // a diagnosis.
+    const API_KEY_STATUS_VERIFYING = 'verifying';
+
     // Constants for API timeouts (seconds)
     const API_TIMEOUT_SHORT = 30; // Standard API timeout
     const API_TIMEOUT_LONG = 60; // Extended timeout for file uploads
@@ -218,6 +274,8 @@ class Twopayment extends PaymentModule
     const HTTP_STATUS_OK = 200;
     const HTTP_STATUS_CREATED = 201;
     const HTTP_STATUS_BAD_REQUEST = 400;
+    const HTTP_STATUS_UNAUTHORIZED = 401;
+    const HTTP_STATUS_FORBIDDEN = 403;
     const HTTP_STATUS_SERVER_ERROR = 500;
     
     // Constants for cookie/session expiry (seconds)
@@ -278,7 +336,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.7.2';
+        $this->version = '2.7.3';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -704,6 +762,10 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName(self::CONFIG_MERCHANT_MIN_ORDER);
         Configuration::deleteByName(self::CONFIG_MERCHANT_MIN_ORDER_BASIS);
         Configuration::deleteByName('PS_TWO_API_KEY_VERIFIED');
+        // Cached verification verdict + its clock (TWO-25326): a verdict left
+        // behind belongs to a key this shop no longer has.
+        Configuration::deleteByName(self::CONFIG_API_KEY_STATUS);
+        Configuration::deleteByName(self::CONFIG_API_KEY_STATUS_TS);
         Configuration::deleteByName('PS_TWO_DISABLE_SSL_VERIFY');
         Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_NAME');
         Configuration::deleteByName('PS_TWO_ADDRESS_LOOKUP');
@@ -847,6 +909,16 @@ class Twopayment extends PaymentModule
             $this->output .= $this->displayError($neverTaxedNotice);
         }
 
+        // Stored key that does not currently verify (TWO-25326). displayError,
+        // not displayWarning: while this shows, Two is not offered at checkout
+        // at all. Rendered from the cached verdict, so opening this page costs
+        // at most one live re-check per TTL rather than one per page load - and
+        // a save above has already refreshed it.
+        $apiKeyNotice = $this->getTwoApiKeyStatusNotice();
+        if ($apiKeyNotice !== '') {
+            $this->output .= $this->displayError($apiKeyNotice);
+        }
+
         $this->context->smarty->assign(
             array(
                 'renderTwoGeneralForm' => $this->renderTwoGeneralForm(),
@@ -855,7 +927,12 @@ class Twopayment extends PaymentModule
                 'renderTwoOrderStatusForm' => $this->renderTwoOrderStatusForm(),
                 'renderTwoPluginInfo' => $this->renderTwoPluginInfo(),
                 'twotabvalue' => Configuration::get('PS_TWO_TAB_VALUE'),
-                'two_api_verified' => (int) Configuration::get('PS_TWO_API_KEY_VERIFIED'),
+                // The CURRENT verdict, not the sticky save-time flag
+                // (TWO-25326): a key that has since expired, been rotated or
+                // stopped being reachable would otherwise render the green
+                // "verified" panel directly above the red notice saying Two is
+                // hidden from checkout.
+                'two_api_verified' => (int) $this->isTwoApiKeyVerified(),
                 'two_merchant_id' => Configuration::get('PS_TWO_MERCHANT_ID'),
                 'two_merchant_short_name' => Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'),
                 'two_env' => Configuration::get('PS_TWO_ENVIRONMENT'),
@@ -1058,14 +1135,39 @@ class Twopayment extends PaymentModule
         $env = Tools::getValue('PS_TWO_ENVIRONMENT');
         if (!empty($apiKey) && in_array($env, array('production','development','staging'))) {
             $verify = $this->verifyTwoApiKey($apiKey, $env);
-            if ($verify === false) {
-                $this->errors[] = $this->l('API key verification failed. Please check your API key.');
+            // Held for the SAVE to publish, not published here (TWO-25326).
+            // Validation can still fail on an unrelated field - an empty title,
+            // a bad environment - in which case nothing is stored and this
+            // verdict describes a key the shop does not have.
+            $this->verifiedApiKeyResult = $verify;
+            // Unless the key AND environment being validated are the stored ones,
+            // in which case the verdict describes the live shop whatever happens
+            // to the rest of the form - and is the only way a FAILING verdict ever
+            // gets published from this page, since a failing key adds an error and
+            // the save never runs (review round 2).
+            //
+            // The environment half is not decoration (review round 3). The check
+            // above ran against the SUBMITTED environment while the slot is keyed
+            // to the STORED one, which the skipped save leaves unchanged - so a
+            // merchant merely switching the dropdown to an environment their key
+            // is not valid for would otherwise publish an 'invalid_key' verdict
+            // against their still-perfectly-good stored configuration, and take
+            // Two off a healthy checkout over a save that never happened.
+            if ((string) $apiKey === (string) Configuration::get('PS_TWO_MERCHANT_API_KEY')
+                && (string) $env === (string) Configuration::get('PS_TWO_ENVIRONMENT')) {
+                $this->cacheTwoApiKeyVerificationStatus($apiKey, $verify);
+            }
+            if ($verify['status'] !== self::API_KEY_STATUS_OK) {
+                // Category-specific, so the merchant is not left choosing
+                // between "my key is wrong" and "Two is down" (TWO-25326).
+                $this->errors[] = $this->getTwoApiKeyFailureMessage($verify['status'], $verify['code']);
             } else {
-                if (!isset($verify['id']) || !isset($verify['short_name'])) {
+                $body = isset($verify['body']) && is_array($verify['body']) ? $verify['body'] : array();
+                if (!isset($body['id']) || !isset($body['short_name'])) {
                     $this->errors[] = $this->l('Invalid verification response from Two.');
                 } else {
-                    $this->verifiedMerchantId = $verify['id'];
-                    $this->verifiedMerchantShortName = $verify['short_name'];
+                    $this->verifiedMerchantId = $body['id'];
+                    $this->verifiedMerchantShortName = $body['short_name'];
                 }
             }
         }
@@ -1087,6 +1189,18 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY')));
         Configuration::updateValue('PS_TWO_ENVIRONMENT', Tools::getValue('PS_TWO_ENVIRONMENT'));
         Configuration::updateValue('PS_TWO_DEBUG_MODE', Tools::getValue('PS_TWO_DEBUG_MODE'));
+        // The verdict from the live check the validation above just made, now
+        // that the key it describes is the stored one (TWO-25326). This is the
+        // freshest that key will ever have had, so it becomes what the checkout
+        // gates read: a merchant who has just fixed a broken key sees Two
+        // return to checkout at once instead of waiting out the TTL.
+        if (is_array($this->verifiedApiKeyResult)) {
+            $this->cacheTwoApiKeyVerificationStatus(
+                trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY')),
+                $this->verifiedApiKeyResult
+            );
+        }
+
         if ($this->verifiedMerchantId) {
             if ((string) Configuration::get('PS_TWO_MERCHANT_ID') !== (string) $this->verifiedMerchantId) {
                 // Merchant identity changed: drop the cached term list so
@@ -2225,7 +2339,9 @@ class Twopayment extends PaymentModule
     protected function renderTwoPluginHealthChecklist()
     {
         $environment = (string) Configuration::get('PS_TWO_ENVIRONMENT', 'development');
-        $api_verified = (bool) Configuration::get('PS_TWO_API_KEY_VERIFIED');
+        // Same live verdict the checkout gate uses (TWO-25326) - a health row
+        // reporting "Verified" while Two is being withheld is worse than no row.
+        $api_verified = $this->isTwoApiKeyVerified();
         $ssl_disabled = (bool) Configuration::get('PS_TWO_DISABLE_SSL_VERIFY');
         $merchant_short_name = (string) Configuration::get('PS_TWO_MERCHANT_SHORT_NAME');
 
@@ -3549,6 +3665,47 @@ class Twopayment extends PaymentModule
                 // relocates into the payment tile. Never a second control,
                 // never fully off.
                 'company_name_search' => $this->isCompanySearchInAddressArea(),
+                // TWO-25326: may the company-search affordance render? A real
+                // PHP bool, so addJsDef emits a real JS boolean.
+                //
+                // Withheld on a known verification failure because the only
+                // thing that NEEDS a captured company is a Two order, and Two is
+                // not offered at all in that state (hookPaymentOptions withholds
+                // it on any non-ok verdict). The selection does still write the
+                // shop's own address record - which is the cost noted below, not
+                // a reason to keep the affordance. What is left is a Two-branded search
+                // whose result nothing consumes, and a "verify your company"
+                // journey that cannot complete - in tile mode the tile is
+                // already gone with the payment option, and the ADDRESS-step
+                // control would otherwise stay behind on its own.
+                //
+                // NOT because the search needs the key: that endpoint is called
+                // unauthenticated (TwoCompanySearch.buildPublicApiBeforeSend()
+                // strips the auth headers deliberately), so it would keep
+                // working. Round-6 review corrected the reasoning here - the
+                // behaviour matches the sibling plugins either way, and the
+                // cost of the gate is a search + address auto-fill a buyer
+                // could otherwise still have used.
+                //
+                // The SAME predicate the address-form override asks (review round
+                // 5), because the JS control and the server-rendered placeholder
+                // are two halves of one affordance and this flag is that
+                // affordance's only reader. Asking "verified?" here while the
+                // override asks "warranted?" left them disagreeing on exactly one
+                // state - a claim in flight with nothing to carry - which is the
+                // state where a shop with a back-office translation of the core
+                // placeholder kept the hint on a field with no search behind it.
+                //
+                // A live check ONLY on the real checkout page (review round 4).
+                // This hook also runs on the module's own front controllers, and
+                // one of those is the payment POST - where the verification gate
+                // deliberately refuses to make an HTTP call, because a stall
+                // there is a stall in the buyer's submit. Letting the media hook
+                // make it on the same request handed back exactly the stall the
+                // gate had just declined to take. Those pages render no
+                // company-search control anyway, so a cache-only answer costs
+                // them nothing.
+                'api_key_verified' => $this->isTwoCompanySearchAffordanceWarranted($is_checkout_page),
                 // Separate from company_name_search: that (now) gates only
                 // WHERE the search widget renders, this gates only what a
                 // selection writes into the address step (TWO-25203) - and
@@ -3753,6 +3910,34 @@ class Twopayment extends PaymentModule
 
         if (Tools::isEmpty($this->merchant_short_name) || Tools::isEmpty($this->api_key)) {
             return;
+        }
+
+        // API-key verification gate (TWO-25326). Withhold Two whenever the
+        // stored key cannot currently be verified, for ANY reason - a rejected
+        // key, a Two service error, or this shop being unable to reach Two at
+        // all. Offering a payment method whose integration is not answering
+        // hands the buyer a dead end at the last step of checkout. Cached, so
+        // this costs a Configuration read per render, not an HTTP call.
+        $apiKeyStatus = $this->getTwoApiKeyVerificationStatus();
+        if ($apiKeyStatus['status'] !== self::API_KEY_STATUS_OK) {
+            // Log it: a silently absent payment method is precisely the
+            // "nobody could tell why" failure this ticket exists to remove.
+            // Once per request, not once per evaluation: PrestaShop asks for
+            // payment options several times per payment-step render, and a
+            // broken shop with traffic would otherwise fill ps_log with the
+            // same line rather than making it findable. Instance-scoped, not a
+            // static: a static would also silence the SECOND shop in a
+            // multistore request, and every spec after the first in a suite
+            // run.
+            if (!$this->twoApiKeyWithholdLogged) {
+                $this->twoApiKeyWithholdLogged = true;
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Payment option hidden - API key verification status "' . $apiKeyStatus['status'] . '"'
+                    . ($apiKeyStatus['code'] ? ' (HTTP ' . (int) $apiKeyStatus['code'] . ')' : ''),
+                    2
+                );
+            }
+            return [];
         }
 
         $cart = $this->context->cart;
@@ -7876,10 +8061,89 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Verify API key directly against selected environment using submitted API key
-     * Returns decoded response array on success, or false on failure
+     * Verify the API key against the selected environment and CATEGORISE the
+     * outcome (TWO-25326). Every non-200 used to collapse into a single
+     * `false` - an expired key, a 5xx on Two's side and a network/routing
+     * failure that never reached anything were indistinguishable, both to the
+     * merchant reading the config page and to every gate that consumed the
+     * result. They are separate conditions with separate remedies (fix the
+     * key / wait / fix connectivity), so they are separate statuses here.
+     *
+     * @param string      $apiKey
+     * @param string      $environment
+     * @param int|null    $timeout seconds, defaulting to API_TIMEOUT_SHORT.
+     *   The cached-status path passes API_TIMEOUT_STATE_CHECK because it can
+     *   run inline in a shopper's page render; the config-page save keeps the
+     *   longer default, since a merchant waiting on a save wants a certain
+     *   answer more than a fast one. Note the config page's own NOTICE reads
+     *   the cached status, so it inherits the tight timeout - deliberately:
+     *   that path can equally be a cache miss on any admin page load, and the
+     *   save above is where the patient check belongs.
+     *
+     * @return array{status:string,code:int|null,body:array|null}
      */
-    private function verifyTwoApiKey($apiKey, $environment)
+    protected function verifyTwoApiKey($apiKey, $environment, $timeout = null)
+    {
+        if (Tools::isEmpty($apiKey)) {
+            return array('status' => self::API_KEY_STATUS_NOT_CONFIGURED, 'code' => null, 'body' => null);
+        }
+
+        $outcome = $this->requestTwoApiKeyVerification($apiKey, $environment, $timeout);
+        $httpCode = isset($outcome['code']) ? (int) $outcome['code'] : 0;
+        $response = isset($outcome['response']) ? $outcome['response'] : false;
+        $transportError = isset($outcome['error']) ? (string) $outcome['error'] : '';
+
+        // Nothing came back at all: a DNS/TLS/routing/timeout failure. Never a
+        // credential verdict - reporting it as a bad key sends the merchant to
+        // re-copy a key that was fine all along.
+        if ($response === false || $transportError !== '') {
+            PrestaShopLogger::addLog(
+                'TwoPayment: API key verification could not reach the Two API - transport error: ' . $transportError,
+                3
+            );
+            return array('status' => self::API_KEY_STATUS_UNREACHABLE, 'code' => null, 'body' => null);
+        }
+
+        if ($httpCode === self::HTTP_STATUS_UNAUTHORIZED || $httpCode === self::HTTP_STATUS_FORBIDDEN) {
+            PrestaShopLogger::addLog('TwoPayment: API key rejected by the Two API (HTTP ' . $httpCode . ')', 2);
+            return array('status' => self::API_KEY_STATUS_INVALID, 'code' => $httpCode, 'body' => null);
+        }
+
+        if ($httpCode >= self::HTTP_STATUS_SERVER_ERROR) {
+            PrestaShopLogger::addLog('TwoPayment: API key verification hit a Two service error (HTTP ' . $httpCode . ')', 2);
+            return array('status' => self::API_KEY_STATUS_SERVICE_ERROR, 'code' => $httpCode, 'body' => null);
+        }
+
+        if ($httpCode !== self::HTTP_STATUS_OK || !$response) {
+            PrestaShopLogger::addLog('TwoPayment: API key verification returned an unexpected HTTP ' . $httpCode, 2);
+            return array('status' => self::API_KEY_STATUS_ERROR, 'code' => $httpCode ?: null, 'body' => null);
+        }
+
+        $decoded = json_decode((string) $response, true);
+        if (!is_array($decoded)) {
+            // A 200 whose body is not the merchant record is not a verified
+            // key: something is answering on the endpoint's behalf (a captive
+            // portal, a proxy error page). 'error' rather than 'invalid_key' -
+            // the key was never judged.
+            PrestaShopLogger::addLog('TwoPayment: API key verification returned an unreadable body on HTTP 200', 2);
+            return array('status' => self::API_KEY_STATUS_ERROR, 'code' => $httpCode, 'body' => null);
+        }
+
+        PrestaShopLogger::addLog('TwoPayment: API key verified. Merchant ID: ' . (isset($decoded['id']) ? $decoded['id'] : 'N/A') . ', Short name: ' . (isset($decoded['short_name']) ? $decoded['short_name'] : 'N/A'), 1);
+        return array('status' => self::API_KEY_STATUS_OK, 'code' => $httpCode, 'body' => $decoded);
+    }
+
+    /**
+     * The wire call behind verifyTwoApiKey(), kept as its own seam so the
+     * categorisation above is exercisable without a network.
+     *
+     * @param string   $apiKey
+     * @param string   $environment
+     * @param int|null $timeout
+     *
+     * @return array{response:string|false,code:int,error:string}
+     */
+    protected function requestTwoApiKeyVerification($apiKey, $environment, $timeout = null)
     {
         $base = $this->getTwoCheckoutHostUrlForEnvironment($environment);
         $url = $base . '/v1/merchant/verify_api_key?' . http_build_query($this->getTwoClientParams());
@@ -7892,38 +8156,437 @@ class Twopayment extends PaymentModule
         curl_setopt($ch, CURLOPT_URL, $url);
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, self::API_TIMEOUT_SHORT);
-        
+        curl_setopt($ch, CURLOPT_TIMEOUT, $timeout !== null ? max(1, (int) $timeout) : self::API_TIMEOUT_SHORT);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, self::API_CONNECT_TIMEOUT);
+
         // SSL VERIFICATION - Secure by default
         $this->configureSslVerification($ch);
-        
+
         curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'GET');
         $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $curl_error = curl_error($ch);
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = (string) curl_error($ch);
         curl_close($ch);
-        
-        // Handle SSL/connection errors
-        if ($response === false || !empty($curl_error)) {
-            PrestaShopLogger::addLog(
-                'TwoPayment: API key verification failed - cURL error: ' . $curl_error . 
-                ' (URL: ' . $url . ')',
-                3
-            );
+
+        return array('response' => $response, 'code' => $httpCode, 'error' => $curlError);
+    }
+
+    /**
+     * The cached, categorised verification status of the STORED API key
+     * (TWO-25326). Consulted by the checkout gates - hookPaymentOptions() and
+     * the checkout media hook that decides whether the company-search control
+     * may run - so both agree, and so neither fires a live HTTP call per page
+     * render. Same TTL-clock-in-Configuration shape as the FX table and the
+     * merchant record; memoised per request on top, because a single checkout
+     * render asks several times.
+     *
+     * A cached verdict is bound to the key it was reached for: a merchant who
+     * pastes a different key misses the cache immediately rather than
+     * inheriting the previous key's verdict.
+     *
+     * @return array{status:string,code:int|null}
+     */
+    public function getTwoApiKeyVerificationStatus($allowLiveCheck = true)
+    {
+        // The memo first: a verdict already reached in THIS request is the
+        // answer, whatever the stored configuration says now (the config-page
+        // save reaches one for the key it just validated, before the gates that
+        // read it further down the same request).
+        if (is_array($this->twoApiKeyStatusMemo)) {
+            return $this->twoApiKeyStatusMemo;
+        }
+
+        $apiKey = (string) Configuration::get('PS_TWO_MERCHANT_API_KEY');
+        if (Tools::isEmpty($apiKey)) {
+            return array('status' => self::API_KEY_STATUS_NOT_CONFIGURED, 'code' => null);
+        }
+
+        $cached = $this->readCachedTwoApiKeyStatus($apiKey);
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        // Callers that must not pay for a verification: a payment POST (a 10s
+        // stall there is a stall in the buyer's submit) and the address-form
+        // override, which also renders on my-account pages. They get "not
+        // verified yet" and decide what that is worth to them - see
+        // isTwoApiKeyDefinitelyUnusable().
+        if (!$allowLiveCheck) {
+            return array('status' => self::API_KEY_STATUS_VERIFYING, 'code' => null);
+        }
+
+        // Anti-stampede, same discipline as refreshTwoFxRates(): claim the slot
+        // BEFORE the wire call, so concurrent renders on a cold cache read a
+        // fresh-looking slot and stand down instead of each firing their own
+        // verification. Without this, an unreachable API costs every concurrent
+        // shopper the full timeout, once per failure TTL, for as long as the
+        // outage lasts.
+        //
+        // What the claim CARRIES is the load-bearing part. A previous verdict
+        // for this same key rides along (serve-stale: a shop that was healthy a
+        // moment ago is not reported broken by a request that has not finished
+        // asking - and, just as importantly, a re-verification every TTL does
+        // not blink Two off a working shop). With NO previous verdict there is
+        // nothing to serve, and the claim says exactly that rather than
+        // guessing 'ok': guessing would offer Two - and let the payment POST
+        // through - for the whole claim window on a shop whose key has never
+        // verified, which is the failure this whole change exists to remove.
+        // That state is reachable without a config-page save: install seeding, a
+        // DB clone, direct SQL.
+        $previous = $this->readStoredTwoApiKeyStatus();
+        $carryable = $previous !== null
+            && $previous['key_hash'] === self::verificationSlotKey($apiKey)
+            && $previous['status'] !== self::API_KEY_STATUS_VERIFYING
+            // Age of the VERDICT, not of the slot write. A zero here (a slot
+            // with neither field readable) fails this comparison on its own, so
+            // it needs no separate guard.
+            && ($previous['verified_on'] + self::API_KEY_STATUS_CARRY_MAX_AGE) > time();
+        $carry = $carryable
+            ? $previous
+            : array('status' => self::API_KEY_STATUS_VERIFYING, 'code' => null, 'verified_on' => 0);
+        $this->writeTwoApiKeyStatusSlot($apiKey, $carry['status'], $carry['code'], true, $carry['verified_on']);
+
+        // Tight timeout: on a cold cache this runs inline in a shopper's
+        // checkout render. The TTL bounds how OFTEN the call happens, never
+        // how long one call may block, so the timeout has to do that job.
+        $result = $this->verifyTwoApiKey(
+            $apiKey,
+            Configuration::get('PS_TWO_ENVIRONMENT'),
+            self::API_TIMEOUT_STATE_CHECK
+        );
+
+        return $this->cacheTwoApiKeyVerificationStatus($apiKey, $result);
+    }
+
+    /**
+     * Whether the stored API key currently verifies. The single question every
+     * gate asks; the category behind a `false` is for the merchant-facing
+     * notice, never for deciding whether to serve Two.
+     *
+     * @return bool
+     */
+    public function isTwoApiKeyVerified($allowLiveCheck = true)
+    {
+        return $this->getTwoApiKeyVerificationStatus($allowLiveCheck)['status'] === self::API_KEY_STATUS_OK;
+    }
+
+    /**
+     * Whether the stored key is known to be unusable, as opposed to merely
+     * unconfirmed (TWO-25326, review round 2). Only the two DEFINITIVE
+     * categories count: a key Two rejected, and no key at all. A 5xx, a network
+     * blip or a cache miss are all "ask again", not "refuse".
+     *
+     * This is the question the payment POST asks, and it is deliberately a
+     * different question from the one the render paths ask. Withholding the
+     * payment option from a page not yet rendered costs a buyer nothing; turning
+     * a submitted order into "this payment method is not available" over one
+     * transient blip costs them the order - and the order-creation call they
+     * would otherwise have reached has its own longer timeout and its own
+     * decline handling. Consulted cache-only for the same reason.
+     *
+     * @return bool
+     */
+    public function isTwoApiKeyDefinitelyUnusable()
+    {
+        $status = $this->getTwoApiKeyVerificationStatus(false)['status'];
+        if (self::isDefinitiveFailureStatus($status)) {
+            return true;
+        }
+
+        // Deliberately reads PAST the TTL for the definitive categories only
+        // (review round 3). This gate exists for the buyer who was already on the
+        // payment step when the verdict changed - which is to say, minutes later -
+        // and a fresh verdict is exactly what it does NOT have: it may not make
+        // the call itself, and the failure TTL is a minute. "Two rejected this
+        // key, when last asked" does not go out of date in a way that makes
+        // accepting the submission the better guess, and it is the only definitive
+        // information available. Transient categories are still ignored here, so
+        // no blip can refuse an order however long it sits in the slot, and a
+        // claim in flight is not a verdict at all.
+        // key_hash: the slot must belong to the key AND environment the shop
+        // holds NOW. Without it a stale rejection would refuse submissions on a
+        // replacement key - a merchant fixing their key and immediately being
+        // told the method is unavailable.
+        //
+        // claim: an EXPIRED claim is not read as a verdict here even though it
+        // carries one. Fail-open, deliberately: a claim outliving its window
+        // means the request that made it never finished, so nothing confirmed
+        // that carried verdict, and refusing a submitted order needs firmer
+        // ground than that. A claim still inside its window is served by the
+        // branch above, where the carried verdict does count.
+        $stored = $this->readStoredTwoApiKeyStatus();
+        if ($stored === null || $stored['claim'] || $stored['key_hash'] !== self::verificationSlotKey((string) Configuration::get('PS_TWO_MERCHANT_API_KEY'))) {
             return false;
         }
 
-        if ($httpCode !== self::HTTP_STATUS_OK || !$response) {
-            PrestaShopLogger::addLog('TwoPayment: API key verification failed. HTTP ' . (int)$httpCode . ' Response: ' . (is_string($response) ? $response : ''), 2);
-            return false;
+        return self::isDefinitiveFailureStatus($stored['status']);
+    }
+
+    /**
+     * Whether the company-search affordance this module adds to the checkout is
+     * warranted right now (TWO-25326, review round 4) - the browser control and
+     * the server-rendered placeholder both, since they are two halves of one
+     * thing and this is the one question both ask.
+     *
+     * Warranted means "a captured company can still be used for something",
+     * which on any known verification failure it cannot: Two is withheld from
+     * checkout entirely in that state, so the search has nothing left to feed.
+     * It does NOT mean "the search would work" - that endpoint is called
+     * unauthenticated and works regardless of the key (round-6 review corrected
+     * the reasoning; the behaviour is unchanged and matches the sibling
+     * plugins).
+     *
+     * Distinct from isTwoApiKeyDefinitelyUnusable(): an affordance is not an
+     * order, so this side may stand down on ANY known failure rather than only a
+     * definitive one.
+     *
+     * 'verifying' (nothing known yet) counts as warranted: a cold cache is not
+     * evidence of a broken shop, and the caller that most needs this - the
+     * address-form override - must not be able to block on an HTTP call, hence
+     * cache-only by default. The checkout media hook opts into a live check,
+     * because that page is a render and the verdict is what its whole
+     * company-search bootstrap turns on.
+     *
+     * @return bool
+     */
+    public function isTwoCompanySearchAffordanceWarranted($allowLiveCheck = false)
+    {
+        $status = $this->getTwoApiKeyVerificationStatus($allowLiveCheck)['status'];
+
+        return $status === self::API_KEY_STATUS_OK || $status === self::API_KEY_STATUS_VERIFYING;
+    }
+
+    /**
+     * The categories that mean "this integration cannot take an order", as
+     * opposed to "ask again later". The ONE definition of that set - the
+     * payment POST's gate asks through this, so nothing re-lists it.
+     *
+     * @param string $status
+     *
+     * @return bool
+     */
+    public static function isDefinitiveFailureStatus($status)
+    {
+        return $status === self::API_KEY_STATUS_INVALID || $status === self::API_KEY_STATUS_NOT_CONFIGURED;
+    }
+
+    /**
+     * Stores a categorised verification outcome as the cached verdict for
+     * $apiKey. The ONE writer, shared by the cache-miss path above and by the
+     * config-page save - a merchant who has just fixed a broken key must not
+     * have to wait out the TTL for checkout to notice.
+     *
+     * @param string $apiKey
+     * @param array  $result verifyTwoApiKey()'s return value
+     *
+     * @return array{status:string,code:int|null}
+     */
+    public function cacheTwoApiKeyVerificationStatus($apiKey, $result)
+    {
+        $status = array(
+            'status' => isset($result['status']) ? (string) $result['status'] : self::API_KEY_STATUS_ERROR,
+            'code' => isset($result['code']) && $result['code'] !== null ? (int) $result['code'] : null,
+        );
+
+        $this->writeTwoApiKeyStatusSlot($apiKey, $status['status'], $status['code']);
+
+        if ((string) $apiKey === (string) Configuration::get('PS_TWO_MERCHANT_API_KEY')) {
+            $this->twoApiKeyStatusMemo = $status;
         }
-        $decoded = json_decode($response, true);
-        if (!is_array($decoded)) {
-            PrestaShopLogger::addLog('TwoPayment: API key verification returned invalid JSON', 2);
-            return false;
+
+        return $status;
+    }
+
+    /**
+     * Writes one verdict into $apiKey's cache slot and stamps the clock. The
+     * only place either config key is written.
+     *
+     * @param string   $apiKey
+     * @param string   $status
+     * @param int|null $code
+     * @param bool     $asClaim marks the slot as a claim rather than a verdict:
+     *   it then expires after API_KEY_STATUS_CLAIM_WINDOW instead of a full TTL,
+     *   so a claim whose process died mid-call stops standing in for a verdict
+     *   within seconds. Recorded as a flag rather than by back-dating the clock,
+     *   which would write a future-dated timestamp the moment any TTL was
+     *   shortened below the claim window.
+     */
+    private function writeTwoApiKeyStatusSlot($apiKey, $status, $code, $asClaim = false, $verifiedOn = null)
+    {
+        if (Tools::isEmpty($apiKey)) {
+            return;
         }
-        PrestaShopLogger::addLog('TwoPayment: API key verified. Merchant ID: ' . (isset($decoded['id']) ? $decoded['id'] : 'N/A') . ', Short name: ' . (isset($decoded['short_name']) ? $decoded['short_name'] : 'N/A'), 1);
-        return $decoded;
+
+        Configuration::updateValue(self::CONFIG_API_KEY_STATUS, json_encode(array(
+            'status' => (string) $status,
+            'code' => $code === null ? null : (int) $code,
+            'key_hash' => self::verificationSlotKey($apiKey),
+            'claim' => (bool) $asClaim,
+            // When the VERDICT was reached, as distinct from when the slot was
+            // last written: a claim re-writes the slot but carries the original
+            // verdict's age with it, which is what bounds serve-stale.
+            'verified_on' => $verifiedOn === null ? time() : (int) $verifiedOn,
+        )));
+        Configuration::updateValue(self::CONFIG_API_KEY_STATUS_TS, time());
+    }
+
+    /**
+     * Slot identity: the API key AND the environment it was verified against. A
+     * key is only valid for one environment, so an environment change by any
+     * route that does not go through the config-page save (an upgrade script,
+     * dev/configure.php, direct SQL) must miss the cache rather than carry the
+     * other environment's verdict for a full TTL.
+     *
+     * @param string $apiKey
+     *
+     * @return string
+     */
+    private static function verificationSlotKey($apiKey)
+    {
+        return md5((string) $apiKey . '|' . Tools::strtolower((string) Configuration::get('PS_TWO_ENVIRONMENT')));
+    }
+
+    /**
+     * How long a verdict of $status stays usable. A failed verdict expires
+     * sooner than a successful one: an outage or a just-rotated key should stop
+     * hiding Two within a minute, while a healthy shop should not re-verify
+     * every minute for nothing.
+     *
+     * @param string $status
+     *
+     * @return int seconds
+     */
+    private static function statusTtlFor($status)
+    {
+        return $status === self::API_KEY_STATUS_OK
+            ? self::API_KEY_STATUS_TTL
+            : self::API_KEY_STATUS_FAILURE_TTL;
+    }
+
+    /**
+     * The stored verdict as written, ignoring the TTL and ignoring which key it
+     * belongs to - callers decide what to do with both. Null when nothing
+     * usable is stored.
+     *
+     * @return array{status:string,code:int|null,key_hash:string,claim:bool,verified_on:int,checked_on:int}|null
+     */
+    private function readStoredTwoApiKeyStatus()
+    {
+        $raw = Configuration::get(self::CONFIG_API_KEY_STATUS);
+        if (Tools::isEmpty($raw)) {
+            return null;
+        }
+        $decoded = json_decode((string) $raw, true);
+        if (!is_array($decoded) || !isset($decoded['status'], $decoded['key_hash'])) {
+            return null;
+        }
+
+        return array(
+            'status' => (string) $decoded['status'],
+            'code' => isset($decoded['code']) && $decoded['code'] !== null ? (int) $decoded['code'] : null,
+            'key_hash' => (string) $decoded['key_hash'],
+            'claim' => !empty($decoded['claim']),
+            // A slot written before this field existed is not ageless: fall back
+            // to the slot's own clock, which for a verdict IS when it was
+            // reached. Reading it as 0 made such a slot uncarryable, so the first
+            // re-verification against it withheld Two for the length of one claim
+            // window (review round 4). No released version ever wrote this slot -
+            // it arrives with this change - so the only shops holding a
+            // field-less one are those that ran an intermediate build of this
+            // branch; the fallback stays because the JSON shape is not something
+            // to assume about a value read back out of Configuration.
+            'verified_on' => isset($decoded['verified_on'])
+                ? (int) $decoded['verified_on']
+                : (int) Configuration::get(self::CONFIG_API_KEY_STATUS_TS),
+            'checked_on' => (int) Configuration::get(self::CONFIG_API_KEY_STATUS_TS),
+        );
+    }
+
+    /**
+     * The still-fresh cached verdict for $apiKey, or null when there is none to
+     * use (never stored, stored for a different key, or expired).
+     *
+     * @param string $apiKey
+     *
+     * @return array{status:string,code:int|null}|null
+     */
+    private function readCachedTwoApiKeyStatus($apiKey)
+    {
+        if (is_array($this->twoApiKeyStatusMemo)) {
+            return $this->twoApiKeyStatusMemo;
+        }
+
+        $stored = $this->readStoredTwoApiKeyStatus();
+        if ($stored === null || $stored['key_hash'] !== self::verificationSlotKey($apiKey)) {
+            return null;
+        }
+        $ttl = $stored['claim'] ? self::API_KEY_STATUS_CLAIM_WINDOW : self::statusTtlFor($stored['status']);
+        if ($stored['checked_on'] <= 0 || ($stored['checked_on'] + $ttl) <= time()) {
+            return null;
+        }
+
+        $this->twoApiKeyStatusMemo = array('status' => $stored['status'], 'code' => $stored['code']);
+
+        return $this->twoApiKeyStatusMemo;
+    }
+
+    /**
+     * Merchant-facing wording for a verification failure category
+     * (TWO-25326). Category and HTTP status only - the response body is
+     * deliberately not surfaced in the back office; it belongs in the log.
+     *
+     * @param string   $status
+     * @param int|null $code
+     *
+     * @return string
+     */
+    public function getTwoApiKeyFailureMessage($status, $code = null)
+    {
+        switch ($status) {
+            case self::API_KEY_STATUS_INVALID:
+                return $this->l('This API key was rejected by Two. It may be invalid or expired - check the key in your Two portal.');
+            case self::API_KEY_STATUS_SERVICE_ERROR:
+                return sprintf(
+                    $this->l('Two could not verify the API key right now (HTTP %d). This is usually temporary - try again shortly.'),
+                    (int) $code
+                );
+            case self::API_KEY_STATUS_UNREACHABLE:
+                return $this->l('This shop could not reach the Two API at all (network, DNS or firewall). The API key itself has not been judged.');
+            case self::API_KEY_STATUS_NOT_CONFIGURED:
+                return $this->l('Enter your Two API key to enable Two.');
+            default:
+                return $code
+                    ? sprintf($this->l('Two returned an unexpected response while verifying the API key (HTTP %d).'), (int) $code)
+                    : $this->l('The API key could not be verified.');
+        }
+    }
+
+    /**
+     * Config-page notice for a stored key that does not currently verify
+     * (TWO-25326), or '' when there is nothing to say. Not merely
+     * informational: while this shows, Two is withheld from checkout, so the
+     * notice states that too.
+     *
+     * @return string
+     */
+    protected function getTwoApiKeyStatusNotice()
+    {
+        $status = $this->getTwoApiKeyVerificationStatus();
+        if ($status['status'] === self::API_KEY_STATUS_OK
+            // A verification another request is still making is not a diagnosis,
+            // and must not be reported as one - the default wording below would
+            // otherwise tell the merchant their key "could not be verified" while
+            // it is being verified. The panel above reads "not verified" for the
+            // same seconds, which is true and self-correcting on reload.
+            || $status['status'] === self::API_KEY_STATUS_VERIFYING
+            || $status['status'] === self::API_KEY_STATUS_NOT_CONFIGURED) {
+            // No stored key at all is what the form's own "Enter an API key"
+            // validation is for - two notices saying it is noise.
+            return '';
+        }
+
+        return $this->getTwoApiKeyFailureMessage($status['status'], $status['code'])
+            . ' ' . $this->l('Two is hidden from checkout until the key verifies.');
     }
 
     /**
@@ -8965,6 +9628,36 @@ class Twopayment extends PaymentModule
      * @var false|null|array{base:string,as_of:string,rates:array<string,float>}
      */
     protected $twoFxRatesMemo = false;
+
+    /**
+     * Request-scoped memo of the categorised API-key verification verdict
+     * (TWO-25326). null = not resolved yet this request. An instance property
+     * rather than a static one on purpose: a static would carry one key's
+     * verdict across every module instance by name, which is wrong the moment
+     * two keys are in play (a specs run, a multistore save).
+     *
+     * @var null|array{status:string,code:int|null}
+     */
+    protected $twoApiKeyStatusMemo = null;
+
+    /**
+     * The categorised result of the API-key verification the general-form
+     * VALIDATION performed, held for the SAVE to publish as the cached verdict
+     * once the key it describes is actually stored (TWO-25326). Null when no
+     * verification ran this request.
+     *
+     * @var null|array{status:string,code:int|null,body:array|null}
+     */
+    protected $verifiedApiKeyResult = null;
+
+    /**
+     * Whether this instance has already logged that it is withholding Two over
+     * a verification failure (TWO-25326). PrestaShop asks for payment options
+     * several times per payment-step render; the reason only needs saying once.
+     *
+     * @var bool
+     */
+    protected $twoApiKeyWithholdLogged = false;
 
     /**
      * Read a brand-config value (brands/two.php), cached per request. Returns

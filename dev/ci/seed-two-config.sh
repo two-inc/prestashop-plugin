@@ -8,11 +8,16 @@
 # real merchant setup does. This repo's CI is deliberately hermetic (no
 # secrets, no live Two API dependency — see tests.yml/smoke.yml), so this
 # script writes the same config keys directly, bypassing the live call.
-# It's for e2e/UI-rendering assertions only. The e2e workflow also sets
-# TWO_API_BASE_URL to an unreachable port (see boot-prestashop.sh) so the
-# checkout-media priming calls (merchant terms/FX-rate refresh, fired on
-# every checkout page view) fail fast rather than hitting Two's real
-# sandbox from public CI with this dummy key.
+# It's for e2e/UI-rendering assertions only. The e2e workflow also points
+# TWO_API_BASE_URL at an in-container stub (dev/ci/start-two-api-stub.sh)
+# that answers ONLY /v1/merchant/verify_api_key and refuses everything
+# else, so the checkout-media priming calls (merchant terms/FX-rate
+# refresh, fired on every checkout page view) still fail fast rather than
+# hitting Two's real sandbox from public CI with this dummy key. That one
+# endpoint has to answer since TWO-25326: the module withholds the payment
+# option entirely - and the company-search control with it - while the
+# stored key cannot be verified, unreachable API included, so seeding
+# PS_TWO_API_KEY_VERIFIED below is no longer sufficient on its own.
 #
 # Deliberately NOT seeded: PS_TWO_MERCHANT_MIN_ORDER / the platform
 # minimum-order config (see isTwoMinimumOrderSatisfied /
@@ -36,6 +41,11 @@ Configuration::updateValue("PS_TWO_ENVIRONMENT", "development");
 Configuration::updateValue("PS_TWO_MERCHANT_SHORT_NAME", "E2E Test Merchant");
 Configuration::updateValue("PS_TWO_MERCHANT_ID", "e2e-merchant-id");
 Configuration::updateValue("PS_TWO_API_KEY_VERIFIED", 1);
+// Any cached verification verdict for a previous seed belongs to a previous run
+// (TWO-25326). A stale FAILED verdict here would start the suite with no payment
+// tile for 60 seconds, for reasons that have nothing to do with the specs.
+Configuration::deleteByName("PS_TWO_API_KEY_STATUS");
+Configuration::deleteByName("PS_TWO_API_KEY_STATUS_TS");
 echo "Two config seeded (hermetic — no live verify_api_key call)\n";
 '
 docker exec "ps-$SFX" bash -c "rm -rf /var/www/html/var/cache/*"

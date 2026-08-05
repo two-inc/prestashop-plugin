@@ -16,6 +16,12 @@ class TwoCheckoutManager {
             // from before this ticket. false: the same control relocates
             // into the payment tile instead.
             companySearchInAddressArea: true,
+            // TWO-25326: whether the shop's stored API key currently verifies.
+            // Default-on, matching every other switch here: an omitted value
+            // must never be read as "the integration is broken" and take the
+            // company search away from a shop that is fine. The server sends a
+            // real boolean; only an explicit false disables anything.
+            apiKeyVerified: true,
             orderIntentEnabled: false,
             checkoutHost: '',
             orderIntentUrl: '',
@@ -2162,6 +2168,22 @@ class TwoCheckoutManager {
      * checked not to recur here, see the e2e coverage for this file).
      */
     initializeCompanySearch() {
+        // API-key verification gate (TWO-25326). Two is not offered at this
+        // checkout when the shop's key does not verify (the payment option is
+        // withheld server-side on the same condition), so there is nothing for a
+        // selected company to be used FOR - and a "search and verify your
+        // company" journey that leads nowhere is worse than a plain field.
+        //
+        // Not because the search would break: that endpoint is called
+        // unauthenticated (see buildPublicApiBeforeSend in TwoCompanySearch) and
+        // works regardless of the key. Leave the company field as the plain text
+        // input the theme rendered, and strip the search-mode placeholder the
+        // address-form override put on it, so it does not tell the buyer to
+        // search a field that no longer does.
+        if (this.config.apiKeyVerified === false) {
+            this.neutralizeCompanySearchAffordance();
+            return;
+        }
         // TWO-25326 §7.1: in tile mode, PrestaShop can replace the whole
         // payment-options fragment (a surcharge/cart-line sync, a payment-
         // form refresh) with a FRESH #two_tile_company node. The re-init
@@ -2210,6 +2232,33 @@ class TwoCheckoutManager {
             checkoutHost: this.config.checkoutHost,
             addressLookupEnabled: this.config.addressLookupEnabled !== false,
             companyFieldSelector: "input[name='company']"
+        });
+    }
+
+    /**
+     * Undo the address form's search-mode affordance when no search will run
+     * (TWO-25326). The placeholder is applied SERVER-side by the address-form
+     * override, so unlike the dropdown and the results list it survives the
+     * search control never being constructed - the buyer would be told to
+     * "enter company name to search" on a field that is now just a text box.
+     *
+     * Only ever clears the module's OWN search wording, matched against the
+     * translated string and its English source. A placeholder the theme (or
+     * anything else) supplied is left exactly as it is.
+     */
+    neutralizeCompanySearchAffordance() {
+        const ours = [
+            this.t('company_search_placeholder', 'Enter company name to search'),
+            'Enter company name to search'
+        ];
+        // ALL of them: PrestaShop renders a second address form, with its own
+        // `name='company'`, as soon as the buyer ticks "billing address differs
+        // from shipping address".
+        document.querySelectorAll("input[name='company']").forEach(function (field) {
+            const current = field.getAttribute('placeholder');
+            if (current && ours.indexOf(current) !== -1) {
+                field.removeAttribute('placeholder');
+            }
         });
     }
 

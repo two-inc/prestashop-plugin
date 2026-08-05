@@ -2,6 +2,12 @@
 
 global $_MODULE;
 $_MODULE = array();
+$_MODULE['<{twopayment}prestashop>twopayment_336d4f49452554bc13e4ed9dd2603300'] = 'Esta tienda no ha podido conectar con la API de Two (red, DNS o firewall). La clave API en sí no se ha evaluado.';
+$_MODULE['<{twopayment}prestashop>twopayment_53943134b629b65e0a320b7dd6ed92a8'] = 'Two ha rechazado esta clave API. Puede que no sea válida o haya caducado: comprueba la clave en tu portal de Two.';
+$_MODULE['<{twopayment}prestashop>twopayment_8effea9a4ab719b4272d74ad33f5b897'] = 'No se ha podido verificar la clave API.';
+$_MODULE['<{twopayment}prestashop>twopayment_943ecf14953e769ec88faeeccfd31cad'] = 'Two ha devuelto una respuesta inesperada al verificar la clave API (HTTP %d).';
+$_MODULE['<{twopayment}prestashop>twopayment_9f403283660172ddd88e719a34a37692'] = 'Introduce tu clave API de Two para activar Two.';
+$_MODULE['<{twopayment}prestashop>twopayment_d2b8b622af4e9432f62dc6e3bea9d3d1'] = 'Two no ha podido verificar la clave API en este momento (HTTP %d). Suele ser temporal: vuelve a intentarlo en unos minutos.';
 $_MODULE['<{twopayment}prestashop>twopayment_d417918cd6fea0a0d40a394dc3826e44'] = 'Two - Compra ahora, paga después para empresas';
 $_MODULE['<{twopayment}prestashop>twopayment_35fc62de72bb14d99ad57dc65b98ddda'] = 'Este módulo permite a cualquier comerciante aceptar pagos con la pasarela de pago Two.';
 $_MODULE['<{twopayment}prestashop>twopayment_52f4393e1b52ba63e27310ca92ba098c'] = 'Configuración general';
@@ -16,6 +22,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_636cf8408eb393133d3495581642ecca'] 
 $_MODULE['<{twopayment}prestashop>twopayment_330f49df8243756a8a4dc7f7f7ee6dfe'] = 'Desarrollo';
 $_MODULE['<{twopayment}prestashop>twopayment_756d97bb256b8580d4d71ee0c547804e'] = 'Producción';
 $_MODULE['<{twopayment}prestashop>twopayment_90732912a0dcac1e45f02ba8122d80bf'] = 'Tipo de plazo de pago';
+$_MODULE['<{twopayment}prestashop>twopayment_d9fe698b79530af9334d5d6f590843cb'] = 'Two permanece oculto en el proceso de pago hasta que la clave se verifique.';
 $_MODULE['<{twopayment}prestashop>twopayment_e8ca0cae6b365fe0c03816ef8905b89c'] = 'Elige cómo se calculan los términos de pago:';
 $_MODULE['<{twopayment}prestashop>twopayment_d7763ceb9a0400fe241b0d5e6f0b5b21'] = 'Términos estándar:';
 $_MODULE['<{twopayment}prestashop>twopayment_d801910356f73cbb407fe5d320c581d7'] = 'Pago vencido X días desde la fecha de cumplimiento. Ejemplo: Si cumples un pedido el 15 de enero con términos de 30 días, el pago vence el 14 de febrero.';
@@ -39,7 +46,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_016e561b39ff316fdf1b182819189cdb'] 
 $_MODULE['<{twopayment}prestashop>twopayment_cd7cc8b6d9b6160db0e405bc2207b5fb'] = 'Introduce una clave API.';
 $_MODULE['<{twopayment}prestashop>twopayment_0a4246253393557e485bed94d7db13a3'] = 'Selecciona un entorno válido (Producción o Desarrollo).';
 $_MODULE['<{twopayment}prestashop>twopayment_1924a6cb5a7ce6a33e93620792fea964'] = 'Debes seleccionar al menos un plazo de pago.';
-$_MODULE['<{twopayment}prestashop>twopayment_ac7209cfe48af2c99afc2be9ce19d71b'] = 'La verificación de la clave API ha fallado. Comprueba tu clave API.';
 $_MODULE['<{twopayment}prestashop>twopayment_ad920804afec4822b0d006452fce3929'] = 'Respuesta de verificación no válida desde Two.';
 $_MODULE['<{twopayment}prestashop>twopayment_85925e31c13734f285ce48920c8120b9'] = 'La configuración general se ha actualizado.';
 $_MODULE['<{twopayment}prestashop>twopayment_a8ad8ed0d7a57bafaf4fa86fda0dd87f'] = 'Otras configuraciones';
