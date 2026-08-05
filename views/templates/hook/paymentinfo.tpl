@@ -20,17 +20,25 @@
        surcharge cart-line sync reloads the page under the buyer, which it does
        on every payment-option change.
 
-       `$sole_trader_available` is the same registry answer the module's
-       soleTraderAvailability endpoint returns (TwoSoleTrader::isAvailable),
-       resolved for the cart's own billing country, so the markup and the JS
-       cannot disagree. The two data- attributes are the handover:
+       The answer is the same registry answer the module's soleTraderAvailability
+       endpoint returns (TwoSoleTrader::resolveAvailability), resolved for the
+       cart's own billing country, so the markup and the JS cannot disagree. The
+       two data- attributes are the handover:
        TwoSoleTrader.adoptServerRenderedToggle() takes this as its settled state
        and issues no request at all, and still re-resolves normally if the buyer
        changes country. An older cached template with no attributes reads as "no
-       answer" there and falls back to the client fetch. *}
+       answer" there and falls back to the client fetch.
+
+       `$sole_trader_answer` is '1', '0', or EMPTY when the registry did not
+       answer at all. Empty is not the same as '0' and must not be rendered as
+       one: the browser reads it as "no answer" and keeps its own retrying
+       request path, which is what stops a single registry blip from becoming a
+       cached "business only" for the rest of the page's life. The container is
+       still drawn hidden and chipless in that state - the fail-soft outcome is
+       unchanged, only the browser's knowledge of it. *}
     <div class="two-sole-trader"
          data-two-country="{$sole_trader_country|escape:'html':'UTF-8'}"
-         data-two-available="{if $sole_trader_available}1{else}0{/if}"
+         data-two-available="{$sole_trader_answer|escape:'html':'UTF-8'}"
          style="display: {if $sole_trader_available}block{else}none{/if};">
         <div class="two-sole-trader__toggle"{if $sole_trader_available} data-two-built="1"{/if}>
             {if $sole_trader_available}
