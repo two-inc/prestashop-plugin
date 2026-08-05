@@ -57,8 +57,15 @@
     // one this file exists to remove. So the failsafe is anchored to DOM-ready
     // (which the restore runs just after) with a small grace period, and the flat
     // timer is kept only as an absolute cap for a document that never gets there.
+    //
+    // The cap is a deliberate number, not a round one (round 3 review, finding 10):
+    // it is the worst case for a payment method showing no additional information
+    // at all, traded against a ~34ms flash, so it is kept close to the flat timer
+    // it replaced rather than stretched to cover an arbitrarily stalled document.
+    // A document that has not reached DOM-ready in two seconds has larger problems
+    // than this tile.
     var FAILSAFE_AFTER_READY_MS = 500;
-    var ABSOLUTE_CAP_MS = 5000;
+    var ABSOLUTE_CAP_MS = 2000;
 
     var root = document.documentElement;
 

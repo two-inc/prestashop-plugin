@@ -72,8 +72,8 @@ class TwoSoleTrader
      * and it must not survive the request (that is what the cookie is for, and
      * why the cookie still never records one). But re-attempting it several times
      * WITHIN one request is not caution, it is a multiple of the timeout on a
-     * page a shopper is waiting for - and this call is now on the checkout render
-     * path. One attempt, null every time after it, error never persisted.
+     * page a buyer is already waiting on. One attempt, null every time after it,
+     * error never persisted.
      *
      * @var array<string, bool>
      */
@@ -144,6 +144,63 @@ class TwoSoleTrader
     }
 
     /**
+     * The same three-state answer, but ONLY if it is already known - never a
+     * network call (TWO-25326 bug 9, round 3 review, finding 2).
+     *
+     * This is what the payment tile renders from. resolveAvailability() cannot be:
+     * it resolves the answer live, and the tile renders inside a shopper's
+     * checkout request, so on any shop that cannot reach the registry EVERY
+     * payment-step render - and a payment-option change is a full page reload -
+     * paid the request timeout again. The failure marker bounds that to one
+     * attempt per request, not per session, because only a SUCCESS is written to
+     * the cookie. Net-new buyer-visible latency on a path that previously made no
+     * call at all, which is not a trade worth making for a rendering nicety.
+     *
+     * The rest of the module is built for exactly this: an unknown answer renders
+     * as no answer, the browser's own availability request resolves it, and the
+     * endpoint that answers writes the cookie - so the FIRST payment-step render
+     * of a session may render no toggle and every render after it, including all
+     * the surcharge-driven reloads that made the flicker visible, renders the
+     * real answer. That is the same shape as this module's other checkout-render
+     * reads (cache-only, primed off the render path).
+     *
+     * @param string $countryIso
+     *
+     * @return bool|null null = not known yet (or known to have failed)
+     */
+    public static function resolveAvailabilityFromCache($countryIso)
+    {
+        $countryIso = strtoupper(trim((string) $countryIso));
+        if (!preg_match('/^[A-Z]{2}$/', $countryIso)) {
+            return null;
+        }
+
+        $types = null;
+        if (array_key_exists($countryIso, self::$types_cache)) {
+            $types = self::$types_cache[$countryIso];
+        } else {
+            $cookie = Context::getContext()->cookie;
+            if ($cookie && !empty($cookie->{self::COOKIE_KEY})) {
+                $cached = json_decode($cookie->{self::COOKIE_KEY}, true);
+                if (
+                    is_array($cached)
+                    && isset($cached['country'], $cached['types'], $cached['fetched_at'])
+                    && $cached['country'] === $countryIso
+                    && is_array($cached['types'])
+                    && time() - (int) $cached['fetched_at'] < self::CACHE_TTL_SECONDS
+                ) {
+                    $types = $cached['types'];
+                }
+            }
+        }
+        if ($types === null) {
+            return null;
+        }
+
+        return in_array(self::SOLE_TRADER, $types, true);
+    }
+
+    /**
      * The buyer company types the Two registry supports for a country,
      * from GET /registry/v1/supported-company-types/<ISO> — only the
      * types that need registry enrollment before they can buy (sole
@@ -153,9 +210,10 @@ class TwoSoleTrader
      * country. Cached in the context cookie for the endpoint's own
      * max-age (single slot - see COOKIE_KEY). A fetch ERROR (network,
      * non-200, malformed body) is fail-soft for the current lookup
-     * (resolves to an empty list, checkout never blocks) but is
-     * deliberately NOT cached, so a transient registry blip does not
-     * suppress the toggle for the rest of the TTL window.
+     * (resolves to an empty list, checkout never blocks) and is never written to
+     * the COOKIE, so a transient registry blip does not suppress the toggle for
+     * the rest of the TTL window. It IS remembered for the rest of the REQUEST,
+     * as a failure rather than as an answer - see $failed_lookups.
      *
      * @param Twopayment $module
      * @param string $countryIso
@@ -249,12 +307,14 @@ class TwoSoleTrader
             null,
             'GET',
             array(),
-            // Tight timeout, not the 30s default (TWO-25326 bug 9, round 3
-            // adversarial review). This call used to be reachable only from the
-            // module's own AJAX controller, i.e. always after the buyer's page had
-            // painted. The payment tile now resolves it INLINE in the checkout
-            // render, so on a cold cache it is on the critical path of a shopper's
-            // page - which is exactly the set of calls this constant exists for.
+            // Tight timeout rather than setTwoPaymentRequest()'s 60s default
+            // (API_TIMEOUT_LONG), which is sized for file uploads. This lookup is
+            // reached from the module's own AJAX controller while a buyer waits on
+            // the checkout for the toggle to appear, so a minute is the wrong
+            // bound for it whichever side of the page it runs on. The payment tile
+            // deliberately does NOT reach this method - it reads
+            // resolveAvailabilityFromCache() so the checkout render makes no call
+            // at all (round 3 review, finding 2).
             Twopayment::API_TIMEOUT_STATE_CHECK
         );
         if (

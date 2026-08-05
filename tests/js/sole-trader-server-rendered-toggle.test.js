@@ -58,6 +58,22 @@ function buildCountry(iso) {
     return holder.querySelector('select');
 }
 
+/**
+ * Drain timers and promises for an instance under test. Named with a trailing
+ * underscore only to stay out of the way of the local `settle` resolvers the
+ * in-flight-request tests hold.
+ *
+ * @param {object} instance
+ * @returns {Promise<void>}
+ */
+async function settle_(instance) {
+    void instance;
+    jest.advanceTimersByTime(150);
+    await flushPromises();
+    jest.advanceTimersByTime(150);
+    await flushPromises();
+}
+
 /** Let the debounced observer callback and any promise chain run. */
 async function settle() {
     jest.advanceTimersByTime(150);
@@ -414,6 +430,74 @@ describe('a replaced container is re-adopted from its own markup', () => {
         expect(fetchCalls).toEqual([]);
         instance.destroy();
     });
+    test('an in-flight request cannot clobber an answer adopted while it was out', async () => {
+        // Round 3 review, finding 1 - and the worst failure mode in this design.
+        // The load starts with NO server answer, so the module fetches. Prestashop
+        // then replaces the payment fragment with one that DOES carry an answer,
+        // which is adopted. The already-outstanding request then answers: the
+        // server has spoken more recently than that request was even issued, so its
+        // result is stale however in-order it looked.
+        let settle;
+        global.window.fetch = (url) => {
+            fetchCalls.push(url);
+            return new Promise((resolve) => { settle = resolve; });
+        };
+        global.fetch = global.window.fetch;
+
+        buildPaymentTile();
+        buildCountry('GB');
+        TwoSoleTrader = loadSoleTrader();
+        const instance = build();
+        jest.advanceTimersByTime(150);
+        await flushPromises();
+        expect(fetchCalls).toHaveLength(1);
+
+        replaceWithServerRendered('1', 'GB');
+        await flushPromises();
+        expect(chipTexts()).toEqual(['Registered business', 'Sole trader']);
+
+        // The in-flight request now FAILS the way a blip does. Before the fix this
+        // called hide() while availabilityByCountry still held the adopted `true`,
+        // so the settled-check then agreed the toggle was correct - and the toggle
+        // stayed hidden for the rest of the page's life, unrecoverably.
+        settle({ json: () => Promise.resolve({ success: false }) });
+        await settle_(instance);
+
+        expect(container().style.display).toBe('block');
+        expect(chipTexts()).toEqual(['Registered business', 'Sole trader']);
+        expect(instance.availabilityByCountry.GB).toBe(true);
+        instance.destroy();
+    });
+
+    test('a successful in-flight request is dropped too if an answer was adopted', async () => {
+        let settle;
+        global.window.fetch = (url) => {
+            fetchCalls.push(url);
+            return new Promise((resolve) => { settle = resolve; });
+        };
+        global.fetch = global.window.fetch;
+
+        buildPaymentTile();
+        buildCountry('GB');
+        TwoSoleTrader = loadSoleTrader();
+        const instance = build();
+        jest.advanceTimersByTime(150);
+        await flushPromises();
+
+        // Server now says business-only for the same country.
+        replaceWithServerRendered('0', 'GB');
+        await flushPromises();
+
+        // The older request says available. It must not win: it was issued before
+        // the server's answer existed.
+        settle({ json: () => Promise.resolve({ success: true, available: true }) });
+        await settle_(instance);
+
+        expect(container().style.display).toBe('none');
+        expect(instance.availabilityByCountry.GB).toBe(false);
+        instance.destroy();
+    });
+
     test('the country-change path re-adopts too, not only the observer', async () => {
         buildPaymentTileWithSoleTraderAnswer('1', 'GB');
         const select = buildCountry('GB');

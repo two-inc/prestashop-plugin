@@ -4037,19 +4037,29 @@ class Twopayment extends PaymentModule
         // have been told. Cost is bounded: that answer is memoised per request
         // and cached in the context cookie for the endpoint's own max-age, and
         // it REPLACES the per-page-load AJAX call rather than adding to it.
-        // THREE-state, not two (round 3 adversarial review). isAvailable() is
-        // fail-soft: a registry timeout and a genuine business-only country both
-        // come back as false. That is right for a capability gate, and wrong here,
-        // because the browser adopts this answer as settled and never re-asks - so
-        // flattening a blip into "no" would launder it into a cached "no" for the
-        // rest of the page's life, defeating the no-caching-of-errors rule both
-        // the server class and the client fetch keep on their own.
-        // resolveAvailability() can say "unresolved"; that renders as NO answer,
-        // and the client's retrying path stays live.
+        // THREE-state, not two (round 3 review). A registry timeout and a genuine
+        // business-only country are both `false` to isAvailable() - right for a
+        // capability gate, wrong here, because the browser adopts this answer as
+        // settled and never re-asks, so flattening a blip into "no" would launder
+        // it into a cached "no" for the rest of the page's life. "Unresolved"
+        // renders as NO answer and the client's own retrying request path stays
+        // live.
+        //
+        // CACHE-ONLY, and never a live call (round 3 review, finding 2). This runs
+        // inside a shopper's checkout render, and a payment-option change reloads
+        // that page - so resolving live meant every payment-step render on a shop
+        // that cannot reach the registry paid the request timeout again (the
+        // per-request failure marker bounds it per request, not per session, since
+        // only a success is cached). The browser's availability request resolves an
+        // unknown answer off the render path and the endpoint answering it writes
+        // the cookie, so at most the FIRST payment-step render of a session shows
+        // no toggle and every render after it - including all the surcharge-driven
+        // reloads that made the flicker visible - is served from cache. Same shape
+        // as this module's other checkout-render reads.
         $sole_trader_country = $this->getCheckoutBillingCountryIso();
         $sole_trader_resolved = $sole_trader_country === ''
             ? false
-            : TwoSoleTrader::resolveAvailability($this, $sole_trader_country);
+            : TwoSoleTrader::resolveAvailabilityFromCache($sole_trader_country);
         $sole_trader_available = $sole_trader_resolved === true;
 
         // Order intent is now handled on frontend via AJAX
