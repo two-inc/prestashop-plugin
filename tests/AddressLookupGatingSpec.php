@@ -42,6 +42,7 @@ final class AddressLookupGatingSpec
         self::testResolverReportsOffForAStoredTileInstall();
         self::testFormRendersLookupOffWhenSearchIsInTheTile();
         self::testAdminJsGreysTheControlOut();
+        self::testAdminJsAutoChecksOnEnable();
         self::testLabelsAreSentenceCase();
     }
 
@@ -199,11 +200,20 @@ final class AddressLookupGatingSpec
         // Reacts to the company-search switch at all, and on load as well as on
         // change - a change-only binding leaves a page that renders in the
         // gated state showing an enabled control until the merchant touches it.
+        // The load-time call passes `false` (respect the stored position) and
+        // the change handler passes `true` (see testAdminJsAutoChecksOnEnable) -
+        // that distinction is TWO-25326's bug fix, so both calls are pinned by
+        // their exact argument here rather than by a bare substring match that
+        // would pass for either.
         TinyAssert::true(strpos($tpl, 'updateAddressLookupAvailability') !== false);
         TinyAssert::true(
-            strpos($tpl, "$('input[name=\"PS_TWO_ENABLE_COMPANY_NAME\"]').on('change', updateAddressLookupAvailability)") !== false
+            strpos(
+                $tpl,
+                "$('input[name=\"PS_TWO_ENABLE_COMPANY_NAME\"]').on('change', function () {\n"
+                . '                updateAddressLookupAvailability(true);'
+            ) !== false
         );
-        TinyAssert::true(strpos($tpl, "updateAddressLookupAvailability();") !== false);
+        TinyAssert::true(strpos($tpl, 'updateAddressLookupAvailability(false);') !== false);
 
         // Disables AND unchecks. Disabling alone leaves a ticked box on screen
         // that the save then silently refuses.
@@ -212,6 +222,26 @@ final class AddressLookupGatingSpec
         // And re-enables, or the merchant cannot turn it back on without a
         // page reload after switching the search back to the address area.
         TinyAssert::true(strpos($tpl, "lookupInputs.prop('disabled', false)") !== false);
+    }
+
+    /**
+     * Bug report (TWO-25326, 2026-08-04): re-enabling company search must
+     * also switch auto-fill ON, not merely stop greying it out - an
+     * enabled-but-unchecked control reads as "on" to the merchant but posts
+     * '0' on save. Pinned as its own test, separate from
+     * testAdminJsGreysTheControlOut(), because the auto-check must fire ONLY
+     * on the user's own toggle (`isUserToggle === true`), never on the
+     * initial page-load render - a page load must still respect whatever
+     * position PS_TWO_ADDRESS_LOOKUP is actually stored in.
+     */
+    private static function testAdminJsAutoChecksOnEnable(): void
+    {
+        $tpl = file_get_contents(dirname(__DIR__) . '/views/templates/admin/configuration.tpl');
+        TinyAssert::true(is_string($tpl) && $tpl !== '');
+
+        TinyAssert::true(strpos($tpl, 'function updateAddressLookupAvailability(isUserToggle)') !== false);
+        TinyAssert::true(strpos($tpl, 'if (isUserToggle) {') !== false);
+        TinyAssert::true(strpos($tpl, "lookupInputs.filter('[value=\"1\"]').prop('checked', true);") !== false);
     }
 
     /**

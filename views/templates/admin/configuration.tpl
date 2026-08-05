@@ -84,7 +84,15 @@
             // (isAddressLookupSettingAvailable): a disabled radio posts
             // nothing, but a hand-crafted POST can still carry a ticked box
             // and the save refuses it there. This half is presentation only.
-            function updateAddressLookupAvailability() {
+            // `isUserToggle` distinguishes the initial page-load render (the
+            // stored PS_TWO_ADDRESS_LOOKUP position must be respected as-is)
+            // from the admin actually flipping the switch just now (bug
+            // report, TWO-25326): re-enabling the row must also turn the
+            // auto-fill switch ON, not merely stop greying it out. Leaving it
+            // enabled-but-unchecked reads as "on" at a glance but posts '0'
+            // on save, silently keeping auto-fill off after the merchant just
+            // turned company search back on.
+            function updateAddressLookupAvailability(isUserToggle) {
                 var inAddressArea = $('input[name="PS_TWO_ENABLE_COMPANY_NAME"]:checked').val();
                 var lookupInputs = $('input[name="PS_TWO_ADDRESS_LOOKUP"]');
                 if (!lookupInputs.length) {
@@ -95,6 +103,10 @@
                 var row = lookupInputs.closest('.form-group');
                 if (String(inAddressArea) === '1') {
                     lookupInputs.prop('disabled', false);
+                    if (isUserToggle) {
+                        lookupInputs.filter('[value="1"]').prop('checked', true);
+                        lookupInputs.filter('[value="0"]').prop('checked', false);
+                    }
                     row.removeClass('two-setting-unavailable');
                     return;
                 }
@@ -106,8 +118,10 @@
                 lookupInputs.filter('[value="1"]').prop('checked', false);
                 row.addClass('two-setting-unavailable');
             }
-            updateAddressLookupAvailability();
-            $('input[name="PS_TWO_ENABLE_COMPANY_NAME"]').on('change', updateAddressLookupAvailability);
+            updateAddressLookupAvailability(false);
+            $('input[name="PS_TWO_ENABLE_COMPANY_NAME"]').on('change', function () {
+                updateAddressLookupAvailability(true);
+            });
 
             // Payment Term Type - Dynamic show/hide of term options
             // PHP 7.1+ compatible: Using ES5 syntax (no arrow functions)
