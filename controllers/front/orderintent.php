@@ -114,8 +114,14 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         // not a tidy-up. PrestaShop's Cookie writes itself from its destructor,
         // which does run on the exit() below, but only while headers are still
         // unsent - i.e. contingent on output buffering, which is an ini setting
-        // and not something this endpoint should depend on. Every other
-        // cookie-mutating action in this controller already writes explicitly.
+        // and not something this endpoint should depend on.
+        //
+        // SEVERAL other cookie-mutating actions here already write explicitly, so
+        // this is the established pattern rather than a new one - but not ALL of
+        // them do: ajaxProcessSavePaymentTerm and ajaxProcessSaveCompany still
+        // rely on the destructor. That is the same latent dependence, noted rather
+        // than changed here because neither is what this ticket is about and
+        // neither has ever been reported failing.
         if ($this->context->cookie) {
             $this->context->cookie->write();
         }
