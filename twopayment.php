@@ -3674,6 +3674,15 @@ class Twopayment extends PaymentModule
                 // address form and would otherwise keep searching (and
                 // failing) on a shop where Two is not available at all.
                 //
+                // The SAME predicate the address-form override asks (review round
+                // 5), because the JS control and the server-rendered placeholder
+                // are two halves of one affordance and this flag is that
+                // affordance's only reader. Asking "verified?" here while the
+                // override asks "warranted?" left them disagreeing on exactly one
+                // state - a claim in flight with nothing to carry - which is the
+                // state where a shop with a back-office translation of the core
+                // placeholder kept the hint on a field with no search behind it.
+                //
                 // A live check ONLY on the real checkout page (review round 4).
                 // This hook also runs on the module's own front controllers, and
                 // one of those is the payment POST - where the verification gate
@@ -3683,7 +3692,7 @@ class Twopayment extends PaymentModule
                 // gate had just declined to take. Those pages render no
                 // company-search control anyway, so a cache-only answer costs
                 // them nothing.
-                'api_key_verified' => $this->isTwoApiKeyVerified($is_checkout_page),
+                'api_key_verified' => $this->isTwoCompanySearchAffordanceWarranted($is_checkout_page),
                 // Separate from company_name_search: that (now) gates only
                 // WHERE the search widget renders, this gates only what a
                 // selection writes into the address step (TWO-25203) - and
@@ -8308,16 +8317,18 @@ class Twopayment extends PaymentModule
      * checkout JS gate does with the same verdict, and the two acting on ONE UI
      * element under different policies is a disagreement a merchant can see.
      *
-     * Cache-only, and 'verifying' (nothing known yet) counts as warranted: an
-     * address form must not be able to block on an HTTP call, and a cold cache
-     * is not evidence of a broken shop. The browser's own strip covers that
-     * window on any shop whose placeholder came from this module's catalogue.
+     * 'verifying' (nothing known yet) counts as warranted: a cold cache is not
+     * evidence of a broken shop, and the caller that most needs this - the
+     * address-form override - must not be able to block on an HTTP call, hence
+     * cache-only by default. The checkout media hook opts into a live check,
+     * because that page is a render and the verdict is what its whole
+     * company-search bootstrap turns on.
      *
      * @return bool
      */
-    public function isTwoCompanySearchAffordanceWarranted()
+    public function isTwoCompanySearchAffordanceWarranted($allowLiveCheck = false)
     {
-        $status = $this->getTwoApiKeyVerificationStatus(false)['status'];
+        $status = $this->getTwoApiKeyVerificationStatus($allowLiveCheck)['status'];
 
         return $status === self::API_KEY_STATUS_OK || $status === self::API_KEY_STATUS_VERIFYING;
     }
@@ -8452,12 +8463,15 @@ class Twopayment extends PaymentModule
             'code' => isset($decoded['code']) && $decoded['code'] !== null ? (int) $decoded['code'] : null,
             'key_hash' => (string) $decoded['key_hash'],
             'claim' => !empty($decoded['claim']),
-            // A slot written before this field existed (an upgraded shop) is not
-            // ageless: fall back to the slot's own clock, which for a verdict IS
-            // when it was reached. Reading it as 0 made the first
-            // re-verification after an upgrade uncarryable, so every upgraded
-            // shop withheld Two for the length of one claim window (review
-            // round 4).
+            // A slot written before this field existed is not ageless: fall back
+            // to the slot's own clock, which for a verdict IS when it was
+            // reached. Reading it as 0 made such a slot uncarryable, so the first
+            // re-verification against it withheld Two for the length of one claim
+            // window (review round 4). No released version ever wrote this slot -
+            // it arrives with this change - so the only shops holding a
+            // field-less one are those that ran an intermediate build of this
+            // branch; the fallback stays because the JSON shape is not something
+            // to assume about a value read back out of Configuration.
             'verified_on' => isset($decoded['verified_on'])
                 ? (int) $decoded['verified_on']
                 : (int) Configuration::get(self::CONFIG_API_KEY_STATUS_TS),

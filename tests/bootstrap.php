@@ -411,6 +411,11 @@ namespace {
         public $currency;
         public $language;
         public $smarty;
+        // Core has one; the checkout media hook reads its iso_code (TWO-25326).
+        // Declared rather than left to a dynamic property, which PHP 8.2+
+        // deprecates - and a deprecation notice on every suite run is noise the
+        // next real one hides in.
+        public $country;
 
         private static ?self $instance = null;
 
@@ -652,7 +657,10 @@ namespace {
         {
             $rows = [];
             foreach (StubStore::$countries as $id => $iso) {
-                $rows[] = ['id_country' => (int) $id, 'iso_code' => (string) $iso];
+                // Keyed by id_country, as core keys it: the only consumer reads the
+                // id out of the row, but a stub that keys sequentially would let a
+                // future caller pass here and fail in production.
+                $rows[(int) $id] = ['id_country' => (int) $id, 'iso_code' => (string) $iso];
             }
 
             return $rows;
