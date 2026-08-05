@@ -3803,6 +3803,17 @@ class Twopayment extends PaymentModule
         // Shared company-number DISPLAY rule (TWO-25326 §12), used by both the
         // search control and the order-intent sentence - so it has to be in
         // place before either of them, hence a priority below both.
+        // Payment-step first-paint guard (TWO-25326 bug 11). The ONLY asset this
+        // module puts in the HEAD, and deliberately so: it exists to run before
+        // the payment-options markup is parsed, which is the only moment at which
+        // the tile's flash on a surcharge-driven reload can still be prevented.
+        // Everything below it is bottom-positioned as before and runs at DOM
+        // ready, by which time that first paint has already happened. It depends
+        // on nothing - not jQuery, not the config payload - because nothing else
+        // has loaded yet, and it no-ops if it finds the markup already in the
+        // document (see the file's own SCOPE note), so a future change to this
+        // position degrades to "no improvement" rather than to a new flicker.
+        $this->context->controller->registerJavascript('two-payment-step-flash-guard', $this->getTwoModuleAssetPath('views/js/modules/TwoPaymentStepFlashGuard.js'), array('position' => 'head', 'priority' => 199, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoPaymentStepFlashGuard.js')));
         $this->context->controller->registerJavascript('two-company-number', $this->getTwoModuleAssetPath('views/js/modules/TwoCompanyNumber.js'), array('priority' => 200, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoCompanyNumber.js')));
         $this->context->controller->registerJavascript('two-company-search', $this->getTwoModuleAssetPath('views/js/modules/TwoCompanySearch.js'), array('priority' => 201, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoCompanySearch.js')));
         $this->context->controller->registerJavascript('two-order-intent', $this->getTwoModuleAssetPath('views/js/modules/TwoOrderIntent.js'), array('priority' => 202, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoOrderIntent.js')));
@@ -4012,8 +4023,35 @@ class Twopayment extends PaymentModule
 
         $optional_fields = $this->getOptionalCheckoutFieldsForDisplay();
 
+        // Sole-trader toggle, resolved HERE rather than in the browser
+        // (TWO-25326 bug 9, round 3). TwoSoleTrader.js used to build the
+        // Business / Sole trader chips only after its own availability round
+        // trip, so they were absent from every first paint of the payment step
+        // and appeared a few hundred milliseconds later - a visible flicker
+        // every time the surcharge cart-line sync reloads the page, which it
+        // does on every payment-option change.
+        //
+        // Same source of truth as the endpoint that JS was calling
+        // (TwoSoleTrader::isAvailable -> the registry's supported-company-types
+        // answer), so the markup can never disagree with what the client would
+        // have been told. Cost is bounded: that answer is memoised per request
+        // and cached in the context cookie for the endpoint's own max-age, and
+        // it REPLACES the per-page-load AJAX call rather than adding to it.
+        // Fail-soft by construction - isAvailable() resolves to false on any
+        // transport failure and the toggle simply does not render, exactly as
+        // when the answer is a genuine "business-only country".
+        $sole_trader_country = $this->getCheckoutBillingCountryIso();
+        $sole_trader_available = $sole_trader_country !== ''
+            && TwoSoleTrader::isAvailable($this, $sole_trader_country);
+
         // Order intent is now handled on frontend via AJAX
         $this->context->smarty->assign(array(
+            // The two halves of the handover to
+            // TwoSoleTrader.adoptServerRenderedToggle(): the answer, and the
+            // country it is an answer ABOUT (so a later country change is still
+            // re-resolved client-side rather than trusting a stale render).
+            'sole_trader_available' => $sole_trader_available,
+            'sole_trader_country' => $sole_trader_country,
             'subtitle' => $subtitle,
             'enable_order_intent' => $this->enable_order_intent,
             'payment_enable' => true, // Always enable, frontend will handle approval

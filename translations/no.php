@@ -87,6 +87,8 @@ $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_eca5a3449475f365c129
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_f23b2c9fe4875f2c3dbc61a4bd02705b'] = 'Two-kjøperportalen';
 $_MODULE['<{twopayment}prestashop>form_92fbf0e5d97b8afd7e73126b52bdc4bb'] = 'Velg en fil';
 $_MODULE['<{twopayment}prestashop>form_f2a6c498fb90ee345d997f888fce3b18'] = 'Slett';
+$_MODULE['<{twopayment}prestashop>paymentinfo_17f58ab6df9d5cfde18be7cb60b37ce4'] = 'Registrert virksomhet';
+$_MODULE['<{twopayment}prestashop>paymentinfo_8fba17b1e1abfeb9ccc08c9248824add'] = 'Enkeltpersonforetak';
 $_MODULE['<{twopayment}prestashop>paymentinfo_1c76cbfe21c6f44c1d1e59d54f3e4420'] = 'Bedrift';
 $_MODULE['<{twopayment}prestashop>paymentinfo_1ffcb4e0a351d5e143bec6362c0feaf8'] = 'Betalingsfristen er slutten av inneværende måned pluss valgt antall dager, regnet fra ordren er oppfylt';
 $_MODULE['<{twopayment}prestashop>paymentinfo_26615a6d6e63f2904432b8b425ee6e93'] = 'Sjekker tilgjengelighet ...';

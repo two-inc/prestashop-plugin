@@ -46,6 +46,13 @@
 
 ## jQuery & JavaScript Issues
 
+### [2026-08-05] Checkout "flicker" bugs are usually the surcharge sync's full page reload
+**Problem**: Two rounds of fixes to the sole-trader chips and the payment tile did not stop either flickering.
+**Root Cause**: `syncSurchargeCartLine()` -> `triggerNativeCartRefresh()` is a **full checkout-page reload** on the payment step (the step carries core's `js-cart-payment-step-refresh` marker), and it fires on every payment-option select *and* deselect. Two consequences, measured with a rAF-rate sampler against the staging shop rather than reasoned about: (1) anything the browser builds after a round trip is missing from the reloaded document until that round trip completes - the chips were absent at first paint and appeared ~280ms later, on every load; (2) the reloaded page paints every payment option's additional-information block EXPANDED, because a reload wipes radio state and core only collapses the unselected ones at DOM ready - so the Two tile was ~497px tall at first paint and 0px ~34ms later.
+**Fix**: Put the answer in the markup (server-rendered chips + visibility, adopted by the JS) and suppress the first paint from the `<head>` for the reload that is on its way to a different payment method. Nothing running at DOM ready can fix a first-paint problem.
+**Lesson**: Instrument before diagnosing. A 40ms sampler over `getBoundingClientRect()` + `sessionStorage` (so it survives the reload) answered in one run what two rounds of source reading got wrong.
+**Files**: `views/js/modules/TwoSoleTrader.js`, `views/js/modules/TwoPaymentStepFlashGuard.js`, `views/js/modules/TwoCheckoutManager.js`, `views/templates/hook/paymentinfo.tpl`, `twopayment.php`, `views/css/two.css`
+
 ### [2025-10-06] jQuery Race Condition on PS 1.7.6.x
 **Problem**: `$ is not defined` errors on checkout
 **Root Cause**: Theme-dependent jQuery loading - scripts execute before jQuery loads

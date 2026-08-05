@@ -18,7 +18,17 @@
  * semantics, so the order payload is unchanged.
  *
  * All decisioning (country eligibility, token minting) lives server-side
- * in classes/TwoSoleTrader.php; this module only renders the result.
+ * in classes/TwoSoleTrader.php.
+ *
+ * The toggle's own MARKUP is server-side too, as of TWO-25326 bug 9 round 3:
+ * paymentinfo.tpl renders the container's visibility and both chips from the
+ * registry answer, and adoptServerRenderedToggle() below takes that over as this
+ * instance's settled state. Building the chips only here, only after an
+ * availability round trip, left them missing from every first paint - which the
+ * buyer sees as a flicker on the payment step, because a payment-option change
+ * reloads the whole checkout page. This module still owns all BEHAVIOUR, and
+ * still renders the toggle itself whenever the markup carries no answer or the
+ * billing country changes under it.
  */
 class TwoSoleTrader {
     constructor(config) {
@@ -47,6 +57,9 @@ class TwoSoleTrader {
         // "already rendered" from "rendered into a node that no longer exists".
         this.renderedContainer = null;
         this.observer = null;
+        // Both page-level subscriptions this instance owns, held so
+        // stopObserving() can detach both. See init().
+        this._countryChangeHandler = null;
         // TWO-25326 bug 9: the country an availability request is currently out
         // for, and the debounce handle for the MutationObserver. See init() and
         // refreshAvailability() for what each prevents.
@@ -64,7 +77,67 @@ class TwoSoleTrader {
         this.nextRetryAt = 0;
         this.retryCooldownMs = 5000;
 
+        // TWO-25326 bug 9, round 3: take the toggle the SERVER already rendered
+        // as the settled state, before init() can decide to fetch anything.
+        this.adoptServerRenderedToggle();
+
         this.init();
+    }
+
+    /**
+     * Adopt a server-rendered toggle as this instance's settled state.
+     *
+     * WHY THIS EXISTS (TWO-25326 bug 9, round 3). The chips used to be built
+     * ONLY here, in the browser, behind an availability round trip - so on every
+     * single load of the payment step the toggle was empty and hidden until that
+     * request came back. Measured on the staging shop: chips absent from first
+     * paint, present ~280ms later. That is invisible on a page the buyer just
+     * arrived at, and very visible indeed once something reloads the page under
+     * them - which the surcharge cart-line sync does on every payment-option
+     * change (see TwoCheckoutManager.triggerNativeCartRefresh). Doug's "the chips
+     * render, then disappear and reappear" is that reload plus that round trip:
+     * chips on the outgoing document, no chips on the incoming one, chips again a
+     * few hundred milliseconds later.
+     *
+     * Round 2 hardened the settled-check and the request guard, and both of those
+     * were real bugs - but neither could close this one, because both are about
+     * not doing redundant work AFTER the answer arrives, and the flicker is the
+     * window BEFORE it arrives. The only fix is for the answer to be in the
+     * markup, so paymentinfo.tpl now renders the chips and the toggle's
+     * visibility from the server-side registry answer (Twopayment::
+     * getTwoPaymentOption -> TwoSoleTrader::isAvailable, the same source this
+     * module's endpoint uses) and this method takes them over as-is.
+     *
+     * Strict about what counts as a server answer: `data-two-available` must be
+     * exactly "1" or "0" and `data-two-country` must be an ISO-2 code. Anything
+     * else - an older cached template, a theme that rebuilt the markup - reads as
+     * "no answer" and leaves the client fetch as the only path, i.e. exactly the
+     * previous behaviour.
+     *
+     * @returns {void}
+     */
+    adoptServerRenderedToggle() {
+        const container = this.container();
+        if (!container) {
+            return;
+        }
+        const answer = container.getAttribute('data-two-available');
+        if (answer !== '1' && answer !== '0') {
+            return;
+        }
+        const country = (container.getAttribute('data-two-country') || '').toUpperCase();
+        if (!/^[A-Z]{2}$/.test(country)) {
+            return;
+        }
+        this.availabilityByCountry[country] = (answer === '1');
+        this.renderedForCountry = country;
+        this.renderedContainer = container;
+        // The chips exist but carry no behaviour yet - they were serialised by
+        // Smarty, not built by render(). Binding is what makes the server-
+        // rendered markup equivalent to a client-rendered toggle; without it the
+        // toggle would look right and do nothing.
+        this.bindChips(container);
+        this.updateChips();
     }
 
     init() {
@@ -72,11 +145,19 @@ class TwoSoleTrader {
         // The payment box and the billing country can both re-render
         // across checkout step transitions; re-evaluate availability on
         // each change.
-        document.addEventListener('change', function (event) {
+        // Kept on the instance so stopObserving() can detach it (TWO-25326 bug 9,
+        // round 3). It used to be an anonymous closure, i.e. permanently bound:
+        // an instance that had finished its flow and disconnected its observer
+        // still answered every country change on the page for the rest of the
+        // page's life, re-resolving availability and re-rendering a toggle it had
+        // deliberately stopped maintaining. Harmless-looking, but it is a second
+        // writer to the same container.
+        this._countryChangeHandler = function (event) {
             if (event.target && event.target.matches("select[name='id_country'], select[name='country']")) {
                 self.refreshAvailability();
             }
-        });
+        };
+        document.addEventListener('change', this._countryChangeHandler);
         // DEBOUNCED (TWO-25326 bug 9). This observer watches the whole body
         // subtree, and refreshAvailability() itself MUTATES that subtree
         // (render() appends chips and sets inline display) - so every render fed
@@ -108,11 +189,20 @@ class TwoSoleTrader {
      * Once the flow has resolved (enrolled company saved) there is
      * nothing left for this instance to react to; stop observing rather
      * than running a body-wide observer for the rest of checkout.
+     *
+     * Detaches EVERY page-level subscription, not just the observer
+     * (TWO-25326 bug 9, round 3) - the country-change listener included. "This
+     * instance is done" has to mean it, or a resolved instance stays a live
+     * writer to the toggle container through the other subscription.
      */
     stopObserving() {
         if (this.observer) {
             this.observer.disconnect();
             this.observer = null;
+        }
+        if (this._countryChangeHandler) {
+            document.removeEventListener('change', this._countryChangeHandler);
+            this._countryChangeHandler = null;
         }
         clearTimeout(this._refreshTimeoutId);
         this._refreshTimeoutId = null;
@@ -295,7 +385,6 @@ class TwoSoleTrader {
         container.style.display = 'block';
         const toggle = container.querySelector('.two-sole-trader__toggle');
         if (toggle && toggle.dataset.twoBuilt !== '1') {
-            const self = this;
             [
                 { value: 'business', label: this.text('registered_business', 'Registered business') },
                 { value: 'sole_trader', label: this.text('sole_trader', 'Sole trader') }
@@ -306,21 +395,47 @@ class TwoSoleTrader {
                 chip.setAttribute('tabindex', '0');
                 chip.dataset.mode = option.value;
                 chip.textContent = option.label;
-                chip.addEventListener('click', function (event) {
-                    event.preventDefault();
-                    self.setMode(option.value);
-                });
-                chip.addEventListener('keypress', function (event) {
-                    if (event.which === 13 || event.which === 32) {
-                        event.preventDefault();
-                        self.setMode(option.value);
-                    }
-                });
                 toggle.appendChild(chip);
             });
             toggle.dataset.twoBuilt = '1';
         }
+        // Binding is separate from building (TWO-25326 bug 9, round 3) because
+        // chips now arrive from two places - built here, or serialised by
+        // paymentinfo.tpl - and only one code path may own what a chip DOES.
+        this.bindChips(container);
         this.updateChips();
+    }
+
+    /**
+     * Attach mode-switching behaviour to every chip in a container that does not
+     * already have it. Idempotent per chip (`data-two-bound`), so it is safe to
+     * call on every render and on a server-rendered toggle alike.
+     *
+     * @param {HTMLElement} container
+     * @returns {void}
+     */
+    bindChips(container) {
+        if (!container) {
+            return;
+        }
+        const self = this;
+        container.querySelectorAll('.two-sole-trader__mode').forEach(function (chip) {
+            if (chip.dataset.twoBound === '1') {
+                return;
+            }
+            chip.dataset.twoBound = '1';
+            const mode = chip.dataset.mode;
+            chip.addEventListener('click', function (event) {
+                event.preventDefault();
+                self.setMode(mode);
+            });
+            chip.addEventListener('keypress', function (event) {
+                if (event.which === 13 || event.which === 32) {
+                    event.preventDefault();
+                    self.setMode(mode);
+                }
+            });
+        });
     }
 
     updateChips() {

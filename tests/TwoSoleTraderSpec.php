@@ -55,6 +55,8 @@ final class TwoSoleTraderSpec
             'testConfigureSslVerificationIsCallableFromOutsideTwopayment',
             'testSignupUrlFollowsEnvironment',
             'testFormatterHasNoAccountTypeField',
+            'testPaymentTileCarriesTheServerResolvedToggleAnswer',
+            'testPaymentTileWithNoBillingCountryAsksTheRegistryNothing',
         ];
         foreach ($tests as $test) {
             self::reset();
@@ -386,5 +388,110 @@ final class TwoSoleTraderSpec
         $format = (new CustomerAddressFormatter($country, $translator, []))->getFormat();
         TinyAssert::false(isset($format['account_type']), 'Address form must not add an account_type field');
         TinyAssert::true(isset($format['company']), 'Company field is still present for B2B checkout');
+    }
+
+    /**
+     * Capture what getTwoPaymentOption() hands the template, which the stub
+     * Smarty otherwise discards.
+     *
+     * @return array{vars: array<string, mixed>}
+     */
+    private static function captureTileVars(TwoSoleTraderTestHarness $module): array
+    {
+        $captured = new class {
+            /** @var array<string, mixed> */
+            public $vars = [];
+
+            public function assign($vars): void
+            {
+                if (is_array($vars)) {
+                    $this->vars = array_merge($this->vars, $vars);
+                }
+            }
+
+            public function fetch($template): string
+            {
+                return '';
+            }
+        };
+        $context = Context::getContext();
+        $previous = $context->smarty;
+        $context->smarty = $captured;
+        try {
+            $method = new ReflectionMethod(Twopayment::class, 'getTwoPaymentOption');
+            $method->setAccessible(true);
+            $method->invoke($module);
+        } finally {
+            $context->smarty = $previous;
+        }
+
+        return ['vars' => $captured->vars];
+    }
+
+    /**
+     * TWO-25326 bug 9, round 3: the toggle is rendered SERVER-side now, so the
+     * payment tile has to carry the registry answer and the country it is an
+     * answer about.
+     *
+     * This is the seam no Jest test can see. The browser half
+     * (TwoSoleTrader.adoptServerRenderedToggle) reads exactly two attributes and
+     * treats anything it cannot parse as "no answer" - i.e. it silently falls
+     * back to the round trip that caused the flicker in the first place. So a
+     * rename or a dropped assign here does not break the checkout, it just
+     * quietly restores the bug, with every JS test still green.
+     */
+    private static function testPaymentTileCarriesTheServerResolvedToggleAnswer(): void
+    {
+        StubStore::$addresses[8811] = ['id_country' => 44];
+        StubStore::$countries[44] = 'gb';
+        Context::getContext()->cart->id_address_invoice = 8811;
+
+        $module = self::harness(
+            [],
+            ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
+        );
+        $available = self::captureTileVars($module);
+        TinyAssert::same(true, $available['vars']['sole_trader_available']);
+        TinyAssert::same('GB', $available['vars']['sole_trader_country']);
+
+        // The other answer, from the same source: a country the registry does
+        // not list sole traders for. The template renders the toggle hidden and
+        // chipless, and the browser adopts THAT rather than asking again.
+        self::reset();
+        StubStore::$addresses[8811] = ['id_country' => 44];
+        StubStore::$countries[44] = 'gb';
+        Context::getContext()->cart->id_address_invoice = 8811;
+        $businessOnly = self::captureTileVars(self::harness(
+            [],
+            ['/registry/v1/supported-company-types/' => self::registryOk([])]
+        ));
+        TinyAssert::same(false, $businessOnly['vars']['sole_trader_available']);
+        TinyAssert::same('GB', $businessOnly['vars']['sole_trader_country']);
+    }
+
+    /**
+     * No billing address yet means no country, and a country is the registry
+     * call's only argument - so there is nothing to ask and the tile must say
+     * "not available" without spending a request on it.
+     */
+    private static function testPaymentTileWithNoBillingCountryAsksTheRegistryNothing(): void
+    {
+        Context::getContext()->cart->id_address_invoice = 0;
+
+        $module = self::harness(
+            [],
+            ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
+        );
+        $captured = self::captureTileVars($module);
+
+        TinyAssert::same(false, $captured['vars']['sole_trader_available']);
+        TinyAssert::same('', $captured['vars']['sole_trader_country']);
+        TinyAssert::same(
+            array(),
+            array_values(array_filter($module->requests, function ($endpoint) {
+                return strpos($endpoint, '/registry/v1/supported-company-types/') === 0;
+            })),
+            'a tile with no billing country must not call the registry at all'
+        );
     }
 }

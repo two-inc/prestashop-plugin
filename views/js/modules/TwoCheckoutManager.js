@@ -521,7 +521,20 @@ class TwoCheckoutManager {
         try {
             const checkedRadio = document.querySelector('input[name="payment-option"]:checked, .payment-options input[type="radio"]:checked');
             if (checkedRadio && checkedRadio.id) {
-                sessionStorage.setItem(this._surchargeRestoreKey, checkedRadio.id);
+                // TWO-25326 bug 11: whether the option being carried across the
+                // reload is Two's is recorded ALONGSIDE its id, because the
+                // head-time flash guard has to know that before any of this
+                // module's code (or the payment markup itself) exists - see
+                // TwoPaymentStepFlashGuard.js. Resolved by containment against
+                // the Two option element rather than through
+                // isTwoPaymentSelected(), whose fallback strategies read the
+                // document's currently-checked radio and so cannot be asked
+                // about a specific node.
+                const twoOption = this.twoPaymentOption || document.querySelector('[data-module-name="twopayment"]');
+                sessionStorage.setItem(this._surchargeRestoreKey, JSON.stringify({
+                    id: checkedRadio.id,
+                    two: !!(twoOption && twoOption.contains(checkedRadio))
+                }));
             }
         } catch (e) {
             // sessionStorage unavailable: reload still happens, buyer re-picks manually.
@@ -544,22 +557,88 @@ class TwoCheckoutManager {
      * triggered again.
      */
     restorePaymentSelectionAfterCartRefresh() {
-        let radioId = null;
         try {
-            radioId = sessionStorage.getItem(this._surchargeRestoreKey);
-            if (radioId !== null) {
+            this.applyStoredPaymentSelection();
+        } finally {
+            // ALWAYS, and on every early return inside the call above: the
+            // suppression the head-time guard put in place is only correct for
+            // the instant before the selection is restored, and leaving it in
+            // force would hide the tile outright. The guard carries its own
+            // failsafe timer for the case where this method never runs, but this
+            // is the path that must not be able to leak it (TWO-25326 bug 11).
+            this.releasePaymentStepFlashGuard();
+        }
+    }
+
+    /**
+     * Re-check the payment option recorded before the surcharge-driven reload.
+     *
+     * @returns {void}
+     */
+    applyStoredPaymentSelection() {
+        let stored = null;
+        try {
+            stored = sessionStorage.getItem(this._surchargeRestoreKey);
+            if (stored !== null) {
                 sessionStorage.removeItem(this._surchargeRestoreKey);
             }
         } catch (e) {
             return;
         }
-        if (!radioId) {
+        if (!stored) {
             return;
+        }
+        // Written as {id, two} since TWO-25326 bug 11. A bare id is the payload
+        // shape this module wrote before that, and can still be in a buyer's
+        // sessionStorage for the one page load that straddles the upgrade.
+        let radioId = stored;
+        try {
+            const parsed = JSON.parse(stored);
+            if (parsed && typeof parsed.id === 'string') {
+                radioId = parsed.id;
+            }
+        } catch (e) {
+            radioId = stored;
         }
         const radio = document.getElementById(radioId);
         if (radio && !radio.checked) {
             radio.checked = true;
             radio.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+    }
+
+    /**
+     * Lift the head-time first-paint suppression (TWO-25326 bug 11). Prefers the
+     * guard's own release function so there is one owner of the class name;
+     * clears the class directly only if that file did not load, so a missing
+     * asset cannot leave the tile permanently hidden.
+     *
+     * @returns {void}
+     */
+    releasePaymentStepFlashGuard() {
+        try {
+            if (typeof window.TwoReleasePaymentStepFlashGuard === 'function') {
+                window.TwoReleasePaymentStepFlashGuard();
+            } else {
+                document.documentElement.classList.remove('two-restoring-payment-selection');
+            }
+            // The company-search control mounts (initializeModules(), earlier in
+            // init()) while the suppression is still in force, so in tile mode it
+            // measured a field inside a display:none container. That case is
+            // handled where it is measured - a field with no measurable width
+            // leaves the wrapper's pixel pin CLEARED rather than pinned to zero -
+            // but the wrapper is then left on the stylesheet's width until the
+            // next viewport change. Re-measure now that the tile is visible
+            // again, so the control is laid out from a real measurement on this
+            // load rather than the next resize.
+            if (this.companySearch && typeof this.companySearch.ensureFieldWrapper === 'function') {
+                this.companySearch.ensureFieldWrapper();
+                if (typeof this.companySearch.constrainAutocompleteMenuWidth === 'function') {
+                    this.companySearch.constrainAutocompleteMenuWidth();
+                }
+            }
+        } catch (e) {
+            // Presentation only; never a gate on checkout.
         }
     }
 
