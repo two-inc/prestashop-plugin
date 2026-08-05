@@ -25,6 +25,19 @@ class TwoOrderIntent {
         // Retained alongside lastCompany so the tile label survives a payload
         // that omits the number; see publishPayloadCompany().
         this.lastCompanyNumber = null;
+        // TWO-25326: monotonic sequence number for checkOrderIntent() calls.
+        // reset() (called from TwoCompanySearch's onCompanySelected on every
+        // fresh selection) forces isProcessing back to false so a re-search
+        // is never blocked by an old in-flight check - but that alone let an
+        // older, slower request for a PREVIOUSLY selected company overwrite
+        // lastCompany/lastResult with stale data once it finally resolved,
+        // racing a newer request started for the company actually selected
+        // now. Bumped at the start of every checkOrderIntent() call; every
+        // write of a call's result is gated on its own captured value still
+        // matching this.requestSeq. Mirrors TwoCompanySearch.js's own
+        // _companySearchSeq pattern for the identical race on its search
+        // request.
+        this.requestSeq = 0;
     }
 
     t(key, fallback) {
@@ -228,11 +241,18 @@ class TwoOrderIntent {
             return Promise.resolve(this.lastResult || { success: false, error: 'Order intent check skipped' });
         }
         this.isProcessing = true;
-        
+        // TWO-25326: this call's own sequence number - see the constructor
+        // comment on requestSeq. Captured now, in a local `const`, so every
+        // later check in this chain compares against whatever the NEWEST
+        // call has bumped this.requestSeq to, not against a value that could
+        // itself have gone stale.
+        const seq = ++this.requestSeq;
+        const isCurrent = () => seq === this.requestSeq;
+
         // CRITICAL FIX: Always let the backend try to resolve company data
         // The backend can check address fields (dni, vat_number) that the frontend can't see
         // Backend will return appropriate status codes if company data is missing
-        return this.collectFormData()
+        return this.collectFormData(seq)
             .then(formData => {
                 // Always proceed to backend - it will check:
                 // 1. Form data (company, companyid)
@@ -242,6 +262,12 @@ class TwoOrderIntent {
                 return this.fetchOrderIntentPayload(formData);
             })
             .then(built => {
+                // Superseded by a fresh selection while this request was in
+                // flight - a slower response for a PREVIOUS company must
+                // never publish that company as the current one.
+                if (!isCurrent()) {
+                    return this.lastResult || { success: false, error: 'Order intent check superseded' };
+                }
                 const payload = built ? built.payload : null;
                 this.publishPayloadCompany(payload);
                 // TWO-24799: the server recognised this exact decision snapshot
@@ -261,12 +287,34 @@ class TwoOrderIntent {
                 }
                 return this.callTwoOrderIntent(payload);
             })
-            .then(result => this.processResult(result))
-            .catch(error => this.handleError(error))
-            .finally(() => { this.isProcessing = false; });
+            .then(result => {
+                // Same guard on the way back out of callTwoOrderIntent()/the
+                // dedup shortcut above - this is the write that would
+                // otherwise overwrite a newer company's already-rendered
+                // result.
+                if (!isCurrent()) {
+                    return this.lastResult || result;
+                }
+                return this.processResult(result);
+            })
+            .catch(error => {
+                if (!isCurrent()) {
+                    return this.lastResult || { success: false, approved: false, message: '' };
+                }
+                return this.handleError(error);
+            })
+            .finally(() => {
+                // A stale request finishing must not clear isProcessing out
+                // from under whichever newer request is still running - only
+                // the request that IS the current sequence gets to flip it.
+                if (isCurrent()) {
+                    this.isProcessing = false;
+                }
+            });
     }
-    
-    collectFormData() {
+
+    collectFormData(seq) {
+        const isCurrent = () => seq === undefined || seq === this.requestSeq;
         return new Promise((resolve) => {
             const formData = {
                 ajax: 1,
@@ -344,9 +392,16 @@ class TwoOrderIntent {
                         // session-fetch response), so the visible sentence
                         // (buildCompanyIntentMessage) can never pair a fresh
                         // name with a stale number left over from a
-                        // different company.
-                        this.lastCompany = formData.company;
-                        this.lastCompanyNumber = formData.companyid || null;
+                        // different company. Gated on isCurrent() (TWO-25326):
+                        // this AJAX round trip can resolve after the buyer has
+                        // already selected a DIFFERENT company and started a
+                        // newer checkOrderIntent() call - writing here anyway
+                        // would stomp that newer call's own company right
+                        // before it publishes its own result.
+                        if (isCurrent()) {
+                            this.lastCompany = formData.company;
+                            this.lastCompanyNumber = formData.companyid || null;
+                        }
                     } else {
                         formData.company = company;
                         formData.companyid = companyid;
@@ -885,6 +940,14 @@ class TwoOrderIntent {
         // only ever be paired with a DIFFERENT company's name later.
         this.lastCompanyNumber = null;
         this.isProcessing = false;
+        // TWO-25326: invalidate any request already in flight for whatever
+        // was selected before this reset, independent of whether a new
+        // checkOrderIntent() call follows immediately. Without this, a
+        // caller that resets but does not immediately re-check (e.g. blocked
+        // by triggerOrderIntentForSelection()'s own cooldown) left the old
+        // request "current" - so it would still land and overwrite the just-
+        // cleared state with a stale company's result once it resolved.
+        this.requestSeq += 1;
         this.stopMonitoring();
     }
 }
