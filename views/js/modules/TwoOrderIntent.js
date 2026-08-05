@@ -380,6 +380,19 @@ class TwoOrderIntent {
         if (capturedAddressId > 0 && currentAddressId > 0 && capturedAddressId !== currentAddressId) {
             return null;
         }
+        // And the same country invalidation, for the same reason (review round
+        // 1): the cookie path this shortcut preempts drops a stored company
+        // whose country disagrees with the current address country
+        // (`storedCountryMismatch`), and a shortcut that skipped that check
+        // would be a weaker guard than the path it replaced. Compared only when
+        // BOTH are resolvable - an unknown country on either side is not
+        // evidence of a mismatch, and at the payment step in tile mode there is
+        // often no country select in the DOM at all.
+        const capturedCountry = selection.countryIso ? String(selection.countryIso).toUpperCase() : '';
+        const currentCountry = String(this.getCurrentAddressCountryISO() || '').toUpperCase();
+        if (capturedCountry && currentCountry && capturedCountry !== currentCountry) {
+            return null;
+        }
         return { company: company, companyid: companyid };
     }
 

@@ -475,6 +475,21 @@ class TwoSoleTrader {
             .then(function (response) { return response.json(); })
             .then(function (json) {
                 if (json && json.success) {
+                    // TWO-25326 bug 8, review round 1: publish the enrolled
+                    // sole trader as the confirmed selection, exactly as a
+                    // search selection does.
+                    //
+                    // Required, not tidying. The order-intent check now
+                    // prefers the browser's in-memory selection over the
+                    // session cookie this request just wrote - so a buyer who
+                    // picked a registered company FIRST and then enrolled as a
+                    // sole trader would have the check keep posting that
+                    // earlier company, and the endpoint re-stores whatever it
+                    // is posted into the session - overwriting the sole-trader
+                    // record the ORDER payload reads. Publishing here keeps
+                    // the in-memory copy and the cookie agreeing on which
+                    // entity the buyer is.
+                    self.publishConfirmedSelection(companyLabel, buyer.organization_number || '');
                     self.showStatus(companyLabel);
                     self.hidePrompt();
                     self.stopObserving();
@@ -486,6 +501,30 @@ class TwoSoleTrader {
             .catch(function () {
                 self.showError();
             });
+    }
+
+    /**
+     * Publish a confirmed company/organisation-number pair to
+     * TwoCheckoutManager, which is what the order-intent payload is built from
+     * (TWO-25326 bug 8). Mirror of TwoCompanySearch.publishConfirmedSelection()
+     * - the two modules are the only two places a company is captured, and they
+     * must feed the same store or the intent check can be built for the entity
+     * the buyer is NOT.
+     *
+     * @param {string} company
+     * @param {string} companyid
+     * @returns {void}
+     */
+    publishConfirmedSelection(company, companyid) {
+        try {
+            const manager = window.TwoCheckoutManager_Instance;
+            if (!manager || typeof manager.setConfirmedCompanySelection !== 'function') {
+                return;
+            }
+            manager.setConfirmedCompanySelection({ company: company, companyid: companyid });
+        } catch (e) {
+            // no-op: presentation only, never a gate.
+        }
     }
 
     /**
