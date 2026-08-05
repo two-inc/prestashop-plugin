@@ -352,6 +352,29 @@ class TwoCompanySearch {
             this.companyField.wrap('<span class="two-company-field-wrap"></span>');
             wrapper = this.companyField.parent();
         }
+        // TWO-25326 bug 10: RELEASE any width this method pinned on a previous
+        // call before measuring, or the pin latches and the control never
+        // follows the viewport again.
+        //
+        // The input is a theme `.form-control`, i.e. `width: 100%` of its
+        // container - and after the first call that container IS this wrapper,
+        // at a fixed pixel width. So `outerWidth()` stops measuring the layout
+        // and starts reading back the value pinned last time: the resize
+        // listener below re-runs this method on every viewport change, measures
+        // the same stale number, and re-pins it. That is why the optional
+        // fields (pure CSS, no JS width anywhere) reflow on resize and the
+        // company control does not.
+        //
+        // Released and re-measured rather than simply not pinned: the pin is
+        // still load-bearing on themes where the input has its own narrower
+        // intrinsic width (see this method's comment above). With the pin off
+        // for the duration of the measurement, the wrapper is back to being an
+        // auto-width block and the input measures against the real layout
+        // again.
+        const wrapperElement = wrapper.get(0);
+        if (wrapperElement && wrapperElement.style.width) {
+            wrapper.css('width', '');
+        }
         // Anchor height for the dropdown panel, refreshed alongside the width
         // for the same reason: the panel is positioned against the INPUT, not
         // against the wrapper, which also carries the org-number label.
@@ -458,7 +481,12 @@ class TwoCompanySearch {
      */
     setCompanyIdHint(value) {
         if (this.companyIdHintField && this.companyIdHintField.length) {
-            const text = value ? String(value) : '';
+            // TWO-25326 §12: a `TWO:`-prefixed number is an internal
+            // identifier and is never shown - forDisplay() answers '' for it,
+            // which the existing empty-string handling below already treats as
+            // "no label at all" (no text, no reserved line box), so the
+            // suppressed case needs no branch of its own here.
+            const text = window.TwoCompanyNumber.forDisplay(value);
             this.companyIdHintField.text(text);
             // TWO-25326 §5/§7: the label takes space in normal flow now, so
             // an EMPTY one still occupies a line box and adds height to an
@@ -2071,6 +2099,12 @@ class TwoCompanySearch {
         this.setCompanyIdHint('');
         this.clearLookupWrittenAddressIdentifiers();
         this.clearPersistedCompany();
+        // FOURTH half (TWO-25326 bug 8): the in-memory copy the order-intent
+        // payload is built from. Clearing the cookie and leaving this behind
+        // would reintroduce the very defect it exists to fix, inverted - the
+        // intent would keep credit-checking a company the buyer has explicitly
+        // moved off, and would do it in preference to the cleared cookie.
+        this.publishConfirmedSelection('', '');
     }
 
     /**
@@ -2876,7 +2910,13 @@ class TwoCompanySearch {
                     if (!orgNumber) {
                         orgNumber = company.registration_number || company.company_number || '';
                     }
-                    const displayLabel = orgNumber ? `${company.name} (${orgNumber})` : company.name;
+                    // TWO-25326 §12: `TWO:`-prefixed internal identifiers are
+                    // never rendered, and the brackets go with them - the
+                    // shared helper owns both halves of that rule so this site
+                    // cannot render `Company Name ()`. `organization_number`
+                    // below still carries the REAL value: it is what gets
+                    // selected, persisted and credit-checked.
+                    const displayLabel = window.TwoCompanyNumber.labelFor(company.name, orgNumber);
                     return {
                         label: displayLabel,
                         value: company.name,
@@ -3112,6 +3152,10 @@ class TwoCompanySearch {
             this.organizationField.attr('data-two-company-name', ui.item.value);
             this.setCompanyIdHint(ui.item.organization_number);
 
+            // Publish BEFORE the cookie write and before the intent trigger:
+            // this is the copy the intent check will actually read (bug 8).
+            this.publishConfirmedSelection(ui.item.value, ui.item.organization_number);
+
             // Persist for reliability across steps
             this.persistCompanyToCookie({
                 company: ui.item.value,
@@ -3235,6 +3279,15 @@ class TwoCompanySearch {
                     this.organizationField.attr('data-two-company-name', this.companyField ? this.companyField.val() : '');
                     this.setCompanyIdHint(natIdVal);
                     this.writeOrganizationToAddressIdentifiers(natIdVal);
+                    // Deferred (GB) path: the number only exists now, so this
+                    // is where the confirmed pair becomes publishable - and it
+                    // must be published BEFORE the intent trigger that
+                    // onCompanySelected()'s `finally` fires off the back of this
+                    // same lookup (TWO-25326 bug 8).
+                    this.publishConfirmedSelection(
+                        this.companyField ? this.companyField.val() : '',
+                        natIdVal
+                    );
                     // Persist to cookie so backend can use it during order placement
                     this.persistCompanyToCookie({
                         company: this.companyField ? this.companyField.val() : '',
@@ -3608,6 +3661,43 @@ class TwoCompanySearch {
         // half way, this instance must never act on the DOM again. Everything
         // that can be re-entered from an event checks it.
         this._destroyed = true;
+    }
+
+    /**
+     * Publish the confirmed company/organisation-number pair to
+     * TwoCheckoutManager, which holds it for the page's lifetime and hands it
+     * to TwoOrderIntent.collectFormData() (TWO-25326 bug 8).
+     *
+     * This is what makes the order-intent payload carry the company the buyer
+     * actually just picked. It cannot come from the session cookie, because
+     * that cookie is written by persistCompanyToCookie()'s fire-and-forget
+     * `saveCompany` request and the intent check goes out in the same tick, on
+     * a request whose cookie header therefore still holds the PREVIOUS
+     * selection: nothing at all on the first search (which the server's own
+     * fallbacks quietly repair, so the first cycle looks correct), and company
+     * A on the second - the exact "select A, search again, select B, intent
+     * fires for A" defect. Nor can it come from the DOM: in tile mode
+     * collectFormData() must not trust the address-area fields at all (§7.1),
+     * and by the payment step PrestaShop has removed that form anyway.
+     *
+     * Passing an empty name or number CLEARS the published selection rather
+     * than half-writing one - see clearSelectedCompany(), which relies on
+     * that.
+     *
+     * @param {string} company
+     * @param {string} companyid
+     * @returns {void}
+     */
+    publishConfirmedSelection(company, companyid) {
+        try {
+            const manager = window.TwoCheckoutManager_Instance;
+            if (!manager || typeof manager.setConfirmedCompanySelection !== 'function') {
+                return;
+            }
+            manager.setConfirmedCompanySelection({ company: company, companyid: companyid });
+        } catch (e) {
+            // no-op: this is a checkout convenience, never a gate.
+        }
     }
 
     persistCompanyToCookie(data) {

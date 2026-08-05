@@ -3800,6 +3800,10 @@ class Twopayment extends PaymentModule
 
         // CRITICAL FIX: Remove async loading and ensure proper load order for reliable initialization
         // Ensures they load AFTER jQuery
+        // Shared company-number DISPLAY rule (TWO-25326 §12), used by both the
+        // search control and the order-intent sentence - so it has to be in
+        // place before either of them, hence a priority below both.
+        $this->context->controller->registerJavascript('two-company-number', $this->getTwoModuleAssetPath('views/js/modules/TwoCompanyNumber.js'), array('priority' => 200, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoCompanyNumber.js')));
         $this->context->controller->registerJavascript('two-company-search', $this->getTwoModuleAssetPath('views/js/modules/TwoCompanySearch.js'), array('priority' => 201, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoCompanySearch.js')));
         $this->context->controller->registerJavascript('two-order-intent', $this->getTwoModuleAssetPath('views/js/modules/TwoOrderIntent.js'), array('priority' => 202, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoOrderIntent.js')));
         $this->context->controller->registerJavascript('two-sole-trader', $this->getTwoModuleAssetPath('views/js/modules/TwoSoleTrader.js'), array('priority' => 204, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoSoleTrader.js')));

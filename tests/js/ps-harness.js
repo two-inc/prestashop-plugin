@@ -149,9 +149,30 @@ function loadScript(relPath) {
  *
  * @returns {{TwoCompanySearch: Function, $: Function, bus: Object}}
  */
+/**
+ * Load the shared company-number display helper (TWO-25326 §12).
+ *
+ * Registered at a lower priority than every module that renders a number
+ * (twopayment.php), so on a real page it is always in place before them. The
+ * loaders below mirror that: the modules call `window.TwoCompanyNumber`
+ * unguarded, exactly as they do in the browser, so nothing here may load them
+ * without it.
+ *
+ * @returns {Object} the helper
+ */
+function loadCompanyNumber() {
+    loadScript('views/js/modules/TwoCompanyNumber.js');
+    const helper = global.window.TwoCompanyNumber;
+    if (!helper || typeof helper.forDisplay !== 'function') {
+        throw new Error('harness: TwoCompanyNumber was not exported onto window');
+    }
+    return helper;
+}
+
 function loadCompanySearch() {
     const $ = installJQuery();
     const bus = installPrestashopBus();
+    loadCompanyNumber();
     loadScript('views/js/modules/TwoCompanySearch.js');
     const TwoCompanySearch = global.window.TwoCompanySearch;
     if (typeof TwoCompanySearch !== 'function') {
@@ -173,6 +194,7 @@ function loadCompanySearch() {
  * @returns {Function} the TwoOrderIntent class
  */
 function loadOrderIntent() {
+    loadCompanyNumber();
     loadScript('views/js/modules/TwoOrderIntent.js');
     const TwoOrderIntent = global.window.TwoOrderIntent;
     if (typeof TwoOrderIntent !== 'function') {
@@ -251,20 +273,45 @@ function stubAjax($) {
     const original = $.ajax;
     const calls = [];
     $.ajax = function (settings) {
+        // Callers use BOTH jQuery ajax styles: `success`/`error` settings, and
+        // the chained `.done()`/`.fail()` the real jqXHR promise exposes
+        // (TwoOrderIntent.collectFormData's session-company read is the second
+        // kind). The stub has to honour whichever a call site used, or a test
+        // "fails" on the shape of the plumbing rather than on the behaviour.
+        const doneHandlers = [];
+        const failHandlers = [];
         const record = {
             settings: settings,
             url: settings.url,
             aborted: false,
             /** Resolve as HTTP 200 with `data`. */
             succeed: function (data) {
-                settings.success(data, 'success', record.xhr);
+                if (typeof settings.success === 'function') {
+                    settings.success(data, 'success', record.xhr);
+                }
+                doneHandlers.slice().forEach(function (handler) {
+                    handler(data, 'success', record.xhr);
+                });
             },
             /** Resolve as a failure. `status` is jQuery's textStatus. */
             fail: function (status, error) {
-                settings.error(record.xhr, status, error || status);
+                if (typeof settings.error === 'function') {
+                    settings.error(record.xhr, status, error || status);
+                }
+                failHandlers.slice().forEach(function (handler) {
+                    handler(record.xhr, status, error || status);
+                });
             }
         };
         record.xhr = {
+            done: function (handler) {
+                doneHandlers.push(handler);
+                return record.xhr;
+            },
+            fail: function (handler) {
+                failHandlers.push(handler);
+                return record.xhr;
+            },
             abort: function () {
                 record.aborted = true;
                 // jQuery reports an aborted request through the error handler
@@ -272,7 +319,7 @@ function stubAjax($) {
                 // load-bearing: searchCompanies() bumps its sequence BEFORE
                 // aborting precisely so this re-entrant call sees a stale
                 // sequence.
-                settings.error(record.xhr, 'abort', 'abort');
+                record.fail('abort', 'abort');
             }
         };
         calls.push(record);
@@ -577,9 +624,29 @@ function resultTexts() {
     }).get();
 }
 
+/**
+ * Load TwoSoleTrader as a <script> tag would.
+ *
+ * No jQuery: the module is plain DOM + `fetch` + MutationObserver, all of which
+ * jsdom supplies (bar `fetch`, which every test stubs because the availability
+ * round trip's timing is the thing under test).
+ *
+ * @returns {Function} the TwoSoleTrader class
+ */
+function loadSoleTrader() {
+    loadScript('views/js/modules/TwoSoleTrader.js');
+    const TwoSoleTrader = global.window.TwoSoleTrader;
+    if (typeof TwoSoleTrader !== 'function') {
+        throw new Error('harness: TwoSoleTrader was not exported onto window');
+    }
+    return TwoSoleTrader;
+}
+
 module.exports = {
     REPO_ROOT: REPO_ROOT,
     buildPaymentTile: buildPaymentTile,
+    loadCompanyNumber: loadCompanyNumber,
+    loadSoleTrader: loadSoleTrader,
     countGifFrames: countGifFrames,
     releaseWidgets: releaseWidgets,
     flushPromises: flushPromises,
