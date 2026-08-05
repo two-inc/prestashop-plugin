@@ -374,7 +374,23 @@ class TwoSoleTrader {
         // result must be discarded rather than applied over it.
         const generation = this._adoptGeneration;
         const superseded = function () {
-            return self._adoptGeneration !== generation;
+            if (self._adoptGeneration === generation) {
+                return false;
+            }
+            // Re-ask for whatever the country is NOW before dropping this result
+            // (round 4 review, finding 1). The counter is per instance, not per
+            // country, so a replacement carrying an answer for country A
+            // supersedes an outstanding request for country B - and simply
+            // discarding it left nothing resolved for B and nothing scheduled to
+            // resolve it: pendingCountry had cleared, and the debounced refresh
+            // that would have re-asked had already run and bailed while the
+            // request was still out. A lost wakeup, and a state the previous code
+            // could not reach because it applied the stale answer instead.
+            // Cheap and self-limiting: refreshAvailability() returns immediately
+            // when the country it finds is already settled.
+            self.scheduleRefresh();
+
+            return true;
         };
         fetch(this.moduleUrl('soleTraderAvailability') + '&country=' + encodeURIComponent(country), { method: 'GET' })
             .then(function (response) { return response.json(); })

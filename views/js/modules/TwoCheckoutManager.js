@@ -525,24 +525,24 @@ class TwoCheckoutManager {
                 // reload is Two's is recorded ALONGSIDE its id, because the
                 // head-time flash guard has to know that before any of this
                 // module's code (or the payment markup itself) exists - see
-                // TwoPaymentStepFlashGuard.js. Resolved by containment against
-                // the Two option element rather than through
-                // isTwoPaymentSelected(), whose fallback strategies read the
-                // document's currently-checked radio and so cannot be asked
-                // about a specific node.
+                // TwoPaymentStepFlashGuard.js.
                 const twoOption = this.twoPaymentOption || document.querySelector('[data-module-name="twopayment"]');
-                // Containment first; the radio's own identity as a fallback when
-                // there is no Two option ELEMENT to contain it (round 3 review,
-                // finding 9). Containment alone would answer "not Two" on a theme
-                // that renders no `data-module-name`, and the guard would then hide
-                // the tile through the first paint of a load that is on its way to
-                // SELECTING Two - inventing exactly the flash it exists to remove.
-                // Mirrors isTwoPaymentSelected()'s own value-based fallback.
-                const isTwoRadio = twoOption
-                    ? twoOption.contains(checkedRadio)
-                    : (checkedRadio.value === 'twopayment'
-                        || checkedRadio.id === 'payment-option-twopayment'
-                        || String(checkedRadio.value || '').includes('twopayment'));
+                // Containment OR the radio's own identity - the same shape
+                // isTwoPaymentSelected() uses, and for the same reason (round 3
+                // review finding 9, widened by round 4 finding 2). Containment
+                // alone answers "not Two" both where no `data-module-name` element
+                // exists AND where one exists without containing the radio, and in
+                // either case the guard would then hide the tile through the first
+                // paint of a load that is on its way to SELECTING Two - inventing
+                // exactly the flash it exists to remove. So the value tests run
+                // whenever containment FAILS, not only when the element is absent.
+                // isTwoPaymentSelected() itself cannot be asked about a specific
+                // node: its own fallbacks read whatever radio the document has
+                // checked, which is the question this needs to avoid.
+                const isTwoRadio = (twoOption && twoOption.contains(checkedRadio))
+                    || checkedRadio.value === 'twopayment'
+                    || checkedRadio.id === 'payment-option-twopayment'
+                    || String(checkedRadio.value || '').includes('twopayment');
                 sessionStorage.setItem(this._surchargeRestoreKey, JSON.stringify({
                     id: checkedRadio.id,
                     two: !!isTwoRadio

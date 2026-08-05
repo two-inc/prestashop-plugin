@@ -113,42 +113,11 @@ class TwoSoleTrader
     }
 
     /**
-     * The same answer, but able to say "I do not know" (TWO-25326 bug 9, round 3
-     * adversarial review). Returns true, false, or NULL when the registry did not
-     * answer at all.
-     *
-     * isAvailable() cannot express that, and must not: every existing caller gates
-     * a capability on it and has to fail soft to "no sole trader" rather than
-     * block checkout. But the payment tile now RENDERS the answer into markup the
-     * browser adopts as settled and never re-asks (paymentinfo.tpl ->
-     * TwoSoleTrader.adoptServerRenderedToggle), so collapsing a transport failure
-     * into "no" there would launder one blip into a cached "no" for the rest of
-     * the page's life. Both layers already refuse to do that on their own - see
-     * getSupportedCompanyTypesOrNull() below and the client fetch's own catch -
-     * and this is what lets the handover refuse to as well: an unresolved answer
-     * is rendered as no answer, and the client's retrying path stays live.
-     *
-     * @param Twopayment $module
-     * @param string $countryIso
-     *
-     * @return bool|null
-     */
-    public static function resolveAvailability($module, $countryIso)
-    {
-        $types = self::getSupportedCompanyTypesOrNull($module, $countryIso);
-        if ($types === null) {
-            return null;
-        }
-
-        return in_array(self::SOLE_TRADER, $types, true);
-    }
-
-    /**
      * The same three-state answer, but ONLY if it is already known - never a
      * network call (TWO-25326 bug 9, round 3 review, finding 2).
      *
-     * This is what the payment tile renders from. resolveAvailability() cannot be:
-     * it resolves the answer live, and the tile renders inside a shopper's
+     * This is what the payment tile renders from, and the only three-state reader
+     * there is. Resolving the answer LIVE here cannot work: the tile renders inside a shopper's
      * checkout request, so on any shop that cannot reach the registry EVERY
      * payment-step render - and a payment-option change is a full page reload -
      * paid the request timeout again. The failure marker bounds that to one
@@ -158,10 +127,13 @@ class TwoSoleTrader
      *
      * The rest of the module is built for exactly this: an unknown answer renders
      * as no answer, the browser's own availability request resolves it, and the
-     * endpoint that answers writes the cookie - so the FIRST payment-step render
-     * of a session may render no toggle and every render after it, including all
-     * the surcharge-driven reloads that made the flicker visible, renders the
-     * real answer. That is the same shape as this module's other checkout-render
+     * endpoint that answers writes the cookie - so ordinarily the FIRST
+     * payment-step render of a session renders no toggle and every render after
+     * it, including all the surcharge-driven reloads that made the flicker
+     * visible, renders the real answer. Where the cookie cannot be stored at all,
+     * or the registry keeps failing, EVERY render answers "unknown" and the
+     * toggle is client-rendered exactly as it was before this ticket - degraded
+     * to the old behaviour, never worse than it. That is the same shape as this module's other checkout-render
      * reads (cache-only, primed off the render path).
      *
      * @param string $countryIso
@@ -175,29 +147,56 @@ class TwoSoleTrader
             return null;
         }
 
-        $types = null;
-        if (array_key_exists($countryIso, self::$types_cache)) {
-            $types = self::$types_cache[$countryIso];
-        } else {
-            $cookie = Context::getContext()->cookie;
-            if ($cookie && !empty($cookie->{self::COOKIE_KEY})) {
-                $cached = json_decode($cookie->{self::COOKIE_KEY}, true);
-                if (
-                    is_array($cached)
-                    && isset($cached['country'], $cached['types'], $cached['fetched_at'])
-                    && $cached['country'] === $countryIso
-                    && is_array($cached['types'])
-                    && time() - (int) $cached['fetched_at'] < self::CACHE_TTL_SECONDS
-                ) {
-                    $types = $cached['types'];
-                }
-            }
-        }
+        $types = self::readCachedTypes($countryIso);
         if ($types === null) {
             return null;
         }
 
         return in_array(self::SOLE_TRADER, $types, true);
+    }
+
+    /**
+     * The already-known answer for a country, or null if there is none.
+     *
+     * ONE reader for both callers (round 4 review, finding 4). This was written
+     * out twice - once here and once inside getSupportedCompanyTypesOrNull() -
+     * with nothing coupling them, so a change to COOKIE_KEY, to CACHE_TTL_SECONDS
+     * or to the stored JSON shape would have had to be made in two places and
+     * would silently work in one of them. The copies had already drifted on how a
+     * malformed country was reported.
+     *
+     * Request memo first, then the cookie: the memo is only ever populated from a
+     * fresh answer, so it cannot be staler than the cookie it shadows.
+     *
+     * Deliberately does NOT consult $failed_lookups. A failure is not an answer,
+     * and both this and "no cached answer" resolve to the same null for every
+     * caller - reading it would add a branch that cannot change an outcome.
+     *
+     * @param string $countryIso already normalised and validated by the caller
+     *
+     * @return string[]|null
+     */
+    private static function readCachedTypes($countryIso)
+    {
+        if (array_key_exists($countryIso, self::$types_cache)) {
+            return self::$types_cache[$countryIso];
+        }
+
+        $cookie = Context::getContext()->cookie;
+        if ($cookie && !empty($cookie->{self::COOKIE_KEY})) {
+            $cached = json_decode($cookie->{self::COOKIE_KEY}, true);
+            if (
+                is_array($cached)
+                && isset($cached['country'], $cached['types'], $cached['fetched_at'])
+                && $cached['country'] === $countryIso
+                && is_array($cached['types'])
+                && time() - (int) $cached['fetched_at'] < self::CACHE_TTL_SECONDS
+            ) {
+                return self::$types_cache[$countryIso] = $cached['types'];
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -229,8 +228,9 @@ class TwoSoleTrader
      * @see getSupportedCompanyTypes() - identical, except that a registry FAILURE
      *   is reported as null instead of being flattened into the empty list that a
      *   business-only country legitimately returns. Split out for
-     *   resolveAvailability(); see its comment for why the distinction has to
-     *   survive as far as the payment tile.
+     *   getSupportedCompanyTypes()'s callers, which must fail closed, from the
+     *   payment tile, which must be able to say "unknown" rather than "no" -
+     *   see resolveAvailabilityFromCache().
      *
      * @param Twopayment $module
      * @param string $countryIso
@@ -244,25 +244,12 @@ class TwoSoleTrader
             return array();
         }
 
-        if (array_key_exists($countryIso, self::$types_cache)) {
-            return self::$types_cache[$countryIso];
+        $cached = self::readCachedTypes($countryIso);
+        if ($cached !== null) {
+            return $cached;
         }
         if (isset(self::$failed_lookups[$countryIso])) {
             return null;
-        }
-
-        $cookie = Context::getContext()->cookie;
-        if ($cookie && !empty($cookie->{self::COOKIE_KEY})) {
-            $cached = json_decode($cookie->{self::COOKIE_KEY}, true);
-            if (
-                is_array($cached)
-                && isset($cached['country'], $cached['types'], $cached['fetched_at'])
-                && $cached['country'] === $countryIso
-                && is_array($cached['types'])
-                && time() - (int) $cached['fetched_at'] < self::CACHE_TTL_SECONDS
-            ) {
-                return self::$types_cache[$countryIso] = $cached['types'];
-            }
         }
 
         $types = self::fetchSupportedCompanyTypes($module, $countryIso);
@@ -281,6 +268,7 @@ class TwoSoleTrader
             return null;
         }
 
+        $cookie = Context::getContext()->cookie;
         if ($cookie) {
             $cookie->{self::COOKIE_KEY} = json_encode(array(
                 'country' => $countryIso,

@@ -106,9 +106,22 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             return;
         }
         $country = (string) Tools::getValue('country');
+        $available = TwoSoleTrader::isAvailable($this->module, $country);
+        // Persist the registry answer this lookup may have just cached BEFORE the
+        // response ends the request (TWO-25326 round 4 review). The payment tile
+        // renders the toggle from that cookie and never resolves it itself, so
+        // this write is what makes the server-rendered toggle exist at all - it is
+        // not a tidy-up. PrestaShop's Cookie writes itself from its destructor,
+        // which does run on the exit() below, but only while headers are still
+        // unsent - i.e. contingent on output buffering, which is an ini setting
+        // and not something this endpoint should depend on. Every other
+        // cookie-mutating action in this controller already writes explicitly.
+        if ($this->context->cookie) {
+            $this->context->cookie->write();
+        }
         $this->sendJsonResponse(json_encode([
             'success' => true,
-            'available' => TwoSoleTrader::isAvailable($this->module, $country),
+            'available' => $available,
         ]));
     }
 

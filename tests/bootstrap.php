@@ -59,7 +59,6 @@ namespace PrestaShop\PrestaShop\Core\Payment {
             'setLogo',
             'setModuleName',
             'setBinary',
-            'setModuleFullName',
         );
 
         public function __call($name, $arguments)
