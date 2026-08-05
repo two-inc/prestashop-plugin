@@ -108,7 +108,16 @@ class TwoOrderIntent {
      * @returns {string}
      */
     buildCompanyIntentMessage(approved, name, number) {
-        const hasNumber = typeof number === 'string' && number.trim().length > 0;
+        // TWO-25326 §12: `TWO:`-prefixed internal identifiers are never shown.
+        // Filtered HERE rather than at each of this method's three callers
+        // (processResult, updateUI, TwoCheckoutManager.handleOrderIntentResult
+        // - the last of which sources the number from the DOM, not from
+        // lastCompanyNumber), because this is the single place the sentence is
+        // built. The suppressed case falls through to the EXISTING
+        // `_no_number` templates, so it reads "...by Example Ltd" and can
+        // never render an empty pair of brackets.
+        const displayNumber = window.TwoCompanyNumber.forDisplay(number);
+        const hasNumber = displayNumber.length > 0;
         if (approved) {
             const override = this.approvedNoticeOverride();
             if (override !== null) {
@@ -117,12 +126,12 @@ class TwoOrderIntent {
             const template = hasNumber
                 ? this.t('invoice_likely_accepted_for', 'This order by %s (%s) is likely to be accepted by Two')
                 : this.t('invoice_likely_accepted_for_no_number', 'This order by %s is likely to be accepted by Two');
-            return TwoOrderIntent.fillTemplate(template, hasNumber ? [name, number] : [name]);
+            return TwoOrderIntent.fillTemplate(template, hasNumber ? [name, displayNumber] : [name]);
         }
         const template = hasNumber
             ? this.t('invoice_cannot_be_approved_for', 'Two is not available for this order by %s (%s)')
             : this.t('invoice_cannot_be_approved_for_no_number', 'Two is not available for this order by %s');
-        return TwoOrderIntent.fillTemplate(template, hasNumber ? [name, number] : [name]);
+        return TwoOrderIntent.fillTemplate(template, hasNumber ? [name, displayNumber] : [name]);
     }
 
     /**
@@ -313,6 +322,67 @@ class TwoOrderIntent {
             });
     }
 
+    /**
+     * The company the buyer has ACTUALLY selected in this browser, if any, as
+     * published by TwoCompanySearch through TwoCheckoutManager
+     * (`getConfirmedCompany`, injected in initializeOrderIntent()).
+     *
+     * TWO-25326 bug 8. This exists because the request payload, not the
+     * response ordering, was the stale half. In tile mode collectFormData()
+     * deliberately reads NOTHING from the address-area DOM (see its comment)
+     * and therefore always falls through to the `getCompany` round trip - which
+     * reads the SESSION COOKIE. That cookie is written by
+     * TwoCompanySearch.persistCompanyToCookie()'s own fire-and-forget
+     * `saveCompany` request, issued in the same tick as the intent check that
+     * follows it. A cookie written by a response the browser has not received
+     * yet is not in the request it has already sent, so `getCompany` answers
+     * with whatever was selected BEFORE this selection: nothing on the first
+     * search (harmless - the server's own fallbacks resolve it), and the
+     * PREVIOUS company on every search after that. The intent then fires,
+     * legitimately and in order, for company A while the buyer is looking at
+     * company B. No response-sequencing gate can see that, because the stale
+     * request IS the current one.
+     *
+     * The selection the browser holds in memory needs no round trip and cannot
+     * be stale, so it is the authoritative source. Returned only when it still
+     * applies to the CURRENT checkout context - a country change or an address
+     * switch invalidates a captured company, exactly as it does for the cookie
+     * path below, and must not be smuggled past those checks by this shortcut.
+     *
+     * @returns {?{company: string, companyid: string}}
+     */
+    getConfirmedCompanySelection() {
+        const getter = this.config.getConfirmedCompany;
+        if (typeof getter !== 'function') {
+            return null;
+        }
+        let selection = null;
+        try {
+            selection = getter();
+        } catch (e) {
+            return null;
+        }
+        if (!selection) {
+            return null;
+        }
+        const company = selection.company ? String(selection.company).trim() : '';
+        const companyid = selection.companyid ? String(selection.companyid).trim() : '';
+        if (!company || !companyid) {
+            return null;
+        }
+        // Same address-switch invalidation the session path applies (an
+        // organisation number captured against one address must not be
+        // credit-checked against another). `addressId` is the address that was
+        // selected at capture time; 0 on either side means "unknown", which is
+        // not evidence of a switch.
+        const capturedAddressId = selection.addressId ? parseInt(selection.addressId, 10) : 0;
+        const currentAddressId = this.getCurrentAddressId();
+        if (capturedAddressId > 0 && currentAddressId > 0 && capturedAddressId !== currentAddressId) {
+            return null;
+        }
+        return { company: company, companyid: companyid };
+    }
+
     collectFormData(seq) {
         const isCurrent = () => seq === undefined || seq === this.requestSeq;
         return new Promise((resolve) => {
@@ -351,6 +421,41 @@ class TwoOrderIntent {
                 companyid = '';
                 // CRITICAL FIX: Clear the flag after handling country change to prevent it from persisting
                 try { sessionStorage.removeItem('two_country_changed'); } catch (e) {}
+            }
+
+            // TWO-25326 bug 8: before reaching for the session cookie, use the
+            // selection this browser is holding in memory - it needs no round
+            // trip, so it cannot lag a `saveCompany` write that has not come
+            // back yet. See getConfirmedCompanySelection() for why the cookie
+            // read is systematically one selection behind in tile mode.
+            //
+            // Positioned AFTER the address-area DOM read and gated on it having
+            // produced nothing, deliberately: where those fields ARE the
+            // control (address mode), they carry what the buyer has typed
+            // since, which is newer than any earlier confirmed selection and
+            // must keep winning. In tile mode they are left empty by design a
+            // few lines up, so this is always the path taken there. A pending
+            // country change still invalidates a captured company, exactly as
+            // it does for the cookie below - the shortcut must not smuggle one
+            // past that.
+            const confirmedSelection = countryChanged ? null : this.getConfirmedCompanySelection();
+            if ((!company && !companyid) && confirmedSelection) {
+                formData.company = confirmedSelection.company;
+                formData.companyid = confirmedSelection.companyid;
+                // Name and number written TOGETHER from the SAME source, and
+                // only while this call is still the current one - same rule as
+                // both branches below.
+                if (isCurrent()) {
+                    this.lastCompany = confirmedSelection.company;
+                    this.lastCompanyNumber = confirmedSelection.companyid;
+                }
+                const confirmedAddressId = this.getCurrentAddressId();
+                if (confirmedAddressId > 0) {
+                    formData.id_address_invoice = confirmedAddressId;
+                    formData.id_address_delivery = confirmedAddressId;
+                }
+                resolve(formData);
+                return;
             }
 
             // Only use cookie fallback when BOTH values are missing (e.g., payment step with no address form fields).

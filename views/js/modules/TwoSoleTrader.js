@@ -38,7 +38,20 @@ class TwoSoleTrader {
         // page's lifetime so the toggle settles without re-fetching.
         this.availabilityByCountry = {};
         this.renderedForCountry = null;
+        // TWO-25326 bug 9: the container node this instance last rendered into.
+        // `renderedForCountry` alone is not a record of what is on the page:
+        // PrestaShop REPLACES the payment fragment (and with it this whole
+        // container) while the checkout step settles, and the replacement
+        // arrives with no chips built and none of the inline display state
+        // render()/hide() set. Keyed on the node, the settled-check can tell
+        // "already rendered" from "rendered into a node that no longer exists".
+        this.renderedContainer = null;
         this.observer = null;
+        // TWO-25326 bug 9: the country an availability request is currently out
+        // for, and the debounce handle for the MutationObserver. See init() and
+        // refreshAvailability() for what each prevents.
+        this.pendingCountry = null;
+        this._refreshTimeoutId = null;
         // In-flight guard + cooldown: setMode('sole_trader') re-invokes
         // fetchTokens() whenever tokens aren't set yet, so repeated clicks
         // on the "Sole trader" chip while a mint keeps failing (network
@@ -64,11 +77,31 @@ class TwoSoleTrader {
                 self.refreshAvailability();
             }
         });
+        // DEBOUNCED (TWO-25326 bug 9). This observer watches the whole body
+        // subtree, and refreshAvailability() itself MUTATES that subtree
+        // (render() appends chips and sets inline display) - so every render fed
+        // the observer, which called back synchronously, once per mutation
+        // record. Coalescing a burst into one call is what makes the
+        // render -> observe -> render path terminate on the first pass instead
+        // of being throttled only by the settled-checks downstream of it.
         this.observer = new MutationObserver(function () {
-            self.refreshAvailability();
+            self.scheduleRefresh();
         });
         this.observer.observe(document.body, { childList: true, subtree: true });
         this.refreshAvailability();
+    }
+
+    /**
+     * Coalesce a burst of DOM mutations into a single availability refresh.
+     *
+     * @returns {void}
+     */
+    scheduleRefresh() {
+        const self = this;
+        clearTimeout(this._refreshTimeoutId);
+        this._refreshTimeoutId = setTimeout(function () {
+            self.refreshAvailability();
+        }, 100);
     }
 
     /**
@@ -81,6 +114,8 @@ class TwoSoleTrader {
             this.observer.disconnect();
             this.observer = null;
         }
+        clearTimeout(this._refreshTimeoutId);
+        this._refreshTimeoutId = null;
     }
 
     container() {
@@ -130,19 +165,41 @@ class TwoSoleTrader {
             this.hide();
             return;
         }
-        if (country === this.renderedForCountry) {
-            return; // already settled for this country
+        // Settled means "this container, for this country" - not the country
+        // alone (TWO-25326 bug 9). A country-only check reported the toggle as
+        // settled after PrestaShop had replaced the container out from under it,
+        // so the chips stayed missing from a container this instance believed it
+        // had already rendered into, until some unrelated later trigger happened
+        // to re-render them - which is the render / disappear / reappear cycle
+        // Doug saw on the chips specifically, distinct from the tile-level
+        // mount/unmount guard.
+        if (country === this.renderedForCountry && this.isSettledFor(container)) {
+            return;
         }
         if (country in this.availabilityByCountry) {
             this.apply(country, this.availabilityByCountry[country]);
             return;
         }
+        // One request in flight per country (TWO-25326 bug 9). The observer
+        // above fires while the answer for the first-ever country is still
+        // outstanding - `renderedForCountry` is null and nothing is cached yet,
+        // so EVERY firing used to start another `fetch`. Beyond being a request
+        // storm, it made the toggle's visibility a race between those
+        // responses: this endpoint is fail-soft to "not available", so one
+        // failing or timing out among a dozen in-flight duplicates called
+        // hide() while its siblings called render(), flickering the chips in and
+        // out with no state change behind it at all.
+        if (this.pendingCountry === country) {
+            return;
+        }
+        this.pendingCountry = country;
         const self = this;
         fetch(this.moduleUrl('soleTraderAvailability') + '&country=' + encodeURIComponent(country), { method: 'GET' })
             .then(function (response) { return response.json(); })
             .then(function (json) {
                 const available = !!(json && json.success && json.available);
                 self.availabilityByCountry[country] = available;
+                self.releasePending(country);
                 // The buyer may have changed country mid-request; only
                 // apply if the answer is still for the current one.
                 if (self.billingCountry() === country) {
@@ -150,14 +207,65 @@ class TwoSoleTrader {
                 }
             })
             .catch(function () {
+                // NOT cached: a transport failure is not an answer about this
+                // country, and caching it would make one blip permanent for the
+                // rest of the page's life. Only the pending marker clears, so a
+                // later mutation or country change can ask again.
+                self.releasePending(country);
                 if (self.billingCountry() === country) {
                     self.apply(country, false);
                 }
             });
     }
 
+    /**
+     * Clear the in-flight marker, but only if it is still this country's - the
+     * buyer may have changed country and started a newer request.
+     *
+     * @param {string} country
+     * @returns {void}
+     */
+    releasePending(country) {
+        if (this.pendingCountry === country) {
+            this.pendingCountry = null;
+        }
+    }
+
+    /**
+     * Is what this instance last rendered still actually on the page, in the
+     * container it is being asked about?
+     *
+     * Both halves matter. The node must be the one rendered into (PrestaShop
+     * replaces it wholesale), and the chips must still be built inside it -
+     * `render()` marks the toggle it built with `data-two-built`, and a
+     * replacement fragment arrives without that marker.
+     *
+     * @param {HTMLElement} container
+     * @returns {boolean}
+     */
+    isSettledFor(container) {
+        if (!container || container !== this.renderedContainer) {
+            return false;
+        }
+        if (!container.isConnected) {
+            return false;
+        }
+        // Only the available/rendered case builds chips; when the answer was
+        // "not available" there is deliberately nothing to build, and hide()'s
+        // inline display is the state to preserve.
+        if (this.availabilityByCountry[this.renderedForCountry] !== true) {
+            return true;
+        }
+        const toggle = container.querySelector('.two-sole-trader__toggle');
+        return !!(toggle && toggle.dataset.twoBuilt === '1');
+    }
+
     apply(country, available) {
         this.renderedForCountry = country;
+        // Recorded BEFORE render()/hide() run, so the mutations they make -
+        // which the observer sees - already find the state settled and stop
+        // (TWO-25326 bug 9).
+        this.renderedContainer = this.container();
         if (available) {
             this.render();
         } else {

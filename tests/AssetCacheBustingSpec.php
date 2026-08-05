@@ -264,7 +264,7 @@ final class AssetCacheBustingSpec
         // numbers are the real current count of register*() calls in each
         // hook; update them deliberately if a call site is ever added or
         // removed on purpose.
-        TinyAssert::same(7, count($frontStatements), 'expected exactly 7 register*() call sites in hookActionFrontControllerSetMedia() (1 CSS + 6 JS), found ' . count($frontStatements) . ' - a call site was added, removed, or renamed');
+        TinyAssert::same(8, count($frontStatements), 'expected exactly 8 register*() call sites in hookActionFrontControllerSetMedia() (1 CSS + 7 JS), found ' . count($frontStatements) . ' - a call site was added, removed, or renamed');
         TinyAssert::same(1, count($adminStatements), 'expected exactly 1 registerStylesheet() call site in hookActionAdminControllerSetMedia(), found ' . count($adminStatements) . ' - it was added, removed, or renamed');
 
         // Identity, not just count (round-4 adversarial review, Vader): a
@@ -300,6 +300,9 @@ final class AssetCacheBustingSpec
         // Binding id -> expected path closes that gap.
         $expectedFrontPathsById = array(
             'two-css' => 'views/css/two.css',
+            // TWO-25326 §12: shared company-number display rule, registered
+            // ahead of both modules that render a number.
+            'two-company-number' => 'views/js/modules/TwoCompanyNumber.js',
             'two-company-search' => 'views/js/modules/TwoCompanySearch.js',
             'two-order-intent' => 'views/js/modules/TwoOrderIntent.js',
             'two-sole-trader' => 'views/js/modules/TwoSoleTrader.js',
