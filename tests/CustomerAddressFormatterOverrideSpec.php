@@ -60,6 +60,8 @@ final class CustomerAddressFormatterOverrideSpec
         self::testDniFieldIsPreservedByOverride();
         self::testCountrySwitchKeepsCoreFormatterCountryInSync();
         self::testCompanyPlaceholderIsTheEmptyFieldHint();
+        self::testCompanyPlaceholderIsWithheldWhenTheApiKeyDoesNotVerify();
+        self::testCompanyPlaceholderSurvivesAnUnreachableModuleInstance();
     }
 
     /**
@@ -200,6 +202,76 @@ final class CustomerAddressFormatterOverrideSpec
 
         TinyAssert::same(6, (int) $formatter->getCountry()->id, 'Expected formatter country to switch to Spain');
         TinyAssert::true(isset($format['dni']) && $format['dni']->isRequired(), 'Expected dni to be required after country switch to Spain');
+    }
+
+
+    /**
+     * TWO-25326: the hint tells the buyer to search, and nothing will search
+     * when the shop's API key does not verify - the module mounts no search
+     * control in that state and the field is a plain text input. Withheld
+     * server-side here as well as stripped in the browser: this is the half that
+     * survives a back-office translation of the core string, which the browser
+     * cannot recognise as the module's own wording.
+     */
+    private static function testCompanyPlaceholderIsWithheldWhenTheApiKeyDoesNotVerify(): void
+    {
+        $format = self::formatWithModuleVerdict(false);
+
+        TinyAssert::true(isset($format['company']), 'the company field itself must still be there');
+        TinyAssert::false(
+            array_key_exists('placeholder', $format['company']->getAvailableValues()),
+            'no search hint while nothing will search'
+        );
+    }
+
+    /**
+     * ...and fail-OPEN when the module instance cannot be reached at all: an
+     * override that cannot ask must render what it always rendered, never strip
+     * a hint from a shop that is fine.
+     */
+    private static function testCompanyPlaceholderSurvivesAnUnreachableModuleInstance(): void
+    {
+        $format = self::formatWithModuleVerdict(null);
+
+        TinyAssert::true(
+            array_key_exists('placeholder', $format['company']->getAvailableValues()),
+            'an unreachable module instance must not cost the hint'
+        );
+    }
+
+    /**
+     * @param bool|null $verified null registers no instance at all
+     *
+     * @return array<string,FormField>
+     */
+    private static function formatWithModuleVerdict($verified): array
+    {
+        $overridePath = dirname(__DIR__) . '/override/classes/form/CustomerAddressFormatter.php';
+        if (!class_exists('CustomerAddressFormatter', false)) {
+            require_once $overridePath;
+        }
+
+        StubStore::$moduleInstances = [];
+        if ($verified !== null) {
+            $module = new TwopaymentTestHarness();
+            $module->primeTwoApiKeyStatus(
+                $verified ? Twopayment::API_KEY_STATUS_OK : Twopayment::API_KEY_STATUS_UNREACHABLE
+            );
+            StubStore::$moduleInstances['twopayment'] = $module;
+        }
+
+        $translator = new class {
+            public function trans($message, array $params = [], $domain = null): string
+            {
+                return (string) $message;
+            }
+        };
+
+        $formatter = new CustomerAddressFormatter(new Country(), $translator, []);
+        $format = $formatter->getFormat();
+        StubStore::$moduleInstances = [];
+
+        return $format;
     }
 
     private static function makeCountry(int $id): Country

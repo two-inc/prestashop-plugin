@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/../controllers/front/payment.php';
+
 /**
  * TWO-25326 - API-key verification failures are not one failure.
  *
@@ -52,11 +54,14 @@ final class ApiKeyVerificationSpec
         self::testNoticeNeverLeaksTheResponseBody();
         self::testNoticeIsSilentWhenVerifiedOrUnconfigured();
         self::testSaveReportsTheCategoryAndPublishesTheVerdict();
+        self::testVerifiedPanelFollowsTheLiveVerdict();
 
         // Checkout gate.
         self::testEveryFailureCategoryWithholdsThePaymentOption();
         self::testVerifiedKeyKeepsThePaymentOption();
         self::testWithholdingThePaymentOptionIsLogged();
+        self::testWithholdReasonIsLoggedOncePerRequestNotPerCall();
+        self::testPaymentSubmissionIsRefusedWhenTheKeyDoesNotVerify();
 
         // Company-search gate.
         self::testCheckoutConfigCarriesTheVerdictAsABoolean();
@@ -64,6 +69,8 @@ final class ApiKeyVerificationSpec
         // Cache.
         self::testCheckoutRendersReuseOneVerification();
         self::testFailingVerdictIsRetriedSoonerThanAHealthyOne();
+        self::testColdCacheClaimStopsConcurrentVerifications();
+        self::testAnAbandonedClaimExpiresQuickly();
         self::testChangedKeyNeverInheritsThePreviousVerdict();
     }
 
@@ -96,10 +103,21 @@ final class ApiKeyVerificationSpec
                 $this->primeTwoApiKeyStatus(null);
             }
 
+            /** @var callable|null runs INSIDE the wire call, i.e. mid-flight */
+            private $duringWireCall = null;
+
+            public function onWireCall(callable $callback): void
+            {
+                $this->duringWireCall = $callback;
+            }
+
             protected function requestTwoApiKeyVerification($apiKey, $environment, $timeout = null)
             {
                 $this->verifyCalls++;
                 $this->verifyTimeouts[] = $timeout;
+                if ($this->duringWireCall !== null) {
+                    call_user_func($this->duringWireCall);
+                }
                 return $this->outcome;
             }
 
@@ -120,6 +138,17 @@ final class ApiKeyVerificationSpec
                 $this->errors = array();
                 $this->validTwoGeneralFormValues();
                 return $this->errors;
+            }
+
+            public function saveGeneralFormForTest(): void
+            {
+                $this->saveTwoGeneralFormValues();
+            }
+
+            /** The config page's own health row / verified panel source. */
+            public function verifiedPanelFlagForTest(): int
+            {
+                return (int) $this->isTwoApiKeyVerified();
             }
 
             protected function getTwoPaymentOption()
@@ -156,6 +185,27 @@ final class ApiKeyVerificationSpec
     private static function transportOutcome(): array
     {
         return array('response' => false, 'code' => 0, 'error' => 'Could not resolve host');
+    }
+
+    /** POST values a minimal valid general-form save needs. */
+    private static function generalFormPost(string $apiKey): void
+    {
+        Tools::setTestValue('PS_TWO_ENVIRONMENT', 'development');
+        Tools::setTestValue('PS_TWO_TITLE_1', 'Two');
+        Tools::setTestValue('PS_TWO_SUB_TITLE_1', 'Pay later');
+        Tools::setTestValue('PS_TWO_MERCHANT_SHORT_NAME', 'merchant');
+        Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', $apiKey);
+    }
+
+    /** Writes a stored verdict for $apiKey, stamped $age seconds ago. */
+    private static function storeVerdict(string $status, ?int $code, string $apiKey, int $age = 0): void
+    {
+        Configuration::updateValue(Twopayment::CONFIG_API_KEY_STATUS, json_encode(array(
+            'status' => $status,
+            'code' => $code,
+            'key_hash' => md5($apiKey),
+        )));
+        Configuration::updateValue(Twopayment::CONFIG_API_KEY_STATUS_TS, time() - $age);
     }
 
     /** A cart that clears every OTHER hookPaymentOptions gate. */
@@ -354,10 +404,7 @@ final class ApiKeyVerificationSpec
     private static function testSaveReportsTheCategoryAndPublishesTheVerdict(): void
     {
         $module = self::module(self::transportOutcome());
-        Tools::setTestValue('PS_TWO_ENVIRONMENT', 'development');
-        Tools::setTestValue('PS_TWO_TITLE_1', 'Two');
-        Tools::setTestValue('PS_TWO_SUB_TITLE_1', 'Pay later');
-        Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', 'stored-key');
+        self::generalFormPost('stored-key');
 
         $errors = $module->validateGeneralFormForTest();
 
@@ -367,6 +414,20 @@ final class ApiKeyVerificationSpec
             $errors[0],
             'the save must report the category, not a generic "check your API key"'
         );
+
+        // Validation ALONE must not publish a verdict: PrestaShop skips the
+        // save when any field failed, and a verdict for a key the shop does not
+        // store would then describe nothing the gates can act on (and would
+        // make the config-page notice re-verify a second time in the same
+        // request).
+        TinyAssert::same(
+            '',
+            (string) Configuration::get(Twopayment::CONFIG_API_KEY_STATUS),
+            'a validation-only pass must not write a cached verdict'
+        );
+
+        // The save is what publishes it.
+        $module->saveGeneralFormForTest();
         TinyAssert::same(
             Twopayment::API_KEY_STATUS_UNREACHABLE,
             $module->getTwoApiKeyVerificationStatus()['status'],
@@ -374,21 +435,53 @@ final class ApiKeyVerificationSpec
         );
 
         // The recovery direction: a save that verifies must not leave the
-        // previous failure cached.
+        // previous failure cached, and must not cost a second verification.
         $fixed = self::module(self::okOutcome());
-        Tools::setTestValue('PS_TWO_ENVIRONMENT', 'development');
-        Tools::setTestValue('PS_TWO_TITLE_1', 'Two');
-        Tools::setTestValue('PS_TWO_SUB_TITLE_1', 'Pay later');
-        Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', 'stored-key');
-        Configuration::updateValue(Twopayment::CONFIG_API_KEY_STATUS, json_encode(array(
-            'status' => Twopayment::API_KEY_STATUS_INVALID,
-            'code' => 401,
-            'key_hash' => md5('stored-key'),
-        )));
-        Configuration::updateValue(Twopayment::CONFIG_API_KEY_STATUS_TS, time());
+        self::generalFormPost('stored-key');
+        self::storeVerdict(Twopayment::API_KEY_STATUS_INVALID, 401, 'stored-key');
 
         TinyAssert::same(0, count($fixed->validateGeneralFormForTest()), 'a verifying key must save cleanly');
+        $fixed->saveGeneralFormForTest();
         TinyAssert::same(Twopayment::API_KEY_STATUS_OK, $fixed->getTwoApiKeyVerificationStatus()['status']);
+        TinyAssert::same(1, $fixed->verifyCalls, 'the save must reuse its own check, not verify twice');
+    }
+
+    /**
+     * The config page used to read a sticky flag written only at save time, so
+     * a key that later expired rendered the green "verified" panel directly
+     * above the red notice saying Two is hidden from checkout (TWO-25326,
+     * review round 1).
+     */
+    private static function testVerifiedPanelFollowsTheLiveVerdict(): void
+    {
+        $module = self::module(self::httpOutcome(401));
+        // What a save on a then-working key left behind.
+        Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 1);
+        $module->primeTwoApiKeyStatus(Twopayment::API_KEY_STATUS_INVALID, 401);
+
+        TinyAssert::same(0, $module->verifiedPanelFlagForTest(), 'the panel must follow the current verdict');
+        TinyAssert::true($module->noticeForTest() !== '', 'and the failure notice must still be shown');
+
+        // The two consumers themselves, asserted against the source: neither
+        // getContent()'s `two_api_verified` template variable nor the health
+        // checklist's "API key" row can be reached without a HelperForm, and
+        // both are one-line reads that would silently go back to the sticky
+        // save-time flag under an unrelated edit. Same source-level approach
+        // AssetCacheBustingSpec uses for structure it cannot execute.
+        $source = (string) file_get_contents(dirname(__DIR__) . '/twopayment.php');
+        TinyAssert::true(
+            strpos($source, "'two_api_verified' => (int) \$this->isTwoApiKeyVerified()") !== false,
+            "getContent()'s two_api_verified must come from the live verdict"
+        );
+        TinyAssert::true(
+            strpos($source, "\$api_verified = \$this->isTwoApiKeyVerified()") !== false,
+            'the health checklist API-key row must come from the live verdict'
+        );
+        TinyAssert::same(
+            0,
+            substr_count($source, "Configuration::get('PS_TWO_API_KEY_VERIFIED')"),
+            'PS_TWO_API_KEY_VERIFIED is a save-time record only - it must have no readers left'
+        );
     }
 
     /* ===================================================================
@@ -450,6 +543,82 @@ final class ApiKeyVerificationSpec
         TinyAssert::true($logged !== '', 'hiding the payment option must say why in the log');
         TinyAssert::true(strpos($logged, 'service_error') !== false, 'the log must name the category');
         TinyAssert::true(strpos($logged, '503') !== false, 'the log must carry the HTTP status');
+    }
+
+
+    /**
+     * PrestaShop asks for payment options several times per payment-step
+     * render. The reason needs saying once, not once per ask, or a broken shop
+     * with traffic buries it in its own repetition (review round 1).
+     */
+    private static function testWithholdReasonIsLoggedOncePerRequestNotPerCall(): void
+    {
+        $module = self::module(self::okOutcome());
+        $module->primeTwoApiKeyStatus(Twopayment::API_KEY_STATUS_UNREACHABLE, null);
+        self::offerableCart($module);
+        PrestaShopLogger::reset();
+
+        $module->hookPaymentOptions([]);
+        $module->hookPaymentOptions([]);
+        $module->hookPaymentOptions([]);
+
+        $lines = 0;
+        foreach (PrestaShopLogger::$logs as $entry) {
+            if (strpos($entry['message'], 'API key verification status') !== false) {
+                ++$lines;
+            }
+        }
+        TinyAssert::same(1, $lines, 'the withhold reason must be logged once per request');
+    }
+
+    /**
+     * The payment option being withheld only stops the buyer who loads the page
+     * after the verdict changed. One who was already looking at the payment step
+     * can still submit, and that submission has to be refused here rather than
+     * failing opaquely at order creation (review round 1).
+     */
+    private static function testPaymentSubmissionIsRefusedWhenTheKeyDoesNotVerify(): void
+    {
+        $module = self::module(self::okOutcome());
+        $module->primeTwoApiKeyStatus(Twopayment::API_KEY_STATUS_INVALID, 401);
+
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$countries[33] = 'FR';
+        StubStore::$addresses[9201] = ['id_country' => 33, 'company' => 'Acme FR SAS', 'loaded' => true];
+        StubStore::$customers[9001] = ['email' => 'buyer@example.com', 'loaded' => true];
+        StubStore::$carts[9601] = [
+            'id_customer' => 9001,
+            'id_currency' => 978,
+            'id_address_invoice' => 9201,
+            'id_address_delivery' => 9201,
+            'id_carrier' => 0,
+            'id_lang' => 1,
+        ];
+
+        $context = Context::getContext();
+        $context->cart = new Cart(9601);
+
+        $controller = new TwopaymentPaymentModuleFrontController();
+        $controller->module = $module;
+        PrestaShopLogger::reset();
+
+        // The refusal path ends in redirectWithNotifications(), which the stub
+        // core raises instead of redirecting.
+        $refused = false;
+        try {
+            $controller->postProcess();
+        } catch (StubRedirect $e) {
+            $refused = true;
+        }
+
+        TinyAssert::true($refused, 'a submission on an unverifiable key must be refused, not processed');
+        $logged = false;
+        foreach (PrestaShopLogger::$logs as $entry) {
+            if (strpos($entry['message'], 'API key does not verify') !== false) {
+                $logged = true;
+            }
+        }
+        TinyAssert::true($logged, 'the refusal must be logged');
     }
 
     /* ===================================================================
@@ -527,33 +696,106 @@ final class ApiKeyVerificationSpec
 
         // Failed verdict, older than the failure TTL: re-verified.
         $failing = self::module(self::okOutcome());
-        Configuration::updateValue(Twopayment::CONFIG_API_KEY_STATUS, json_encode(array(
-            'status' => Twopayment::API_KEY_STATUS_SERVICE_ERROR,
-            'code' => 503,
-            'key_hash' => md5('stored-key'),
-        )));
-        Configuration::updateValue(Twopayment::CONFIG_API_KEY_STATUS_TS, time() - $ageBetweenTtls);
+        self::storeVerdict(Twopayment::API_KEY_STATUS_SERVICE_ERROR, 503, 'stored-key', $ageBetweenTtls);
 
         TinyAssert::same(Twopayment::API_KEY_STATUS_OK, $failing->getTwoApiKeyVerificationStatus()['status']);
         TinyAssert::same(1, $failing->verifyCalls, 'a stale FAILED verdict must be re-verified');
 
-        // A healthy verdict of exactly the same age is still good.
+        // A healthy verdict of exactly the same age is still good. The stub
+        // would answer 503, so a re-verification here would be visible in the
+        // status as well as in the call count.
         $healthy = self::module(self::httpOutcome(503));
-        Configuration::updateValue(Twopayment::CONFIG_API_KEY_STATUS, json_encode(array(
-            'status' => Twopayment::API_KEY_STATUS_OK,
-            'code' => 200,
-            'key_hash' => md5('stored-key'),
-        )));
-        Configuration::updateValue(Twopayment::CONFIG_API_KEY_STATUS_TS, time() - $ageBetweenTtls);
+        self::storeVerdict(Twopayment::API_KEY_STATUS_OK, 200, 'stored-key', $ageBetweenTtls);
 
         TinyAssert::same(Twopayment::API_KEY_STATUS_OK, $healthy->getTwoApiKeyVerificationStatus()['status']);
         TinyAssert::same(0, $healthy->verifyCalls, 'a healthy verdict of the same age is still fresh');
 
-        // Past the long TTL it is re-verified too.
+        // Past the long TTL it is re-verified too. The verdict JSON is written
+        // again here on purpose: writing only the clock would make this pass on
+        // the empty-slot branch instead of the expiry branch, and the long TTL
+        // would then have no coverage at all.
         $expired = self::module(self::httpOutcome(401));
-        Configuration::updateValue(Twopayment::CONFIG_API_KEY_STATUS_TS, time() - (Twopayment::API_KEY_STATUS_TTL + 1));
+        self::storeVerdict(Twopayment::API_KEY_STATUS_OK, 200, 'stored-key', Twopayment::API_KEY_STATUS_TTL + 1);
+
         TinyAssert::same(Twopayment::API_KEY_STATUS_INVALID, $expired->getTwoApiKeyVerificationStatus()['status']);
         TinyAssert::same(1, $expired->verifyCalls, 'a healthy verdict past its TTL must be re-verified');
+    }
+
+    /**
+     * Anti-stampede (review round 1). The clock is claimed BEFORE the wire call,
+     * so concurrent renders on a cold cache stand down instead of each firing
+     * their own verification - which on an unreachable API costs every one of
+     * them the full timeout, once per failure TTL, for the length of the
+     * outage.
+     */
+    private static function testColdCacheClaimStopsConcurrentVerifications(): void
+    {
+        // The claim is observable as a stored slot that a SECOND request (fresh
+        // instance, no memo) treats as fresh, written while the first request's
+        // wire call is still in flight. Reaching into the call itself is how a
+        // second request is simulated here.
+        $module = self::module(self::okOutcome());
+        $secondRequestSaw = null;
+
+        $module->onWireCall(function () use (&$secondRequestSaw) {
+            $concurrent = new class extends TwopaymentTestHarness {
+                public int $verifyCalls = 0;
+
+                public function __construct()
+                {
+                    parent::__construct();
+                    $this->primeTwoApiKeyStatus(null);
+                }
+
+                protected function requestTwoApiKeyVerification($apiKey, $environment, $timeout = null)
+                {
+                    $this->verifyCalls++;
+                    return array('response' => false, 'code' => 0, 'error' => 'should not be reached');
+                }
+            };
+            $concurrent->getTwoApiKeyVerificationStatus();
+            $secondRequestSaw = $concurrent->verifyCalls;
+        });
+
+        $module->getTwoApiKeyVerificationStatus();
+
+        TinyAssert::same(1, $module->verifyCalls, 'the first request verifies');
+        TinyAssert::same(0, (int) $secondRequestSaw, 'a concurrent request must not fire its own verification');
+    }
+
+    /**
+     * ...and a claim that is never superseded (the claiming process died
+     * mid-call) must expire quickly rather than standing in for a real verdict
+     * for a whole TTL.
+     */
+    private static function testAnAbandonedClaimExpiresQuickly(): void
+    {
+        $module = self::module(self::okOutcome());
+        $abandoned = null;
+
+        $module->onWireCall(function () use (&$abandoned) {
+            $abandoned = array(
+                'raw' => (string) Configuration::get(Twopayment::CONFIG_API_KEY_STATUS),
+                'ts' => (int) Configuration::get(Twopayment::CONFIG_API_KEY_STATUS_TS),
+            );
+        });
+        $module->getTwoApiKeyVerificationStatus();
+
+        TinyAssert::true(is_array($abandoned), 'the claim must be written before the wire call');
+        $decoded = json_decode($abandoned['raw'], true);
+        TinyAssert::same(md5('stored-key'), $decoded['key_hash'], 'the claim belongs to the key being verified');
+
+        // The claim was back-dated so it survives the call it covers and little
+        // more.
+        $remaining = ($abandoned['ts'] + Twopayment::API_KEY_STATUS_TTL) - time();
+        TinyAssert::true(
+            $remaining <= Twopayment::API_KEY_STATUS_CLAIM_WINDOW,
+            'a claim must not stand in for a verdict for a whole TTL (got ' . $remaining . 's)'
+        );
+        TinyAssert::true(
+            Twopayment::API_KEY_STATUS_CLAIM_WINDOW > Twopayment::API_TIMEOUT_STATE_CHECK,
+            'the claim window must outlast the call it covers'
+        );
     }
 
     /**

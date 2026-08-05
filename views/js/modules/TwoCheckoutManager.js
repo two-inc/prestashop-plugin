@@ -2244,21 +2244,19 @@ class TwoCheckoutManager {
      * anything else) supplied is left exactly as it is.
      */
     neutralizeCompanySearchAffordance() {
-        const field = document.querySelector("input[name='company']");
-        if (!field) {
-            return;
-        }
-        const current = field.getAttribute('placeholder');
-        if (!current) {
-            return;
-        }
         const ours = [
             this.t('company_search_placeholder', 'Enter company name to search'),
             'Enter company name to search'
         ];
-        if (ours.indexOf(current) !== -1) {
-            field.removeAttribute('placeholder');
-        }
+        // ALL of them: PrestaShop renders a second address form, with its own
+        // `name='company'`, as soon as the buyer ticks "billing address differs
+        // from shipping address".
+        document.querySelectorAll("input[name='company']").forEach(function (field) {
+            const current = field.getAttribute('placeholder');
+            if (current && ours.indexOf(current) !== -1) {
+                field.removeAttribute('placeholder');
+            }
+        });
     }
 
     /**
