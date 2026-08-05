@@ -62,6 +62,7 @@ final class TwoSoleTraderSpec
             'testPaymentTileReportsAnUnresolvedRegistryAsNoAnswer',
             'testPaymentTileWithNoBillingCountryAsksTheRegistryNothing',
             'testRegistryLookupUsesTheRenderPathTimeout',
+            'testFailedRegistryLookupIsAttemptedOncePerRequest',
         ];
         foreach ($tests as $test) {
             self::reset();
@@ -476,6 +477,45 @@ final class TwoSoleTraderSpec
         // what lets the browser adopt "business-only country" and stop asking.
         TinyAssert::same('0', $businessOnly['vars']['sole_trader_answer']);
         TinyAssert::same('GB', $businessOnly['vars']['sole_trader_country']);
+    }
+
+    /**
+     * A failed lookup costs the request ONE timeout, not one per caller.
+     *
+     * This is the counterpart to testFetchErrorIsNotCached: the error must not
+     * become an ANSWER and must not outlive the request, but it must still be
+     * remembered FOR the request. Round 3 dropped the request-scoped memo along
+     * with the bad one and turned a failing registry into several serial timeouts
+     * on the checkout render path - which took the payment option past the e2e
+     * suite's wait and off the page entirely.
+     */
+    private static function testFailedRegistryLookupIsAttemptedOncePerRequest(): void
+    {
+        // No canned response: the harness returns false, the shape of a transport
+        // failure.
+        $module = self::harness([], []);
+
+        TinyAssert::same(null, TwoSoleTrader::resolveAvailability($module, 'GB'));
+        TinyAssert::same(null, TwoSoleTrader::resolveAvailability($module, 'GB'));
+        TinyAssert::false(TwoSoleTrader::isAvailable($module, 'GB'));
+
+        TinyAssert::same(
+            1,
+            count(array_filter($module->requests, function ($endpoint) {
+                return strpos($endpoint, '/registry/v1/supported-company-types/GB') === 0;
+            })),
+            'a failing registry lookup must be attempted at most once per request per country'
+        );
+
+        // Still per-COUNTRY, not a blanket "give up".
+        TinyAssert::same(null, TwoSoleTrader::resolveAvailability($module, 'NO'));
+        TinyAssert::same(
+            1,
+            count(array_filter($module->requests, function ($endpoint) {
+                return strpos($endpoint, '/registry/v1/supported-company-types/NO') === 0;
+            })),
+            'a different country must still get its own attempt'
+        );
     }
 
     /**
