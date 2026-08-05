@@ -60,10 +60,10 @@ final class TwoSoleTraderSpec
             'testFormatterHasNoAccountTypeField',
             'testPaymentTileCarriesTheServerResolvedToggleAnswer',
             'testPaymentTileWithAnUnknownAnswerAsksNothingAndClaimsNothing',
-            'testPaymentTileReportsAFailedLookupAsNoAnswer',
             'testPaymentTileWithNoBillingCountryAsksTheRegistryNothing',
-            'testRegistryLookupUsesTheRenderPathTimeout',
+            'testRegistryLookupUsesTheTightCheckoutTimeout',
             'testFailedRegistryLookupIsAttemptedOncePerRequest',
+            'testPaymentOptionStubRefusesASetterCoreDoesNotHave',
         ];
         foreach ($tests as $test) {
             self::reset();
@@ -509,8 +509,8 @@ final class TwoSoleTraderSpec
         // failure.
         $module = self::harness([], []);
 
-        TinyAssert::same(null, TwoSoleTrader::resolveAvailability($module, 'GB'));
-        TinyAssert::same(null, TwoSoleTrader::resolveAvailability($module, 'GB'));
+        TinyAssert::same(null, TwoSoleTrader::getSupportedCompanyTypesOrNull($module, 'GB'));
+        TinyAssert::same(null, TwoSoleTrader::getSupportedCompanyTypesOrNull($module, 'GB'));
         TinyAssert::false(TwoSoleTrader::isAvailable($module, 'GB'));
 
         TinyAssert::same(
@@ -522,7 +522,7 @@ final class TwoSoleTraderSpec
         );
 
         // Still per-COUNTRY, not a blanket "give up".
-        TinyAssert::same(null, TwoSoleTrader::resolveAvailability($module, 'NO'));
+        TinyAssert::same(null, TwoSoleTrader::getSupportedCompanyTypesOrNull($module, 'NO'));
         TinyAssert::same(
             1,
             count(array_filter($module->requests, function ($endpoint) {
@@ -575,32 +575,38 @@ final class TwoSoleTraderSpec
     }
 
     /**
-     * And a registry FAILURE that the browser already hit is still no answer -
-     * never cached as "business-only country" (see resolveAvailability()).
+     * The PaymentOption stub must refuse a setter PrestaShop core does not have.
+     *
+     * Round 4 review: the stub used to accept ANY `set*` name, record it and
+     * return $this - so a module change calling a setter core lacks passed every
+     * spec here and fatalled in production, the one mismatch a stub of a core
+     * value object exists to catch. This asserts the allowlist is load-bearing
+     * rather than decorative.
      */
-    private static function testPaymentTileReportsAFailedLookupAsNoAnswer(): void
+    private static function testPaymentOptionStubRefusesASetterCoreDoesNotHave(): void
     {
-        StubStore::$addresses[8811] = ['id_country' => 44];
-        StubStore::$countries[44] = 'gb';
-        Context::getContext()->cart->id_address_invoice = 8811;
+        $option = new PrestaShop\PrestaShop\Core\Payment\PaymentOption();
+        // A real one still works, and still chains.
+        TinyAssert::true($option->setModuleName('twopayment') === $option);
 
-        // No canned response: the harness returns false, the shape of a transport
-        // failure. This is the browser's request failing, before the render.
-        $module = self::harness([], []);
-        TinyAssert::same(null, TwoSoleTrader::resolveAvailability($module, 'GB'));
-
-        $captured = self::captureTileVars($module);
-        TinyAssert::same('', $captured['vars']['sole_trader_answer']);
-        TinyAssert::same(false, $captured['vars']['sole_trader_available']);
+        $refused = false;
+        try {
+            $option->setSomethingCoreDoesNotHave('x');
+        } catch (BadMethodCallException $e) {
+            $refused = true;
+        }
+        TinyAssert::true($refused, 'the stub must refuse a setter that PrestaShop core does not define');
     }
 
     /**
-     * The registry lookup runs inline in a shopper's payment-step render now, so
-     * it must carry the tight render-path timeout rather than the 30s default it
-     * inherited when it was only ever reached from the module's own AJAX
-     * controller, after the buyer's page had already painted.
+     * The registry lookup must carry the tight checkout timeout rather than
+     * setTwoPaymentRequest()'s 60-second default (API_TIMEOUT_LONG), which is
+     * sized for file uploads. It is reached from the module's own AJAX controller
+     * while a buyer waits on the checkout for the toggle to appear - the payment
+     * tile deliberately does NOT reach it, reading the answer cache-only instead -
+     * so a minute is the wrong bound for it either way.
      */
-    private static function testRegistryLookupUsesTheRenderPathTimeout(): void
+    private static function testRegistryLookupUsesTheTightCheckoutTimeout(): void
     {
         $module = self::harness(
             [],
@@ -611,7 +617,7 @@ final class TwoSoleTraderSpec
         TinyAssert::same(
             Twopayment::API_TIMEOUT_STATE_CHECK,
             $module->timeouts['/registry/v1/supported-company-types/GB'] ?? null,
-            'the registry lookup is on the checkout render path and must not inherit the 30s default'
+            'the registry lookup happens while a buyer waits on the checkout and must not inherit the 60s default'
         );
     }
 

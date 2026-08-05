@@ -58,24 +58,8 @@ function buildCountry(iso) {
     return holder.querySelector('select');
 }
 
-/**
- * Drain timers and promises for an instance under test. Named with a trailing
- * underscore only to stay out of the way of the local `settle` resolvers the
- * in-flight-request tests hold.
- *
- * @param {object} instance
- * @returns {Promise<void>}
- */
-async function settle_(instance) {
-    void instance;
-    jest.advanceTimersByTime(150);
-    await flushPromises();
-    jest.advanceTimersByTime(150);
-    await flushPromises();
-}
-
 /** Let the debounced observer callback and any promise chain run. */
-async function settle() {
+async function drain() {
     jest.advanceTimersByTime(150);
     await flushPromises();
     jest.advanceTimersByTime(150);
@@ -130,7 +114,7 @@ describe('a server-rendered toggle is adopted, not rebuilt', () => {
         expect(container().getAttribute('style')).toContain('display: block');
 
         const instance = build();
-        await settle();
+        await drain();
 
         // Still there, still visible - and not a single availability request.
         expect(chipTexts()).toEqual(['Registered business', 'Sole trader']);
@@ -143,7 +127,7 @@ describe('a server-rendered toggle is adopted, not rebuilt', () => {
         buildCountry('GB');
         TwoSoleTrader = loadSoleTrader();
         const instance = build();
-        await settle();
+        await drain();
 
         // The whole risk of moving the markup server-side: chips that look
         // right and do nothing, because the listeners used to be attached in
@@ -163,7 +147,7 @@ describe('a server-rendered toggle is adopted, not rebuilt', () => {
         buildCountry('GB');
         TwoSoleTrader = loadSoleTrader();
         const instance = build();
-        await settle();
+        await drain();
 
         const soleTraderChip = document.querySelector('.two-sole-trader__mode[data-mode="sole_trader"]');
         const press = new window.Event('keypress', { bubbles: true });
@@ -184,7 +168,7 @@ describe('a server-rendered toggle is adopted, not rebuilt', () => {
         expect(container().getAttribute('style')).toContain('display: none');
 
         const instance = build();
-        await settle();
+        await drain();
 
         expect(chipTexts()).toEqual([]);
         expect(fetchCalls).toEqual([]);
@@ -196,7 +180,7 @@ describe('a server-rendered toggle is adopted, not rebuilt', () => {
         buildCountry('GB');
         TwoSoleTrader = loadSoleTrader();
         const instance = build();
-        await settle();
+        await drain();
 
         // Force render() to run over the already-bound, server-rendered chips.
         // A second listener per chip would make one click toggle mode twice -
@@ -222,7 +206,7 @@ describe('the adopted answer is trusted exactly as far as it goes', () => {
         buildCountry('NO');
         TwoSoleTrader = loadSoleTrader();
         const instance = build();
-        await settle();
+        await drain();
 
         expect(fetchCalls).toHaveLength(1);
         expect(fetchCalls[0]).toContain('country=NO');
@@ -234,12 +218,12 @@ describe('the adopted answer is trusted exactly as far as it goes', () => {
         const select = buildCountry('GB');
         TwoSoleTrader = loadSoleTrader();
         const instance = build();
-        await settle();
+        await drain();
         expect(fetchCalls).toEqual([]);
 
         select.querySelector('option').setAttribute('data-iso-code', 'SE');
         select.dispatchEvent(new window.Event('change', { bubbles: true }));
-        await settle();
+        await drain();
 
         expect(fetchCalls).toHaveLength(1);
         expect(fetchCalls[0]).toContain('country=SE');
@@ -258,7 +242,7 @@ describe('the adopted answer is trusted exactly as far as it goes', () => {
         expect(instance.renderedForCountry).toBeNull();
         expect(instance.availabilityByCountry).toEqual({});
 
-        await settle();
+        await drain();
 
         expect(fetchCalls).toHaveLength(1);
         expect(chipTexts()).toEqual(['Registered business', 'Sole trader']);
@@ -278,7 +262,7 @@ describe('the adopted answer is trusted exactly as far as it goes', () => {
         expect(instance.renderedForCountry).toBeNull();
         expect(instance.availabilityByCountry).toEqual({});
 
-        await settle();
+        await drain();
 
         expect(fetchCalls).toHaveLength(1);
         instance.destroy();
@@ -291,7 +275,7 @@ describe('the adopted answer is trusted exactly as far as it goes', () => {
         buildCountry('GB');
         TwoSoleTrader = loadSoleTrader();
         const instance = build();
-        await settle();
+        await drain();
 
         expect(fetchCalls).toHaveLength(1);
         expect(chipTexts()).toEqual(['Registered business', 'Sole trader']);
@@ -321,7 +305,7 @@ describe('the adopted answer is trusted exactly as far as it goes', () => {
         expect(instance.renderedForCountry).toBeNull();
         expect(instance.availabilityByCountry).toEqual({});
 
-        await settle();
+        await drain();
         expect(fetchCalls).toHaveLength(1);
         instance.destroy();
     });
@@ -336,7 +320,7 @@ describe('which country the answer is resolved for', () => {
         buildPaymentTileWithSoleTraderAnswer('', 'NO');
         TwoSoleTrader = loadSoleTrader();
         const instance = build({ billingCountry: 'NO', shopCountry: 'ZZ' });
-        await settle();
+        await drain();
 
         expect(fetchCalls).toHaveLength(1);
         expect(fetchCalls[0]).toContain('country=NO');
@@ -347,7 +331,7 @@ describe('which country the answer is resolved for', () => {
         buildPaymentTileWithSoleTraderAnswer('', 'GB');
         TwoSoleTrader = loadSoleTrader();
         const instance = build({ billingCountry: '', shopCountry: 'SE' });
-        await settle();
+        await drain();
 
         expect(fetchCalls).toHaveLength(1);
         expect(fetchCalls[0]).toContain('country=SE');
@@ -359,7 +343,7 @@ describe('which country the answer is resolved for', () => {
         buildCountry('DK');
         TwoSoleTrader = loadSoleTrader();
         const instance = build({ billingCountry: 'NO', shopCountry: 'SE' });
-        await settle();
+        await drain();
 
         // A buyer mid-edit may have picked a country that is not saved yet.
         expect(fetchCalls).toHaveLength(1);
@@ -396,7 +380,7 @@ describe('a replaced container is re-adopted from its own markup', () => {
         buildCountry('GB');
         TwoSoleTrader = loadSoleTrader();
         const instance = build();
-        await settle();
+        await drain();
 
         replaceWithServerRendered('1', 'GB');
         // NO timer advance: the container-identity check is deliberately not
@@ -417,13 +401,13 @@ describe('a replaced container is re-adopted from its own markup', () => {
         buildCountry('GB');
         TwoSoleTrader = loadSoleTrader();
         const instance = build();
-        await settle();
+        await drain();
         expect(container().getAttribute('style')).toContain('display: block');
 
         // Same country, but the server now says business-only. The cached `true`
         // used to win and re-render the toggle as available.
         replaceWithServerRendered('0', 'GB');
-        await settle();
+        await drain();
 
         expect(container().style.display).toBe('none');
         expect(chipTexts()).toEqual([]);
@@ -461,11 +445,52 @@ describe('a replaced container is re-adopted from its own markup', () => {
         // so the settled-check then agreed the toggle was correct - and the toggle
         // stayed hidden for the rest of the page's life, unrecoverably.
         settle({ json: () => Promise.resolve({ success: false }) });
-        await settle_(instance);
+        await drain();
 
         expect(container().style.display).toBe('block');
         expect(chipTexts()).toEqual(['Registered business', 'Sole trader']);
         expect(instance.availabilityByCountry.GB).toBe(true);
+        instance.destroy();
+    });
+
+    test('a superseded request leaves the CURRENT country resolved, not stuck', async () => {
+        // Round 4 review, finding 1. The generation counter is per instance, not
+        // per country, so an adoption for country A supersedes an outstanding
+        // request for country B - and dropping that result must not leave B
+        // unresolved with nothing scheduled to resolve it. The debounced refresh
+        // that would have re-asked already ran and bailed while the request was
+        // still out (pendingCountry was set), so the bail has to re-arm it.
+        let settle;
+        global.window.fetch = (url) => {
+            fetchCalls.push(url);
+            return new Promise((resolve) => { settle = resolve; });
+        };
+        global.fetch = global.window.fetch;
+
+        buildPaymentTile();
+        buildCountry('DK');
+        TwoSoleTrader = loadSoleTrader();
+        const instance = build({ billingCountry: 'DK' });
+        jest.advanceTimersByTime(150);
+        await flushPromises();
+        expect(fetchCalls).toHaveLength(1);
+        expect(fetchCalls[0]).toContain('country=DK');
+
+        // A replacement carrying an answer for a DIFFERENT country.
+        replaceWithServerRendered('1', 'GB');
+        await flushPromises();
+
+        global.window.fetch = (url) => {
+            fetchCalls.push(url);
+            return Promise.resolve({ json: () => Promise.resolve({ success: true, available: true }) });
+        };
+        global.fetch = global.window.fetch;
+        settle({ json: () => Promise.resolve({ success: true, available: true }) });
+        await drain();
+
+        // The buyer's country is still DK, so DK is what has to end up resolved.
+        expect(fetchCalls.filter((u) => u.includes('country=DK'))).toHaveLength(2);
+        expect(instance.renderedForCountry).toBe('DK');
         instance.destroy();
     });
 
@@ -491,7 +516,7 @@ describe('a replaced container is re-adopted from its own markup', () => {
         // The older request says available. It must not win: it was issued before
         // the server's answer existed.
         settle({ json: () => Promise.resolve({ success: true, available: true }) });
-        await settle_(instance);
+        await drain();
 
         expect(container().style.display).toBe('none');
         expect(instance.availabilityByCountry.GB).toBe(false);
@@ -503,7 +528,7 @@ describe('a replaced container is re-adopted from its own markup', () => {
         const select = buildCountry('GB');
         TwoSoleTrader = loadSoleTrader();
         const instance = build();
-        await settle();
+        await drain();
 
         // Observer off, so the ONLY route into refreshAvailability() is the
         // country-change listener. That listener can fire after a fragment
@@ -528,7 +553,7 @@ describe('lifecycle', () => {
         const select = buildCountry('GB');
         TwoSoleTrader = loadSoleTrader();
         const instance = build();
-        await settle();
+        await drain();
 
         // stopObserving() means "this flow is resolved", not "this instance is
         // gone". An enrolled buyer who then switches to a business-only country
@@ -537,7 +562,7 @@ describe('lifecycle', () => {
         answer.available = false;
         select.querySelector('option').setAttribute('data-iso-code', 'SE');
         select.dispatchEvent(new window.Event('change', { bubbles: true }));
-        await settle();
+        await drain();
 
         expect(fetchCalls).toHaveLength(1);
         expect(container().style.display).toBe('none');
@@ -549,12 +574,12 @@ describe('lifecycle', () => {
         const select = buildCountry('GB');
         TwoSoleTrader = loadSoleTrader();
         const instance = build();
-        await settle();
+        await drain();
 
         instance.destroy();
         select.querySelector('option').setAttribute('data-iso-code', 'SE');
         select.dispatchEvent(new window.Event('change', { bubbles: true }));
-        await settle();
+        await drain();
 
         // The handler used to be an anonymous closure with no reference kept, so
         // there was no way to detach it at all - a disposed instance stayed a

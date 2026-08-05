@@ -185,7 +185,12 @@ describe('the guard suppresses the first paint only when all three conditions ho
             // No TwoCheckoutManager, no restore - a JS error elsewhere, an asset
             // that failed to load. The tile must not stay hidden for the rest of
             // the checkout.
-            jest.advanceTimersByTime(2000);
+            //
+            // 600ms, not 2000: jsdom reports readyState 'complete', so this is the
+            // post-DOM-ready grace path, and 2000 now coincides with the absolute
+            // cap - which made either path satisfy the assertion. Proven by
+            // mutation: stretching the grace period alone left this test passing.
+            jest.advanceTimersByTime(600);
             expect(guardActive()).toBe(false);
         } finally {
             jest.useRealTimers();
@@ -350,6 +355,26 @@ describe('the payload the guard reads', () => {
         // flash the guard exists to remove, invented by the guard.
         document.body.innerHTML = [
             '<div class="payment-options">',
+            "  <input type='radio' name='payment-option' value='twopayment' id='payment-option-1' checked />",
+            "  <input type='radio' name='payment-option' value='othermethod' id='payment-option-2' />",
+            '</div>'
+        ].join('\n');
+        const manager = makeManager();
+
+        manager.triggerNativeCartRefresh();
+
+        expect(JSON.parse(sessionStorage.getItem(KEY))).toEqual({ id: 'payment-option-1', two: true });
+    });
+
+    test("Two's selection is recorded as two: true when containment FAILS but the radio is Two's", () => {
+        // Round 4 review, finding 2. A theme can render `data-module-name` on a
+        // wrapper that does not contain the radio - containment then answers "not
+        // Two" for Two's own radio, and the guard hides the tile through the first
+        // paint of a load on its way to SELECTING Two. So the value tests must run
+        // whenever containment FAILS, not only when no such element exists.
+        document.body.innerHTML = [
+            '<div class="payment-options">',
+            '  <div data-module-name="twopayment"><span>label only, no radio</span></div>',
             "  <input type='radio' name='payment-option' value='twopayment' id='payment-option-1' checked />",
             "  <input type='radio' name='payment-option' value='othermethod' id='payment-option-2' />",
             '</div>'
