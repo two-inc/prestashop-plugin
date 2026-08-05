@@ -172,6 +172,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_31a1931b5703e90cf392686134f4aae1'] 
 $_MODULE['<{twopayment}prestashop>twopayment_3279954443b449a5be560a0be578e6c2'] = 'Avgiftsregelgruppe som BARE ANTAS FOR FRAKT når fraktørens avgiftssats ikke kan fastslås for ordren – for eksempel når frakten prises utenfor fraktørtabellen i PrestaShop, slik at ingen fraktør oppgir en avgiftsregelgruppe. Den brukes aldri når en fraktør faktisk oppgir en: fraktørens egen gruppe vinner alltid. La den stå tom for å fortsette å avvise slike ordrer framfor å anta en sats.';
 $_MODULE['<{twopayment}prestashop>twopayment_329aa8486f4fde54cc4c9965faea9aa9'] = '(etter pris)';
 $_MODULE['<{twopayment}prestashop>twopayment_330f49df8243756a8a4dc7f7f7ee6dfe'] = 'Utvikling';
+$_MODULE['<{twopayment}prestashop>twopayment_336d4f49452554bc13e4ed9dd2603300'] = 'Denne butikken fikk ikke kontakt med Two API i det hele tatt (nettverk, DNS eller brannmur). Selve API-nøkkelen er ikke vurdert.';
 $_MODULE['<{twopayment}prestashop>twopayment_3438dbc5b197844ab4cb01ab14af8a7b'] = 'Standardvilkår (f.eks. 30 dager fra oppfyllelse)';
 $_MODULE['<{twopayment}prestashop>twopayment_34d4c5b4f293f3953b9f1cea4ada6a1d'] = 'Velg hvilke betalingsvilkår du vil tilby. Standardvilkår beregnes fra datoen ordren blir oppfylt.';
 $_MODULE['<{twopayment}prestashop>twopayment_35e20456c7fa8d5e53e003d7f6675d84'] = 'Tilstand for gjeldende konfigurasjon';
@@ -213,6 +214,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_4e48eb7b84e6418738c6548b3c826d94'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4f40188f22dbc3f6b5f5ea06152782ca'] = 'Kunne ikke bygge datainnholdet for ordreintensjonen';
 $_MODULE['<{twopayment}prestashop>twopayment_526f52140844e831b1965500d17c26d8'] = 'Vilkår med slutten av måneden (EOM):';
 $_MODULE['<{twopayment}prestashop>twopayment_52f4393e1b52ba63e27310ca92ba098c'] = 'Generelle innstillinger';
+$_MODULE['<{twopayment}prestashop>twopayment_53943134b629b65e0a320b7dd6ed92a8'] = 'Denne API-nøkkelen ble avvist av Two. Den kan være ugyldig eller utløpt - kontroller nøkkelen i Two-portalen din.';
 $_MODULE['<{twopayment}prestashop>twopayment_539de410a9a131c0e925dc8e248a29d2'] = 'Betalingsfristen er slutten av inneværende måned pluss X dager fra datoen ordren blir oppfylt. Eksempel: Hvis du oppfyller en ordre 15. januar med vilkåret EOM+30, er betalingsfristen 28. februar (slutten av januar + 30 dager). Dette er vanlig ved B2B-fakturering.';
 $_MODULE['<{twopayment}prestashop>twopayment_545e6db228f47336669130f1068a519e'] = 'Kunne ikke behandle ordren din med Two-betaling. Velg en annen betalingsmåte eller kontakt butikken.';
 $_MODULE['<{twopayment}prestashop>twopayment_547b272d62ed4ca5d2cd83e8b7b463da'] = 'Viktige krav';
@@ -259,6 +261,9 @@ $_MODULE['<{twopayment}prestashop>twopayment_6cae7c7478f2d404dc69e4e355172166'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6d5cc1a38d6228cd43fb864b6c4d4b75'] = 'Kunne ikke bekrefte betalingen fra Two. Prøv utsjekken på nytt.';
 $_MODULE['<{twopayment}prestashop>twopayment_6f3455d187a23443796efdcbe044096b'] = 'Ingen avgift';
 $_MODULE['<{twopayment}prestashop>twopayment_6fd95deaadec67e72965ee1c5a8d81cf'] = 'Skriv inn firmanavn for å søke';
+$_MODULE['<{twopayment}prestashop>twopayment_8effea9a4ab719b4272d74ad33f5b897'] = 'API-nøkkelen kunne ikke verifiseres.';
+$_MODULE['<{twopayment}prestashop>twopayment_943ecf14953e769ec88faeeccfd31cad'] = 'Two ga et uventet svar under verifisering av API-nøkkelen (HTTP %d).';
+$_MODULE['<{twopayment}prestashop>twopayment_9f403283660172ddd88e719a34a37692'] = 'Skriv inn Two API-nøkkelen din for å aktivere Two.';
 $_MODULE['<{twopayment}prestashop>twopayment_b880d635ee26e267ab68784bb47a0ad1'] = 'Skriv inn firmanavnet ditt';
 $_MODULE['<{twopayment}prestashop>twopayment_70121086cdb2e52ce9ac069b1781dc76'] = 'Det oppsto et midlertidig problem med å verifisere betalingen din. Prøv igjen eller velg en annen betalingsmåte.';
 $_MODULE['<{twopayment}prestashop>twopayment_701dfa446588bcb18e3a546249ca91a2'] = 'Skjul betalingsmåten under denne ordreverdien (butikkens standardvaluta, på avgiftsgrunnlaget som er valgt nedenfor). La feltet stå tomt for ingen minsteverdi.';
@@ -343,7 +348,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_a58a88e252eae380cbcff6421cd5d08c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_a7ae6fbd75c4968e5b9c92b908fe824e'] = 'Telefonnummeret i fakturaadressen din ser ut til å være ugyldig. Gå tilbake og kontroller at du har oppgitt et gyldig telefonnummer for landet ditt.';
 $_MODULE['<{twopayment}prestashop>twopayment_ab63d3168928b8331551047a81e5dd32'] = 'Velg land ovenfor for å søke opp firmaet ditt.';
 $_MODULE['<{twopayment}prestashop>twopayment_ac0aea4e2a54e5ce025bec4b58fd7ca3'] = 'Grunnlag for tilleggsberegning';
-$_MODULE['<{twopayment}prestashop>twopayment_ac7209cfe48af2c99afc2be9ce19d71b'] = 'Verifiseringen av API-nøkkelen mislyktes. Kontroller API-nøkkelen din.';
 $_MODULE['<{twopayment}prestashop>twopayment_ad390087f94a9a17adaf0b81ad83b2e7'] = 'fra slutten av måneden';
 $_MODULE['<{twopayment}prestashop>twopayment_ad920804afec4822b0d006452fce3929'] = 'Ugyldig verifiseringssvar fra Two.';
 $_MODULE['<{twopayment}prestashop>twopayment_b1021ae56c3544e96ea36a7d80e48145'] = 'Kundene må oppgi firmanavnet sitt i fakturaadressen';
@@ -392,6 +396,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_cf30831a8831200d89309561f036c5a7'] 
 $_MODULE['<{twopayment}prestashop>twopayment_cf5f3091e30dee6597885d8c0e0c357f'] = 'Vilkår';
 $_MODULE['<{twopayment}prestashop>twopayment_d132286ce060a9349df55de2808b4d5f'] = 'Ingen treff funnet';
 $_MODULE['<{twopayment}prestashop>twopayment_d2a7c39c5ec025981855847fed006923'] = 'Hvis du velger JA, blir tax_subtotals sendt i datainnholdet til /v1/order og /v1/order_intent. Hvis du velger NEI, utelates tax_subtotals fra dette datainnholdet.';
+$_MODULE['<{twopayment}prestashop>twopayment_d2b8b622af4e9432f62dc6e3bea9d3d1'] = 'Two kunne ikke verifisere API-nøkkelen nå (HTTP %d). Dette er vanligvis midlertidig - prøv igjen om kort tid.';
 $_MODULE['<{twopayment}prestashop>twopayment_d2f68faa84d4bab378419dae024f85f9'] = 'Betalingen er godkjent! Velg betalingsvilkår nedenfor.';
 $_MODULE['<{twopayment}prestashop>twopayment_d314a00556eb88a960abf8a0de8b45f8'] = 'Noen av opplysningene som er oppgitt er ugyldige. Kontroller opplysningene i fakturaadressen din og prøv igjen.';
 $_MODULE['<{twopayment}prestashop>twopayment_d32e67e619603fc5368d087716b1afb4'] = 'Firmaopplysningene som er oppgitt er ugyldige. Gå tilbake til fakturaadressen og søk opp firmanavnet ditt for å velge et gyldig firma.';
@@ -407,6 +412,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_d74f5295cfbc83c79a5737ed01bc13d3'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d7763ceb9a0400fe241b0d5e6f0b5b21'] = 'Standardvilkår:';
 $_MODULE['<{twopayment}prestashop>twopayment_d801910356f73cbb407fe5d320c581d7'] = 'Betalingsfristen er X dager fra datoen ordren blir oppfylt. Eksempel: Hvis du oppfyller en ordre 15. januar med 30 dagers vilkår, er betalingsfristen 14. februar.';
 $_MODULE['<{twopayment}prestashop>twopayment_d83e9ff3f8fd11e651a6f27f40dcf82b'] = 'Feil i konfigurasjonen av betalingsmåten. Kontakt butikken.';
+$_MODULE['<{twopayment}prestashop>twopayment_d9fe698b79530af9334d5d6f590843cb'] = 'Two skjules i kassen til nøkkelen er verifisert.';
 $_MODULE['<{twopayment}prestashop>twopayment_da26328af93752b0b89478bfd90627ce'] = 'Ordre refundert → Refundert';
 $_MODULE['<{twopayment}prestashop>twopayment_da26aecbab950874dc37e7b30d82b40d'] = 'Minste ordreverdi er %1$s%2$s %3$s avgift.';
 $_MODULE['<{twopayment}prestashop>twopayment_dc01133f318ab68ac223d3e362927266'] = 'Slå på feilsøkingsmodus';
