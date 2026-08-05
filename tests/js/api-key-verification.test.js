@@ -167,3 +167,41 @@ describe('company search on a healthy shop', () => {
         });
     });
 });
+
+describe('the bootstrap translation of the server payload', () => {
+    // views/js/twopayment.js is where the verdict actually crosses from the
+    // server payload into the manager's config, and it used to do that twice
+    // (primary + retry path) with no coverage of either - so the
+    // explicit-false-only semantics the comments and the tests above advertise
+    // could have been an === true check and nothing would have noticed.
+    function buildConfig(payload) {
+        window.twopayment = payload;
+        loadScript('views/js/twopayment.js');
+        return window.twoBuildCheckoutManagerConfig(payload);
+    }
+
+    test('a real false from the server disables the search', () => {
+        expect(buildConfig({ api_key_verified: false }).apiKeyVerified).toBe(false);
+    });
+
+    test('a real true enables it', () => {
+        expect(buildConfig({ api_key_verified: true }).apiKeyVerified).toBe(true);
+    });
+
+    test('anything else - absent included - reads as verified', () => {
+        [{}, { api_key_verified: undefined }, { api_key_verified: '0' }, { api_key_verified: 0 }].forEach(
+            (payload) => {
+                expect(buildConfig(payload).apiKeyVerified).toBe(true);
+            }
+        );
+    });
+
+    test('the location and lookup switches keep their own string semantics', () => {
+        const config = buildConfig({ company_name_search: '0', address_lookup: '0', api_key_verified: true });
+
+        expect(config.companySearchInAddressArea).toBe(false);
+        expect(config.addressLookupEnabled).toBe(false);
+        expect(buildConfig({}).companySearchInAddressArea).toBe(true);
+        expect(buildConfig({}).addressLookupEnabled).toBe(true);
+    });
+});

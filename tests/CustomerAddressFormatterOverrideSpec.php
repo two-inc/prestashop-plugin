@@ -60,7 +60,8 @@ final class CustomerAddressFormatterOverrideSpec
         self::testDniFieldIsPreservedByOverride();
         self::testCountrySwitchKeepsCoreFormatterCountryInSync();
         self::testCompanyPlaceholderIsTheEmptyFieldHint();
-        self::testCompanyPlaceholderIsWithheldWhenTheApiKeyDoesNotVerify();
+        self::testCompanyPlaceholderIsWithheldWhenTheApiKeyIsRejected();
+        self::testCompanyPlaceholderSurvivesAnUnconfirmedVerdict();
         self::testCompanyPlaceholderSurvivesAnUnreachableModuleInstance();
     }
 
@@ -207,21 +208,41 @@ final class CustomerAddressFormatterOverrideSpec
 
     /**
      * TWO-25326: the hint tells the buyer to search, and nothing will search
-     * when the shop's API key does not verify - the module mounts no search
+     * when the shop's API key has been REJECTED - the module mounts no search
      * control in that state and the field is a plain text input. Withheld
      * server-side here as well as stripped in the browser: this is the half that
      * survives a back-office translation of the core string, which the browser
      * cannot recognise as the module's own wording.
      */
-    private static function testCompanyPlaceholderIsWithheldWhenTheApiKeyDoesNotVerify(): void
+    private static function testCompanyPlaceholderIsWithheldWhenTheApiKeyIsRejected(): void
     {
-        $format = self::formatWithModuleVerdict(false);
+        $format = self::formatWithModuleVerdict(Twopayment::API_KEY_STATUS_INVALID);
 
         TinyAssert::true(isset($format['company']), 'the company field itself must still be there');
         TinyAssert::false(
             array_key_exists('placeholder', $format['company']->getAvailableValues()),
             'no search hint while nothing will search'
         );
+    }
+
+    /**
+     * ...but only for a DEFINITIVE failure (review round 2). This runs inside
+     * address-form rendering - on my-account pages as well as checkout - so it
+     * reads the verdict cache-only and never makes the verification call itself.
+     * An unconfirmed verdict (nothing cached yet, or a transient service/network
+     * failure) must therefore leave the form exactly as it was rather than
+     * flickering the hint away on a shop that is fine.
+     */
+    private static function testCompanyPlaceholderSurvivesAnUnconfirmedVerdict(): void
+    {
+        foreach ([Twopayment::API_KEY_STATUS_VERIFYING, Twopayment::API_KEY_STATUS_SERVICE_ERROR] as $status) {
+            $format = self::formatWithModuleVerdict($status);
+
+            TinyAssert::true(
+                array_key_exists('placeholder', $format['company']->getAvailableValues()),
+                'an unconfirmed verdict (' . $status . ') must not cost the hint'
+            );
+        }
     }
 
     /**
@@ -240,11 +261,11 @@ final class CustomerAddressFormatterOverrideSpec
     }
 
     /**
-     * @param bool|null $verified null registers no instance at all
+     * @param string|null $status null registers no module instance at all
      *
      * @return array<string,FormField>
      */
-    private static function formatWithModuleVerdict($verified): array
+    private static function formatWithModuleVerdict($status): array
     {
         $overridePath = dirname(__DIR__) . '/override/classes/form/CustomerAddressFormatter.php';
         if (!class_exists('CustomerAddressFormatter', false)) {
@@ -252,11 +273,9 @@ final class CustomerAddressFormatterOverrideSpec
         }
 
         StubStore::$moduleInstances = [];
-        if ($verified !== null) {
+        if ($status !== null) {
             $module = new TwopaymentTestHarness();
-            $module->primeTwoApiKeyStatus(
-                $verified ? Twopayment::API_KEY_STATUS_OK : Twopayment::API_KEY_STATUS_UNREACHABLE
-            );
+            $module->primeTwoApiKeyStatus($status);
             StubStore::$moduleInstances['twopayment'] = $module;
         }
 

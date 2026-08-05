@@ -87,11 +87,19 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
 
     /**
      * Whether the company search will actually run on this shop right now
-     * (TWO-25326) - i.e. whether the module's stored API key currently
-     * verifies. Best-effort and fail-OPEN: an override that cannot reach the
-     * module instance must keep rendering the address form it has always
-     * rendered, never take a hint away on a shop that is fine. The verdict is
-     * cached module-side, so this costs a config read on a warm cache.
+     * (TWO-25326) - i.e. whether the module's stored API key currently verifies.
+     *
+     * CACHE-ONLY: never allowed to make the verification call itself. This runs
+     * inside address-form rendering, which happens on my-account pages as well
+     * as checkout, and a form render must not be able to block on an HTTP call.
+     * On a cache miss it therefore reads "not verified yet" - handled by the
+     * fail-open below rather than by dropping the hint.
+     *
+     * Best-effort and fail-OPEN: an override that cannot get an answer must keep
+     * rendering the address form it has always rendered, never take a hint away
+     * from a shop that is fine. Throwable, not Exception: a TypeError or an Error
+     * out of the module's own construction would otherwise escape into every
+     * address form on the shop and break the address step outright.
      *
      * @return bool
      */
@@ -99,10 +107,14 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
     {
         try {
             $module = Module::getInstanceByName('twopayment');
-            if (is_object($module) && method_exists($module, 'isTwoApiKeyVerified')) {
-                return (bool) $module->isTwoApiKeyVerified();
+            if (is_object($module) && method_exists($module, 'getTwoApiKeyVerificationStatus')) {
+                $status = $module->getTwoApiKeyVerificationStatus(false);
+                $status = isset($status['status']) ? (string) $status['status'] : '';
+                // Only a DEFINITIVE failure withholds the hint. An unconfirmed
+                // verdict (nothing cached yet) leaves the form exactly as it was.
+                return !in_array($status, array('invalid_key', 'not_configured'), true);
             }
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             // Fall through to fail-open below.
         }
 
