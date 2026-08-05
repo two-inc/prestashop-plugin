@@ -113,6 +113,13 @@ class Twopayment extends PaymentModule
     // whole TTL. Must comfortably exceed API_TIMEOUT_STATE_CHECK so the claim
     // does not expire while the call it is covering is still in flight.
     const API_KEY_STATUS_CLAIM_WINDOW = 15;
+    // Oldest a verdict may be and still ride along on a claim (serve-stale). A
+    // claim re-stamps the slot's clock, so without a cap on the age of the
+    // VERDICT itself, a shop whose verification never completes - a fatal, a
+    // killed worker - could re-carry and re-freshen the same ancient 'ok'
+    // indefinitely (review round 3). Past this, a claim carries nothing and the
+    // gates close until a call actually finishes.
+    const API_KEY_STATUS_CARRY_MAX_AGE = 900;
 
     // Verification outcome categories (TWO-25326). Held apart because the
     // merchant's remedy differs per category: fix the key, wait for Two, or
@@ -1133,12 +1140,21 @@ class Twopayment extends PaymentModule
             // a bad environment - in which case nothing is stored and this
             // verdict describes a key the shop does not have.
             $this->verifiedApiKeyResult = $verify;
-            // Unless the key being validated IS the stored one, in which case the
-            // verdict describes the live shop whatever happens to the rest of the
-            // form - and is the only way a FAILING verdict ever gets published
-            // from this page, since a failing key adds an error and the save
-            // never runs (review round 2).
-            if ((string) $apiKey === (string) Configuration::get('PS_TWO_MERCHANT_API_KEY')) {
+            // Unless the key AND environment being validated are the stored ones,
+            // in which case the verdict describes the live shop whatever happens
+            // to the rest of the form - and is the only way a FAILING verdict ever
+            // gets published from this page, since a failing key adds an error and
+            // the save never runs (review round 2).
+            //
+            // The environment half is not decoration (review round 3). The check
+            // above ran against the SUBMITTED environment while the slot is keyed
+            // to the STORED one, which the skipped save leaves unchanged - so a
+            // merchant merely switching the dropdown to an environment their key
+            // is not valid for would otherwise publish an 'invalid_key' verdict
+            // against their still-perfectly-good stored configuration, and take
+            // Two off a healthy checkout over a save that never happened.
+            if ((string) $apiKey === (string) Configuration::get('PS_TWO_MERCHANT_API_KEY')
+                && (string) $env === (string) Configuration::get('PS_TWO_ENVIRONMENT')) {
                 $this->cacheTwoApiKeyVerificationStatus($apiKey, $verify);
             }
             if ($verify['status'] !== self::API_KEY_STATUS_OK) {
@@ -8186,10 +8202,15 @@ class Twopayment extends PaymentModule
         // That state is reachable without a config-page save: install seeding, a
         // DB clone, direct SQL.
         $previous = $this->readStoredTwoApiKeyStatus();
-        $carry = ($previous !== null && $previous['key_hash'] === self::verificationSlotKey($apiKey) && $previous['status'] !== self::API_KEY_STATUS_VERIFYING)
+        $carryable = $previous !== null
+            && $previous['key_hash'] === self::verificationSlotKey($apiKey)
+            && $previous['status'] !== self::API_KEY_STATUS_VERIFYING
+            && $previous['verified_on'] > 0
+            && ($previous['verified_on'] + self::API_KEY_STATUS_CARRY_MAX_AGE) > time();
+        $carry = $carryable
             ? $previous
-            : array('status' => self::API_KEY_STATUS_VERIFYING, 'code' => null);
-        $this->writeTwoApiKeyStatusSlot($apiKey, $carry['status'], $carry['code'], true);
+            : array('status' => self::API_KEY_STATUS_VERIFYING, 'code' => null, 'verified_on' => 0);
+        $this->writeTwoApiKeyStatusSlot($apiKey, $carry['status'], $carry['code'], true, $carry['verified_on']);
 
         // Tight timeout: on a cold cache this runs inline in a shopper's
         // checkout render. The TTL bounds how OFTEN the call happens, never
@@ -8234,7 +8255,39 @@ class Twopayment extends PaymentModule
     public function isTwoApiKeyDefinitelyUnusable()
     {
         $status = $this->getTwoApiKeyVerificationStatus(false)['status'];
+        if (self::isDefinitiveFailureStatus($status)) {
+            return true;
+        }
 
+        // Deliberately reads PAST the TTL for the definitive categories only
+        // (review round 3). This gate exists for the buyer who was already on the
+        // payment step when the verdict changed - which is to say, minutes later -
+        // and a fresh verdict is exactly what it does NOT have: it may not make
+        // the call itself, and the failure TTL is a minute. "Two rejected this
+        // key, when last asked" does not go out of date in a way that makes
+        // accepting the submission the better guess, and it is the only definitive
+        // information available. Transient categories are still ignored here, so
+        // no blip can refuse an order however long it sits in the slot, and a
+        // claim in flight is not a verdict at all.
+        $stored = $this->readStoredTwoApiKeyStatus();
+        if ($stored === null || $stored['claim'] || $stored['key_hash'] !== self::verificationSlotKey((string) Configuration::get('PS_TWO_MERCHANT_API_KEY'))) {
+            return false;
+        }
+
+        return self::isDefinitiveFailureStatus($stored['status']);
+    }
+
+    /**
+     * The categories that mean "this integration cannot take an order", as
+     * opposed to "ask again later". The ONE definition of that set - the
+     * address-form override asks through this too, so the two cannot drift.
+     *
+     * @param string $status
+     *
+     * @return bool
+     */
+    public static function isDefinitiveFailureStatus($status)
+    {
         return $status === self::API_KEY_STATUS_INVALID || $status === self::API_KEY_STATUS_NOT_CONFIGURED;
     }
 
@@ -8279,7 +8332,7 @@ class Twopayment extends PaymentModule
      *   which would write a future-dated timestamp the moment any TTL was
      *   shortened below the claim window.
      */
-    private function writeTwoApiKeyStatusSlot($apiKey, $status, $code, $asClaim = false)
+    private function writeTwoApiKeyStatusSlot($apiKey, $status, $code, $asClaim = false, $verifiedOn = null)
     {
         if (Tools::isEmpty($apiKey)) {
             return;
@@ -8290,6 +8343,10 @@ class Twopayment extends PaymentModule
             'code' => $code === null ? null : (int) $code,
             'key_hash' => self::verificationSlotKey($apiKey),
             'claim' => (bool) $asClaim,
+            // When the VERDICT was reached, as distinct from when the slot was
+            // last written: a claim re-writes the slot but carries the original
+            // verdict's age with it, which is what bounds serve-stale.
+            'verified_on' => $verifiedOn === null ? time() : (int) $verifiedOn,
         )));
         Configuration::updateValue(self::CONFIG_API_KEY_STATUS_TS, time());
     }
@@ -8350,6 +8407,7 @@ class Twopayment extends PaymentModule
             'code' => isset($decoded['code']) && $decoded['code'] !== null ? (int) $decoded['code'] : null,
             'key_hash' => (string) $decoded['key_hash'],
             'claim' => !empty($decoded['claim']),
+            'verified_on' => isset($decoded['verified_on']) ? (int) $decoded['verified_on'] : 0,
             'checked_on' => (int) Configuration::get(self::CONFIG_API_KEY_STATUS_TS),
         );
     }
@@ -8425,6 +8483,11 @@ class Twopayment extends PaymentModule
     {
         $status = $this->getTwoApiKeyVerificationStatus();
         if ($status['status'] === self::API_KEY_STATUS_OK
+            // A verification another request is still making is not a diagnosis,
+            // and must not be reported as one - the default wording below would
+            // otherwise tell the merchant their key "could not be verified" while
+            // it is being verified. The panel above reads "not verified" for the
+            // same seconds, which is true and self-correcting on reload.
             || $status['status'] === self::API_KEY_STATUS_VERIFYING
             || $status['status'] === self::API_KEY_STATUS_NOT_CONFIGURED) {
             // No stored key at all is what the form's own "Enter an API key"

@@ -36,6 +36,41 @@ final class OverrideMigrationSpec
         self::testStampParsingIgnoresProse();
         self::testStampInsideAStringLiteralIsNotAStamp();
         self::testUntokenisableSourceIsLeftAlone();
+        self::testUpgradeScriptNeverFailsTheUpgradeOnAnError();
+    }
+
+    /**
+     * An upgrade script's override refresh is housekeeping ON TOP of an upgrade
+     * that has already succeeded, so nothing it can hit may propagate: a throw
+     * here leaves the module version un-bumped and the shop in a state no later
+     * script can reason about. Errors included, not just exceptions - a TypeError
+     * or a missing class on an odd install is exactly the shape that gets past a
+     * `catch (Exception)` (TWO-25326, review round 3).
+     */
+    private static function testUpgradeScriptNeverFailsTheUpgradeOnAnError(): void
+    {
+        require_once dirname(__DIR__) . '/upgrade/upgrade-2.7.3.php';
+        PrestaShopLogger::reset();
+
+        $module = new class extends TwopaymentTestHarness {
+            public function getLocalPath()
+            {
+                throw new TypeError('anything at all, from anywhere in the migrator');
+            }
+        };
+
+        TinyAssert::true(
+            upgrade_module_2_7_3($module),
+            'an upgrade script must finish the upgrade even when its housekeeping raises an Error'
+        );
+
+        $logged = false;
+        foreach (PrestaShopLogger::$logs as $entry) {
+            if (strpos($entry['message'], 'override refresh raised') !== false) {
+                $logged = true;
+            }
+        }
+        TinyAssert::true($logged, 'and it must say so, or the shop is silently stale');
     }
 
     /**
