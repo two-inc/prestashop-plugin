@@ -54,10 +54,10 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
         // own address form.
         //
         // Not applied while the shop's API key is KNOWN not to verify (TWO-25326):
-        // the search is authenticated with that key, so no search control is
-        // mounted in that state and the field is a plain text input - a hint
-        // telling the buyer to search it would be instructing them to do
-        // something that cannot happen. Same predicate the checkout JS gate is
+        // Two is withheld from checkout entirely in that state, so nothing
+        // consumes a captured company and the module mounts no search control -
+        // leaving the field a plain text input that this hint would be telling
+        // the buyer to search. Same predicate the checkout JS gate is
         // handed, so the two halves of the affordance cannot disagree; an
         // as-yet-unknown verdict leaves the form untouched, since a cold cache is
         // not evidence of a broken shop and this render may not go to the network
@@ -92,8 +92,8 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
 
     /**
      * Whether the search-mode hint on the company field is warranted right now
-     * (TWO-25326) - which is to say, whether the module's stored API key is in a
-     * state where a search can run at all.
+     * (TWO-25326) - which is to say, whether the module is in a state where a
+     * captured company is still good for anything.
      *
      * Asked THROUGH the module rather than by testing categories here, so the
      * server-rendered hint and the browser-side control - two halves of ONE
@@ -114,7 +114,12 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
     {
         try {
             $module = Module::getInstanceByName('twopayment');
-            if (is_object($module) && method_exists($module, 'isTwoCompanySearchAffordanceWarranted')) {
+            if (is_object($module)) {
+                // No method_exists() guard: an instance too old to answer raises
+                // an Error, which the catch below turns into the same fail-open
+                // as any other failure to get an answer. The guard was a second
+                // spelling of one behaviour, and an unpinnable one - removing it
+                // changed nothing any test could see (round 6).
                 return (bool) $module->isTwoCompanySearchAffordanceWarranted();
             }
         } catch (Throwable $e) {

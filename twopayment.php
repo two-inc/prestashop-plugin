@@ -3665,14 +3665,25 @@ class Twopayment extends PaymentModule
                 // relocates into the payment tile. Never a second control,
                 // never fully off.
                 'company_name_search' => $this->isCompanySearchInAddressArea(),
-                // TWO-25326: does the stored API key currently verify? A real
-                // PHP bool, so addJsDef emits a real JS boolean. The company
-                // search runs against Two's company register with this key, so
-                // when the key does not verify the control must not offer
-                // itself - in tile mode the tile is already gone with the
-                // payment option, but the ADDRESS-step control lives on the
-                // address form and would otherwise keep searching (and
-                // failing) on a shop where Two is not available at all.
+                // TWO-25326: may the company-search affordance render? A real
+                // PHP bool, so addJsDef emits a real JS boolean.
+                //
+                // Withheld on a known verification failure because the ONLY
+                // thing a captured company feeds is a Two order, and Two is not
+                // offered at all in that state (hookPaymentOptions withholds it
+                // on any non-ok verdict). What is left is a Two-branded search
+                // whose result nothing consumes, and a "verify your company"
+                // journey that cannot complete - in tile mode the tile is
+                // already gone with the payment option, and the ADDRESS-step
+                // control would otherwise stay behind on its own.
+                //
+                // NOT because the search needs the key: that endpoint is called
+                // unauthenticated (TwoCompanySearch.buildPublicApiBeforeSend()
+                // strips the auth headers deliberately), so it would keep
+                // working. Round-6 review corrected the reasoning here - the
+                // behaviour matches the sibling plugins either way, and the
+                // cost of the gate is a search + address auto-fill a buyer
+                // could otherwise still have used.
                 //
                 // The SAME predicate the address-form override asks (review round
                 // 5), because the JS control and the server-rendered placeholder
@@ -8310,12 +8321,22 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Whether the search-mode affordances the module adds to the address form
-     * are warranted right now (TWO-25326, review round 4). Distinct from
-     * isTwoApiKeyDefinitelyUnusable(): a placeholder is not an order, so this
-     * side may fail closed on ANY known failure - which is also what the
-     * checkout JS gate does with the same verdict, and the two acting on ONE UI
-     * element under different policies is a disagreement a merchant can see.
+     * Whether the company-search affordance this module adds to the checkout is
+     * warranted right now (TWO-25326, review round 4) - the browser control and
+     * the server-rendered placeholder both, since they are two halves of one
+     * thing and this is the one question both ask.
+     *
+     * Warranted means "a captured company can still be used for something",
+     * which on any known verification failure it cannot: Two is withheld from
+     * checkout entirely in that state, so the search has nothing left to feed.
+     * It does NOT mean "the search would work" - that endpoint is called
+     * unauthenticated and works regardless of the key (round-6 review corrected
+     * the reasoning; the behaviour is unchanged and matches the sibling
+     * plugins).
+     *
+     * Distinct from isTwoApiKeyDefinitelyUnusable(): an affordance is not an
+     * order, so this side may stand down on ANY known failure rather than only a
+     * definitive one.
      *
      * 'verifying' (nothing known yet) counts as warranted: a cold cache is not
      * evidence of a broken shop, and the caller that most needs this - the
