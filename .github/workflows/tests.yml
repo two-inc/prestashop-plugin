@@ -59,6 +59,7 @@ jobs:
           php -l tests/integration/default-shipping-tax-code.php
           php -l tests/integration/fixtures/twocarrierlesstest/twocarrierlesstest.php
           php -l dev/ci/seed-carrierless-cart.php
+          php -l dev/ci/two-api-stub.php
 
       - name: Run offline test suite
         run: php tests/run.php
