@@ -53,14 +53,18 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
         // wording when this slot is empty, which covers a theme rendering its
         // own address form.
         //
-        // Not applied at all when the shop's API key does not currently verify
-        // (TWO-25326): the search is authenticated with that key, so no search
-        // control is mounted in that state and the field is a plain text input -
-        // a hint telling the buyer to search it would be instructing them to do
-        // something that cannot happen. The browser strips the wording too, for
-        // a page rendered before the verdict changed; this is the half that
-        // survives a back-office translation of the core string, which the
-        // browser cannot recognise as ours.
+        // Not applied while the shop's API key is KNOWN not to verify (TWO-25326):
+        // the search is authenticated with that key, so no search control is
+        // mounted in that state and the field is a plain text input - a hint
+        // telling the buyer to search it would be instructing them to do
+        // something that cannot happen. Same condition the checkout JS gate uses,
+        // so the two halves of the affordance agree; an as-yet-unknown verdict
+        // leaves the form untouched, since a cold cache is not evidence of a
+        // broken shop and this render may not go to the network to find out.
+        // The browser strips the wording too, for a page rendered before the
+        // verdict changed; this is the half that survives a back-office
+        // translation of the core string, which the browser cannot recognise as
+        // ours.
         if (isset($format['company']) && $format['company'] instanceof FormField && $this->twoCompanySearchAvailable()) {
             $format['company']->addAvailableValue('placeholder', $this->translator->trans('Enter company name to search', [], 'Shop.Forms.Labels'));
         }
@@ -86,20 +90,22 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
     }
 
     /**
-     * Whether the company search will actually run on this shop right now
-     * (TWO-25326) - i.e. whether the module's stored API key currently verifies.
+     * Whether the search-mode hint on the company field is warranted right now
+     * (TWO-25326) - which is to say, whether the module's stored API key is in a
+     * state where a search can run at all.
      *
-     * CACHE-ONLY: never allowed to make the verification call itself. This runs
-     * inside address-form rendering, which happens on my-account pages as well
-     * as checkout, and a form render must not be able to block on an HTTP call.
-     * On a cache miss it therefore reads "not verified yet" - handled by the
-     * fail-open below rather than by dropping the hint.
+     * Asked THROUGH the module rather than by testing categories here, so the
+     * server-rendered hint and the browser-side control - two halves of ONE
+     * affordance - cannot end up on different policies (review round 4). That
+     * method is cache-only by contract, which is what keeps an address-form
+     * render (this also runs on my-account pages) off the network, and it treats
+     * "nothing known yet" as warranted rather than as broken.
      *
-     * Best-effort and fail-OPEN: an override that cannot get an answer must keep
-     * rendering the address form it has always rendered, never take a hint away
-     * from a shop that is fine. Throwable, not Exception: a TypeError or an Error
-     * out of the module's own construction would otherwise escape into every
-     * address form on the shop and break the address step outright.
+     * Best-effort and fail-OPEN: an override that cannot get an answer at all
+     * must keep rendering the address form it has always rendered, never take a
+     * hint away from a shop that is fine. Throwable, not Exception: a TypeError
+     * or an Error out of the module's own construction would otherwise escape
+     * into every address form on the shop and break the address step outright.
      *
      * @return bool
      */
@@ -107,14 +113,8 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
     {
         try {
             $module = Module::getInstanceByName('twopayment');
-            // Only a DEFINITIVE failure withholds the hint; an unconfirmed verdict
-            // (nothing cached yet, a transient service or network failure) leaves
-            // the form exactly as it was. Asked THROUGH the module rather than by
-            // re-listing the categories here, so there is one definition of that
-            // set (review round 3) - and that method is cache-only by contract,
-            // which is what keeps an address-form render off the network.
-            if (is_object($module) && method_exists($module, 'isTwoApiKeyDefinitelyUnusable')) {
-                return !$module->isTwoApiKeyDefinitelyUnusable();
+            if (is_object($module) && method_exists($module, 'isTwoCompanySearchAffordanceWarranted')) {
+                return (bool) $module->isTwoCompanySearchAffordanceWarranted();
             }
         } catch (Throwable $e) {
             // Fall through to fail-open below.

@@ -61,6 +61,7 @@ final class CustomerAddressFormatterOverrideSpec
         self::testCountrySwitchKeepsCoreFormatterCountryInSync();
         self::testCompanyPlaceholderIsTheEmptyFieldHint();
         self::testCompanyPlaceholderIsWithheldWhenTheApiKeyIsRejected();
+        self::testEveryKnownFailureWithholdsThePlaceholder();
         self::testCompanyPlaceholderSurvivesAnUnconfirmedVerdict();
         self::testCompanyPlaceholderSurvivesAnUnreachableModuleInstance();
         self::testCompanyPlaceholderSurvivesAThrowingModuleInstance();
@@ -227,23 +228,47 @@ final class CustomerAddressFormatterOverrideSpec
     }
 
     /**
-     * ...but only for a DEFINITIVE failure (review round 2). This runs inside
-     * address-form rendering - on my-account pages as well as checkout - so it
-     * reads the verdict cache-only and never makes the verification call itself.
-     * An unconfirmed verdict (nothing cached yet, or a transient service/network
-     * failure) must therefore leave the form exactly as it was rather than
-     * flickering the hint away on a shop that is fine.
+     * Every KNOWN failure withholds it, not only a rejected key (review round 4).
+     * The browser-side half of this affordance stands down on any non-ok verdict,
+     * and the two halves acting on one field under different policies is a
+     * disagreement a merchant can see: on a shop with a back-office translation
+     * of the core placeholder string - the exact case the server-side half exists
+     * for - the hint survived on a field with no search behind it.
+     */
+    private static function testEveryKnownFailureWithholdsThePlaceholder(): void
+    {
+        foreach (
+            [
+                Twopayment::API_KEY_STATUS_SERVICE_ERROR,
+                Twopayment::API_KEY_STATUS_UNREACHABLE,
+                Twopayment::API_KEY_STATUS_ERROR,
+                Twopayment::API_KEY_STATUS_NOT_CONFIGURED,
+            ] as $status
+        ) {
+            $format = self::formatWithModuleVerdict($status);
+
+            TinyAssert::false(
+                array_key_exists('placeholder', $format['company']->getAvailableValues()),
+                'verdict "' . $status . '" must withhold the hint, as the JS gate does'
+            );
+        }
+    }
+
+    /**
+     * ...but an as-yet-UNKNOWN verdict does not. This runs inside address-form
+     * rendering - on my-account pages as well as checkout - so it reads the
+     * verdict cache-only and never makes the verification call itself; a cold
+     * cache is not evidence of a broken shop, and flickering the hint away on
+     * one would be a worse outcome than leaving it.
      */
     private static function testCompanyPlaceholderSurvivesAnUnconfirmedVerdict(): void
     {
-        foreach ([Twopayment::API_KEY_STATUS_VERIFYING, Twopayment::API_KEY_STATUS_SERVICE_ERROR] as $status) {
-            $format = self::formatWithModuleVerdict($status);
+        $format = self::formatWithModuleVerdict(Twopayment::API_KEY_STATUS_VERIFYING);
 
-            TinyAssert::true(
-                array_key_exists('placeholder', $format['company']->getAvailableValues()),
-                'an unconfirmed verdict (' . $status . ') must not cost the hint'
-            );
-        }
+        TinyAssert::true(
+            array_key_exists('placeholder', $format['company']->getAvailableValues()),
+            'an unconfirmed verdict must not cost the hint'
+        );
     }
 
     /**

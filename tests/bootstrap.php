@@ -641,6 +641,38 @@ namespace {
         {
             return StubStore::$countries[(int) $id] ?? false;
         }
+
+        /**
+         * Core's shape: one row per country, with the module only ever reading
+         * id_country and iso_code out of it (see the checkout media hook).
+         *
+         * @return array<int,array{id_country:int,iso_code:string}>
+         */
+        public static function getCountries($idLang = null, $active = false, $containStates = false, $listStates = true): array
+        {
+            $rows = [];
+            foreach (StubStore::$countries as $id => $iso) {
+                $rows[] = ['id_country' => (int) $id, 'iso_code' => (string) $iso];
+            }
+
+            return $rows;
+        }
+    }
+
+    class Media
+    {
+        /** @var array<string,mixed> the last payload handed to the browser */
+        public static array $jsDef = [];
+
+        public static function addJsDef($vars): void
+        {
+            self::$jsDef = array_merge(self::$jsDef, (array) $vars);
+        }
+
+        public static function reset(): void
+        {
+            self::$jsDef = [];
+        }
     }
 
     class State
