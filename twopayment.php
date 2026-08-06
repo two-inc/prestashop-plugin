@@ -4022,9 +4022,11 @@ class Twopayment extends PaymentModule
         // (TWO-25326 bug 9, round 3). TwoSoleTrader.js used to build the
         // Business / Sole trader chips only after its own availability round
         // trip, so they were absent from every first paint of the payment step
-        // and appeared a few hundred milliseconds later - a visible flicker
-        // every time the surcharge cart-line sync reloads the page, which it
-        // does on every payment-option change.
+        // and appeared a few hundred milliseconds later - a visible flicker on
+        // any page load, and at the time this was written the surcharge
+        // cart-line sync caused one on every payment-option change. It no longer
+        // navigates at all (TWO-25326 round 4); the loads this still covers are
+        // the genuine ones (arrival, currency switch, back-navigation).
         //
         // Same source of truth as the endpoint that JS was calling
         // (TwoSoleTrader::isAvailable -> the registry's supported-company-types

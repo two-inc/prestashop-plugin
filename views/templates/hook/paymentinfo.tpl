@@ -16,9 +16,11 @@
        round 3). It used to be an empty, hidden container that TwoSoleTrader.js
        filled in after an availability round trip - which meant the chips were
        missing from every first paint and appeared a few hundred milliseconds
-       later. Harmless on a fresh arrival, plainly visible as a flicker once the
-       surcharge cart-line sync reloads the page under the buyer, which it does
-       on every payment-option change.
+       later. Harmless on a fresh arrival, plainly visible as a flicker on a page
+       that reloads under the buyer - which, when this was written, the surcharge
+       cart-line sync did on every payment-option change. It no longer navigates
+       at all (TWO-25326 round 4), so the remaining loads this covers are the
+       genuine ones: arriving at the step, a currency switch, a back-navigation.
 
        The answer is the same registry answer the module's soleTraderAvailability
        endpoint returns (TwoSoleTrader::isAvailable), read here from the cache that

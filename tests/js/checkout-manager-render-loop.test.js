@@ -17,11 +17,14 @@
  * brand new, permanent set of duplicate document-level listeners on every
  * firing; nothing in cleanup() can remove them afterwards (they are
  * anonymous closures - no reference is ever kept to un-register).
- * handlePaymentOptionChange() calls syncSurchargeCartLine(), which can
- * trigger a full payment-step reload (triggerNativeCartRefresh()) - so a
- * single radio change ends up invoking it once per accumulated duplicate,
- * each one independently racing a reload. That reload is what Doug saw as
- * the tile being removed and re-rendered several times in a row.
+ * handlePaymentOptionChange() calls syncSurchargeCartLine(), which at the
+ * time this was written triggered a full payment-step reload - so a single
+ * radio change ended up invoking it once per accumulated duplicate, each one
+ * independently racing a reload. That reload is what Doug saw as the tile
+ * being removed and re-rendered several times in a row. The reload itself is
+ * gone (TWO-25326 round 4: refreshCartSummaryInPlace), but duplicate
+ * document-level listeners with no way to unbind them are still a defect, and
+ * they still multiply the sync round trips, so these tests stand as they are.
  *
  * These tests pin: (1) a single user action still triggers the handler
  * exactly once no matter how many times the DOM-settle path has already run,
