@@ -1215,6 +1215,57 @@ namespace {
         }
     }
 
+    /**
+     * Stub of the parts of core's AddressFormat the module touches (TWO-25326).
+     *
+     * `$requireFormFieldsList` is core's own public static "default required
+     * form fields" list, seeded here with core's real defaults;
+     * `getFieldsRequired()` merges it with the merchant's `required_field` table
+     * rows exactly as core does (`array_unique(array_merge(...))`).
+     * `$fieldsRequiredDatabase` stands in for those rows, and
+     * `$addFieldsRequiredDatabaseCalls` counts writes to that table so a spec
+     * can assert the module never makes one.
+     */
+    class AddressFormat
+    {
+        /** @var string[] */
+        public static array $requireFormFieldsList = [
+            'firstname',
+            'lastname',
+            'address1',
+            'city',
+            'Country:name',
+        ];
+
+        /** @var string[] The merchant's own Customers > Addresses selections. */
+        public static array $fieldsRequiredDatabase = [];
+
+        public static int $addFieldsRequiredDatabaseCalls = 0;
+
+        /** @return string[] */
+        public static function getFieldsRequired(): array
+        {
+            return array_values(array_unique(array_merge(
+                self::$fieldsRequiredDatabase,
+                self::$requireFormFieldsList
+            )));
+        }
+
+        /**
+         * Core reaches the table through ObjectModel, not through here - this
+         * exists only so a call to it is COUNTABLE rather than silent.
+         *
+         * @param string[] $fields
+         */
+        public static function addFieldsRequiredDatabase(array $fields): bool
+        {
+            ++self::$addFieldsRequiredDatabaseCalls;
+            self::$fieldsRequiredDatabase = $fields;
+
+            return true;
+        }
+    }
+
     class FormField
     {
         private string $name = '';
@@ -1224,6 +1275,8 @@ namespace {
         private array $availableValues = [];
         private array $constraints = [];
         private ?int $maxLength = null;
+        private $value = null;
+        private array $errors = [];
 
         public function setName($name): self
         {
@@ -1295,6 +1348,34 @@ namespace {
         {
             $this->maxLength = (int) $maxLength;
             return $this;
+        }
+
+        public function setValue($value): self
+        {
+            $this->value = $value;
+            return $this;
+        }
+
+        public function getValue()
+        {
+            return $this->value;
+        }
+
+        /**
+         * Core's FormField carries the field's submitted value and its own
+         * error list; AbstractForm::validate() reads the first and writes the
+         * second. Modelled here because the phone-required gate (TWO-25326) is
+         * only observable through that pair.
+         */
+        public function addError($error): self
+        {
+            $this->errors[] = (string) $error;
+            return $this;
+        }
+
+        public function getErrors(): array
+        {
+            return $this->errors;
         }
     }
 
