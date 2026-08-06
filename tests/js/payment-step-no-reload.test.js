@@ -143,7 +143,12 @@ function installCorePaymentStep() {
  */
 function installCoreCartPlumbing(bus) {
     const state = { navigations: 0 };
-    bus.on('updateCart', function () {
+    bus.on('updateCart', function (event) {
+        // core's handler opens with exactly this, which is why an emit carrying
+        // `resp: {cart: {}}` replaced core's cart object with an empty one.
+        if (event && event.resp) {
+            bus.cart = event.resp.cart;
+        }
         state.navigations += 1;
         document.getElementById('checkout').remove();
         // A navigation's new document arrives later, and with the tile present
@@ -295,8 +300,11 @@ describe('a payment-option change never navigates the document', () => {
         await selectOptionAndReportCartChanged(TWO_RADIO_ID);
         log.record();
 
-        expect(core.navigations).toBe(0);
+        // Shape FIRST, counter second: asserted the other way round, restoring
+        // the navigation fails on the counter and short-circuits, leaving the
+        // state log - the part that encodes the actual report - unproven.
         expect(existenceRun(log.rows)).toBe('present');
+        expect(core.navigations).toBe(0);
         log.stop();
     });
 
@@ -315,9 +323,9 @@ describe('a payment-option change never navigates the document', () => {
         await selectOptionAndReportCartChanged(OTHER_RADIO_ID);
         log.record();
 
-        expect(core.navigations).toBe(0);
-        expect(existenceRun(log.rows)).toBe('present');
         expect(visibilityRun(log.rows)).toBe('shown,hidden');
+        expect(existenceRun(log.rows)).toBe('present');
+        expect(core.navigations).toBe(0);
         log.stop();
     });
 
@@ -414,18 +422,23 @@ describe('a payment-option change never navigates the document', () => {
     });
 
     /**
-     * A latent bug that went out with the emit, kept as a regression pin: core's
-     * handler starts `prestashop.cart = event.resp.cart`, and the module passed
-     * `resp: {cart: prestashop.cart || {}}` - so a sync with no cart object on the
-     * bus replaced core's cart with an empty one for the rest of the page's life.
+     * A latent bug that went out with the emit, kept as a regression pin.
+     *
+     * Core's handler opens with `prestashop.cart = event.resp.cart`, and the
+     * module passed `resp: {cart: prestashop.cart || {}}`. Narrow but real: when
+     * the bus has no cart object yet, that `|| {}` is what core then adopts AS
+     * the cart for the rest of the page's life. With a cart already on the bus
+     * the assignment is the same object back again, i.e. harmless - so the case
+     * worth pinning is the empty one, and pinning the other would pass whether
+     * the emit is there or not.
      */
-    test('the cart object on the bus is left alone', async () => {
-        const cart = { totals: { total: { amount: 100 } } };
-        window.prestashop.cart = cart;
+    test('a sync never puts an empty cart object on the bus', async () => {
+        delete window.prestashop.cart;
         makeManager();
+        installCoreCartPlumbing(window.prestashop);
 
         await selectOptionAndReportCartChanged(TWO_RADIO_ID);
 
-        expect(window.prestashop.cart).toBe(cart);
+        expect(window.prestashop.cart).toBeUndefined();
     });
 });
