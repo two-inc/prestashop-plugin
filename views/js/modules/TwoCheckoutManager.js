@@ -60,6 +60,9 @@ class TwoCheckoutManager {
         // (not 0) so the sequence stays monotonic across page reloads - the
         // server persists the last-applied value per cart.
         this._surchargeSyncSeq = Date.now();
+        // Monotonic sequence for the in-place order-summary refreshes that follow
+        // a sync which actually changed the cart - see refreshCartSummaryInPlace().
+        this._summaryRefreshSeq = 0;
 
         this.init();
     }
@@ -573,8 +576,18 @@ class TwoCheckoutManager {
             return;
         }
 
+        // Last-wins, for the same reason the sync itself is sequenced: a buyer
+        // clicking between options fires several of these, and the summary each
+        // response carries is the cart AS OF that request. Without this, a slow
+        // earlier response landing after a newer one repaints the totals with the
+        // older cart - the sync's own guard cannot cover it, because by the time
+        // it runs each of those syncs WAS the newest.
+        const refreshSeq = ++this._summaryRefreshSeq;
         jQuery.post(refreshUrl, {})
             .done((response) => {
+                if (refreshSeq !== this._summaryRefreshSeq) {
+                    return;
+                }
                 this.applyCartSummaryPartials(response);
             })
             .fail(() => {
@@ -629,9 +642,26 @@ class TwoCheckoutManager {
             }
             const selector = (coreSelectors && coreSelectors[partial[1]]) || partial[2];
             const target = jQuery(selector);
-            if (target.length) {
-                target.replaceWith(html);
+            if (!target.length) {
+                return;
             }
+            // FIRST match only, deliberately (review round 1). Every one of these
+            // selectors is a two-convention alternation - `.cart-summary-totals,
+            // .js-cart-summary-totals` - and core's own handler calls
+            // `replaceWith()` on the whole matched set. On the shipped classic
+            // theme that is one element either way, because both classes sit on
+            // the SAME node (verified on the delivered checkout markup:
+            // `class="card-block cart-summary-totals js-cart-summary-totals"`).
+            // But a theme that spelled the two conventions as two SEPARATE nodes
+            // would get the replacement HTML written into each of them - a
+            // duplicated totals block, which is visible corruption, and worse
+            // than the alternative failure of leaving a second stale copy alone.
+            // So: replace one, and say so when there was more than one rather
+            // than silently picking.
+            if (target.length > 1) {
+                console.warn('Two Payment: ' + selector + ' matched ' + target.length + ' elements; refreshing the first only.');
+            }
+            target.first().replaceWith(html);
         });
     }
 
