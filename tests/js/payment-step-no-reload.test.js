@@ -422,6 +422,76 @@ describe('a payment-option change never navigates the document', () => {
     });
 
     /**
+     * Review round 1. Each partial's selector is a two-convention alternation, and
+     * core replaces the whole matched set. On the shipped theme both classes are on
+     * one node, so this is moot there - but a theme spelling them as two separate
+     * nodes would get the replacement written into BOTH, i.e. a duplicated totals
+     * block. One replacement, and a warning that there was more than one candidate.
+     */
+    test('a theme with both class conventions on separate nodes gets no duplicate', async () => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const summary = document.getElementById('js-checkout-summary');
+        const legacy = document.createElement('div');
+        legacy.className = 'js-cart-summary-totals';
+        legacy.textContent = 'LEGACY TOTAL';
+        summary.appendChild(legacy);
+        expect(document.querySelectorAll('.cart-summary-totals, .js-cart-summary-totals')).toHaveLength(2);
+
+        makeManager();
+        await selectOptionAndReportCartChanged(TWO_RADIO_ID);
+        summaryCalls()[0].succeed({
+            cart_summary_totals: '<div class="cart-summary-totals js-cart-summary-totals">NEW TOTAL</div>'
+        });
+        await flushPromises();
+
+        const replaced = document.querySelectorAll('.cart-summary-totals');
+        expect(replaced).toHaveLength(1);
+        expect(replaced[0].textContent).toBe('NEW TOTAL');
+        expect(warn).toHaveBeenCalled();
+    });
+
+    /** The shipped shape: both classes on ONE node, replaced exactly once. */
+    test('both conventions on one node is replaced exactly once', async () => {
+        const totals = document.querySelector('.cart-summary-totals');
+        totals.className = 'card-block cart-summary-totals js-cart-summary-totals';
+        makeManager();
+
+        await selectOptionAndReportCartChanged(TWO_RADIO_ID);
+        summaryCalls()[0].succeed({
+            cart_summary_totals: '<div class="card-block cart-summary-totals js-cart-summary-totals">NEW TOTAL</div>'
+        });
+        await flushPromises();
+
+        expect(document.querySelectorAll('.cart-summary-totals')).toHaveLength(1);
+        expect(document.querySelector('.cart-summary-totals').textContent).toBe('NEW TOTAL');
+    });
+
+    /**
+     * Last-wins on the summary refresh. A buyer clicking between options fires
+     * several, and each response carries the cart as of ITS request - so an
+     * earlier response landing after a newer one would repaint the totals with
+     * the older cart. The sync's own sequence guard cannot cover this: by the
+     * time each sync resolved, it WAS the newest.
+     */
+    test('a slow earlier summary response cannot overwrite a newer one', async () => {
+        makeManager();
+
+        await selectOptionAndReportCartChanged(TWO_RADIO_ID);
+        await selectOptionAndReportCartChanged(OTHER_RADIO_ID);
+
+        const refreshes = summaryCalls();
+        expect(refreshes).toHaveLength(2);
+
+        // Newer answers first, then the stale one arrives late.
+        refreshes[1].succeed({ cart_summary_totals: '<div class="cart-summary-totals">NEWER TOTAL</div>' });
+        await flushPromises();
+        refreshes[0].succeed({ cart_summary_totals: '<div class="cart-summary-totals">STALE TOTAL</div>' });
+        await flushPromises();
+
+        expect(document.querySelector('.cart-summary-totals').textContent).toBe('NEWER TOTAL');
+    });
+
+    /**
      * A latent bug that went out with the emit, kept as a regression pin.
      *
      * Core's handler opens with `prestashop.cart = event.resp.cart`, and the
