@@ -60,7 +60,9 @@ class TwoCheckoutManager {
         // (not 0) so the sequence stays monotonic across page reloads - the
         // server persists the last-applied value per cart.
         this._surchargeSyncSeq = Date.now();
-        this._surchargeRestoreKey = 'two_restore_payment_selection';
+        // Monotonic sequence for the in-place order-summary refreshes that follow
+        // a sync which actually changed the cart - see refreshCartSummaryInPlace().
+        this._summaryRefreshSeq = 0;
 
         this.init();
     }
@@ -123,10 +125,12 @@ class TwoCheckoutManager {
         // Setup PrestaShop-native event listeners
         this.setupPrestaShopEventListeners();
 
-        // If the native cart refresh (full payment-step reload) was triggered
-        // by a surcharge line sync, restore the payment option the buyer had
-        // clicked - the reload wipes radio state.
-        this.restorePaymentSelectionAfterCartRefresh();
+        // The company-search control mounted (initializeModules(), above) while
+        // its tile may still have been collapsed by core, so in tile mode it
+        // measured a field inside a hidden container. Re-measure at the end of
+        // init, so the control is laid out from a real measurement on this load
+        // rather than on the next viewport change.
+        this.remeasureCompanySearchLayout();
 
         this.isInitialized = true;
     }
@@ -499,7 +503,7 @@ class TwoCheckoutManager {
                     return response;
                 }
                 if (response && response.success && response.changed) {
-                    this.triggerNativeCartRefresh();
+                    this.refreshCartSummaryInPlace();
                 } else if (!response || !response.success) {
                     console.warn('Two Payment: surcharge cart line sync failed; server-side order-create gate remains authoritative.');
                 }
@@ -508,141 +512,176 @@ class TwoCheckoutManager {
     }
 
     /**
-     * Trigger PrestaShop core's own cart-refresh pipeline (no hand-rolled
-     * summary re-render). Empirically verified against PS8 themes/core.js:
-     * core listens on the 'updateCart' event, POSTs the .js-cart
-     * data-refresh-url, replaces the summary partials, and - because the
-     * payment step carries the .js-cart-payment-step-refresh marker - fully
-     * reloads the checkout page (then emits 'updatedCart' post-render). The
-     * handler dereferences event.resp.cart unconditionally, so a cart object
-     * (prestashop.cart or {}) must always be passed.
+     * Bring the checkout's order summary in line with the surcharge cart line
+     * WITHOUT navigating the document (TWO-25326 bug 11, round 4).
+     *
+     * WHAT THIS REPLACES, and why the previous approach could not be patched
+     * into working. The module used to emit core's own `updateCart` event, which
+     * is the documented way to ask PrestaShop to re-render the cart - but on the
+     * payment step core deliberately turns that into a full page NAVIGATION:
+     * `themes/_core/js/cart.js` calls `refreshCheckoutPage()`
+     * (`themes/_core/js/common.js`), which sets
+     * `window.location.href = pathname + '?updatedTransaction=1'` and, once that
+     * parameter is already on the URL, `window.location.reload()`. Core's own
+     * comment gives the reason: "on payment step we need to refresh page to be
+     * sure amount is correctly updated on payment modules".
+     *
+     * That navigation IS the flicker, in both of its reported shapes:
+     *  - SELECTING Two: the tile the buyer has just opened is destroyed with the
+     *    old document and rebuilt in the new one - "rendered, then removed and
+     *    re-rendered". There is no first paint to suppress here; the tile
+     *    genuinely goes away and comes back.
+     *  - SELECTING SOMETHING ELSE: the tile collapses (correct), and then the
+     *    reloaded document paints every payment option's additional-information
+     *    block VISIBLE, because core hides the unselected ones only once
+     *    `Payment.init()` -> `toggleOrderButton()` -> `collapseOptions()` runs at
+     *    DOM ready (`themes/_core/js/checkout-payment.js`). So the tile returns
+     *    for a moment and goes again.
+     *
+     * Round 3 kept the navigation and tried to hide its artefacts at first paint
+     * instead. That could only ever address the second shape - it deliberately
+     * did nothing when Two was the option being restored - so the first shape was
+     * never addressed at all. The navigation itself is what had to go.
+     *
+     * WHAT REPLACES IT: exactly what core's own `updateCart` handler does, MINUS
+     * the navigation. POST the same `.js-cart` refresh URL and swap the same
+     * summary partials out of the response. The buyer-visible totals update, the
+     * document is never navigated, and there is no artefact left to hide.
+     *
+     * WHAT THE NAVIGATION BOUGHT, AND WHY GIVING IT UP IS SAFE: re-rendering the
+     * payment options so OTHER payment modules recompute against the new amount.
+     * Nothing here needs that. The fee line exists only while Two is the selected
+     * option and is removed the instant another one is picked, and the module
+     * additionally strips it server-side before any other payment module's
+     * controller can compute totals (the `actionFrontControllerInitAfter`
+     * stale-guard). The authoritative check is, as before, the order-create
+     * parity gate, which fails closed.
+     *
+     * FAIL-SOFT, like the sync it follows: a theme with no `.js-cart` refresh URL,
+     * or a failed request, leaves the summary showing its previous total. That is
+     * a display staleness, never a charge: a buyer cannot complete a Two order
+     * whose PrestaShop total diverges from the Two invoice.
+     *
+     * @returns {void}
      */
-    triggerNativeCartRefresh() {
-        try {
-            const checkedRadio = document.querySelector('input[name="payment-option"]:checked, .payment-options input[type="radio"]:checked');
-            if (checkedRadio && checkedRadio.id) {
-                // TWO-25326 bug 11: whether the option being carried across the
-                // reload is Two's is recorded ALONGSIDE its id, because the
-                // head-time flash guard has to know that before any of this
-                // module's code (or the payment markup itself) exists - see
-                // TwoPaymentStepFlashGuard.js.
-                const twoOption = this.twoPaymentOption || document.querySelector('[data-module-name="twopayment"]');
-                // Containment OR the radio's own identity - the same shape
-                // isTwoPaymentSelected() uses, and for the same reason (round 3
-                // review finding 9, widened by round 4 finding 2). Containment
-                // alone answers "not Two" both where no `data-module-name` element
-                // exists AND where one exists without containing the radio, and in
-                // either case the guard would then hide the tile through the first
-                // paint of a load that is on its way to SELECTING Two - inventing
-                // exactly the flash it exists to remove. So the value tests run
-                // whenever containment FAILS, not only when the element is absent.
-                // isTwoPaymentSelected() itself cannot be asked about a specific
-                // node: its own fallbacks read whatever radio the document has
-                // checked, which is the question this needs to avoid.
-                const isTwoRadio = (twoOption && twoOption.contains(checkedRadio))
-                    || checkedRadio.value === 'twopayment'
-                    || checkedRadio.id === 'payment-option-twopayment'
-                    || String(checkedRadio.value || '').includes('twopayment');
-                sessionStorage.setItem(this._surchargeRestoreKey, JSON.stringify({
-                    id: checkedRadio.id,
-                    two: !!isTwoRadio
-                }));
-            }
-        } catch (e) {
-            // sessionStorage unavailable: reload still happens, buyer re-picks manually.
+    refreshCartSummaryInPlace() {
+        if (typeof jQuery === 'undefined') {
+            return;
+        }
+        const refreshUrl = jQuery('.js-cart').data('refresh-url');
+        if (!refreshUrl) {
+            // Not an error state worth alarming the buyer about, but it does mean
+            // the summary will lag until the next page load, so it is logged.
+            console.warn('Two Payment: no cart refresh URL in this theme; the order summary keeps its previous total until the next page load.');
+            return;
         }
 
-        if (window.prestashop && typeof window.prestashop.emit === 'function') {
-            window.prestashop.emit('updateCart', {
-                reason: { linkAction: 'twoSurchargeSync' },
-                resp: { cart: (window.prestashop && window.prestashop.cart) || {} }
+        // Last-wins, for the same reason the sync itself is sequenced: a buyer
+        // clicking between options fires several of these, and the summary each
+        // response carries is the cart AS OF that request. Without this, a slow
+        // earlier response landing after a newer one repaints the totals with the
+        // older cart - the sync's own guard cannot cover it, because by the time
+        // it runs each of those syncs WAS the newest.
+        const refreshSeq = ++this._summaryRefreshSeq;
+        jQuery.post(refreshUrl, {})
+            .done((response) => {
+                if (refreshSeq !== this._summaryRefreshSeq) {
+                    return;
+                }
+                this.applyCartSummaryPartials(response);
+            })
+            .fail(() => {
+                console.warn('Two Payment: cart summary refresh failed; the server-side order-create gate remains authoritative.');
             });
-        }
     }
 
     /**
-     * After the native payment-step reload, re-check the payment option the
-     * buyer had clicked and re-fire its change event so all listeners
-     * (PrestaShop core's option toggling, our own handler) rebuild their
-     * state. The server-side sync endpoint is idempotent, so the re-fired
-     * change cannot loop: it reports changed=false and no refresh is
-     * triggered again.
+     * Swap in the summary partials the cart-refresh endpoint returns.
+     *
+     * The response keys and the elements they replace are core's, taken from its
+     * own `updateCart` handler; `prestashop.selectors.cart` is read when core has
+     * published it and the literal selector is used otherwise, because that map is
+     * supplied by core's `selectors.js` and a theme that has not loaded it would
+     * otherwise silently update nothing.
+     *
+     * Two things core's handler also does are deliberately NOT done here:
+     * resetting `#product_customization_id` and re-stamping the cart lines'
+     * quantity inputs. Both belong to editing a cart LINE from the cart page;
+     * this call only ever follows a payment-fee sync, where no product line the
+     * buyer can edit has changed.
+     *
+     * A missing or non-string value is skipped rather than written, so a partial
+     * response cannot blank a section of the summary.
+     *
+     * @param {Object} response the endpoint's JSON
+     * @returns {void}
      */
-    restorePaymentSelectionAfterCartRefresh() {
-        try {
-            this.applyStoredPaymentSelection();
-        } finally {
-            // ALWAYS, and on every early return inside the call above: the
-            // suppression the head-time guard put in place is only correct for
-            // the instant before the selection is restored, and leaving it in
-            // force would hide the tile outright. The guard carries its own
-            // failsafe timer for the case where this method never runs, but this
-            // is the path that must not be able to leak it (TWO-25326 bug 11).
-            this.releasePaymentStepFlashGuard();
+    applyCartSummaryPartials(response) {
+        if (!response || typeof response !== 'object') {
+            return;
         }
+        const coreSelectors = (window.prestashop && window.prestashop.selectors && window.prestashop.selectors.cart)
+            ? window.prestashop.selectors.cart
+            : null;
+        const partials = [
+            ['cart_detailed_totals', 'detailedTotals', '.cart-detailed-totals, .js-cart-detailed-totals'],
+            ['cart_summary_items_subtotal', 'summaryItemsSubtotal', '.cart-summary-items-subtotal, .js-cart-summary-items-subtotal'],
+            ['cart_summary_subtotals_container', 'summarySubTotalsContainer', '.cart-summary-subtotals-container, .js-cart-summary-subtotals-container'],
+            ['cart_summary_products', 'summaryProducts', '.cart-summary-products, .js-cart-summary-products'],
+            ['cart_summary_totals', 'summaryTotals', '.cart-summary-totals, .js-cart-summary-totals'],
+            ['cart_detailed_actions', 'detailedActions', '.cart-detailed-actions, .js-cart-detailed-actions'],
+            ['cart_voucher', 'voucher', '.cart-voucher, .js-cart-voucher'],
+            ['cart_detailed', 'overview', '.cart-overview'],
+            ['cart_summary_top', 'summaryTop', '.cart-summary-top, .js-cart-summary-top']
+        ];
+
+        partials.forEach((partial) => {
+            const html = response[partial[0]];
+            if (typeof html !== 'string' || html === '') {
+                return;
+            }
+            const selector = (coreSelectors && coreSelectors[partial[1]]) || partial[2];
+            const target = jQuery(selector);
+            if (!target.length) {
+                return;
+            }
+            // FIRST match only, deliberately (review round 1). Every one of these
+            // selectors is a two-convention alternation - `.cart-summary-totals,
+            // .js-cart-summary-totals` - and core's own handler calls
+            // `replaceWith()` on the whole matched set. On the shipped classic
+            // theme that is one element either way, because both classes sit on
+            // the SAME node (verified on the delivered checkout markup:
+            // `class="card-block cart-summary-totals js-cart-summary-totals"`).
+            // But a theme that spelled the two conventions as two SEPARATE nodes
+            // would get the replacement HTML written into each of them - a
+            // duplicated totals block, which is visible corruption, and worse
+            // than the alternative failure of leaving a second stale copy alone.
+            // So: replace one, and say so when there was more than one rather
+            // than silently picking.
+            if (target.length > 1) {
+                console.warn('Two Payment: ' + selector + ' matched ' + target.length + ' elements; refreshing the first only.');
+            }
+            target.first().replaceWith(html);
+        });
     }
 
     /**
-     * Re-check the payment option recorded before the surcharge-driven reload.
+     * Re-measure the company-search control's layout (TWO-25326).
+     *
+     * In tile mode the control mounts inside a tile core may still have
+     * collapsed, so it measured a field with no measurable width. That case is
+     * handled where it is measured - no measurable width leaves the wrapper's
+     * pixel pin CLEARED rather than pinned to zero - but the wrapper then keeps
+     * the stylesheet's width until the next viewport change. This re-measures at
+     * the end of init instead.
+     *
+     * Presentation only, and never a gate on checkout: anything thrown here is
+     * swallowed.
      *
      * @returns {void}
      */
-    applyStoredPaymentSelection() {
-        let stored = null;
+    remeasureCompanySearchLayout() {
         try {
-            stored = sessionStorage.getItem(this._surchargeRestoreKey);
-            if (stored !== null) {
-                sessionStorage.removeItem(this._surchargeRestoreKey);
-            }
-        } catch (e) {
-            return;
-        }
-        if (!stored) {
-            return;
-        }
-        // Written as {id, two} since TWO-25326 bug 11. A bare id is the payload
-        // shape this module wrote before that, and can still be in a buyer's
-        // sessionStorage for the one page load that straddles the upgrade.
-        let radioId = stored;
-        try {
-            const parsed = JSON.parse(stored);
-            if (parsed && typeof parsed.id === 'string') {
-                radioId = parsed.id;
-            }
-        } catch (e) {
-            radioId = stored;
-        }
-        const radio = document.getElementById(radioId);
-        if (radio && !radio.checked) {
-            radio.checked = true;
-            radio.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-    }
-
-    /**
-     * Lift the head-time first-paint suppression (TWO-25326 bug 11). Prefers the
-     * guard's own release function so there is one owner of the class name;
-     * clears the class directly only if that file did not load, so a missing
-     * asset cannot leave the tile permanently hidden.
-     *
-     * @returns {void}
-     */
-    releasePaymentStepFlashGuard() {
-        try {
-            if (typeof window.TwoReleasePaymentStepFlashGuard === 'function') {
-                window.TwoReleasePaymentStepFlashGuard();
-            } else {
-                document.documentElement.classList.remove('two-restoring-payment-selection');
-            }
-            // The company-search control mounts (initializeModules(), earlier in
-            // init()) while the suppression is still in force, so in tile mode it
-            // measured a field inside a display:none container. That case is
-            // handled where it is measured - a field with no measurable width
-            // leaves the wrapper's pixel pin CLEARED rather than pinned to zero -
-            // but the wrapper is then left on the stylesheet's width until the
-            // next viewport change. Re-measure now that the tile is visible
-            // again, so the control is laid out from a real measurement on this
-            // load rather than the next resize.
             if (this.companySearch && typeof this.companySearch.ensureFieldWrapper === 'function') {
                 this.companySearch.ensureFieldWrapper();
                 if (typeof this.companySearch.constrainAutocompleteMenuWidth === 'function') {
@@ -2061,9 +2100,12 @@ class TwoCheckoutManager {
         // listeners (plus another Method-5 setInterval, never cleared) on
         // every firing - so a single click could invoke
         // handlePaymentOptionChange() several times concurrently, each
-        // independently racing syncSurchargeCartLine() -> a full payment-
-        // step reload (triggerNativeCartRefresh()), which is what Doug saw
-        // as the tile rendering and being removed several times in a row.
+        // independently racing syncSurchargeCartLine() -> back when that
+        // navigated the payment step, a stack of full page reloads, which
+        // is what Doug saw as the tile rendering and being removed several
+        // times in a row. That navigation is gone now
+        // (refreshCartSummaryInPlace), but the duplicate listeners are
+        // still worth never creating.
         // cleanup() has no matching removeEventListener calls (the handlers
         // are anonymous closures, never kept), so nothing this module does
         // can safely undo the duplicates once bound - the fix is to never

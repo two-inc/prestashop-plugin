@@ -119,8 +119,11 @@ class TwoSoleTrader
      * This is what the payment tile renders from, and the only three-state reader
      * there is. Resolving the answer LIVE here cannot work: the tile renders inside a shopper's
      * checkout request, so on any shop that cannot reach the registry EVERY
-     * payment-step render - and a payment-option change is a full page reload -
-     * paid the request timeout again. The failure marker bounds that to one
+     * payment-step render paid the request timeout again - and at the time this
+     * was written a payment-option change was a full page reload, so there were
+     * a lot of those renders. That reload is gone (TWO-25326 round 4), which
+     * makes the argument weaker but not wrong: a render-path network call on a
+     * shop that cannot reach the registry is still a buyer-visible timeout. The failure marker bounds that to one
      * attempt per request, not per session, because only a SUCCESS is written to
      * the cookie. Net-new buyer-visible latency on a path that previously made no
      * call at all, which is not a trade worth making for a rendering nicety.
