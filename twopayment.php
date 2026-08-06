@@ -11560,6 +11560,20 @@ class Twopayment extends PaymentModule
      * lost that way. The override's line stays as-is: same outcome, and on a
      * current shop the two agree.
      *
+     * NOT SCOPED TO THE CHECKOUT CONTROLLER, and that was a decision rather than
+     * an oversight (review round 2 raised it). The address form is filled in
+     * BEFORE a payment method is chosen, so "require it only when Two is the
+     * selected method" does not exist as a question at the moment the buyer is
+     * being asked - and that ordering is exactly the failure this closes. An
+     * address saved from My Account is used at checkout later, so exempting that
+     * form just moves the dead end one step back. The cost to a shop's other
+     * buyers is one field they were already being shown, now marked required;
+     * the cost of the narrower scope is the bug.
+     *
+     * Front office only, as a consequence of the hook rather than of a test: the
+     * back office's own required-fields screen reads the DATABASE list, which
+     * this never touches, so a merchant still sees exactly what they configured.
+     *
      * Idempotent. Guarded on the class and on the property still being an array
      * so a future core that reshapes either degrades to "phone stays optional"
      * rather than to a fatal on every front page.
