@@ -107,8 +107,9 @@ class TwoSoleTrader {
      * request came back. Measured on the staging shop: chips absent from first
      * paint, present ~280ms later. That is invisible on a page the buyer just
      * arrived at, and very visible indeed once something reloads the page under
-     * them - which the surcharge cart-line sync does on every payment-option
-     * change (see TwoCheckoutManager.triggerNativeCartRefresh). Doug's "the chips
+     * them - which the surcharge cart-line sync used to do on every
+     * payment-option change (it no longer navigates the page at all - see
+     * TwoCheckoutManager.refreshCartSummaryInPlace). Doug's "the chips
      * render, then disappear and reappear" is that reload plus that round trip:
      * chips on the outgoing document, no chips on the incoming one, chips again a
      * few hundred milliseconds later.

@@ -264,7 +264,7 @@ final class AddressLookupGatingSpec
         }
 
         TinyAssert::same('Enable company search in address entry', $labels['PS_TWO_ENABLE_COMPANY_NAME']);
-        TinyAssert::same('Auto-fill the address from the selected company', $labels['PS_TWO_ADDRESS_LOOKUP']);
+        TinyAssert::same('Autofill company address', $labels['PS_TWO_ADDRESS_LOOKUP']);
 
         // Every label on this form, not only the two this change touched: the
         // convention is what is being pinned. A label is sentence case when no

@@ -382,7 +382,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_c23d1b05a68bc7bf02d67b60fe043586'] 
 $_MODULE['<{twopayment}prestashop>twopayment_c24b167a42bc9624b05bb755eee9a550'] = 'Two-betaling er ikke tilgjengelig for denne ordren.';
 $_MODULE['<{twopayment}prestashop>twopayment_c352b4e66293dc015043d84f10a54c37'] = 'Betalingsfeil → Betalingsfeil';
 $_MODULE['<{twopayment}prestashop>twopayment_c3d132002979d91f2cb910ab3e8c3985'] = 'Distribuert:';
-$_MODULE['<{twopayment}prestashop>twopayment_c47a7e5b5a98011da2175b7231c7e12b'] = 'Fyll ut adressen automatisk fra det valgte firmaet';
+$_MODULE['<{twopayment}prestashop>twopayment_6704e26559ba2da9acb10c0ef50defc4'] = 'Fyll ut firmaadresse automatisk';
 $_MODULE['<{twopayment}prestashop>twopayment_c66a99dc2e09bb78051ff4f11dd89f6c'] = 'Produktene må ha riktige avgiftsregler satt opp i PrestaShop';
 $_MODULE['<{twopayment}prestashop>twopayment_c72d2eb12f16e79b940e80b200786d01'] = 'Koble Two-betalingstilstander til ordretilstander i PrestaShop for integrasjon i arbeidsflyten. Two oppretter automatisk sine egne merkede ordretilstander, men du kan koble dem til eksisterende PrestaShop-tilstander om nødvendig.';
 $_MODULE['<{twopayment}prestashop>twopayment_c86427e7020aa074399a2ecdb9c42a1d'] = 'Fakturaen kunne ikke hentes. Prøv igjen senere eller kontakt butikkeieren.';
