@@ -1661,8 +1661,8 @@ class Twopayment extends PaymentModule
                         // - the control is never off.
                         //
                         // SENTENCE CASE, matching every other label on this
-                        // page ("Auto-fill the address from the selected
-                        // company", "Automatically fulfill orders with Two",
+                        // page ("Autofill company address", "Automatically
+                        // fulfill orders with Two",
                         // "Send tax subtotals in request payloads"). This was
                         // Title Case for cross-platform word-for-word parity
                         // with woocommerce-plugin/magento-plugin; house style
@@ -1692,7 +1692,13 @@ class Twopayment extends PaymentModule
                     ),
                     array(
                         'type' => 'switch',
-                        'label' => $this->l('Auto-fill the address from the selected company'),
+                        // TWO-25326: caption aligned word-for-word with the
+                        // magento-plugin and woocommerce-plugin settings for the
+                        // same switch. Sentence case, as everything else on this
+                        // page is, so the alignment costs no house style here.
+                        // Only the CAPTION changed - the setting key, its
+                        // default and every behaviour it governs are untouched.
+                        'label' => $this->l('Autofill company address'),
                         'name' => 'PS_TWO_ADDRESS_LOOKUP',
                         'is_bool' => true,
                         'desc' => $this->l('Governs the company address lookup on the checkout ADDRESS step only. When enabled, picking a company from the company search overwrites the address fields (street, postcode, city) and the organisation-number fields (DNI / VAT number) with the registry data for that company - including on a re-search, where picking a different company replaces the previous company\'s values. When disabled, the company search still works and still records the company name and organisation number, but nothing is written into the address or identifier fields and the customer fills them in themselves. This setting is unavailable and forced off when "Enable company search in address entry" is set to "No" - there is no address-area lookup to govern once the search itself has moved to the payment tile.'),
@@ -3800,17 +3806,6 @@ class Twopayment extends PaymentModule
 
         // CRITICAL FIX: Remove async loading and ensure proper load order for reliable initialization
         // Ensures they load AFTER jQuery
-        // Payment-step first-paint guard (TWO-25326 bug 11). The ONLY asset this
-        // module puts in the HEAD, and deliberately so: it exists to run before
-        // the payment-options markup is parsed, which is the only moment at which
-        // the tile's flash on a surcharge-driven reload can still be prevented.
-        // Everything below it is bottom-positioned as before and runs at DOM
-        // ready, by which time that first paint has already happened. It depends
-        // on nothing - not jQuery, not the config payload - because nothing else
-        // has loaded yet, and it no-ops if it finds the markup already in the
-        // document (see the file's own SCOPE note), so a future change to this
-        // position degrades to "no improvement" rather than to a new flicker.
-        $this->context->controller->registerJavascript('two-payment-step-flash-guard', $this->getTwoModuleAssetPath('views/js/modules/TwoPaymentStepFlashGuard.js'), array('position' => 'head', 'priority' => 199, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoPaymentStepFlashGuard.js')));
         // Shared company-number DISPLAY rule (TWO-25326 §12), used by both the
         // search control and the order-intent sentence - so it has to be in
         // place before either of them, hence a priority below both.
@@ -4027,9 +4022,11 @@ class Twopayment extends PaymentModule
         // (TWO-25326 bug 9, round 3). TwoSoleTrader.js used to build the
         // Business / Sole trader chips only after its own availability round
         // trip, so they were absent from every first paint of the payment step
-        // and appeared a few hundred milliseconds later - a visible flicker
-        // every time the surcharge cart-line sync reloads the page, which it
-        // does on every payment-option change.
+        // and appeared a few hundred milliseconds later - a visible flicker on
+        // any page load, and at the time this was written the surcharge
+        // cart-line sync caused one on every payment-option change. It no longer
+        // navigates at all (TWO-25326 round 4); the loads this still covers are
+        // the genuine ones (arrival, currency switch, back-navigation).
         //
         // Same source of truth as the endpoint that JS was calling
         // (TwoSoleTrader::isAvailable -> the registry's supported-company-types
@@ -11522,6 +11519,83 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Make the address form's phone field MANDATORY for as long as this module
+     * is enabled (TWO-25326).
+     *
+     * WHY. A Two order is a credit decision, and a reachable phone number is
+     * part of it - the provider validates the number and rejects the order
+     * without one, at which point the buyer is already at the payment step with
+     * nothing to do but go back and edit an address they were never told was
+     * incomplete. The field exists in PrestaShop's default address format for
+     * every country; core just leaves it optional.
+     *
+     * MECHANISM, and it is core's own rather than anything hand-rolled:
+     * `AddressFormat::$requireFormFieldsList` is the public static list core
+     * itself seeds with firstname/lastname/address1/city/Country:name, and
+     * `AddressFormat::getFieldsRequired()` merges it with the merchant's
+     * back-office selections. `CustomerAddressFormatter::getFormat()` reads that
+     * merged list and calls `FormField::setRequired(true)`, which is BOTH halves
+     * of the requirement in one move: the theme renders the field as required,
+     * and `AbstractForm::validate()` refuses an empty value server-side. Verified
+     * against 8.1.x and against `develop` (PS9) - the list, the merge and the
+     * formatter's use of it are unchanged across both.
+     *
+     * WHY NOT the `required_field` TABLE, which is the other way to spell this:
+     * `ObjectModel::addFieldsRequiredDatabase()` DELETEs every existing row for
+     * the object before inserting, so writing through it would silently discard
+     * whatever the merchant had configured in Customers > Addresses. Worse, a
+     * field required in that table is enforced by
+     * `ObjectModel::validateFieldsRequiredDatabase()` on EVERY save, including
+     * the programmatic ones - the sole-trader autofill path here, other modules,
+     * CSV imports - so a shop with any of those would start failing address
+     * saves outright. The static list is scoped to the FORM, which is exactly
+     * the scope asked for.
+     *
+     * WHY HERE rather than only in the module's `CustomerAddressFormatter`
+     * override, which also calls `setRequired(true)`: overrides live as a COPY in
+     * the shop's own `override/` directory and are only refreshed on
+     * install/upgrade, so a shop can and does run a stale one (observed live on
+     * staging - a 2.4.0-stamped copy on a 2.7.0 install). This runs from the
+     * module file itself on every front request, so the requirement cannot be
+     * lost that way. The override's line stays as-is: same outcome, and on a
+     * current shop the two agree.
+     *
+     * NOT SCOPED TO THE CHECKOUT CONTROLLER, and that was a decision rather than
+     * an oversight (review round 2 raised it). The address form is filled in
+     * BEFORE a payment method is chosen, so "require it only when Two is the
+     * selected method" does not exist as a question at the moment the buyer is
+     * being asked - and that ordering is exactly the failure this closes. An
+     * address saved from My Account is used at checkout later, so exempting that
+     * form just moves the dead end one step back. The cost to a shop's other
+     * buyers is one field they were already being shown, now marked required;
+     * the cost of the narrower scope is the bug.
+     *
+     * Front office only, as a consequence of the hook rather than of a test: the
+     * back office's own required-fields screen reads the DATABASE list, which
+     * this never touches, so a merchant still sees exactly what they configured.
+     *
+     * Idempotent. Guarded on the class and on the property still being an array
+     * so a future core that reshapes either degrades to "phone stays optional"
+     * rather than to a fatal on every front page.
+     *
+     * @return void
+     */
+    private function requirePhoneOnAddressForms()
+    {
+        if (!class_exists('AddressFormat')) {
+            return;
+        }
+        if (!is_array(AddressFormat::$requireFormFieldsList)) {
+            return;
+        }
+        if (in_array('phone', AddressFormat::$requireFormFieldsList, true)) {
+            return;
+        }
+
+        AddressFormat::$requireFormFieldsList[] = 'phone';
+    }
+
+    /**
      * Stale-line guard (runs on every front request, cheap early-outs).
      *
      * Two removal rules, both money-protective:
@@ -11542,6 +11616,11 @@ class Twopayment extends PaymentModule
      */
     public function hookActionFrontControllerInitAfter($params)
     {
+        // Unconditional and FIRST, ahead of the surcharge stale-guard below and
+        // outside its early returns: it has nothing to do with the cart, and it
+        // has to be in place before the address form is built.
+        $this->requirePhoneOnAddressForms();
+
         try {
             $cart = isset($this->context->cart) ? $this->context->cart : null;
             if (!Validate::isLoadedObject($cart)) {

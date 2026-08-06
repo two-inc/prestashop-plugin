@@ -26,21 +26,6 @@
  * appearance of its own now.
  */
 
-/*
- * Payment-step flash guard (TWO-25326 bug 11). The class on <html> is set by
- * views/js/modules/TwoPaymentStepFlashGuard.js, which runs in the head - so
- * this rule is in force before the payment options are parsed and the tile is
- * never part of the first paint of a reload that is on its way to selecting a
- * DIFFERENT payment method. See that file for why nothing later can do this and
- * for the three conditions that have to hold before the class is set at all.
- *
- * !important because PrestaShop's own inline/JS-applied display on the
- * surrounding additional-information block is what we are racing.
- */
-html.two-restoring-payment-selection .two-payment-container {
-    display: none !important;
-}
-
 /* Remove custom styling that modifies core radio/checkbox visuals for consistency */
 .two-payment-option .custom-radio  {
     border: none;
