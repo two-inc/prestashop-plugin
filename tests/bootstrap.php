@@ -24,8 +24,58 @@ namespace {
 }
 
 namespace PrestaShop\PrestaShop\Core\Payment {
+    /**
+     * Core's fluent payment-option value object. The setters were previously
+     * absent, which was fine while nothing invoked getTwoPaymentOption() - it is
+     * exercised now (TWO-25326 bug 9, round 3, for the server-rendered
+     * sole-trader answer it assigns), and a fluent builder is unusable without
+     * them: the first call fatals rather than failing an assertion.
+     *
+     * Records rather than validates - the specs that use this care about what the
+     * module hands the TEMPLATE, and core's own contract for these values is not
+     * something a stub can meaningfully assert.
+     */
     class PaymentOption
     {
+        /** @var array<string, mixed> */
+        public $recorded = [];
+
+        /**
+         * The setters PrestaShop core's PaymentOption actually has. An
+         * allowlist, not a `strpos($name, 'set') === 0` catch-all: a catch-all
+         * records ANY setter and returns $this, so a module change calling a
+         * setter core does NOT have passes every spec here and fatals in
+         * production - which is precisely the class of mismatch a stub of a core
+         * value object exists to catch.
+         *
+         * @var string[]
+         */
+        private const CORE_SETTERS = array(
+            'setCallToActionText',
+            'setAction',
+            'setForm',
+            'setInputs',
+            'setAdditionalInformation',
+            'setLogo',
+            'setModuleName',
+            'setBinary',
+        );
+
+        public function __call($name, $arguments)
+        {
+            if (in_array($name, self::CORE_SETTERS, true)) {
+                $this->recorded[lcfirst(substr($name, 3))] = $arguments[0] ?? null;
+
+                return $this;
+            }
+            if (strpos($name, 'get') === 0) {
+                return $this->recorded[lcfirst(substr($name, 3))] ?? null;
+            }
+
+            throw new \BadMethodCallException(
+                'PaymentOption stub has no ' . $name . '() - if PrestaShop core really does, add it to CORE_SETTERS'
+            );
+        }
     }
 }
 
@@ -446,12 +496,24 @@ namespace {
     #[\AllowDynamicProperties]
     class Cookie
     {
+        /**
+         * How many times write() was called. Recorded because at least one
+         * endpoint's correctness depends on writing the cookie explicitly before
+         * it ends the request (TWO-25326: the payment tile renders the sole-trader
+         * toggle from that cookie and never resolves it itself), and a stub that
+         * silently swallows write() cannot tell that apart from not writing.
+         *
+         * @var int
+         */
+        public int $writes = 0;
+
         public function setExpire(int $timestamp): void
         {
         }
 
         public function write(): void
         {
+            ++$this->writes;
         }
     }
 

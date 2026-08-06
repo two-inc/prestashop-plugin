@@ -79,7 +79,14 @@ Reliable B2B invoice checkout via Two, with:
 - `views/js/modules/TwoCompanySearch.js`
   - Company discovery and selection
 - `views/js/modules/TwoSoleTrader.js`
-  - Business / sole-trader toggle and enrolment prompt
+  - Business / sole-trader toggle behaviour and enrolment prompt. The toggle's
+    visibility and its two chips are rendered SERVER-side by `paymentinfo.tpl`
+    (TWO-25326) and adopted here; this module re-resolves them only when the
+    billing country changes
+- `views/js/modules/TwoPaymentStepFlashGuard.js`
+  - The one HEAD-loaded asset. Keeps the payment tile out of the first paint of
+    the checkout-page reload that a surcharge cart-line sync triggers, when that
+    reload is on its way to selecting a different payment method (TWO-25326)
 - `views/js/modules/TwoOptionalFields.js`
   - Optional buyer reference fields in the payment tile: mirrors each visible
     input into its hidden twin inside the payment form (the tile is a sibling

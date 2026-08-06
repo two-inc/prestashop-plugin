@@ -22,10 +22,13 @@ final class TwoSoleTraderTestHarness extends TwopaymentTestHarness
     public $cannedResponses = [];
     /** @var string[] */
     public $requests = [];
+    /** @var array<string, int|null> endpoint prefix -> timeout it was called with */
+    public $timeouts = [];
 
     public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
     {
         $this->requests[] = $endpoint;
+        $this->timeouts[$endpoint] = $timeout;
         foreach ($this->cannedResponses as $prefix => $response) {
             if (strpos($endpoint, $prefix) === 0) {
                 return $response;
@@ -55,6 +58,14 @@ final class TwoSoleTraderSpec
             'testConfigureSslVerificationIsCallableFromOutsideTwopayment',
             'testSignupUrlFollowsEnvironment',
             'testFormatterHasNoAccountTypeField',
+            'testPaymentTileCarriesTheServerResolvedToggleAnswer',
+            'testPaymentTileWithAnUnknownAnswerAsksNothingAndClaimsNothing',
+            'testPaymentTileWithNoBillingCountryAsksTheRegistryNothing',
+            'testRegistryLookupUsesTheTightCheckoutTimeout',
+            'testFailedRegistryLookupIsAttemptedOncePerRequest',
+            'testPaymentOptionStubRefusesASetterCoreDoesNotHave',
+            'testAvailabilityEndpointPersistsTheRegistryAnswer',
+            'testAvailabilityEndpointWritesNothingWhenTheTokenIsRejected',
         ];
         foreach ($tests as $test) {
             self::reset();
@@ -386,5 +397,374 @@ final class TwoSoleTraderSpec
         $format = (new CustomerAddressFormatter($country, $translator, []))->getFormat();
         TinyAssert::false(isset($format['account_type']), 'Address form must not add an account_type field');
         TinyAssert::true(isset($format['company']), 'Company field is still present for B2B checkout');
+    }
+
+    /**
+     * Capture what getTwoPaymentOption() hands the template, which the stub
+     * Smarty otherwise discards.
+     *
+     * @return array{vars: array<string, mixed>}
+     */
+    private static function captureTileVars(TwoSoleTraderTestHarness $module): array
+    {
+        $captured = new class {
+            /** @var array<string, mixed> */
+            public $vars = [];
+
+            public function assign($vars): void
+            {
+                if (is_array($vars)) {
+                    $this->vars = array_merge($this->vars, $vars);
+                }
+            }
+
+            public function fetch($template): string
+            {
+                return '';
+            }
+        };
+        $context = Context::getContext();
+        $previous = $context->smarty;
+        $context->smarty = $captured;
+        try {
+            $method = new ReflectionMethod(Twopayment::class, 'getTwoPaymentOption');
+            $method->setAccessible(true);
+            $method->invoke($module);
+        } finally {
+            $context->smarty = $previous;
+        }
+
+        return ['vars' => $captured->vars];
+    }
+
+    /**
+     * TWO-25326 bug 9, round 3: the toggle is rendered SERVER-side now, so the
+     * payment tile has to carry the registry answer and the country it is an
+     * answer about.
+     *
+     * This is the seam no Jest test can see. The browser half
+     * (TwoSoleTrader.adoptServerRenderedToggle) reads exactly two attributes and
+     * treats anything it cannot parse as "no answer" - i.e. it silently falls
+     * back to the round trip that caused the flicker in the first place. So a
+     * rename or a dropped assign here does not break the checkout, it just
+     * quietly restores the bug, with every JS test still green.
+     */
+    private static function testPaymentTileCarriesTheServerResolvedToggleAnswer(): void
+    {
+        StubStore::$addresses[8811] = ['id_country' => 44];
+        StubStore::$countries[44] = 'gb';
+        Context::getContext()->cart->id_address_invoice = 8811;
+
+        $module = self::harness(
+            [],
+            ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
+        );
+        // The tile reads CACHE-ONLY (round 3 review, finding 2), so the answer has
+        // to already be known - which on a real shop is what the browser's own
+        // availability request arranges, through the endpoint that writes the
+        // cookie. This stands in for that having happened.
+        TwoSoleTrader::isAvailable($module, 'GB');
+        $requestsBefore = count($module->requests);
+        $available = self::captureTileVars($module);
+        TinyAssert::same(
+            $requestsBefore,
+            count($module->requests),
+            'rendering the tile must not make a registry request of its own'
+        );
+        TinyAssert::same(true, $available['vars']['sole_trader_available']);
+        TinyAssert::same('1', $available['vars']['sole_trader_answer']);
+        TinyAssert::same('GB', $available['vars']['sole_trader_country']);
+
+        // The other answer, from the same source: a country the registry does
+        // not list sole traders for. The template renders the toggle hidden and
+        // chipless, and the browser adopts THAT rather than asking again.
+        self::reset();
+        StubStore::$addresses[8811] = ['id_country' => 44];
+        StubStore::$countries[44] = 'gb';
+        Context::getContext()->cart->id_address_invoice = 8811;
+        $businessOnlyModule = self::harness(
+            [],
+            ['/registry/v1/supported-company-types/' => self::registryOk([])]
+        );
+        TwoSoleTrader::isAvailable($businessOnlyModule, 'GB');
+        $businessOnly = self::captureTileVars($businessOnlyModule);
+        TinyAssert::same(false, $businessOnly['vars']['sole_trader_available']);
+        // '0' is a real answer and must be distinguishable from '' below - it is
+        // what lets the browser adopt "business-only country" and stop asking.
+        TinyAssert::same('0', $businessOnly['vars']['sole_trader_answer']);
+        TinyAssert::same('GB', $businessOnly['vars']['sole_trader_country']);
+    }
+
+    /**
+     * A failed lookup costs the request ONE timeout, not one per caller.
+     *
+     * This is the counterpart to testFetchErrorIsNotCached: the error must not
+     * become an ANSWER and must not outlive the request, but it must still be
+     * remembered FOR the request. Round 3 dropped the request-scoped memo along
+     * with the bad one and turned a failing registry into several serial timeouts
+     * on the checkout render path - which took the payment option past the e2e
+     * suite's wait and off the page entirely.
+     */
+    private static function testFailedRegistryLookupIsAttemptedOncePerRequest(): void
+    {
+        // No canned response: the harness returns false, the shape of a transport
+        // failure.
+        $module = self::harness([], []);
+
+        TinyAssert::same(null, TwoSoleTrader::getSupportedCompanyTypesOrNull($module, 'GB'));
+        TinyAssert::same(null, TwoSoleTrader::getSupportedCompanyTypesOrNull($module, 'GB'));
+        TinyAssert::false(TwoSoleTrader::isAvailable($module, 'GB'));
+
+        TinyAssert::same(
+            1,
+            count(array_filter($module->requests, function ($endpoint) {
+                return strpos($endpoint, '/registry/v1/supported-company-types/GB') === 0;
+            })),
+            'a failing registry lookup must be attempted at most once per request per country'
+        );
+
+        // Still per-COUNTRY, not a blanket "give up".
+        TinyAssert::same(null, TwoSoleTrader::getSupportedCompanyTypesOrNull($module, 'NO'));
+        TinyAssert::same(
+            1,
+            count(array_filter($module->requests, function ($endpoint) {
+                return strpos($endpoint, '/registry/v1/supported-company-types/NO') === 0;
+            })),
+            'a different country must still get its own attempt'
+        );
+    }
+
+    /**
+     * An answer that is not already known is reported as NO answer, and costs the
+     * render no request at all.
+     *
+     * Two properties in one, and both matter:
+     *  - it must not be "no" (isAvailable() flattens the two, which is right for a
+     *    capability gate and wrong for markup the browser adopts as settled and
+     *    never re-asks - one timeout would become a cached "business-only country"
+     *    for the rest of the page's life);
+     *  - it must not be resolved HERE. This runs in a shopper's checkout render,
+     *    and a payment-option change reloads that page, so a live call meant every
+     *    payment-step render on a shop that cannot reach the registry paid the
+     *    timeout again (round 3 review, finding 2).
+     */
+    private static function testPaymentTileWithAnUnknownAnswerAsksNothingAndClaimsNothing(): void
+    {
+        StubStore::$addresses[8811] = ['id_country' => 44];
+        StubStore::$countries[44] = 'gb';
+        Context::getContext()->cart->id_address_invoice = 8811;
+
+        // A registry that WOULD answer, and a cold cache. The tile must still not
+        // call it - that is the whole point, and a canned success here is what
+        // makes the assertion about the render rather than about the transport.
+        $module = self::harness(
+            [],
+            ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
+        );
+        $captured = self::captureTileVars($module);
+
+        TinyAssert::same('', $captured['vars']['sole_trader_answer']);
+        // Still fail-soft in what it DRAWS - the toggle does not render.
+        TinyAssert::same(false, $captured['vars']['sole_trader_available']);
+        TinyAssert::same('GB', $captured['vars']['sole_trader_country']);
+        TinyAssert::same(
+            array(),
+            array_values(array_filter($module->requests, function ($endpoint) {
+                return strpos($endpoint, '/registry/v1/supported-company-types/') === 0;
+            })),
+            'the payment-step render must never resolve availability over the network'
+        );
+    }
+
+    /**
+     * Build the order-intent controller for the availability action, with a
+     * response that unwinds instead of exiting. Same pattern as
+     * SessionCompanyClearSpec/OrgNumberPreVerificationSpec.
+     */
+    private static function makeAvailabilityController(string $token, string $country)
+    {
+        Tools::resetTestValues();
+        Tools::setTestValue('ajax', 1);
+        Tools::setTestValue('action', 'soleTraderAvailability');
+        Tools::setTestValue('country', $country);
+        if ($token !== '') {
+            Tools::setTestValue('token', $token);
+        }
+
+        $controller = new class extends TwopaymentOrderintentModuleFrontController {
+            /** @var array<int,array> */
+            public array $emitted = array();
+            /** @var int cookie writes seen at the moment the response was sent */
+            public int $writesAtResponse = -1;
+
+            public function sendJsonResponse($content)
+            {
+                $decoded = json_decode((string) $content, true);
+                $this->emitted[] = is_array($decoded) ? $decoded : array('raw' => $content);
+                $this->writesAtResponse = Context::getContext()->cookie->writes;
+
+                throw new StubOrderIntentResponded('order intent response sent');
+            }
+        };
+        $controller->context = Context::getContext();
+        $controller->module = self::harness([], array(
+            '/registry/v1/supported-company-types/' => self::registryOk(array('SOLE_TRADER')),
+        ));
+
+        return $controller;
+    }
+
+    /**
+     * The availability endpoint must PERSIST the registry answer it just cached,
+     * explicitly, before it ends the request.
+     *
+     * This is load-bearing, not hygiene (TWO-25326 round 4/5): the payment tile
+     * renders the sole-trader toggle from that cookie and never resolves the
+     * registry itself, so without this write the server-rendered toggle can never
+     * appear and the chip flicker this ticket fixes comes straight back. It used
+     * to rely on PrestaShop's Cookie destructor, which only writes while headers
+     * are unsent - contingent on output buffering, an ini setting.
+     *
+     * Asserted at the moment the response is sent, not afterwards, because a write
+     * that happens after the headers are out is exactly the failure mode.
+     */
+    private static function testAvailabilityEndpointPersistsTheRegistryAnswer(): void
+    {
+        $controller = self::makeAvailabilityController(Tools::getToken(false), 'GB');
+        $before = Context::getContext()->cookie->writes;
+
+        try {
+            $controller->postProcess();
+        } catch (StubOrderIntentResponded $e) {
+            // expected: the response unwinds instead of exiting
+        }
+
+        TinyAssert::same(
+            array(array('success' => true, 'available' => true)),
+            $controller->emitted,
+            'the endpoint must still answer the availability question'
+        );
+        TinyAssert::true(
+            $controller->writesAtResponse > $before,
+            'the registry answer must be written to the cookie BEFORE the response ends the request - '
+            . 'the payment tile renders the toggle from that cookie and never resolves the registry itself'
+        );
+    }
+
+    /**
+     * And nothing is written when the token is rejected: that path returns before
+     * any lookup, so there is no answer to persist and no session to touch.
+     */
+    private static function testAvailabilityEndpointWritesNothingWhenTheTokenIsRejected(): void
+    {
+        $controller = self::makeAvailabilityController('wrongtoken', 'GB');
+        $before = Context::getContext()->cookie->writes;
+
+        try {
+            $controller->postProcess();
+        } catch (StubOrderIntentResponded $e) {
+            // expected
+        }
+
+        TinyAssert::same($before, Context::getContext()->cookie->writes);
+        // Not merely `success === false`: the controller's unknown-action branch
+        // emits exactly that and also writes nothing, so this test would pass with
+        // the availability case removed entirely. Assert the refusal is the TOKEN
+        // refusal.
+        TinyAssert::same(
+            array(array('success' => false, 'error' => 'Invalid token')),
+            $controller->emitted,
+            'a rejected token must be refused as a token, not silently as an unknown action'
+        );
+        // And that the refusal happens BEFORE any lookup - the half the docblock
+        // claims and nothing asserted. Without this, moving the token check below
+        // the registry call (an unauthenticated request triggering a live outbound
+        // call) passes.
+        TinyAssert::same(
+            array(),
+            $controller->module->requests,
+            'an unauthenticated request must not reach the registry at all'
+        );
+    }
+
+    /**
+     * The PaymentOption stub must refuse a setter PrestaShop core does not have.
+     *
+     * Round 4 review: the stub used to accept ANY `set*` name, record it and
+     * return $this - so a module change calling a setter core lacks passed every
+     * spec here and fatalled in production, the one mismatch a stub of a core
+     * value object exists to catch. This asserts the allowlist is load-bearing
+     * rather than decorative.
+     */
+    private static function testPaymentOptionStubRefusesASetterCoreDoesNotHave(): void
+    {
+        $option = new PrestaShop\PrestaShop\Core\Payment\PaymentOption();
+        // A real one still works, and still chains.
+        TinyAssert::true($option->setModuleName('twopayment') === $option);
+
+        $refused = false;
+        try {
+            $option->setSomethingCoreDoesNotHave('x');
+        } catch (BadMethodCallException $e) {
+            $refused = true;
+        }
+        TinyAssert::true($refused, 'the stub must refuse a setter that PrestaShop core does not define');
+    }
+
+    /**
+     * The registry lookup must carry the tight checkout timeout rather than
+     * setTwoPaymentRequest()'s 60-second default (API_TIMEOUT_LONG), which is
+     * sized for file uploads. It is reached from the module's own AJAX controller
+     * while a buyer waits on the checkout for the toggle to appear - the payment
+     * tile deliberately does NOT reach it, reading the answer cache-only instead -
+     * so a minute is the wrong bound for it either way.
+     */
+    private static function testRegistryLookupUsesTheTightCheckoutTimeout(): void
+    {
+        $module = self::harness(
+            [],
+            ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
+        );
+        TwoSoleTrader::isAvailable($module, 'GB');
+
+        TinyAssert::same(
+            Twopayment::API_TIMEOUT_STATE_CHECK,
+            $module->timeouts['/registry/v1/supported-company-types/GB'] ?? null,
+            'the registry lookup happens while a buyer waits on the checkout and must not inherit the 60s default'
+        );
+    }
+
+    /**
+     * No billing address yet means no country, and a country is the registry
+     * call's only argument - so there is nothing to ask and the tile must say
+     * "not available", definitively, without spending a request on it.
+     *
+     * The caller-side `!== ''` guard is defence in depth rather than the only
+     * thing standing between here and an HTTP call: getSupportedCompanyTypes()
+     * rejects a non-ISO country before any request of its own. What this test
+     * genuinely pins is the ANSWER - '0', a definite no, not '' - because an
+     * empty country is not an unresolved registry, and telling the browser it was
+     * would make it keep asking about a country it does not have.
+     */
+    private static function testPaymentTileWithNoBillingCountryAsksTheRegistryNothing(): void
+    {
+        Context::getContext()->cart->id_address_invoice = 0;
+
+        $module = self::harness(
+            [],
+            ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
+        );
+        $captured = self::captureTileVars($module);
+
+        TinyAssert::same(false, $captured['vars']['sole_trader_available']);
+        TinyAssert::same('0', $captured['vars']['sole_trader_answer']);
+        TinyAssert::same('', $captured['vars']['sole_trader_country']);
+        TinyAssert::same(
+            array(),
+            array_values(array_filter($module->requests, function ($endpoint) {
+                return strpos($endpoint, '/registry/v1/supported-company-types/') === 0;
+            })),
+            'a tile with no billing country must not call the registry at all'
+        );
     }
 }

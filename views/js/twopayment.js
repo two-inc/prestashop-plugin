@@ -169,6 +169,15 @@
                     checkoutHost: twopayment.checkout_host,
                     orderIntentUrl: twopayment.order_intent_url,
                     ajaxToken: twopayment.ajax_token,
+                    // TWO-25326 bug 9, round 3: the cart's billing country, which
+                    // is what the toggle's availability is actually about. The
+                    // payment step renders no country select, so without this the
+                    // module fell back to `shop_country` - the visitor/shop
+                    // country, not the country the order will be billed to - and
+                    // re-resolved availability for the wrong one. Already in the
+                    // payload for the company search (TwoCompanySearch reads the
+                    // same key); this just stops a second consumer guessing.
+                    billingCountry: twopayment.billing_country,
                     shopCountry: twopayment.shop_country,
                     i18n: {
                         registered_business: twopayment.i18n && twopayment.i18n.sole_trader_registered_business,
