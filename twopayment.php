@@ -3800,6 +3800,17 @@ class Twopayment extends PaymentModule
 
         // CRITICAL FIX: Remove async loading and ensure proper load order for reliable initialization
         // Ensures they load AFTER jQuery
+        // Payment-step first-paint guard (TWO-25326 bug 11). The ONLY asset this
+        // module puts in the HEAD, and deliberately so: it exists to run before
+        // the payment-options markup is parsed, which is the only moment at which
+        // the tile's flash on a surcharge-driven reload can still be prevented.
+        // Everything below it is bottom-positioned as before and runs at DOM
+        // ready, by which time that first paint has already happened. It depends
+        // on nothing - not jQuery, not the config payload - because nothing else
+        // has loaded yet, and it no-ops if it finds the markup already in the
+        // document (see the file's own SCOPE note), so a future change to this
+        // position degrades to "no improvement" rather than to a new flicker.
+        $this->context->controller->registerJavascript('two-payment-step-flash-guard', $this->getTwoModuleAssetPath('views/js/modules/TwoPaymentStepFlashGuard.js'), array('position' => 'head', 'priority' => 199, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoPaymentStepFlashGuard.js')));
         // Shared company-number DISPLAY rule (TWO-25326 §12), used by both the
         // search control and the order-intent sentence - so it has to be in
         // place before either of them, hence a priority below both.
@@ -4012,8 +4023,62 @@ class Twopayment extends PaymentModule
 
         $optional_fields = $this->getOptionalCheckoutFieldsForDisplay();
 
+        // Sole-trader toggle, resolved HERE rather than in the browser
+        // (TWO-25326 bug 9, round 3). TwoSoleTrader.js used to build the
+        // Business / Sole trader chips only after its own availability round
+        // trip, so they were absent from every first paint of the payment step
+        // and appeared a few hundred milliseconds later - a visible flicker
+        // every time the surcharge cart-line sync reloads the page, which it
+        // does on every payment-option change.
+        //
+        // Same source of truth as the endpoint that JS was calling
+        // (TwoSoleTrader::isAvailable -> the registry's supported-company-types
+        // answer), so the markup can never disagree with what the client would
+        // have been told. Cost is bounded: that answer is memoised per request
+        // and cached in the context cookie for the endpoint's own max-age, and
+        // it REPLACES the per-page-load AJAX call rather than adding to it.
+        // THREE-state, not two (round 3 review). A registry timeout and a genuine
+        // business-only country are both `false` to isAvailable() - right for a
+        // capability gate, wrong here, because the browser adopts this answer as
+        // settled and never re-asks, so flattening a blip into "no" would launder
+        // it into a cached "no" for the rest of the page's life. "Unresolved"
+        // renders as NO answer and the client's own retrying request path stays
+        // live.
+        //
+        // CACHE-ONLY, and never a live call (round 3 review, finding 2). This runs
+        // inside a shopper's checkout render, and a payment-option change reloads
+        // that page - so resolving live meant every payment-step render on a shop
+        // that cannot reach the registry paid the request timeout again (the
+        // per-request failure marker bounds it per request, not per session, since
+        // only a success is cached). The browser's availability request resolves an
+        // unknown answer off the render path and the endpoint answering it writes
+        // the cookie, so at most the FIRST payment-step render of a session shows
+        // no toggle and every render after it - including all the surcharge-driven
+        // reloads that made the flicker visible - is served from cache. Same shape
+        // as this module's other checkout-render reads.
+        $sole_trader_country = $this->getCheckoutBillingCountryIso();
+        $sole_trader_resolved = $sole_trader_country === ''
+            ? false
+            : TwoSoleTrader::resolveAvailabilityFromCache($sole_trader_country);
+        $sole_trader_available = $sole_trader_resolved === true;
+
         // Order intent is now handled on frontend via AJAX
         $this->context->smarty->assign(array(
+            // The handover to TwoSoleTrader.adoptServerRenderedToggle(). Three
+            // vars, each doing one job:
+            //  - `sole_trader_answer` is what the BROWSER adopts: '1', '0', or ''
+            //    for unresolved. A pre-rendered string rather than a nested {if},
+            //    so the template stays one condition deep.
+            //  - `sole_trader_available` drives what the template DRAWS (chips and
+            //    the container's visibility). Unresolved draws as not-available,
+            //    which is the same fail-soft outcome as before - the difference is
+            //    only that the browser is told it was not an answer.
+            //  - `sole_trader_country` is the country the answer is ABOUT, so a
+            //    later or different country is re-resolved client-side rather than
+            //    trusting a stale render.
+            'sole_trader_answer' => $sole_trader_resolved === null ? '' : ($sole_trader_resolved ? '1' : '0'),
+            'sole_trader_available' => $sole_trader_available,
+            'sole_trader_country' => $sole_trader_country,
             'subtitle' => $subtitle,
             'enable_order_intent' => $this->enable_order_intent,
             'payment_enable' => true, // Always enable, frontend will handle approval

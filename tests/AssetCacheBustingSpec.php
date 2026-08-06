@@ -264,7 +264,7 @@ final class AssetCacheBustingSpec
         // numbers are the real current count of register*() calls in each
         // hook; update them deliberately if a call site is ever added or
         // removed on purpose.
-        TinyAssert::same(8, count($frontStatements), 'expected exactly 8 register*() call sites in hookActionFrontControllerSetMedia() (1 CSS + 7 JS), found ' . count($frontStatements) . ' - a call site was added, removed, or renamed');
+        TinyAssert::same(9, count($frontStatements), 'expected exactly 9 register*() call sites in hookActionFrontControllerSetMedia() (1 CSS + 8 JS), found ' . count($frontStatements) . ' - a call site was added, removed, or renamed');
         TinyAssert::same(1, count($adminStatements), 'expected exactly 1 registerStylesheet() call site in hookActionAdminControllerSetMedia(), found ' . count($adminStatements) . ' - it was added, removed, or renamed');
 
         // Identity, not just count (round-4 adversarial review, Vader): a
@@ -300,6 +300,11 @@ final class AssetCacheBustingSpec
         // Binding id -> expected path closes that gap.
         $expectedFrontPathsById = array(
             'two-css' => 'views/css/two.css',
+            // TWO-25326 bug 11: the one HEAD-positioned asset (it has to run
+            // before the payment markup is parsed). Position is asserted
+            // separately below - registering it at the bottom like the rest
+            // would silently make it a no-op.
+            'two-payment-step-flash-guard' => 'views/js/modules/TwoPaymentStepFlashGuard.js',
             // TWO-25326 §12: shared company-number display rule, registered
             // ahead of both modules that render a number.
             'two-company-number' => 'views/js/modules/TwoCompanyNumber.js',
@@ -321,6 +326,27 @@ final class AssetCacheBustingSpec
 
         self::assertCallsMatchExpectedPaths($frontStatements, $expectedFrontPathsById);
         self::assertCallsMatchExpectedPaths($adminStatements, $expectedAdminPathsById);
+
+        // TWO-25326 bug 11: the flash guard is the one asset whose whole purpose
+        // is WHEN it runs. Its entire effect is to mark the document before the
+        // payment-options markup is parsed, and it deliberately no-ops if it
+        // finds that markup already there - so demoting it to the default bottom
+        // position leaves a file that loads, runs, and does nothing, with no
+        // error and no failing assertion anywhere else in this suite. Pin the
+        // position, and pin that nothing else claims it (a second head-positioned
+        // blocking script is a render-blocking request on every checkout page).
+        $headCalls = array();
+        foreach ($frontStatements as $statement) {
+            if (strpos($statement, "'position' => 'head'") !== false) {
+                $headCalls[] = self::extractCallIds(array($statement))[0];
+            }
+        }
+        TinyAssert::same(
+            array('two-payment-step-flash-guard'),
+            $headCalls,
+            "exactly one front asset may be registered with 'position' => 'head' - the payment-step flash "
+            . 'guard, which is inert unless it runs before the payment markup is parsed'
+        );
     }
 
     /**

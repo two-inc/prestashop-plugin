@@ -497,12 +497,65 @@ function countGifFrames(bytes) {
  * @returns {HTMLElement} the `.two-payment-container` that was appended
  */
 function buildPaymentTile() {
+    return renderPaymentTile(null);
+}
+
+/**
+ * The same tile, with the SERVER-side sole-trader answer resolved (TWO-25326
+ * bug 9, round 3).
+ *
+ * buildPaymentTile() leaves every `{if}` block stripped, which reproduces a
+ * render where Smarty gave no answer - the fallback path where TwoSoleTrader
+ * still has to fetch. This one evaluates the `$sole_trader_available` blocks
+ * instead, so the markup under test is the markup a real shop serves: chips
+ * already in the toggle, `data-two-built`, and the container's display and
+ * data- attributes set. Rendered FROM the template rather than hand-written in
+ * the test, so a template change that breaks the handover breaks these tests.
+ *
+ * @param {string} answer the value Smarty rendered into `data-two-available`:
+ *        '1' available, '0' business-only, '' the registry did not answer.
+ *        Arbitrary strings are accepted deliberately - a theme or a future
+ *        template can emit one, and rejecting it is behaviour under test.
+ * @param {string} countryIso the country that answer is about
+ *
+ * @returns {HTMLElement} the `.two-payment-container` that was appended
+ */
+function buildPaymentTileWithSoleTraderAnswer(answer, countryIso) {
+    return renderPaymentTile({ answer: String(answer), country: countryIso });
+}
+
+/**
+ * @param {{answer: string, country: string}|null} soleTrader null = leave
+ *        the sole-trader `{if}` blocks unevaluated, as buildPaymentTile() does
+ * @returns {HTMLElement}
+ */
+function renderPaymentTile(soleTrader) {
     const tpl = fs.readFileSync(
         path.join(REPO_ROOT, 'views/templates/hook/paymentinfo.tpl'),
         'utf8'
     );
-    const html = tpl
-        .replace(/\{\*[\s\S]*?\*\}/g, '')
+    let html = tpl.replace(/\{\*[\s\S]*?\*\}/g, '');
+    if (soleTrader) {
+        // `$sole_trader_available` is what the template DRAWS from; it is true
+        // only for the '1' answer, exactly as twopayment.php resolves it (an
+        // unresolved answer draws as not-available).
+        const available = soleTrader.answer === '1';
+        // Both shapes the template uses, if/else first: an if/else block's own
+        // `{/if}` would otherwise terminate the plain-`{if}` pattern early and
+        // leave `{else}...` in the output.
+        html = html
+            .replace(
+                /\{if \$sole_trader_available\}([\s\S]*?)\{else\}([\s\S]*?)\{\/if\}/g,
+                available ? '$1' : '$2'
+            )
+            .replace(
+                /\{if \$sole_trader_available\}([\s\S]*?)\{\/if\}/g,
+                available ? '$1' : ''
+            )
+            .replace(/\{\$sole_trader_answer\|[^}]*\}/g, soleTrader.answer)
+            .replace(/\{\$sole_trader_country\|[^}]*\}/g, soleTrader.country);
+    }
+    html = html
         .replace(/\{if[\s\S]*?\{\/if\}/g, '')
         .replace(/\{l\s+s='([^']*)'[^}]*\}/g, '$1')
         .replace(/\{\$[^}]*\}/g, '');
@@ -651,6 +704,7 @@ function loadSoleTrader() {
 module.exports = {
     REPO_ROOT: REPO_ROOT,
     buildPaymentTile: buildPaymentTile,
+    buildPaymentTileWithSoleTraderAnswer: buildPaymentTileWithSoleTraderAnswer,
     loadCompanyNumber: loadCompanyNumber,
     loadSoleTrader: loadSoleTrader,
     countGifFrames: countGifFrames,
