@@ -2449,8 +2449,16 @@ class TwoCheckoutManager {
             // conditional on the (now-removed) account-type toggle; there
             // is no longer a reason to ever skip it, so it is unconditional
             // (TwoOrderIntent's own default is also true).
+            //
+            // TWO-25386 #8: `enabled` now follows the admin's order-intent
+            // toggle (this.config.orderIntentEnabled) rather than being
+            // hardcoded - shouldRunOrderIntent() reads it to skip the
+            // pre-approval preview call entirely when the merchant has
+            // turned it off. This is the pre-approval PREVIEW only; it never
+            // gates the authoritative approval check the backend runs at
+            // actual payment submission.
             this.orderIntent = new TwoOrderIntent({
-                enabled: true,
+                enabled: this.config.orderIntentEnabled !== false,
                 orderIntentUrl: this.config.orderIntentUrl,
                 ajaxToken: this.config.ajaxToken,
                 enablePaymentPreventionOnDecline: true,
