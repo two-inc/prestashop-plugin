@@ -238,6 +238,26 @@ describe('§1 the dropdown is a real control, not an in-field autocomplete', () 
         expect(ajax.calls.length).toBe(0);
     });
 
+    test('the query field\'s aria-label names its ROLE, not the length-requirement placeholder (adversarial review finding)', () => {
+        // aria-label is the field's accessible NAME, set once and never
+        // re-synced - unlike placeholder, which visually disappears the
+        // moment the field has a value. Naming the field after a hint that
+        // stops being true as soon as the buyer has typed enough left a
+        // screen-reader user, tabbing back into the field after a completed
+        // search, still hearing "Enter 3 or more characters" as the field's
+        // permanent name.
+        makeInstance();
+        openPanel();
+
+        const placeholder = panelParts().query.attr('placeholder');
+        const ariaLabel = panelParts().query.attr('aria-label');
+
+        expect(placeholder).toContain(String(TwoCompanySearch.MIN_SEARCH_LENGTH));
+        expect(ariaLabel).not.toContain(String(TwoCompanySearch.MIN_SEARCH_LENGTH));
+        expect(ariaLabel).not.toBe(placeholder);
+        expect(ariaLabel).toBe(TwoCompanySearch.getQueryAriaLabelText());
+    });
+
     test('a zero-result query says exactly "No matches found"', () => {
         makeInstance();
         openPanel();

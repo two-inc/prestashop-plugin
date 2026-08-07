@@ -370,6 +370,13 @@ class TwoSoleTrader {
      * Same map as TwoCompanySearch.js's extractCountryFromText() (TWO-40
      * follow-up) - kept here rather than shared, since these are two
      * independently-loaded modules with no common utility file between them.
+     * MIRRORED there; keep the two in step by hand.
+     *
+     * nl/no/sv entries added (adversarial review finding, TWO-40 follow-up
+     * round 2) - see the identical comment on the sibling copy in
+     * TwoCompanySearch.js for why: this shop ships those three locales, and
+     * an English/Spanish/French-only map left this fallback blind for all of
+     * them.
      *
      * @param {string} text visible text of the selected <option>
      * @returns {?string} uppercase ISO code, or null
@@ -377,15 +384,20 @@ class TwoSoleTrader {
     static extractCountryFromOptionText(text) {
         const countryMap = {
             'united kingdom': 'GB', 'great britain': 'GB', 'uk': 'GB', 'england': 'GB',
+            'verenigd koninkrijk': 'GB', 'storbritannia': 'GB', 'storbritannien': 'GB',
             'spain': 'ES', 'españa': 'ES', 'espagne': 'ES',
-            'france': 'FR', 'francia': 'FR',
+            'spanje': 'ES', 'spania': 'ES', 'spanien': 'ES',
+            'france': 'FR', 'francia': 'FR', 'frankrijk': 'FR', 'frankrike': 'FR',
             'germany': 'DE', 'deutschland': 'DE', 'alemania': 'DE',
-            'italy': 'IT', 'italia': 'IT', 'italie': 'IT',
+            'duitsland': 'DE', 'tyskland': 'DE',
+            'italy': 'IT', 'italia': 'IT', 'italie': 'IT', 'italië': 'IT', 'italien': 'IT',
             'netherlands': 'NL', 'holland': 'NL', 'países bajos': 'NL',
+            'nederland': 'NL', 'nederländerna': 'NL',
             'belgium': 'BE', 'bélgica': 'BE', 'belgique': 'BE',
-            'united states': 'US', 'usa': 'US', 'estados unidos': 'US',
+            'belgië': 'BE', 'belgia': 'BE', 'belgien': 'BE',
+            'united states': 'US', 'usa': 'US', 'estados unidos': 'US', 'verenigde staten': 'US',
             'canada': 'CA', 'canadá': 'CA',
-            'australia': 'AU'
+            'australia': 'AU', 'australië': 'AU', 'australien': 'AU'
         };
         const lowerText = String(text || '').toLowerCase().trim();
         return countryMap[lowerText] || null;

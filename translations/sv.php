@@ -360,6 +360,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_b5f41647401f7d6a7aa511cbd9aa5ecf'] 
 $_MODULE['<{twopayment}prestashop>twopayment_b78a3223503896721cca1303f776159b'] = 'Titel';
 $_MODULE['<{twopayment}prestashop>twopayment_b7e84545a616108ac9b4496b15a60966'] = 'Kunden måste ange sitt officiellt registrerade företagsnamn';
 $_MODULE['<{twopayment}prestashop>twopayment_b81f4425b7556f2c97a12cb81ed44824'] = 'PO-nummer';
+$_MODULE['<{twopayment}prestashop>twopayment_b96a0cd4ff2da7a7998fd293c6e2be24'] = 'Sök efter ett företag';
 $_MODULE['<{twopayment}prestashop>twopayment_b9f5c797ebbf55adccdd8539a65a0241'] = 'Avaktiverad';
 $_MODULE['<{twopayment}prestashop>twopayment_ba087184ee6e25ec7a1b51b8897679e3'] = 'Minsta ordervärde';
 $_MODULE['<{twopayment}prestashop>twopayment_ba565358a4357911e173c8af649b569e'] = 'exklusive';
