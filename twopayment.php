@@ -3984,10 +3984,17 @@ class Twopayment extends PaymentModule
             // several times per render.
             if (!$this->twoCountryWithholdLogged) {
                 $this->twoCountryWithholdLogged = true;
+                $idCountry = (int)$billing_address->id_country;
                 PrestaShopLogger::addLog(
-                    'TwoPayment: Payment option hidden - billing country '
-                    . (int)$billing_address->id_country . ' not enabled for this module, cart '
-                    . (int)$cart->id,
+                    'TwoPayment: Payment option hidden - '
+                    // Distinct wording: an address with no country at all is a
+                    // different fault from a country the merchant disallowed,
+                    // and "country 0 not enabled" sends the reader to the
+                    // Payment Restrictions screen for nothing.
+                    . ($idCountry > 0
+                        ? 'billing country ' . $idCountry . ' not enabled for this module'
+                        : 'billing address carries no country')
+                    . ', cart ' . (int)$cart->id,
                     2
                 );
             }
@@ -4359,13 +4366,16 @@ class Twopayment extends PaymentModule
      * the tile against one country and then refused the order against the other,
      * at the last click. Two further cases reach here for the same reason: a
      * merchant who has switched that setting to the invoice address still gets
-     * no protection when the contextual Country fails to load at all (core skips
-     * its country clause entirely in that state), and neither filter runs on a
-     * cart core never dispatched the hook for.
+     * no protection when the contextual Country fails to load at all, because
+     * core skips its country clause entirely in that state and dispatches to
+     * every payment module.
      *
-     * Gating here closes all of that at display time, the same way
-     * checkCurrency() withholds the tile rather than letting an unsupported
-     * currency fail at submission.
+     * Gating here closes those at display time, the same way checkCurrency()
+     * withholds the tile rather than letting an unsupported currency fail at
+     * submission. It can only ever narrow what core dispatched: a cart core
+     * withheld the hook for never reaches this method, so core's opposite
+     * failure - refusing to dispatch when the CONTEXTUAL country is not
+     * allowlisted but the invoice country is - is untouched and remains core's.
      *
      * Fail-closed on a genuine "no such row" answer, because a row core cannot
      * find here is a row it will not find at submission either - showing the
@@ -4389,7 +4399,13 @@ class Twopayment extends PaymentModule
             return false;
         }
 
-        if (!Validate::isLoadedObject($billing_address)) {
+        // Accept the caller's copy only if it IS this cart's invoice address.
+        // The verdict inverts if a delivery address is passed instead, and the
+        // whole point of the gate is that it matches what core checks at
+        // submission - so this is checked rather than trusted.
+        if (!Validate::isLoadedObject($billing_address)
+            || (int) $billing_address->id !== (int) $cart->id_address_invoice
+        ) {
             $billing_address = new Address((int) $cart->id_address_invoice);
             if (!Validate::isLoadedObject($billing_address)) {
                 return false;
@@ -4413,18 +4429,70 @@ class Twopayment extends PaymentModule
             . ' AND `id_country` = ' . $id_country
             . ' AND `id_shop` = ' . (isset($this->context->shop->id) ? (int) $this->context->shop->id : 0);
 
+        $db = Db::getInstance();
+
         try {
-            $matched = Db::getInstance()->getValue($sql);
+            $matched = $db->getValue($sql);
         } catch (Exception $e) {
-            // Fail-open, and say so loudly: see the docblock.
-            PrestaShopLogger::addLog(
-                'TwoPayment: module_country lookup failed, country restriction not enforced - ' . $e->getMessage(),
-                3
-            );
+            // PS 8 + the PDO driver: PHP 8 defaults PDO to ERRMODE_EXCEPTION and
+            // DbPDO::_query() lets it surface.
+            $this->logTwoCountryLookupFailure(get_class($e));
             return true;
         }
 
+        if ($matched === false) {
+            // "false" is BOTH "no such row" and "the query failed", and on the
+            // module's declared floor (ps_versions_compliancy min 1.7.6.0) a
+            // failure does not throw at all: DbPDO::_query() is a bare
+            // link->query(), and DbMySQLi's is unwrapped too. Without asking the
+            // driver, a broken query is silently read as a country restriction
+            // and Two disappears from every shop - which is exactly how the
+            // LIMIT bug behaved. Ask.
+            //
+            // getNumberError() reports the LAST query on the connection, which
+            // is this one. If some earlier unrelated failure leaks in, the worst
+            // outcome is failing OPEN on a cart that was genuinely restricted -
+            // the status quo before this gate existed, not an outage.
+            $errno = 0;
+            if (method_exists($db, 'getNumberError')) {
+                $errno = (int) $db->getNumberError();
+            }
+            if ($errno !== 0) {
+                $this->logTwoCountryLookupFailure('SQL error ' . $errno);
+                return true;
+            }
+
+            return false;
+        }
+
         return (int) $matched === $id_country;
+    }
+
+    /**
+     * Report that the country allowlist is NOT being enforced (TWO-25387).
+     *
+     * Once per request: unlike a transient API-key outage, a lookup that fails
+     * fails on every evaluation forever, and core asks for payment options
+     * several times per payment-step render.
+     *
+     * Deliberately NOT the driver's message: it carries the SQL, and the payment
+     * controller already refuses to put SQL text where a buyer or a log reader
+     * could pick it up. The class name or errno is what makes this diagnosable.
+     *
+     * @param string $reason
+     */
+    private function logTwoCountryLookupFailure($reason)
+    {
+        if ($this->twoCountryLookupFailureLogged) {
+            return;
+        }
+        $this->twoCountryLookupFailureLogged = true;
+
+        PrestaShopLogger::addLog(
+            'TwoPayment: module_country lookup failed (' . $reason
+            . ') - country restriction NOT enforced for this request',
+            3
+        );
     }
 
     /**
@@ -9847,6 +9915,17 @@ class Twopayment extends PaymentModule
      * @var bool
      */
     protected $twoCountryWithholdLogged = false;
+
+    /**
+     * Whether this instance has already reported that the country allowlist
+     * could not be consulted (TWO-25387). Separate from the flag above because
+     * it is a different event - "not enforced" rather than "enforced and
+     * refused" - and it is the persistent case: a failing lookup fails on every
+     * evaluation, so it floods harder than any withhold ever could.
+     *
+     * @var bool
+     */
+    protected $twoCountryLookupFailureLogged = false;
 
     /**
      * Read a brand-config value (brands/two.php), cached per request. Returns
