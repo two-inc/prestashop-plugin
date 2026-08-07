@@ -133,9 +133,65 @@ describe('clicking "Registered Company"', () => {
         expect(soleTraderInstance.startEnrollment).toHaveBeenCalledTimes(1);
         const cancelCallsBefore = soleTraderInstance.cancelEnrollment.mock.calls.length;
 
+        // Reopening ALSO calls cancelEnrollment() once, unconditionally, via
+        // openDropdown() - isolate the chip's OWN call by asserting the exact
+        // delta (+2: one from the reopen, one from the chip click), not just
+        // "more than before". A weaker assertion here would still pass even
+        // if the chip's own handler stopped calling cancelEnrollment() at
+        // all, since the reopen's call alone already satisfies
+        // `toBeGreaterThan`.
         $("input[name='company']").trigger('mousedown');
+        const cancelCallsAfterReopen = soleTraderInstance.cancelEnrollment.mock.calls.length;
+        expect(cancelCallsAfterReopen).toBe(cancelCallsBefore + 1);
+
         panelParts().registered.trigger('click');
 
-        expect(soleTraderInstance.cancelEnrollment.mock.calls.length).toBeGreaterThan(cancelCallsBefore);
+        expect(soleTraderInstance.cancelEnrollment.mock.calls.length).toBe(cancelCallsAfterReopen + 1);
+    });
+});
+
+describe('clicking "Enter Manually" while a sole-trader enrolment is active', () => {
+    /**
+     * Round 2 adversarial review OBSERVATION: "Enter Manually" has no
+     * click-handler call to cancelEnrollment() of its own - only
+     * "Registered Company" and openDropdown() call it. That is safe ONLY
+     * because "Enter Manually" is unreachable except through an open panel,
+     * and every route into an open panel goes through openDropdown(), which
+     * calls cancelEnrollment() unconditionally before the chip is even
+     * visible. This test pins THAT invariant directly, so a future change
+     * that makes the panel reachable some other way (a deep link, a
+     * programmatic re-open) trips a failure here instead of silently
+     * reintroducing the cross-flow selection clobber
+     * sole-trader-generation-guard.test.js covers.
+     */
+    test('cancelEnrollment has already been called by the time the chip is clickable', () => {
+        const soleTraderInstance = {
+            isAvailableForCurrentCountry: () => true,
+            startEnrollment: jest.fn(),
+            cancelEnrollment: jest.fn()
+        };
+        global.window.TwoSoleTrader_Instance = soleTraderInstance;
+
+        makeInstance();
+        // The FIRST open already calls cancelEnrollment() once too
+        // (openDropdown() calls it unconditionally, even with nothing to
+        // cancel yet) - baseline against that rather than assuming zero.
+        openPanel();
+        const callsAfterFirstOpen = soleTraderInstance.cancelEnrollment.mock.calls.length;
+        panelParts().soleTrader.trigger('click');
+        expect(soleTraderInstance.cancelEnrollment.mock.calls.length).toBe(callsAfterFirstOpen);
+
+        // The only way back to a clickable "Enter Manually" is reopening the
+        // panel - which must have already cancelled the enrolment BEFORE
+        // this click fires.
+        $("input[name='company']").trigger('mousedown');
+        const callsAfterReopen = soleTraderInstance.cancelEnrollment.mock.calls.length;
+        expect(callsAfterReopen).toBe(callsAfterFirstOpen + 1);
+
+        panelParts().notListed.trigger('click');
+
+        // The click itself adds nothing further - proving the safety came
+        // from the reopen, not from "Enter Manually" doing its own cancel.
+        expect(soleTraderInstance.cancelEnrollment.mock.calls.length).toBe(callsAfterReopen);
     });
 });
