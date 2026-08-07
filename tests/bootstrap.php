@@ -169,6 +169,17 @@ namespace {
         public static array $taxRuleRates = [];
         public static array $dbExecuteSResponses = [];
         public static array $dbLastExecuteS = [];
+        /** @var string[] Every SQL string passed to Db::getValue() */
+        public static array $dbLastGetValue = [];
+        /**
+         * Substring which, when present in a Db::getValue() query, makes the
+         * stub RAISE instead of answering. Core's Db throws
+         * PrestaShopDatabaseException on a failed query, and a gate's behaviour
+         * on an unanswerable lookup is a real branch worth pinning (TWO-25387).
+         *
+         * @var string|null
+         */
+        public static ?string $dbGetValueThrowsOn = null;
         public static array $orderCarriers = [];
         /** @var array<int,array{id_order_state:string,name:string}> Override for OrderState::getOrderStates() */
         public static array $orderStates = [];
@@ -280,6 +291,8 @@ namespace {
             self::$taxRuleRates = [];
             self::$dbExecuteSResponses = [];
             self::$dbLastExecuteS = [];
+            self::$dbLastGetValue = [];
+            self::$dbGetValueThrowsOn = null;
             self::$products = [];
             self::$specificPrices = [];
             self::$stock = [];
@@ -1752,6 +1765,24 @@ namespace {
         public function getValue($sql)
         {
             $sql = (string) $sql;
+            StubStore::$dbLastGetValue[] = $sql;
+            if (StubStore::$dbGetValueThrowsOn !== null
+                && strpos($sql, StubStore::$dbGetValueThrowsOn) !== false
+            ) {
+                throw new PrestaShopDatabaseException('stubbed query failure: ' . $sql);
+            }
+            // Core's Db::getValue() delegates to getRow(), which appends its OWN
+            // ' LIMIT 1' - its docblock documents the argument as "the select
+            // query (without LIMIT 1)". A caller that supplies one produces
+            // `LIMIT 1 LIMIT 1` and a real MariaDB syntax error. The stub used
+            // to accept it silently, so that bug could only be caught by the
+            // Playwright e2e job against a live shop; it shipped once
+            // (TWO-25387) and cost a full CI round. Reproduce the fatal here.
+            if (preg_match('/\bLIMIT\s+\d+\s*;?\s*$/i', $sql)) {
+                throw new PrestaShopDatabaseException(
+                    'Db::getValue() appends its own LIMIT 1 - the query must not carry one: ' . $sql
+                );
+            }
             if (preg_match("/GET_LOCK\\('([^']+)'/", $sql, $m)) {
                 if (!empty(StubStore::$dbLocks[$m[1]])) {
                     return '0'; // held by a simulated concurrent request
