@@ -344,8 +344,8 @@ class Twopayment extends PaymentModule
         $this->author_address = '';
         parent::__construct();
         $this->languages = Language::getLanguages(false);
-        $this->displayName = $this->l('Two - BNPL for businesses');
-        $this->description = $this->l('This module allows any merchant to accept payments with Two payment gateway.');
+        $this->displayName = sprintf($this->l('%s - BNPL for businesses'), $this->getTwoBrandConfig('product_name'));
+        $this->description = sprintf($this->l('This module allows any merchant to accept payments with %s payment gateway.'), $this->getTwoBrandConfig('product_name'));
         $this->merchant_short_name = Configuration::get('PS_TWO_MERCHANT_SHORT_NAME');
         $this->api_key = Configuration::get('PS_TWO_MERCHANT_API_KEY');
         $this->enable_company_name = Configuration::get('PS_TWO_ENABLE_COMPANY_NAME');
@@ -1149,7 +1149,7 @@ class Twopayment extends PaymentModule
                         'label' => $this->l('Api key'),
                         'name' => 'PS_TWO_MERCHANT_API_KEY',
                         'required' => true,
-                        'desc' => $this->l('Enter your api key which is provided by Two.'),
+                        'desc' => sprintf($this->l('Enter your api key which is provided by %s.'), $this->getTwoBrandConfig('product_name')),
                     ),
                     // Multi-site vendor/site name (TWO-25386, ported from
                     // woocommerce-plugin's `vendor_name` field). Free text, no
@@ -1163,13 +1163,13 @@ class Twopayment extends PaymentModule
                         'label' => $this->l('Vendor name (optional)'),
                         'name' => 'PS_TWO_VENDOR_NAME',
                         'required' => false,
-                        'desc' => $this->l('If this store represents one of several vendor sites sharing the same Two merchant account, enter a name here to identify this specific site/vendor on each order sent to Two - leave blank if you only run a single site.'),
+                        'desc' => sprintf($this->l('If this store represents one of several vendor sites sharing the same %1$s merchant account, enter a name here to identify this specific site/vendor on each order sent to %1$s - leave blank if you only run a single site.'), $this->getTwoBrandConfig('product_name')),
                     ),
                     array(
                         'type' => 'select',
                         'label' => $this->l('Environment'),
                         'name' => 'PS_TWO_ENVIRONMENT',
-                        'desc' => $this->l('Select the Two API environment to use. Production for live transactions, Staging/Development for testing.'),
+                        'desc' => sprintf($this->l('Select the %s API environment to use. Production for live transactions, Staging/Development for testing.'), $this->getTwoBrandConfig('product_name')),
                         'required' => true,
                         'options' => array(
                             'query' => array(
@@ -1290,7 +1290,7 @@ class Twopayment extends PaymentModule
             } else {
                 $body = isset($verify['body']) && is_array($verify['body']) ? $verify['body'] : array();
                 if (!isset($body['id']) || !isset($body['short_name'])) {
-                    $this->errors[] = $this->l('Invalid verification response from Two.');
+                    $this->errors[] = sprintf($this->l('Invalid verification response from %s.'), $this->getTwoBrandConfig('product_name'));
                 } else {
                     $this->verifiedMerchantId = $body['id'];
                     $this->verifiedMerchantShortName = $body['short_name'];
@@ -1416,7 +1416,7 @@ class Twopayment extends PaymentModule
                 'label' => $this->l('Checkout sort order'),
                 'name' => 'PS_TWO_CHECKOUT_SORT_ORDER',
                 'required' => false,
-                'desc' => $this->l('Optional. A lower number shows Two earlier among the payment methods offered at checkout. Leave empty to use PrestaShop\'s own Payment > Preferences ordering.'),
+                'desc' => sprintf($this->l('Optional. A lower number shows %s earlier among the payment methods offered at checkout. Leave empty to use PrestaShop\'s own Payment > Preferences ordering.'), $this->getTwoBrandConfig('product_name')),
             ),
         );
 
@@ -1467,7 +1467,7 @@ class Twopayment extends PaymentModule
             'label' => $this->l('Enable order intent pre-approval check'),
             'name' => 'PS_TWO_ENABLE_ORDER_INTENT',
             'is_bool' => true,
-            'desc' => $this->l('If you choose YES then the checkout calls Two to preview order approval before the buyer submits payment, and reflects the result in the payment tile. If you choose NO, this preview call is skipped - the buyer still goes through Two\'s real approval check when they submit payment.'),
+            'desc' => sprintf($this->l('If you choose YES then the checkout calls %1$s to preview order approval before the buyer submits payment, and reflects the result in the payment tile. If you choose NO, this preview call is skipped - the buyer still goes through %1$s\'s real approval check when they submit payment.'), $this->getTwoBrandConfig('product_name')),
             'required' => true,
             'values' => array(
                 array('id' => 'PS_TWO_ENABLE_ORDER_INTENT_ON', 'value' => 1, 'label' => $this->l('Yes')),
@@ -1481,10 +1481,10 @@ class Twopayment extends PaymentModule
         // tile's pre-existing always-on behaviour.
         $inputs[] = array(
             'type' => 'switch',
-            'label' => $this->l('Show "What is Two" explainer link'),
+            'label' => sprintf($this->l('Show "What is %s" explainer link'), $this->getTwoBrandConfig('product_name')),
             'name' => 'PS_TWO_SHOW_ABOUT_LINK',
             'is_bool' => true,
-            'desc' => $this->l('If you choose YES then buyers see a "What is Two?" info tooltip with a link to an explainer resource in the Two payment tile at checkout.'),
+            'desc' => sprintf($this->l('If you choose YES then buyers see a "What is %1$s?" info tooltip with a link to an explainer resource in the %1$s payment tile at checkout.'), $this->getTwoBrandConfig('product_name')),
             'required' => true,
             'values' => array(
                 array('id' => 'PS_TWO_SHOW_ABOUT_LINK_ON', 'value' => 1, 'label' => $this->l('Yes')),
@@ -1530,7 +1530,7 @@ class Twopayment extends PaymentModule
             'label' => $this->l('Show Invoice email field'),
             'name' => 'PS_TWO_ENABLE_INVOICE_EMAIL',
             'is_bool' => true,
-            'desc' => $this->l('If you choose YES then customers will see an invoice email field in the Two payment section at checkout. It sits with the payment method rather than the address so the buyer is prompted to consider a dedicated invoicing address even when their billing and shipping addresses match.'),
+            'desc' => sprintf($this->l('If you choose YES then customers will see an invoice email field in the %s payment section at checkout. It sits with the payment method rather than the address so the buyer is prompted to consider a dedicated invoicing address even when their billing and shipping addresses match.'), $this->getTwoBrandConfig('product_name')),
             'required' => true,
             'values' => array(
                 array(
@@ -1551,7 +1551,7 @@ class Twopayment extends PaymentModule
             'label' => $this->l('Show PO Number field'),
             'name' => 'PS_TWO_ENABLE_PO_NUMBER',
             'is_bool' => true,
-            'desc' => $this->l('If you choose YES then customers will see a PO Number field in the Two payment section at checkout.'),
+            'desc' => sprintf($this->l('If you choose YES then customers will see a PO Number field in the %s payment section at checkout.'), $this->getTwoBrandConfig('product_name')),
             'required' => true,
             'values' => array(
                 array(
@@ -1571,7 +1571,7 @@ class Twopayment extends PaymentModule
             'label' => $this->l('Show Project field'),
             'name' => 'PS_TWO_ENABLE_PROJECT',
             'is_bool' => true,
-            'desc' => $this->l('If you choose YES then customers will see a project field in the Two payment section at checkout.'),
+            'desc' => sprintf($this->l('If you choose YES then customers will see a project field in the %s payment section at checkout.'), $this->getTwoBrandConfig('product_name')),
             'required' => true,
             'values' => array(
                 array(
@@ -1591,7 +1591,7 @@ class Twopayment extends PaymentModule
             'label' => $this->l('Show Department field'),
             'name' => 'PS_TWO_ENABLE_DEPARTMENT',
             'is_bool' => true,
-            'desc' => $this->l('If you choose YES then customers will see a department field in the Two payment section at checkout.'),
+            'desc' => sprintf($this->l('If you choose YES then customers will see a department field in the %s payment section at checkout.'), $this->getTwoBrandConfig('product_name')),
             'required' => true,
             'values' => array(
                 array(
@@ -1698,7 +1698,7 @@ class Twopayment extends PaymentModule
                 'label' => $this->l('Custom payment term (days)'),
                 'name' => 'PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS',
                 'required' => false,
-                'desc' => $this->l('Optional. Offer an additional payment term (in days) not covered by the presets above. Leave empty to only offer the terms selected above. Two must still permit this term length for your account - an unsupported value is silently ignored.'),
+                'desc' => sprintf($this->l('Optional. Offer an additional payment term (in days) not covered by the presets above. Leave empty to only offer the terms selected above. %s must still permit this term length for your account - an unsupported value is silently ignored.'), $this->getTwoBrandConfig('product_name')),
             ),
             // Default pre-selected term (TWO-25386 #10): an explicit admin
             // choice that takes priority over getDefaultPaymentTerm()'s
@@ -2305,10 +2305,10 @@ class Twopayment extends PaymentModule
                 'input' => array(
                     array(
                         'type' => 'switch',
-                        'label' => $this->l('Automatically fulfill orders with Two'),
+                        'label' => sprintf($this->l('Automatically fulfill orders with %s'), $this->getTwoBrandConfig('product_name')),
                         'name' => 'PS_TWO_FINALIZE_PURCHASE',
                         'is_bool' => true,
-                        'desc' => $this->l('When enabled, orders are automatically marked as fulfilled in Two when their status changes to one of your configured fulfillment trigger statuses (see Fulfilment Statuses below). This activates buyer payment terms and begins the payout cycle. If disabled, you must fulfill orders manually in Two\'s Merchant Portal.'),
+                        'desc' => sprintf($this->l('When enabled, orders are automatically marked as fulfilled in %1$s when their status changes to one of your configured fulfillment trigger statuses (see Fulfilment Statuses below). This activates buyer payment terms and begins the payout cycle. If disabled, you must fulfill orders manually in %1$s\'s Merchant Portal.'), $this->getTwoBrandConfig('product_name')),
                         'required' => true,
                         'values' => array(
                             array(
@@ -2417,7 +2417,7 @@ class Twopayment extends PaymentModule
                         'label' => $this->l('Enable Debug Mode'),
                         'name' => 'PS_TWO_DEBUG_MODE',
                         'is_bool' => true,
-                        'desc' => $this->l('Enable detailed logging for troubleshooting. Logs tax calculations and other diagnostic data. Only enable when requested by Two support.'),
+                        'desc' => sprintf($this->l('Enable detailed logging for troubleshooting. Logs tax calculations and other diagnostic data. Only enable when requested by %s support.'), $this->getTwoBrandConfig('product_name')),
                         'required' => false,
                         'values' => array(
                             array(
@@ -2876,7 +2876,7 @@ class Twopayment extends PaymentModule
             </div>
             <div class="panel-body">
                 <div class="alert alert-info">
-                    <strong>' . $this->l('Two is a B2B Buy Now, Pay Later solution') . '</strong><br>
+                    <strong>' . sprintf($this->l('%s is a B2B Buy Now, Pay Later solution'), $this->getTwoBrandConfig('product_name')) . '</strong><br>
                     ' . $this->l('This plugin enables business customers to pay on invoice with instant credit decisions.') . '
                 </div>
                 ' . $this->renderTwoPluginHealthChecklist() . '
@@ -2890,7 +2890,7 @@ class Twopayment extends PaymentModule
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Support for Standard and End-of-Month (EOM) payment terms') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Configurable payment terms (7, 15, 20, 30, 45, 60, 90 days)') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Handle full refunds through PrestaShop admin') . '</li>
-                    <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Display Two order information in admin order view') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . sprintf($this->l('Display %s order information in admin order view'), $this->getTwoBrandConfig('product_name')) . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Support for multiple tax rates and tax-exempt customers') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Handle free shipping cart rules and discounts correctly') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Works with PrestaShop 1.7.6 through 9.x') . '</li>
@@ -2901,16 +2901,16 @@ class Twopayment extends PaymentModule
                     <li style="margin-bottom:8px;"><i class="icon-exclamation-triangle text-warning"></i> ' . $this->l('Customers must have a valid company/organization number') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-exclamation-triangle text-warning"></i> ' . $this->l('Customers must enter their company name in the billing address') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-exclamation-triangle text-warning"></i> ' . $this->l('A valid phone number is required for credit checks') . '</li>
-                    <li style="margin-bottom:8px;"><i class="icon-exclamation-triangle text-warning"></i> ' . $this->l('Two must approve the buyer before the order can be placed') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-exclamation-triangle text-warning"></i> ' . sprintf($this->l('%s must approve the buyer before the order can be placed'), $this->getTwoBrandConfig('product_name')) . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-exclamation-triangle text-warning"></i> ' . $this->l('Products must have correct tax rules configured in PrestaShop') . '</li>
                 </ul>
                 
                 <h4 style="color:#d9534f;margin-top:25px;"><i class="icon-times"></i> ' . $this->l('What the plugin CANNOT do') . '</h4>
                 <ul class="list-unstyled" style="margin-left:20px;">
-                    <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . $this->l('Process B2C (consumer) payments - Two is B2B only') . '</li>
-                    <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . $this->l('Guarantee approval - Two performs real-time credit checks') . '</li>
-                    <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . $this->l('Override Two\'s credit decision or buyer limits') . '</li>
-                    <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . $this->l('Process partial refunds - use the Two Merchant Portal for partial refunds') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . sprintf($this->l('Process B2C (consumer) payments - %s is B2B only'), $this->getTwoBrandConfig('product_name')) . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . sprintf($this->l('Guarantee approval - %s performs real-time credit checks'), $this->getTwoBrandConfig('product_name')) . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . sprintf($this->l('Override %s\'s credit decision or buyer limits'), $this->getTwoBrandConfig('product_name')) . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . sprintf($this->l('Process partial refunds - use the %s Merchant Portal for partial refunds'), $this->getTwoBrandConfig('product_name')) . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . $this->l('Partial fulfillment - orders must be fulfilled in full') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . $this->l('Fix incorrect tax configuration in your store - taxes must be set up correctly in PrestaShop') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . $this->l('Process orders without a valid company registration number') . '</li>
@@ -2920,10 +2920,10 @@ class Twopayment extends PaymentModule
                 <h4 style="color:#5bc0de;margin-top:25px;"><i class="icon-lightbulb-o"></i> ' . $this->l('Troubleshooting Tips') . '</h4>
                 <ul class="list-unstyled" style="margin-left:20px;">
                     <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Tax shows 0%?') . '</strong> ' . $this->l('Check that tax rules are configured for your country in International > Taxes > Tax Rules') . '</li>
-                    <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Buyer rejected?') . '</strong> ' . $this->l('The company may have reached their credit limit or failed Two\'s credit check') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Buyer rejected?') . '</strong> ' . sprintf($this->l('The company may have reached their credit limit or failed %s\'s credit check'), $this->getTwoBrandConfig('product_name')) . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Company not found?') . '</strong> ' . $this->l('Customer must enter their official registered company name') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Phone invalid?') . '</strong> ' . $this->l('Ensure the phone number includes country code and is in a valid format') . '</li>
-                    <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Amount mismatch errors?') . '</strong> ' . $this->l('Enable Debug Mode in Diagnostics and contact Two support with the logs') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Amount mismatch errors?') . '</strong> ' . sprintf($this->l('Enable Debug Mode in Diagnostics and contact %s support with the logs'), $this->getTwoBrandConfig('product_name')) . '</li>
                 </ul>
             </div>
         </div>
@@ -2937,7 +2937,7 @@ class Twopayment extends PaymentModule
                 <ul>
                     <li><strong>' . $this->l('Email:') . '</strong> <a href="mailto:support@two.inc">support@two.inc</a></li>
                     <li><strong>' . $this->l('Documentation:') . '</strong> <a href="https://docs.two.inc" target="_blank">docs.two.inc</a></li>
-                    <li><strong>' . $this->l('Merchant Portal:') . '</strong> <a href="' . $this->getTwoPortalUrl() . '" target="_blank">' . $this->l('Open Two Portal') . '</a></li>
+                    <li><strong>' . $this->l('Merchant Portal:') . '</strong> <a href="' . $this->getTwoPortalUrl() . '" target="_blank">' . sprintf($this->l('Open %s Portal'), $this->getTwoBrandConfig('product_name')) . '</a></li>
                 </ul>
                 <p style="margin-top:15px;"><small class="text-muted">' . $version_line . '</small></p>
             </div>
@@ -3195,12 +3195,12 @@ class Twopayment extends PaymentModule
         $fields_form = array(
             'form' => array(
                 'legend' => array(
-                    'title' => $this->l('Two Order Status Mapping'),
+                    'title' => sprintf($this->l('%s Order Status Mapping'), $this->getTwoBrandConfig('product_name')),
                     'icon' => 'icon-cogs',
                 ),
-                'description' => $this->l('Map Two payment states to PrestaShop order states for workflow integration. Two creates its own branded order states automatically, but you can map them to existing PrestaShop states if needed.') . '<br><br><strong>' . $this->l('Default Mappings:') . '</strong><br>' . 
-                    '• ' . $this->l('Awaiting Buyer Verification → Two: Awaiting Buyer Verification') . '<br>' .
-                    '• ' . $this->l('Verified - Ready for Fulfillment → Two: Verified - Ready for Fulfillment') . '<br>' .
+                'description' => sprintf($this->l('Map %1$s payment states to PrestaShop order states for workflow integration. %1$s creates its own branded order states automatically, but you can map them to existing PrestaShop states if needed.'), $this->getTwoBrandConfig('product_name')) . '<br><br><strong>' . $this->l('Default Mappings:') . '</strong><br>' . 
+                    '• ' . sprintf($this->l('Awaiting Buyer Verification → %s: Awaiting Buyer Verification'), $this->getTwoBrandConfig('product_name')) . '<br>' .
+                    '• ' . sprintf($this->l('Verified - Ready for Fulfillment → %s: Verified - Ready for Fulfillment'), $this->getTwoBrandConfig('product_name')) . '<br>' .
                     '• ' . $this->l('Order Fulfilled → Shipped') . '<br>' .
                     '• ' . $this->l('Payment Error → Payment error') . '<br>' .
                     '• ' . $this->l('Order Cancelled → Canceled') . '<br>' .
@@ -3209,8 +3209,8 @@ class Twopayment extends PaymentModule
                     array(
                         'type' => 'select',
                         'name' => 'PS_TWO_OS_AWAITING_VERIFICATION_MAP',
-                        'label' => $this->l('Two: Awaiting Buyer Verification'),
-                        'desc' => $this->l('When the buyer needs to complete order verification with Two before payment processing can begin. Default: Preparation in progress'),
+                        'label' => sprintf($this->l('%s: Awaiting Buyer Verification'), $this->getTwoBrandConfig('product_name')),
+                        'desc' => sprintf($this->l('When the buyer needs to complete order verification with %s before payment processing can begin. Default: Preparation in progress'), $this->getTwoBrandConfig('product_name')),
                         'required' => true,
                         'options' => array(
                             'query' => $orderStatesAwaitingOnly,
@@ -3221,7 +3221,7 @@ class Twopayment extends PaymentModule
                     array(
                         'type' => 'select',
                         'name' => 'PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP',
-                        'label' => $this->l('Two: Verified - Ready for Fulfillment'),
+                        'label' => sprintf($this->l('%s: Verified - Ready for Fulfillment'), $this->getTwoBrandConfig('product_name')),
                         'desc' => $this->l('Payment is verified and order is ready for merchant fulfillment. Merchant can now process and ship the order. Default: Preparation in progress'),
                         'required' => true,
                         'options' => array(
@@ -3233,7 +3233,7 @@ class Twopayment extends PaymentModule
                     array(
                         'type' => 'select',
                         'name' => 'PS_TWO_OS_FULFILLED_MAP',
-                        'label' => $this->l('Two: Order Fulfilled - Trigger Statuses'),
+                        'label' => sprintf($this->l('%s: Order Fulfilled - Trigger Statuses'), $this->getTwoBrandConfig('product_name')),
                         'desc' => $this->buildFulfillmentStatusDescription(),
                         'required' => true,
                         'multiple' => true,
@@ -3247,8 +3247,8 @@ class Twopayment extends PaymentModule
                     array(
                         'type' => 'select',
                         'name' => 'PS_TWO_OS_PAYMENT_ERROR_MAP',
-                        'label' => $this->l('Two: Payment Processing Error'),
-                        'desc' => $this->l('Payment processing failed. Merchant should investigate and contact Two support if needed. Default: Payment error'),
+                        'label' => sprintf($this->l('%s: Payment Processing Error'), $this->getTwoBrandConfig('product_name')),
+                        'desc' => sprintf($this->l('Payment processing failed. Merchant should investigate and contact %s support if needed. Default: Payment error'), $this->getTwoBrandConfig('product_name')),
                         'required' => true,
                         'options' => array(
                             'query' => $orderStatesNoTwo,
@@ -3259,8 +3259,8 @@ class Twopayment extends PaymentModule
                     array(
                         'type' => 'select',
                         'name' => 'PS_TWO_OS_CANCELLED_MAP',
-                        'label' => $this->l('Two: Order Cancelled'),
-                        'desc' => $this->l('Order has been cancelled with Two. This prevents fulfillment and stops the payment process. Default: Canceled'),
+                        'label' => sprintf($this->l('%s: Order Cancelled'), $this->getTwoBrandConfig('product_name')),
+                        'desc' => sprintf($this->l('Order has been cancelled with %s. This prevents fulfillment and stops the payment process. Default: Canceled'), $this->getTwoBrandConfig('product_name')),
                         'required' => true,
                         'options' => array(
                             'query' => $orderStatesNoTwo,
@@ -3271,8 +3271,8 @@ class Twopayment extends PaymentModule
                     array(
                         'type' => 'select',
                         'name' => 'PS_TWO_OS_REFUNDED_MAP',
-                        'label' => $this->l('Two: Order Refunded'),
-                        'desc' => $this->l('Order has been refunded through Two. A credit note is issued to the buyer immediately. Default: Refunded'),
+                        'label' => sprintf($this->l('%s: Order Refunded'), $this->getTwoBrandConfig('product_name')),
+                        'desc' => sprintf($this->l('Order has been refunded through %s. A credit note is issued to the buyer immediately. Default: Refunded'), $this->getTwoBrandConfig('product_name')),
                         'required' => true,
                         'options' => array(
                             'query' => $orderStatesNoTwo,
@@ -3356,7 +3356,7 @@ class Twopayment extends PaymentModule
         $status_names = $this->getOrderStatusNames($fulfilled_ids);
         $status_list = !empty($status_names) ? implode(', ', $status_names) : $this->l('None selected');
         
-        $confirmation_message = $this->l('Two order status mapping updated successfully.');
+        $confirmation_message = sprintf($this->l('%s order status mapping updated successfully.'), $this->getTwoBrandConfig('product_name'));
         if (!empty($status_names)) {
             $confirmation_message .= '<br><br><strong>' . $this->l('Currently active fulfillment trigger statuses:') . '</strong><br>';
             $confirmation_message .= '<ul style="margin: 5px 0; padding-left: 20px;">';
@@ -3376,7 +3376,7 @@ class Twopayment extends PaymentModule
      */
     protected function buildFulfillmentStatusDescription()
     {
-        $base_desc = $this->l('Select one or more order statuses that should trigger Two fulfillment. When any of these statuses are set, the order will be marked as fulfilled with Two. Buyer payment terms become active and payout cycle begins. You can select multiple statuses (Hold Ctrl/Cmd to select multiple. Default: Shipped');
+        $base_desc = sprintf($this->l('Select one or more order statuses that should trigger %1$s fulfillment. When any of these statuses are set, the order will be marked as fulfilled with %1$s. Buyer payment terms become active and payout cycle begins. You can select multiple statuses (Hold Ctrl/Cmd to select multiple. Default: Shipped'), $this->getTwoBrandConfig('product_name'));
         
         // Get currently selected statuses
         $fulfilled_map = Configuration::get('PS_TWO_OS_FULFILLED_MAP');
@@ -3628,7 +3628,7 @@ class Twopayment extends PaymentModule
                         $stored_two_state = isset($orderpaymentdata['two_order_state']) ? strtoupper(trim((string)$orderpaymentdata['two_order_state'])) : '';
                         if ($this->shouldBlockTwoFulfillmentByTwoState($stored_two_state)) {
                             $this->applyTwoCancelledOrderStateProfileToStatusObject($new_order_status, (int)$order->id_lang);
-                            $this->addTwoBackOfficeWarning($this->l('Fulfillment blocked: this Two order is cancelled at provider. The order status has been reverted to cancelled.'));
+                            $this->addTwoBackOfficeWarning(sprintf($this->l('Fulfillment blocked: this %s order is cancelled at provider. The order status has been reverted to cancelled.'), $this->getTwoBrandConfig('product_name')));
                             PrestaShopLogger::addLog(
                                 'TwoPayment: Fulfillment blocked for cancelled Two order ' . $two_order_id .
                                 ' (stored state=' . $stored_two_state . '). Fulfillment status change will be forced to cancelled for order ' . $id_order,
@@ -3663,7 +3663,7 @@ class Twopayment extends PaymentModule
                             );
                             $this->setTwoOrderPaymentData((int)$id_order, $payment_data);
                             $this->applyTwoCancelledOrderStateProfileToStatusObject($new_order_status, (int)$order->id_lang);
-                            $this->addTwoBackOfficeWarning($this->l('Fulfillment blocked: this Two order is cancelled at provider. The order status has been reverted to cancelled.'));
+                            $this->addTwoBackOfficeWarning(sprintf($this->l('Fulfillment blocked: this %s order is cancelled at provider. The order status has been reverted to cancelled.'), $this->getTwoBrandConfig('product_name')));
                             PrestaShopLogger::addLog(
                                 'TwoPayment: Fulfillment blocked for cancelled Two order ' . $two_order_id .
                                 ' (provider state=' . $provider_two_state . '). Fulfillment status change will be forced to cancelled for order ' . $id_order,
@@ -4302,14 +4302,14 @@ class Twopayment extends PaymentModule
         }
         // Build FE i18n (strings are translated by PrestaShop according to current language)
         $i18n = array(
-            'checking_eligibility' => $this->l('Checking Two payment eligibility...'),
+            'checking_eligibility' => sprintf($this->l('Checking %s payment eligibility...'), $this->getTwoBrandConfig('product_name')),
             'checking_subtext' => $this->l('Please wait a moment while we verify your company details.'),
             'payment_approved_title' => $this->l('Payment Approved'),
             'payment_not_available_title' => $this->l('Payment Not Available'),
             'action_required_title' => $this->l('Action Required'),
             'payment_approved_message' => $this->l('Payment approved! Choose your payment terms below.'),
-            'payment_not_available_message' => $this->l('Two payment is not available for this order.'),
-            'generic_error' => $this->l('There was an issue processing your Two payment request. Please try again or choose another payment method.'),
+            'payment_not_available_message' => sprintf($this->l('%s payment is not available for this order.'), $this->getTwoBrandConfig('product_name')),
+            'generic_error' => sprintf($this->l('There was an issue processing your %s payment request. Please try again or choose another payment method.'), $this->getTwoBrandConfig('product_name')),
             'order_intent_check_failed' => $this->l('Order intent check failed'),
             'invalid_response_from_server' => $this->l('Invalid response from server'),
             'choose_payment_terms' => $this->l('Choose the Buy Now, Pay Later option that works best for you'),
@@ -4319,27 +4319,27 @@ class Twopayment extends PaymentModule
             // separate company name/number label, just these two sentences
             // with the company folded straight in. Exact wording, matched
             // by the cross-platform test script - do not paraphrase.
-            'invoice_likely_accepted_for' => $this->l('This order by %s (%s) is likely to be accepted by Two'),
-            'invoice_cannot_be_approved_for' => $this->l('Two is not available for this order by %s (%s)'),
+            'invoice_likely_accepted_for' => sprintf($this->l('This order by %%s (%%s) is likely to be accepted by %s'), $this->getTwoBrandConfig('product_name')),
+            'invoice_cannot_be_approved_for' => sprintf($this->l('%s is not available for this order by %%s (%%s)'), $this->getTwoBrandConfig('product_name')),
             // Name-only fallback: a company captured without an organisation
             // number (should not occur once §6 gating is enforced, but kept
             // so a stray no-number case never renders "Example Ltd ()").
-            'invoice_likely_accepted_for_no_number' => $this->l('This order by %s is likely to be accepted by Two'),
-            'invoice_cannot_be_approved_for_no_number' => $this->l('Two is not available for this order by %s'),
-            'invoice_likely_accepted' => $this->l('Your invoice with Two is likely to be accepted, subject to additional checks.'),
-            'invoice_cannot_be_approved' => $this->l('Your invoice with Two cannot be approved at this time'),
+            'invoice_likely_accepted_for_no_number' => sprintf($this->l('This order by %%s is likely to be accepted by %s'), $this->getTwoBrandConfig('product_name')),
+            'invoice_cannot_be_approved_for_no_number' => sprintf($this->l('%s is not available for this order by %%s'), $this->getTwoBrandConfig('product_name')),
+            'invoice_likely_accepted' => sprintf($this->l('Your invoice with %s is likely to be accepted, subject to additional checks.'), $this->getTwoBrandConfig('product_name')),
+            'invoice_cannot_be_approved' => sprintf($this->l('Your invoice with %s cannot be approved at this time'), $this->getTwoBrandConfig('product_name')),
             'invalid_phone_number' => $this->l('The phone number in your billing address appears to be invalid. Please go back and ensure you have entered a valid phone number for your country.'),
-            'company_name_required' => $this->l('To pay with Two, go back to your billing address and enter your company name in the Company field.'),
+            'company_name_required' => sprintf($this->l('To pay with %s, go back to your billing address and enter your company name in the Company field.'), $this->getTwoBrandConfig('product_name')),
             'company_name_required_business' => $this->l('Company name is required for business accounts.'),
-            'organization_number_required' => $this->l('Please search and select a valid company to continue with Two payment.'),
-            'select_company_to_use_two' => $this->l('To pay with Two, go back to your billing address and search for your company name. Select your company from the results to verify your business.'),
+            'organization_number_required' => sprintf($this->l('Please search and select a valid company to continue with %s payment.'), $this->getTwoBrandConfig('product_name')),
+            'select_company_to_use_two' => sprintf($this->l('To pay with %s, go back to your billing address and search for your company name. Select your company from the results to verify your business.'), $this->getTwoBrandConfig('product_name')),
             'invalid_company' => $this->l('The company information provided is not valid. Please search and select a valid company.'),
             'company_not_found' => $this->l('We could not find your company. Please try a different company name or contact support.'),
-            'credit_unavailable' => $this->l('Two payment is not available for this order. Please choose another payment method.'),
+            'credit_unavailable' => sprintf($this->l('%s payment is not available for this order. Please choose another payment method.'), $this->getTwoBrandConfig('product_name')),
             'network_issue' => $this->l('There was a temporary issue verifying your payment. Please try again or choose another payment method.'),
             'resolve_payment_issue_before_continuing' => $this->l('Please resolve the payment issue before continuing.'),
             'approval_required' => $this->l('Payment approval required before proceeding'),
-            'invoice_declined' => $this->l('Your invoice with Two cannot be approved at this time. Please select an alternative payment method.'),
+            'invoice_declined' => sprintf($this->l('Your invoice with %s cannot be approved at this time. Please select an alternative payment method.'), $this->getTwoBrandConfig('product_name')),
             'invalid_email' => $this->l('The email address provided is invalid. Please check your email and try again.'),
             'invalid_invoice_email' => $this->l('Please enter a valid invoice email address, or leave the field empty.'),
             'invalid_address' => $this->l('The address provided is invalid. Please go back and verify your billing address details.'),
@@ -4819,7 +4819,7 @@ class Twopayment extends PaymentModule
         $subtitle = Configuration::get('PS_TWO_SUB_TITLE', $this->context->language->id);
 
         if (Tools::isEmpty($title)) {
-            $title = $this->l('Pay with Two');
+            $title = sprintf($this->l('Pay with %s'), $this->getTwoBrandConfig('product_name'));
         }
         if (Tools::isEmpty($subtitle)) {
             $subtitle = $this->l('Buy now, pay later - instant credit');
@@ -4910,6 +4910,7 @@ class Twopayment extends PaymentModule
             // that control and the address-area control is suppressed
             // client-side.
             'company_search_tile' => $this->isCompanySearchInAddressArea() !== '1',
+            'two_product_name' => $this->getTwoBrandConfig('product_name'),
         ));
 
         $inputs = ['token' => ['name' => 'token', 'type' => 'hidden', 'value' => Tools::getToken(false)]];
@@ -4993,7 +4994,7 @@ class Twopayment extends PaymentModule
             'department' => $this->l('The department to associate with this purchase, for your own internal reference.'),
             'project' => $this->l('The project to associate with this purchase, for your own internal reference.'),
             'purchase_order_number' => $this->l('Your internal purchase order reference for this order.'),
-            'invoice_email' => $this->l('Where Two should send the invoice for this order, if different from your account email.'),
+            'invoice_email' => sprintf($this->l('Where %s should send the invoice for this order, if different from your account email.'), $this->getTwoBrandConfig('product_name')),
         );
 
         $fields = array();
@@ -5723,7 +5724,7 @@ class Twopayment extends PaymentModule
         $result = array(
             'approved' => false,
             'status' => 'provider_error',
-            'message' => $this->l('Unable to process your order with Two payment.'),
+            'message' => sprintf($this->l('Unable to process your order with %s payment.'), $this->getTwoBrandConfig('product_name')),
             'timestamp' => time(),
             'http_status' => 0,
         );
@@ -5743,7 +5744,7 @@ class Twopayment extends PaymentModule
                 // amounts, so a merchant-side cart/shipping misconfiguration is
                 // diagnosable from the checkout page instead of only from the
                 // shop log (TWO-25161).
-                $result['message'] = $this->l('Two could not accept this order because the cart total does not match the total of the order lines.')
+                $result['message'] = sprintf($this->l('%s could not accept this order because the cart total does not match the total of the order lines.'), $this->getTwoBrandConfig('product_name'))
                     . ' ' . $exceptionMessage . '. '
                     . $this->l('This is usually a shipping or discount amount the cart has not applied yet. Please refresh your cart and try again, or contact the store.');
             } else {
@@ -5773,7 +5774,7 @@ class Twopayment extends PaymentModule
                 $result['status'] = $approved ? 'approved' : 'declined';
                 $result['message'] = $approved
                     ? ''
-                    : $this->l('Your order could not be approved by Two payment. Please choose another payment method or contact support.');
+                    : sprintf($this->l('Your order could not be approved by %s payment. Please choose another payment method or contact support.'), $this->getTwoBrandConfig('product_name'));
 
                 if (!$approved) {
                     $provider_message = '';
@@ -5800,7 +5801,7 @@ class Twopayment extends PaymentModule
             }
 
             $result['status'] = 'invalid_response';
-            $result['message'] = $this->l('Unable to process your order with Two payment.');
+            $result['message'] = sprintf($this->l('Unable to process your order with %s payment.'), $this->getTwoBrandConfig('product_name'));
             return $result;
         }
 
@@ -9589,19 +9590,20 @@ class Twopayment extends PaymentModule
     {
         switch ($status) {
             case self::API_KEY_STATUS_INVALID:
-                return $this->l('This API key was rejected by Two. It may be invalid or expired - check the key in your Two portal.');
+                return sprintf($this->l('This API key was rejected by %1$s. It may be invalid or expired - check the key in your %1$s portal.'), $this->getTwoBrandConfig('product_name'));
             case self::API_KEY_STATUS_SERVICE_ERROR:
                 return sprintf(
-                    $this->l('Two could not verify the API key right now (HTTP %d). This is usually temporary - try again shortly.'),
+                    $this->l('%s could not verify the API key right now (HTTP %d). This is usually temporary - try again shortly.'),
+                    $this->getTwoBrandConfig('product_name'),
                     (int) $code
                 );
             case self::API_KEY_STATUS_UNREACHABLE:
-                return $this->l('This shop could not reach the Two API at all (network, DNS or firewall). The API key itself has not been judged.');
+                return sprintf($this->l('This shop could not reach the %s API at all (network, DNS or firewall). The API key itself has not been judged.'), $this->getTwoBrandConfig('product_name'));
             case self::API_KEY_STATUS_NOT_CONFIGURED:
-                return $this->l('Enter your Two API key to enable Two.');
+                return sprintf($this->l('Enter your %1$s API key to enable %1$s.'), $this->getTwoBrandConfig('product_name'));
             default:
                 return $code
-                    ? sprintf($this->l('Two returned an unexpected response while verifying the API key (HTTP %d).'), (int) $code)
+                    ? sprintf($this->l('%s returned an unexpected response while verifying the API key (HTTP %d).'), $this->getTwoBrandConfig('product_name'), (int) $code)
                     : $this->l('The API key could not be verified.');
         }
     }
@@ -9631,7 +9633,7 @@ class Twopayment extends PaymentModule
         }
 
         return $this->getTwoApiKeyFailureMessage($status['status'], $status['code'])
-            . ' ' . $this->l('Two is hidden from checkout until the key verifies.');
+            . ' ' . sprintf($this->l('%s is hidden from checkout until the key verifies.'), $this->getTwoBrandConfig('product_name'));
     }
 
     /**
@@ -12816,7 +12818,7 @@ class Twopayment extends PaymentModule
             'type' => 'select',
             'label' => $this->l('Buyer Surcharge Method'),
             'name' => 'PS_TWO_SURCHARGE_TYPE',
-            'desc' => $this->l('Add an offset pricing fee to the buyer for the selected payment term. The fee amount is computed by Two; the plugin only sends the configuration.'),
+            'desc' => sprintf($this->l('Add an offset pricing fee to the buyer for the selected payment term. The fee amount is computed by %s; the plugin only sends the configuration.'), $this->getTwoBrandConfig('product_name')),
             'options' => array(
                 'query' => array(
                     array('id' => 'none', 'name' => $this->l('No surcharge applied')),
@@ -14087,7 +14089,7 @@ class Twopayment extends PaymentModule
                 isset($candidate['error_code']);
 
             if (isset($candidate['response']['code']) && $candidate['response'] && $candidate['response']['code'] && $candidate['response']['code'] >= self::HTTP_STATUS_BAD_REQUEST) {
-                return sprintf($this->l('Two response code %d'), $candidate['response']['code']);
+                return sprintf($this->l('%s response code %d'), $this->getTwoBrandConfig('product_name'), $candidate['response']['code']);
             }
 
             if (isset($candidate['error_details']) && $candidate['error_details']) {
@@ -14139,7 +14141,7 @@ class Twopayment extends PaymentModule
         }
 
         if ($http_status >= self::HTTP_STATUS_BAD_REQUEST) {
-            return sprintf($this->l('Two response code %d'), $http_status);
+            return sprintf($this->l('%s response code %d'), $this->getTwoBrandConfig('product_name'), $http_status);
         }
 
         return null;
@@ -15258,7 +15260,7 @@ class Twopayment extends PaymentModule
             }
         }
 
-        $this->addTwoBackOfficeWarning($this->l('Fulfillment blocked: this Two order is cancelled at provider. The order status has been reverted to cancelled.'));
+        $this->addTwoBackOfficeWarning(sprintf($this->l('Fulfillment blocked: this %s order is cancelled at provider. The order status has been reverted to cancelled.'), $this->getTwoBrandConfig('product_name')));
         PrestaShopLogger::addLog(
             'TwoPayment: Blocked fulfillment status insert for cancelled Two order ' . $two_order_id .
             ' (state=' . strtoupper(trim((string)$two_state)) . ', source=' . trim((string)$source) . '). ' .
@@ -15674,6 +15676,7 @@ class Twopayment extends PaymentModule
             $this->context->smarty->assign(array(
                 'twopaymentdata' => $twopaymentdata,
                 'two_buyer_portal_url' => $this->getTwoBuyerPortalUrl(),
+                'two_product_name' => $this->getTwoBrandConfig('product_name'),
             ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayPaymentReturnBuyer.tpl');
         }
@@ -15703,6 +15706,7 @@ class Twopayment extends PaymentModule
                 'twopaymentdata' => $twopaymentdata,
                 'two_portal_url' => $this->getTwoPortalUrl(),
                 'two_pdf_url' => $pdf_url,
+                'two_product_name' => $this->getTwoBrandConfig('product_name'),
             ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayOrderDetail.tpl');
         }
@@ -15736,6 +15740,7 @@ class Twopayment extends PaymentModule
                 'two_pdf_url' => $pdf_url, // PDF invoice URL if available
                 'two_invoice_actions_available' => $invoice_actions_available,
                 'two_invoice_notice' => $this->getTwoInvoiceNoticeFromRequest(),
+                'two_product_name' => $this->getTwoBrandConfig('product_name'),
             ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayAdminOrderLeft.tpl');
         }
@@ -15746,6 +15751,9 @@ class Twopayment extends PaymentModule
         $id_order = $params['id_order'];
         $twopaymentdata = $this->getTwoOrderPaymentData($id_order);
         if ($twopaymentdata) {
+            $this->context->smarty->assign(array(
+                'two_product_name' => $this->getTwoBrandConfig('product_name'),
+            ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayAdminOrderTabLink.tpl');
         }
     }
@@ -15785,6 +15793,7 @@ class Twopayment extends PaymentModule
                     || !empty($twopaymentdata['two_invoice_upload_status']),
                 'two_invoice_actions_available' => $invoice_actions_available,
                 'two_invoice_notice' => $this->getTwoInvoiceNoticeFromRequest(),
+                'two_product_name' => $this->getTwoBrandConfig('product_name'),
             ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayAdminOrderTabContent.tpl');
         }
