@@ -103,14 +103,14 @@ final class OptionalCheckoutFieldsSpec
     /** @return array<string,mixed> */
     private static function formValues(TwopaymentTestHarness $module): array
     {
-        $method = new ReflectionMethod(Twopayment::class, 'getTwoPaymentSettingsFormValues');
+        $method = new ReflectionMethod(Twopayment::class, 'getTwoCheckoutFieldsFormValues');
 
         return $method->invoke($module);
     }
 
     private static function save(TwopaymentTestHarness $module): void
     {
-        $method = new ReflectionMethod(Twopayment::class, 'saveTwoPaymentSettingsFormValues');
+        $method = new ReflectionMethod(Twopayment::class, 'saveTwoCheckoutFieldsFormValues');
         $method->invoke($module);
     }
 
@@ -402,7 +402,7 @@ final class OptionalCheckoutFieldsSpec
         self::enableAll();
         $module = new TwopaymentTestHarness();
 
-        $method = new ReflectionMethod(Twopayment::class, 'getTwoPaymentSettingsForm');
+        $method = new ReflectionMethod(Twopayment::class, 'getTwoCheckoutFieldsForm');
         $form = $method->invoke($module);
 
         $switchOrder = array();
