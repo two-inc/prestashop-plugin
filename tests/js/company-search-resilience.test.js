@@ -548,6 +548,48 @@ describe('class-static result cache', () => {
         expect(search.getCurrentCountry()).toBe('NL');
     });
 
+    describe('the option-text map covers this shop\'s own locales (TWO-40 follow-up, adversarial review)', () => {
+        // This shop ships nl/no/sv translations. A map with only English/
+        // Spanish/French country names was blind for exactly the locales this
+        // shop actually serves, on a theme with no ISO attribute and no id in
+        // window.twopayment.countries.
+        test.each([
+            ['Nederland', 'NL'],
+            ['Storbritannia', 'GB'],
+            ['Storbritannien', 'GB'],
+            ['Frankrike', 'FR'],
+            ['Tyskland', 'DE'],
+            ['Spanien', 'ES'],
+            ['Belgien', 'BE'],
+            ['Australien', 'AU']
+        ])('%s resolves to %s', (countryText, expectedIso) => {
+            document.body.innerHTML = '';
+            buildAddressForm({ country: null, countryId: '999', countryText });
+            const search = makeInstance();
+
+            expect(search.getCurrentCountry()).toBe(expectedIso);
+        });
+    });
+
+    test('a select named "country" (no "id_" prefix) is resolved too, not just "id_country" (adversarial review finding)', () => {
+        // TwoSoleTrader.js's billingCountry() and TwoOrderIntent.js's
+        // getCurrentAddressCountryISO() both already fall back to
+        // `select[name='country']`. This method used to check `id_country`
+        // only, so a theme rendering the field under that name made this
+        // method fall straight through to the page-load-time
+        // `window.twopayment.billing_country` while TwoSoleTrader.js resolved
+        // the live value off the real select - the two silently disagreeing
+        // on country.
+        document.body.innerHTML = '';
+        document.body.innerHTML = "<select name='country'>"
+            + '<option value="17" data-iso-code="SE" selected>Sverige</option>'
+            + '</select>'
+            + "<input type='text' name='company' value='' />";
+        const search = makeInstance();
+
+        expect(search.getCurrentCountry()).toBe('SE');
+    });
+
     test('nothing is cached for an unresolved country', () => {
         // The cache is class-static and outlives the widget, so an entry filed
         // under the empty key would be served to every later search for the same

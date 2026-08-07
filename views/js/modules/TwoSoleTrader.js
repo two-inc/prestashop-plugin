@@ -318,6 +318,37 @@ class TwoSoleTrader {
             if (iso) {
                 return iso.toUpperCase();
             }
+            // TWO-40 follow-up: this fallback was missing here despite the
+            // comment above CLAIMING parity with TwoOrderIntent.js/
+            // TwoCompanySearch.js - it jumped straight to `this.config`
+            // (page-load-time, never updated on a later country change)
+            // instead. On any theme/PS version whose country <option>s carry
+            // none of the three data- attributes above - exactly why the
+            // other two modules needed this fallback in the first place -
+            // billingCountry() returned the ORIGINAL page-load country
+            // forever, however many times the buyer changed it: this and
+            // isAvailableForCurrentCountry() both silently kept answering for
+            // the WRONG country, with no error and no re-fetch, since the
+            // (wrong) country was already "settled" in availabilityByCountry.
+            // `window.twopayment.countries` is the server-built id -> ISO map
+            // (`Country::getCountries()`, injected via `Media::addJsDef`)
+            // TwoCompanySearch.getCurrentCountry() and TwoOrderIntent.js's
+            // getCurrentAddressCountryISO() both already read.
+            const countryId = option.value;
+            const isoFromConfig = (window.twopayment && window.twopayment.countries)
+                ? window.twopayment.countries[countryId]
+                : null;
+            if (isoFromConfig) {
+                return String(isoFromConfig).toUpperCase();
+            }
+            // Last DOM-derived attempt, for a theme that renders its own
+            // select with none of the above and loads this module without
+            // the server-built map - same map TwoCompanySearch.js's
+            // extractCountryFromText() uses.
+            const fromText = TwoSoleTrader.extractCountryFromOptionText(option.textContent);
+            if (fromText) {
+                return fromText;
+            }
         }
         // The cart's billing country BEFORE the shop's own country (TWO-25326 bug
         // 9, round 3 adversarial review). PrestaShop only renders the address FORM
@@ -333,6 +364,43 @@ class TwoSoleTrader {
         // construction; shopCountry stays as a last resort for a payload that
         // predates this key.
         return (this.config.billingCountry || this.config.shopCountry || '').toUpperCase();
+    }
+
+    /**
+     * Same map as TwoCompanySearch.js's extractCountryFromText() (TWO-40
+     * follow-up) - kept here rather than shared, since these are two
+     * independently-loaded modules with no common utility file between them.
+     * MIRRORED there; keep the two in step by hand.
+     *
+     * nl/no/sv entries added (adversarial review finding, TWO-40 follow-up
+     * round 2) - see the identical comment on the sibling copy in
+     * TwoCompanySearch.js for why: this shop ships those three locales, and
+     * an English/Spanish/French-only map left this fallback blind for all of
+     * them.
+     *
+     * @param {string} text visible text of the selected <option>
+     * @returns {?string} uppercase ISO code, or null
+     */
+    static extractCountryFromOptionText(text) {
+        const countryMap = {
+            'united kingdom': 'GB', 'great britain': 'GB', 'uk': 'GB', 'england': 'GB',
+            'verenigd koninkrijk': 'GB', 'storbritannia': 'GB', 'storbritannien': 'GB',
+            'spain': 'ES', 'españa': 'ES', 'espagne': 'ES',
+            'spanje': 'ES', 'spania': 'ES', 'spanien': 'ES',
+            'france': 'FR', 'francia': 'FR', 'frankrijk': 'FR', 'frankrike': 'FR',
+            'germany': 'DE', 'deutschland': 'DE', 'alemania': 'DE',
+            'duitsland': 'DE', 'tyskland': 'DE',
+            'italy': 'IT', 'italia': 'IT', 'italie': 'IT', 'italië': 'IT', 'italien': 'IT',
+            'netherlands': 'NL', 'holland': 'NL', 'países bajos': 'NL',
+            'nederland': 'NL', 'nederländerna': 'NL',
+            'belgium': 'BE', 'bélgica': 'BE', 'belgique': 'BE',
+            'belgië': 'BE', 'belgia': 'BE', 'belgien': 'BE',
+            'united states': 'US', 'usa': 'US', 'estados unidos': 'US', 'verenigde staten': 'US',
+            'canada': 'CA', 'canadá': 'CA',
+            'australia': 'AU', 'australië': 'AU', 'australien': 'AU'
+        };
+        const lowerText = String(text || '').toLowerCase().trim();
+        return countryMap[lowerText] || null;
     }
 
     /**

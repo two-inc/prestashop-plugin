@@ -221,19 +221,41 @@ describe('§1 the dropdown is a real control, not an in-field autocomplete', () 
         expect(companyField().is(':disabled')).toBe(false);
     });
 
-    test('a too-short query shows the "type N more characters" hint', () => {
+    test('a too-short query renders no results and makes no request - the length requirement lives in the placeholder now (TWO-40 follow-up)', () => {
         makeInstance();
         openPanel();
         jest.advanceTimersByTime(400);
 
-        // Present from the moment the panel opens, before a single keystroke.
-        expect(resultTexts().join(' ')).toContain(String(TwoCompanySearch.MIN_SEARCH_LENGTH));
+        // Present from the moment the panel opens, before a single keystroke -
+        // via the query field's own placeholder, not a dropdown row any more.
+        expect(panelParts().query.attr('placeholder')).toContain(String(TwoCompanySearch.MIN_SEARCH_LENGTH));
+        expect(resultTexts()).toEqual([]);
         expect(ajax.calls.length).toBe(0);
 
         typeQuery('ex');
         jest.advanceTimersByTime(400);
-        expect(resultTexts().join(' ')).toContain(String(TwoCompanySearch.MIN_SEARCH_LENGTH));
+        expect(resultTexts()).toEqual([]);
         expect(ajax.calls.length).toBe(0);
+    });
+
+    test('the query field\'s aria-label names its ROLE, not the length-requirement placeholder (adversarial review finding)', () => {
+        // aria-label is the field's accessible NAME, set once and never
+        // re-synced - unlike placeholder, which visually disappears the
+        // moment the field has a value. Naming the field after a hint that
+        // stops being true as soon as the buyer has typed enough left a
+        // screen-reader user, tabbing back into the field after a completed
+        // search, still hearing "Enter 3 or more characters" as the field's
+        // permanent name.
+        makeInstance();
+        openPanel();
+
+        const placeholder = panelParts().query.attr('placeholder');
+        const ariaLabel = panelParts().query.attr('aria-label');
+
+        expect(placeholder).toContain(String(TwoCompanySearch.MIN_SEARCH_LENGTH));
+        expect(ariaLabel).not.toContain(String(TwoCompanySearch.MIN_SEARCH_LENGTH));
+        expect(ariaLabel).not.toBe(placeholder);
+        expect(ariaLabel).toBe(TwoCompanySearch.getQueryAriaLabelText());
     });
 
     test('a zero-result query says exactly "No matches found"', () => {
@@ -500,7 +522,7 @@ describe('panel handler binding', () => {
 describe('regressions found in adversarial review', () => {
     test('Enter in the query field never submits the address form', () => {
         // jQuery UI only preventDefaults Enter when it has an ACTIVE menu
-        // item. In every other state - the too-short hint, "No matches found",
+        // item. In every other state - too short to search, "No matches found",
         // results painted but nothing highlighted - Enter fell through to
         // PrestaShop's <form> and triggered implicit submission: the buyer
         // types a name, presses Enter before results land, and submits the
@@ -516,7 +538,7 @@ describe('regressions found in adversarial review', () => {
         expect(event.isDefaultPrevented()).toBe(true);
     });
 
-    test('Enter is still prevented on the too-short hint, before any search', () => {
+    test('Enter is still prevented while too short to search, before any search', () => {
         makeInstance();
         openPanel();
 
