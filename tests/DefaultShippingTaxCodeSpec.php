@@ -116,7 +116,7 @@ final class DefaultShippingTaxCodeSpec
     private static function advancedFieldNames(DefaultShippingTaxCodeHarness $module): array
     {
         $names = [];
-        foreach ($module->exposeOtherForm()['form']['input'] as $input) {
+        foreach ($module->exposeOrderManagementForm()['form']['input'] as $input) {
             $names[] = (string) ($input['name'] ?? '');
         }
 
@@ -126,7 +126,7 @@ final class DefaultShippingTaxCodeSpec
     /** The rendered default-shipping-tax-code input, or null when hidden. */
     private static function shippingTaxInput(DefaultShippingTaxCodeHarness $module): ?array
     {
-        foreach ($module->exposeOtherForm()['form']['input'] as $input) {
+        foreach ($module->exposeOrderManagementForm()['form']['input'] as $input) {
             if ((string) ($input['name'] ?? '') === self::CONFIG_KEY) {
                 return $input;
             }
@@ -283,12 +283,12 @@ final class DefaultShippingTaxCodeSpec
             in_array(self::CONFIG_KEY, $names, true),
             'The default-shipping-tax-code field must not be rendered while the flag is off'
         );
-        // The rest of Advanced Settings is untouched.
-        TinyAssert::true(in_array('PS_TWO_ENABLE_COMPANY_NAME', $names, true));
-        TinyAssert::true(in_array('PS_TWO_DISABLE_SSL_VERIFY', $names, true));
+        // The rest of Order Management is untouched.
+        TinyAssert::true(in_array('PS_TWO_FINALIZE_PURCHASE', $names, true));
+        TinyAssert::true(in_array('PS_TWO_ENABLE_TAX_SUBTOTALS', $names, true));
 
         TinyAssert::false(
-            array_key_exists(self::CONFIG_KEY, $module->exposeOtherFormValues()),
+            array_key_exists(self::CONFIG_KEY, $module->exposeOrderManagementFormValues()),
             'A hidden field must not contribute a form value either'
         );
     }
@@ -311,7 +311,7 @@ final class DefaultShippingTaxCodeSpec
         // submitted, this field is not in the form at all.
         Tools::setTestValue('PS_TWO_ENABLE_COMPANY_NAME', 1);
         Tools::setTestValue('PS_TWO_FINALIZE_PURCHASE', 1);
-        $module->exposeSaveOtherFormValues();
+        $module->exposeSaveOrderManagementFormValues();
 
         TinyAssert::same(
             '4210',
@@ -334,7 +334,7 @@ final class DefaultShippingTaxCodeSpec
 
         $module = new DefaultShippingTaxCodeHarness();
         Tools::setTestValue(self::CONFIG_KEY, '4100');
-        $module->exposeSaveOtherFormValues();
+        $module->exposeSaveOrderManagementFormValues();
 
         TinyAssert::same(
             '4210',
@@ -454,7 +454,7 @@ final class DefaultShippingTaxCodeSpec
 
         TinyAssert::same(
             '',
-            (string) $module->exposeOtherFormValues()[self::CONFIG_KEY],
+            (string) $module->exposeOrderManagementFormValues()[self::CONFIG_KEY],
             'An unconfigured field must pre-select the placeholder - never "No tax", which is a real treatment'
         );
     }
@@ -466,7 +466,7 @@ final class DefaultShippingTaxCodeSpec
         Configuration::updateValue(self::CONFIG_KEY, '4210');
 
         $module = new DefaultShippingTaxCodeHarness();
-        TinyAssert::same('4210', (string) $module->exposeOtherFormValues()[self::CONFIG_KEY]);
+        TinyAssert::same('4210', (string) $module->exposeOrderManagementFormValues()[self::CONFIG_KEY]);
     }
 
     /**
@@ -491,7 +491,7 @@ final class DefaultShippingTaxCodeSpec
         }
         TinyAssert::true(isset($byId['4900']), 'A deactivated but configured group must stay selectable');
         TinyAssert::same('Retired group (inactive)', $byId['4900']);
-        TinyAssert::same('4900', (string) $module->exposeOtherFormValues()[self::CONFIG_KEY]);
+        TinyAssert::same('4900', (string) $module->exposeOrderManagementFormValues()[self::CONFIG_KEY]);
     }
 
     private static function testSaveStoresAnExplicitSelection(): void
@@ -501,7 +501,7 @@ final class DefaultShippingTaxCodeSpec
 
         $module = new DefaultShippingTaxCodeHarness();
         Tools::setTestValue(self::CONFIG_KEY, '4210');
-        $module->exposeSaveOtherFormValues();
+        $module->exposeSaveOrderManagementFormValues();
 
         TinyAssert::same('4210', (string) Configuration::get(self::CONFIG_KEY));
     }
@@ -512,7 +512,7 @@ final class DefaultShippingTaxCodeSpec
         self::reset();
         $module = new DefaultShippingTaxCodeHarness();
         Tools::setTestValue(self::CONFIG_KEY, '0');
-        $module->exposeSaveOtherFormValues();
+        $module->exposeSaveOrderManagementFormValues();
 
         TinyAssert::same('0', (string) Configuration::get(self::CONFIG_KEY));
     }
@@ -526,7 +526,7 @@ final class DefaultShippingTaxCodeSpec
 
         $module = new DefaultShippingTaxCodeHarness();
         Tools::setTestValue(self::CONFIG_KEY, '');
-        $module->exposeSaveOtherFormValues();
+        $module->exposeSaveOrderManagementFormValues();
 
         TinyAssert::same('', (string) Configuration::get(self::CONFIG_KEY));
     }
@@ -539,12 +539,12 @@ final class DefaultShippingTaxCodeSpec
 
         foreach (['abc', '0.5', '-4210', '4211'] as $bad) {
             Tools::setTestValue(self::CONFIG_KEY, $bad);
-            $errors = $module->exposeValidOtherFormValues();
+            $errors = $module->exposeValidOrderManagementFormValues();
             TinyAssert::count(1, $errors, 'Value ' . $bad . ' must be rejected');
             TinyAssert::true(strpos($errors[0], 'Default shipping tax code') !== false);
 
             // ...and rejected values are never stored.
-            $module->exposeSaveOtherFormValues();
+            $module->exposeSaveOrderManagementFormValues();
             TinyAssert::same(
                 '',
                 (string) Configuration::get(self::CONFIG_KEY),
@@ -559,10 +559,10 @@ final class DefaultShippingTaxCodeSpec
         $module = new DefaultShippingTaxCodeHarness();
 
         Tools::setTestValue(self::CONFIG_KEY, '');
-        TinyAssert::count(0, $module->exposeValidOtherFormValues(), 'Unselected is a legitimate state');
+        TinyAssert::count(0, $module->exposeValidOrderManagementFormValues(), 'Unselected is a legitimate state');
 
         Tools::setTestValue(self::CONFIG_KEY, '0');
-        TinyAssert::count(0, $module->exposeValidOtherFormValues(), '"No tax" is a legitimate selection');
+        TinyAssert::count(0, $module->exposeValidOrderManagementFormValues(), '"No tax" is a legitimate selection');
     }
 
     // -----------------------------------------------------------------
@@ -831,28 +831,28 @@ final class DefaultShippingTaxCodeHarness extends TwopaymentTestHarness
         return $this->isTwoDefaultShippingTaxCodeFieldEnabled();
     }
 
-    public function exposeOtherForm(): array
+    public function exposeOrderManagementForm(): array
     {
-        return $this->getTwoOtherForm();
+        return $this->getTwoOrderManagementForm();
     }
 
-    public function exposeOtherFormValues(): array
+    public function exposeOrderManagementFormValues(): array
     {
-        return $this->getTwoOtherFormValues();
+        return $this->getTwoOrderManagementFormValues();
     }
 
     /** @return string[] The errors this submission would raise. */
-    public function exposeValidOtherFormValues(): array
+    public function exposeValidOrderManagementFormValues(): array
     {
         $this->errors = array();
-        $this->validTwoOtherFormValues();
+        $this->validTwoOrderManagementFormValues();
 
         return $this->errors;
     }
 
-    public function exposeSaveOtherFormValues(): void
+    public function exposeSaveOrderManagementFormValues(): void
     {
         $this->output = '';
-        $this->saveTwoOtherFormValues();
+        $this->saveTwoOrderManagementFormValues();
     }
 }
