@@ -189,6 +189,9 @@ class TwoCompanySearch {
         this._dropdown = null;
         this._queryField = null;
         this._notListedButton = null;
+        // Sole-trader enrolment entry point (TWO-40). See buildDropdown() -
+        // a sibling of _notListedButton, same reasoning.
+        this._soleTraderButton = null;
         this._resultsList = null;
         this._dropdownOpen = false;
         // Deferred close, so focus moving BETWEEN two controls inside the
@@ -594,6 +597,7 @@ class TwoCompanySearch {
             this._queryField = panel.find('.two-company-dropdown__query').first();
             this._resultsList = panel.find('.two-company-dropdown__results').first();
             this._notListedButton = panel.find('.two-company-not-listed').first();
+            this._soleTraderButton = panel.find('.two-company-sole-trader-entry').first();
             // RE-BIND, do not merely adopt the references.
             //
             // Every handler on an existing panel closes over the instance that
@@ -645,7 +649,20 @@ class TwoCompanySearch {
         const notListed = $('<button type="button" class="two-company-not-listed"></button>')
             .text(this.getManualEntryText());
 
-        panel.append(searchRow).append(results).append(notListed);
+        // Sole-trader enrolment entry point (TWO-40). Replaces the old
+        // upfront Business / Sole trader chip - there is no choice to make
+        // before opening this control any more, this row is the choice.
+        // A sibling of "My company is not on the list", not a row inside the
+        // results list, for the exact same reasons that button is a sibling
+        // (see the class doc above buildDropdown()): reachable without
+        // scrolling past up to 50 results, and outside the list so the
+        // cursor keys - which only ever move within the list - cannot reach
+        // it. Hidden by default; syncSoleTraderEntryVisibility() decides
+        // whether the registry says the current billing country is eligible.
+        const soleTraderEntry = $('<button type="button" class="two-company-sole-trader-entry"></button>')
+            .text(this.getSoleTraderEntryText());
+
+        panel.append(searchRow).append(results).append(notListed).append(soleTraderEntry);
         // After the company field, so DOM order === tab order (see above).
         // `appendTo` the wrapper rather than `.after()` the input: the
         // org-number hint is also a child of this wrapper and the panel must
@@ -656,6 +673,7 @@ class TwoCompanySearch {
         this._queryField = query;
         this._resultsList = results;
         this._notListedButton = notListed;
+        this._soleTraderButton = soleTraderEntry;
 
         this.bindDropdownHandlers();
     }
@@ -700,6 +718,9 @@ class TwoCompanySearch {
         if (this._notListedButton && this._notListedButton.length) {
             this._notListedButton.off('.twoDropdown');
         }
+        if (this._soleTraderButton && this._soleTraderButton.length) {
+            this._soleTraderButton.off('.twoDropdown');
+        }
         if (this._dropdown && this._dropdown.length) {
             // Native listener, so jQuery's namespace sweep above does not
             // reach it - it has to come off by reference.
@@ -717,6 +738,7 @@ class TwoCompanySearch {
         this._queryField = null;
         this._resultsList = null;
         this._notListedButton = null;
+        this._soleTraderButton = null;
     }
 
     /**
@@ -757,6 +779,24 @@ class TwoCompanySearch {
                 // reads a stray click as "collapse this step".
                 event.stopPropagation();
                 this.enterManualEntryMode();
+            });
+        }
+
+        // "I'm a sole trader" (TWO-40) - same click-handling shape as "My
+        // company is not on the list" above, including the stopPropagation
+        // for the same accordion-toggle reason. Enrolment is owned entirely
+        // by TwoSoleTrader.js; this control only decides when to offer the
+        // entry point and hands off to it.
+        if (this._soleTraderButton && this._soleTraderButton.length) {
+            this._soleTraderButton.off('.twoDropdown');
+            this._soleTraderButton.on('click.twoDropdown', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.closeDropdown(true);
+                if (window.TwoSoleTrader_Instance
+                    && typeof window.TwoSoleTrader_Instance.startEnrollment === 'function') {
+                    window.TwoSoleTrader_Instance.startEnrollment();
+                }
             });
         }
 
@@ -1033,6 +1073,15 @@ class TwoCompanySearch {
             || !this._queryField || !this._queryField.length) {
             return;
         }
+        // Reopening the search control is the buyer choosing ordinary company
+        // search over an "I'm a sole trader" row they may have clicked
+        // moments earlier (TWO-40). Cancel any not-yet-completed enrolment -
+        // TwoSoleTrader.js keeps its minted tokens either way, so a buyer who
+        // comes back to this row resumes rather than re-mints.
+        if (window.TwoSoleTrader_Instance
+            && typeof window.TwoSoleTrader_Instance.cancelEnrollment === 'function') {
+            window.TwoSoleTrader_Instance.cancelEnrollment();
+        }
         clearTimeout(this._closeTimerId);
         this._closeTimerId = null;
         // Cleared on every open: the flag is otherwise only reset by a
@@ -1045,6 +1094,7 @@ class TwoCompanySearch {
         this._dropdown.removeAttr('hidden').show();
         this.setDropdownExpandedState();
         this.syncNotListedVisibility();
+        this.syncSoleTraderEntryVisibility();
         this._queryField.trigger('focus');
         // Render the current state immediately - for an empty query that is
         // the "type N more characters" hint (§1), not an empty or absent
@@ -1144,6 +1194,32 @@ class TwoCompanySearch {
             this._notListedButton.show();
         } else {
             this._notListedButton.hide();
+        }
+    }
+
+    /**
+     * Visibility gating for "I'm a sole trader" (TWO-40).
+     *
+     * Same gate as "My company is not on the list" - open, not in manual
+     * entry, nothing confirmed yet - AND-ed with the registry's own
+     * per-billing-country answer, read from TwoSoleTrader.js's availability
+     * cache rather than duplicated here. `TwoSoleTrader_Instance` may not
+     * exist yet (script load order) or may not have resolved an answer for
+     * the current country yet; both read as "not available", matching this
+     * control's fail-soft posture everywhere else.
+     */
+    syncSoleTraderEntryVisibility() {
+        if (!this._soleTraderButton || !this._soleTraderButton.length) {
+            return;
+        }
+        const instance = window.TwoSoleTrader_Instance;
+        const available = !!(instance && typeof instance.isAvailableForCurrentCountry === 'function'
+            && instance.isAvailableForCurrentCountry());
+        const show = available && this._dropdownOpen && !this._manualEntry && !this.hasConfirmedSelection();
+        if (show) {
+            this._soleTraderButton.show();
+        } else {
+            this._soleTraderButton.hide();
         }
     }
 
@@ -1350,6 +1426,7 @@ class TwoCompanySearch {
             // list" button on - so re-evaluate it however the field's value
             // ended up changing.
             this.syncNotListedVisibility();
+            this.syncSoleTraderEntryVisibility();
         });
     }
 
@@ -1666,6 +1743,7 @@ class TwoCompanySearch {
         this.setCompanyFieldSearchMode(!this._manualEntry);
         this.setupCompanyFieldOpeners();
         this.syncNotListedVisibility();
+        this.syncSoleTraderEntryVisibility();
 
         // Use jQuery UI autocomplete if available; otherwise fallback to custom.
         // `$.fn.autocomplete` alone is not proof of jQuery UI - the older
@@ -2056,6 +2134,14 @@ class TwoCompanySearch {
     }
 
     /**
+     * @returns {string} wording for the sole-trader enrolment row (TWO-40)
+     */
+    getSoleTraderEntryText() {
+        return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_sole_trader_entry)
+            || "I'm a sole trader";
+    }
+
+    /**
      * @returns {string} wording for the link back out of manual entry
      */
     getBackToSearchText() {
@@ -2188,6 +2274,7 @@ class TwoCompanySearch {
         // close path changes.
         this.closeDropdown(false);
         this.syncNotListedVisibility();
+        this.syncSoleTraderEntryVisibility();
 
         // The company-name field stops being a search trigger and becomes the
         // plain text input the buyer types their company into (§2/§5:
@@ -3217,6 +3304,7 @@ class TwoCompanySearch {
         // at all, in which case the deferred GB path re-syncs from
         // autoFillAddressIfNeeded() below).
         this.syncNotListedVisibility();
+        this.syncSoleTraderEntryVisibility();
 
         return true;
     }
@@ -3298,6 +3386,7 @@ class TwoCompanySearch {
                     // so on the GB path this, not onCompanySelected(), is
                     // where the "not on the list" button finally hides.
                     this.syncNotListedVisibility();
+                    this.syncSoleTraderEntryVisibility();
                 }
             }
             // Find addresses list in various shapes. Gated by the SAME
