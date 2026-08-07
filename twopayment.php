@@ -1897,6 +1897,67 @@ class Twopayment extends PaymentModule
         $this->output .= $this->displayConfirmation($this->l('Checkout field settings are updated.'));
     }
 
+    /**
+     * Validate the checkout sort order field (TWO-25386 #6): empty (no
+     * preference) or a plain integer, positive or negative.
+     */
+    protected function validTwoCheckoutSortOrderValue()
+    {
+        $raw = trim((string) Tools::getValue('PS_TWO_CHECKOUT_SORT_ORDER'));
+        if ($raw === '') {
+            return;
+        }
+        if (!preg_match('/^-?\d+$/', $raw)) {
+            $this->errors[] = $this->l('Checkout sort order must be a whole number, or left empty.');
+        }
+    }
+
+    /**
+     * Best-effort application of the checkout sort order (TWO-25386 #6).
+     *
+     * PrestaShop core has no per-module sort_order config path for payment
+     * methods (unlike Magento's payment/two_payment/sort_order); the native
+     * mechanism is the hook_module position table that Module::updatePosition()
+     * writes, normally driven by dragging rows in Payment > Preferences. This
+     * asks core to move the module to the configured position on its own
+     * paymentOptions hook registration.
+     *
+     * Deliberately swallows any failure: the admin field and its stored value
+     * are the source of truth this method reads, and updatePosition()
+     * misbehaving (a lock conflict, an unexpected DB state, or genuinely not
+     * existing on some future core) must never block saving the rest of the
+     * Checkout Fields form. The method_exists() guard is a defensive
+     * belt-and-suspenders check, not the real safety net here -
+     * Module::updatePosition() is a real, long-standing core method this
+     * module's own PaymentModule parent inherits, so it exists on every
+     * supported PrestaShop version; the try/catch is what actually protects
+     * this save path.
+     *
+     * @return void
+     */
+    protected function applyTwoCheckoutSortOrder()
+    {
+        $raw = trim((string) Configuration::get('PS_TWO_CHECKOUT_SORT_ORDER'));
+        if ($raw === '' || !preg_match('/^-?\d+$/', $raw)) {
+            return;
+        }
+        if (!method_exists($this, 'updatePosition')) {
+            return;
+        }
+
+        try {
+            $id_hook = (int) Hook::getIdByName('paymentOptions');
+            if ($id_hook > 0) {
+                $this->updatePosition($id_hook, false, (int) $raw);
+            }
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Failed applying checkout sort order - ' . $e->getMessage(),
+                2
+            );
+        }
+    }
+
     protected function getTwoPaymentTermsFormValues()
     {
         $fields_values = array();
@@ -2748,17 +2809,6 @@ class Twopayment extends PaymentModule
      * Validate the checkout sort order field (TWO-25386 #6): empty (no
      * preference) or a plain integer, positive or negative.
      */
-    protected function validTwoCheckoutSortOrderValue()
-    {
-        $raw = trim((string) Tools::getValue('PS_TWO_CHECKOUT_SORT_ORDER'));
-        if ($raw === '') {
-            return;
-        }
-        if (!preg_match('/^-?\d+$/', $raw)) {
-            $this->errors[] = $this->l('Checkout sort order must be a whole number, or left empty.');
-        }
-    }
-
     protected function getTwoDiagnosticsFormValues()
     {
         $fields_values = array();
@@ -2780,52 +2830,6 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', (int) Tools::getValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', 1));
 
         $this->output .= $this->displayConfirmation($this->l('Diagnostics settings are updated.'));
-    }
-
-    /**
-     * Best-effort application of the checkout sort order (TWO-25386 #6).
-     *
-     * PrestaShop core has no per-module sort_order config path for payment
-     * methods (unlike Magento's payment/two_payment/sort_order); the native
-     * mechanism is the hook_module position table that Module::updatePosition()
-     * writes, normally driven by dragging rows in Payment > Preferences. This
-     * asks core to move the module to the configured position on its own
-     * paymentOptions hook registration.
-     *
-     * Deliberately swallows any failure: the admin field and its stored value
-     * are the source of truth this method reads, and updatePosition()
-     * misbehaving (a lock conflict, an unexpected DB state, or genuinely not
-     * existing on some future core) must never block saving the rest of the
-     * Advanced Settings form. The method_exists() guard is a defensive
-     * belt-and-suspenders check, not the real safety net here -
-     * Module::updatePosition() is a real, long-standing core method this
-     * module's own PaymentModule parent inherits, so it exists on every
-     * supported PrestaShop version; the try/catch is what actually protects
-     * this save path.
-     *
-     * @return void
-     */
-    protected function applyTwoCheckoutSortOrder()
-    {
-        $raw = trim((string) Configuration::get('PS_TWO_CHECKOUT_SORT_ORDER'));
-        if ($raw === '' || !preg_match('/^-?\d+$/', $raw)) {
-            return;
-        }
-        if (!method_exists($this, 'updatePosition')) {
-            return;
-        }
-
-        try {
-            $id_hook = (int) Hook::getIdByName('paymentOptions');
-            if ($id_hook > 0) {
-                $this->updatePosition($id_hook, false, (int) $raw);
-            }
-        } catch (Exception $e) {
-            PrestaShopLogger::addLog(
-                'TwoPayment: Failed applying checkout sort order - ' . $e->getMessage(),
-                2
-            );
-        }
     }
 
     protected function renderTwoOrderStatusForm()
@@ -12789,7 +12793,7 @@ class Twopayment extends PaymentModule
 
     /**
      * HelperForm input entries for the surcharge settings (appended to the
-     * Payment Settings form). Presentation only — all decisioning is in the
+     * Payment Terms form). Presentation only — all decisioning is in the
      * methods above.
      *
      * @return array
@@ -13174,7 +13178,7 @@ class Twopayment extends PaymentModule
         // JS hides it (and, with it, the help text explaining this very rule)
         // otherwise - but a hidden input still posts, so a cap stored while the
         // type was percentage keeps arriving. Refusing it would abort the whole
-        // Payment Settings save over a field the merchant can neither see nor
+        // Payment Terms save over a field the merchant can neither see nor
         // read about. The value is still stored either way; only the zero rule
         // is skipped, and a legacy zero resurfaces when the column comes back
         // into view, which is where they can act on it.
