@@ -87,8 +87,6 @@ $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_eca5a3449475f365c129
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_f23b2c9fe4875f2c3dbc61a4bd02705b'] = 'Two-koperportaal';
 $_MODULE['<{twopayment}prestashop>form_92fbf0e5d97b8afd7e73126b52bdc4bb'] = 'Kies een bestand';
 $_MODULE['<{twopayment}prestashop>form_f2a6c498fb90ee345d997f888fce3b18'] = 'Verwijderen';
-$_MODULE['<{twopayment}prestashop>paymentinfo_17f58ab6df9d5cfde18be7cb60b37ce4'] = 'Ingeschreven onderneming';
-$_MODULE['<{twopayment}prestashop>paymentinfo_8fba17b1e1abfeb9ccc08c9248824add'] = 'Eenmanszaak';
 $_MODULE['<{twopayment}prestashop>paymentinfo_1c76cbfe21c6f44c1d1e59d54f3e4420'] = 'Bedrijf';
 $_MODULE['<{twopayment}prestashop>paymentinfo_1ffcb4e0a351d5e143bec6362c0feaf8'] = 'Betaling vervalt aan het einde van de maand waarin je bestelling wordt uitgeleverd, plus het gekozen aantal dagen';
 $_MODULE['<{twopayment}prestashop>paymentinfo_26615a6d6e63f2904432b8b425ee6e93'] = 'Beschikbaarheid controleren...';
@@ -139,7 +137,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_144b4dc20a476a4588ff5f481283cfc6'] 
 $_MODULE['<{twopayment}prestashop>twopayment_1451451832b090e38c24860ea609e5a8'] = 'Bedrijfsverificatie nodig';
 $_MODULE['<{twopayment}prestashop>twopayment_16ca4b14c683275e516bbb4def8a837f'] = 'Ondersteuning voor standaard- en einde-van-de-maand (EOM) betaaltermijnen';
 $_MODULE['<{twopayment}prestashop>twopayment_1710ee7af07f5640bdb52b05df988209'] = 'Je winkelwagen is gewijzigd tijdens de betaalverificatie. Controleer je winkelwagen en probeer het opnieuw.';
-$_MODULE['<{twopayment}prestashop>twopayment_17f58ab6df9d5cfde18be7cb60b37ce4'] = 'Ingeschreven onderneming';
 $_MODULE['<{twopayment}prestashop>twopayment_1924a6cb5a7ce6a33e93620792fea964'] = 'Je moet minimaal één betaaltermijn selecteren.';
 $_MODULE['<{twopayment}prestashop>twopayment_19d3894f53ce79c3f836f26cf8a3be3b'] = 'inactief';
 $_MODULE['<{twopayment}prestashop>twopayment_1bee0d8aaede29ac319901e96850adee'] = 'Staging';
@@ -313,7 +310,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_8bc50504c201a3c29db85208d8ce68af'] 
 $_MODULE['<{twopayment}prestashop>twopayment_8c597b2f3bc899e1e04f301844c44482'] = 'De factuur is nog niet klaar omdat de bestelling nog wordt uitgeleverd. Probeer het later opnieuw.';
 $_MODULE['<{twopayment}prestashop>twopayment_8dd557fb0a33b5d844cdf7b87e84f59a'] = 'Deze betaalmethode is niet beschikbaar voor de door je gekozen valuta.';
 $_MODULE['<{twopayment}prestashop>twopayment_8faa7616b66ec7990abd90e6eb970b03'] = 'Documentatie:';
-$_MODULE['<{twopayment}prestashop>twopayment_8fba17b1e1abfeb9ccc08c9248824add'] = 'Eenmanszaak';
 $_MODULE['<{twopayment}prestashop>twopayment_90732912a0dcac1e45f02ba8122d80bf'] = 'Type betaaltermijn';
 $_MODULE['<{twopayment}prestashop>twopayment_9091655deaca780040e501e02a1805b2'] = '(op gewicht)';
 $_MODULE['<{twopayment}prestashop>twopayment_9397d7f54ed01d00e59b0e49f0900586'] = 'Een moment geduld terwijl we je bedrijfsgegevens verifiëren.';
@@ -341,7 +337,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_a002c8066738bc8f9d9394abdcef7ea8'] 
 $_MODULE['<{twopayment}prestashop>twopayment_a029c838076e00c19453faa87a214790'] = 'Geverifieerd - Klaar voor uitlevering → Two: Geverifieerd - Klaar voor uitlevering';
 $_MODULE['<{twopayment}prestashop>twopayment_a18b98ac865c5099d00d15aa7955772e'] = 'De opgevraagde bestelling kan niet worden gevonden; neem contact op met de winkeleigenaar.';
 $_MODULE['<{twopayment}prestashop>twopayment_a27e23cbfc35671fad9f198723675df3'] = 'Geen factuuradres ingesteld voor deze bestelling';
-$_MODULE['<{twopayment}prestashop>twopayment_a305be9a7fd5f6541e913ce81317976d'] = 'Mijn bedrijf staat niet in de lijst';
 $_MODULE['<{twopayment}prestashop>twopayment_a39746aced7f2b7acba1b2f715654995'] = 'Beschikbare betaaltermijnen';
 $_MODULE['<{twopayment}prestashop>twopayment_a49e05d4125474b3a6cfc0caacc5a48f'] = 'De aangemaakte bestelling kan niet worden geladen. Neem contact op met support.';
 $_MODULE['<{twopayment}prestashop>twopayment_a4f2f007d16e05710980a4141c331168'] = 'SSL-verificatie';
@@ -460,3 +455,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_6d818b8b22700d2a99440ee017b0a4e8'] 
 $_MODULE['<{twopayment}prestashop>twopayment_2541a3eb94a103e88a8090ac10b1276b'] = 'Two is niet beschikbaar voor deze bestelling van %s (%s)';
 $_MODULE['<{twopayment}prestashop>twopayment_1ec613a214555191e9ebf229eed7ecf4'] = 'Deze bestelling van %s wordt waarschijnlijk geaccepteerd door Two';
 $_MODULE['<{twopayment}prestashop>twopayment_25aae1c9462dc158b23f4ae8a621faae'] = 'Two is niet beschikbaar voor deze bestelling van %s';
+$_MODULE['<{twopayment}prestashop>twopayment_8fba17b1e1abfeb9ccc08c9248824add'] = 'Eenmanszaak';
+$_MODULE['<{twopayment}prestashop>twopayment_156b5d6812dcb5dcf1867a145cf5f1bf'] = 'Handmatig invoeren';
+$_MODULE['<{twopayment}prestashop>twopayment_040583ad2de8733ea4280fdf16dfef61'] = 'Geregistreerd bedrijf';
+$_MODULE['<{twopayment}prestashop>twopayment_bd2b7238dd5be2875d527d62a880d043'] = 'Eenmanszaak';

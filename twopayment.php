@@ -336,7 +336,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.7.3';
+        $this->version = '2.7.4';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -3633,12 +3633,14 @@ class Twopayment extends PaymentModule
             // in every translation catalogue. Same shape as
             // `end_of_month_plus_days` above.
             'company_search_too_short' => $this->l('Please enter %d or more characters'),
-            // The manual-entry affordance and its reverse link (TWO-25288,
-            // reworked by TWO-25326). A real button below the results list,
-            // and the way back out of the manual entry it switches to.
-            // Identical wording on every plugin surface - do not paraphrase
-            // either of these when translating.
-            'company_search_manual_entry' => $this->l('My company is not on the list'),
+            // The manual-entry CHIP (TWO-25288, reworked by TWO-25326, reworked
+            // again TWO-40) and the reverse link out of the manual-entry mode
+            // it switches to. TWO-40 replaced the plain-link wording "My
+            // company is not on the list" with a short chip label -
+            // deliberately DIVERGES from the other three plugins' current
+            // wording for this affordance, pending their own rollout of the
+            // same three-chip pattern.
+            'company_search_manual_entry' => $this->l('Enter Manually'),
             'company_search_back_to_search' => $this->l('Search for company'),
             // Zero-result wording (TWO-25326 §1). EXACT across all four
             // plugins - "No results found" is a different string and the
@@ -3648,8 +3650,24 @@ class Twopayment extends PaymentModule
             // trigger that opens the search panel (TWO-25326 §1). Its visible
             // value is the confirmed company name itself.
             'company_search_edit' => $this->l('Search for a different company'),
-            'sole_trader_registered_business' => $this->l('Registered business'),
-            'sole_trader_label' => $this->l('Sole trader'),
+            // The three-chip mode selector (TWO-40 design revision). Shown
+            // immediately on interacting with the search control, no
+            // upfront choice OUTSIDE the control any more, no waiting for
+            // characters to be typed. "Registered Company" is the default;
+            // "Enter Manually" (above) is always visible alongside it;
+            // "Sole Trader" is added to the set only when the registry says
+            // the currently-selected billing country supports sole traders
+            // (TwoSoleTrader::isAvailable), and removed again live if the
+            // buyer changes the country selector to one that does not.
+            'company_search_registered_entry' => $this->l('Registered Company'),
+            'company_search_sole_trader_entry' => $this->l('Sole Trader'),
+            // Fallback status label shown once enrolment succeeds but the
+            // registration carries no displayable company name or number
+            // (TwoCompanyNumber.forDisplay() answers '' for both a blank name
+            // and a suppressed `TWO:`-prefixed number). Distinct from the row
+            // above: that one is a first-person prompt to START enrolling,
+            // this is a noun phrase describing what the buyer already IS.
+            'sole_trader_status_label' => $this->l('Sole trader'),
         );
 
         // Checkout media render is a sanctioned refresh point for the backend
@@ -3992,9 +4010,10 @@ class Twopayment extends PaymentModule
         // B2B checkout: Two shows for any company-bearing buyer. There is
         // no account-type selector to also gate on (TWO-24755 rework) -
         // the front-end prompts for the company at payment time when
-        // needed, and sole traders enrol through the payment-step
-        // Business / Sole trader toggle; the order-intent pre-check
-        // enforces a verified company + org number either way.
+        // needed, and sole traders enrol from an entry point folded into
+        // the company search control itself (TWO-40); there is no separate
+        // upfront chip choosing between the two any more. The order-intent
+        // pre-check enforces a verified company + org number either way.
         PrestaShopLogger::addLog('TwoPayment: Payment option shown', 1);
         
         $payment_options = [
@@ -4018,15 +4037,17 @@ class Twopayment extends PaymentModule
 
         $optional_fields = $this->getOptionalCheckoutFieldsForDisplay();
 
-        // Sole-trader toggle, resolved HERE rather than in the browser
-        // (TWO-25326 bug 9, round 3). TwoSoleTrader.js used to build the
-        // Business / Sole trader chips only after its own availability round
-        // trip, so they were absent from every first paint of the payment step
-        // and appeared a few hundred milliseconds later - a visible flicker on
-        // any page load, and at the time this was written the surcharge
-        // cart-line sync caused one on every payment-option change. It no longer
-        // navigates at all (TWO-25326 round 4); the loads this still covers are
-        // the genuine ones (arrival, currency switch, back-navigation).
+        // Sole-trader AVAILABILITY, resolved HERE rather than in the browser
+        // (TWO-25326 bug 9, round 3; TWO-40 removed the chip UI this used to
+        // drive). TwoSoleTrader.js used to build Business / Sole trader chips
+        // only after its own availability round trip, so they were absent from
+        // every first paint of the payment step and appeared a few hundred
+        // milliseconds later - a visible flicker on any page load. There is no
+        // toggle to flicker any more (TWO-40 folded sole-trader enrolment into
+        // the company search control), but the same server-resolved answer is
+        // still what TwoSoleTrader.js adopts as its settled availability cache,
+        // so the search control's "I'm a sole trader" row can appear on first
+        // paint with no round trip of its own either.
         //
         // Same source of truth as the endpoint that JS was calling
         // (TwoSoleTrader::isAvailable -> the registry's supported-company-types
@@ -4066,10 +4087,10 @@ class Twopayment extends PaymentModule
             //  - `sole_trader_answer` is what the BROWSER adopts: '1', '0', or ''
             //    for unresolved. A pre-rendered string rather than a nested {if},
             //    so the template stays one condition deep.
-            //  - `sole_trader_available` drives what the template DRAWS (chips and
-            //    the container's visibility). Unresolved draws as not-available,
-            //    which is the same fail-soft outcome as before - the difference is
-            //    only that the browser is told it was not an answer.
+            //  - `sole_trader_available` is kept for template parity/debugging
+            //    even though the template no longer draws a toggle from it
+            //    (TWO-40); the browser-side cache is what actually gates the
+            //    company-search "I'm a sole trader" row now.
             //  - `sole_trader_country` is the country the answer is ABOUT, so a
             //    later or different country is re-resolved client-side rather than
             //    trusting a stale render.

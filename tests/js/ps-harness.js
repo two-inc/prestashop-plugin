@@ -502,15 +502,15 @@ function buildPaymentTile() {
 
 /**
  * The same tile, with the SERVER-side sole-trader answer resolved (TWO-25326
- * bug 9, round 3).
+ * bug 9, round 3; TWO-40 removed the chip UI this answer used to draw).
  *
  * buildPaymentTile() leaves every `{if}` block stripped, which reproduces a
  * render where Smarty gave no answer - the fallback path where TwoSoleTrader
- * still has to fetch. This one evaluates the `$sole_trader_available` blocks
- * instead, so the markup under test is the markup a real shop serves: chips
- * already in the toggle, `data-two-built`, and the container's display and
- * data- attributes set. Rendered FROM the template rather than hand-written in
- * the test, so a template change that breaks the handover breaks these tests.
+ * still has to fetch. This one fills in the `data-two-available`/
+ * `data-two-country` attributes instead, so the markup under test is the
+ * markup a real shop serves. Rendered FROM the template rather than
+ * hand-written in the test, so a template change that breaks the handover
+ * breaks these tests.
  *
  * @param {string} answer the value Smarty rendered into `data-two-available`:
  *        '1' available, '0' business-only, '' the registry did not answer.
@@ -593,7 +593,12 @@ function panelParts() {
         panel: $('.two-company-dropdown'),
         query: $('.two-company-dropdown__query'),
         results: $('.two-company-dropdown__results'),
-        notListed: $('.two-company-not-listed')
+        // The three-chip mode selector (TWO-40 design revision).
+        modeChips: $('.two-company-mode-chips'),
+        notListed: $('.two-company-not-listed'),
+        registered: $('.two-company-registered-entry'),
+        // Sole-trader enrolment entry point (TWO-40).
+        soleTrader: $('.two-company-sole-trader-entry')
     };
 }
 

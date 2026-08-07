@@ -2385,7 +2385,19 @@ class TwoCheckoutManager {
             }
             this.companySearch = new TwoCompanySearch({
                 checkoutHost: this.config.checkoutHost,
-                addressLookupEnabled: this.config.addressLookupEnabled !== false,
+                // ALWAYS false in the payment tile, never inherited from the
+                // merchant's general auto-fill toggle (core principle,
+                // TWO-40: the control behaves identically wherever it is
+                // mounted, with exactly one exception - it must never write
+                // into the address form from here). The tile field
+                // (#two_tile_company) is not part of the address form at
+                // all, but autoFillAddress() writes into the address form's
+                // OWN inputs (input[name='address1'/'postcode'/'city']) by
+                // global selector, with no awareness of which control
+                // triggered the fill - so leaving this inherited would let a
+                // company picked in the tile silently rewrite an address the
+                // buyer is not even looking at.
+                addressLookupEnabled: false,
                 companyFieldSelector: '#two_tile_company'
             });
             return;

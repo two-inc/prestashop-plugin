@@ -1,34 +1,35 @@
 /**
- * Two Sole Trader - presentation layer for the sole-trader checkout flow
+ * Two Sole Trader - enrolment mechanics for the sole-trader checkout flow
  * (TWO-24755).
  *
- * Renders a Business / Sole trader toggle on the payment step - the same
- * model as the Magento and WooCommerce plugins - shown wherever Two's
- * registry says the billing country supports sole traders. That country
- * answer is the only gate; there is no merchant opt-in toggle
- * (TWO-25166). There is no account-type selector on
- * the address form; the buyer always enters company details (B2B), and
- * sole traders enrol from this toggle.
+ * TWO-40 removed the upfront Business / Sole trader chip choice this module
+ * used to render on the payment step. There is now a single entry point
+ * regardless of business type: the company search control
+ * (TwoCompanySearch.js). When the registry says the billing country
+ * supports sole traders, that control shows an "I'm a sole trader" row
+ * alongside "My company is not on the list" and calls
+ * `startEnrollment()`/`isAvailableForCurrentCountry()` below directly - there
+ * is no chip, and no toggle markup, in between.
  *
- * Picking "Sole trader" mints the delegation + autofill tokens
- * server-side, opens Two's hosted signup popup, and autofills the
- * company fields from GET /autofill/v1/buyer/current on completion. An
- * enrolled sole trader then checks out as a regular business - the
- * synthetic organization number their registration minted carries the
- * semantics, so the order payload is unchanged.
+ * This module still owns everything about what happens once enrolment
+ * starts: minting the delegation + autofill tokens server-side, opening
+ * Two's hosted signup popup, and autofilling the company fields from
+ * GET /autofill/v1/buyer/current on completion. An enrolled sole trader
+ * then checks out as a regular business - the synthetic organization
+ * number their registration minted carries the semantics, so the order
+ * payload is unchanged.
  *
  * All decisioning (country eligibility, token minting) lives server-side
  * in classes/TwoSoleTrader.php.
  *
- * The toggle's own MARKUP is server-side too, as of TWO-25326 bug 9 round 3:
- * paymentinfo.tpl renders the container's visibility and both chips from the
- * registry answer, and adoptServerRenderedToggle() below takes that over as this
- * instance's settled state. Building the chips only here, only after an
- * availability round trip, left them missing from every first paint - which the
- * buyer sees as a flicker on the payment step, because a payment-option change
- * reloads the whole checkout page. This module still owns all BEHAVIOUR, and
- * still renders the toggle itself whenever the markup carries no answer or the
- * billing country changes under it.
+ * The availability ANSWER is still handed over server-side, as of TWO-25326
+ * bug 9 round 3: paymentinfo.tpl renders `data-two-available`/
+ * `data-two-country` on `.two-sole-trader` from the registry answer, and
+ * adoptServerRenderedToggle() below takes that over as this instance's
+ * settled availability cache - so the search control's "I'm a sole trader"
+ * row can appear on first paint with no round trip of its own. That
+ * container renders no visible chips or toggle any more; it now exists only
+ * to host the prompt/status/error messaging shown once enrolment starts.
  */
 class TwoSoleTrader {
     constructor(config) {
@@ -40,24 +41,53 @@ class TwoSoleTrader {
             // (TWO-25326 bug 9, round 3 adversarial review). See billingCountry().
             billingCountry: '',
             shopCountry: '',
-            i18n: {},
+            // Translated fallback for showStatus() when an enrolled buyer's
+            // registration carries no displayable company name or number.
+            // The only i18n this module needs since TWO-40 removed the chip
+            // labels - see applyBuyer().
+            statusLabel: '',
             ...config
         };
-        this.mode = 'business';
+        // Whether an enrolment (signup popup + autofill) is currently under
+        // way. Replaces the old chip's 'business'/'sole_trader' mode - there
+        // is no second mode to switch back to any more, just "not enrolling"
+        // and "enrolling".
+        this.enrolling = false;
+        // Bumped by cancelEnrollment() every time it is called, whatever
+        // `enrolling` was (round 2 adversarial review finding). A
+        // getCurrentBuyer() call captures this before it starts and
+        // applyBuyer() refuses to publish a selection if it has moved -
+        // see cancelEnrollment()'s own comment for the buyer-facing failure
+        // this closes.
+        this._enrollGeneration = 0;
+        // The `_enrollGeneration` value that was current when `this.tokens`
+        // was last minted or explicitly resumed (round 3 adversarial review
+        // finding). `cancelEnrollment()` deliberately does NOT invalidate
+        // `tokens` or close the signup popup - the flow is meant to be
+        // resumable - so the popup-completion listener has to be able to
+        // tell "these tokens belong to the CURRENT attempt" from "these
+        // tokens are from an attempt the buyer has since walked away from,
+        // and the popup just happens to still be open" before it reacts to
+        // anything. See fetchTokens()/startEnrollment() (where this is
+        // stamped) and bindPopupMessageListener() (where it is checked).
+        this._tokensGeneration = 0;
         this.tokens = null;
         this.flowStarted = false;
         this.messageListenerBound = false;
+        // Held so destroy() can detach it. See bindPopupMessageListener().
+        this._messageHandler = null;
         // Server-resolved availability, cached per billing country for the
-        // page's lifetime so the toggle settles without re-fetching.
+        // page's lifetime so isAvailableForCurrentCountry() settles without
+        // re-fetching.
         this.availabilityByCountry = {};
         this.renderedForCountry = null;
-        // TWO-25326 bug 9: the container node this instance last rendered into.
-        // `renderedForCountry` alone is not a record of what is on the page:
-        // PrestaShop REPLACES the payment fragment (and with it this whole
-        // container) while the checkout step settles, and the replacement
-        // arrives with no chips built and none of the inline display state
-        // render()/hide() set. Keyed on the node, the settled-check can tell
-        // "already rendered" from "rendered into a node that no longer exists".
+        // TWO-25326 bug 9: the container node this instance last adopted an
+        // answer into. `renderedForCountry` alone is not a record of what is
+        // on the page: PrestaShop REPLACES the payment fragment (and with it
+        // this whole container) while the checkout step settles, and the
+        // replacement arrives with no adopted answer at all. Keyed on the
+        // node, the settled-check can tell "already adopted" from "adopted
+        // into a node that no longer exists".
         this.renderedContainer = null;
         this.observer = null;
         // The country-change subscription, held so destroy() can detach it.
@@ -71,17 +101,18 @@ class TwoSoleTrader {
         // in flight when PrestaShop replaced the fragment could overwrite the
         // answer that replacement carried - and because a failed request applies
         // "not available" while availabilityByCountry still held the adopted
-        // `true`, the settled-check then agreed the toggle was correct and the
-        // toggle stayed hidden for the rest of the page's life.
+        // `true`, the settled-check then agreed the cache was correct and
+        // isAvailableForCurrentCountry() stayed wrong for the rest of the
+        // page's life.
         this._adoptGeneration = 0;
         // TWO-25326 bug 9: the country an availability request is currently out
         // for, and the debounce handle for the MutationObserver. See init() and
         // refreshAvailability() for what each prevents.
         this.pendingCountry = null;
         this._refreshTimeoutId = null;
-        // In-flight guard + cooldown: setMode('sole_trader') re-invokes
+        // In-flight guard + cooldown: startEnrollment() re-invokes
         // fetchTokens() whenever tokens aren't set yet, so repeated clicks
-        // on the "Sole trader" chip while a mint keeps failing (network
+        // on the "I'm a sole trader" row while a mint keeps failing (network
         // blip, no invoice address yet) would otherwise re-issue the mint
         // - two upstream Two API calls - on every click, with no backoff.
         // (The MutationObserver only calls the cheap, self-caching
@@ -91,37 +122,30 @@ class TwoSoleTrader {
         this.nextRetryAt = 0;
         this.retryCooldownMs = 5000;
 
-        // TWO-25326 bug 9, round 3: take the toggle the SERVER already rendered
-        // as the settled state, before init() can decide to fetch anything.
+        // TWO-25326 bug 9, round 3: take the availability answer the SERVER
+        // already resolved as this instance's settled state, before init()
+        // can decide to fetch anything.
         this.adoptServerRenderedToggle();
 
         this.init();
     }
 
     /**
-     * Adopt a server-rendered toggle as this instance's settled state.
+     * Adopt the server-rendered availability answer as this instance's
+     * settled state.
      *
-     * WHY THIS EXISTS (TWO-25326 bug 9, round 3). The chips used to be built
-     * ONLY here, in the browser, behind an availability round trip - so on every
-     * single load of the payment step the toggle was empty and hidden until that
-     * request came back. Measured on the staging shop: chips absent from first
-     * paint, present ~280ms later. That is invisible on a page the buyer just
-     * arrived at, and very visible indeed once something reloads the page under
-     * them - which the surcharge cart-line sync used to do on every
-     * payment-option change (it no longer navigates the page at all - see
-     * TwoCheckoutManager.refreshCartSummaryInPlace). Doug's "the chips
-     * render, then disappear and reappear" is that reload plus that round trip:
-     * chips on the outgoing document, no chips on the incoming one, chips again a
-     * few hundred milliseconds later.
-     *
-     * Round 2 hardened the settled-check and the request guard, and both of those
-     * were real bugs - but neither could close this one, because both are about
-     * not doing redundant work AFTER the answer arrives, and the flicker is the
-     * window BEFORE it arrives. The only fix is for the answer to be in the
-     * markup, so paymentinfo.tpl now renders the chips and the toggle's
-     * visibility from the server-side registry answer (Twopayment::
-     * getTwoPaymentOption -> TwoSoleTrader::isAvailable, the same source this
-     * module's endpoint uses) and this method takes them over as-is.
+     * WHY THIS EXISTS (TWO-25326 bug 9, round 3; TWO-40 removed the chip UI it
+     * used to feed). The answer used to be resolved ONLY here, in the browser,
+     * behind an availability round trip - so on every single load of the
+     * payment step there was no answer at all until that request came back.
+     * Measured on the staging shop: ~280ms of "no answer" on every load. The
+     * only fix is for the answer to already be in the markup, so
+     * paymentinfo.tpl renders `.two-sole-trader`'s data- attributes from the
+     * server-side registry answer (Twopayment::getTwoPaymentOption ->
+     * TwoSoleTrader::isAvailable, the same source this module's endpoint uses)
+     * and this method takes it over as-is - which is what lets
+     * isAvailableForCurrentCountry() answer correctly for TwoCompanySearch.js's
+     * "I'm a sole trader" row on first paint, with no round trip of its own.
      *
      * Strict about what counts as a server answer: `data-two-available` must be
      * exactly "1" or "0" and `data-two-country` must be an ISO-2 code. Anything
@@ -148,12 +172,6 @@ class TwoSoleTrader {
         this.renderedForCountry = country;
         this.renderedContainer = container;
         this._adoptGeneration += 1;
-        // The chips exist but carry no behaviour yet - they were serialised by
-        // Smarty, not built by render(). Binding is what makes the server-
-        // rendered markup equivalent to a client-rendered toggle; without it the
-        // toggle would look right and do nothing.
-        this.bindChips(container);
-        this.updateChips();
     }
 
     init() {
@@ -172,19 +190,18 @@ class TwoSoleTrader {
         };
         document.addEventListener('change', this._countryChangeHandler);
         // DEBOUNCED (TWO-25326 bug 9). This observer watches the whole body
-        // subtree, and refreshAvailability() itself MUTATES that subtree
-        // (render() appends chips and sets inline display) - so every render fed
-        // the observer, which called back synchronously, once per mutation
-        // record. Coalescing a burst into one call is what makes the
-        // render -> observe -> render path terminate on the first pass instead
-        // of being throttled only by the settled-checks downstream of it.
+        // subtree, and PrestaShop's own address-form/payment-fragment
+        // re-renders mutate that subtree constantly - so every one of those
+        // fed the observer, which called back synchronously, once per mutation
+        // record. Coalescing a burst into one call is what keeps re-adoption
+        // (below) cheap instead of running once per mutation record.
         this.observer = new MutationObserver(function () {
             // Container-identity check runs UNDEBOUNCED, the availability refresh
             // does not (TWO-25326 bug 9, round 3 adversarial review). A replaced
-            // fragment now arrives WITH server-rendered chips, and those chips
-            // carry no listeners until this instance binds them - so waiting out
-            // the 100ms debounce left a toggle that looked correct and did
-            // nothing. Re-adopting is pure DOM work with no request in it. Once a
+            // fragment carries its OWN server-rendered availability answer, which
+            // this instance has not adopted yet - so waiting out the 100ms
+            // debounce left the availability cache answering for a node that no
+            // longer exists. Re-adopting is pure DOM work with no request in it. Once a
             // container IS adopted the check is a no-op however many mutations
             // follow; when the replacement carries no parseable answer nothing is
             // adopted, so the check keeps re-running - one querySelector and two
@@ -198,16 +215,14 @@ class TwoSoleTrader {
     }
 
     /**
-     * Re-adopt when PrestaShop has swapped the toggle container for a fresh one.
+     * Re-adopt when PrestaShop has swapped the `.two-sole-trader` container
+     * for a fresh one.
      *
-     * Two things this closes (TWO-25326 bug 9, round 3 adversarial review), both
-     * consequences of the markup now carrying the answer:
-     *  - the replacement's chips are real chips with no behaviour until they are
-     *    bound, and waiting out the refresh debounce left them inert;
-     *  - the replacement carries a FRESHER answer than this instance's cache. A
-     *    container rendered `data-two-available="0"` while the cache still says
-     *    true for the same country used to be re-rendered as available, i.e. the
-     *    stale client answer overwrote the current server one.
+     * The replacement carries a FRESHER answer than this instance's cache
+     * (TWO-25326 bug 9, round 3 adversarial review). A container rendered
+     * `data-two-available="0"` while the cache still said true for the same
+     * country used to be treated as available, i.e. the stale client answer
+     * overwrote the current server one.
      *
      * @returns {void}
      */
@@ -238,8 +253,8 @@ class TwoSoleTrader {
      *
      * Deliberately leaves the country-change listener attached - see destroy().
      * An enrolled buyer who then changes to a business-only country must still
-     * have the toggle taken away and the mode reset, and refreshAvailability() ->
-     * hide() is what does that.
+     * have any pending enrolment cancelled, and refreshAvailability() -> apply()
+     * is what does that.
      */
     stopObserving() {
         if (this.observer) {
@@ -272,14 +287,15 @@ class TwoSoleTrader {
             document.removeEventListener('change', this._countryChangeHandler);
             this._countryChangeHandler = null;
         }
+        if (this._messageHandler) {
+            window.removeEventListener('message', this._messageHandler);
+            this._messageHandler = null;
+        }
+        this.messageListenerBound = false;
     }
 
     container() {
         return document.querySelector('.two-sole-trader');
-    }
-
-    text(key, fallback) {
-        return (this.config.i18n && this.config.i18n[key]) || fallback;
     }
 
     moduleUrl(action) {
@@ -320,9 +336,9 @@ class TwoSoleTrader {
     }
 
     /**
-     * Decide whether to show the toggle for the current billing country.
-     * Availability (registry endpoint + merchant toggle) is resolved
-     * server-side; fail-soft to "not available" so checkout never blocks.
+     * Resolve availability for the current billing country and cache it.
+     * Availability is resolved server-side; fail-soft to "not available" so
+     * checkout never blocks.
      */
     refreshAvailability() {
         const container = this.container();
@@ -335,17 +351,15 @@ class TwoSoleTrader {
         this.adoptReplacedContainer();
         const country = this.billingCountry();
         if (!country) {
-            this.hide();
+            this.apply('', false);
             return;
         }
         // Settled means "this container, for this country" - not the country
-        // alone (TWO-25326 bug 9). A country-only check reported the toggle as
+        // alone (TWO-25326 bug 9). A country-only check reported the answer as
         // settled after PrestaShop had replaced the container out from under it,
-        // so the chips stayed missing from a container this instance believed it
-        // had already rendered into, until some unrelated later trigger happened
-        // to re-render them - which is the render / disappear / reappear cycle
-        // Doug saw on the chips specifically, distinct from the tile-level
-        // mount/unmount guard.
+        // until some unrelated later trigger happened to re-adopt it - which is
+        // the render / disappear / reappear cycle Doug saw on the old chips,
+        // distinct from the tile-level mount/unmount guard.
         if (country === this.renderedForCountry && this.isSettledFor(container)) {
             return;
         }
@@ -357,11 +371,10 @@ class TwoSoleTrader {
         // above fires while the answer for the first-ever country is still
         // outstanding - `renderedForCountry` is null and nothing is cached yet,
         // so EVERY firing used to start another `fetch`. Beyond being a request
-        // storm, it made the toggle's visibility a race between those
-        // responses: this endpoint is fail-soft to "not available", so one
-        // failing or timing out among a dozen in-flight duplicates called
-        // hide() while its siblings called render(), flickering the chips in and
-        // out with no state change behind it at all.
+        // storm, it made the cached answer a race between those responses: this
+        // endpoint is fail-soft to "not available", so one failing or timing out
+        // among a dozen in-flight duplicates could overwrite an answer another
+        // had just applied, with no real state change behind it at all.
         if (this.pendingCountry === country) {
             return;
         }
@@ -437,159 +450,112 @@ class TwoSoleTrader {
     }
 
     /**
-     * Is what this instance last rendered still actually on the page, in the
-     * container it is being asked about?
+     * Is the availability answer this instance last adopted still current for
+     * the container it is being asked about?
      *
-     * Both halves matter. The node must be the one rendered into (PrestaShop
-     * replaces it wholesale), and the chips must still be built inside it -
-     * `render()` marks the toggle it built with `data-two-built`, and a
-     * replacement fragment arrives without that marker.
+     * There is no chip markup to verify building/binding of any more (TWO-40)
+     * - the only thing that can go stale is the container node itself, which
+     * PrestaShop replaces wholesale on a fragment re-render.
      *
      * @param {HTMLElement} container
      * @returns {boolean}
      */
     isSettledFor(container) {
-        if (!container || container !== this.renderedContainer) {
-            return false;
-        }
-        if (!container.isConnected) {
-            return false;
-        }
-        // Only the available/rendered case builds chips; when the answer was
-        // "not available" there is deliberately nothing to build, and hide()'s
-        // inline display is the state to preserve.
-        if (this.availabilityByCountry[this.renderedForCountry] !== true) {
-            return true;
-        }
-        const toggle = container.querySelector('.two-sole-trader__toggle');
-        return !!(toggle && toggle.dataset.twoBuilt === '1');
+        return !!(container && container === this.renderedContainer && container.isConnected);
     }
 
     apply(country, available) {
         this.renderedForCountry = country;
-        // Recorded BEFORE render()/hide() run, so the mutations they make -
-        // which the observer sees - already find the state settled and stop
-        // (TWO-25326 bug 9).
         this.renderedContainer = this.container();
-        if (available) {
-            this.render();
-        } else {
-            this.hide();
-        }
-    }
-
-    hide() {
-        const container = this.container();
-        if (container) {
-            container.style.display = 'none';
-        }
-        if (this.mode === 'sole_trader') {
-            this.setMode('business');
+        // An enrolment in progress for a country that has just stopped being
+        // eligible (buyer changed country mid-flow) must not keep showing a
+        // prompt/status for it - mirrors the old chip's hide()-forces-business
+        // behaviour, without a "business" mode to fall back to.
+        if (!available && this.enrolling) {
+            this.cancelEnrollment();
         }
     }
 
     /**
-     * Render the Business / Sole trader toggle into the payment-step
-     * container. Chips are built once; subsequent calls just reveal it.
+     * @returns {boolean} whether the registry says the CURRENT billing
+     *   country supports sole traders. Read by TwoCompanySearch.js to decide
+     *   whether to show its "I'm a sole trader" row - the single place that
+     *   decision is made now that there is no upfront chip (TWO-40).
      */
-    render() {
-        const container = this.container();
-        if (!container) {
-            return;
+    isAvailableForCurrentCountry() {
+        const country = this.billingCountry();
+        if (!country) {
+            return false;
         }
-        container.style.display = 'block';
-        const toggle = container.querySelector('.two-sole-trader__toggle');
-        if (toggle && toggle.dataset.twoBuilt !== '1') {
-            [
-                { value: 'business', label: this.text('registered_business', 'Registered business') },
-                { value: 'sole_trader', label: this.text('sole_trader', 'Sole trader') }
-            ].forEach(function (option) {
-                const chip = document.createElement('span');
-                chip.className = 'two-sole-trader__mode';
-                chip.setAttribute('role', 'button');
-                chip.setAttribute('tabindex', '0');
-                chip.dataset.mode = option.value;
-                chip.textContent = option.label;
-                toggle.appendChild(chip);
-            });
-            toggle.dataset.twoBuilt = '1';
-        }
-        // Binding is separate from building (TWO-25326 bug 9, round 3) because
-        // chips now arrive from two places - built here, or serialised by
-        // paymentinfo.tpl - and only one code path may own what a chip DOES.
-        this.bindChips(container);
-        this.updateChips();
+        return this.availabilityByCountry[country] === true;
     }
 
     /**
-     * Attach mode-switching behaviour to every chip in a container that does not
-     * already have it. Idempotent per chip (`data-two-bound`), so it is safe to
-     * call on every render and on a server-rendered toggle alike.
+     * Start (or resume) sole-trader enrolment: mint tokens then autofill (or
+     * prompt the signup popup) once per page. Called directly by
+     * TwoCompanySearch.js's "I'm a sole trader" row - there is no chip in
+     * between any more (TWO-40).
+     */
+    startEnrollment() {
+        this.enrolling = true;
+        if (!this.flowStarted || !this.tokens) {
+            this.flowStarted = true;
+            this.fetchTokens();
+        } else if (this.tokens) {
+            // Re-stamp the existing tokens as CURRENT (round 3 adversarial
+            // review finding). This is an explicit, deliberate resume - the
+            // buyer clicked "Sole Trader" again - so whatever generation was
+            // active when these tokens were originally minted no longer
+            // matters; see the comment on `_tokensGeneration` and
+            // bindPopupMessageListener() for why the stamp exists at all.
+            this._tokensGeneration = this._enrollGeneration;
+            this.getCurrentBuyer();
+        }
+    }
+
+    /**
+     * Abandon an in-progress enrolment without discarding minted tokens -
+     * re-entering via startEnrollment() resumes rather than re-mints. Called
+     * when the buyer goes back to ordinary company search (opening the
+     * dropdown again) or when the billing country stops being eligible.
      *
-     * @param {HTMLElement} container
-     * @returns {void}
+     * The `enrolling` bookkeeping is a NO-OP once it is already false
+     * (adversarial review finding, TWO-40). TwoCompanySearch.openDropdown()
+     * calls this UNCONDITIONALLY on every open, including long after a
+     * SUCCESSFUL enrolment - and without that guard, hidePrompt() would hide
+     * the confirmation status showStatus() left on screen every single time
+     * the buyer so much as reopens company search afterward. `enrolling`
+     * flips false on success (see applyBuyer()) precisely so THAT part stays
+     * a no-op past that point.
+     *
+     * `_enrollGeneration` is bumped UNCONDITIONALLY, deliberately outside
+     * that guard (round 2 adversarial review finding). The buyer reopening
+     * search and picking a REAL registered company does not discard a
+     * still-in-flight sole-trader lookup - the message listener for the
+     * hosted signup popup is deliberately NOT gated on `enrolling` any more
+     * (see bindPopupMessageListener(), the round-1 fix for a dropped
+     * genuine completion) - so a getCurrentBuyer() call issued before this
+     * cancel can still resolve to applyBuyer() afterward. Without a
+     * generation to check, that resolution would call
+     * publishConfirmedSelection() and silently overwrite the company the
+     * buyer explicitly moved on to search and select, with the order-intent
+     * credit check then running against the WRONG entity and nothing on
+     * screen to show it happened. See getCurrentBuyer()/applyBuyer().
      */
-    bindChips(container) {
-        if (!container) {
+    cancelEnrollment() {
+        this._enrollGeneration += 1;
+        if (!this.enrolling) {
             return;
         }
-        const self = this;
-        container.querySelectorAll('.two-sole-trader__mode').forEach(function (chip) {
-            if (chip.dataset.twoBound === '1') {
-                return;
-            }
-            chip.dataset.twoBound = '1';
-            const mode = chip.dataset.mode;
-            chip.addEventListener('click', function (event) {
-                event.preventDefault();
-                self.setMode(mode);
-            });
-            chip.addEventListener('keypress', function (event) {
-                if (event.which === 13 || event.which === 32) {
-                    event.preventDefault();
-                    self.setMode(mode);
-                }
-            });
-        });
-    }
-
-    updateChips() {
-        const container = this.container();
-        if (!container) {
-            return;
-        }
-        const self = this;
-        container.querySelectorAll('.two-sole-trader__mode').forEach(function (chip) {
-            chip.classList.toggle('two-sole-trader__mode--selected', chip.dataset.mode === self.mode);
-        });
-    }
-
-    /**
-     * Switch mode. Sole trader mints tokens then autofills (or prompts
-     * the signup popup) once per page; business just hides the prompt.
-     * The popup opens from the prompt link's own click so the blocker
-     * lets it through.
-     */
-    setMode(mode) {
-        this.mode = mode;
-        this.updateChips();
-        if (mode === 'sole_trader') {
-            if (!this.flowStarted || !this.tokens) {
-                this.flowStarted = true;
-                this.fetchTokens();
-            } else if (this.tokens) {
-                this.getCurrentBuyer();
-            }
-        } else {
-            this.hidePrompt();
-        }
+        this.enrolling = false;
+        this.hidePrompt();
     }
 
     /**
      * Mint tokens, guarded against a request storm: refuses re-entry
      * while a request is already outstanding (isFetchingTokens) and
      * enforces a minimum gap between attempts after a failure
-     * (nextRetryAt/retryCooldownMs) - repeated clicks on the toggle chip
+     * (nextRetryAt/retryCooldownMs) - repeated clicks on "I'm a sole trader"
      * while the flow is broken could otherwise re-invoke this on every
      * click.
      */
@@ -599,13 +565,37 @@ class TwoSoleTrader {
         }
         this.isFetchingTokens = true;
         const self = this;
+        // Captured BEFORE the request starts (round 3 adversarial review
+        // finding) - a mint still outstanding when the buyer reopens search
+        // and cancels must resolve into tokens correctly stamped as STALE,
+        // not as current-at-resolution-time. Stamping with whatever
+        // `_enrollGeneration` happens to read at the moment the mint
+        // resolves would make an abandoned attempt's tokens look current
+        // again the instant they land, defeating bindPopupMessageListener()'s
+        // whole check.
+        const generation = this._enrollGeneration;
         fetch(this.moduleUrl('soleTraderTokens'), { method: 'POST' })
             .then(function (response) { return response.json(); })
             .then(function (json) {
                 if (json && json.success && json.autofill_token) {
                     self.tokens = json;
+                    // Stamp with the CAPTURED generation, not the current
+                    // one - see the comment above. If cancelEnrollment() ran
+                    // while this request was out, `generation` is already
+                    // behind `self._enrollGeneration` and the stamp
+                    // correctly reads as stale; bindPopupMessageListener()'s
+                    // check (and a resumed startEnrollment()'s own re-stamp)
+                    // are what bring it current again, never this callback.
+                    self._tokensGeneration = generation;
                     self.bindPopupMessageListener();
-                    self.getCurrentBuyer();
+                    // Only auto-continue into the buyer lookup if nothing
+                    // has cancelled since this mint was requested. A
+                    // superseded mint still keeps its tokens (an explicit
+                    // resume works off them without re-minting), it just
+                    // does not act on them unasked.
+                    if (self._enrollGeneration === generation) {
+                        self.getCurrentBuyer();
+                    }
                 } else {
                     self.tokens = null;
                     self.nextRetryAt = Date.now() + self.retryCooldownMs;
@@ -645,6 +635,18 @@ class TwoSoleTrader {
      */
     getCurrentBuyer() {
         const self = this;
+        // Captured BEFORE the request starts (round 2 adversarial review
+        // finding). cancelEnrollment() bumps this on every call, including
+        // one triggered by the buyer reopening search and picking a
+        // DIFFERENT, real company while this request is still out - see
+        // cancelEnrollment()'s own comment. Every continuation below checks
+        // it before touching anything, not only the publish path in
+        // applyBuyer(): a stale prompt/error appearing after the buyer has
+        // moved on is confusing even where it is not a data-integrity risk.
+        const generation = this._enrollGeneration;
+        const superseded = function () {
+            return self._enrollGeneration !== generation;
+        };
         fetch(this.config.checkoutHost + '/autofill/v1/buyer/current', {
             credentials: 'include',
             headers: { 'two-delegated-authority-token': this.tokens.autofill_token }
@@ -659,16 +661,22 @@ class TwoSoleTrader {
                 throw new Error('autofill/v1/buyer/current failed');
             })
             .then(function (buyer) {
+                if (superseded()) {
+                    return;
+                }
                 const entered = self.checkoutEmail().trim().toLowerCase();
                 const matches = !!(buyer && buyer.email && entered
                     && String(buyer.email).toLowerCase() === entered);
                 if (matches) {
-                    self.applyBuyer(buyer);
+                    self.applyBuyer(buyer, generation);
                 } else {
                     self.showPrompt();
                 }
             })
             .catch(function () {
+                if (superseded()) {
+                    return;
+                }
                 self.showError();
             });
     }
@@ -689,7 +697,17 @@ class TwoSoleTrader {
      *    wipes the whole session company the moment the saved country
      *    disagrees with the cart's actual invoice-address country.
      */
-    applyBuyer(buyer) {
+    /**
+     * @param {Object} buyer
+     * @param {number} generation the value of `_enrollGeneration` at the
+     *   moment the getCurrentBuyer() call that led here was ISSUED (round 2
+     *   adversarial review finding). Re-checked again below, after this
+     *   method's own `saveCompany` round trip - that request is itself async
+     *   and long enough for the buyer to reopen search and cancel (or start a
+     *   fresh enrolment) while it is in flight, and a superseded save
+     *   response must not publish over whatever they have since done.
+     */
+    applyBuyer(buyer, generation) {
         const self = this;
         const companyLabel = buyer.company_name || buyer.organization_number || '';
         const body = new URLSearchParams({
@@ -704,6 +722,15 @@ class TwoSoleTrader {
         })
             .then(function (response) { return response.json(); })
             .then(function (json) {
+                if (self._enrollGeneration !== generation) {
+                    // Superseded while this request was out. The server HAS
+                    // been told to persist it either way (see the comment
+                    // above applyBuyer() about the session cookie needing
+                    // this for the OPPOSITE ordering) - only the in-memory
+                    // publish and the on-screen status are skipped, so this
+                    // does not fight whatever the buyer has done since.
+                    return;
+                }
                 if (json && json.success) {
                     // TWO-25326 bug 8, review round 1: publish the enrolled
                     // sole trader as the confirmed selection, exactly as a
@@ -728,8 +755,12 @@ class TwoSoleTrader {
                     // number of their own. The persisted `company` field above
                     // still carries it (server semantics depend on it, per the
                     // comment above); only this on-screen status must not.
-                    self.showStatus(window.TwoCompanyNumber.forDisplay(companyLabel) || self.text('sole_trader', 'Sole trader'));
+                    self.showStatus(window.TwoCompanyNumber.forDisplay(companyLabel) || self.config.statusLabel || 'Sole trader');
                     self.hidePrompt();
+                    // Enrolment is DONE, not merely inactive (adversarial review
+                    // finding, TWO-40) - reopening company search later must not
+                    // hide this status. See cancelEnrollment()'s no-op guard.
+                    self.enrolling = false;
                     self.stopObserving();
                     document.dispatchEvent(new CustomEvent('two:sole-trader-ready'));
                 } else {
@@ -824,17 +855,52 @@ class TwoSoleTrader {
         }
         this.messageListenerBound = true;
         const self = this;
-        window.addEventListener('message', function (event) {
-            if (self.mode !== 'sole_trader' || !self.tokens) {
+        // Held on the instance, same reasoning as `_countryChangeHandler`,
+        // so destroy() can detach it (found chasing test isolation for the
+        // round-3 generation-guard tests, which is exactly the shape of leak
+        // this would cause on a real page too - a destroyed instance's
+        // listener would go on reacting to a LATER instance's popup, on the
+        // rare page that ever constructs a second one).
+        this._messageHandler = function (event) {
+            // Deliberately NOT gated on `self.enrolling` (round 1 adversarial
+            // review finding, TWO-40). The buyer can click back into company
+            // search - which calls cancelEnrollment() unconditionally on
+            // every open, see TwoCompanySearch.openDropdown() - while the
+            // hosted signup popup is still open in another window; that is
+            // "still glancing around", not "abandoned the flow", and must
+            // not make a genuine completion silently vanish.
+            if (!self.tokens) {
                 return;
             }
             if (event.origin !== new URL(self.tokens.signup_url).origin) {
                 return;
             }
-            if (event.data === 'ACCEPTED') {
-                self.getCurrentBuyer();
+            if (event.data !== 'ACCEPTED') {
+                return;
             }
-        });
+            // Gated on the STAMP, not on `enrolling` (round 3 adversarial
+            // review finding). cancelEnrollment() bumps `_enrollGeneration`
+            // but deliberately does not close the popup or invalidate
+            // `tokens` - the flow is resumable - so this popup can still be
+            // open and go on to complete long after the buyer has walked
+            // away and picked a different, real company via search. Without
+            // this check, `getCurrentBuyer()` would capture the CURRENT
+            // (already-moved-on) generation fresh at the moment this message
+            // arrives, which reads as a brand-new legitimate attempt however
+            // stale the tokens actually are - silently overwriting the real
+            // selection the buyer made in between. `_tokensGeneration` is
+            // only re-stamped as current by an EXPLICIT resume
+            // (fetchTokens()'s success handler, or startEnrollment() calling
+            // back into an existing token set) - never by this listener
+            // itself - so a stale popup finishing on its own has no way to
+            // pass this check.
+            if (self._enrollGeneration !== self._tokensGeneration) {
+                return;
+            }
+            self.enrolling = true;
+            self.getCurrentBuyer();
+        };
+        window.addEventListener('message', this._messageHandler);
     }
 
     showPrompt() {

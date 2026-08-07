@@ -188,7 +188,15 @@ class TwoCompanySearch {
         // what replaces it.
         this._dropdown = null;
         this._queryField = null;
+        // The three-chip mode selector (TWO-40 design revision). See
+        // buildDropdown() for the DOM shape and bindDropdownHandlers() for
+        // what each chip's click does.
         this._notListedButton = null;
+        this._soleTraderButton = null;
+        this._registeredButton = null;
+        // Which chip is current - drives the `--selected` class. Reset to the
+        // default on every openDropdown() (see there).
+        this._chipMode = 'registered';
         this._resultsList = null;
         this._dropdownOpen = false;
         // Deferred close, so focus moving BETWEEN two controls inside the
@@ -594,6 +602,8 @@ class TwoCompanySearch {
             this._queryField = panel.find('.two-company-dropdown__query').first();
             this._resultsList = panel.find('.two-company-dropdown__results').first();
             this._notListedButton = panel.find('.two-company-not-listed').first();
+            this._soleTraderButton = panel.find('.two-company-sole-trader-entry').first();
+            this._registeredButton = panel.find('.two-company-registered-entry').first();
             // RE-BIND, do not merely adopt the references.
             //
             // Every handler on an existing panel closes over the instance that
@@ -642,10 +652,49 @@ class TwoCompanySearch {
         // it without restyling a widget-owned element.
         const results = $('<div class="two-company-dropdown__results"></div>');
 
-        const notListed = $('<button type="button" class="two-company-not-listed"></button>')
+        // The three-chip mode selector (TWO-40 design revision). A sibling of
+        // the search row and the results host, not a row inside the results
+        // `<ul>`, for the same reason "My company is not on the list"
+        // originally was: reachable without scrolling past up to 50 results,
+        // and outside the list so the cursor keys - which only ever move
+        // within the list - cannot reach it. Shown immediately whenever the
+        // panel is open, with no wait for characters to be typed (unlike
+        // Magento's equivalent link, which gates on the 3-character
+        // threshold) - see syncModeChipVisibility().
+        //
+        // "Registered Company" is the default-selected chip and stays
+        // visible for as long as the panel is open; clicking it is how the
+        // buyer returns to ordinary search from either of the other two
+        // (see chip click handlers in bindDropdownHandlers()).
+        const registeredEntry = $('<button type="button" class="two-company-mode-chip two-company-registered-entry two-company-mode-chip--selected"></button>')
+            .text(this.getRegisteredEntryText());
+
+        // "Enter Manually" replaces the old plain-wording link/button of the
+        // same name ("My company is not on the list", TWO-25288/TWO-25326).
+        const notListed = $('<button type="button" class="two-company-mode-chip two-company-not-listed"></button>')
             .text(this.getManualEntryText());
 
-        panel.append(searchRow).append(results).append(notListed);
+        // "Sole Trader" - the sole-trader enrolment entry point (TWO-40).
+        // Hidden by default; syncModeChipVisibility() decides whether the
+        // registry says the current billing country is eligible, and keeps
+        // that current live across a country-selector change.
+        const soleTraderEntry = $('<button type="button" class="two-company-mode-chip two-company-sole-trader-entry"></button>')
+            .text(this.getSoleTraderEntryText());
+
+        const modeChips = $('<div class="two-company-mode-chips"></div>')
+            .append(soleTraderEntry)
+            .append(registeredEntry)
+            .append(notListed);
+
+        // Positioned AFTER the results host, not before the query field
+        // (design nuance flagged for Doug, TWO-40 round 2): keeps the
+        // existing "query field is the next tab stop after the company-name
+        // field" contract (§1) intact, since the chips are functionally the
+        // same slot the old "My company is not on the list" link occupied.
+        // If the intent was for the chips to sit ABOVE the query field
+        // instead (visually gating which mode the search below is even in),
+        // that is a one-line reorder here plus a tab-order re-check.
+        panel.append(searchRow).append(results).append(modeChips);
         // After the company field, so DOM order === tab order (see above).
         // `appendTo` the wrapper rather than `.after()` the input: the
         // org-number hint is also a child of this wrapper and the panel must
@@ -656,6 +705,8 @@ class TwoCompanySearch {
         this._queryField = query;
         this._resultsList = results;
         this._notListedButton = notListed;
+        this._soleTraderButton = soleTraderEntry;
+        this._registeredButton = registeredEntry;
 
         this.bindDropdownHandlers();
     }
@@ -700,6 +751,12 @@ class TwoCompanySearch {
         if (this._notListedButton && this._notListedButton.length) {
             this._notListedButton.off('.twoDropdown');
         }
+        if (this._soleTraderButton && this._soleTraderButton.length) {
+            this._soleTraderButton.off('.twoDropdown');
+        }
+        if (this._registeredButton && this._registeredButton.length) {
+            this._registeredButton.off('.twoDropdown');
+        }
         if (this._dropdown && this._dropdown.length) {
             // Native listener, so jQuery's namespace sweep above does not
             // reach it - it has to come off by reference.
@@ -717,6 +774,8 @@ class TwoCompanySearch {
         this._queryField = null;
         this._resultsList = null;
         this._notListedButton = null;
+        this._soleTraderButton = null;
+        this._registeredButton = null;
     }
 
     /**
@@ -756,7 +815,53 @@ class TwoCompanySearch {
                 // binds a delegated accordion-toggle handler above it, which
                 // reads a stray click as "collapse this step".
                 event.stopPropagation();
+                this._chipMode = 'manual';
                 this.enterManualEntryMode();
+            });
+        }
+
+        // "Sole Trader" (TWO-40) - same click-handling shape as "Enter
+        // Manually" above, including the stopPropagation for the same
+        // accordion-toggle reason. Enrolment is owned entirely by
+        // TwoSoleTrader.js; this control only decides when to offer the
+        // entry point and hands off to it.
+        if (this._soleTraderButton && this._soleTraderButton.length) {
+            this._soleTraderButton.off('.twoDropdown');
+            this._soleTraderButton.on('click.twoDropdown', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this._chipMode = 'sole_trader';
+                this.closeDropdown(true);
+                if (window.TwoSoleTrader_Instance
+                    && typeof window.TwoSoleTrader_Instance.startEnrollment === 'function') {
+                    window.TwoSoleTrader_Instance.startEnrollment();
+                }
+            });
+        }
+
+        // "Registered Company" (TWO-40) - the default chip and the way BACK
+        // to ordinary search from either of the other two, without closing
+        // the panel: unlike "Enter Manually"/"Sole Trader", picking this one
+        // is not a hand-off to a different flow, it is "stay here, search
+        // normally". Reverses whichever of the other two modes was active -
+        // both reversals are no-ops if that mode was never entered.
+        if (this._registeredButton && this._registeredButton.length) {
+            this._registeredButton.off('.twoDropdown');
+            this._registeredButton.on('click.twoDropdown', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this._chipMode = 'registered';
+                if (this._manualEntry) {
+                    this.exitManualEntryMode();
+                }
+                if (window.TwoSoleTrader_Instance
+                    && typeof window.TwoSoleTrader_Instance.cancelEnrollment === 'function') {
+                    window.TwoSoleTrader_Instance.cancelEnrollment();
+                }
+                this.renderChipSelection();
+                if (this._queryField && this._queryField.length) {
+                    this._queryField.trigger('focus');
+                }
             });
         }
 
@@ -1033,6 +1138,15 @@ class TwoCompanySearch {
             || !this._queryField || !this._queryField.length) {
             return;
         }
+        // Reopening the search control is the buyer choosing ordinary company
+        // search over an "I'm a sole trader" row they may have clicked
+        // moments earlier (TWO-40). Cancel any not-yet-completed enrolment -
+        // TwoSoleTrader.js keeps its minted tokens either way, so a buyer who
+        // comes back to this row resumes rather than re-mints.
+        if (window.TwoSoleTrader_Instance
+            && typeof window.TwoSoleTrader_Instance.cancelEnrollment === 'function') {
+            window.TwoSoleTrader_Instance.cancelEnrollment();
+        }
         clearTimeout(this._closeTimerId);
         this._closeTimerId = null;
         // Cleared on every open: the flag is otherwise only reset by a
@@ -1044,7 +1158,16 @@ class TwoCompanySearch {
         this._dropdownOpen = true;
         this._dropdown.removeAttr('hidden').show();
         this.setDropdownExpandedState();
+        // Every FRESH open starts at the default chip (TWO-40: "Default
+        // selected chip: Registered Company"). Not reachable from manual
+        // entry (early-returns above), so the only mode this could be
+        // carrying over from is 'sole_trader' - and cancelEnrollment() just
+        // above already reversed that.
+        this._chipMode = 'registered';
+        this.renderChipSelection();
         this.syncNotListedVisibility();
+        this.syncSoleTraderEntryVisibility();
+        this.syncRegisteredEntryVisibility();
         this._queryField.trigger('focus');
         // Render the current state immediately - for an empty query that is
         // the "type N more characters" hint (§1), not an empty or absent
@@ -1126,25 +1249,91 @@ class TwoCompanySearch {
     }
 
     /**
-     * §2 visibility gating for "My company is not on the list".
+     * Visibility gating for the "Enter Manually" mode chip (TWO-40 design
+     * revision of §2's "My company is not on the list").
      *
-     * "Search UI open and nothing captured yet" - NOT "the query is long
-     * enough to have searched". Doug's requirement is explicit that a buyer
-     * must have a route into manual entry without typing a doomed query
-     * first, and the WC regression recorded on TWO-25326 was exactly this:
-     * gating on the 3-character threshold removed the button from the DOM for
-     * a buyer who had typed nothing, which is the case the bullet is about.
+     * ALWAYS visible whenever the panel is open - Doug's spec for the
+     * three-chip picker is explicit that this one and "Registered Company"
+     * are always in the set, unlike "Sole Trader" which is conditional. No
+     * gating on a confirmed selection or on characters typed: the buyer must
+     * have a route into manual entry (or back out of a selection into it)
+     * without typing a doomed query first, which is the WC regression
+     * originally recorded on TWO-25326 for this same affordance under its
+     * previous, narrower gating.
      */
     syncNotListedVisibility() {
         if (!this._notListedButton || !this._notListedButton.length) {
             return;
         }
-        const show = this._dropdownOpen && !this._manualEntry && !this.hasConfirmedSelection();
-        if (show) {
+        if (this._dropdownOpen) {
             this._notListedButton.show();
         } else {
             this._notListedButton.hide();
         }
+    }
+
+    /**
+     * Visibility gating for the "Registered Company" mode chip (TWO-40).
+     * Always visible whenever the panel is open, same as "Enter Manually" -
+     * it is the default, not a conditional option.
+     */
+    syncRegisteredEntryVisibility() {
+        if (!this._registeredButton || !this._registeredButton.length) {
+            return;
+        }
+        if (this._dropdownOpen) {
+            this._registeredButton.show();
+        } else {
+            this._registeredButton.hide();
+        }
+    }
+
+    /**
+     * Visibility gating for the "Sole Trader" mode chip (TWO-40).
+     *
+     * The ONE conditional chip of the three: open AND-ed with the registry's
+     * own per-billing-country answer, read from TwoSoleTrader.js's
+     * availability cache rather than duplicated here. `TwoSoleTrader_Instance`
+     * may not exist yet (script load order) or may not have resolved an
+     * answer for the current country yet; both read as "not available",
+     * matching this control's fail-soft posture everywhere else. Reactivity
+     * to a live country-selector change is inherited rather than built here:
+     * setupCountryChangeListener() already closes the panel on every country
+     * change, so the next open always re-evaluates this against the current
+     * country - the chip cannot go stale while sitting open across a change.
+     */
+    syncSoleTraderEntryVisibility() {
+        if (!this._soleTraderButton || !this._soleTraderButton.length) {
+            return;
+        }
+        const instance = window.TwoSoleTrader_Instance;
+        const available = !!(instance && typeof instance.isAvailableForCurrentCountry === 'function'
+            && instance.isAvailableForCurrentCountry());
+        const show = available && this._dropdownOpen;
+        if (show) {
+            this._soleTraderButton.show();
+        } else {
+            this._soleTraderButton.hide();
+        }
+    }
+
+    /**
+     * Reflect `this._chipMode` onto the `--selected` class of all three mode
+     * chips (TWO-40). Purely cosmetic bookkeeping - the actual mode-switching
+     * behaviour lives in each chip's own click handler and in
+     * enterManualEntryMode()/exitManualEntryMode().
+     */
+    renderChipSelection() {
+        const chips = [
+            [this._soleTraderButton, 'sole_trader'],
+            [this._registeredButton, 'registered'],
+            [this._notListedButton, 'manual']
+        ];
+        chips.forEach(([button, mode]) => {
+            if (button && button.length) {
+                button.toggleClass('two-company-mode-chip--selected', this._chipMode === mode);
+            }
+        });
     }
 
     /**
@@ -1350,6 +1539,8 @@ class TwoCompanySearch {
             // list" button on - so re-evaluate it however the field's value
             // ended up changing.
             this.syncNotListedVisibility();
+            this.syncSoleTraderEntryVisibility();
+            this.syncRegisteredEntryVisibility();
         });
     }
 
@@ -1666,6 +1857,8 @@ class TwoCompanySearch {
         this.setCompanyFieldSearchMode(!this._manualEntry);
         this.setupCompanyFieldOpeners();
         this.syncNotListedVisibility();
+        this.syncSoleTraderEntryVisibility();
+        this.syncRegisteredEntryVisibility();
 
         // Use jQuery UI autocomplete if available; otherwise fallback to custom.
         // `$.fn.autocomplete` alone is not proof of jQuery UI - the older
@@ -2048,11 +2241,31 @@ class TwoCompanySearch {
     }
 
     /**
-     * @returns {string} wording for the manual-entry row
+     * @returns {string} label for the "Enter Manually" mode chip (TWO-40
+     *   design revision - was a plain-wording link, "My company is not on
+     *   the list", before this)
      */
     getManualEntryText() {
         return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_manual_entry)
-            || 'My company is not on the list';
+            || 'Enter Manually';
+    }
+
+    /**
+     * @returns {string} label for the "Registered Company" mode chip
+     *   (TWO-40 design revision) - the default-selected chip, ordinary
+     *   company search
+     */
+    getRegisteredEntryText() {
+        return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_registered_entry)
+            || 'Registered Company';
+    }
+
+    /**
+     * @returns {string} label for the "Sole Trader" mode chip (TWO-40)
+     */
+    getSoleTraderEntryText() {
+        return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_sole_trader_entry)
+            || 'Sole Trader';
     }
 
     /**
@@ -2188,6 +2401,8 @@ class TwoCompanySearch {
         // close path changes.
         this.closeDropdown(false);
         this.syncNotListedVisibility();
+        this.syncSoleTraderEntryVisibility();
+        this.syncRegisteredEntryVisibility();
 
         // The company-name field stops being a search trigger and becomes the
         // plain text input the buyer types their company into (§2/§5:
@@ -3217,6 +3432,8 @@ class TwoCompanySearch {
         // at all, in which case the deferred GB path re-syncs from
         // autoFillAddressIfNeeded() below).
         this.syncNotListedVisibility();
+        this.syncSoleTraderEntryVisibility();
+        this.syncRegisteredEntryVisibility();
 
         return true;
     }
@@ -3298,6 +3515,8 @@ class TwoCompanySearch {
                     // so on the GB path this, not onCompanySelected(), is
                     // where the "not on the list" button finally hides.
                     this.syncNotListedVisibility();
+                    this.syncSoleTraderEntryVisibility();
+                    this.syncRegisteredEntryVisibility();
                 }
             }
             // Find addresses list in various shapes. Gated by the SAME

@@ -12,44 +12,31 @@
         <span class="two-result-text"></span>
     </div>
 
-    {* Sole trader flow (TWO-24755), rendered SERVER-side (TWO-25326 bug 9,
-       round 3). It used to be an empty, hidden container that TwoSoleTrader.js
-       filled in after an availability round trip - which meant the chips were
-       missing from every first paint and appeared a few hundred milliseconds
-       later. Harmless on a fresh arrival, plainly visible as a flicker on a page
-       that reloads under the buyer - which, when this was written, the surcharge
-       cart-line sync did on every payment-option change. It no longer navigates
-       at all (TWO-25326 round 4), so the remaining loads this covers are the
-       genuine ones: arriving at the step, a currency switch, a back-navigation.
+    {* Sole trader flow (TWO-24755). TWO-40 removed the upfront Business /
+       Sole trader chip choice this container used to render server-side
+       (TWO-25326 bug 9, round 3) - enrolment is now entered from a row
+       inside the company search dropdown (TwoCompanySearch.js), gated on
+       the same registry availability. This container is left in place only
+       to host the prompt/status/error messaging TwoSoleTrader.js shows once
+       enrolment actually starts (signup popup, autofill result) - it has no
+       visible content, and therefore no visible size, until then.
 
-       The answer is the same registry answer the module's soleTraderAvailability
-       endpoint returns (TwoSoleTrader::isAvailable), read here from the cache that
-       endpoint fills (TwoSoleTrader::resolveAvailabilityFromCache) and resolved
-       for the cart's own billing country - so the markup and the JS cannot
-       disagree. The
-       two data- attributes are the handover:
-       TwoSoleTrader.adoptServerRenderedToggle() takes this as its settled state
-       and issues no request at all, and still re-resolves normally if the buyer
-       changes country. An older cached template with no attributes reads as "no
-       answer" there and falls back to the client fetch.
+       The two data- attributes are still the handover that lets the browser
+       skip its own availability round trip: TwoSoleTrader.adoptServerRenderedToggle()
+       takes them as its settled availability cache, which is what the company
+       search dropdown's "I'm a sole trader" row reads to decide whether to
+       show itself. Same registry answer as before (TwoSoleTrader::isAvailable,
+       via TwoSoleTrader::resolveAvailabilityFromCache), resolved for the cart's
+       own billing country, so the markup and the JS cannot disagree.
 
        `$sole_trader_answer` is '1', '0', or EMPTY when the registry did not
        answer at all. Empty is not the same as '0' and must not be rendered as
        one: the browser reads it as "no answer" and keeps its own retrying
        request path, which is what stops a single registry blip from becoming a
-       cached "business only" for the rest of the page's life. The container is
-       still drawn hidden and chipless in that state - the fail-soft outcome is
-       unchanged, only the browser's knowledge of it. *}
+       cached "business only" for the rest of the page's life. *}
     <div class="two-sole-trader"
          data-two-country="{$sole_trader_country|escape:'html':'UTF-8'}"
-         data-two-available="{$sole_trader_answer|escape:'html':'UTF-8'}"
-         style="display: {if $sole_trader_available}block{else}none{/if};">
-        <div class="two-sole-trader__toggle"{if $sole_trader_available} data-two-built="1"{/if}>
-            {if $sole_trader_available}
-            <span class="two-sole-trader__mode two-sole-trader__mode--selected" role="button" tabindex="0" data-mode="business">{l s='Registered business' mod='twopayment'}</span>
-            <span class="two-sole-trader__mode" role="button" tabindex="0" data-mode="sole_trader">{l s='Sole trader' mod='twopayment'}</span>
-            {/if}
-        </div>
+         data-two-available="{$sole_trader_answer|escape:'html':'UTF-8'}">
         <a href="#" class="two-sole-trader__prompt" style="display: none;">{l s='Click here to log in or sign up as a sole trader with Two.' mod='twopayment'}</a>
         <span class="two-sole-trader__status" style="display: none;"></span>
         <span class="two-sole-trader__error" style="display: none;">{l s='Something went wrong setting up sole trader checkout. Please try again.' mod='twopayment'}</span>
