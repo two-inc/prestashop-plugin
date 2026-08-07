@@ -23,6 +23,7 @@ final class BrandTokenSpec
         self::testSingleMentionCaptionInterpolatesProductName();
         self::testRepeatedMentionCaptionReusesTheSameProductName();
         self::testHttpCodeCaptionKeepsBothTokensInOrder();
+        self::testCancelControllerMessageSubstitutesBothTheBrandAndTheId();
     }
 
     private static function testProductNameResolvesToTwoByDefault(): void
@@ -82,6 +83,48 @@ final class BrandTokenSpec
         TinyAssert::same(
             'Two could not verify the API key right now (HTTP 503). This is usually temporary - try again shortly.',
             $module->getTwoApiKeyFailureMessage(Twopayment::API_KEY_STATUS_SERVICE_ERROR, 503)
+        );
+    }
+
+    /**
+     * Regression (found in PR review): controllers/front/cancel.php's legacy
+     * cancel-callback error message carries a brand token AND an order id in
+     * the SAME sprintf() call. An earlier draft of the brand-token sweep
+     * wrote the id's placeholder as an escaped '%%s' (copying the pattern
+     * used for the JS-fed i18n templates elsewhere, which deliberately keep
+     * a literal '%s' for the client to fill in) - that silently swallowed
+     * the order id from every rendered message, because sprintf() only ever
+     * consumes the ONE real %s (the brand) and drops the extra argument.
+     *
+     * This exercises the exact format string cancel.php uses (both call
+     * sites are byte-identical), not a copy, by extracting it straight out
+     * of the source file - a regression here means cancel.php's sprintf()
+     * call itself changed shape, not just this test's expectation.
+     */
+    private static function testCancelControllerMessageSubstitutesBothTheBrandAndTheId(): void
+    {
+        $source = (string) file_get_contents(dirname(__DIR__) . '/controllers/front/cancel.php');
+        TinyAssert::true(
+            (bool) preg_match(
+                "/l\\('Could not update status to cancelled, please check with %1\\\$s admin for id %2\\\$s'\\)/",
+                $source
+            ),
+            'cancel.php no longer carries the expected two-real-placeholder format string'
+        );
+        TinyAssert::false(
+            (bool) strpos($source, "for id %%s"),
+            'cancel.php regressed to an escaped %%s placeholder, which drops the order id argument'
+        );
+
+        $module = new TwopaymentTestHarness();
+        $rendered = sprintf(
+            $module->l('Could not update status to cancelled, please check with %1$s admin for id %2$s'),
+            $module->getTwoBrandConfig('product_name'),
+            'ORDER-123'
+        );
+        TinyAssert::same(
+            'Could not update status to cancelled, please check with Two admin for id ORDER-123',
+            $rendered
         );
     }
 }

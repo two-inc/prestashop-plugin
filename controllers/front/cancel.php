@@ -146,7 +146,7 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
                 '. Local cancellation aborted to preserve provider-first consistency.',
                 3
             );
-            $message = sprintf($this->module->l('Could not update status to cancelled, please check with %s admin for id %%s'), $this->module->getTwoBrandConfig('product_name'), (string)$order->id);
+            $message = sprintf($this->module->l('Could not update status to cancelled, please check with %1$s admin for id %2$s'), $this->module->getTwoBrandConfig('product_name'), (string)$order->id);
             $this->errors[] = $message;
             $this->redirectWithNotifications('index.php?controller=order');
         }
@@ -185,7 +185,7 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
                 ', provider_state=' . (isset($response['state']) ? (string)$response['state'] : 'unknown'),
                 2
             );
-            $message = sprintf($this->module->l('Could not update status to cancelled, please check with %s admin for id %%s'), $this->module->getTwoBrandConfig('product_name'), $two_order_id);
+            $message = sprintf($this->module->l('Could not update status to cancelled, please check with %1$s admin for id %2$s'), $this->module->getTwoBrandConfig('product_name'), $two_order_id);
             $this->errors[] = $message;
             $this->redirectWithNotifications('index.php?controller=order');
         }

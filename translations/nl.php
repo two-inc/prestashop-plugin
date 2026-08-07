@@ -233,7 +233,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_656a6828d7ef1bb791e42087c4b5ee6e'] 
 $_MODULE['<{twopayment}prestashop>twopayment_65a4e2b7da5e4f1c422b2de7277d8311'] = 'Het interval waarop de toeslag wordt afgerond (bijv. 1 = hele eenheden, 0,50 = op een halve). Geldt alleen als er een afrondingsrichting is gekozen.';
 $_MODULE['<{twopayment}prestashop>twopayment_65facdf395107d60a23ce012c2a1c456'] = 'Einde van de maand + %s dagen';
 $_MODULE['<{twopayment}prestashop>twopayment_b6ad84289187f5d686fbc5c417f796f6'] = '%s-responscode %d';
-$_MODULE['<{twopayment}prestashop>twopayment_539e269e4b3d9cf5c3bada678a9f0b24'] = 'De status kon niet worden bijgewerkt naar geannuleerd; controleer bij het %s-beheer voor id %%s';
+$_MODULE['<{twopayment}prestashop>twopayment_d798878a0be2e5e69e818bd8164c1172'] = 'De status kon niet worden bijgewerkt naar geannuleerd; controleer bij het %1$s-beheer voor id %2$s';
 $_MODULE['<{twopayment}prestashop>twopayment_6735bd225a891660cc38b49f427acb08'] = 'Meestal gaat het om verzendkosten of een korting die nog niet in de winkelwagen is toegepast. Vernieuw je winkelwagen en probeer het opnieuw, of neem contact op met de winkel.';
 $_MODULE['<{twopayment}prestashop>twopayment_67d805ed4bbf1baf8cd7a94badcb7bc1'] = 'Exclusief btw (netto)';
 $_MODULE['<{twopayment}prestashop>twopayment_6825c19161f9f1b9a4047b08720ac98c'] = 'Er is geen bestelreferentie van de betaalprovider ingesteld voor deze bestelling.';
