@@ -233,7 +233,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_656a6828d7ef1bb791e42087c4b5ee6e'] 
 $_MODULE['<{twopayment}prestashop>twopayment_65a4e2b7da5e4f1c422b2de7277d8311'] = 'Intervallet tillegget rundes av til (f.eks. 1 = hele enheter, 0,50 = nærmeste halve). Gjelder bare når det er valgt en avrundingsretning.';
 $_MODULE['<{twopayment}prestashop>twopayment_65facdf395107d60a23ce012c2a1c456'] = 'Slutten av måneden + %s dager';
 $_MODULE['<{twopayment}prestashop>twopayment_b6ad84289187f5d686fbc5c417f796f6'] = '%s svarkode %d';
-$_MODULE['<{twopayment}prestashop>twopayment_539e269e4b3d9cf5c3bada678a9f0b24'] = 'Kunne ikke oppdatere status til kansellert, kontroller med %s-administrasjonen for id %%s';
+$_MODULE['<{twopayment}prestashop>twopayment_d798878a0be2e5e69e818bd8164c1172'] = 'Kunne ikke oppdatere status til kansellert, kontroller med %1$s-administrasjonen for id %2$s';
 $_MODULE['<{twopayment}prestashop>twopayment_6735bd225a891660cc38b49f427acb08'] = 'Dette skyldes vanligvis et frakt- eller rabattbeløp som handlekurven ennå ikke har lagt til. Oppdater handlekurven og prøv igjen, eller kontakt butikken.';
 $_MODULE['<{twopayment}prestashop>twopayment_67d805ed4bbf1baf8cd7a94badcb7bc1'] = 'Eksklusiv avgift (netto)';
 $_MODULE['<{twopayment}prestashop>twopayment_6825c19161f9f1b9a4047b08720ac98c'] = 'Det er ikke satt noen ordrereferanse fra betalingsleverandøren for denne ordren.';
