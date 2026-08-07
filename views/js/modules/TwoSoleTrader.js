@@ -53,6 +53,13 @@ class TwoSoleTrader {
         // is no second mode to switch back to any more, just "not enrolling"
         // and "enrolling".
         this.enrolling = false;
+        // Bumped by cancelEnrollment() every time it is called, whatever
+        // `enrolling` was (round 2 adversarial review finding). A
+        // getCurrentBuyer() call captures this before it starts and
+        // applyBuyer() refuses to publish a selection if it has moved -
+        // see cancelEnrollment()'s own comment for the buyer-facing failure
+        // this closes.
+        this._enrollGeneration = 0;
         this.tokens = null;
         this.flowStarted = false;
         this.messageListenerBound = false;
@@ -487,15 +494,31 @@ class TwoSoleTrader {
      * when the buyer goes back to ordinary company search (opening the
      * dropdown again) or when the billing country stops being eligible.
      *
-     * A NO-OP once enrolling is already false (adversarial review finding,
-     * TWO-40). TwoCompanySearch.openDropdown() calls this UNCONDITIONALLY on
-     * every open, including long after a SUCCESSFUL enrolment - and without
-     * this guard, hidePrompt() would hide the confirmation status
-     * showStatus() left on screen every single time the buyer so much as
-     * reopens company search afterward. `enrolling` flips false on success
-     * (see applyBuyer()) precisely so this stays a no-op past that point.
+     * The `enrolling` bookkeeping is a NO-OP once it is already false
+     * (adversarial review finding, TWO-40). TwoCompanySearch.openDropdown()
+     * calls this UNCONDITIONALLY on every open, including long after a
+     * SUCCESSFUL enrolment - and without that guard, hidePrompt() would hide
+     * the confirmation status showStatus() left on screen every single time
+     * the buyer so much as reopens company search afterward. `enrolling`
+     * flips false on success (see applyBuyer()) precisely so THAT part stays
+     * a no-op past that point.
+     *
+     * `_enrollGeneration` is bumped UNCONDITIONALLY, deliberately outside
+     * that guard (round 2 adversarial review finding). The buyer reopening
+     * search and picking a REAL registered company does not discard a
+     * still-in-flight sole-trader lookup - the message listener for the
+     * hosted signup popup is deliberately NOT gated on `enrolling` any more
+     * (see bindPopupMessageListener(), the round-1 fix for a dropped
+     * genuine completion) - so a getCurrentBuyer() call issued before this
+     * cancel can still resolve to applyBuyer() afterward. Without a
+     * generation to check, that resolution would call
+     * publishConfirmedSelection() and silently overwrite the company the
+     * buyer explicitly moved on to search and select, with the order-intent
+     * credit check then running against the WRONG entity and nothing on
+     * screen to show it happened. See getCurrentBuyer()/applyBuyer().
      */
     cancelEnrollment() {
+        this._enrollGeneration += 1;
         if (!this.enrolling) {
             return;
         }
@@ -563,6 +586,18 @@ class TwoSoleTrader {
      */
     getCurrentBuyer() {
         const self = this;
+        // Captured BEFORE the request starts (round 2 adversarial review
+        // finding). cancelEnrollment() bumps this on every call, including
+        // one triggered by the buyer reopening search and picking a
+        // DIFFERENT, real company while this request is still out - see
+        // cancelEnrollment()'s own comment. Every continuation below checks
+        // it before touching anything, not only the publish path in
+        // applyBuyer(): a stale prompt/error appearing after the buyer has
+        // moved on is confusing even where it is not a data-integrity risk.
+        const generation = this._enrollGeneration;
+        const superseded = function () {
+            return self._enrollGeneration !== generation;
+        };
         fetch(this.config.checkoutHost + '/autofill/v1/buyer/current', {
             credentials: 'include',
             headers: { 'two-delegated-authority-token': this.tokens.autofill_token }
@@ -577,16 +612,22 @@ class TwoSoleTrader {
                 throw new Error('autofill/v1/buyer/current failed');
             })
             .then(function (buyer) {
+                if (superseded()) {
+                    return;
+                }
                 const entered = self.checkoutEmail().trim().toLowerCase();
                 const matches = !!(buyer && buyer.email && entered
                     && String(buyer.email).toLowerCase() === entered);
                 if (matches) {
-                    self.applyBuyer(buyer);
+                    self.applyBuyer(buyer, generation);
                 } else {
                     self.showPrompt();
                 }
             })
             .catch(function () {
+                if (superseded()) {
+                    return;
+                }
                 self.showError();
             });
     }
@@ -607,7 +648,17 @@ class TwoSoleTrader {
      *    wipes the whole session company the moment the saved country
      *    disagrees with the cart's actual invoice-address country.
      */
-    applyBuyer(buyer) {
+    /**
+     * @param {Object} buyer
+     * @param {number} generation the value of `_enrollGeneration` at the
+     *   moment the getCurrentBuyer() call that led here was ISSUED (round 2
+     *   adversarial review finding). Re-checked again below, after this
+     *   method's own `saveCompany` round trip - that request is itself async
+     *   and long enough for the buyer to reopen search and cancel (or start a
+     *   fresh enrolment) while it is in flight, and a superseded save
+     *   response must not publish over whatever they have since done.
+     */
+    applyBuyer(buyer, generation) {
         const self = this;
         const companyLabel = buyer.company_name || buyer.organization_number || '';
         const body = new URLSearchParams({
@@ -622,6 +673,15 @@ class TwoSoleTrader {
         })
             .then(function (response) { return response.json(); })
             .then(function (json) {
+                if (self._enrollGeneration !== generation) {
+                    // Superseded while this request was out. The server HAS
+                    // been told to persist it either way (see the comment
+                    // above applyBuyer() about the session cookie needing
+                    // this for the OPPOSITE ordering) - only the in-memory
+                    // publish and the on-screen status are skipped, so this
+                    // does not fight whatever the buyer has done since.
+                    return;
+                }
                 if (json && json.success) {
                     // TWO-25326 bug 8, review round 1: publish the enrolled
                     // sole trader as the confirmed selection, exactly as a
