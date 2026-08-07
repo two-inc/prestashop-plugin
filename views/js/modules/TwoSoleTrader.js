@@ -60,9 +60,22 @@ class TwoSoleTrader {
         // see cancelEnrollment()'s own comment for the buyer-facing failure
         // this closes.
         this._enrollGeneration = 0;
+        // The `_enrollGeneration` value that was current when `this.tokens`
+        // was last minted or explicitly resumed (round 3 adversarial review
+        // finding). `cancelEnrollment()` deliberately does NOT invalidate
+        // `tokens` or close the signup popup - the flow is meant to be
+        // resumable - so the popup-completion listener has to be able to
+        // tell "these tokens belong to the CURRENT attempt" from "these
+        // tokens are from an attempt the buyer has since walked away from,
+        // and the popup just happens to still be open" before it reacts to
+        // anything. See fetchTokens()/startEnrollment() (where this is
+        // stamped) and bindPopupMessageListener() (where it is checked).
+        this._tokensGeneration = 0;
         this.tokens = null;
         this.flowStarted = false;
         this.messageListenerBound = false;
+        // Held so destroy() can detach it. See bindPopupMessageListener().
+        this._messageHandler = null;
         // Server-resolved availability, cached per billing country for the
         // page's lifetime so isAvailableForCurrentCountry() settles without
         // re-fetching.
@@ -274,6 +287,11 @@ class TwoSoleTrader {
             document.removeEventListener('change', this._countryChangeHandler);
             this._countryChangeHandler = null;
         }
+        if (this._messageHandler) {
+            window.removeEventListener('message', this._messageHandler);
+            this._messageHandler = null;
+        }
+        this.messageListenerBound = false;
     }
 
     container() {
@@ -484,6 +502,13 @@ class TwoSoleTrader {
             this.flowStarted = true;
             this.fetchTokens();
         } else if (this.tokens) {
+            // Re-stamp the existing tokens as CURRENT (round 3 adversarial
+            // review finding). This is an explicit, deliberate resume - the
+            // buyer clicked "Sole Trader" again - so whatever generation was
+            // active when these tokens were originally minted no longer
+            // matters; see the comment on `_tokensGeneration` and
+            // bindPopupMessageListener() for why the stamp exists at all.
+            this._tokensGeneration = this._enrollGeneration;
             this.getCurrentBuyer();
         }
     }
@@ -540,13 +565,37 @@ class TwoSoleTrader {
         }
         this.isFetchingTokens = true;
         const self = this;
+        // Captured BEFORE the request starts (round 3 adversarial review
+        // finding) - a mint still outstanding when the buyer reopens search
+        // and cancels must resolve into tokens correctly stamped as STALE,
+        // not as current-at-resolution-time. Stamping with whatever
+        // `_enrollGeneration` happens to read at the moment the mint
+        // resolves would make an abandoned attempt's tokens look current
+        // again the instant they land, defeating bindPopupMessageListener()'s
+        // whole check.
+        const generation = this._enrollGeneration;
         fetch(this.moduleUrl('soleTraderTokens'), { method: 'POST' })
             .then(function (response) { return response.json(); })
             .then(function (json) {
                 if (json && json.success && json.autofill_token) {
                     self.tokens = json;
+                    // Stamp with the CAPTURED generation, not the current
+                    // one - see the comment above. If cancelEnrollment() ran
+                    // while this request was out, `generation` is already
+                    // behind `self._enrollGeneration` and the stamp
+                    // correctly reads as stale; bindPopupMessageListener()'s
+                    // check (and a resumed startEnrollment()'s own re-stamp)
+                    // are what bring it current again, never this callback.
+                    self._tokensGeneration = generation;
                     self.bindPopupMessageListener();
-                    self.getCurrentBuyer();
+                    // Only auto-continue into the buyer lookup if nothing
+                    // has cancelled since this mint was requested. A
+                    // superseded mint still keeps its tokens (an explicit
+                    // resume works off them without re-minting), it just
+                    // does not act on them unasked.
+                    if (self._enrollGeneration === generation) {
+                        self.getCurrentBuyer();
+                    }
                 } else {
                     self.tokens = null;
                     self.nextRetryAt = Date.now() + self.retryCooldownMs;
@@ -806,28 +855,52 @@ class TwoSoleTrader {
         }
         this.messageListenerBound = true;
         const self = this;
-        window.addEventListener('message', function (event) {
-            // Deliberately NOT gated on `self.enrolling` (adversarial review
-            // finding, TWO-40). The buyer can click back into company search
-            // - which calls cancelEnrollment() unconditionally on every open,
-            // see TwoCompanySearch.openDropdown() - while the hosted signup
-            // popup is still open in another window; that is "still glancing
-            // around", not "abandoned the flow", and must not make a
-            // genuine completion silently vanish. `tokens` plus the
-            // origin check below already scope this to a real, current
-            // signup popup this instance opened - `enrolling` added nothing
-            // but a way to drop a legitimate message.
+        // Held on the instance, same reasoning as `_countryChangeHandler`,
+        // so destroy() can detach it (found chasing test isolation for the
+        // round-3 generation-guard tests, which is exactly the shape of leak
+        // this would cause on a real page too - a destroyed instance's
+        // listener would go on reacting to a LATER instance's popup, on the
+        // rare page that ever constructs a second one).
+        this._messageHandler = function (event) {
+            // Deliberately NOT gated on `self.enrolling` (round 1 adversarial
+            // review finding, TWO-40). The buyer can click back into company
+            // search - which calls cancelEnrollment() unconditionally on
+            // every open, see TwoCompanySearch.openDropdown() - while the
+            // hosted signup popup is still open in another window; that is
+            // "still glancing around", not "abandoned the flow", and must
+            // not make a genuine completion silently vanish.
             if (!self.tokens) {
                 return;
             }
             if (event.origin !== new URL(self.tokens.signup_url).origin) {
                 return;
             }
-            if (event.data === 'ACCEPTED') {
-                self.enrolling = true;
-                self.getCurrentBuyer();
+            if (event.data !== 'ACCEPTED') {
+                return;
             }
-        });
+            // Gated on the STAMP, not on `enrolling` (round 3 adversarial
+            // review finding). cancelEnrollment() bumps `_enrollGeneration`
+            // but deliberately does not close the popup or invalidate
+            // `tokens` - the flow is resumable - so this popup can still be
+            // open and go on to complete long after the buyer has walked
+            // away and picked a different, real company via search. Without
+            // this check, `getCurrentBuyer()` would capture the CURRENT
+            // (already-moved-on) generation fresh at the moment this message
+            // arrives, which reads as a brand-new legitimate attempt however
+            // stale the tokens actually are - silently overwriting the real
+            // selection the buyer made in between. `_tokensGeneration` is
+            // only re-stamped as current by an EXPLICIT resume
+            // (fetchTokens()'s success handler, or startEnrollment() calling
+            // back into an existing token set) - never by this listener
+            // itself - so a stale popup finishing on its own has no way to
+            // pass this check.
+            if (self._enrollGeneration !== self._tokensGeneration) {
+                return;
+            }
+            self.enrolling = true;
+            self.getCurrentBuyer();
+        };
+        window.addEventListener('message', this._messageHandler);
     }
 
     showPrompt() {
