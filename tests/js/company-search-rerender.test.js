@@ -660,10 +660,15 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
         expect(notListed()).toHaveLength(1);
         expect(notListed().prop('tagName')).toBe('BUTTON');
         expect(notListed().attr('type')).toBe('button');
-        expect(notListed().parent().is('.two-company-dropdown')).toBe(true);
-        expect(notListed().prev().is('.two-company-dropdown__results')).toBe(true);
+        // Nested one level deeper since TWO-40's three-chip mode selector -
+        // a sibling of the other two chips inside `.two-company-mode-chips`,
+        // which is itself a direct child of the panel and a sibling of the
+        // results container, painted after it.
+        expect(notListed().parent().is('.two-company-mode-chips')).toBe(true);
+        expect(notListed().parent().parent().is('.two-company-dropdown')).toBe(true);
+        expect(notListed().parent().prev().is('.two-company-dropdown__results')).toBe(true);
         expect(notListed().text()).toBe(instance.getManualEntryText());
-        expect(instance.getManualEntryText()).toBe('My company is not on the list');
+        expect(instance.getManualEntryText()).toBe('Enter Manually');
         expect(shown(notListed())).toBe(true);
     });
 
@@ -2956,7 +2961,7 @@ describe('the custom fallback used when jQuery UI is absent', () => {
             expect(TwoCompanySearch.MIN_SEARCH_LENGTH).toBe(AT_THRESHOLD.length);
         });
 
-        test('it is the LAST thing in the panel, after the results host', () => {
+        test('it is inside the mode-chip row, after the results host', () => {
             const search = makeInstance();
             expect(search._customAutocomplete).toBeTruthy();
 
@@ -2970,8 +2975,14 @@ describe('the custom fallback used when jQuery UI is absent', () => {
             // it is reachable without scrolling past up to 50 results (§2).
             expect(notListed()).toHaveLength(1);
             expect(notListed().text()).toBe(search.getManualEntryText());
-            expect(panel().children().last().is('.two-company-not-listed')).toBe(true);
-            expect(notListed().prev().is('.two-company-dropdown__results')).toBe(true);
+            // Nested inside the three-chip mode selector (TWO-40 design
+            // revision): a sibling of "Sole Trader"/"Registered Company"
+            // inside `.two-company-mode-chips`, which sits directly after the
+            // results host - still outside the scroll container either way,
+            // so still reachable without scrolling past up to 50 results (§2).
+            const chips = notListed().parent();
+            expect(chips.is('.two-company-mode-chips')).toBe(true);
+            expect(chips.prev().is('.two-company-dropdown__results')).toBe(true);
         });
 
         // DELETED (TWO-25326 §2): `it survives the loading render`, `it is
@@ -3066,7 +3077,7 @@ describe('the custom fallback used when jQuery UI is absent', () => {
             expect(button.attr('role')).toBeUndefined();
             expect(button.attr('tabindex')).toBeUndefined();
             // Its accessible name is its text content; nothing else supplies one.
-            expect(button.text()).toBe('My company is not on the list');
+            expect(button.text()).toBe('Enter Manually');
             // NOT disabled and NOT aria-disabled, unlike the message rows.
             expect(button.prop('disabled')).toBe(false);
             expect(button.attr('aria-disabled')).toBeUndefined();

@@ -87,8 +87,6 @@ $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_eca5a3449475f365c129
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_f23b2c9fe4875f2c3dbc61a4bd02705b'] = 'Two köparportal';
 $_MODULE['<{twopayment}prestashop>form_92fbf0e5d97b8afd7e73126b52bdc4bb'] = 'Välj en fil';
 $_MODULE['<{twopayment}prestashop>form_f2a6c498fb90ee345d997f888fce3b18'] = 'Ta bort';
-$_MODULE['<{twopayment}prestashop>paymentinfo_17f58ab6df9d5cfde18be7cb60b37ce4'] = 'Registrerat företag';
-$_MODULE['<{twopayment}prestashop>paymentinfo_8fba17b1e1abfeb9ccc08c9248824add'] = 'Enskild firma';
 $_MODULE['<{twopayment}prestashop>paymentinfo_1c76cbfe21c6f44c1d1e59d54f3e4420'] = 'Företag';
 $_MODULE['<{twopayment}prestashop>paymentinfo_1ffcb4e0a351d5e143bec6362c0feaf8'] = 'Betalning förfaller vid månadsskiftet plus det valda antalet dagar räknat från när din order levereras';
 $_MODULE['<{twopayment}prestashop>paymentinfo_26615a6d6e63f2904432b8b425ee6e93'] = 'Kontrollerar tillgänglighet...';
@@ -139,7 +137,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_144b4dc20a476a4588ff5f481283cfc6'] 
 $_MODULE['<{twopayment}prestashop>twopayment_1451451832b090e38c24860ea609e5a8'] = 'Företagsverifiering krävs';
 $_MODULE['<{twopayment}prestashop>twopayment_16ca4b14c683275e516bbb4def8a837f'] = 'Stöd för betalningsvillkoren Standard och Månadsskifte (EOM)';
 $_MODULE['<{twopayment}prestashop>twopayment_1710ee7af07f5640bdb52b05df988209'] = 'Din varukorg ändrades under betalningsverifieringen. Kontrollera din varukorg och försök igen.';
-$_MODULE['<{twopayment}prestashop>twopayment_17f58ab6df9d5cfde18be7cb60b37ce4'] = 'Registrerat företag';
 $_MODULE['<{twopayment}prestashop>twopayment_1924a6cb5a7ce6a33e93620792fea964'] = 'Du måste välja minst ett betalningsvillkor.';
 $_MODULE['<{twopayment}prestashop>twopayment_19d3894f53ce79c3f836f26cf8a3be3b'] = 'inaktiv';
 $_MODULE['<{twopayment}prestashop>twopayment_1bee0d8aaede29ac319901e96850adee'] = 'Staging';
@@ -313,7 +310,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_8bc50504c201a3c29db85208d8ce68af'] 
 $_MODULE['<{twopayment}prestashop>twopayment_8c597b2f3bc899e1e04f301844c44482'] = 'Fakturan är inte klar ännu eftersom ordern fortfarande levereras. Försök igen senare.';
 $_MODULE['<{twopayment}prestashop>twopayment_8dd557fb0a33b5d844cdf7b87e84f59a'] = 'Denna betalningsmetod är inte tillgänglig för den valuta du valt.';
 $_MODULE['<{twopayment}prestashop>twopayment_8faa7616b66ec7990abd90e6eb970b03'] = 'Dokumentation:';
-$_MODULE['<{twopayment}prestashop>twopayment_8fba17b1e1abfeb9ccc08c9248824add'] = 'Enskild firma';
 $_MODULE['<{twopayment}prestashop>twopayment_90732912a0dcac1e45f02ba8122d80bf'] = 'Typ av betalningsvillkor';
 $_MODULE['<{twopayment}prestashop>twopayment_9091655deaca780040e501e02a1805b2'] = '(efter vikt)';
 $_MODULE['<{twopayment}prestashop>twopayment_9397d7f54ed01d00e59b0e49f0900586'] = 'Vänta ett ögonblick medan vi verifierar dina företagsuppgifter.';
@@ -341,7 +337,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_a002c8066738bc8f9d9394abdcef7ea8'] 
 $_MODULE['<{twopayment}prestashop>twopayment_a029c838076e00c19453faa87a214790'] = 'Verifierad - klar för leverans → Two: Verifierad - klar för leverans';
 $_MODULE['<{twopayment}prestashop>twopayment_a18b98ac865c5099d00d15aa7955772e'] = 'Kunde inte hitta den efterfrågade ordern, kontakta butiksägaren.';
 $_MODULE['<{twopayment}prestashop>twopayment_a27e23cbfc35671fad9f198723675df3'] = 'Ingen fakturaadress är angiven för denna order';
-$_MODULE['<{twopayment}prestashop>twopayment_a305be9a7fd5f6541e913ce81317976d'] = 'Mitt företag finns inte i listan';
 $_MODULE['<{twopayment}prestashop>twopayment_a39746aced7f2b7acba1b2f715654995'] = 'Tillgängliga betalningsvillkor';
 $_MODULE['<{twopayment}prestashop>twopayment_a49e05d4125474b3a6cfc0caacc5a48f'] = 'Kunde inte läsa in den skapade ordern. Kontakta supporten.';
 $_MODULE['<{twopayment}prestashop>twopayment_a4f2f007d16e05710980a4141c331168'] = 'SSL-verifiering';
@@ -460,3 +455,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_6d818b8b22700d2a99440ee017b0a4e8'] 
 $_MODULE['<{twopayment}prestashop>twopayment_2541a3eb94a103e88a8090ac10b1276b'] = 'Two är inte tillgängligt för den här beställningen från %s (%s)';
 $_MODULE['<{twopayment}prestashop>twopayment_1ec613a214555191e9ebf229eed7ecf4'] = 'Den här beställningen från %s kommer sannolikt att godkännas av Two';
 $_MODULE['<{twopayment}prestashop>twopayment_25aae1c9462dc158b23f4ae8a621faae'] = 'Two är inte tillgängligt för den här beställningen från %s';
+$_MODULE['<{twopayment}prestashop>twopayment_8fba17b1e1abfeb9ccc08c9248824add'] = 'Enskild firma';
+$_MODULE['<{twopayment}prestashop>twopayment_156b5d6812dcb5dcf1867a145cf5f1bf'] = 'Ange manuellt';
+$_MODULE['<{twopayment}prestashop>twopayment_040583ad2de8733ea4280fdf16dfef61'] = 'Registrerat företag';
+$_MODULE['<{twopayment}prestashop>twopayment_bd2b7238dd5be2875d527d62a880d043'] = 'Enskild firma';

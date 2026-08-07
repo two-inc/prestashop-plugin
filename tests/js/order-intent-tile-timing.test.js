@@ -199,3 +199,49 @@ describe('address mode: existing behaviour is unaffected', () => {
         expect(TwoOrderIntent.prototype.checkOrderIntent).toHaveBeenCalled();
     });
 });
+
+/**
+ * TWO-40 core principle: the company search control behaves IDENTICALLY
+ * whether mounted in the address area or the payment tile, with exactly ONE
+ * exception - it must never populate the address form from the tile.
+ * autoFillAddress()/writeOrganizationToAddressIdentifiers() write into the
+ * address form's OWN inputs by global selector, with no awareness of which
+ * control triggered the fill - so the tile instance's `addressLookupEnabled`
+ * has to be hardcoded false, never inherited from the merchant's general
+ * auto-fill toggle, or a company picked in the tile would silently rewrite an
+ * address the buyer is not even looking at.
+ */
+describe('tile mode never populates the address form (TWO-40 core principle)', () => {
+    beforeEach(() => {
+        buildTilePaymentStepWithTwoAutoSelected();
+    });
+
+    test('the tile control is constructed with addressLookupEnabled: false even when the merchant toggle is ON', () => {
+        const manager = new TwoCheckoutManager({
+            checkoutHost: CHECKOUT_HOST,
+            orderIntentEnabled: true,
+            orderIntentUrl: ORDER_INTENT_URL,
+            ajaxToken: 'test-token',
+            companySearchInAddressArea: false,
+            // The merchant's general toggle is ON - the tile must not inherit it.
+            addressLookupEnabled: true
+        });
+        window.TwoCheckoutManager_Instance = manager;
+
+        expect(manager.companySearch.config.addressLookupEnabled).toBe(false);
+    });
+
+    test('the tile control is also addressLookupEnabled: false when the merchant toggle is OFF', () => {
+        const manager = new TwoCheckoutManager({
+            checkoutHost: CHECKOUT_HOST,
+            orderIntentEnabled: true,
+            orderIntentUrl: ORDER_INTENT_URL,
+            ajaxToken: 'test-token',
+            companySearchInAddressArea: false,
+            addressLookupEnabled: false
+        });
+        window.TwoCheckoutManager_Instance = manager;
+
+        expect(manager.companySearch.config.addressLookupEnabled).toBe(false);
+    });
+});

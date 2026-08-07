@@ -842,26 +842,65 @@
     background: #f0f2f5;
 }
 
-.two-company-not-listed {
-    display: block;
-    width: 100%;
+/*
+ * The three-chip mode selector (TWO-40 design revision): "Sole Trader",
+ * "Registered Company" (default), "Enter Manually". Replaces the old plain
+ * link-style ".two-company-not-listed"/".two-company-sole-trader-entry" rows
+ * - those two classes are kept (each chip still carries its own, alongside
+ * the shared ".two-company-mode-chip") so the DOM stays selectable the same
+ * way, but the visual treatment is now a pill/chip, not a link.
+ *
+ * flex-wrap on the ROW, not on each chip's own text: with up to three chips
+ * and only one hidden conditionally ("Sole Trader"), the row itself wraps
+ * to a second line on a narrow field before any single chip's label does.
+ */
+.two-company-mode-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
     margin-top: 8px;
-    padding: 6px 0 0;
-    border: none;
+    padding-top: 8px;
     border-top: 1px solid #e0e0e0;
-    background: none;
+}
+
+/*
+ * Each chip. `white-space: normal` + `word-break: break-word` deliberately,
+ * NOT `nowrap`/`text-overflow: ellipsis` (TWO-40 spec: "chip label text may
+ * need to wrap onto two lines — design for that", explicitly not truncate).
+ * `flex: 1 1 auto` with a `min-width` rather than a fixed width: the row
+ * has up to three chips of different label lengths and the field itself can
+ * be narrow (payment-tile placement, a compact theme column), so a fixed
+ * width either clips a long label or leaves visible slack next to a short
+ * one.
+ */
+.two-company-mode-chip {
+    flex: 1 1 auto;
+    min-width: 84px;
+    padding: 6px 10px;
+    border: 1px solid #d0d5dd;
+    border-radius: 6px;
+    background: #fff;
     font: inherit;
-    text-align: start;
-    color: #3043d1;
-    text-decoration: none;
+    font-size: 13px;
+    line-height: 1.3;
+    color: #344054;
+    text-align: center;
+    white-space: normal;
+    word-break: break-word;
     cursor: pointer;
+}
+
+.two-company-mode-chip--selected {
+    background: #1a1a1a;
+    border-color: #1a1a1a;
+    color: #fff;
 }
 
 /* An interactive control with no visible focus state is worse than no
    keyboard support at all. */
-.two-company-not-listed:focus {
+.two-company-mode-chip:focus {
     outline: 2px solid #1976d2;
-    outline-offset: -2px;
+    outline-offset: 2px;
 }
 
 /*
@@ -1620,37 +1659,13 @@
     display: none !important;
 }
 
-/* Sole trader Business / Sole trader toggle (TWO-24755) */
-.two-sole-trader {
-    margin: 0 0 12px;
-}
-
-.two-sole-trader__toggle {
-    display: inline-flex;
-    border: 1px solid #d0d5dd;
-    border-radius: 6px;
-    overflow: hidden;
-}
-
-.two-sole-trader__mode {
-    padding: 6px 14px;
-    font-size: 13px;
-    line-height: 1.4;
-    cursor: pointer;
-    background: #fff;
-    color: #344054;
-    user-select: none;
-}
-
-.two-sole-trader__mode + .two-sole-trader__mode {
-    border-left: 1px solid #d0d5dd;
-}
-
-.two-sole-trader__mode--selected {
-    background: #1a1a1a;
-    color: #fff;
-}
-
+/*
+ * Sole trader enrolment messaging (TWO-24755). TWO-40 removed the upfront
+ * Business / Sole trader toggle this container used to render - see
+ * .two-company-sole-trader-entry above for the entry point it was replaced
+ * by. This container is empty of visible content (and therefore takes no
+ * space) until enrolment actually starts.
+ */
 .two-sole-trader__prompt {
     display: inline-block;
     margin-top: 8px;
