@@ -462,7 +462,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_bd2b7238dd5be2875d527d62a880d043'] 
 $_MODULE['<{twopayment}prestashop>twopayment_adaed373af40f154859a1e470279527f'] = 'Leverancier-/sitenaam';
 $_MODULE['<{twopayment}prestashop>twopayment_4e378a4617ae99ebad1374c430d83a96'] = 'Optioneel. Stel dit in als je Two op meerdere sites/leveranciers gebruikt, om te identificeren van welke de aanvragen komen.';
 $_MODULE['<{twopayment}prestashop>twopayment_0f193cdd9a8a87ce1d829b1c1fecb7f9'] = 'Aangepaste betaaltermijn (dagen)';
-$_MODULE['<{twopayment}prestashop>twopayment_d696ff3e66ef8ff69045c662ae2ea7da'] = 'Optioneel. Bied een extra betaaltermijn (in dagen) aan die niet in de bovenstaande voorinstellingen is opgenomen. Laat leeg om alleen de hierboven geselecteerde termijnen aan te bieden.';
+$_MODULE['<{twopayment}prestashop>twopayment_e8910a5d4ad165a5989f6b672b4c8216'] = 'Optioneel. Bied een extra betaaltermijn (in dagen) aan die niet in de bovenstaande voorinstellingen is opgenomen. Laat leeg om alleen de hierboven geselecteerde termijnen aan te bieden. Two moet deze termijnlengte nog steeds toestaan voor je account - een niet-ondersteunde waarde wordt stilzwijgend genegeerd.';
 $_MODULE['<{twopayment}prestashop>twopayment_3ac5c697efd1c21abb77ab72a59fd256'] = 'Standaard voorgeselecteerde termijn';
 $_MODULE['<{twopayment}prestashop>twopayment_85975d3764f15a461e1b4241e4a5b1c3'] = 'Welke aangeboden termijn standaard is voorgeselecteerd bij het afrekenen. Laat niet ingesteld om de automatische keuze te behouden (de eigen standaardtermijn van de merchant indien aangeboden, anders 30 dagen, anders de kortste aangeboden termijn).';
 $_MODULE['<{twopayment}prestashop>twopayment_5bb72acf6ba0fe6fa13318ead4b90c2b'] = 'Toon uitlegkoppeling "Wat is Two"';

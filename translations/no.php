@@ -462,7 +462,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_bd2b7238dd5be2875d527d62a880d043'] 
 $_MODULE['<{twopayment}prestashop>twopayment_adaed373af40f154859a1e470279527f'] = 'Leverandør-/nettstedsnavn';
 $_MODULE['<{twopayment}prestashop>twopayment_4e378a4617ae99ebad1374c430d83a96'] = 'Valgfritt. Angi dette hvis du kjører Two på flere nettsteder/leverandører, for å identifisere hvilken forespørslene kommer fra.';
 $_MODULE['<{twopayment}prestashop>twopayment_0f193cdd9a8a87ce1d829b1c1fecb7f9'] = 'Egendefinert betalingsfrist (dager)';
-$_MODULE['<{twopayment}prestashop>twopayment_d696ff3e66ef8ff69045c662ae2ea7da'] = 'Valgfritt. Tilby en ekstra betalingsfrist (i dager) som ikke er dekket av forhåndsinnstillingene ovenfor. La stå tomt for å kun tilby betingelsene valgt ovenfor.';
+$_MODULE['<{twopayment}prestashop>twopayment_e8910a5d4ad165a5989f6b672b4c8216'] = 'Valgfritt. Tilby en ekstra betalingsfrist (i dager) som ikke er dekket av forhåndsinnstillingene ovenfor. La stå tomt for å kun tilby betingelsene valgt ovenfor. Two må fortsatt tillate denne fristlengden for kontoen din - en ustøttet verdi ignoreres stille.';
 $_MODULE['<{twopayment}prestashop>twopayment_3ac5c697efd1c21abb77ab72a59fd256'] = 'Standard forhåndsvalgt betalingsfrist';
 $_MODULE['<{twopayment}prestashop>twopayment_85975d3764f15a461e1b4241e4a5b1c3'] = 'Hvilken tilbudt betalingsfrist som er forhåndsvalgt i kassen som standard. La stå uvalgt for å beholde det automatiske valget (forhandlerens egen standardfrist når den tilbys, ellers 30 dager, ellers den kortest tilbudte fristen).';
 $_MODULE['<{twopayment}prestashop>twopayment_5bb72acf6ba0fe6fa13318ead4b90c2b'] = 'Vis forklaringslenken "Hva er Two"';
