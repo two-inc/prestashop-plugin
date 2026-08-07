@@ -3975,12 +3975,22 @@ class Twopayment extends PaymentModule
         // so a buyer outside it saw the tile and was refused at the last step.
         // Withhold it at display time instead, exactly like the currency check
         // above. See checkCountry().
-        if (!$this->checkCountry($cart)) {
-            PrestaShopLogger::addLog(
-                'TwoPayment: Payment option hidden - billing country not enabled for this module, cart '
-                . (int)$cart->id,
-                2
-            );
+        if (!$this->checkCountry($cart, $billing_address)) {
+            // Once per request, not once per evaluation - the same reason the
+            // API-key gate above uses an instance flag. This gate is worse than
+            // that one for repetition: a narrow allowlist is a permanent
+            // merchant setting, so EVERY out-of-allowlist buyer trips it on
+            // every payment-step render, and core asks for payment options
+            // several times per render.
+            if (!$this->twoCountryWithholdLogged) {
+                $this->twoCountryWithholdLogged = true;
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Payment option hidden - billing country '
+                    . (int)$billing_address->id_country . ' not enabled for this module, cart '
+                    . (int)$cart->id,
+                    2
+                );
+            }
             return [];
         }
 
@@ -4335,33 +4345,55 @@ class Twopayment extends PaymentModule
      * table, edited from the back office's Payment Restrictions screen). This is
      * a separate allowlist from the shop's own active-country list.
      *
-     * Deliberately matched on the INVOICE address country and the current shop,
-     * because that is exactly the pair core matches on at final order
-     * submission - and the submission gate in controllers/front/payment.php
-     * defers to core for that verdict. Core's display-time filter matches
-     * module_country against the *contextual* country instead, so a shop whose
-     * context country differs from the buyer's billing country renders the tile
-     * and then refuses the order at the last step. This closes that gap at
-     * display time (TWO-25387), the same way checkCurrency() withholds the tile
-     * rather than letting an unsupported currency fail at submission.
+     * Matched on the INVOICE address country and the current shop, because that
+     * is exactly the pair core matches at final order submission: the submission
+     * gate in controllers/front/payment.php defers to core, and core's
+     * authorisation query filters `module_country` on the invoice address.
      *
-     * Fail-closed on every inconclusive input, unlike most gates in this file:
-     * a lookup that cannot be resolved here would not resolve for core at
-     * submission either, so showing the tile would only move the same refusal
-     * to a worse place in the flow.
+     * Core's own DISPLAY-time filter disagrees with its submission-time one, and
+     * that disagreement is the bug. The display filter matches this table
+     * against the *contextual* country, and the front controller resolves that
+     * from whichever address `PS_TAX_ADDRESS_TYPE` names - which defaults to the
+     * DELIVERY address (verified on a stock PrestaShop 8 install, not assumed).
+     * So on any cart whose delivery and invoice countries differ, core rendered
+     * the tile against one country and then refused the order against the other,
+     * at the last click. Two further cases reach here for the same reason: a
+     * merchant who has switched that setting to the invoice address still gets
+     * no protection when the contextual Country fails to load at all (core skips
+     * its country clause entirely in that state), and neither filter runs on a
+     * cart core never dispatched the hook for.
+     *
+     * Gating here closes all of that at display time, the same way
+     * checkCurrency() withholds the tile rather than letting an unsupported
+     * currency fail at submission.
+     *
+     * Fail-closed on a genuine "no such row" answer, because a row core cannot
+     * find here is a row it will not find at submission either - showing the
+     * tile would only move the same refusal to a worse place in the flow.
+     * Fail-OPEN on a query that could not be answered at all: a thrown DB error
+     * is not a restriction verdict, and treating it as one would hide Two on
+     * every shop at once. That distinction is not hypothetical - the first cut
+     * of this method shipped a redundant `LIMIT 1` (core's Db::getValue()
+     * appends its own, so the query was a syntax error) and the fail-closed
+     * branch turned it into a silently missing payment method.
      *
      * @param Cart $cart
+     * @param Address|null $billing_address already-loaded invoice address, if the
+     *   caller has one - hookPaymentOptions() does, and core asks it for payment
+     *   options several times per payment-step render
      * @return bool
      */
-    private function checkCountry($cart)
+    private function checkCountry($cart, $billing_address = null)
     {
         if (!Validate::isLoadedObject($cart) || (int) $cart->id_address_invoice <= 0) {
             return false;
         }
 
-        $billing_address = new Address((int) $cart->id_address_invoice);
         if (!Validate::isLoadedObject($billing_address)) {
-            return false;
+            $billing_address = new Address((int) $cart->id_address_invoice);
+            if (!Validate::isLoadedObject($billing_address)) {
+                return false;
+            }
         }
 
         $id_country = (int) $billing_address->id_country;
@@ -4373,13 +4405,26 @@ class Twopayment extends PaymentModule
         // for the currency allowlist but nothing equivalent for module_country -
         // every core reader of that table inlines the query - so this one does
         // too, scoped to this module and this shop.
+        // NO `LIMIT 1`: Db::getValue() -> Db::getRow() appends one itself, and
+        // core's own docblock documents the argument as "the select query
+        // (without LIMIT 1)". Supplying one produces `LIMIT 1 LIMIT 1`.
         $sql = 'SELECT `id_country` FROM `' . _DB_PREFIX_ . 'module_country`'
             . ' WHERE `id_module` = ' . (int) $this->id
             . ' AND `id_country` = ' . $id_country
-            . ' AND `id_shop` = ' . (isset($this->context->shop->id) ? (int) $this->context->shop->id : 0)
-            . ' LIMIT 1';
+            . ' AND `id_shop` = ' . (isset($this->context->shop->id) ? (int) $this->context->shop->id : 0);
 
-        return (int) Db::getInstance()->getValue($sql) === $id_country;
+        try {
+            $matched = Db::getInstance()->getValue($sql);
+        } catch (Exception $e) {
+            // Fail-open, and say so loudly: see the docblock.
+            PrestaShopLogger::addLog(
+                'TwoPayment: module_country lookup failed, country restriction not enforced - ' . $e->getMessage(),
+                3
+            );
+            return true;
+        }
+
+        return (int) $matched === $id_country;
     }
 
     /**
@@ -9791,6 +9836,17 @@ class Twopayment extends PaymentModule
      * @var bool
      */
     protected $twoApiKeyWithholdLogged = false;
+
+    /**
+     * Whether this instance has already logged that it is withholding Two over
+     * the module's country allowlist (TWO-25387). Same once-per-request reason
+     * as the flag above, and more load-bearing: a narrow allowlist is a
+     * permanent merchant setting, so every out-of-allowlist buyer trips it on
+     * every render rather than only while an outage lasts.
+     *
+     * @var bool
+     */
+    protected $twoCountryWithholdLogged = false;
 
     /**
      * Read a brand-config value (brands/two.php), cached per request. Returns
