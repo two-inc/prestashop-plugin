@@ -40,7 +40,13 @@
             // The server sends a real boolean; an absent key must read as
             // verified rather than take the search away from a working shop.
             apiKeyVerified: config.api_key_verified !== false,
-            orderIntentEnabled: true,
+            // TWO-25386 #8: only an explicit off (0, '0' or false) disables
+            // the order-intent pre-approval preview. An absent key - an older
+            // cached config payload predating this admin toggle - must read
+            // as enabled, matching the previously-hardcoded-true behaviour.
+            orderIntentEnabled: config.enable_order_intent !== 0
+                && config.enable_order_intent !== '0'
+                && config.enable_order_intent !== false,
             checkoutHost: config.checkout_host,
             orderIntentUrl: config.order_intent_url,
             ajaxToken: config.ajax_token,

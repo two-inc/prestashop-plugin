@@ -5545,6 +5545,7 @@ require __DIR__ . '/TranslationCatalogueSpec.php';
 require __DIR__ . '/AssetCacheBustingSpec.php';
 require __DIR__ . '/ApiKeyVerificationSpec.php';
 require __DIR__ . '/RequiredPhoneFieldSpec.php';
+require __DIR__ . '/AdminControlsSpec.php';
 require __DIR__ . '/PaymentCountryRestrictionSpec.php';
 // LAST, deliberately: DefaultShippingTaxCodeSpec defines
 // _TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_ partway through its own run, and a
@@ -5587,6 +5588,7 @@ $tests = [
     'AssetCacheBustingSpec::runAll' => [AssetCacheBustingSpec::class, 'runAll'],
     'ApiKeyVerificationSpec::runAll' => [ApiKeyVerificationSpec::class, 'runAll'],
     'RequiredPhoneFieldSpec::runAll' => [RequiredPhoneFieldSpec::class, 'runAll'],
+    'AdminControlsSpec::runAll' => [AdminControlsSpec::class, 'runAll'],
     'PaymentCountryRestrictionSpec::runAll' => [PaymentCountryRestrictionSpec::class, 'runAll'],
     // Keep last - see the require above.
     'DefaultShippingTaxCodeSpec::runAll' => [DefaultShippingTaxCodeSpec::class, 'runAll'],
