@@ -63,6 +63,10 @@ final class PaymentCountryRestrictionSpec
         self::testEveryActiveCountryEnabledIsUnaffected();
         self::testTheLookupDoesNotCarryItsOwnLimitClause();
         self::testAnUnanswerableLookupFailsOpen();
+        self::testALookupThatFailsWithoutThrowingAlsoFailsOpen();
+        self::testTheFailOpenReasonIsLoggedOncePerRequestAndCarriesNoSql();
+        self::testAnAddressWithNoCountryIsNotReportedAsADisallowedCountry();
+        self::testAPassedAddressThatIsNotTheInvoiceAddressIsIgnored();
     }
 
     /* ===================================================================
@@ -130,6 +134,18 @@ final class PaymentCountryRestrictionSpec
         $lines = 0;
         foreach (PrestaShopLogger::$logs as $entry) {
             if (strpos($entry['message'], 'not enabled for this module') !== false) {
+                ++$lines;
+            }
+        }
+
+        return $lines;
+    }
+
+    private static function lookupFailureLines(): int
+    {
+        $lines = 0;
+        foreach (PrestaShopLogger::$logs as $entry) {
+            if (strpos($entry['message'], 'module_country lookup failed') !== false) {
                 ++$lines;
             }
         }
@@ -371,6 +387,42 @@ final class PaymentCountryRestrictionSpec
     }
 
     /**
+     * checkCountry() accepts an already-loaded Address so the hook does not
+     * hydrate a second copy per render - but the verdict INVERTS if that copy is
+     * the delivery address, and the gate's whole purpose is agreeing with what
+     * core checks at submission. So the passed object is verified to be this
+     * cart's invoice address rather than trusted.
+     *
+     * Driven directly: every path through hookPaymentOptions() passes the right
+     * address by construction, so a spec that went through the hook could never
+     * catch a future caller getting this wrong.
+     */
+    private static function testAPassedAddressThatIsNotTheInvoiceAddressIsIgnored(): void
+    {
+        $module = self::offerableModule(self::GB);
+        // The cart's real invoice address is 904/GB, which is NOT allowlisted.
+        StubStore::$moduleCountries = self::allow($module, self::NO);
+        StubStore::$addresses[905] = ['id_country' => self::NO, 'loaded' => true];
+
+        $method = new ReflectionMethod(Twopayment::class, 'checkCountry');
+        $method->setAccessible(true);
+
+        TinyAssert::same(
+            false,
+            $method->invoke($module, $module->context->cart, new Address(905)),
+            'a passed address that is not the invoice address must be ignored, not trusted'
+        );
+
+        // The genuine invoice address is still accepted, so the fast path works.
+        StubStore::$moduleCountries = self::allow($module, self::GB);
+        TinyAssert::same(
+            true,
+            $method->invoke($module, $module->context->cart, new Address(904)),
+            "the cart's own invoice address must be accepted"
+        );
+    }
+
+    /**
      * Core's Db::getValue() delegates to getRow(), which appends its OWN
      * ' LIMIT 1'; its docblock documents the argument as "the select query
      * (without LIMIT 1)". The first cut of this gate supplied one anyway, so
@@ -414,13 +466,99 @@ final class PaymentCountryRestrictionSpec
             count($module->hookPaymentOptions([])),
             'a lookup that could not be answered must not withhold the payment option'
         );
+        TinyAssert::same(1, self::lookupFailureLines(), 'failing open must be logged - the restriction is NOT enforced');
 
-        $logged = false;
+        StubStore::$dbGetValueThrowsOn = null;
+    }
+
+    /**
+     * The case the throwing fixture CANNOT show, and the one that matters most:
+     * on the module's declared floor (ps_versions_compliancy min 1.7.6.0) a
+     * failed query does not throw at all - DbPDO::_query() is a bare
+     * link->query(), and DbMySQLi's is unwrapped too - so Db::getValue() just
+     * returns false, exactly like a genuine "no such row". A gate that reads
+     * that as a restriction verdict removes Two from every shop over a fault
+     * that has nothing to do with the merchant's country settings. Which is
+     * precisely what the redundant LIMIT 1 did.
+     */
+    private static function testALookupThatFailsWithoutThrowingAlsoFailsOpen(): void
+    {
+        $module = self::offerableModule(self::GB);
+        StubStore::$moduleCountries = self::allow($module, self::NO);
+        StubStore::$dbGetValueSilentErrorOn = 'module_country';
+        PrestaShopLogger::reset();
+
+        TinyAssert::same(
+            1,
+            count($module->hookPaymentOptions([])),
+            'a silently-failed lookup must not be read as a country restriction'
+        );
+        TinyAssert::same(1, self::lookupFailureLines(), 'failing open must be logged');
+
+        StubStore::$dbGetValueSilentErrorOn = null;
+    }
+
+    /**
+     * A failing lookup fails on EVERY evaluation, forever - it floods harder
+     * than any withhold. And the driver's own message carries the SQL, which the
+     * payment controller already refuses to put anywhere a log reader picks it
+     * up, so the reason must be the exception class or errno instead.
+     */
+    private static function testTheFailOpenReasonIsLoggedOncePerRequestAndCarriesNoSql(): void
+    {
+        $module = self::offerableModule(self::GB);
+        StubStore::$moduleCountries = self::allow($module, self::NO);
+        StubStore::$dbGetValueSilentErrorOn = 'module_country';
+        PrestaShopLogger::reset();
+
+        $module->hookPaymentOptions([]);
+        $module->hookPaymentOptions([]);
+        $module->hookPaymentOptions([]);
+
+        TinyAssert::same(1, self::lookupFailureLines(), 'the fail-open reason must be logged once per request');
+
         foreach (PrestaShopLogger::$logs as $entry) {
-            if (strpos($entry['message'], 'module_country lookup failed') !== false) {
-                $logged = true;
+            if (strpos($entry['message'], 'module_country lookup failed') === false) {
+                continue;
+            }
+            TinyAssert::true(
+                strpos($entry['message'], 'SELECT') === false
+                && strpos($entry['message'], 'ps_module_country') === false,
+                'the log must not carry the SQL: ' . $entry['message']
+            );
+        }
+
+        StubStore::$dbGetValueSilentErrorOn = null;
+    }
+
+    /**
+     * "billing country 0 not enabled for this module" sends whoever reads it to
+     * the Payment Restrictions screen to look for a country that was never
+     * there. The address has no country; that is a different fault.
+     */
+    private static function testAnAddressWithNoCountryIsNotReportedAsADisallowedCountry(): void
+    {
+        $module = self::offerableModule(self::GB);
+        StubStore::$addresses[904]['id_country'] = 0;
+        StubStore::$moduleCountries = self::allow($module, self::GB);
+        PrestaShopLogger::reset();
+
+        $module->hookPaymentOptions([]);
+
+        $logged = '';
+        foreach (PrestaShopLogger::$logs as $entry) {
+            if (strpos($entry['message'], 'Payment option hidden') !== false) {
+                $logged = $entry['message'];
             }
         }
-        TinyAssert::true($logged, 'failing open must be logged - it means the restriction is NOT being enforced');
+        TinyAssert::true($logged !== '', 'the withholding must be logged');
+        TinyAssert::true(
+            strpos($logged, 'no country') !== false,
+            'the log must say the address has no country, not that country 0 is disallowed: ' . $logged
+        );
+        TinyAssert::true(
+            strpos($logged, 'country 0') === false,
+            'the log must not report a country id of 0 as a disallowed country: ' . $logged
+        );
     }
 }

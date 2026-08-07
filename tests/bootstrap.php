@@ -180,6 +180,21 @@ namespace {
          * @var string|null
          */
         public static ?string $dbGetValueThrowsOn = null;
+        /**
+         * Substring which, when present in a Db::getValue() query, makes the stub
+         * answer `false` AND report a driver errno - WITHOUT throwing. This is
+         * how a failed query behaves on the module's declared PrestaShop floor
+         * (1.7.6.0: DbPDO::_query() is a bare link->query(), and DbMySQLi's is
+         * unwrapped too), so "false" there means BOTH "no such row" and "the
+         * query failed". Any gate that reads `false` as a verdict without
+         * consulting getNumberError() is wrong on the floor version, and the
+         * throwing fixture above cannot show it (TWO-25387).
+         *
+         * @var string|null
+         */
+        public static ?string $dbGetValueSilentErrorOn = null;
+        /** @var int Driver errno the stub reports for the last query */
+        public static int $dbErrno = 0;
         public static array $orderCarriers = [];
         /** @var array<int,array{id_order_state:string,name:string}> Override for OrderState::getOrderStates() */
         public static array $orderStates = [];
@@ -293,6 +308,8 @@ namespace {
             self::$dbLastExecuteS = [];
             self::$dbLastGetValue = [];
             self::$dbGetValueThrowsOn = null;
+            self::$dbGetValueSilentErrorOn = null;
+            self::$dbErrno = 0;
             self::$products = [];
             self::$specificPrices = [];
             self::$stock = [];
@@ -1766,11 +1783,6 @@ namespace {
         {
             $sql = (string) $sql;
             StubStore::$dbLastGetValue[] = $sql;
-            if (StubStore::$dbGetValueThrowsOn !== null
-                && strpos($sql, StubStore::$dbGetValueThrowsOn) !== false
-            ) {
-                throw new PrestaShopDatabaseException('stubbed query failure: ' . $sql);
-            }
             // Core's Db::getValue() delegates to getRow(), which appends its OWN
             // ' LIMIT 1' - its docblock documents the argument as "the select
             // query (without LIMIT 1)". A caller that supplies one produces
@@ -1778,10 +1790,22 @@ namespace {
             // to accept it silently, so that bug could only be caught by the
             // Playwright e2e job against a live shop; it shipped once
             // (TWO-25387) and cost a full CI round. Reproduce the fatal here.
-            if (preg_match('/\bLIMIT\s+\d+\s*;?\s*$/i', $sql)) {
+            if (preg_match('/\bLIMIT\s+\d+\s*(?:,\s*\d+\s*)?;?\s*$/i', $sql)) {
                 throw new PrestaShopDatabaseException(
                     'Db::getValue() appends its own LIMIT 1 - the query must not carry one: ' . $sql
                 );
+            }
+            StubStore::$dbErrno = 0;
+            if (StubStore::$dbGetValueThrowsOn !== null
+                && strpos($sql, StubStore::$dbGetValueThrowsOn) !== false
+            ) {
+                throw new PrestaShopDatabaseException('stubbed query failure');
+            }
+            if (StubStore::$dbGetValueSilentErrorOn !== null
+                && strpos($sql, StubStore::$dbGetValueSilentErrorOn) !== false
+            ) {
+                StubStore::$dbErrno = 1064;
+                return false;
             }
             if (preg_match("/GET_LOCK\\('([^']+)'/", $sql, $m)) {
                 if (!empty(StubStore::$dbLocks[$m[1]])) {
@@ -1844,6 +1868,17 @@ namespace {
                 return is_array($next) ? $next : [];
             }
             return [];
+        }
+
+        /** Core's driver errno for the LAST query; 0 when it succeeded. */
+        public function getNumberError(): int
+        {
+            return StubStore::$dbErrno;
+        }
+
+        public function getMsgError($query = false): string
+        {
+            return StubStore::$dbErrno === 0 ? '' : 'stubbed driver error ' . StubStore::$dbErrno;
         }
 
         public function insert($table, $data): bool
