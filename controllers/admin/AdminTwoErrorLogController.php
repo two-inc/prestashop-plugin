@@ -41,7 +41,7 @@ class AdminTwoErrorLogController extends ModuleAdminController
         $rows = $this->getTwoLogRows();
 
         $html = '<div class="panel"><div class="panel-heading"><i class="icon-file-text"></i> '
-            . $this->l('Two payment gateway - last log records') . '</div>';
+            . sprintf($this->l('%s payment gateway - last log records'), $this->module->getTwoBrandConfig('product_name')) . '</div>';
 
         if (empty($rows)) {
             $html .= '<p class="alert alert-info">' . $this->l('No log records found for this module.') . '</p>';

@@ -6,7 +6,7 @@
 
 <li class="nav-item">
     <a href="#two-payment-info" class="nav-link" data-toggle="tab" role="tab">
-        {l s='Two Payment Info' mod='twopayment'}
+        {l s='%s Payment Info' mod='twopayment' sprintf=[$two_product_name]}
     </a>
 </li>
 
