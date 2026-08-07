@@ -138,7 +138,7 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
         $companyId = isset($companyData['organization_number']) ? trim((string) $companyData['organization_number']) : '';
         if (Tools::isEmpty($companyName) || Tools::isEmpty($companyId)) {
             $this->failCheckout(
-                $this->module->l('To pay with Two, please select your company so we can verify your business and offer invoice terms.')
+                sprintf($this->module->l('To pay with %s, please select your company so we can verify your business and offer invoice terms.'), $this->module->getTwoBrandConfig('product_name'))
             );
             return;
         }
@@ -163,7 +163,7 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
         if (!(bool)$orderIntentResult['approved']) {
             $failureMessage = (isset($orderIntentResult['message']) && !Tools::isEmpty($orderIntentResult['message']))
                 ? (string)$orderIntentResult['message']
-                : $this->module->l('Your order could not be approved by Two payment. Please choose another payment method or contact support.');
+                : sprintf($this->module->l('Your order could not be approved by %s payment. Please choose another payment method or contact support.'), $this->module->getTwoBrandConfig('product_name'));
             $this->failCheckout(
                 $failureMessage,
                 'TwoPayment: Order blocked by authoritative backend order intent check for cart ' .
@@ -206,7 +206,7 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             // message, with the real exception class and message logged at
             // severity 4 so nothing is lost for diagnosis.
             $isBuyerActionable = $e instanceof TwoCheckoutAmountException;
-            $message = $this->module->l('Two could not build this order from your cart.');
+            $message = sprintf($this->module->l('%s could not build this order from your cart.'), $this->module->getTwoBrandConfig('product_name'));
             $detail = $isBuyerActionable ? trim((string)$e->getMessage()) : '';
             if ($detail !== '') {
                 $message .= ' ' . sprintf($this->module->l('Details: %s.'), $detail);
@@ -252,7 +252,7 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             );
             
             // Determine user-friendly error message based on response
-            $message = $this->module->l('Unable to process your order with Two payment.');
+            $message = sprintf($this->module->l('Unable to process your order with %s payment.'), $this->module->getTwoBrandConfig('product_name'));
             
             if (!isset($response) || $http_status === 0) {
                 $message = $this->module->l('Connection error with payment provider. Please try again.');
@@ -486,7 +486,7 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                 // text (the detail belongs in the log, not on the storefront).
                 // An AJAX caller still needs something to render, or the fix
                 // reproduces the silent hang one layer up.
-                $this->module->l('Unable to process your order with Two payment. Please choose another payment method or contact the store.'),
+                sprintf($this->module->l('Unable to process your order with %s payment. Please choose another payment method or contact the store.'), $this->module->getTwoBrandConfig('product_name')),
                 $redirectUrl
             ));
             return;

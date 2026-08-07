@@ -7,7 +7,7 @@
 <div class="panel two-admin-panel">
     <div class="panel-heading two-panel-heading">
         <div class="two-admin-header">
-            <h3 class="two-admin-title">{l s='Two Payment Information' mod='twopayment'}</h3>
+            <h3 class="two-admin-title">{l s='%s Payment Information' mod='twopayment' sprintf=[$two_product_name]}</h3>
         </div>
     </div>
     <div class="panel-body two-admin-content">
@@ -20,7 +20,7 @@
         <div class="two-details-section">
             {if $twopaymentdata.two_order_id}
             <div class="two-info-item">
-                <span class="two-info-label">{l s='Two Order ID' mod='twopayment'}</span>
+                <span class="two-info-label">{l s='%s Order ID' mod='twopayment' sprintf=[$two_product_name]}</span>
                 <span class="two-info-value two-order-id">{$twopaymentdata.two_order_id|escape:'html':'UTF-8'}</span>
             </div>
             {/if}
@@ -50,13 +50,13 @@
             {/if}
             {if $twopaymentdata.two_order_state}
             <div class="two-info-item">
-                <span class="two-info-label">{l s='Two State' mod='twopayment'}</span>
+                <span class="two-info-label">{l s='%s State' mod='twopayment' sprintf=[$two_product_name]}</span>
                 <span class="two-info-value">{$twopaymentdata.two_order_state|escape:'html':'UTF-8'}</span>
             </div>
             {/if}
             {if $twopaymentdata.two_order_status}
             <div class="two-info-item">
-                <span class="two-info-label">{l s='Two Status' mod='twopayment'}</span>
+                <span class="two-info-label">{l s='%s Status' mod='twopayment' sprintf=[$two_product_name]}</span>
                 <span class="two-info-value">{$twopaymentdata.two_order_status|escape:'html':'UTF-8'}</span>
             </div>
             {/if}
@@ -81,7 +81,7 @@
             {/if}
             {if !$two_invoice_actions_available}
             <div class="two-info-value text-muted">
-                <i class="icon-info-circle"></i> {l s='Invoice links become available after the Two order is fulfilled.' mod='twopayment'}
+                <i class="icon-info-circle"></i> {l s='Invoice links become available after the %s order is fulfilled.' mod='twopayment' sprintf=[$two_product_name]}
             </div>
             {/if}
         </div>
