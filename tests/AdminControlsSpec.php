@@ -31,6 +31,7 @@ final class AdminControlsSpec
     public static function runAll(): void
     {
         self::testCustomDaysUnionedIntoAvailableTerms();
+        self::testCustomDaysRejectedWhenNotBackendPermitted();
         self::testCustomDaysIgnoredWhenBlankOrInvalid();
         self::testCustomDaysBypassesEomIntersection();
 
@@ -77,14 +78,40 @@ final class AdminControlsSpec
 
     // ---- #9 custom payment term days --------------------------------------
 
+    /**
+     * 20 is in the hardcoded PAYMENT_TERMS_OPTIONS fallback (the source
+     * getOfferableTermSource() returns on a cold backend-terms cache) but is
+     * not in EOM_PAYMENT_TERMS_OPTIONS - useful as a "custom" value that is
+     * still backend-permitted without needing a live merchant-record fetch.
+     */
+    private const BACKEND_PERMITTED_CUSTOM_DAYS = 20;
+
     private static function testCustomDaysUnionedIntoAvailableTerms(): void
     {
         self::reset();
         self::enableTerms([15, 30]);
-        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS', 21);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS', self::BACKEND_PERMITTED_CUSTOM_DAYS);
         $module = new TwopaymentTestHarness();
 
-        TinyAssert::same(array(15, 21, 30), $module->getAvailablePaymentTerms());
+        TinyAssert::same(array(15, 20, 30), $module->getAvailablePaymentTerms());
+    }
+
+    /**
+     * A custom day count Two's backend does not offer at all - review-round-1
+     * finding: this must NOT be unioned in regardless of what the merchant
+     * types, or the custom field becomes a bypass for the backend
+     * available_terms restriction (TWO-24813) - a real business/credit-risk
+     * control, not just a UI narrowing. 99 is not in PAYMENT_TERMS_OPTIONS
+     * (the fallback source on a cold cache) at all.
+     */
+    private static function testCustomDaysRejectedWhenNotBackendPermitted(): void
+    {
+        self::reset();
+        self::enableTerms([15, 30]);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS', 99);
+        $module = new TwopaymentTestHarness();
+
+        TinyAssert::same(array(15, 30), $module->getAvailablePaymentTerms());
     }
 
     private static function testCustomDaysIgnoredWhenBlankOrInvalid(): void
@@ -107,12 +134,13 @@ final class AdminControlsSpec
         self::reset();
         Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', 'EOM');
         self::enableTerms([30]);
-        // 21 is not in EOM_PAYMENT_TERMS_OPTIONS - the custom term is the
-        // merchant's own explicit offer and is unioned regardless.
-        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS', 21);
+        // 20 is backend-permitted (PAYMENT_TERMS_OPTIONS fallback) but not in
+        // EOM_PAYMENT_TERMS_OPTIONS - the custom term bypasses the
+        // EOM/STANDARD split specifically, not the backend restriction.
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS', self::BACKEND_PERMITTED_CUSTOM_DAYS);
         $module = new TwopaymentTestHarness();
 
-        TinyAssert::same(array(21, 30), $module->getAvailablePaymentTerms());
+        TinyAssert::same(array(20, 30), $module->getAvailablePaymentTerms());
     }
 
     // ---- #10 default pre-selected term ------------------------------------

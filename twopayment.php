@@ -1426,15 +1426,16 @@ class Twopayment extends PaymentModule
             // Custom payment term in days (TWO-25386, ported from
             // magento-plugin's payment_terms_duration_days / woocommerce-plugin's
             // payment_terms_custom_days): a merchant-typed term length in
-            // addition to the preset checkboxes above. Unioned (not
-            // intersected with the backend-restricted checkbox source) into
-            // getAvailablePaymentTerms() when > 0 - see that method.
+            // addition to the preset checkboxes above. Unioned into
+            // getAvailablePaymentTerms() when > 0 AND still within Two's own
+            // backend-permitted term set (see that method) - it bypasses the
+            // EOM/STANDARD checkbox split, never the backend restriction.
             array(
                 'type' => 'text',
                 'label' => $this->l('Custom payment term (days)'),
                 'name' => 'PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS',
                 'required' => false,
-                'desc' => $this->l('Optional. Offer an additional payment term (in days) not covered by the presets above. Leave empty to only offer the terms selected above.'),
+                'desc' => $this->l('Optional. Offer an additional payment term (in days) not covered by the presets above. Leave empty to only offer the terms selected above. Two must still permit this term length for your account - an unsupported value is silently ignored.'),
             ),
             // Default pre-selected term (TWO-25386 #10): an explicit admin
             // choice that takes priority over getDefaultPaymentTerm()'s
@@ -2536,9 +2537,15 @@ class Twopayment extends PaymentModule
      * paymentOptions hook registration.
      *
      * Deliberately swallows any failure: the admin field and its stored value
-     * are the source of truth this method reads, and a core API mismatch
-     * across PrestaShop versions must never block saving the rest of the
-     * Advanced Settings form.
+     * are the source of truth this method reads, and updatePosition()
+     * misbehaving (a lock conflict, an unexpected DB state, or genuinely not
+     * existing on some future core) must never block saving the rest of the
+     * Advanced Settings form. The method_exists() guard is a defensive
+     * belt-and-suspenders check, not the real safety net here -
+     * Module::updatePosition() is a real, long-standing core method this
+     * module's own PaymentModule parent inherits, so it exists on every
+     * supported PrestaShop version; the try/catch is what actually protects
+     * this save path.
      *
      * @return void
      */
@@ -12863,12 +12870,21 @@ class Twopayment extends PaymentModule
 
         // Custom payment term (TWO-25386 #9, ported from magento-plugin's
         // payment_terms_duration_days / woocommerce-plugin's
-        // payment_terms_custom_days): UNIONED, not intersected with the
-        // backend-restricted $source above - it is the merchant's own
-        // explicit offer, not narrowed by the API's available_terms list or
-        // by the EOM/STANDARD split.
+        // payment_terms_custom_days). UNIONED past the EOM/STANDARD split
+        // above (neither WC nor Magento have that distinction, and the
+        // custom day count is not a preset the merchant is picking FROM), but
+        // NOT past the backend-restricted source: getOfferableTermSource()
+        // exists specifically so a term Two's backend has withdrawn for this
+        // merchant drops out even while an admin checkbox is still ticked
+        // (TWO-24813), and this custom field must not become a bypass for
+        // that same protection - WC/Magento have no equivalent
+        // backend-restriction concept at all, so "unconditionally unioned
+        // there" is not a precedent for bypassing it here.
         $custom_days = $this->getTwoCustomPaymentTermDays();
-        if ($custom_days !== null && !in_array($custom_days, $available_terms, true)) {
+        if ($custom_days !== null
+            && !in_array($custom_days, $available_terms, true)
+            && in_array($custom_days, $this->getOfferableTermSource(false), true)
+        ) {
             $available_terms[] = $custom_days;
         }
 

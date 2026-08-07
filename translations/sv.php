@@ -462,7 +462,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_bd2b7238dd5be2875d527d62a880d043'] 
 $_MODULE['<{twopayment}prestashop>twopayment_adaed373af40f154859a1e470279527f'] = 'Leverantörs-/webbplatsnamn';
 $_MODULE['<{twopayment}prestashop>twopayment_4e378a4617ae99ebad1374c430d83a96'] = 'Valfritt. Ange detta om du använder Two på flera webbplatser/leverantörer, för att identifiera vilken förfrågningarna kommer från.';
 $_MODULE['<{twopayment}prestashop>twopayment_0f193cdd9a8a87ce1d829b1c1fecb7f9'] = 'Anpassat betalningsvillkor (dagar)';
-$_MODULE['<{twopayment}prestashop>twopayment_d696ff3e66ef8ff69045c662ae2ea7da'] = 'Valfritt. Erbjud ytterligare ett betalningsvillkor (i dagar) som inte täcks av förinställningarna ovan. Lämna tomt för att endast erbjuda de villkor som valts ovan.';
+$_MODULE['<{twopayment}prestashop>twopayment_e8910a5d4ad165a5989f6b672b4c8216'] = 'Valfritt. Erbjud ytterligare ett betalningsvillkor (i dagar) som inte täcks av förinställningarna ovan. Lämna tomt för att endast erbjuda de villkor som valts ovan. Two måste fortfarande tillåta denna villkorslängd för ditt konto - ett ej understött värde ignoreras tyst.';
 $_MODULE['<{twopayment}prestashop>twopayment_3ac5c697efd1c21abb77ab72a59fd256'] = 'Standardförvalt betalningsvillkor';
 $_MODULE['<{twopayment}prestashop>twopayment_85975d3764f15a461e1b4241e4a5b1c3'] = 'Vilket erbjudet betalningsvillkor som är förvalt i kassan som standard. Lämna ej valt för att behålla det automatiska valet (handlarens eget standardvillkor när det erbjuds, annars 30 dagar, annars det kortaste erbjudna villkoret).';
 $_MODULE['<{twopayment}prestashop>twopayment_5bb72acf6ba0fe6fa13318ead4b90c2b'] = 'Visa förklaringslänken "Vad är Two"';
