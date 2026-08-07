@@ -318,6 +318,37 @@ class TwoSoleTrader {
             if (iso) {
                 return iso.toUpperCase();
             }
+            // TWO-40 follow-up: this fallback was missing here despite the
+            // comment above CLAIMING parity with TwoOrderIntent.js/
+            // TwoCompanySearch.js - it jumped straight to `this.config`
+            // (page-load-time, never updated on a later country change)
+            // instead. On any theme/PS version whose country <option>s carry
+            // none of the three data- attributes above - exactly why the
+            // other two modules needed this fallback in the first place -
+            // billingCountry() returned the ORIGINAL page-load country
+            // forever, however many times the buyer changed it: this and
+            // isAvailableForCurrentCountry() both silently kept answering for
+            // the WRONG country, with no error and no re-fetch, since the
+            // (wrong) country was already "settled" in availabilityByCountry.
+            // `window.twopayment.countries` is the server-built id -> ISO map
+            // (`Country::getCountries()`, injected via `Media::addJsDef`)
+            // TwoCompanySearch.getCurrentCountry() and TwoOrderIntent.js's
+            // getCurrentAddressCountryISO() both already read.
+            const countryId = option.value;
+            const isoFromConfig = (window.twopayment && window.twopayment.countries)
+                ? window.twopayment.countries[countryId]
+                : null;
+            if (isoFromConfig) {
+                return String(isoFromConfig).toUpperCase();
+            }
+            // Last DOM-derived attempt, for a theme that renders its own
+            // select with none of the above and loads this module without
+            // the server-built map - same map TwoCompanySearch.js's
+            // extractCountryFromText() uses.
+            const fromText = TwoSoleTrader.extractCountryFromOptionText(option.textContent);
+            if (fromText) {
+                return fromText;
+            }
         }
         // The cart's billing country BEFORE the shop's own country (TWO-25326 bug
         // 9, round 3 adversarial review). PrestaShop only renders the address FORM
@@ -333,6 +364,31 @@ class TwoSoleTrader {
         // construction; shopCountry stays as a last resort for a payload that
         // predates this key.
         return (this.config.billingCountry || this.config.shopCountry || '').toUpperCase();
+    }
+
+    /**
+     * Same map as TwoCompanySearch.js's extractCountryFromText() (TWO-40
+     * follow-up) - kept here rather than shared, since these are two
+     * independently-loaded modules with no common utility file between them.
+     *
+     * @param {string} text visible text of the selected <option>
+     * @returns {?string} uppercase ISO code, or null
+     */
+    static extractCountryFromOptionText(text) {
+        const countryMap = {
+            'united kingdom': 'GB', 'great britain': 'GB', 'uk': 'GB', 'england': 'GB',
+            'spain': 'ES', 'españa': 'ES', 'espagne': 'ES',
+            'france': 'FR', 'francia': 'FR',
+            'germany': 'DE', 'deutschland': 'DE', 'alemania': 'DE',
+            'italy': 'IT', 'italia': 'IT', 'italie': 'IT',
+            'netherlands': 'NL', 'holland': 'NL', 'países bajos': 'NL',
+            'belgium': 'BE', 'bélgica': 'BE', 'belgique': 'BE',
+            'united states': 'US', 'usa': 'US', 'estados unidos': 'US',
+            'canada': 'CA', 'canadá': 'CA',
+            'australia': 'AU'
+        };
+        const lowerText = String(text || '').toLowerCase().trim();
+        return countryMap[lowerText] || null;
     }
 
     /**

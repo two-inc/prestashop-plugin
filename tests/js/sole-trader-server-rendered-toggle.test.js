@@ -57,6 +57,23 @@ function buildCountry(iso) {
     return holder.querySelector('select');
 }
 
+/**
+ * A country <select> with NONE of the `data-iso-code`/`data-iso`/
+ * `data-country-iso` attributes - the exact shape that exposed the missing
+ * `window.twopayment.countries` id-to-ISO fallback in billingCountry() (TWO-40
+ * follow-up). Doug's own repro (>10 min open, France -> GB -> reopen, chip
+ * still missing) happens on any theme/PS version whose options look like
+ * this - that fallback is the only thing that can resolve them at all.
+ */
+function buildCountryNoIsoAttr(id, text) {
+    const holder = document.createElement('div');
+    holder.innerHTML = "<select name='id_country'>"
+        + '<option value="' + id + '" selected>' + (text || 'Country') + '</option>'
+        + '</select>';
+    document.body.appendChild(holder);
+    return holder.querySelector('select');
+}
+
 /** Let the debounced observer callback and any promise chain run. */
 async function drain() {
     jest.advanceTimersByTime(150);
@@ -519,5 +536,90 @@ describe('lifecycle', () => {
         // there was no way to detach it at all - a disposed instance stayed a
         // live second writer to the availability cache.
         expect(fetchCalls).toEqual([]);
+    });
+});
+
+describe('billingCountry() id-to-ISO map fallback (TWO-40 follow-up)', () => {
+    afterEach(() => {
+        delete window.twopayment;
+    });
+
+    test('resolves via window.twopayment.countries when no data- attribute exists on the option', async () => {
+        buildPaymentTile();
+        buildCountryNoIsoAttr('44', 'Nederland');
+        window.twopayment = { countries: { 44: 'nl' } };
+        TwoSoleTrader = loadSoleTrader();
+        // billingCountry config deliberately blank: a fallback straight to
+        // `this.config` (the bug) would surface here as '', not silently
+        // agree with a live value.
+        const instance = build({ billingCountry: '', shopCountry: '' });
+
+        expect(instance.billingCountry()).toBe('NL');
+
+        await drain();
+
+        expect(fetchCalls).toHaveLength(1);
+        expect(fetchCalls[0]).toContain('country=NL');
+        instance.destroy();
+    });
+
+    test('a later country change through the map fallback is picked up - not pinned to the page-load value', async () => {
+        // This is Doug's exact repro shape: no ISO attribute anywhere, a
+        // country change, then a re-check with no reopen forced in between.
+        buildPaymentTile();
+        const select = buildCountryNoIsoAttr('44', 'Nederland');
+        window.twopayment = { countries: { 44: 'nl', 8: 'gb' } };
+        TwoSoleTrader = loadSoleTrader();
+        const instance = build({ billingCountry: '', shopCountry: '' });
+        await drain();
+        expect(fetchCalls).toHaveLength(1);
+        expect(fetchCalls[0]).toContain('country=NL');
+
+        // Swap to a different id, still with no data-iso-code anywhere - the
+        // buyer picking a new country in a theme that never renders it.
+        select.innerHTML = '<option value="8" selected>United Kingdom</option>';
+        select.dispatchEvent(new window.Event('change', { bubbles: true }));
+        await drain();
+
+        // Before this fix: billingCountry() stayed on the page-load 'GB'/''
+        // fallback and never asked about NL let alone GB again - the buyer's
+        // OWN change to the selector had no effect at all.
+        expect(instance.billingCountry()).toBe('GB');
+        expect(fetchCalls).toHaveLength(2);
+        expect(fetchCalls[1]).toContain('country=GB');
+        instance.destroy();
+    });
+
+    test('isAvailableForCurrentCountry() follows the map-resolved country, not a stale page-load one', async () => {
+        buildPaymentTile();
+        const select = buildCountryNoIsoAttr('44', 'Nederland');
+        window.twopayment = { countries: { 44: 'nl', 8: 'gb' } };
+        answer.available = false;
+        TwoSoleTrader = loadSoleTrader();
+        const instance = build({ billingCountry: '', shopCountry: '' });
+        await drain();
+        expect(instance.isAvailableForCurrentCountry()).toBe(false);
+
+        answer.available = true;
+        select.innerHTML = '<option value="8" selected>United Kingdom</option>';
+        select.dispatchEvent(new window.Event('change', { bubbles: true }));
+        await drain();
+
+        // The chip-visibility gate TwoCompanySearch.js reads. If billingCountry()
+        // stayed pinned to the wrong country, this would still read false
+        // (or the NL answer) despite GB now being available.
+        expect(instance.isAvailableForCurrentCountry()).toBe(true);
+        instance.destroy();
+    });
+
+    test('falls through to the option-text map when neither an attribute nor the config covers it', async () => {
+        buildPaymentTile();
+        buildCountryNoIsoAttr('999', 'France');
+        window.twopayment = { countries: { 44: 'nl' } };
+        TwoSoleTrader = loadSoleTrader();
+        const instance = build({ billingCountry: '', shopCountry: '' });
+
+        expect(instance.billingCountry()).toBe('FR');
+        instance.destroy();
     });
 });

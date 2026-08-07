@@ -628,9 +628,15 @@ class TwoCompanySearch {
         panel = $('<div class="two-company-dropdown" hidden></div>');
 
         const searchRow = $('<div class="two-company-dropdown__search"></div>');
+        // Placeholder/aria-label carry the LENGTH REQUIREMENT (TWO-40
+        // follow-up), not the watermark wording the company field already
+        // showed to get here - a placeholder identical to the field the buyer
+        // just clicked past told them nothing new. aria-label matches so a
+        // screen reader announces the same requirement on focus that a
+        // sighted buyer reads in the field.
         const query = $('<input type="text" class="two-company-dropdown__query" autocomplete="off" />')
-            .attr('placeholder', TwoCompanySearch.getEmptyFieldHintText())
-            .attr('aria-label', TwoCompanySearch.getEmptyFieldHintText())
+            .attr('placeholder', TwoCompanySearch.getQueryPlaceholderText())
+            .attr('aria-label', TwoCompanySearch.getQueryPlaceholderText())
             // Combobox semantics, so the `aria-activedescendant` the fallback
             // engine sets while arrowing through results means something. The
             // jQuery UI path sets its own equivalents on this same input.
@@ -1914,17 +1920,27 @@ class TwoCompanySearch {
                         return;
                     }
                     // Too short to search on - INCLUDING the empty query the
-                    // panel opens with. TWO-25326 §1 requires the "type N more
-                    // characters" hint to be on screen as soon as the control
-                    // opens, not only once the buyer has typed a character
-                    // (that is the Hyva failure recorded on the ticket), so
-                    // the empty case is not special-cased into a hint of its
-                    // own any more - it IS the too-short case, and says the
-                    // same thing the buyer will keep reading until they have
-                    // typed enough. Trimmed: whitespace is not something the
-                    // search can match on.
+                    // panel opens with. No search is made and no row is
+                    // rendered for this any more (TWO-40 follow-up): the
+                    // length requirement lives in the query field's own
+                    // placeholder (getQueryPlaceholderText()), which - per
+                    // TWO-25326 §1's original requirement that the hint be on
+                    // screen as soon as the control opens - is already
+                    // visible the moment the panel opens, since the field is
+                    // still empty then. Trimmed: whitespace is not something
+                    // the search can match on.
                     if (term.trim().length < MIN_SEARCH_LENGTH) {
-                        response([this.buildTooShortItem()]);
+                        // jQuery UI's own __response() never calls _suggest()
+                        // for empty content - only _close(), which HIDES the
+                        // menu without emptying it. Left alone, a buyer who
+                        // had real results on screen and then cleared back
+                        // below the threshold would carry those same <li>
+                        // elements forward, hidden but still in the DOM,
+                        // until the next non-empty response happens to
+                        // overwrite them. Cleared explicitly so "too short"
+                        // means an empty list, not a hidden stale one.
+                        this.clearAutocompleteMenu();
+                        response([]);
                         return;
                     }
                     const key = this.buildCacheKey(request.term);
@@ -2225,9 +2241,9 @@ class TwoCompanySearch {
     /**
      * Pseudo-result carrying the zero-result message through jQuery UI's
      * result-list plumbing. `two_unavailable` for the same reason
-     * buildTooShortItem() uses it: that flag means "not a company", so
-     * select / focus / _renderItem keep it out of the field and the keyboard
-     * skips it.
+     * buildSelectCountryItem() and buildUnavailableItem() use it: that flag
+     * means "not a company", so select / focus / _renderItem keep it out of
+     * the field and the keyboard skips it.
      *
      * @returns {Object}
      */
@@ -2571,48 +2587,54 @@ class TwoCompanySearch {
     }
 
     /**
-     * Message shown when the term is too short to search on (TWO-25288).
+     * @returns {string} wording for the query field's placeholder (TWO-40
+     *   follow-up).
      *
-     * Below the threshold PrestaShop used to show nothing at all - jQuery UI
-     * simply never opened its menu - which is indistinguishable from a search
-     * that ran and found nothing.
-     *
-     * A FIXED number, not a countdown of characters still needed. A count that
-     * changes on every keystroke reads as an error being repeatedly re-raised,
-     * and it has to be recomputed at every call site, which is exactly where a
-     * claimed threshold drifts from the enforced one. `%d` is interpolated from
-     * MIN_SEARCH_LENGTH so the number the buyer reads IS the number the guards
-     * apply.
+     * Below MIN_SEARCH_LENGTH, PrestaShop used to show a "Please enter %d or
+     * more characters" row inside the dropdown - a second on-screen hint,
+     * separate from (and, at first paint, sitting right underneath) the query
+     * field's own placeholder, which at the time read the same as the
+     * unclicked company field's watermark ("Enter company name to search").
+     * Folded into one: the query field's placeholder now carries the length
+     * requirement directly, and no separate row is rendered for it any more
+     * (see the `source`/fallback-engine call sites this replaced). `%d` is
+     * interpolated from MIN_SEARCH_LENGTH, same reasoning as
+     * `company_search_too_short` had - the number the buyer reads must be the
+     * number the guard enforces, not a second constant that can drift from it.
      *
      * @returns {string}
      */
-    getTooShortText() {
-        const template = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_too_short)
-            || 'Please enter %d or more characters';
+    static getQueryPlaceholderText() {
+        const template = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_query_placeholder)
+            || 'Enter %d or more characters';
         return String(template).replace('%d', String(MIN_SEARCH_LENGTH));
     }
 
     /**
-     * Pseudo-result carrying the too-short message through jQuery UI's
-     * result-list plumbing.
+     * Empty the jQuery UI menu's own `<ul>`, in place (TWO-40 follow-up).
      *
-     * Reuses `two_unavailable` for the same reason buildSelectCountryItem() does:
-     * that flag is what the select / focus / _renderItem handlers check to keep a
-     * message row out of the company field. It means "not a company".
+     * `response([])` alone leaves stale `<li>`s behind: jQuery UI's
+     * `__response()` only calls `_suggest()` (which rebuilds the menu) for
+     * NON-empty content - for empty content it calls `_close()` instead,
+     * which merely hides the menu without touching its children. Called from
+     * the `source` callback's too-short branch, where a previous non-empty
+     * response (real results) can otherwise be carried forward hidden rather
+     * than cleared.
      *
-     * `two_row_class` overrides only the row's own class so this row is
-     * distinguishable in the DOM from a genuine failure - the disabled/keyboard
-     * behaviour is shared and must stay shared.
-     *
-     * @returns {Object}
+     * @returns {void}
      */
-    buildTooShortItem() {
-        return {
-            label: this.getTooShortText(),
-            value: '',
-            two_unavailable: true,
-            two_row_class: 'two-autocomplete-too-short'
-        };
+    clearAutocompleteMenu() {
+        if (!this._queryField || !this._queryField.length || !this._queryField.hasClass('ui-autocomplete-input')) {
+            return;
+        }
+        try {
+            const widget = this._queryField.autocomplete('instance');
+            if (widget && widget.menu && widget.menu.element && widget.menu.element.empty) {
+                widget.menu.element.empty();
+            }
+        } catch (e) {
+            // Widget not ready/already torn down; nothing to clear.
+        }
     }
 
     /**
@@ -2897,17 +2919,16 @@ class TwoCompanySearch {
                 debounce.id = null;
                 return;
             }
-            // Rendered SYNCHRONOUSLY, outside the debounce, and this is the
-            // point of it: openDropdown() reaches this path by dispatching an
-            // `input` event, so a too-short state deferred by 300ms leaves the
-            // panel blank for 300ms every time it opens. §1 wants the hint on
-            // screen as the control opens. There is no request to debounce in
-            // this branch anyway - the whole reason it exists is that no
-            // search will be made.
+            // Handled SYNCHRONOUSLY, outside the debounce: there is no
+            // request to debounce here anyway, since the whole reason this
+            // branch exists is that no search will be made. No row is
+            // rendered for it any more (TWO-40 follow-up) - the length
+            // requirement lives in the query field's placeholder instead, see
+            // getQueryPlaceholderText().
             if (term.trim().length < MIN_SEARCH_LENGTH) {
                 debounce.id = null;
                 setLoadingState(false);
-                renderRows([messageRow(this.buildTooShortItem())]);
+                renderRows([]);
                 return;
             }
             debounce.id = setTimeout(() => {

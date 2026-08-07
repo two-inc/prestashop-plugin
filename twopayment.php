@@ -3626,13 +3626,18 @@ class Twopayment extends PaymentModule
             // swapped for the search wording above, never over a placeholder a
             // theme supplied; see syncCompanyFieldPlaceholder().
             'company_manual_placeholder' => $this->l('Enter your company name'),
-            // `%d` is deliberately left UNRESOLVED here. The browser JS holds the
-            // one threshold constant and interpolates it, so the number this
-            // sentence claims cannot drift from the number the search enforces.
-            // Spelling a number out here would create a second source of truth
-            // in every translation catalogue. Same shape as
-            // `end_of_month_plus_days` above.
-            'company_search_too_short' => $this->l('Please enter %d or more characters'),
+            // Query field placeholder once the buyer has clicked into the
+            // search panel (TWO-40 follow-up). Folds the separate "Please
+            // enter %d or more characters" dropdown-row message this key used
+            // to hold into the placeholder itself, so the length requirement
+            // is not duplicated on screen alongside a placeholder that used to
+            // just repeat the unclicked field's own watermark wording. `%d` is
+            // deliberately left UNRESOLVED here for the same reason as
+            // `end_of_month_plus_days` above: the browser JS holds the one
+            // threshold constant and interpolates it, so the number this
+            // sentence claims cannot drift from the number the search
+            // enforces.
+            'company_search_query_placeholder' => $this->l('Enter %d or more characters'),
             // The manual-entry CHIP (TWO-25288, reworked by TWO-25326, reworked
             // again TWO-40) and the reverse link out of the manual-entry mode
             // it switches to. TWO-40 replaced the plain-link wording "My
