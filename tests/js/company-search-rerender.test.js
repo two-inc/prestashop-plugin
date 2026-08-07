@@ -123,9 +123,9 @@ describe('the real jQuery UI widget is what gets bound', () => {
         expect(searchInput().autocomplete('instance')).toBeTruthy();
         // 0 is deliberate (TWO-25288). jQuery UI does not invoke `source` for a
         // term shorter than `minLength`, so a threshold here would swallow
-        // sub-threshold keystrokes and the too-short hint could never render. The
-        // threshold lives in the `source` guard instead - see the hint tests
-        // below, which pin that no request escapes it.
+        // sub-threshold keystrokes before `source` ever runs. The threshold
+        // lives in the `source` guard instead - see the hint tests below,
+        // which pin that no request escapes it.
         expect(searchInput().autocomplete('option', 'minLength')).toBe(0);
         expect(searchInput().autocomplete('option', 'delay')).toBe(300);
     });
@@ -274,9 +274,9 @@ describe('the company-search hints (TWO-25288)', () => {
      */
     function search(term) {
         // The panel has to be open before there is a query field to search on
-        // (TWO-25326 §1). Opening it renders the too-short hint for the empty
-        // query it opens with and makes no request, so the ajax counts below
-        // still measure only what `term` caused.
+        // (TWO-25326 §1). Opening it renders no row for the empty query it
+        // opens with (TWO-40 follow-up) and makes no request, so the ajax
+        // counts below still measure only what `term` caused.
         openPanel();
         const field = searchInput();
         // Bootstrapped-guard: without the widget bound, every hint assertion
