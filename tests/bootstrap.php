@@ -137,6 +137,21 @@ namespace {
          */
         public static array $cartDeliveryOptionListThrows = [];
         public static array $moduleCurrencies = [];
+        /**
+         * `module_country` rows, as PrestaShop's Payment Restrictions screen
+         * writes them: [['id_module' => int, 'id_shop' => int, 'id_country' =>
+         * int], ...]. Read by the Db::getValue() stub, so a spec restricts the
+         * module to a country subset the same way a merchant does.
+         *
+         * NULL (the default) is NOT "the table is empty" - it means no spec has
+         * expressed an opinion, so every country resolves as enabled. That is the
+         * PrestaShop install default: PaymentModule::install() populates a row per
+         * active country. An empty ARRAY is the genuinely-empty table, which core
+         * treats as "no country enabled".
+         *
+         * @var array<int,array<string,int>>|null
+         */
+        public static ?array $moduleCountries = null;
         public static array $productCategories = [];
         public static array $images = [];
         /**
@@ -154,6 +169,32 @@ namespace {
         public static array $taxRuleRates = [];
         public static array $dbExecuteSResponses = [];
         public static array $dbLastExecuteS = [];
+        /** @var string[] Every SQL string passed to Db::getValue() */
+        public static array $dbLastGetValue = [];
+        /**
+         * Substring which, when present in a Db::getValue() query, makes the
+         * stub RAISE instead of answering. Core's Db throws
+         * PrestaShopDatabaseException on a failed query, and a gate's behaviour
+         * on an unanswerable lookup is a real branch worth pinning (TWO-25387).
+         *
+         * @var string|null
+         */
+        public static ?string $dbGetValueThrowsOn = null;
+        /**
+         * Substring which, when present in a Db::getValue() query, makes the stub
+         * answer `false` AND report a driver errno - WITHOUT throwing. This is
+         * how a failed query behaves on the module's declared PrestaShop floor
+         * (1.7.6.0: DbPDO::_query() is a bare link->query(), and DbMySQLi's is
+         * unwrapped too), so "false" there means BOTH "no such row" and "the
+         * query failed". Any gate that reads `false` as a verdict without
+         * consulting getNumberError() is wrong on the floor version, and the
+         * throwing fixture above cannot show it (TWO-25387).
+         *
+         * @var string|null
+         */
+        public static ?string $dbGetValueSilentErrorOn = null;
+        /** @var int Driver errno the stub reports for the last query */
+        public static int $dbErrno = 0;
         public static array $orderCarriers = [];
         /** @var array<int,array{id_order_state:string,name:string}> Override for OrderState::getOrderStates() */
         public static array $orderStates = [];
@@ -259,11 +300,16 @@ namespace {
                     ['id_currency' => 978], // EUR
                 ],
             ];
+            self::$moduleCountries = null;
             self::$productCategories = [];
             self::$images = [];
             self::$taxRuleRates = [];
             self::$dbExecuteSResponses = [];
             self::$dbLastExecuteS = [];
+            self::$dbLastGetValue = [];
+            self::$dbGetValueThrowsOn = null;
+            self::$dbGetValueSilentErrorOn = null;
+            self::$dbErrno = 0;
             self::$products = [];
             self::$specificPrices = [];
             self::$stock = [];
@@ -280,6 +326,7 @@ namespace {
             self::$nextId = 90000;
 
             $context = Context::getContext();
+            $context->shop = new Shop();
             $context->cookie = new Cookie();
             $context->link = new Link();
             $context->controller = new \stdClass();
@@ -466,6 +513,11 @@ namespace {
         // deprecates - and a deprecation notice on every suite run is noise the
         // next real one hides in.
         public $country;
+        // Core has one on every request. Declared for the same reason as
+        // $country above: the module scopes its module_country lookup to the
+        // current shop (TWO-25387), and a dynamic property would raise a PHP
+        // 8.2 deprecation on every suite run.
+        public $shop;
 
         private static ?self $instance = null;
 
@@ -473,6 +525,7 @@ namespace {
         {
             if (self::$instance === null) {
                 self::$instance = new self();
+                self::$instance->shop = new Shop();
                 self::$instance->cookie = new Cookie();
                 self::$instance->link = new Link();
                 self::$instance->controller = new \stdClass();
@@ -1683,6 +1736,9 @@ namespace {
     {
         public const CONTEXT_ALL = 1;
 
+        /** Core's per-shop id; 1 is the default single-shop install. */
+        public int $id = 1;
+
         public static function isFeatureActive(): bool
         {
             return false;
@@ -1726,6 +1782,31 @@ namespace {
         public function getValue($sql)
         {
             $sql = (string) $sql;
+            StubStore::$dbLastGetValue[] = $sql;
+            // Core's Db::getValue() delegates to getRow(), which appends its OWN
+            // ' LIMIT 1' - its docblock documents the argument as "the select
+            // query (without LIMIT 1)". A caller that supplies one produces
+            // `LIMIT 1 LIMIT 1` and a real MariaDB syntax error. The stub used
+            // to accept it silently, so that bug could only be caught by the
+            // Playwright e2e job against a live shop; it shipped once
+            // (TWO-25387) and cost a full CI round. Reproduce the fatal here.
+            if (preg_match('/\bLIMIT\s+\d+\s*(?:,\s*\d+\s*)?;?\s*$/i', $sql)) {
+                throw new PrestaShopDatabaseException(
+                    'Db::getValue() appends its own LIMIT 1 - the query must not carry one: ' . $sql
+                );
+            }
+            StubStore::$dbErrno = 0;
+            if (StubStore::$dbGetValueThrowsOn !== null
+                && strpos($sql, StubStore::$dbGetValueThrowsOn) !== false
+            ) {
+                throw new PrestaShopDatabaseException('stubbed query failure');
+            }
+            if (StubStore::$dbGetValueSilentErrorOn !== null
+                && strpos($sql, StubStore::$dbGetValueSilentErrorOn) !== false
+            ) {
+                StubStore::$dbErrno = 1064;
+                return false;
+            }
             if (preg_match("/GET_LOCK\\('([^']+)'/", $sql, $m)) {
                 if (!empty(StubStore::$dbLocks[$m[1]])) {
                     return '0'; // held by a simulated concurrent request
@@ -1755,6 +1836,27 @@ namespace {
             if (preg_match("/FROM information_schema\.TRIGGERS.*TRIGGER_NAME = '([^']+)'/s", $sql, $m)) {
                 return isset(StubStore::$dbTriggers[$m[1]]) ? '1' : '0';
             }
+            // Native per-module payment restrictions (TWO-25387). Core returns the
+            // matched id_country, or false when no row matches.
+            if (preg_match(
+                '/SELECT `id_country` FROM `' . _DB_PREFIX_ . 'module_country`'
+                . ' WHERE `id_module` = (\d+) AND `id_country` = (\d+) AND `id_shop` = (\d+)/',
+                $sql,
+                $m
+            )) {
+                if (StubStore::$moduleCountries === null) {
+                    return $m[2]; // unrestricted - see StubStore::$moduleCountries
+                }
+                foreach (StubStore::$moduleCountries as $row) {
+                    if ((int) ($row['id_module'] ?? 0) === (int) $m[1]
+                        && (int) ($row['id_country'] ?? 0) === (int) $m[2]
+                        && (int) ($row['id_shop'] ?? 0) === (int) $m[3]
+                    ) {
+                        return $m[2];
+                    }
+                }
+                return false;
+            }
             return false;
         }
 
@@ -1766,6 +1868,17 @@ namespace {
                 return is_array($next) ? $next : [];
             }
             return [];
+        }
+
+        /** Core's driver errno for the LAST query; 0 when it succeeded. */
+        public function getNumberError(): int
+        {
+            return StubStore::$dbErrno;
+        }
+
+        public function getMsgError($query = false): string
+        {
+            return StubStore::$dbErrno === 0 ? '' : 'stubbed driver error ' . StubStore::$dbErrno;
         }
 
         public function insert($table, $data): bool
