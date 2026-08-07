@@ -384,6 +384,18 @@ namespace {
         {
             return StubStore::$moduleInstances[(string) $name] ?? null;
         }
+
+        /**
+         * Core's uninstall lifecycle is not otherwise exercised by this
+         * suite - a real uninstall happens against a real PrestaShop core,
+         * never this stub. A no-op true lets Twopayment::uninstall()'s OWN
+         * gating logic (TWO-25386 #5, the "clear settings on deactivation"
+         * toggle) be exercised end-to-end without a real core underneath it.
+         */
+        public function uninstall()
+        {
+            return true;
+        }
     }
     }
 
