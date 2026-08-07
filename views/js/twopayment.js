@@ -157,10 +157,15 @@
             window.TwoCheckoutManager_Instance = checkoutManager;
 
             // Sole trader flow (TWO-24755) - separate presentation module.
-            // Always constructed; whether the toggle actually renders is
-            // decided per billing country by the server-side registry
-            // answer via soleTraderAvailability (TWO-25166 removed the
-            // merchant opt-in toggle that used to gate this too).
+            // Always constructed; availability is still decided per billing
+            // country by the server-side registry answer via
+            // soleTraderAvailability (TWO-25166 removed the merchant opt-in
+            // toggle that used to gate this too). TWO-40 removed the
+            // Business / Sole trader chip UI this module used to render - the
+            // enrolment entry point now lives inside TwoCompanySearch's
+            // dropdown, which reads this instance's availability cache and
+            // calls startEnrollment() directly. This instance still owns all
+            // enrolment mechanics (token minting, the signup popup, autofill).
             if (
                 typeof TwoSoleTrader !== 'undefined' &&
                 !window.TwoSoleTrader_Instance
@@ -170,19 +175,15 @@
                     orderIntentUrl: twopayment.order_intent_url,
                     ajaxToken: twopayment.ajax_token,
                     // TWO-25326 bug 9, round 3: the cart's billing country, which
-                    // is what the toggle's availability is actually about. The
-                    // payment step renders no country select, so without this the
-                    // module fell back to `shop_country` - the visitor/shop
-                    // country, not the country the order will be billed to - and
-                    // re-resolved availability for the wrong one. Already in the
-                    // payload for the company search (TwoCompanySearch reads the
-                    // same key); this just stops a second consumer guessing.
+                    // is what availability is actually about. The payment step
+                    // renders no country select, so without this the module fell
+                    // back to `shop_country` - the visitor/shop country, not the
+                    // country the order will be billed to - and re-resolved
+                    // availability for the wrong one. Already in the payload for
+                    // the company search (TwoCompanySearch reads the same key);
+                    // this just stops a second consumer guessing.
                     billingCountry: twopayment.billing_country,
-                    shopCountry: twopayment.shop_country,
-                    i18n: {
-                        registered_business: twopayment.i18n && twopayment.i18n.sole_trader_registered_business,
-                        sole_trader: twopayment.i18n && twopayment.i18n.sole_trader_label
-                    }
+                    shopCountry: twopayment.shop_country
                 });
             }
 

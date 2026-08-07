@@ -2970,8 +2970,12 @@ describe('the custom fallback used when jQuery UI is absent', () => {
             // it is reachable without scrolling past up to 50 results (§2).
             expect(notListed()).toHaveLength(1);
             expect(notListed().text()).toBe(search.getManualEntryText());
-            expect(panel().children().last().is('.two-company-not-listed')).toBe(true);
+            // No longer necessarily the LAST child (TWO-40 appends the
+            // sole-trader entry row after it), but still directly after the
+            // results host, outside the scroll container, so it is reachable
+            // without scrolling past up to 50 results (§2).
             expect(notListed().prev().is('.two-company-dropdown__results')).toBe(true);
+            expect(notListed().next().is('.two-company-sole-trader-entry')).toBe(true);
         });
 
         // DELETED (TWO-25326 §2): `it survives the loading render`, `it is

@@ -865,6 +865,35 @@
 }
 
 /*
+ * Sole-trader enrolment entry point (TWO-40). Same shape as
+ * .two-company-not-listed above - a sibling row below the results, not a
+ * chip and not gated behind an upfront choice. Its own border-top rather
+ * than relying on .two-company-not-listed's: either row can be hidden
+ * independently (no match for this country, or a company already
+ * confirmed), so each needs to be able to draw its own separator from the
+ * results above it.
+ */
+.two-company-sole-trader-entry {
+    display: block;
+    width: 100%;
+    margin-top: 8px;
+    padding: 6px 0 0;
+    border: none;
+    border-top: 1px solid #e0e0e0;
+    background: none;
+    font: inherit;
+    text-align: start;
+    color: #3043d1;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.two-company-sole-trader-entry:focus {
+    outline: 2px solid #1976d2;
+    outline-offset: -2px;
+}
+
+/*
  * Payment terms chip selector (TWO-24752). Replaces the previous slider.
  * Structure/behaviour mirrors the Magento (Hyva) and WooCommerce chip
  * selectors; the palette keeps PrestaShop's existing slate accent
@@ -1620,37 +1649,13 @@
     display: none !important;
 }
 
-/* Sole trader Business / Sole trader toggle (TWO-24755) */
-.two-sole-trader {
-    margin: 0 0 12px;
-}
-
-.two-sole-trader__toggle {
-    display: inline-flex;
-    border: 1px solid #d0d5dd;
-    border-radius: 6px;
-    overflow: hidden;
-}
-
-.two-sole-trader__mode {
-    padding: 6px 14px;
-    font-size: 13px;
-    line-height: 1.4;
-    cursor: pointer;
-    background: #fff;
-    color: #344054;
-    user-select: none;
-}
-
-.two-sole-trader__mode + .two-sole-trader__mode {
-    border-left: 1px solid #d0d5dd;
-}
-
-.two-sole-trader__mode--selected {
-    background: #1a1a1a;
-    color: #fff;
-}
-
+/*
+ * Sole trader enrolment messaging (TWO-24755). TWO-40 removed the upfront
+ * Business / Sole trader toggle this container used to render - see
+ * .two-company-sole-trader-entry above for the entry point it was replaced
+ * by. This container is empty of visible content (and therefore takes no
+ * space) until enrolment actually starts.
+ */
 .two-sole-trader__prompt {
     display: inline-block;
     margin-top: 8px;

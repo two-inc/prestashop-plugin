@@ -1,32 +1,36 @@
 /**
- * TWO-25326 bug 9, chip-level half. Doug live-tested the shipped render-loop fix
- * and the "Registered business" / "Sole trader" chips still render, disappear
- * and reappear.
+ * TWO-25326 bug 9, availability-cache half. TWO-40 removed the "Registered
+ * business" / "Sole trader" chips this test used to watch flicker across a
+ * payment-fragment replacement - there is no chip UI left to flicker. What
+ * survives, and what this file now covers, is the underlying availability
+ * cache TwoCompanySearch.js's "I'm a sole trader" row reads via
+ * isAvailableForCurrentCountry(): it must settle correctly across the same
+ * container replacements and request storms that used to make the chips
+ * disappear and reappear.
  *
- * WHY THE EXISTING TEST DID NOT CATCH IT
+ * WHY THE EXISTING TEST DID NOT CATCH THE ORIGINAL BUG
  * checkout-manager-render-loop.test.js covers TwoCheckoutManager's tile-level
  * mount/unmount guard - that handleDynamicContentChange() must not re-attach
  * document-level payment listeners on every debounced MutationObserver firing.
- * That fix was real, and it is not the chips: the chips are rendered by a
- * DIFFERENT module (TwoSoleTrader) with a render/observe cycle entirely of its
+ * That fix was real, and it is not this: the availability cache is owned by a
+ * DIFFERENT module (TwoSoleTrader) with a refresh/observe cycle entirely of its
  * own, which that test never loads.
  *
  * TWO ROOT CAUSES, both in TwoSoleTrader:
  *
- *  1. "Settled" was recorded as a COUNTRY (`renderedForCountry`), not as a
- *     rendered container. PrestaShop replaces the payment fragment - and with it
+ *  1. "Settled" was recorded as a COUNTRY (`renderedForCountry`), not as an
+ *     adopted container. PrestaShop replaces the payment fragment - and with it
  *     the whole `.two-sole-trader` container - repeatedly while the step
- *     settles. The replacement arrives with no chips in it and none of the
- *     inline display state render()/hide() set, and the observer's callback then
- *     read the country as unchanged and returned early. The chips were gone from
- *     a container the module believed it had already rendered into.
+ *     settles. The replacement arrives with no answer adopted into it, and the
+ *     observer's callback then read the country as unchanged and returned
+ *     early. The cache was answering for a container that no longer existed.
  *
  *  2. There was no in-flight guard on the availability request. The observer
  *     watches the whole body subtree while nothing is cached yet, so every
- *     mutation started ANOTHER `fetch`. Beyond the request storm, that made the
- *     toggle's visibility a race between those responses: the endpoint is
+ *     mutation started ANOTHER `fetch`. Beyond the request storm, that made
+ *     the cached answer a race between those responses: the endpoint is
  *     fail-soft to "not available", so one failure among a dozen duplicates
- *     called hide() while its siblings called render().
+ *     could overwrite an answer another had just applied.
  */
 
 'use strict';
@@ -37,11 +41,6 @@ let TwoSoleTrader;
 let fetchCalls;
 let answer;
 
-/** The chips currently built into the live container, as text. */
-function chipTexts() {
-    return Array.from(document.querySelectorAll('.two-sole-trader__mode')).map((chip) => chip.textContent);
-}
-
 function container() {
     return document.querySelector('.two-sole-trader');
 }
@@ -49,7 +48,7 @@ function container() {
 /**
  * Replace the `.two-sole-trader` container with a fresh copy of the template's
  * markup, exactly as a payment-fragment re-render does: same selector, new node,
- * no chips, no inline state.
+ * no answer adopted, no inline state.
  *
  * @returns {HTMLElement} the new container
  */
@@ -57,8 +56,7 @@ function replaceContainer() {
     const old = container();
     const fresh = document.createElement('div');
     fresh.className = 'two-sole-trader';
-    fresh.innerHTML = '<div class="two-sole-trader__toggle"></div>'
-        + '<a href="#" class="two-sole-trader__prompt" style="display: none;"></a>'
+    fresh.innerHTML = '<a href="#" class="two-sole-trader__prompt" style="display: none;"></a>'
         + '<span class="two-sole-trader__status" style="display: none;"></span>'
         + '<span class="two-sole-trader__error" style="display: none;"></span>';
     old.parentNode.replaceChild(fresh, old);
@@ -88,8 +86,7 @@ function build() {
     return new TwoSoleTrader({
         orderIntentUrl: 'https://shop.example.test/module/twopayment/orderintent',
         ajaxToken: 'test-token',
-        shopCountry: 'NO',
-        i18n: { registered_business: 'Registered business', sole_trader: 'Sole trader' }
+        shopCountry: 'NO'
     });
 }
 
@@ -121,58 +118,51 @@ afterEach(() => {
     delete global.fetch;
 });
 
-describe('the chips survive a payment-fragment replacement', () => {
-    test('a replaced container gets the chips rebuilt', async () => {
+describe('the availability cache survives a payment-fragment replacement', () => {
+    test('a replaced container gets its availability re-adopted', async () => {
         const instance = build();
         await settle();
-        expect(chipTexts()).toEqual(['Registered business', 'Sole trader']);
-        expect(container().style.display).toBe('block');
+        expect(instance.isAvailableForCurrentCountry()).toBe(true);
 
         // PrestaShop re-renders the payment step. Same country, brand new node.
         replaceContainer();
-        expect(chipTexts()).toEqual([]);
 
         await settle();
 
-        // Before the fix this stayed empty: the country was unchanged, so the
-        // settled-check returned early and nothing ever rendered into the new
-        // node - the chips simply stopped existing until some unrelated later
-        // trigger happened to rebuild them.
-        expect(chipTexts()).toEqual(['Registered business', 'Sole trader']);
-        expect(container().style.display).toBe('block');
+        // Before the fix this stayed stuck on the previous container's answer:
+        // the country was unchanged, so the settled-check returned early and
+        // the new node's own answer was never adopted.
+        expect(instance.isAvailableForCurrentCountry()).toBe(true);
         instance.stopObserving();
     });
 
-    test('a replaced container is re-hidden when the country is not eligible', async () => {
+    test('a replaced container is re-adopted as unavailable when the country is not eligible', async () => {
         answer.available = false;
         const instance = build();
         await settle();
-        expect(container().style.display).toBe('none');
+        expect(instance.isAvailableForCurrentCountry()).toBe(false);
 
-        // The template ships `display: none`, so build the replacement VISIBLE -
-        // otherwise the assertion below passes on the markup's own default and
-        // proves nothing about the module.
-        replaceContainer().style.display = 'block';
+        replaceContainer();
         await settle();
 
-        expect(container().style.display).toBe('none');
+        expect(instance.isAvailableForCurrentCountry()).toBe(false);
         instance.stopObserving();
     });
 
-    test('the settled container is not re-rendered once it is correct', async () => {
+    test('the settled container is not re-resolved once it is correct', async () => {
         const instance = build();
         await settle();
-        const built = document.querySelector('.two-sole-trader__toggle');
-        const chipsBefore = chipTexts();
+        const settledContainer = container();
+        const requestsBefore = fetchCalls.length;
 
         // A mutation somewhere else on the page (the intent message rendering,
-        // a spinner) must not rebuild anything.
+        // a spinner) must not trigger another resolution.
         const noise = document.createElement('div');
         document.body.appendChild(noise);
         await settle();
 
-        expect(document.querySelector('.two-sole-trader__toggle')).toBe(built);
-        expect(chipTexts()).toEqual(chipsBefore);
+        expect(container()).toBe(settledContainer);
+        expect(fetchCalls.length).toBe(requestsBefore);
         instance.stopObserving();
     });
 });
@@ -203,17 +193,17 @@ describe('the availability request is made once, not once per mutation', () => {
         answer.reject = true;
         const instance = build();
         await settle();
-        expect(container().style.display).toBe('none');
+        expect(instance.isAvailableForCurrentCountry()).toBe(false);
         const afterFailure = fetchCalls.length;
 
         // Caching a transport blip as "not available" would make one dropped
-        // request hide the toggle for the rest of the page's life.
+        // request answer "not available" for the rest of the page's life.
         answer.reject = false;
         replaceContainer();
         await settle();
 
         expect(fetchCalls.length).toBeGreaterThan(afterFailure);
-        expect(chipTexts()).toEqual(['Registered business', 'Sole trader']);
+        expect(instance.isAvailableForCurrentCountry()).toBe(true);
         instance.stopObserving();
     });
 

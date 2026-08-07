@@ -411,3 +411,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_e1f3e840de378499e19505d283e4601d'] 
 $_MODULE['<{twopayment}prestashop>twopayment_128ce19a81ca82c86adfed35ed88578a'] = 'El límite se aplica a la totalidad de la cuota: el porcentaje y la cuota fija juntos, no solo el porcentaje. Déjalo vacío para no aplicar ningún límite.';
 $_MODULE['<{twopayment}prestashop>twopayment_822f646e52655f26a80e2b6d0c79f41c'] = 'No se permite un límite de 0. Si no quieres cobrar nada en un plazo, establece el porcentaje y la cuota fija de ese plazo en 0.';
 $_MODULE['<{twopayment}prestashop>twopayment_d132286ce060a9349df55de2808b4d5f'] = 'No se han encontrado coincidencias';
+$_MODULE['<{twopayment}prestashop>twopayment_65b14afa2d7fd0251f35716cd679d7ed'] = 'Soy autónomo';

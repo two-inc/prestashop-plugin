@@ -87,8 +87,6 @@ $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_eca5a3449475f365c129
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_f23b2c9fe4875f2c3dbc61a4bd02705b'] = 'Two-kjøperportalen';
 $_MODULE['<{twopayment}prestashop>form_92fbf0e5d97b8afd7e73126b52bdc4bb'] = 'Velg en fil';
 $_MODULE['<{twopayment}prestashop>form_f2a6c498fb90ee345d997f888fce3b18'] = 'Slett';
-$_MODULE['<{twopayment}prestashop>paymentinfo_17f58ab6df9d5cfde18be7cb60b37ce4'] = 'Registrert virksomhet';
-$_MODULE['<{twopayment}prestashop>paymentinfo_8fba17b1e1abfeb9ccc08c9248824add'] = 'Enkeltpersonforetak';
 $_MODULE['<{twopayment}prestashop>paymentinfo_1c76cbfe21c6f44c1d1e59d54f3e4420'] = 'Bedrift';
 $_MODULE['<{twopayment}prestashop>paymentinfo_1ffcb4e0a351d5e143bec6362c0feaf8'] = 'Betalingsfristen er slutten av inneværende måned pluss valgt antall dager, regnet fra ordren er oppfylt';
 $_MODULE['<{twopayment}prestashop>paymentinfo_26615a6d6e63f2904432b8b425ee6e93'] = 'Sjekker tilgjengelighet ...';
@@ -139,7 +137,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_144b4dc20a476a4588ff5f481283cfc6'] 
 $_MODULE['<{twopayment}prestashop>twopayment_1451451832b090e38c24860ea609e5a8'] = 'Firmaet må verifiseres';
 $_MODULE['<{twopayment}prestashop>twopayment_16ca4b14c683275e516bbb4def8a837f'] = 'Støtte for standard betalingsvilkår og vilkår med slutten av måneden (EOM)';
 $_MODULE['<{twopayment}prestashop>twopayment_1710ee7af07f5640bdb52b05df988209'] = 'Handlekurven din ble endret under verifiseringen av betalingen. Gå gjennom handlekurven og prøv igjen.';
-$_MODULE['<{twopayment}prestashop>twopayment_17f58ab6df9d5cfde18be7cb60b37ce4'] = 'Registrert virksomhet';
 $_MODULE['<{twopayment}prestashop>twopayment_1924a6cb5a7ce6a33e93620792fea964'] = 'Du må velge minst ett betalingsvilkår.';
 $_MODULE['<{twopayment}prestashop>twopayment_19d3894f53ce79c3f836f26cf8a3be3b'] = 'inaktiv';
 $_MODULE['<{twopayment}prestashop>twopayment_1bee0d8aaede29ac319901e96850adee'] = 'Staging';
@@ -313,7 +310,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_8bc50504c201a3c29db85208d8ce68af'] 
 $_MODULE['<{twopayment}prestashop>twopayment_8c597b2f3bc899e1e04f301844c44482'] = 'Fakturaen er ikke klar ennå fordi ordren fortsatt er under oppfyllelse. Prøv igjen senere.';
 $_MODULE['<{twopayment}prestashop>twopayment_8dd557fb0a33b5d844cdf7b87e84f59a'] = 'Denne betalingsmåten er ikke tilgjengelig for valutaen du har valgt.';
 $_MODULE['<{twopayment}prestashop>twopayment_8faa7616b66ec7990abd90e6eb970b03'] = 'Dokumentasjon:';
-$_MODULE['<{twopayment}prestashop>twopayment_8fba17b1e1abfeb9ccc08c9248824add'] = 'Enkeltpersonforetak';
 $_MODULE['<{twopayment}prestashop>twopayment_90732912a0dcac1e45f02ba8122d80bf'] = 'Type betalingsvilkår';
 $_MODULE['<{twopayment}prestashop>twopayment_9091655deaca780040e501e02a1805b2'] = '(etter vekt)';
 $_MODULE['<{twopayment}prestashop>twopayment_9397d7f54ed01d00e59b0e49f0900586'] = 'Vent et øyeblikk mens vi verifiserer firmaopplysningene dine.';
@@ -460,3 +456,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_6d818b8b22700d2a99440ee017b0a4e8'] 
 $_MODULE['<{twopayment}prestashop>twopayment_2541a3eb94a103e88a8090ac10b1276b'] = 'Two er ikke tilgjengelig for denne bestillingen fra %s (%s)';
 $_MODULE['<{twopayment}prestashop>twopayment_1ec613a214555191e9ebf229eed7ecf4'] = 'Denne bestillingen fra %s vil sannsynligvis bli godkjent av Two';
 $_MODULE['<{twopayment}prestashop>twopayment_25aae1c9462dc158b23f4ae8a621faae'] = 'Two er ikke tilgjengelig for denne bestillingen fra %s';
+$_MODULE['<{twopayment}prestashop>twopayment_65b14afa2d7fd0251f35716cd679d7ed'] = 'Jeg er et enkeltpersonforetak';

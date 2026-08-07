@@ -40,11 +40,13 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
 
         // B2B checkout: the company field is always present (the buyer
         // types or searches their company). There is no account-type
-        // selector here - sole traders enrol through the payment-step
-        // Business / Sole trader toggle (TWO-24755), which autofills this
-        // field from their Two registration once enrolled; matches the
-        // Magento and WooCommerce plugins (the third-account_type-option
-        // approach previously here has been dropped, see TWO-24755).
+        // selector here - sole traders enrol from an entry point folded
+        // into the company search control itself (TWO-40; formerly a
+        // separate payment-step Business / Sole trader toggle, TWO-24755),
+        // which autofills this field from their Two registration once
+        // enrolled; matches the Magento and WooCommerce plugins (the
+        // third-account_type-option approach previously here has been
+        // dropped, see TWO-24755).
         //
         // The placeholder is the empty-field hint (TWO-25288). Its wording was
         // replaced rather than joined by a second hint: there is exactly one
