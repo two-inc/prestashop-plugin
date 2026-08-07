@@ -41,6 +41,11 @@ class TwoSoleTrader {
             // (TWO-25326 bug 9, round 3 adversarial review). See billingCountry().
             billingCountry: '',
             shopCountry: '',
+            // Translated fallback for showStatus() when an enrolled buyer's
+            // registration carries no displayable company name or number.
+            // The only i18n this module needs since TWO-40 removed the chip
+            // labels - see applyBuyer().
+            statusLabel: '',
             ...config
         };
         // Whether an enrolment (signup popup + autofill) is currently under
@@ -481,8 +486,19 @@ class TwoSoleTrader {
      * re-entering via startEnrollment() resumes rather than re-mints. Called
      * when the buyer goes back to ordinary company search (opening the
      * dropdown again) or when the billing country stops being eligible.
+     *
+     * A NO-OP once enrolling is already false (adversarial review finding,
+     * TWO-40). TwoCompanySearch.openDropdown() calls this UNCONDITIONALLY on
+     * every open, including long after a SUCCESSFUL enrolment - and without
+     * this guard, hidePrompt() would hide the confirmation status
+     * showStatus() left on screen every single time the buyer so much as
+     * reopens company search afterward. `enrolling` flips false on success
+     * (see applyBuyer()) precisely so this stays a no-op past that point.
      */
     cancelEnrollment() {
+        if (!this.enrolling) {
+            return;
+        }
         this.enrolling = false;
         this.hidePrompt();
     }
@@ -630,8 +646,12 @@ class TwoSoleTrader {
                     // number of their own. The persisted `company` field above
                     // still carries it (server semantics depend on it, per the
                     // comment above); only this on-screen status must not.
-                    self.showStatus(window.TwoCompanyNumber.forDisplay(companyLabel) || 'Sole trader');
+                    self.showStatus(window.TwoCompanyNumber.forDisplay(companyLabel) || self.config.statusLabel || 'Sole trader');
                     self.hidePrompt();
+                    // Enrolment is DONE, not merely inactive (adversarial review
+                    // finding, TWO-40) - reopening company search later must not
+                    // hide this status. See cancelEnrollment()'s no-op guard.
+                    self.enrolling = false;
                     self.stopObserving();
                     document.dispatchEvent(new CustomEvent('two:sole-trader-ready'));
                 } else {
@@ -727,13 +747,24 @@ class TwoSoleTrader {
         this.messageListenerBound = true;
         const self = this;
         window.addEventListener('message', function (event) {
-            if (!self.enrolling || !self.tokens) {
+            // Deliberately NOT gated on `self.enrolling` (adversarial review
+            // finding, TWO-40). The buyer can click back into company search
+            // - which calls cancelEnrollment() unconditionally on every open,
+            // see TwoCompanySearch.openDropdown() - while the hosted signup
+            // popup is still open in another window; that is "still glancing
+            // around", not "abandoned the flow", and must not make a
+            // genuine completion silently vanish. `tokens` plus the
+            // origin check below already scope this to a real, current
+            // signup popup this instance opened - `enrolling` added nothing
+            // but a way to drop a legitimate message.
+            if (!self.tokens) {
                 return;
             }
             if (event.origin !== new URL(self.tokens.signup_url).origin) {
                 return;
             }
             if (event.data === 'ACCEPTED') {
+                self.enrolling = true;
                 self.getCurrentBuyer();
             }
         });

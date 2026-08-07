@@ -327,7 +327,12 @@ describe('§2 "My company is not on the list"', () => {
         // ...and it is the scroll container it sits outside of, not some other
         // box - otherwise this assertion would pass on a broken layout.
         expect(window.getComputedStyle(results.get(0)).overflowY).toBe('auto');
-        expect(notListed.parent().is(panelParts().panel)).toBe(true);
+        // Nested one level deeper than before the three-chip mode selector
+        // (TWO-40 design revision): a sibling of the other two chips inside
+        // `.two-company-mode-chips`, which is itself the panel's own direct
+        // child - still outside the results container either way.
+        expect(notListed.parent().is(panelParts().modeChips)).toBe(true);
+        expect(panelParts().modeChips.parent().is(panelParts().panel)).toBe(true);
     });
 
     test('is NOT reachable by the cursor keys', () => {
@@ -357,19 +362,27 @@ describe('§2 "My company is not on the list"', () => {
         expect(menu.attr('tabindex')).toBe('-1');
     });
 
-    test('is the next tab stop after the query field', () => {
+    test('is one of the tab stops immediately after the query field', () => {
         makeInstance();
         openPanel();
         const { panel, query, notListed } = panelParts();
 
-        // Structural proof, per the jsdom caveat at the top of this file: both
-        // are focusable, neither is removed from the tab order, and the button
-        // is the very next such element after the query field in document
-        // order within the panel.
+        // Structural proof, per the jsdom caveat at the top of this file:
+        // both are focusable and neither is removed from the tab order.
+        // TWO-40's three-chip mode selector means "not on the list" (now
+        // "Enter Manually") is no longer necessarily the VERY next stop -
+        // "Sole Trader" and "Registered Company" are siblings in the same
+        // row and may sit before it in document order - but it is still
+        // among the small, fixed set of stops immediately following the
+        // query field, well before the results list's own (non-tabbable)
+        // items.
         const focusable = panel.find('input, button, a[href], [tabindex]')
             .filter(function () { return $(this).attr('tabindex') !== '-1'; })
             .get();
-        expect(focusable.indexOf(notListed.get(0))).toBe(focusable.indexOf(query.get(0)) + 1);
+        const queryIndex = focusable.indexOf(query.get(0));
+        const notListedIndex = focusable.indexOf(notListed.get(0));
+        expect(notListedIndex).toBeGreaterThan(queryIndex);
+        expect(notListedIndex - queryIndex).toBeLessThanOrEqual(3);
     });
 
     test('is visually distinguishable from inert result rows', () => {
@@ -380,8 +393,10 @@ describe('§2 "My company is not on the list"', () => {
 
         const buttonColour = window.getComputedStyle(panelParts().notListed.get(0)).color;
         const rowColour = window.getComputedStyle(panelParts().results.find('li').get(0)).color;
-        // Link-blue, matching WC's #search_company_btn.
-        expect(buttonColour).toBe('rgb(48, 67, 209)');
+        // TWO-40 design revision: a pill-style chip (dark-grey text, its own
+        // border) rather than a link-blue text link - still visually
+        // distinct from an inert result row either way.
+        expect(buttonColour).toBe('rgb(52, 64, 84)');
         expect(buttonColour).not.toBe(rowColour);
     });
 
@@ -429,16 +444,21 @@ describe('§2 "My company is not on the list"', () => {
         expect(shown(panelParts().notListed)).toBe(true);
     });
 
-    test('is hidden once a company IS selected', () => {
+    test('stays visible even once a company IS selected (TWO-40 design revision)', () => {
+        // Was gated on !hasConfirmedSelection() before TWO-40's three-chip
+        // mode selector - Doug's spec for that selector is explicit that
+        // "Enter Manually" and "Registered Company" are ALWAYS in the set,
+        // with no confirmed-selection exception. A buyer who picked the
+        // wrong company must be able to switch straight to manual entry
+        // without first clearing the selection some other way.
         makeInstance();
         openPanel();
         typeQuery('exa');
         settleSearch();
         pickResult(0);
 
-        // Reopen: a company is captured now, so the affordance is gone.
         openPanel();
-        expect(shown(panelParts().notListed)).toBe(false);
+        expect(shown(panelParts().notListed)).toBe(true);
     });
 });
 
