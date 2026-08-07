@@ -16,6 +16,12 @@ if (!defined('_PS_VERSION_')) {
 }
 
 return array(
+    // Customer-facing product name (admin captions, checkout copy, order
+    // notes). Mirrors the WooCommerce plugin's and Magento plugin's
+    // product_name brand key (TWO-25386). An overlay replaces this with its
+    // own brand name; getTwoBrandConfig() resolves it wherever the plugin
+    // used to hardcode the literal word "Two".
+    'product_name' => 'Two',
     // Increments the buyer surcharge line may be rounded to, offered in the
     // admin Rounding Step select. Mirrors the WooCommerce brand
     // available_rounding_steps and Magento's RoundingStep source model; an

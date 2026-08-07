@@ -37,7 +37,7 @@
     <div class="two-sole-trader"
          data-two-country="{$sole_trader_country|escape:'html':'UTF-8'}"
          data-two-available="{$sole_trader_answer|escape:'html':'UTF-8'}">
-        <a href="#" class="two-sole-trader__prompt" style="display: none;">{l s='Click here to log in or sign up as a sole trader with Two.' mod='twopayment'}</a>
+        <a href="#" class="two-sole-trader__prompt" style="display: none;">{l s='Click here to log in or sign up as a sole trader with %s.' mod='twopayment' sprintf=[$two_product_name]}</a>
         <span class="two-sole-trader__status" style="display: none;"></span>
         <span class="two-sole-trader__error" style="display: none;">{l s='Something went wrong setting up sole trader checkout. Please try again.' mod='twopayment'}</span>
     </div>
@@ -45,7 +45,7 @@
     {* Header Section *}
     <div class="two-header">
         <div class="two-logo-container">
-            <img src="{$module_dir|escape:'html':'UTF-8'}views/img/TwoLogo.svg" alt="Two" class="two-logo" />
+            <img src="{$module_dir|escape:'html':'UTF-8'}views/img/TwoLogo.svg" alt="{$two_product_name|escape:'html':'UTF-8'}" class="two-logo" />
             <p class="two-tagline">
                 {l s='Business payments made simple' mod='twopayment'}
                 {* "What is Two" explainer link (TWO-25386 #2, ported from
@@ -55,10 +55,10 @@
                 <span class="two-info-tooltip">
                     <span class="two-info-icon">?</span>
                     <span class="two-tooltip-content">
-                        <span class="two-tooltip-title">{l s='What is Two?' mod='twopayment'}</span>
-                        <span class="two-tooltip-text">{l s='Two provides instant trade credit for B2B purchases. Buy now, pay later with no interest or fees.' mod='twopayment'}</span>
+                        <span class="two-tooltip-title">{l s='What is %s?' mod='twopayment' sprintf=[$two_product_name]}</span>
+                        <span class="two-tooltip-text">{l s='%s provides instant trade credit for B2B purchases. Buy now, pay later with no interest or fees.' mod='twopayment' sprintf=[$two_product_name]}</span>
                         <a href="https://www.two.inc/resources/buyers" target="_blank" rel="noopener noreferrer" class="two-tooltip-link">
-                            {l s='Learn more about Two' mod='twopayment'} →
+                            {l s='Learn more about %s' mod='twopayment' sprintf=[$two_product_name]} →
                         </a>
                     </span>
                 </span>

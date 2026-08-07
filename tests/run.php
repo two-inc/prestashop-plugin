@@ -5540,6 +5540,7 @@ require __DIR__ . '/AddressLookupGatingSpec.php';
 require __DIR__ . '/CompanySearchLocationConfigSpec.php';
 require __DIR__ . '/OrgNumberPreVerificationSpec.php';
 require __DIR__ . '/IntentApprovedNoticeSpec.php';
+require __DIR__ . '/BrandTokenSpec.php';
 require __DIR__ . '/UpgradeScriptVersionSpec.php';
 require __DIR__ . '/CompanySearchCountrySourcingSpec.php';
 require __DIR__ . '/SessionCompanyClearSpec.php';
@@ -5583,6 +5584,7 @@ $tests = [
     'CompanySearchLocationConfigSpec::runAll' => [CompanySearchLocationConfigSpec::class, 'runAll'],
     'OrgNumberPreVerificationSpec::runAll' => [OrgNumberPreVerificationSpec::class, 'runAll'],
     'IntentApprovedNoticeSpec::runAll' => [IntentApprovedNoticeSpec::class, 'runAll'],
+    'BrandTokenSpec::runAll' => [BrandTokenSpec::class, 'runAll'],
     'UpgradeScriptVersionSpec::runAll' => [UpgradeScriptVersionSpec::class, 'runAll'],
     'CompanySearchCountrySourcingSpec::runAll' => [CompanySearchCountrySourcingSpec::class, 'runAll'],
     'SessionCompanyClearSpec::runAll' => [SessionCompanyClearSpec::class, 'runAll'],

@@ -7,7 +7,7 @@
 <div class="tab-pane two-admin-tab" id="two-payment-info">
     <div class="two-tab-header">
         <div class="two-admin-header">
-            <h3 class="two-admin-title">{l s='Two Payment Details' mod='twopayment'}</h3>
+            <h3 class="two-admin-title">{l s='%s Payment Details' mod='twopayment' sprintf=[$two_product_name]}</h3>
         </div>
     </div>
     
@@ -23,7 +23,7 @@
             <div class="two-info-cards">
                 {if $twopaymentdata.two_order_id}
                 <div class="two-info-card">
-                    <span class="two-info-label">{l s='Two Order ID' mod='twopayment'}</span>
+                    <span class="two-info-label">{l s='%s Order ID' mod='twopayment' sprintf=[$two_product_name]}</span>
                     <span class="two-info-value two-order-id">{$twopaymentdata.two_order_id|escape:'html':'UTF-8'}</span>
                 </div>
                 {/if}
@@ -53,13 +53,13 @@
                 {/if}
                 {if $twopaymentdata.two_order_state}
                 <div class="two-info-card">
-                    <span class="two-info-label">{l s='Two State' mod='twopayment'}</span>
+                    <span class="two-info-label">{l s='%s State' mod='twopayment' sprintf=[$two_product_name]}</span>
                     <span class="two-info-value">{$twopaymentdata.two_order_state|escape:'html':'UTF-8'}</span>
                 </div>
                 {/if}
                 {if $twopaymentdata.two_order_status}
                 <div class="two-info-card">
-                    <span class="two-info-label">{l s='Two Status' mod='twopayment'}</span>
+                    <span class="two-info-label">{l s='%s Status' mod='twopayment' sprintf=[$two_product_name]}</span>
                     <span class="two-info-value">{$twopaymentdata.two_order_status|escape:'html':'UTF-8'}</span>
                 </div>
                 {/if}
@@ -119,7 +119,7 @@
             <div class="two-info-cards">
                 {if $twopaymentdata.two_order_id && $two_portal_url}
                 <div class="two-info-card">
-                    <span class="two-info-label">{l s='View in Two Portal' mod='twopayment'}</span>
+                    <span class="two-info-label">{l s='View in %s Portal' mod='twopayment' sprintf=[$two_product_name]}</span>
                     <span class="two-info-value"><a href="{$two_portal_url|escape:'html':'UTF-8'}/merchant/orders/{$twopaymentdata.two_order_id|escape:'url':'UTF-8'}" target="_blank" rel="noopener noreferrer">{l s='Open' mod='twopayment'}</a></span>
                 </div>
                 {/if}
@@ -138,12 +138,12 @@
                 {if !$two_invoice_actions_available}
                 <div class="two-info-card">
                     <span class="two-info-label">{l s='Invoice Links' mod='twopayment'}</span>
-                    <span class="two-info-value text-muted">{l s='Available after Two order fulfillment' mod='twopayment'}</span>
+                    <span class="two-info-value text-muted">{l s='Available after %s order fulfillment' mod='twopayment' sprintf=[$two_product_name]}</span>
                 </div>
                 {/if}
                 {if $two_portal_url}
                 <div class="two-info-card">
-                    <span class="two-info-label">{l s='Two Portal' mod='twopayment'}</span>
+                    <span class="two-info-label">{l s='%s Portal' mod='twopayment' sprintf=[$two_product_name]}</span>
                     <span class="two-info-value"><a href="{$two_portal_url|escape:'html':'UTF-8'}" target="_blank" rel="noopener noreferrer">{l s='Open' mod='twopayment'}</a></span>
                 </div>
                 {/if}

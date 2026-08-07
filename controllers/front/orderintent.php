@@ -473,7 +473,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
                 $this->sendJsonResponse(json_encode([
                     'success' => false,
                     'status' => 'no_company',
-                    'error' => $this->module->l('To pay with Two, go back to your billing address and enter your company name in the Company field.')
+                    'error' => sprintf($this->module->l('To pay with %s, go back to your billing address and enter your company name in the Company field.'), $this->module->getTwoBrandConfig('product_name'))
                 ]));
                 return;
             }
@@ -483,7 +483,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             $this->sendJsonResponse(json_encode([
                 'success' => false,
                 'status' => 'incomplete_company',
-                'error' => $this->module->l('To pay with Two, go back to your billing address and search for your company name. Select your company from the results to verify your business.')
+                'error' => sprintf($this->module->l('To pay with %s, go back to your billing address and search for your company name. Select your company from the results to verify your business.'), $this->module->getTwoBrandConfig('product_name'))
             ]));
             return;
         }
