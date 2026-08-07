@@ -3638,6 +3638,14 @@ class Twopayment extends PaymentModule
             // sentence claims cannot drift from the number the search
             // enforces.
             'company_search_query_placeholder' => $this->l('Enter %d or more characters'),
+            // The query field's accessible NAME, deliberately a different
+            // string from the placeholder above (adversarial review finding,
+            // TWO-40 follow-up round 2). `aria-label` is set once and never
+            // re-synced, so naming the field after the length-requirement hint
+            // left a screen reader still announcing "Enter N or more
+            // characters" as what the field IS long after the buyer has typed
+            // enough - see getQueryAriaLabelText() in TwoCompanySearch.js.
+            'company_search_query_label' => $this->l('Search for a company'),
             // The manual-entry CHIP (TWO-25288, reworked by TWO-25326, reworked
             // again TWO-40) and the reverse link out of the manual-entry mode
             // it switches to. TWO-40 replaced the plain-link wording "My

@@ -628,15 +628,25 @@ class TwoCompanySearch {
         panel = $('<div class="two-company-dropdown" hidden></div>');
 
         const searchRow = $('<div class="two-company-dropdown__search"></div>');
-        // Placeholder/aria-label carry the LENGTH REQUIREMENT (TWO-40
-        // follow-up), not the watermark wording the company field already
-        // showed to get here - a placeholder identical to the field the buyer
-        // just clicked past told them nothing new. aria-label matches so a
-        // screen reader announces the same requirement on focus that a
-        // sighted buyer reads in the field.
+        // `placeholder` carries the LENGTH REQUIREMENT (TWO-40 follow-up), not
+        // the watermark wording the company field already showed to get here
+        // - a placeholder identical to the field the buyer just clicked past
+        // told them nothing new.
+        //
+        // `aria-label` deliberately does NOT mirror the placeholder (adversarial
+        // review finding, round 2). `aria-label` is the field's accessible
+        // NAME - set once here and never re-synced - while `placeholder` is a
+        // transient hint that visually disappears the moment the field has a
+        // value. Naming the field after a hint that stops being true the
+        // instant the buyer has typed enough left a screen-reader user
+        // tabbing back into the field, after a full query or after picking a
+        // result, still hearing "Enter 3 or more characters" as what the
+        // field IS, which by then it no longer needs to say and does not
+        // describe. `aria-label` instead names the field's role, same
+        // pattern WCAG's "Label in Name" expects.
         const query = $('<input type="text" class="two-company-dropdown__query" autocomplete="off" />')
             .attr('placeholder', TwoCompanySearch.getQueryPlaceholderText())
-            .attr('aria-label', TwoCompanySearch.getQueryPlaceholderText())
+            .attr('aria-label', TwoCompanySearch.getQueryAriaLabelText())
             // Combobox semantics, so the `aria-activedescendant` the fallback
             // engine sets while arrowing through results means something. The
             // jQuery UI path sets its own equivalents on this same input.
@@ -878,7 +888,7 @@ class TwoCompanySearch {
             // input handler has had the keystroke - jQuery UI only
             // `preventDefault`s Enter when it has an active menu item, and the
             // fallback engine only when it has an active row. In every other
-            // state (the too-short hint, "No matches found", results painted
+            // state (too short to search, "No matches found", results painted
             // but nothing highlighted) Enter fell through to PrestaShop's
             // `<form>` and triggered implicit submission: the buyer types a
             // company name, presses Enter before the results land, and submits
@@ -1026,7 +1036,7 @@ class TwoCompanySearch {
      * That is exactly what happened, and it is why manual entry was
      * unreachable by mouse. Pressing the button moves focus off the query
      * field; the blur empties the results area (jQuery UI closes its menu on
-     * blur, and the too-short hint lives in that same container); the button
+     * blur, and results/messages live in that same container); the button
      * jumps up by the height of whatever was showing; mouseup lands on the
      * form behind the panel. Measured in real Chromium: results 30px -> 0px
      * between mousedown and mouseup, button top 658 -> 627, `click` retargeted
@@ -1985,10 +1995,11 @@ class TwoCompanySearch {
                 },
                 // Deliberately 0, and NOT MIN_SEARCH_LENGTH: jQuery UI never
                 // invokes `source` for a term shorter than `minLength`, so
-                // leaving the threshold here would make the too-short hint
-                // unreachable by construction - the widget would swallow those
-                // keystrokes silently, which is the behaviour TWO-25288 removes.
-                // The threshold has moved into the `source` guard above, which is
+                // leaving the threshold here would swallow those keystrokes
+                // silently before `source` ever runs - the widget would revert
+                // to the pre-TWO-25288 behaviour of doing nothing at all below
+                // the threshold. The threshold has moved into the `source`
+                // guard above, which is
                 // the ONLY gate on this path and reads MIN_SEARCH_LENGTH; no
                 // request can escape it, because `source` is where the request is
                 // made.
@@ -2123,9 +2134,9 @@ class TwoCompanySearch {
                         // merely refused on select. .text() (as jQuery UI's own
                         // renderer does) keeps markup out of the dropdown.
                         // `two_row_class` lets a message row be told apart in the
-                        // DOM (the too-short hint is not a failure, and neither
-                        // is "No matches found") while keeping the
-                        // disabled/keyboard-skip behaviour identical.
+                        // DOM ("no country chosen" and "unavailable" are not the
+                        // same cause, and neither is "No matches found") while
+                        // keeping the disabled/keyboard-skip behaviour identical.
                         return $('<li>')
                             .addClass('two-autocomplete-message '
                                 + (item.two_row_class || 'two-autocomplete-unavailable') + ' ui-state-disabled')
@@ -2598,9 +2609,10 @@ class TwoCompanySearch {
      * Folded into one: the query field's placeholder now carries the length
      * requirement directly, and no separate row is rendered for it any more
      * (see the `source`/fallback-engine call sites this replaced). `%d` is
-     * interpolated from MIN_SEARCH_LENGTH, same reasoning as
-     * `company_search_too_short` had - the number the buyer reads must be the
-     * number the guard enforces, not a second constant that can drift from it.
+     * interpolated from MIN_SEARCH_LENGTH, same reasoning as the removed
+     * `company_search_too_short` key had - the number the buyer reads must be
+     * the number the guard enforces, not a second constant that can drift
+     * from it.
      *
      * @returns {string}
      */
@@ -2608,6 +2620,17 @@ class TwoCompanySearch {
         const template = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_query_placeholder)
             || 'Enter %d or more characters';
         return String(template).replace('%d', String(MIN_SEARCH_LENGTH));
+    }
+
+    /**
+     * @returns {string} the query field's accessible NAME (adversarial review
+     *   finding, round 2) - static, describing the field's role, deliberately
+     *   NOT the same string as the placeholder. See the comment in
+     *   buildDropdown() where this is applied for why the two must differ.
+     */
+    static getQueryAriaLabelText() {
+        return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_query_label)
+            || 'Search for a company';
     }
 
     /**
@@ -2621,6 +2644,17 @@ class TwoCompanySearch {
      * response (real results) can otherwise be carried forward hidden rather
      * than cleared.
      *
+     * `widget._suggest([])` (adversarial review finding), not
+     * `widget.menu.element.empty()`. `_suggest()` is Autocomplete's own
+     * method - `menu.element` is a level BELOW that, an internal property of
+     * the Menu sub-widget Autocomplete happens to compose, which is not part
+     * of Autocomplete's own documented surface at all. `_suggest([])` does
+     * the identical `this.menu.element.empty()` internally (see jQuery UI's
+     * own source) before rendering zero items, so this gets the same result
+     * through the one-level-shallower call. `response([])` right after this
+     * still runs `_close()` and hides the (now-empty) menu, so there is no
+     * visible flash between the two calls.
+     *
      * @returns {void}
      */
     clearAutocompleteMenu() {
@@ -2629,8 +2663,8 @@ class TwoCompanySearch {
         }
         try {
             const widget = this._queryField.autocomplete('instance');
-            if (widget && widget.menu && widget.menu.element && widget.menu.element.empty) {
-                widget.menu.element.empty();
+            if (widget && typeof widget._suggest === 'function') {
+                widget._suggest([]);
             }
         } catch (e) {
             // Widget not ready/already torn down; nothing to clear.
@@ -3259,7 +3293,17 @@ class TwoCompanySearch {
      * @returns {string} uppercase ISO code, or '' when unresolvable
      */
     getCurrentCountry() {
-        const countryField = document.querySelector("select[name='id_country']");
+        // Both selectors (TWO-40 follow-up, adversarial review finding): this
+        // used to check `id_country` only, while TwoSoleTrader.js's
+        // billingCountry() and TwoOrderIntent.js's getCurrentAddressCountryISO()
+        // both already fell back to `select[name='country']` too. On a theme
+        // that renders the field under that name, this method fell straight
+        // through to `window.twopayment.billing_country` (a page-load-time
+        // value, never reassigned client-side) while TwoSoleTrader.js resolved
+        // the LIVE value off the real select - so the sole-trader chip and the
+        // company search could silently disagree on country on exactly the
+        // theme shape this ticket's fix targets.
+        const countryField = document.querySelector("select[name='id_country'], select[name='country']");
         if (countryField && countryField.selectedOptions.length > 0) {
             const selectedOption = countryField.selectedOptions[0];
 
@@ -3309,22 +3353,41 @@ class TwoCompanySearch {
     }
 
     /**
-     * Extract country code from country name text
+     * Extract country code from country name text.
+     *
+     * MIRRORED in TwoSoleTrader.js's `extractCountryFromOptionText()` - two
+     * independently-loaded modules with no common utility file between them,
+     * so this map is duplicated rather than shared. Keep the two in step by
+     * hand; there is no test or build step that would catch one drifting from
+     * the other.
+     *
+     * nl/no/sv entries added (adversarial review finding, TWO-40 follow-up
+     * round 2): this shop ships nl/no/sv translations, so a theme with no
+     * `data-iso*` attribute and no id in `window.twopayment.countries`,
+     * rendered in one of those locales, used to fall through this map
+     * silently - reaching only English/Spanish/French country names left the
+     * text-match strategy blind for three of the shop's own locales, exactly
+     * the failure mode this whole fallback chain exists to close.
      */
     extractCountryFromText(text) {
         const countryMap = {
             'united kingdom': 'GB', 'great britain': 'GB', 'uk': 'GB', 'england': 'GB',
+            'verenigd koninkrijk': 'GB', 'storbritannia': 'GB', 'storbritannien': 'GB',
             'spain': 'ES', 'españa': 'ES', 'espagne': 'ES',
-            'france': 'FR', 'francia': 'FR',
+            'spanje': 'ES', 'spania': 'ES', 'spanien': 'ES',
+            'france': 'FR', 'francia': 'FR', 'frankrijk': 'FR', 'frankrike': 'FR',
             'germany': 'DE', 'deutschland': 'DE', 'alemania': 'DE',
-            'italy': 'IT', 'italia': 'IT', 'italie': 'IT',
+            'duitsland': 'DE', 'tyskland': 'DE',
+            'italy': 'IT', 'italia': 'IT', 'italie': 'IT', 'italië': 'IT', 'italien': 'IT',
             'netherlands': 'NL', 'holland': 'NL', 'países bajos': 'NL',
+            'nederland': 'NL', 'nederländerna': 'NL',
             'belgium': 'BE', 'bélgica': 'BE', 'belgique': 'BE',
-            'united states': 'US', 'usa': 'US', 'estados unidos': 'US',
+            'belgië': 'BE', 'belgia': 'BE', 'belgien': 'BE',
+            'united states': 'US', 'usa': 'US', 'estados unidos': 'US', 'verenigde staten': 'US',
             'canada': 'CA', 'canadá': 'CA',
-            'australia': 'AU'
+            'australia': 'AU', 'australië': 'AU', 'australien': 'AU'
         };
-        
+
         const lowerText = text.toLowerCase().trim();
         return countryMap[lowerText] || null;
     }
