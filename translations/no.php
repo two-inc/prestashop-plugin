@@ -446,8 +446,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_8fba17b1e1abfeb9ccc08c9248824add'] 
 $_MODULE['<{twopayment}prestashop>twopayment_156b5d6812dcb5dcf1867a145cf5f1bf'] = 'Angi manuelt';
 $_MODULE['<{twopayment}prestashop>twopayment_040583ad2de8733ea4280fdf16dfef61'] = 'Registrert virksomhet';
 $_MODULE['<{twopayment}prestashop>twopayment_bd2b7238dd5be2875d527d62a880d043'] = 'Enkeltpersonforetak';
-$_MODULE['<{twopayment}prestashop>twopayment_adaed373af40f154859a1e470279527f'] = 'Leverandør-/nettstedsnavn';
-$_MODULE['<{twopayment}prestashop>twopayment_4e378a4617ae99ebad1374c430d83a96'] = 'Valgfritt. Angi dette hvis du kjører Two på flere nettsteder/leverandører, for å identifisere hvilken forespørslene kommer fra.';
 $_MODULE['<{twopayment}prestashop>twopayment_0f193cdd9a8a87ce1d829b1c1fecb7f9'] = 'Egendefinert betalingsfrist (dager)';
 $_MODULE['<{twopayment}prestashop>twopayment_e8910a5d4ad165a5989f6b672b4c8216'] = 'Valgfritt. Tilby en ekstra betalingsfrist (i dager) som ikke er dekket av forhåndsinnstillingene ovenfor. La stå tomt for å kun tilby betingelsene valgt ovenfor. Two må fortsatt tillate denne fristlengden for kontoen din - en ustøttet verdi ignoreres stille.';
 $_MODULE['<{twopayment}prestashop>twopayment_3ac5c697efd1c21abb77ab72a59fd256'] = 'Standard forhåndsvalgt betalingsfrist';
@@ -499,3 +497,5 @@ $_MODULE['<{twopayment}prestashop>twopayment_891235d1cd86cc1c2d1979a42beed2e1'] 
 $_MODULE['<{twopayment}prestashop>twopayment_3789cbd8ceb584069580a3ea14085851'] = 'Diagnostikkinnstillingene er oppdatert.';
 $_MODULE['<{twopayment}prestashop>twopayment_68496b4b801e25ab61ddfd84675fe52c'] = 'Slå på feilsøkingsmodus under Diagnostikk og kontakt Two-støtte med loggene';
 $_MODULE['<{twopayment}prestashop>twopayment_59ad2606b9dfb64aa42b2270950bbbbe'] = 'API-nøkkelen er ikke verifisert. Forespørsler i utsjekken kan feile til de generelle innstillingene er lagret med en gyldig nøkkel.';
+$_MODULE['<{twopayment}prestashop>twopayment_740ac829af0e2bbb2816a70b724c851d'] = 'Leverandørnavn (valgfritt)';
+$_MODULE['<{twopayment}prestashop>twopayment_b41ef96a0f570c44647792507627d3e9'] = 'Hvis denne butikken representerer ett av flere leverandørnettsteder som deler samme Two-selgerkonto, skriv inn et navn her for å identifisere dette spesifikke nettstedet/leverandøren på hver bestilling som sendes til Two - la stå tomt hvis du bare driver ett nettsted.';

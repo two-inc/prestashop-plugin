@@ -271,17 +271,11 @@ final class AddressLookupGatingSpec
         // word after the first starts with a capital, allowing for proper nouns
         // and acronyms the module genuinely uses.
         $allowed = array('Two', 'DNI', 'VAT', 'SSL', 'PrestaShop');
-        // KNOWN EXCEPTION, listed rather than papered over: "Disable SSL
-        // Verification (Corporate Networks Only)" predates this change and is
-        // Title Case. Fixing it means re-keying it in four translation
-        // catalogues, which is not this change's scope - it is noted here so
-        // the next person to touch these labels knows it is outstanding rather
-        // than deliberate.
-        $known_exceptions = array('PS_TWO_DISABLE_SSL_VERIFY');
+        // "Disable SSL Verification (Corporate Networks Only)" (Title Case,
+        // a known pre-existing exception) no longer renders on THIS form -
+        // TWO-25386 Part 1 relocated it to the Diagnostics panel - so there is
+        // nothing left to except here.
         foreach ($labels as $name => $label) {
-            if (in_array($name, $known_exceptions, true)) {
-                continue;
-            }
             $words = preg_split('/\s+/', trim($label));
             foreach (array_slice($words, 1) as $word) {
                 $bare = trim($word, '(),.:"\'');
