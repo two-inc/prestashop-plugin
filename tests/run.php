@@ -132,7 +132,7 @@ final class OrderBuilderSpec
         self::testGetTwoCheckoutCompanyDataUsesValidatedCookieFallback();
         self::testGetTwoCheckoutCompanyDataClearsStaleCookieOnCountryMismatch();
         self::testGetTwoCheckoutCompanyDataIgnoresStaleCookieWhenAddressCompanyChangesSameCountry();
-        self::testSaveGeneralFormUpdatesSslVerificationFlag();
+        self::testSaveDiagnosticsFormUpdatesSslVerificationFlag();
         self::testSaveOrderManagementFormUpdatesTaxSubtotalsFlag();
         self::testOrderManagementFormDoesNotExposeOrderIntentToggle();
         self::testHookActionAdminControllerSetMediaRegistersCssOnModuleConfigPage();
@@ -4547,27 +4547,24 @@ final class OrderBuilderSpec
         TinyAssert::same('ES', $data['country_iso']);
     }
 
-    private static function testSaveGeneralFormUpdatesSslVerificationFlag(): void
+    private static function testSaveDiagnosticsFormUpdatesSslVerificationFlag(): void
     {
-        // TWO-25386 Part 1 section regroup: Disable SSL Verification now
-        // renders under, and is saved by, the General panel (Section A)
-        // alongside the other connection-level controls (key, environment) -
-        // it moved out of the former "Advanced Settings"/"Other" panel.
+        // TWO-25386 Part 1 section regroup: Disable SSL Verification renders
+        // under, and is saved by, the Diagnostics panel (Section F) alongside
+        // the other debug-only controls - it moved out of the former
+        // "Advanced Settings"/"Other" panel (and never lived in General).
         self::reset();
         $module = new class extends TwopaymentTestHarness {
-            public function saveGeneralForTest(): void
+            public function saveDiagnosticsForTest(): void
             {
-                $this->saveTwoGeneralFormValues();
+                $this->saveTwoDiagnosticsFormValues();
             }
         };
 
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', 0);
         Tools::setTestValue('PS_TWO_DISABLE_SSL_VERIFY', 1);
-        Tools::setTestValue('PS_TWO_ENVIRONMENT', 'development');
-        Tools::setTestValue('PS_TWO_MERCHANT_SHORT_NAME', 'merchant');
-        Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', 'api-key');
 
-        $module->saveGeneralForTest();
+        $module->saveDiagnosticsForTest();
 
         TinyAssert::same(1, (int) Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
     }

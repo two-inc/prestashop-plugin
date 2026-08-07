@@ -1154,14 +1154,16 @@ class Twopayment extends PaymentModule
                     // Multi-site vendor/site name (TWO-25386, ported from
                     // woocommerce-plugin's `vendor_name` field). Free text, no
                     // validation - only meaningful for merchants running Two
-                    // across more than one site/vendor identity; empty is the
-                    // normal single-site state and is never sent to Two.
+                    // across more than one site/vendor identity. Sent verbatim
+                    // as `vendor_name` in the order-create/edit JSON payload to
+                    // Two's backend - never shown to buyers, not a header.
+                    // Empty is the normal single-site state and is never sent.
                     array(
                         'type' => 'text',
-                        'label' => $this->l('Vendor/site name'),
+                        'label' => $this->l('Vendor name (optional)'),
                         'name' => 'PS_TWO_VENDOR_NAME',
                         'required' => false,
-                        'desc' => $this->l('Optional. Set this if you run Two across multiple sites/vendors, to identify which one requests came from.'),
+                        'desc' => $this->l('If this store represents one of several vendor sites sharing the same Two merchant account, enter a name here to identify this specific site/vendor on each order sent to Two - leave blank if you only run a single site.'),
                     ),
                     array(
                         'type' => 'select',
@@ -1178,29 +1180,6 @@ class Twopayment extends PaymentModule
                             'id' => 'id_option',
                             'name' => 'name'
                         )
-                    ),
-                    // Disable SSL verification (TWO-25386 §A: relocated from
-                    // the former "Advanced Settings" panel, alongside the
-                    // other connection-level controls - key, environment).
-                    array(
-                        'type' => 'switch',
-                        'label' => $this->l('Disable SSL Verification (Corporate Networks Only)'),
-                        'name' => 'PS_TWO_DISABLE_SSL_VERIFY',
-                        'is_bool' => true,
-                        'desc' => $this->l('WARNING: Only enable this if you are behind a corporate proxy with custom SSL certificates. This disables SSL certificate verification and is a SECURITY RISK. NOT RECOMMENDED for production.'),
-                        'required' => true,
-                        'values' => array(
-                            array(
-                                'id' => 'PS_TWO_DISABLE_SSL_VERIFY_ON',
-                                'value' => 1,
-                                'label' => $this->l('Yes (Not Recommended)')
-                            ),
-                            array(
-                                'id' => 'PS_TWO_DISABLE_SSL_VERIFY_OFF',
-                                'value' => 0,
-                                'label' => $this->l('No (Secure)')
-                            ),
-                        ),
                     ),
                 ),
                 'submit' => array(
@@ -1262,7 +1241,6 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_MERCHANT_API_KEY'] = Tools::getValue('PS_TWO_MERCHANT_API_KEY', Configuration::get('PS_TWO_MERCHANT_API_KEY'));
         $fields_values['PS_TWO_VENDOR_NAME'] = Tools::getValue('PS_TWO_VENDOR_NAME', Configuration::get('PS_TWO_VENDOR_NAME'));
         $fields_values['PS_TWO_ENVIRONMENT'] = Tools::getValue('PS_TWO_ENVIRONMENT', Configuration::get('PS_TWO_ENVIRONMENT'));
-        $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
         return $fields_values;
     }
 
@@ -1329,7 +1307,6 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY')));
         Configuration::updateValue('PS_TWO_VENDOR_NAME', trim((string) Tools::getValue('PS_TWO_VENDOR_NAME')));
         Configuration::updateValue('PS_TWO_ENVIRONMENT', Tools::getValue('PS_TWO_ENVIRONMENT'));
-        Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
         // The verdict from the live check the validation above just made, now
         // that the key it describes is the stored one (TWO-25326). This is the
         // freshest that key will ever have had, so it becomes what the checkout
@@ -2455,6 +2432,29 @@ class Twopayment extends PaymentModule
                             ),
                         ),
                     ),
+                    // Disable SSL verification (relocated from the former
+                    // "Advanced Settings" panel, alongside the other
+                    // debug/diagnostic-only controls).
+                    array(
+                        'type' => 'switch',
+                        'label' => $this->l('Disable SSL Verification (Corporate Networks Only)'),
+                        'name' => 'PS_TWO_DISABLE_SSL_VERIFY',
+                        'is_bool' => true,
+                        'desc' => $this->l('WARNING: Only enable this if you are behind a corporate proxy with custom SSL certificates. This disables SSL certificate verification and is a SECURITY RISK. NOT RECOMMENDED for production.'),
+                        'required' => true,
+                        'values' => array(
+                            array(
+                                'id' => 'PS_TWO_DISABLE_SSL_VERIFY_ON',
+                                'value' => 1,
+                                'label' => $this->l('Yes (Not Recommended)')
+                            ),
+                            array(
+                                'id' => 'PS_TWO_DISABLE_SSL_VERIFY_OFF',
+                                'value' => 0,
+                                'label' => $this->l('No (Secure)')
+                            ),
+                        ),
+                    ),
                     // Skip confirm-order nonce/token check (TWO-25386 #4,
                     // ported from woocommerce-plugin's `skip_confirm_auth`).
                     // DEBUG ONLY - gates the CSRF-style token check
@@ -2805,14 +2805,11 @@ class Twopayment extends PaymentModule
         $this->output .= $this->displayConfirmation($this->l('Order management settings are updated.'));
     }
 
-    /**
-     * Validate the checkout sort order field (TWO-25386 #6): empty (no
-     * preference) or a plain integer, positive or negative.
-     */
     protected function getTwoDiagnosticsFormValues()
     {
         $fields_values = array();
         $fields_values['PS_TWO_DEBUG_MODE'] = Tools::getValue('PS_TWO_DEBUG_MODE', Configuration::get('PS_TWO_DEBUG_MODE'));
+        $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
         $fields_values['PS_TWO_SKIP_CONFIRM_NONCE_CHECK'] = Tools::getValue('PS_TWO_SKIP_CONFIRM_NONCE_CHECK', Configuration::get('PS_TWO_SKIP_CONFIRM_NONCE_CHECK'));
         $fields_values['PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION'] = Tools::getValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', $this->isTwoBooleanConfigEnabledByDefault('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION'));
         return $fields_values;
@@ -2820,12 +2817,13 @@ class Twopayment extends PaymentModule
 
     protected function validTwoDiagnosticsFormValues()
     {
-        // Nothing to validate: all three fields are booleans / an html link.
+        // Nothing to validate: all fields are booleans / an html link.
     }
 
     protected function saveTwoDiagnosticsFormValues()
     {
         Configuration::updateValue('PS_TWO_DEBUG_MODE', Tools::getValue('PS_TWO_DEBUG_MODE'));
+        Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
         Configuration::updateValue('PS_TWO_SKIP_CONFIRM_NONCE_CHECK', (int) Tools::getValue('PS_TWO_SKIP_CONFIRM_NONCE_CHECK', 0));
         Configuration::updateValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', (int) Tools::getValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', 1));
 

@@ -446,8 +446,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_8fba17b1e1abfeb9ccc08c9248824add'] 
 $_MODULE['<{twopayment}prestashop>twopayment_156b5d6812dcb5dcf1867a145cf5f1bf'] = 'Ange manuellt';
 $_MODULE['<{twopayment}prestashop>twopayment_040583ad2de8733ea4280fdf16dfef61'] = 'Registrerat företag';
 $_MODULE['<{twopayment}prestashop>twopayment_bd2b7238dd5be2875d527d62a880d043'] = 'Enskild firma';
-$_MODULE['<{twopayment}prestashop>twopayment_adaed373af40f154859a1e470279527f'] = 'Leverantörs-/webbplatsnamn';
-$_MODULE['<{twopayment}prestashop>twopayment_4e378a4617ae99ebad1374c430d83a96'] = 'Valfritt. Ange detta om du använder Two på flera webbplatser/leverantörer, för att identifiera vilken förfrågningarna kommer från.';
 $_MODULE['<{twopayment}prestashop>twopayment_0f193cdd9a8a87ce1d829b1c1fecb7f9'] = 'Anpassat betalningsvillkor (dagar)';
 $_MODULE['<{twopayment}prestashop>twopayment_e8910a5d4ad165a5989f6b672b4c8216'] = 'Valfritt. Erbjud ytterligare ett betalningsvillkor (i dagar) som inte täcks av förinställningarna ovan. Lämna tomt för att endast erbjuda de villkor som valts ovan. Two måste fortfarande tillåta denna villkorslängd för ditt konto - ett ej understött värde ignoreras tyst.';
 $_MODULE['<{twopayment}prestashop>twopayment_3ac5c697efd1c21abb77ab72a59fd256'] = 'Standardförvalt betalningsvillkor';
@@ -499,3 +497,5 @@ $_MODULE['<{twopayment}prestashop>twopayment_891235d1cd86cc1c2d1979a42beed2e1'] 
 $_MODULE['<{twopayment}prestashop>twopayment_3789cbd8ceb584069580a3ea14085851'] = 'Diagnostikinställningarna är uppdaterade.';
 $_MODULE['<{twopayment}prestashop>twopayment_68496b4b801e25ab61ddfd84675fe52c'] = 'Aktivera felsökningsläge under Diagnostik och kontakta Twos support med loggarna';
 $_MODULE['<{twopayment}prestashop>twopayment_59ad2606b9dfb64aa42b2270950bbbbe'] = 'API-nyckeln är inte verifierad. Förfrågningar från kassan kan misslyckas till dess att de allmänna inställningarna sparas med en giltig nyckel.';
+$_MODULE['<{twopayment}prestashop>twopayment_740ac829af0e2bbb2816a70b724c851d'] = 'Leverantörsnamn (valfritt)';
+$_MODULE['<{twopayment}prestashop>twopayment_b41ef96a0f570c44647792507627d3e9'] = 'Om den här butiken representerar en av flera leverantörswebbplatser som delar samma Two-handlarkonto, ange ett namn här för att identifiera just denna webbplats/leverantör på varje order som skickas till Two - lämna tomt om du bara driver en webbplats.';
