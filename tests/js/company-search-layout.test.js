@@ -445,10 +445,14 @@ describe('the manual-entry route stays reachable without scrolling (2.4, reshape
         expect(resultsStyle.overflowY).toBe('auto');
         expect(resultsStyle.maxHeight).toBe('240px');
 
-        // The button is a sibling of that box, painted below it, so it cannot
-        // be scrolled away from.
+        // The button sits outside that box, painted below it, so it cannot be
+        // scrolled away from - nested one level deeper since TWO-40's
+        // three-chip mode selector (a sibling of the other two chips inside
+        // `.two-company-mode-chips`, which is itself the panel's own direct
+        // child), but still outside the results container either way.
         expect(results.get(0).contains(notListed.get(0))).toBe(false);
-        expect(notListed.parent().is(panel)).toBe(true);
+        expect(notListed.parent().is(panelParts().modeChips)).toBe(true);
+        expect(panelParts().modeChips.parent().is(panel)).toBe(true);
         expect(getComputedStyle(notListed.get(0)).overflowY).not.toBe('auto');
     });
 });

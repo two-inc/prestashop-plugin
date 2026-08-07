@@ -593,7 +593,10 @@ function panelParts() {
         panel: $('.two-company-dropdown'),
         query: $('.two-company-dropdown__query'),
         results: $('.two-company-dropdown__results'),
+        // The three-chip mode selector (TWO-40 design revision).
+        modeChips: $('.two-company-mode-chips'),
         notListed: $('.two-company-not-listed'),
+        registered: $('.two-company-registered-entry'),
         // Sole-trader enrolment entry point (TWO-40).
         soleTrader: $('.two-company-sole-trader-entry')
     };

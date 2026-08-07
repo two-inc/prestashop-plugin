@@ -3633,12 +3633,14 @@ class Twopayment extends PaymentModule
             // in every translation catalogue. Same shape as
             // `end_of_month_plus_days` above.
             'company_search_too_short' => $this->l('Please enter %d or more characters'),
-            // The manual-entry affordance and its reverse link (TWO-25288,
-            // reworked by TWO-25326). A real button below the results list,
-            // and the way back out of the manual entry it switches to.
-            // Identical wording on every plugin surface - do not paraphrase
-            // either of these when translating.
-            'company_search_manual_entry' => $this->l('My company is not on the list'),
+            // The manual-entry CHIP (TWO-25288, reworked by TWO-25326, reworked
+            // again TWO-40) and the reverse link out of the manual-entry mode
+            // it switches to. TWO-40 replaced the plain-link wording "My
+            // company is not on the list" with a short chip label -
+            // deliberately DIVERGES from the other three plugins' current
+            // wording for this affordance, pending their own rollout of the
+            // same three-chip pattern.
+            'company_search_manual_entry' => $this->l('Enter Manually'),
             'company_search_back_to_search' => $this->l('Search for company'),
             // Zero-result wording (TWO-25326 §1). EXACT across all four
             // plugins - "No results found" is a different string and the
@@ -3648,13 +3650,24 @@ class Twopayment extends PaymentModule
             // trigger that opens the search panel (TWO-25326 §1). Its visible
             // value is the confirmed company name itself.
             'company_search_edit' => $this->l('Search for a different company'),
-            // Sole-trader enrolment entry point, folded into the company
-            // search control itself (TWO-40): there is no upfront
-            // business/sole-trader chip choice any more. This row sits
-            // alongside "My company is not on the list" in the dropdown and
-            // is only shown when the registry says the billing country
-            // supports sole traders (TwoSoleTrader::isAvailable).
-            'company_search_sole_trader_entry' => $this->l("I'm a sole trader"),
+            // The three-chip mode selector (TWO-40 design revision). Shown
+            // immediately on interacting with the search control, no
+            // upfront choice OUTSIDE the control any more, no waiting for
+            // characters to be typed. "Registered Company" is the default;
+            // "Enter Manually" (above) is always visible alongside it;
+            // "Sole Trader" is added to the set only when the registry says
+            // the currently-selected billing country supports sole traders
+            // (TwoSoleTrader::isAvailable), and removed again live if the
+            // buyer changes the country selector to one that does not.
+            'company_search_registered_entry' => $this->l('Registered Company'),
+            'company_search_sole_trader_entry' => $this->l('Sole Trader'),
+            // Fallback status label shown once enrolment succeeds but the
+            // registration carries no displayable company name or number
+            // (TwoCompanyNumber.forDisplay() answers '' for both a blank name
+            // and a suppressed `TWO:`-prefixed number). Distinct from the row
+            // above: that one is a first-person prompt to START enrolling,
+            // this is a noun phrase describing what the buyer already IS.
+            'sole_trader_status_label' => $this->l('Sole trader'),
         );
 
         // Checkout media render is a sanctioned refresh point for the backend

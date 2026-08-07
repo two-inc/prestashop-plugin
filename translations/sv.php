@@ -337,7 +337,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_a002c8066738bc8f9d9394abdcef7ea8'] 
 $_MODULE['<{twopayment}prestashop>twopayment_a029c838076e00c19453faa87a214790'] = 'Verifierad - klar för leverans → Two: Verifierad - klar för leverans';
 $_MODULE['<{twopayment}prestashop>twopayment_a18b98ac865c5099d00d15aa7955772e'] = 'Kunde inte hitta den efterfrågade ordern, kontakta butiksägaren.';
 $_MODULE['<{twopayment}prestashop>twopayment_a27e23cbfc35671fad9f198723675df3'] = 'Ingen fakturaadress är angiven för denna order';
-$_MODULE['<{twopayment}prestashop>twopayment_a305be9a7fd5f6541e913ce81317976d'] = 'Mitt företag finns inte i listan';
 $_MODULE['<{twopayment}prestashop>twopayment_a39746aced7f2b7acba1b2f715654995'] = 'Tillgängliga betalningsvillkor';
 $_MODULE['<{twopayment}prestashop>twopayment_a49e05d4125474b3a6cfc0caacc5a48f'] = 'Kunde inte läsa in den skapade ordern. Kontakta supporten.';
 $_MODULE['<{twopayment}prestashop>twopayment_a4f2f007d16e05710980a4141c331168'] = 'SSL-verifiering';
@@ -456,4 +455,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_6d818b8b22700d2a99440ee017b0a4e8'] 
 $_MODULE['<{twopayment}prestashop>twopayment_2541a3eb94a103e88a8090ac10b1276b'] = 'Two är inte tillgängligt för den här beställningen från %s (%s)';
 $_MODULE['<{twopayment}prestashop>twopayment_1ec613a214555191e9ebf229eed7ecf4'] = 'Den här beställningen från %s kommer sannolikt att godkännas av Two';
 $_MODULE['<{twopayment}prestashop>twopayment_25aae1c9462dc158b23f4ae8a621faae'] = 'Two är inte tillgängligt för den här beställningen från %s';
-$_MODULE['<{twopayment}prestashop>twopayment_65b14afa2d7fd0251f35716cd679d7ed'] = 'Jag är en enskild firma';
+$_MODULE['<{twopayment}prestashop>twopayment_8fba17b1e1abfeb9ccc08c9248824add'] = 'Enskild firma';
+$_MODULE['<{twopayment}prestashop>twopayment_156b5d6812dcb5dcf1867a145cf5f1bf'] = 'Ange manuellt';
+$_MODULE['<{twopayment}prestashop>twopayment_040583ad2de8733ea4280fdf16dfef61'] = 'Registrerat företag';
+$_MODULE['<{twopayment}prestashop>twopayment_bd2b7238dd5be2875d527d62a880d043'] = 'Enskild firma';

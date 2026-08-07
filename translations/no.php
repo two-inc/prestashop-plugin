@@ -337,7 +337,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_a002c8066738bc8f9d9394abdcef7ea8'] 
 $_MODULE['<{twopayment}prestashop>twopayment_a029c838076e00c19453faa87a214790'] = 'Verifisert – klar for oppfyllelse → Two: Verifisert – klar for oppfyllelse';
 $_MODULE['<{twopayment}prestashop>twopayment_a18b98ac865c5099d00d15aa7955772e'] = 'Finner ikke den forespurte ordren, kontakt butikkeieren.';
 $_MODULE['<{twopayment}prestashop>twopayment_a27e23cbfc35671fad9f198723675df3'] = 'Ingen fakturaadresse er angitt for denne ordren';
-$_MODULE['<{twopayment}prestashop>twopayment_a305be9a7fd5f6541e913ce81317976d'] = 'Firmaet mitt står ikke på listen';
 $_MODULE['<{twopayment}prestashop>twopayment_a39746aced7f2b7acba1b2f715654995'] = 'Tilgjengelige betalingsvilkår';
 $_MODULE['<{twopayment}prestashop>twopayment_a49e05d4125474b3a6cfc0caacc5a48f'] = 'Kunne ikke laste den opprettede ordren. Kontakt kundestøtte.';
 $_MODULE['<{twopayment}prestashop>twopayment_a4f2f007d16e05710980a4141c331168'] = 'SSL-verifisering';
@@ -456,4 +455,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_6d818b8b22700d2a99440ee017b0a4e8'] 
 $_MODULE['<{twopayment}prestashop>twopayment_2541a3eb94a103e88a8090ac10b1276b'] = 'Two er ikke tilgjengelig for denne bestillingen fra %s (%s)';
 $_MODULE['<{twopayment}prestashop>twopayment_1ec613a214555191e9ebf229eed7ecf4'] = 'Denne bestillingen fra %s vil sannsynligvis bli godkjent av Two';
 $_MODULE['<{twopayment}prestashop>twopayment_25aae1c9462dc158b23f4ae8a621faae'] = 'Two er ikke tilgjengelig for denne bestillingen fra %s';
-$_MODULE['<{twopayment}prestashop>twopayment_65b14afa2d7fd0251f35716cd679d7ed'] = 'Jeg er et enkeltpersonforetak';
+$_MODULE['<{twopayment}prestashop>twopayment_8fba17b1e1abfeb9ccc08c9248824add'] = 'Enkeltpersonforetak';
+$_MODULE['<{twopayment}prestashop>twopayment_156b5d6812dcb5dcf1867a145cf5f1bf'] = 'Angi manuelt';
+$_MODULE['<{twopayment}prestashop>twopayment_040583ad2de8733ea4280fdf16dfef61'] = 'Registrert virksomhet';
+$_MODULE['<{twopayment}prestashop>twopayment_bd2b7238dd5be2875d527d62a880d043'] = 'Enkeltpersonforetak';

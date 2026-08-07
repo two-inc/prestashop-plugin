@@ -183,7 +183,10 @@
                     // the company search (TwoCompanySearch reads the same key);
                     // this just stops a second consumer guessing.
                     billingCountry: twopayment.billing_country,
-                    shopCountry: twopayment.shop_country
+                    shopCountry: twopayment.shop_country,
+                    // Fallback status label only - the chip labels this used
+                    // to carry are gone along with the chips (TWO-40).
+                    statusLabel: twopayment.i18n && twopayment.i18n.sole_trader_status_label
                 });
             }
 
