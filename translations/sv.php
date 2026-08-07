@@ -119,7 +119,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_0e59e4dd7c8466ff99df71f1e49cbfa1'] 
 $_MODULE['<{twopayment}prestashop>twopayment_0eb2ab65c0156ef3da0c1d96523c55a7'] = 'Företagsnamn är obligatoriskt för företagskonton.';
 $_MODULE['<{twopayment}prestashop>twopayment_0f5d80604ec05f089baca925102a473b'] = 'Avgiftsskillnad mot standard betalningsvillkor';
 $_MODULE['<{twopayment}prestashop>twopayment_104d9898c04874d0fbac36e125fa1369'] = 'Rabatt';
-$_MODULE['<{twopayment}prestashop>twopayment_11379daccc4d43380822ecb7bc5bc1b7'] = 'Ange minst %d tecken';
 $_MODULE['<{twopayment}prestashop>twopayment_11503989a3f470d727d38a6054896940'] = 'Kunde inte läsa in valutan för detta betalningsförsök.';
 $_MODULE['<{twopayment}prestashop>twopayment_11c0c6552a36b6fff05e235aedff525e'] = 'Företaget kan ha nått sin kreditgräns eller inte klarat Twos kreditkontroll';
 $_MODULE['<{twopayment}prestashop>twopayment_1243daf593fa297e07ab03bf06d925af'] = 'Söker...';
@@ -248,6 +247,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_6adf97f83acf6453d4a6a4b1070f3754'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6b6975991479cc2c6781be75b9a7e5ed'] = 'När köparen behöver slutföra orderverifiering hos Two innan betalningen kan börja behandlas. Standard: Förberedelse pågår';
 $_MODULE['<{twopayment}prestashop>twopayment_6be9e6c7a97ef6916df30b37dcd5985a'] = 'Two måste godkänna köparen innan ordern kan läggas';
 $_MODULE['<{twopayment}prestashop>twopayment_6c04b086d2a5eed8ae6b2beca8a4221f'] = 'Betalningsleverantören är tillfälligt otillgänglig. Försök igen senare.';
+$_MODULE['<{twopayment}prestashop>twopayment_6c63214370d0302a32c914ebf6f30819'] = 'Ange %d eller fler tecken';
 $_MODULE['<{twopayment}prestashop>twopayment_6cae7c7478f2d404dc69e4e355172166'] = 'Momsbasis för minsta ordervärde';
 $_MODULE['<{twopayment}prestashop>twopayment_6d5cc1a38d6228cd43fb864b6c4d4b75'] = 'Kunde inte bekräfta svaret från betalningsleverantören. Försök genomföra kassan igen.';
 $_MODULE['<{twopayment}prestashop>twopayment_6f3455d187a23443796efdcbe044096b'] = 'Ingen moms';
@@ -349,6 +349,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_b5f41647401f7d6a7aa511cbd9aa5ecf'] 
 $_MODULE['<{twopayment}prestashop>twopayment_b78a3223503896721cca1303f776159b'] = 'Titel';
 $_MODULE['<{twopayment}prestashop>twopayment_b7e84545a616108ac9b4496b15a60966'] = 'Kunden måste ange sitt officiellt registrerade företagsnamn';
 $_MODULE['<{twopayment}prestashop>twopayment_b81f4425b7556f2c97a12cb81ed44824'] = 'PO-nummer';
+$_MODULE['<{twopayment}prestashop>twopayment_b96a0cd4ff2da7a7998fd293c6e2be24'] = 'Sök efter ett företag';
 $_MODULE['<{twopayment}prestashop>twopayment_b9f5c797ebbf55adccdd8539a65a0241'] = 'Avaktiverad';
 $_MODULE['<{twopayment}prestashop>twopayment_ba087184ee6e25ec7a1b51b8897679e3'] = 'Minsta ordervärde';
 $_MODULE['<{twopayment}prestashop>twopayment_ba565358a4357911e173c8af649b569e'] = 'exklusive';

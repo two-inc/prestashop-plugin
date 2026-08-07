@@ -403,8 +403,9 @@ $_MODULE['<{twopayment}prestashop>twopayment_7de934009c752b9208f359e4db589fa0'] 
 $_MODULE['<{twopayment}prestashop>twopayment_7aa0ef00af5612e50834b5bf969457e6'] = 'La búsqueda de empresas no está disponible temporalmente. Por favor, inténtalo de nuevo.';
 $_MODULE['<{twopayment}prestashop>twopayment_6fd95deaadec67e72965ee1c5a8d81cf'] = 'Introduce el nombre de la empresa para buscar';
 $_MODULE['<{twopayment}prestashop>twopayment_b880d635ee26e267ab68784bb47a0ad1'] = 'Introduce el nombre de tu empresa';
-$_MODULE['<{twopayment}prestashop>twopayment_11379daccc4d43380822ecb7bc5bc1b7'] = 'Introduce %d o más caracteres';
+$_MODULE['<{twopayment}prestashop>twopayment_6c63214370d0302a32c914ebf6f30819'] = 'Introduce %d o más caracteres';
 $_MODULE['<{twopayment}prestashop>twopayment_070800fb9c7ae071aff6e63bded5c3c2'] = 'Buscar empresa';
+$_MODULE['<{twopayment}prestashop>twopayment_b96a0cd4ff2da7a7998fd293c6e2be24'] = 'Buscar una empresa';
 $_MODULE['<{twopayment}prestashop>twopayment_88d53497f4a92958c67c73a9f2f52df3'] = 'Límite';
 $_MODULE['<{twopayment}prestashop>twopayment_e1f3e840de378499e19505d283e4601d'] = 'El límite del recargo para el plazo de %d días no puede ser 0. Si no quieres cobrar nada en este plazo, establece el porcentaje y la cuota fija en 0 y deja el límite vacío.';
 $_MODULE['<{twopayment}prestashop>twopayment_128ce19a81ca82c86adfed35ed88578a'] = 'El límite se aplica a la totalidad de la cuota: el porcentaje y la cuota fija juntos, no solo el porcentaje. Déjalo vacío para no aplicar ningún límite.';

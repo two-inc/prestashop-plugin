@@ -123,9 +123,9 @@ describe('the real jQuery UI widget is what gets bound', () => {
         expect(searchInput().autocomplete('instance')).toBeTruthy();
         // 0 is deliberate (TWO-25288). jQuery UI does not invoke `source` for a
         // term shorter than `minLength`, so a threshold here would swallow
-        // sub-threshold keystrokes and the too-short hint could never render. The
-        // threshold lives in the `source` guard instead - see the hint tests
-        // below, which pin that no request escapes it.
+        // sub-threshold keystrokes before `source` ever runs. The threshold
+        // lives in the `source` guard instead - see the hint tests below,
+        // which pin that no request escapes it.
         expect(searchInput().autocomplete('option', 'minLength')).toBe(0);
         expect(searchInput().autocomplete('option', 'delay')).toBe(300);
     });
@@ -156,7 +156,7 @@ describe('#30.x.14 bug 2.1: a real click opens a control, plain keyboard focus d
         field.trigger('focus');
     }
 
-    test('clicking into an EMPTY field opens the menu showing the hint row', () => {
+    test('clicking into an EMPTY field opens the panel with no result rows - the hint lives in the placeholder now', () => {
         makeInstance();
         const field = liveField();
 
@@ -170,10 +170,10 @@ describe('#30.x.14 bug 2.1: a real click opens a control, plain keyboard focus d
         click(field);
 
         expect(shown(panel())).toBe(true);
-        // buildFocusHintItem() is gone: an empty query is now the SAME
-        // too-short state the buyer keeps reading until they have typed
-        // enough, so the row that opens with the panel is the too-short one.
-        expect(menu().find('li').hasClass('two-autocomplete-too-short')).toBe(true);
+        // buildFocusHintItem() and buildTooShortItem() are both gone (TWO-40
+        // follow-up): an empty/too-short query renders NO row any more - the
+        // length requirement is the query field's own placeholder instead.
+        expect(menu().find('li')).toHaveLength(0);
     });
 
     test('plain keyboard focus (Tab, no mousedown) opens nothing', () => {
@@ -274,9 +274,9 @@ describe('the company-search hints (TWO-25288)', () => {
      */
     function search(term) {
         // The panel has to be open before there is a query field to search on
-        // (TWO-25326 §1). Opening it renders the too-short hint for the empty
-        // query it opens with and makes no request, so the ajax counts below
-        // still measure only what `term` caused.
+        // (TWO-25326 §1). Opening it renders no row for the empty query it
+        // opens with (TWO-40 follow-up) and makes no request, so the ajax
+        // counts below still measure only what `term` caused.
         openPanel();
         const field = searchInput();
         // Bootstrapped-guard: without the widget bound, every hint assertion
@@ -306,22 +306,21 @@ describe('the company-search hints (TWO-25288)', () => {
             expect(TwoCompanySearch.MIN_SEARCH_LENGTH).toBe(3);
         });
 
-        test('the hint states the number the guard actually enforces', () => {
-            const instance = makeInstance();
+        test('the query field placeholder states the number the guard actually enforces (TWO-40 follow-up)', () => {
             const threshold = TwoCompanySearch.MIN_SEARCH_LENGTH;
 
             // The msgid's own `%d` must be gone, replaced by the constant.
-            expect(instance.getTooShortText()).toBe(
-                'Please enter ' + threshold + ' or more characters'
+            expect(TwoCompanySearch.getQueryPlaceholderText()).toBe(
+                'Enter ' + threshold + ' or more characters'
             );
-            expect(instance.getTooShortText()).not.toContain('%d');
+            expect(TwoCompanySearch.getQueryPlaceholderText()).not.toContain('%d');
         });
 
         test('the number comes from the constant, not from the translation', () => {
             const saved = window.twopayment;
-            window.twopayment = { i18n: { company_search_too_short: 'Introduce %d o más caracteres' } };
+            window.twopayment = { i18n: { company_search_query_placeholder: 'Introduce %d o más caracteres' } };
             try {
-                expect(makeInstance().getTooShortText()).toBe(
+                expect(TwoCompanySearch.getQueryPlaceholderText()).toBe(
                     'Introduce ' + TwoCompanySearch.MIN_SEARCH_LENGTH + ' o más caracteres'
                 );
             } finally {
@@ -370,85 +369,48 @@ describe('the company-search hints (TWO-25288)', () => {
         });
     });
 
-    describe('the min-chars hint on the jQuery UI path', () => {
-        test('a sub-threshold term shows the hint and fires no request', () => {
-            const instance = makeInstance();
+    describe('the min-chars gate on the jQuery UI path (TWO-40 follow-up: no row rendered any more)', () => {
+        test('a sub-threshold term renders no row and fires no request', () => {
+            makeInstance();
             const short = 'a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1);
 
             search(short);
 
-            expect(rows()).toHaveLength(1);
-            expect(rows().hasClass('two-autocomplete-too-short')).toBe(true);
-            expect(rows().text()).toBe(instance.getTooShortText());
+            // buildTooShortItem() is gone: the length requirement lives in the
+            // query field's placeholder (getQueryPlaceholderText()) instead of a
+            // dropdown row.
+            expect(rows()).toHaveLength(0);
+            expect(searchInput().attr('placeholder')).toBe(TwoCompanySearch.getQueryPlaceholderText());
             // Before TWO-25288 the widget swallowed this term and showed nothing,
-            // which is indistinguishable from a search that found no match.
+            // which is indistinguishable from a search that found no match -
+            // that gate (no request escapes it) is what survives here.
             expect(ajax.calls).toHaveLength(0);
         });
 
-        test('the hint row is not the failure row', () => {
-            makeInstance();
-
-            search('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1));
-
-            // Nothing is broken and retrying will not help, so it must not carry
-            // the class the failure copy is styled and asserted by.
-            expect(rows().hasClass('two-autocomplete-unavailable')).toBe(false);
-        });
-
-        test('the hint row is non-selectable and cannot reach the field', () => {
-            const instance = makeInstance();
-            const short = 'a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1);
-
-            const field = search(short);
-
-            // `ui-state-disabled` is what jQuery UI own menu checks, so the row is
-            // skipped by keyboard navigation rather than merely refused on select.
-            expect(rows().hasClass('ui-state-disabled')).toBe(true);
-            expect(rows().attr('aria-disabled')).toBe('true');
-
-            const item = { item: instance.buildTooShortItem() };
-            expect(field.autocomplete('option', 'select')(null, item)).toBe(false);
-            expect(field.autocomplete('option', 'focus')(null, item)).toBe(false);
-            // The query field keeps what the buyer typed...
-            expect(field.val()).toBe(short);
-            // ...and the company-name field, which the message row must never
-            // reach, is untouched. That second assertion is the one that
-            // matters now the two are different inputs.
-            expect(liveField().val()).toBe('');
-        });
-
-        test('a term at the threshold searches and shows no hint', () => {
+        test('a term at the threshold searches and shows results, no leftover row', () => {
             makeInstance();
 
             search('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH));
 
             expect(ajax.calls).toHaveLength(1);
-            // Resolved before asserting: opening the panel renders the
-            // too-short hint for the empty query it opens with, so the list
-            // still holds that row until this search's own response repaints
-            // it. Asserting on the un-resolved state would pass vacuously
-            // against the previous render rather than this one.
             ajax.last().succeed(SEARCH_RESPONSE);
-            expect($('ul.ui-autocomplete li.two-autocomplete-too-short')).toHaveLength(0);
             expect(rows()).toHaveLength(SEARCH_RESPONSE.items.length);
         });
 
-        test('an empty query shows exactly the too-short hint row, no search made', () => {
+        test('an empty query renders no row and makes no request', () => {
             makeInstance();
 
             search('');
 
             // #30.x.14 bug 2.1: a click into an empty field must open
-            // something - a plain `response([])` here is indistinguishable
-            // from "not a dropdown at all", which was the live complaint.
-            // TWO-25326 §1 went one step further and removed the separate
-            // focus-hint row: the empty query IS the too-short case now, and
-            // says the same thing the buyer will keep reading until they have
-            // typed enough. Still not a real search, so no request goes out.
-            expect(rows()).toHaveLength(1);
-            expect(rows().hasClass('two-autocomplete-too-short')).toBe(true);
-            expect(rows().hasClass('ui-state-disabled')).toBe(true);
-            expect(rows().attr('aria-disabled')).toBe('true');
+            // something, i.e. the PANEL - a plain `response([])` here is
+            // indistinguishable from "not a dropdown at all", which was the
+            // live complaint. TWO-25326 §1's separate focus-hint row and the
+            // too-short row it later merged into are BOTH gone now (TWO-40
+            // follow-up): the empty query renders no row at all, and the
+            // requirement lives in the query field's placeholder. Still not a
+            // real search, so no request goes out.
+            expect(rows()).toHaveLength(0);
             expect(ajax.calls).toHaveLength(0);
         });
 
@@ -457,12 +419,11 @@ describe('the company-search hints (TWO-25288)', () => {
 
             // Long enough to clear the threshold by raw length, but there is
             // nothing here the search could match on, so it must not go on the
-            // wire - and it must not be refused silently either.
+            // wire.
             search('   ');
 
             expect(ajax.calls).toHaveLength(0);
-            expect(rows()).toHaveLength(1);
-            expect(rows().hasClass('two-autocomplete-too-short')).toBe(true);
+            expect(rows()).toHaveLength(0);
         });
     });
 
@@ -514,13 +475,21 @@ describe('the company-search hints (TWO-25288)', () => {
             }
         });
 
-        test('the too-short row is muted and unclickable, exactly as the failure row is', () => {
+        // buildTooShortItem()/getTooShortText() are gone (TWO-40 follow-up) -
+        // the length requirement no longer renders a row at all, so these two
+        // now drive the paint check off the "unavailable" (search-failure)
+        // message row instead. Still exercises the same generic
+        // `.two-autocomplete-message` styling every message row shares -
+        // that is what these tests are actually pinning.
+        test('the unavailable row is muted and unclickable, exactly as any message row is', () => {
             makeInstance();
 
-            search('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1));
+            search('exa');
+            ajax.last().fail('timeout');
             const hint = rows().get(0);
 
             expect(rows().hasClass('two-autocomplete-message')).toBe(true);
+            expect(rows().hasClass('two-autocomplete-unavailable')).toBe(true);
             expect(window.getComputedStyle(hint).color).toBe('rgb(136, 136, 136)');
             expect(window.getComputedStyle(hint).cursor).toBe('default');
 
@@ -530,23 +499,24 @@ describe('the company-search hints (TWO-25288)', () => {
             expect(window.getComputedStyle(wrapper).color).toBe('rgb(136, 136, 136)');
             expect(window.getComputedStyle(wrapper).cursor).toBe('default');
 
-            // The same row rendered for the failure cause, for comparison: the
-            // two must be indistinguishable in appearance, since the whole point
-            // of the per-cause class is that it changes the WORDING and the DOM
-            // identity, not the look.
-            const failure = $('<li>')
-                .addClass('two-autocomplete-message two-autocomplete-unavailable')
+            // The same row rendered for the no-country cause, for comparison:
+            // the two must be indistinguishable in appearance, since the whole
+            // point of the per-cause class is that it changes the WORDING and
+            // the DOM identity, not the look.
+            const otherCause = $('<li>')
+                .addClass('two-autocomplete-message two-autocomplete-select-country')
                 .appendTo(document.body)
                 .get(0);
             expect(window.getComputedStyle(hint).color)
-                .toBe(window.getComputedStyle(failure).color);
+                .toBe(window.getComputedStyle(otherCause).color);
             expect(window.getComputedStyle(hint).cursor)
-                .toBe(window.getComputedStyle(failure).cursor);
+                .toBe(window.getComputedStyle(otherCause).cursor);
         });
 
         test('the hover highlight is suppressed on the row jQuery UI would highlight', () => {
             makeInstance();
-            search('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1));
+            search('exa');
+            ajax.last().fail('timeout');
 
             // `ui-state-active` is what jQuery UI's menu puts on the wrapper of
             // the row under the pointer. On a message row that highlight is a
@@ -721,8 +691,10 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
         // threshold removed it for a buyer who had typed nothing. That is the
         // deliberate REVERSAL of the pseudo-row's old below-threshold gating.
         search('');
-        expect(rows()).toHaveLength(1);
-        expect(rows().hasClass('two-autocomplete-too-short')).toBe(true);
+        // No row renders below the threshold any more (TWO-40 follow-up) -
+        // the assertion that matters here is that manual entry is offered
+        // regardless.
+        expect(rows()).toHaveLength(0);
         expect(shown(notListed())).toBe(true);
 
         search('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1));
@@ -833,11 +805,10 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
         // blank box (§3 routes through openDropdown() for exactly that). The
         // query field opens EMPTY by design now - it is deliberately not
         // re-seeded from the confirmed name - so what is on screen is the
-        // too-short hint, not the previous result set.
+        // too-short state, which renders no row any more (TWO-40 follow-up).
         expect(shown(panel())).toBe(true);
         expect(document.activeElement).toBe(searchInput().get(0));
-        expect(rows()).toHaveLength(1);
-        expect(rows().hasClass('two-autocomplete-too-short')).toBe(true);
+        expect(rows()).toHaveLength(0);
         expect(shown(notListed())).toBe(true);
     });
 
@@ -2858,15 +2829,16 @@ describe('the custom fallback used when jQuery UI is absent', () => {
             expect(liveField().attr('placeholder')).toBe('Enter company name to search');
         });
 
-        test('a sub-threshold term shows the hint and fires no request', () => {
+        test('a sub-threshold term renders no row and fires no request (TWO-40 follow-up)', () => {
             const search = makeInstance();
             expect(search._customAutocomplete).toBeTruthy();
 
             type('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1));
 
-            const row = $('.two-autocomplete-too-short');
-            expect(row).toHaveLength(1);
-            expect(row.text()).toBe(search.getTooShortText());
+            // buildTooShortItem() is gone: the length requirement lives in the
+            // query field's placeholder instead of a dropdown row.
+            expect(listRows()).toHaveLength(0);
+            expect(searchInput().attr('placeholder')).toBe(TwoCompanySearch.getQueryPlaceholderText());
             expect(shown(panel())).toBe(true);
             expect(ajax.calls).toHaveLength(0);
             // Nothing was requested, so nothing may leave a spinner running.
@@ -2874,7 +2846,7 @@ describe('the custom fallback used when jQuery UI is absent', () => {
             expect($('.two-autocomplete-unavailable')).toHaveLength(0);
         });
 
-        test('a term at the threshold searches and shows no hint', () => {
+        test('a term at the threshold searches and shows results', () => {
             const search = makeInstance();
             expect(search._customAutocomplete).toBeTruthy();
 
@@ -2882,7 +2854,6 @@ describe('the custom fallback used when jQuery UI is absent', () => {
 
             expect(ajax.calls).toHaveLength(1);
             ajax.last().succeed(SEARCH_RESPONSE);
-            expect($('.two-autocomplete-too-short')).toHaveLength(0);
             expect(listRows()).toHaveLength(SEARCH_RESPONSE.items.length);
         });
 
@@ -2893,38 +2864,16 @@ describe('the custom fallback used when jQuery UI is absent', () => {
             type('   ');
 
             expect(ajax.calls).toHaveLength(0);
-            expect($('.two-autocomplete-too-short')).toHaveLength(1);
+            expect(listRows()).toHaveLength(0);
         });
 
-        test('the hint row is painted as a message on this path too', () => {
-            const stylesheet = installStylesheet('views/css/two.css');
-            try {
-                makeInstance();
-                type('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1));
-
-                // The shared class is what carries the message look, and this
-                // path must carry it as well or the two paths diverge again. The
-                // cursor comes from the stylesheet alone - the row inlines its
-                // colour but nothing inlines this - so it is the assertion that
-                // fails if the shared class is dropped here.
-                const row = $('.two-autocomplete-too-short');
-                expect(row.hasClass('two-autocomplete-message')).toBe(true);
-                expect(window.getComputedStyle(row.get(0)).cursor).toBe('default');
-                expect(window.getComputedStyle(row.get(0)).color).toBe('rgb(136, 136, 136)');
-            } finally {
-                if (stylesheet && stylesheet.parentNode) {
-                    stylesheet.parentNode.removeChild(stylesheet);
-                }
-            }
-        });
-
-        test('clearing the field shows the hint again rather than an empty panel', () => {
-            // INVERTED by TWO-25326 §1, deliberately. This path used to close
-            // the list outright when the field was cleared; §1 requires the
-            // "type N more characters" hint to be on screen for as long as the
-            // control is open and the query is too short - closing is
-            // indistinguishable from "not a dropdown at all", which is the
-            // Hyva failure recorded on the ticket.
+        test('clearing the field shows no row and makes no request, rather than leaving stale results', () => {
+            // This path used to close the list outright when the field was
+            // cleared; TWO-25326 §1 required the too-short state to stay on
+            // screen rather than close, and TWO-40 removed the row that state
+            // rendered entirely (see the query-field placeholder tests above).
+            // What survives is that clearing the field must not leave the
+            // PREVIOUS result set on screen.
             const search = makeInstance();
             type(AT_THRESHOLD_FALLBACK);
             ajax.last().succeed(SEARCH_RESPONSE);
@@ -2934,8 +2883,7 @@ describe('the custom fallback used when jQuery UI is absent', () => {
             type('');
 
             expect(search._customAutocomplete).toBeTruthy();
-            expect($('.two-autocomplete-too-short')).toHaveLength(1);
-            expect(listRows()).toHaveLength(1);
+            expect(listRows()).toHaveLength(0);
             expect(shown(panel())).toBe(true);
             expect(ajax.calls).toHaveLength(callsBefore);
         });
@@ -3052,7 +3000,8 @@ describe('the custom fallback used when jQuery UI is absent', () => {
             expect(search._customAutocomplete).toBeTruthy();
 
             type('');
-            expect($('.two-autocomplete-too-short')).toHaveLength(1);
+            // No row renders below the threshold any more (TWO-40 follow-up).
+            expect(listRows()).toHaveLength(0);
             expect(shown(notListed())).toBe(true);
 
             type('a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1));
@@ -3144,11 +3093,12 @@ describe('the custom fallback used when jQuery UI is absent', () => {
 
             expect(search._manualEntry).toBe(false);
             expect($('.two-company-search-back')).toHaveLength(0);
-            // §3 routes back through openDropdown(), so the panel is open and
-            // painted rather than blank - with the hint, because the query
-            // field deliberately opens EMPTY rather than re-seeded.
+            // §3 routes back through openDropdown(), so the panel is open
+            // rather than blank, with the query field deliberately opening
+            // EMPTY rather than re-seeded - which renders no row any more
+            // (TWO-40 follow-up).
             expect(shown(panel())).toBe(true);
-            expect($('.two-autocomplete-too-short')).toHaveLength(1);
+            expect($('.two-autocomplete-too-short')).toHaveLength(0);
             expect(shown(notListed())).toBe(true);
         });
 

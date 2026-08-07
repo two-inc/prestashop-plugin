@@ -119,7 +119,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_0e59e4dd7c8466ff99df71f1e49cbfa1'] 
 $_MODULE['<{twopayment}prestashop>twopayment_0eb2ab65c0156ef3da0c1d96523c55a7'] = 'Firmanavn er påkrevd for bedriftskontoer.';
 $_MODULE['<{twopayment}prestashop>twopayment_0f5d80604ec05f089baca925102a473b'] = 'Avgiftsforskjell mot standard betalingsvilkår';
 $_MODULE['<{twopayment}prestashop>twopayment_104d9898c04874d0fbac36e125fa1369'] = 'Rabatt';
-$_MODULE['<{twopayment}prestashop>twopayment_11379daccc4d43380822ecb7bc5bc1b7'] = 'Skriv inn minst %d tegn';
 $_MODULE['<{twopayment}prestashop>twopayment_11503989a3f470d727d38a6054896940'] = 'Kunne ikke laste valutaen for dette betalingsforsøket.';
 $_MODULE['<{twopayment}prestashop>twopayment_11c0c6552a36b6fff05e235aedff525e'] = 'Firmaet kan ha nådd kredittgrensen sin eller ikke bestått Twos kredittvurdering';
 $_MODULE['<{twopayment}prestashop>twopayment_1243daf593fa297e07ab03bf06d925af'] = 'Søker ...';
@@ -248,6 +247,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_6adf97f83acf6453d4a6a4b1070f3754'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6b6975991479cc2c6781be75b9a7e5ed'] = 'Når kjøperen må fullføre ordreverifisering med Two før betalingsbehandlingen kan starte. Standard: Forberedelse pågår';
 $_MODULE['<{twopayment}prestashop>twopayment_6be9e6c7a97ef6916df30b37dcd5985a'] = 'Two må godkjenne kjøperen før ordren kan legges inn';
 $_MODULE['<{twopayment}prestashop>twopayment_6c04b086d2a5eed8ae6b2beca8a4221f'] = 'Betalingsleverandøren er midlertidig utilgjengelig. Prøv igjen senere.';
+$_MODULE['<{twopayment}prestashop>twopayment_6c63214370d0302a32c914ebf6f30819'] = 'Skriv inn %d eller flere tegn';
 $_MODULE['<{twopayment}prestashop>twopayment_6cae7c7478f2d404dc69e4e355172166'] = 'Avgiftsgrunnlag for minste ordreverdi';
 $_MODULE['<{twopayment}prestashop>twopayment_6d5cc1a38d6228cd43fb864b6c4d4b75'] = 'Kunne ikke bekrefte betalingen fra Two. Prøv utsjekken på nytt.';
 $_MODULE['<{twopayment}prestashop>twopayment_6f3455d187a23443796efdcbe044096b'] = 'Ingen avgift';
@@ -349,6 +349,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_b5f41647401f7d6a7aa511cbd9aa5ecf'] 
 $_MODULE['<{twopayment}prestashop>twopayment_b78a3223503896721cca1303f776159b'] = 'Tittel';
 $_MODULE['<{twopayment}prestashop>twopayment_b7e84545a616108ac9b4496b15a60966'] = 'Kunden må oppgi det offisielt registrerte firmanavnet sitt';
 $_MODULE['<{twopayment}prestashop>twopayment_b81f4425b7556f2c97a12cb81ed44824'] = 'PO-nummer';
+$_MODULE['<{twopayment}prestashop>twopayment_b96a0cd4ff2da7a7998fd293c6e2be24'] = 'Søk etter et firma';
 $_MODULE['<{twopayment}prestashop>twopayment_b9f5c797ebbf55adccdd8539a65a0241'] = 'Deaktivert';
 $_MODULE['<{twopayment}prestashop>twopayment_ba087184ee6e25ec7a1b51b8897679e3'] = 'Minste ordreverdi';
 $_MODULE['<{twopayment}prestashop>twopayment_ba565358a4357911e173c8af649b569e'] = 'eksklusiv';
