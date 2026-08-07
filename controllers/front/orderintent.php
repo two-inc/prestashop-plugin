@@ -377,6 +377,22 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
      */
     public function ajaxProcessCheckOrderIntent()
     {
+        // Order intent pre-approval preview toggle (TWO-25386 #8). Server-side
+        // hard gate, defense-in-depth alongside the client-side
+        // shouldRunOrderIntent() check in TwoOrderIntent.js which normally
+        // prevents this call from firing at all when disabled. Never touches
+        // Twopayment::checkTwoOrderIntentApprovalAtPayment() - the
+        // authoritative approval check at actual payment submission always
+        // runs regardless of this setting.
+        if (!$this->module->isTwoOrderIntentPreviewEnabled()) {
+            $this->sendJsonResponse(json_encode([
+                'success' => false,
+                'status' => 'order_intent_disabled',
+                'error' => $this->module->l('Order intent preview is disabled by the merchant configuration.')
+            ]));
+            return;
+        }
+
         // Rate limiting protection
         if (!$this->checkRateLimit()) {
             $this->sendJsonResponse(json_encode([
@@ -662,20 +678,29 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
     }
 
     /**
-     * Helper method to validate AJAX token
+     * Helper method to validate AJAX token.
+     *
+     * DEBUG ESCAPE HATCH (TWO-25386 #4, ported from woocommerce-plugin's
+     * `skip_confirm_auth`): PS_TWO_SKIP_CONFIRM_NONCE_CHECK, when enabled,
+     * skips this token check entirely on every action on this controller.
+     * Default OFF - matches the pre-existing always-checked behaviour.
      */
     public function validateAjaxToken()
     {
+        if ($this->module->isTwoSkipConfirmNonceCheckEnabled()) {
+            return true;
+        }
+
         $token = Tools::getValue('token');
         if (empty($token)) {
             return false;
         }
-        
+
         // Validate token format (should be alphanumeric)
         if (!preg_match('/^[a-zA-Z0-9]+$/', $token)) {
             return false;
         }
-        
+
         return $token === Tools::getToken(false);
     }
 
