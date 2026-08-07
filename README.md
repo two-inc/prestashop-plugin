@@ -177,11 +177,11 @@ A complete minimal file:
 define('_TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_', true);
 ```
 
-Then go to **Module Configuration → Advanced Settings**, pick a tax rules group in **Default shipping tax code**, and save.
+Then go to **Module Configuration → Order Management**, pick a tax rules group in **Default shipping tax code**, and save.
 
 Notes:
 
-- The constant controls **visibility of the field only**. A value already saved keeps being honoured if the constant is later removed (a server migration must not silently start declining orders), and saving Advanced Settings while the field is hidden never overwrites the stored selection.
+- The constant controls **visibility of the field only**. A value already saved keeps being honoured if the constant is later removed (a server migration must not silently start declining orders), and saving Order Management settings while the field is hidden never overwrites the stored selection.
 - Selecting a group that is later deleted is treated as "not set" — the order is refused, not relayed at 0%.
 - Every order that actually uses the fallback writes a warning to the shop log naming the group, its id and the resolved rate, e.g. `assuming the configured Default shipping tax code "IVA 21%" (tax_rules_group=12, rate=21%)`. If you never see that line, the fallback is not being used.
 
@@ -243,7 +243,7 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 - Module searches Two's Company API v2 (frontend call)
 - Customer selects a company from search results
 - Module stores organization number in hidden `companyid` field
-- Address fields, DNI and VAT number auto-fill from Two's data when available, and a re-search overwrites them with the newly selected company's values. Merchant-configurable (Advanced Settings -> "Autofill company address", enabled by default); with it off, the company search still records the company name and organisation number but writes nothing into the address step
+- Address fields, DNI and VAT number auto-fill from Two's data when available, and a re-search overwrites them with the newly selected company's values. Merchant-configurable (Company Lookup -> "Autofill company address", enabled by default); with it off, the company search still records the company name and organisation number but writes nothing into the address step
 - Selection persists in cookie to survive checkout step changes
 
 #### 2. Payment Step
@@ -279,7 +279,7 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 - Order state changes from `CONFIRMED` to `FULFILLED` in Two
 
 **Configuration:**
-- Configure fulfillment trigger statuses in module settings: **Two → Configuration → Order Status Mapping → Fulfillment Statuses**
+- Configure fulfillment trigger statuses in module settings: **Two → Configuration → Order Management → Fulfillment Statuses**
 - You can select multiple statuses (hold Ctrl/Cmd to select multiple)
 - Default: "Shipped" status triggers fulfillment
 - The form field shows currently active statuses in green text for easy reference
@@ -332,7 +332,7 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
   - Idempotency keys prevent duplicate refund calls (race condition protection)
 
 **Configuration:**
-- Configure refund trigger status in module settings: **Two → Configuration → Order Status Mapping → Two: Order Refunded**
+- Configure refund trigger status in module settings: **Two → Configuration → Order Management → Two: Order Refunded**
 - Default: "Refunded" status triggers full refund
 - The module checks if order is already refunded to prevent duplicate refunds
 

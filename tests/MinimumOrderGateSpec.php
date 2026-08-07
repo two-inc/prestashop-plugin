@@ -382,10 +382,10 @@ final class MinimumOrderGateSpec
     private static function validatingModule(): object
     {
         return new class () extends TwopaymentTestHarness {
-            public function runPaymentSettingsValidation(): array
+            public function runCheckoutFieldsValidation(): array
             {
                 $this->errors = [];
-                $this->validTwoPaymentSettingsFormValues();
+                $this->validTwoCheckoutFieldsFormValues();
                 return $this->errors;
             }
         };
@@ -406,24 +406,24 @@ final class MinimumOrderGateSpec
         Tools::setTestValue('PS_TWO_PAYMENT_TERMS_30', '1');
 
         Tools::setTestValue('PS_TWO_MERCHANT_MIN_ORDER', '-5');
-        $errors = self::minimumOrderErrors($module->runPaymentSettingsValidation());
+        $errors = self::minimumOrderErrors($module->runCheckoutFieldsValidation());
         TinyAssert::count(1, $errors, 'negative value must be rejected');
 
         Tools::setTestValue('PS_TWO_MERCHANT_MIN_ORDER', 'abc');
-        $errors = self::minimumOrderErrors($module->runPaymentSettingsValidation());
+        $errors = self::minimumOrderErrors($module->runCheckoutFieldsValidation());
         TinyAssert::count(1, $errors, 'non-numeric value must be rejected');
 
         // Platform floor 1150 NOK = 100 EUR: a merchant value of 99 EUR would
         // lower the effective minimum below the platform floor - rejected.
         self::cachePlatformMinimum(['amount' => 1150.0, 'currency' => 'NOK', 'basis' => 'gross']);
         Tools::setTestValue('PS_TWO_MERCHANT_MIN_ORDER', '99');
-        $errors = self::minimumOrderErrors($module->runPaymentSettingsValidation());
+        $errors = self::minimumOrderErrors($module->runCheckoutFieldsValidation());
         TinyAssert::count(1, $errors, 'value below the platform floor must be rejected');
         TinyAssert::true(strpos($errors[0], '100 EUR (1150 NOK)') !== false, 'floor shown in shop currency with native figure: ' . $errors[0]);
 
         Tools::setTestValue('PS_TWO_MERCHANT_MIN_ORDER_BASIS', 'both');
         Tools::setTestValue('PS_TWO_MERCHANT_MIN_ORDER', '');
-        $errors = self::minimumOrderErrors($module->runPaymentSettingsValidation());
+        $errors = self::minimumOrderErrors($module->runCheckoutFieldsValidation());
         TinyAssert::count(1, $errors, 'unknown basis must be rejected');
     }
 
@@ -437,7 +437,7 @@ final class MinimumOrderGateSpec
         Tools::setTestValue('PS_TWO_MERCHANT_MIN_ORDER_BASIS', 'net');
         foreach (['', '100', '250,50'] as $value) {
             Tools::setTestValue('PS_TWO_MERCHANT_MIN_ORDER', $value);
-            $errors = self::minimumOrderErrors($module->runPaymentSettingsValidation());
+            $errors = self::minimumOrderErrors($module->runCheckoutFieldsValidation());
             TinyAssert::count(0, $errors, 'value "' . $value . '" must be accepted');
         }
 
@@ -446,7 +446,7 @@ final class MinimumOrderGateSpec
         // at checkout instead.
         self::cachePlatformMinimum(['amount' => 100.0, 'currency' => 'USD', 'basis' => 'gross']);
         Tools::setTestValue('PS_TWO_MERCHANT_MIN_ORDER', '1');
-        $errors = self::minimumOrderErrors($module->runPaymentSettingsValidation());
+        $errors = self::minimumOrderErrors($module->runCheckoutFieldsValidation());
         TinyAssert::count(0, $errors, 'unconvertible floor must not block the save');
     }
 }
