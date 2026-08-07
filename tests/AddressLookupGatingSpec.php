@@ -63,14 +63,14 @@ final class AddressLookupGatingSpec
     /** @return array<string,mixed> */
     private static function formValues(TwopaymentTestHarness $module): array
     {
-        $method = new ReflectionMethod(Twopayment::class, 'getTwoOtherFormValues');
+        $method = new ReflectionMethod(Twopayment::class, 'getTwoCompanyLookupFormValues');
 
         return $method->invoke($module);
     }
 
     private static function save(TwopaymentTestHarness $module): void
     {
-        $method = new ReflectionMethod(Twopayment::class, 'saveTwoOtherFormValues');
+        $method = new ReflectionMethod(Twopayment::class, 'saveTwoCompanyLookupFormValues');
         $method->invoke($module);
     }
 
@@ -253,7 +253,7 @@ final class AddressLookupGatingSpec
     {
         self::reset();
         $module = new TwopaymentTestHarness();
-        $method = new ReflectionMethod(Twopayment::class, 'getTwoOtherForm');
+        $method = new ReflectionMethod(Twopayment::class, 'getTwoCompanyLookupForm');
         $form = $method->invoke($module);
 
         $labels = array();

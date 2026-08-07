@@ -164,7 +164,7 @@ class Twopayment extends PaymentModule
     // deliberate and shared - the admin switches render in the same sequence as
     // the checkout fields, so the pane reads like the thing it configures.
     // Adding a field means putting it in the right place in BOTH this array and
-    // getTwoPaymentSettingsForm()'s input list, not appending to either.
+    // getTwoCheckoutFieldsForm()'s input list, not appending to either.
     //
     // The order note is the fifth field in that standard sequence and is
     // deliberately absent from here: it is PrestaShop core's own
@@ -966,6 +966,12 @@ class Twopayment extends PaymentModule
 
     public function getContent()
     {
+        // Six-section admin scheme (TWO-25386 Part 1): A. General,
+        // B. Checkout Fields, C. Company Lookup, D. Payment Terms,
+        // E. Order Management, F. Diagnostics - same names/order as
+        // magento-plugin and woocommerce-plugin. This is a pure
+        // reorganisation of WHICH PANEL each existing field renders under;
+        // no Configuration key, validation rule or save behaviour changed.
         if (((bool) Tools::isSubmit('submitTwoGeneralForm')) == true) {
             Configuration::updateValue('PS_TWO_TAB_VALUE', 1);
             $this->validTwoGeneralFormValues();
@@ -978,11 +984,11 @@ class Twopayment extends PaymentModule
             }
         }
 
-        if (((bool) Tools::isSubmit('submitTwoPaymentSettingsForm')) == true) {
-            Configuration::updateValue('PS_TWO_TAB_VALUE', 5);
-            $this->validTwoPaymentSettingsFormValues();
+        if (((bool) Tools::isSubmit('submitTwoCheckoutFieldsForm')) == true) {
+            Configuration::updateValue('PS_TWO_TAB_VALUE', 2);
+            $this->validTwoCheckoutFieldsFormValues();
             if (!count($this->errors)) {
-                $this->saveTwoPaymentSettingsFormValues();
+                $this->saveTwoCheckoutFieldsFormValues();
             } else {
                 foreach ($this->errors as $err) {
                     $this->output .= $this->displayError($err);
@@ -990,11 +996,35 @@ class Twopayment extends PaymentModule
             }
         }
 
-        if (((bool) Tools::isSubmit('submitTwoOtherForm')) == true) {
-            Configuration::updateValue('PS_TWO_TAB_VALUE', 2);
-            $this->validTwoOtherFormValues();
+        if (((bool) Tools::isSubmit('submitTwoCompanyLookupForm')) == true) {
+            Configuration::updateValue('PS_TWO_TAB_VALUE', 3);
+            $this->validTwoCompanyLookupFormValues();
             if (!count($this->errors)) {
-                $this->saveTwoOtherFormValues();
+                $this->saveTwoCompanyLookupFormValues();
+            } else {
+                foreach ($this->errors as $err) {
+                    $this->output .= $this->displayError($err);
+                }
+            }
+        }
+
+        if (((bool) Tools::isSubmit('submitTwoPaymentTermsForm')) == true) {
+            Configuration::updateValue('PS_TWO_TAB_VALUE', 4);
+            $this->validTwoPaymentTermsFormValues();
+            if (!count($this->errors)) {
+                $this->saveTwoPaymentTermsFormValues();
+            } else {
+                foreach ($this->errors as $err) {
+                    $this->output .= $this->displayError($err);
+                }
+            }
+        }
+
+        if (((bool) Tools::isSubmit('submitTwoOrderManagementForm')) == true) {
+            Configuration::updateValue('PS_TWO_TAB_VALUE', 5);
+            $this->validTwoOrderManagementFormValues();
+            if (!count($this->errors)) {
+                $this->saveTwoOrderManagementFormValues();
             } else {
                 foreach ($this->errors as $err) {
                     $this->output .= $this->displayError($err);
@@ -1003,8 +1033,20 @@ class Twopayment extends PaymentModule
         }
 
         if (((bool) Tools::isSubmit('submitTwoOrderStatusForm')) == true) {
-            Configuration::updateValue('PS_TWO_TAB_VALUE', 3);
+            Configuration::updateValue('PS_TWO_TAB_VALUE', 5);
             $this->saveTwoOrderStatusFormValues();
+        }
+
+        if (((bool) Tools::isSubmit('submitTwoDiagnosticsForm')) == true) {
+            Configuration::updateValue('PS_TWO_TAB_VALUE', 6);
+            $this->validTwoDiagnosticsFormValues();
+            if (!count($this->errors)) {
+                $this->saveTwoDiagnosticsFormValues();
+            } else {
+                foreach ($this->errors as $err) {
+                    $this->output .= $this->displayError($err);
+                }
+            }
         }
 
         // Post-upgrade nag (upgrade-2.5.0.php): a pre-release flat surcharge
@@ -1040,9 +1082,12 @@ class Twopayment extends PaymentModule
         $this->context->smarty->assign(
             array(
                 'renderTwoGeneralForm' => $this->renderTwoGeneralForm(),
-                'renderTwoPaymentSettingsForm' => $this->renderTwoPaymentSettingsForm(),
-                'renderTwoOtherForm' => $this->renderTwoOtherForm(),
+                'renderTwoCheckoutFieldsForm' => $this->renderTwoCheckoutFieldsForm(),
+                'renderTwoCompanyLookupForm' => $this->renderTwoCompanyLookupForm(),
+                'renderTwoPaymentTermsForm' => $this->renderTwoPaymentTermsForm(),
+                'renderTwoOrderManagementForm' => $this->renderTwoOrderManagementForm(),
                 'renderTwoOrderStatusForm' => $this->renderTwoOrderStatusForm(),
+                'renderTwoDiagnosticsForm' => $this->renderTwoDiagnosticsForm(),
                 'renderTwoPluginInfo' => $this->renderTwoPluginInfo(),
                 'twotabvalue' => Configuration::get('PS_TWO_TAB_VALUE'),
                 // The CURRENT verdict, not the sticky save-time flag
@@ -1095,27 +1140,10 @@ class Twopayment extends PaymentModule
         $fields_form = array(
             'form' => array(
                 'legend' => array(
-                    'title' => $this->l('General Settings'),
+                    'title' => $this->l('General'),
                     'icon' => 'icon-cogs',
                 ),
                 'input' => array(
-                    array(
-                        'type' => 'text',
-                        'label' => $this->l('Title'),
-                        'desc' => $this->l('Enter a title which is appear on checkout page as payment method title.'),
-                        'name' => 'PS_TWO_TITLE',
-                        'required' => true,
-                        'lang' => true,
-                    ),
-                    array(
-                        'type' => 'text',
-                        'label' => $this->l('Sub title'),
-                        'desc' => $this->l('Enter a sub title which is appear on checkout page as payment method sub title.'),
-                        'name' => 'PS_TWO_SUB_TITLE',
-                        'required' => true,
-                        'lang' => true,
-                    ),
-                    
                     array(
                         'type' => 'password',
                         'label' => $this->l('Api key'),
@@ -1151,25 +1179,26 @@ class Twopayment extends PaymentModule
                             'name' => 'name'
                         )
                     ),
-                    // Debug mode lives in General Settings for parity with
-                    // Magento's two_general > general group (which includes it).
+                    // Disable SSL verification (TWO-25386 §A: relocated from
+                    // the former "Advanced Settings" panel, alongside the
+                    // other connection-level controls - key, environment).
                     array(
                         'type' => 'switch',
-                        'label' => $this->l('Enable Debug Mode'),
-                        'name' => 'PS_TWO_DEBUG_MODE',
+                        'label' => $this->l('Disable SSL Verification (Corporate Networks Only)'),
+                        'name' => 'PS_TWO_DISABLE_SSL_VERIFY',
                         'is_bool' => true,
-                        'desc' => $this->l('Enable detailed logging for troubleshooting. Logs tax calculations and other diagnostic data. Only enable when requested by Two support.'),
-                        'required' => false,
+                        'desc' => $this->l('WARNING: Only enable this if you are behind a corporate proxy with custom SSL certificates. This disables SSL certificate verification and is a SECURITY RISK. NOT RECOMMENDED for production.'),
+                        'required' => true,
                         'values' => array(
                             array(
-                                'id' => 'PS_TWO_DEBUG_MODE_ON',
+                                'id' => 'PS_TWO_DISABLE_SSL_VERIFY_ON',
                                 'value' => 1,
-                                'label' => $this->l('Yes')
+                                'label' => $this->l('Yes (Not Recommended)')
                             ),
                             array(
-                                'id' => 'PS_TWO_DEBUG_MODE_OFF',
+                                'id' => 'PS_TWO_DISABLE_SSL_VERIFY_OFF',
                                 'value' => 0,
-                                'label' => $this->l('No')
+                                'label' => $this->l('No (Secure)')
                             ),
                         ),
                     ),
@@ -1229,28 +1258,16 @@ class Twopayment extends PaymentModule
     protected function getTwoGeneralFormValues()
     {
         $fields_values = array();
-        foreach ($this->languages as $language) {
-            $fields_values['PS_TWO_TITLE'][$language['id_lang']] = Tools::getValue('PS_TWO_TITLE_' . (int) $language['id_lang'], Configuration::get('PS_TWO_TITLE', (int) $language['id_lang']));
-            $fields_values['PS_TWO_SUB_TITLE'][$language['id_lang']] = Tools::getValue('PS_TWO_SUB_TITLE_' . (int) $language['id_lang'], Configuration::get('PS_TWO_SUB_TITLE', (int) $language['id_lang']));
-        }
         $fields_values['PS_TWO_MERCHANT_SHORT_NAME'] = Tools::getValue('PS_TWO_MERCHANT_SHORT_NAME', Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'));
         $fields_values['PS_TWO_MERCHANT_API_KEY'] = Tools::getValue('PS_TWO_MERCHANT_API_KEY', Configuration::get('PS_TWO_MERCHANT_API_KEY'));
         $fields_values['PS_TWO_VENDOR_NAME'] = Tools::getValue('PS_TWO_VENDOR_NAME', Configuration::get('PS_TWO_VENDOR_NAME'));
         $fields_values['PS_TWO_ENVIRONMENT'] = Tools::getValue('PS_TWO_ENVIRONMENT', Configuration::get('PS_TWO_ENVIRONMENT'));
-        $fields_values['PS_TWO_DEBUG_MODE'] = Tools::getValue('PS_TWO_DEBUG_MODE', Configuration::get('PS_TWO_DEBUG_MODE'));
+        $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
         return $fields_values;
     }
 
     protected function validTwoGeneralFormValues()
     {
-        foreach ($this->languages as $language) {
-            if (Tools::isEmpty(Tools::getValue('PS_TWO_TITLE_' . (int) $language['id_lang']))) {
-                $this->errors[] = $this->l('Enter a title.');
-            }
-            if (Tools::isEmpty(Tools::getValue('PS_TWO_SUB_TITLE_' . (int) $language['id_lang']))) {
-                $this->errors[] = $this->l('Enter a sub title.');
-            }
-        }
         if (Tools::isEmpty(Tools::getValue('PS_TWO_MERCHANT_API_KEY'))) {
             $this->errors[] = $this->l('Enter an API key.');
         }
@@ -1306,21 +1323,13 @@ class Twopayment extends PaymentModule
 
     protected function saveTwoGeneralFormValues()
     {
-
-        $values = array();
-        foreach ($this->languages as $language) {
-            $values['PS_TWO_TITLE'][(int) $language['id_lang']] = Tools::getValue('PS_TWO_TITLE_' . (int) $language['id_lang']);
-            $values['PS_TWO_SUB_TITLE'][(int) $language['id_lang']] = Tools::getValue('PS_TWO_SUB_TITLE_' . (int) $language['id_lang']);
-        }
-        Configuration::updateValue('PS_TWO_TITLE', $values['PS_TWO_TITLE']);
-        Configuration::updateValue('PS_TWO_SUB_TITLE', $values['PS_TWO_SUB_TITLE']);
         // If verification succeeded, use verified short name; else fallback to form (kept for safety)
         $shortNameToSave = $this->verifiedMerchantShortName ? $this->verifiedMerchantShortName : trim(Tools::getValue('PS_TWO_MERCHANT_SHORT_NAME'));
         Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', $shortNameToSave);
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY')));
         Configuration::updateValue('PS_TWO_VENDOR_NAME', trim((string) Tools::getValue('PS_TWO_VENDOR_NAME')));
         Configuration::updateValue('PS_TWO_ENVIRONMENT', Tools::getValue('PS_TWO_ENVIRONMENT'));
-        Configuration::updateValue('PS_TWO_DEBUG_MODE', Tools::getValue('PS_TWO_DEBUG_MODE'));
+        Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
         // The verdict from the live check the validation above just made, now
         // that the key it describes is the stored one (TWO-25326). This is the
         // freshest that key will ever have had, so it becomes what the checkout
@@ -1366,7 +1375,7 @@ class Twopayment extends PaymentModule
         $this->output .= $this->displayConfirmation($this->l('General settings are updated.'));
     }
 
-    protected function renderTwoPaymentSettingsForm()
+    protected function renderTwoCheckoutFieldsForm()
     {
         $helper = new HelperForm();
         $helper->show_toolbar = false;
@@ -1375,108 +1384,170 @@ class Twopayment extends PaymentModule
         $helper->module = $this;
         $helper->allow_employee_form_lang = Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG') ? Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG') : 0;
         $helper->identifier = $this->identifier;
-        $helper->submit_action = 'submitTwoPaymentSettingsForm';
+        $helper->submit_action = 'submitTwoCheckoutFieldsForm';
         $helper->currentIndex = $this->context->link->getAdminLink('AdminModules', false) . '&configure=' . $this->name . '&tab_module=' . $this->tab . '&module_name=' . $this->name;
         $helper->token = Tools::getAdminTokenLite('AdminModules');
         $helper->tpl_vars = array(
             'uri' => $this->getPathUri(),
-            'fields_value' => $this->getTwoPaymentSettingsFormValues(),
+            'fields_value' => $this->getTwoCheckoutFieldsFormValues(),
             'languages' => $this->context->controller->getLanguages(),
             'id_language' => $this->context->language->id,
         );
-        return $helper->generateForm(array($this->getTwoPaymentSettingsForm()));
+        return $helper->generateForm(array($this->getTwoCheckoutFieldsForm()));
     }
 
-    protected function getTwoPaymentSettingsForm()
+    /**
+     * Section B - Checkout Fields (TWO-25386 Part 1). Title/Subtitle/Sort
+     * order/Min order value+basis/Order intent/"What is Two" link/Tooltips,
+     * then the optional buyer inputs (invoice email, PO number, project,
+     * department) - relocated here from the former "General Settings" and
+     * "Payment Settings" panels. Pure reorganisation: every Configuration
+     * key, default and validation rule is unchanged from before this ticket.
+     */
+    protected function getTwoCheckoutFieldsForm()
     {
         $inputs = array(
             array(
-                'type' => 'radio',
-                'label' => $this->l('Payment Term Type'),
-                'name' => 'PS_TWO_PAYMENT_TERM_TYPE',
-                'desc' => $this->l('Choose how payment terms are calculated:') . '<br><br><strong>' . $this->l('Standard Terms:') . '</strong> ' . $this->l('Payment due X days from fulfillment date. Example: If you fulfill an order on January 15th with 30-day terms, payment is due February 14th.') . '<br><br><strong>' . $this->l('End-of-Month (EOM) Terms:') . '</strong> ' . $this->l('Payment due at the end of the current month plus X days from fulfillment date. Example: If you fulfill an order on January 15th with EOM+30 terms, payment is due February 28th (end of January + 30 days). This is common for B2B invoicing.'),
-                'is_bool' => false,
-                'values' => array(
-                    array(
-                        'id' => 'term_type_standard',
-                        'value' => 'STANDARD',
-                        'label' => $this->l('Standard Terms (e.g., 30 days from fulfillment)')
-                    ),
-                    array(
-                        'id' => 'term_type_eom',
-                        'value' => 'EOM',
-                        'label' => $this->l('End-of-Month Terms (e.g., EOM + 30 days)')
-                    ),
-                ),
+                'type' => 'text',
+                'label' => $this->l('Title'),
+                'desc' => $this->l('Enter a title which is appear on checkout page as payment method title.'),
+                'name' => 'PS_TWO_TITLE',
+                'required' => true,
+                'lang' => true,
             ),
-            array(
-                'type' => 'checkbox',
-                'label' => $this->l('Available Payment Terms'),
-                'name' => 'PS_TWO_PAYMENT_TERMS',
-                'desc' => '<span id="two-payment-terms-desc-standard" style="display: none;">' . $this->l('Select which payment terms you want to offer. Standard terms are calculated from the fulfillment date.') . '</span><span id="two-payment-terms-desc-eom" style="display: none;">' . $this->l('Select which payment terms you want to offer. EOM (End-of-Month) terms are calculated from the end of the month at fulfillment, plus the selected days. Only 30, 45, and 60 day terms are available for EOM.') . '</span>',
-                'values' => array(
-                    // Restrict the tickable set to the merchant's backend
-                    // available_terms (TWO-24813); admin render is one of
-                    // the two sanctioned refresh points.
-                    'query' => $this->buildPaymentTermCheckboxQuery(),
-                    'id' => 'id',
-                    'name' => 'name'
-                )
-            ),
-            // Custom payment term in days (TWO-25386, ported from
-            // magento-plugin's payment_terms_duration_days / woocommerce-plugin's
-            // payment_terms_custom_days): a merchant-typed term length in
-            // addition to the preset checkboxes above. Unioned into
-            // getAvailablePaymentTerms() when > 0 AND still within Two's own
-            // backend-permitted term set (see that method) - it bypasses the
-            // EOM/STANDARD checkbox split, never the backend restriction.
             array(
                 'type' => 'text',
-                'label' => $this->l('Custom payment term (days)'),
-                'name' => 'PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS',
-                'required' => false,
-                'desc' => $this->l('Optional. Offer an additional payment term (in days) not covered by the presets above. Leave empty to only offer the terms selected above. Two must still permit this term length for your account - an unsupported value is silently ignored.'),
+                'label' => $this->l('Sub title'),
+                'desc' => $this->l('Enter a sub title which is appear on checkout page as payment method sub title.'),
+                'name' => 'PS_TWO_SUB_TITLE',
+                'required' => true,
+                'lang' => true,
             ),
-            // Default pre-selected term (TWO-25386 #10): an explicit admin
-            // choice that takes priority over getDefaultPaymentTerm()'s
-            // derived default (API due_in_days, else 30 days, else lowest
-            // offered term) whenever the chosen term is still offered. This is
-            // the highest-priority item in this batch per the ticket: the
-            // surcharge differential-basis calculation
-            // (buildTwoBuyerFeeShare -> getDefaultPaymentTerm) reads through
-            // this same function, so setting it here is what actually makes
-            // the surcharge calc respect the merchant's chosen default.
+            // Checkout sort order (TWO-25386 #6, ported from
+            // magento-plugin's Advanced > sort_order). Best-effort:
+            // PrestaShop core has no per-module sort_order config path
+            // for payment methods the way Magento does - the native
+            // mechanism is the hook_module position table, normally
+            // reordered by dragging in Payment > Preferences. Saving
+            // this field asks core to move this module to that
+            // position on the paymentOptions hook (see
+            // applyTwoCheckoutSortOrder()); it is stored regardless so
+            // the value survives even where the move itself cannot be
+            // applied.
             array(
-                'type' => 'select',
-                'label' => $this->l('Default pre-selected term'),
-                'name' => 'PS_TWO_DEFAULT_PAYMENT_TERM',
-                'desc' => $this->l('Which offered term is pre-selected at checkout by default. Leave unset to keep the automatic choice (the merchant\'s own default term when offered, else 30 days, else the shortest offered term).'),
-                'options' => array(
-                    'query' => $this->getTwoDefaultPaymentTermOptions(),
-                    'id' => 'id_option',
-                    'name' => 'name',
-                ),
+                'type' => 'text',
+                'label' => $this->l('Checkout sort order'),
+                'name' => 'PS_TWO_CHECKOUT_SORT_ORDER',
+                'required' => false,
+                'desc' => $this->l('Optional. A lower number shows Two earlier among the payment methods offered at checkout. Leave empty to use PrestaShop\'s own Payment > Preferences ordering.'),
             ),
         );
 
-        // Checkout fields (Magento two_payment > checkout_fields parity):
-        // optional buyer inputs, placed after the term selection and before
-        // the surcharge configuration.
+        // Minimum order value (TWO-24775): the merchant's own optional bar,
+        // stacked on top of the API-resolved platform minimum. Field UX
+        // mirrors woocommerce-plugin / magento-plugin: currency in the label
+        // ("Minimum Order Value, EUR"), platform floor in the description,
+        // net/gross basis selector.
+        $default_currency_iso = $this->getTwoShopDefaultCurrencyIso();
+        $inputs[] = array(
+            'type' => 'text',
+            'label' => $default_currency_iso !== ''
+                ? sprintf($this->l('Minimum Order Value, %s'), $default_currency_iso)
+                : $this->l('Minimum Order Value'),
+            'name' => 'PS_TWO_MERCHANT_MIN_ORDER',
+            'desc' => $this->getTwoMerchantMinimumOrderDescription(),
+        );
+        $inputs[] = array(
+            'type' => 'select',
+            'label' => $this->l('Minimum Order Value Tax Basis'),
+            'name' => 'PS_TWO_MERCHANT_MIN_ORDER_BASIS',
+            'desc' => $this->l('Whether the basket is compared against the minimum including or excluding tax.'),
+            'options' => array(
+                'query' => array(
+                    array('id_option' => 'gross', 'name' => $this->l('Including tax (gross)')),
+                    array('id_option' => 'net', 'name' => $this->l('Excluding tax (net)')),
+                ),
+                'id' => 'id_option',
+                'name' => 'name',
+            ),
+        );
+
+        // Order intent / pre-approve toggle (TWO-25386 #8, NEW control - not a
+        // port). PS already runs the order-intent pre-approval check
+        // (controllers/front/orderintent.php ajaxProcessCheckOrderIntent)
+        // unconditionally on every payment-step render; this is the first
+        // admin switch for it. Gates the FRONT CONTROLLER's pre-approval
+        // preview call only (both server-side here and client-side via
+        // window.twopayment.enable_order_intent, see twopayment.js /
+        // TwoCheckoutManager.js) - it deliberately does NOT touch
+        // checkTwoOrderIntentApprovalAtPayment(), the authoritative check Two
+        // always runs at actual payment submission, so turning this off never
+        // lets an order through without Two's real approval - it only removes
+        // the early "will this be approved" preview shown during checkout.
+        // Default ON, matching the pre-existing always-on behaviour.
+        $inputs[] = array(
+            'type' => 'switch',
+            'label' => $this->l('Enable order intent pre-approval check'),
+            'name' => 'PS_TWO_ENABLE_ORDER_INTENT',
+            'is_bool' => true,
+            'desc' => $this->l('If you choose YES then the checkout calls Two to preview order approval before the buyer submits payment, and reflects the result in the payment tile. If you choose NO, this preview call is skipped - the buyer still goes through Two\'s real approval check when they submit payment.'),
+            'required' => true,
+            'values' => array(
+                array('id' => 'PS_TWO_ENABLE_ORDER_INTENT_ON', 'value' => 1, 'label' => $this->l('Yes')),
+                array('id' => 'PS_TWO_ENABLE_ORDER_INTENT_OFF', 'value' => 0, 'label' => $this->l('No')),
+            ),
+        );
+        // "What is Two" explainer link (TWO-25386, ported from
+        // woocommerce-plugin's `show_abt_link`): shows/hides the "What is
+        // Two?" info tooltip already rendered in the payment tile
+        // (views/templates/hook/paymentinfo.tpl). Default ON, matching the
+        // tile's pre-existing always-on behaviour.
+        $inputs[] = array(
+            'type' => 'switch',
+            'label' => $this->l('Show "What is Two" explainer link'),
+            'name' => 'PS_TWO_SHOW_ABOUT_LINK',
+            'is_bool' => true,
+            'desc' => $this->l('If you choose YES then buyers see a "What is Two?" info tooltip with a link to an explainer resource in the Two payment tile at checkout.'),
+            'required' => true,
+            'values' => array(
+                array('id' => 'PS_TWO_SHOW_ABOUT_LINK_ON', 'value' => 1, 'label' => $this->l('Yes')),
+                array('id' => 'PS_TWO_SHOW_ABOUT_LINK_OFF', 'value' => 0, 'label' => $this->l('No')),
+            ),
+        );
+        // Display input tooltips (TWO-25386, ported from woocommerce-plugin's
+        // `display_tooltips`): whether the optional checkout field inputs
+        // (invoice email, PO number, project, department) show a help tooltip
+        // on their label. Default OFF, matching woocommerce-plugin's default.
+        $inputs[] = array(
+            'type' => 'switch',
+            'label' => $this->l('Display input tooltips'),
+            'name' => 'PS_TWO_DISPLAY_TOOLTIPS',
+            'is_bool' => true,
+            'desc' => $this->l('If you choose YES then the optional checkout fields above show a short help tooltip on their label.'),
+            'required' => true,
+            'values' => array(
+                array('id' => 'PS_TWO_DISPLAY_TOOLTIPS_ON', 'value' => 1, 'label' => $this->l('Yes')),
+                array('id' => 'PS_TWO_DISPLAY_TOOLTIPS_OFF', 'value' => 0, 'label' => $this->l('No')),
+            ),
+        );
+
+        // Optional buyer inputs (Magento two_payment > checkout_fields
+        // parity). All four render inside the Two payment tile at the
+        // payment step, NOT in the billing address block. PrestaShop asks
+        // for the SHIPPING address first and only reveals the billing block
+        // when the buyer ticks "Billing address differs from shipping
+        // address", so anything hosted there is invisible to most buyers -
+        // which is exactly what happened to department and project before
+        // this release.
         //
-        // All four render inside the Two payment tile at the payment step, NOT
-        // in the billing address block. PrestaShop asks for the SHIPPING
-        // address first and only reveals the billing block when the buyer ticks
-        // "Billing address differs from shipping address", so anything hosted
-        // there is invisible to most buyers - which is exactly what happened to
-        // department and project before this release.
-        //
-        // ORDER IS LOAD-BEARING and must stay in step with
+        // ORDER IS LOAD-BEARING (TWO-25263) and must stay in step with
         // self::OPTIONAL_CHECKOUT_FIELDS, which is what the checkout tile
-        // iterates: invoice email, purchase order number, project, department.
-        // The switches read top-to-bottom in the same sequence the buyer sees.
-        // The order note completes that standard sequence but has no switch and
-        // no tile field - it is PrestaShop core's own `delivery_message` on the
-        // shipping step (see the constant's comment).
+        // iterates: invoice email, purchase order number, project,
+        // department. The switches read top-to-bottom in the same sequence
+        // the buyer sees. The order note completes that standard sequence
+        // but has no switch and no tile field - it is PrestaShop core's own
+        // `delivery_message` on the shipping step (see the constant's
+        // comment) and has no admin field to relocate.
         $inputs[] = array(
             'type' => 'switch',
             'label' => $this->l('Show Invoice email field'),
@@ -1558,102 +1629,131 @@ class Twopayment extends PaymentModule
                 ),
             ),
         );
-        // "What is Two" explainer link (TWO-25386, ported from
-        // woocommerce-plugin's `show_abt_link`): shows/hides the "What is
-        // Two?" info tooltip already rendered in the payment tile
-        // (views/templates/hook/paymentinfo.tpl). Default ON, matching the
-        // tile's pre-existing always-on behaviour.
-        $inputs[] = array(
-            'type' => 'switch',
-            'label' => $this->l('Show "What is Two" explainer link'),
-            'name' => 'PS_TWO_SHOW_ABOUT_LINK',
-            'is_bool' => true,
-            'desc' => $this->l('If you choose YES then buyers see a "What is Two?" info tooltip with a link to an explainer resource in the Two payment tile at checkout.'),
-            'required' => true,
-            'values' => array(
-                array('id' => 'PS_TWO_SHOW_ABOUT_LINK_ON', 'value' => 1, 'label' => $this->l('Yes')),
-                array('id' => 'PS_TWO_SHOW_ABOUT_LINK_OFF', 'value' => 0, 'label' => $this->l('No')),
-            ),
-        );
-        // Display input tooltips (TWO-25386, ported from woocommerce-plugin's
-        // `display_tooltips`): whether the optional checkout field inputs
-        // (invoice email, PO number, project, department) show a help tooltip
-        // on their label. Default OFF, matching woocommerce-plugin's default.
-        $inputs[] = array(
-            'type' => 'switch',
-            'label' => $this->l('Display input tooltips'),
-            'name' => 'PS_TWO_DISPLAY_TOOLTIPS',
-            'is_bool' => true,
-            'desc' => $this->l('If you choose YES then the optional checkout fields above show a short help tooltip on their label.'),
-            'required' => true,
-            'values' => array(
-                array('id' => 'PS_TWO_DISPLAY_TOOLTIPS_ON', 'value' => 1, 'label' => $this->l('Yes')),
-                array('id' => 'PS_TWO_DISPLAY_TOOLTIPS_OFF', 'value' => 0, 'label' => $this->l('No')),
-            ),
-        );
-        // Order intent / pre-approve toggle (TWO-25386 #8, NEW control - not a
-        // port). PS already runs the order-intent pre-approval check
-        // (controllers/front/orderintent.php ajaxProcessCheckOrderIntent)
-        // unconditionally on every payment-step render; this is the first
-        // admin switch for it. Gates the FRONT CONTROLLER's pre-approval
-        // preview call only (both server-side here and client-side via
-        // window.twopayment.enable_order_intent, see twopayment.js /
-        // TwoCheckoutManager.js) - it deliberately does NOT touch
-        // checkTwoOrderIntentApprovalAtPayment(), the authoritative check Two
-        // always runs at actual payment submission, so turning this off never
-        // lets an order through without Two's real approval - it only removes
-        // the early "will this be approved" preview shown during checkout.
-        // Default ON, matching the pre-existing always-on behaviour.
-        $inputs[] = array(
-            'type' => 'switch',
-            'label' => $this->l('Enable order intent pre-approval check'),
-            'name' => 'PS_TWO_ENABLE_ORDER_INTENT',
-            'is_bool' => true,
-            'desc' => $this->l('If you choose YES then the checkout calls Two to preview order approval before the buyer submits payment, and reflects the result in the payment tile. If you choose NO, this preview call is skipped - the buyer still goes through Two\'s real approval check when they submit payment.'),
-            'required' => true,
-            'values' => array(
-                array('id' => 'PS_TWO_ENABLE_ORDER_INTENT_ON', 'value' => 1, 'label' => $this->l('Yes')),
-                array('id' => 'PS_TWO_ENABLE_ORDER_INTENT_OFF', 'value' => 0, 'label' => $this->l('No')),
-            ),
-        );
-        // Offset pricing fee (buyer surcharge) fields — appended so the
-        // per-term grid reflects the merchant's currently-offered terms.
-        // TWO-24752 / TWO-24893.
-        $inputs = array_merge($inputs, $this->getTwoSurchargeFormInputs());
-
-        // Minimum order value (TWO-24775): the merchant's own optional bar,
-        // stacked on top of the API-resolved platform minimum. Field UX
-        // mirrors woocommerce-plugin / magento-plugin: currency in the label
-        // ("Minimum Order Value, EUR"), platform floor in the description,
-        // net/gross basis selector.
-        $default_currency_iso = $this->getTwoShopDefaultCurrencyIso();
-        $inputs[] = array(
-            'type' => 'text',
-            'label' => $default_currency_iso !== ''
-                ? sprintf($this->l('Minimum Order Value, %s'), $default_currency_iso)
-                : $this->l('Minimum Order Value'),
-            'name' => 'PS_TWO_MERCHANT_MIN_ORDER',
-            'desc' => $this->getTwoMerchantMinimumOrderDescription(),
-        );
-        $inputs[] = array(
-            'type' => 'select',
-            'label' => $this->l('Minimum Order Value Tax Basis'),
-            'name' => 'PS_TWO_MERCHANT_MIN_ORDER_BASIS',
-            'desc' => $this->l('Whether the basket is compared against the minimum including or excluding tax.'),
-            'options' => array(
-                'query' => array(
-                    array('id_option' => 'gross', 'name' => $this->l('Including tax (gross)')),
-                    array('id_option' => 'net', 'name' => $this->l('Excluding tax (net)')),
-                ),
-                'id' => 'id_option',
-                'name' => 'name',
-            ),
-        );
 
         return array(
             'form' => array(
                 'legend' => array(
-                    'title' => $this->l('Payment Settings'),
+                    'title' => $this->l('Checkout Fields'),
+                    'icon' => 'icon-list-alt',
+                ),
+                'input' => $inputs,
+                'submit' => array(
+                    'title' => $this->l('Save'),
+                ),
+            ),
+        );
+    }
+
+    protected function renderTwoPaymentTermsForm()
+    {
+        $helper = new HelperForm();
+        $helper->show_toolbar = false;
+        $helper->table = $this->table;
+        $helper->default_form_language = (int) Configuration::get('PS_LANG_DEFAULT');
+        $helper->module = $this;
+        $helper->allow_employee_form_lang = Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG') ? Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG') : 0;
+        $helper->identifier = $this->identifier;
+        $helper->submit_action = 'submitTwoPaymentTermsForm';
+        $helper->currentIndex = $this->context->link->getAdminLink('AdminModules', false) . '&configure=' . $this->name . '&tab_module=' . $this->tab . '&module_name=' . $this->name;
+        $helper->token = Tools::getAdminTokenLite('AdminModules');
+        $helper->tpl_vars = array(
+            'uri' => $this->getPathUri(),
+            'fields_value' => $this->getTwoPaymentTermsFormValues(),
+            'languages' => $this->context->controller->getLanguages(),
+            'id_language' => $this->context->language->id,
+        );
+        return $helper->generateForm(array($this->getTwoPaymentTermsForm()));
+    }
+
+    /**
+     * Section D - Payment Terms (TWO-25386 Part 1). Term type, offered
+     * terms, custom term days, default term, then the surcharge
+     * method -> basis -> line description -> per-term grid -> rounding ->
+     * tax treatment/class controls (getTwoSurchargeFormInputs), in that
+     * relative sub-order - relocated here from the former "Payment
+     * Settings" panel.
+     */
+    protected function getTwoPaymentTermsForm()
+    {
+        $inputs = array(
+            array(
+                'type' => 'radio',
+                'label' => $this->l('Payment Term Type'),
+                'name' => 'PS_TWO_PAYMENT_TERM_TYPE',
+                'desc' => $this->l('Choose how payment terms are calculated:') . '<br><br><strong>' . $this->l('Standard Terms:') . '</strong> ' . $this->l('Payment due X days from fulfillment date. Example: If you fulfill an order on January 15th with 30-day terms, payment is due February 14th.') . '<br><br><strong>' . $this->l('End-of-Month (EOM) Terms:') . '</strong> ' . $this->l('Payment due at the end of the current month plus X days from fulfillment date. Example: If you fulfill an order on January 15th with EOM+30 terms, payment is due February 28th (end of January + 30 days). This is common for B2B invoicing.'),
+                'is_bool' => false,
+                'values' => array(
+                    array(
+                        'id' => 'term_type_standard',
+                        'value' => 'STANDARD',
+                        'label' => $this->l('Standard Terms (e.g., 30 days from fulfillment)')
+                    ),
+                    array(
+                        'id' => 'term_type_eom',
+                        'value' => 'EOM',
+                        'label' => $this->l('End-of-Month Terms (e.g., EOM + 30 days)')
+                    ),
+                ),
+            ),
+            array(
+                'type' => 'checkbox',
+                'label' => $this->l('Available Payment Terms'),
+                'name' => 'PS_TWO_PAYMENT_TERMS',
+                'desc' => '<span id="two-payment-terms-desc-standard" style="display: none;">' . $this->l('Select which payment terms you want to offer. Standard terms are calculated from the fulfillment date.') . '</span><span id="two-payment-terms-desc-eom" style="display: none;">' . $this->l('Select which payment terms you want to offer. EOM (End-of-Month) terms are calculated from the end of the month at fulfillment, plus the selected days. Only 30, 45, and 60 day terms are available for EOM.') . '</span>',
+                'values' => array(
+                    // Restrict the tickable set to the merchant's backend
+                    // available_terms (TWO-24813); admin render is one of
+                    // the two sanctioned refresh points.
+                    'query' => $this->buildPaymentTermCheckboxQuery(),
+                    'id' => 'id',
+                    'name' => 'name'
+                )
+            ),
+            // Custom payment term in days (TWO-25386, ported from
+            // magento-plugin's payment_terms_duration_days / woocommerce-plugin's
+            // payment_terms_custom_days): a merchant-typed term length in
+            // addition to the preset checkboxes above. Unioned into
+            // getAvailablePaymentTerms() when > 0 AND still within Two's own
+            // backend-permitted term set (see that method) - it bypasses the
+            // EOM/STANDARD checkbox split, never the backend restriction.
+            array(
+                'type' => 'text',
+                'label' => $this->l('Custom payment term (days)'),
+                'name' => 'PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS',
+                'required' => false,
+                'desc' => $this->l('Optional. Offer an additional payment term (in days) not covered by the presets above. Leave empty to only offer the terms selected above. Two must still permit this term length for your account - an unsupported value is silently ignored.'),
+            ),
+            // Default pre-selected term (TWO-25386 #10): an explicit admin
+            // choice that takes priority over getDefaultPaymentTerm()'s
+            // derived default (API due_in_days, else 30 days, else lowest
+            // offered term) whenever the chosen term is still offered. This is
+            // the highest-priority item in this batch per the ticket: the
+            // surcharge differential-basis calculation
+            // (buildTwoBuyerFeeShare -> getDefaultPaymentTerm) reads through
+            // this same function, so setting it here is what actually makes
+            // the surcharge calc respect the merchant's chosen default.
+            array(
+                'type' => 'select',
+                'label' => $this->l('Default pre-selected term'),
+                'name' => 'PS_TWO_DEFAULT_PAYMENT_TERM',
+                'desc' => $this->l('Which offered term is pre-selected at checkout by default. Leave unset to keep the automatic choice (the merchant\'s own default term when offered, else 30 days, else the shortest offered term).'),
+                'options' => array(
+                    'query' => $this->getTwoDefaultPaymentTermOptions(),
+                    'id' => 'id_option',
+                    'name' => 'name',
+                ),
+            ),
+        );
+
+        // Offset pricing fee (buyer surcharge) fields — method, basis, line
+        // description, per-term grid, rounding, tax treatment/class, in
+        // that relative sub-order. TWO-24752 / TWO-24893.
+        $inputs = array_merge($inputs, $this->getTwoSurchargeFormInputs());
+
+        return array(
+            'form' => array(
+                'legend' => array(
+                    'title' => $this->l('Payment Terms'),
                     'icon' => 'icon-money',
                 ),
                 'input' => $inputs,
@@ -1664,26 +1764,145 @@ class Twopayment extends PaymentModule
         );
     }
 
-    protected function getTwoPaymentSettingsFormValues()
+    protected function getTwoCheckoutFieldsFormValues()
+    {
+        $fields_values = array();
+        foreach ($this->languages as $language) {
+            $fields_values['PS_TWO_TITLE'][$language['id_lang']] = Tools::getValue('PS_TWO_TITLE_' . (int) $language['id_lang'], Configuration::get('PS_TWO_TITLE', (int) $language['id_lang']));
+            $fields_values['PS_TWO_SUB_TITLE'][$language['id_lang']] = Tools::getValue('PS_TWO_SUB_TITLE_' . (int) $language['id_lang'], Configuration::get('PS_TWO_SUB_TITLE', (int) $language['id_lang']));
+        }
+        $fields_values['PS_TWO_CHECKOUT_SORT_ORDER'] = Tools::getValue('PS_TWO_CHECKOUT_SORT_ORDER', Configuration::get('PS_TWO_CHECKOUT_SORT_ORDER'));
+
+        $fields_values['PS_TWO_MERCHANT_MIN_ORDER'] = Tools::getValue(
+            'PS_TWO_MERCHANT_MIN_ORDER',
+            Configuration::get(self::CONFIG_MERCHANT_MIN_ORDER)
+        );
+        $saved_basis = Configuration::get(self::CONFIG_MERCHANT_MIN_ORDER_BASIS);
+        $fields_values['PS_TWO_MERCHANT_MIN_ORDER_BASIS'] = Tools::getValue(
+            'PS_TWO_MERCHANT_MIN_ORDER_BASIS',
+            in_array($saved_basis, array('net', 'gross'), true) ? $saved_basis : 'gross'
+        );
+
+        // Default-on switches (TWO-25386): an absent/empty stored row must
+        // read as enabled, matching the behaviour these switches shipped
+        // replacing (the "what is Two" tooltip and the order-intent preview
+        // call were both previously unconditional).
+        $fields_values['PS_TWO_ENABLE_ORDER_INTENT'] = Tools::getValue('PS_TWO_ENABLE_ORDER_INTENT', $this->isTwoBooleanConfigEnabledByDefault('PS_TWO_ENABLE_ORDER_INTENT'));
+        $fields_values['PS_TWO_SHOW_ABOUT_LINK'] = Tools::getValue('PS_TWO_SHOW_ABOUT_LINK', $this->isTwoBooleanConfigEnabledByDefault('PS_TWO_SHOW_ABOUT_LINK'));
+        $fields_values['PS_TWO_DISPLAY_TOOLTIPS'] = Tools::getValue('PS_TWO_DISPLAY_TOOLTIPS', Configuration::get('PS_TWO_DISPLAY_TOOLTIPS'));
+
+        // Optional buyer inputs. Standard field order, same as the form
+        // inputs and the checkout tile (TWO-25263).
+        $fields_values['PS_TWO_ENABLE_INVOICE_EMAIL'] = Tools::getValue('PS_TWO_ENABLE_INVOICE_EMAIL', Configuration::get('PS_TWO_ENABLE_INVOICE_EMAIL'));
+        $fields_values['PS_TWO_ENABLE_PO_NUMBER'] = Tools::getValue('PS_TWO_ENABLE_PO_NUMBER', Configuration::get('PS_TWO_ENABLE_PO_NUMBER'));
+        $fields_values['PS_TWO_ENABLE_PROJECT'] = Tools::getValue('PS_TWO_ENABLE_PROJECT', Configuration::get('PS_TWO_ENABLE_PROJECT'));
+        $fields_values['PS_TWO_ENABLE_DEPARTMENT'] = Tools::getValue('PS_TWO_ENABLE_DEPARTMENT', Configuration::get('PS_TWO_ENABLE_DEPARTMENT'));
+
+        return $fields_values;
+    }
+
+    protected function validTwoCheckoutFieldsFormValues()
+    {
+        foreach ($this->languages as $language) {
+            if (Tools::isEmpty(Tools::getValue('PS_TWO_TITLE_' . (int) $language['id_lang']))) {
+                $this->errors[] = $this->l('Enter a title.');
+            }
+            if (Tools::isEmpty(Tools::getValue('PS_TWO_SUB_TITLE_' . (int) $language['id_lang']))) {
+                $this->errors[] = $this->l('Enter a sub title.');
+            }
+        }
+
+        $this->validTwoCheckoutSortOrderValue();
+
+        // Minimum order value (TWO-24775): numeric and non-negative always;
+        // at least the platform floor when one is resolved AND expressible in
+        // the shop default currency. A floor that cannot be converted (no
+        // rate) skips the numeric check - the checkout gate enforces both
+        // minima independently (magento-plugin beforeSave parity).
+        $raw_minimum = trim((string) Tools::getValue('PS_TWO_MERCHANT_MIN_ORDER'));
+        if ($raw_minimum !== '') {
+            $normalised = str_replace(',', '.', $raw_minimum);
+            if (!is_numeric($normalised) || (float) $normalised < 0) {
+                $this->errors[] = $this->l('Minimum Order Value must be a non-negative number.');
+            } elseif ((float) $normalised > 0) {
+                $platform_minimum = $this->getPlatformMinimumOrder();
+                if ($platform_minimum) {
+                    $floor = $this->convertTwoAmountBetweenCurrencies(
+                        $platform_minimum['amount'],
+                        $platform_minimum['currency'],
+                        $this->getTwoShopDefaultCurrencyIso()
+                    );
+                    if ($floor !== null && (float) $normalised < $floor) {
+                        $this->errors[] = sprintf(
+                            $this->l('Minimum Order Value must be at least the platform minimum of %1$s, %2$s tax.'),
+                            $floor . ' ' . $this->getTwoShopDefaultCurrencyIso()
+                                . ($this->getTwoShopDefaultCurrencyIso() !== $platform_minimum['currency']
+                                    ? ' (' . $platform_minimum['amount'] . ' ' . $platform_minimum['currency'] . ')'
+                                    : ''),
+                            $platform_minimum['basis'] === 'gross' ? $this->l('including') : $this->l('excluding')
+                        );
+                    }
+                }
+            }
+        }
+        $basis = (string) Tools::getValue('PS_TWO_MERCHANT_MIN_ORDER_BASIS');
+        if ($basis !== '' && !in_array($basis, array('net', 'gross'), true)) {
+            $this->errors[] = $this->l('Minimum Order Value Tax Basis must be either including or excluding tax.');
+        }
+    }
+
+    protected function saveTwoCheckoutFieldsFormValues()
+    {
+        $values = array();
+        foreach ($this->languages as $language) {
+            $values['PS_TWO_TITLE'][(int) $language['id_lang']] = Tools::getValue('PS_TWO_TITLE_' . (int) $language['id_lang']);
+            $values['PS_TWO_SUB_TITLE'][(int) $language['id_lang']] = Tools::getValue('PS_TWO_SUB_TITLE_' . (int) $language['id_lang']);
+        }
+        Configuration::updateValue('PS_TWO_TITLE', $values['PS_TWO_TITLE']);
+        Configuration::updateValue('PS_TWO_SUB_TITLE', $values['PS_TWO_SUB_TITLE']);
+
+        // Checkout sort order (TWO-25386 #6). Passed validTwoCheckoutSortOrderValue
+        // above (empty, or a plain integer).
+        $raw_sort_order = trim((string) Tools::getValue('PS_TWO_CHECKOUT_SORT_ORDER'));
+        Configuration::updateValue(
+            'PS_TWO_CHECKOUT_SORT_ORDER',
+            ($raw_sort_order !== '' && preg_match('/^-?\d+$/', $raw_sort_order)) ? $raw_sort_order : ''
+        );
+        $this->applyTwoCheckoutSortOrder();
+
+        // Minimum order value (TWO-24775). Normalise the decimal comma; store
+        // '' when empty (no merchant minimum). Values reaching here passed
+        // validTwoCheckoutFieldsFormValues (the caller aborts on errors).
+        $raw_minimum = trim((string) Tools::getValue('PS_TWO_MERCHANT_MIN_ORDER'));
+        Configuration::updateValue(
+            self::CONFIG_MERCHANT_MIN_ORDER,
+            $raw_minimum === '' ? '' : str_replace(',', '.', $raw_minimum)
+        );
+        $basis = (string) Tools::getValue('PS_TWO_MERCHANT_MIN_ORDER_BASIS');
+        if (in_array($basis, array('net', 'gross'), true)) {
+            Configuration::updateValue(self::CONFIG_MERCHANT_MIN_ORDER_BASIS, $basis);
+        }
+
+        Configuration::updateValue('PS_TWO_ENABLE_ORDER_INTENT', (int) Tools::getValue('PS_TWO_ENABLE_ORDER_INTENT', 1));
+        Configuration::updateValue('PS_TWO_SHOW_ABOUT_LINK', (int) Tools::getValue('PS_TWO_SHOW_ABOUT_LINK', 1));
+        Configuration::updateValue('PS_TWO_DISPLAY_TOOLTIPS', (int) Tools::getValue('PS_TWO_DISPLAY_TOOLTIPS', 0));
+
+        // Optional buyer inputs (moved from the former "Payment Settings" tab).
+        // Standard field order, same as the form inputs and the checkout tile.
+        Configuration::updateValue('PS_TWO_ENABLE_INVOICE_EMAIL', Tools::getValue('PS_TWO_ENABLE_INVOICE_EMAIL'));
+        Configuration::updateValue('PS_TWO_ENABLE_PO_NUMBER', Tools::getValue('PS_TWO_ENABLE_PO_NUMBER'));
+        Configuration::updateValue('PS_TWO_ENABLE_PROJECT', Tools::getValue('PS_TWO_ENABLE_PROJECT'));
+        Configuration::updateValue('PS_TWO_ENABLE_DEPARTMENT', Tools::getValue('PS_TWO_ENABLE_DEPARTMENT'));
+
+        $this->output .= $this->displayConfirmation($this->l('Checkout field settings are updated.'));
+    }
+
+    protected function getTwoPaymentTermsFormValues()
     {
         $fields_values = array();
 
         // Payment term type (STANDARD or EOM)
         $fields_values['PS_TWO_PAYMENT_TERM_TYPE'] = Tools::getValue('PS_TWO_PAYMENT_TERM_TYPE', Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'));
-
-        // Checkout fields (moved from the former "Other Settings" tab).
-        // Standard field order, same as the form inputs and the checkout tile.
-        $fields_values['PS_TWO_ENABLE_INVOICE_EMAIL'] = Tools::getValue('PS_TWO_ENABLE_INVOICE_EMAIL', Configuration::get('PS_TWO_ENABLE_INVOICE_EMAIL'));
-        $fields_values['PS_TWO_ENABLE_PO_NUMBER'] = Tools::getValue('PS_TWO_ENABLE_PO_NUMBER', Configuration::get('PS_TWO_ENABLE_PO_NUMBER'));
-        $fields_values['PS_TWO_ENABLE_PROJECT'] = Tools::getValue('PS_TWO_ENABLE_PROJECT', Configuration::get('PS_TWO_ENABLE_PROJECT'));
-        $fields_values['PS_TWO_ENABLE_DEPARTMENT'] = Tools::getValue('PS_TWO_ENABLE_DEPARTMENT', Configuration::get('PS_TWO_ENABLE_DEPARTMENT'));
-        // Default-on switches (TWO-25386): an absent/empty stored row must
-        // read as enabled, matching the behaviour these switches shipped
-        // replacing (the "what is Two" tooltip and the order-intent preview
-        // call were both previously unconditional).
-        $fields_values['PS_TWO_SHOW_ABOUT_LINK'] = Tools::getValue('PS_TWO_SHOW_ABOUT_LINK', $this->isTwoBooleanConfigEnabledByDefault('PS_TWO_SHOW_ABOUT_LINK'));
-        $fields_values['PS_TWO_DISPLAY_TOOLTIPS'] = Tools::getValue('PS_TWO_DISPLAY_TOOLTIPS', Configuration::get('PS_TWO_DISPLAY_TOOLTIPS'));
-        $fields_values['PS_TWO_ENABLE_ORDER_INTENT'] = Tools::getValue('PS_TWO_ENABLE_ORDER_INTENT', $this->isTwoBooleanConfigEnabledByDefault('PS_TWO_ENABLE_ORDER_INTENT'));
 
         // Payment terms checkboxes
         $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
@@ -1694,16 +1913,6 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_DEFAULT_PAYMENT_TERM'] = (string) Tools::getValue(
             'PS_TWO_DEFAULT_PAYMENT_TERM',
             $this->getTwoDefaultPaymentTermFormDefault()
-        );
-
-        $fields_values['PS_TWO_MERCHANT_MIN_ORDER'] = Tools::getValue(
-            'PS_TWO_MERCHANT_MIN_ORDER',
-            Configuration::get(self::CONFIG_MERCHANT_MIN_ORDER)
-        );
-        $saved_basis = Configuration::get(self::CONFIG_MERCHANT_MIN_ORDER_BASIS);
-        $fields_values['PS_TWO_MERCHANT_MIN_ORDER_BASIS'] = Tools::getValue(
-            'PS_TWO_MERCHANT_MIN_ORDER_BASIS',
-            in_array($saved_basis, array('net', 'gross'), true) ? $saved_basis : 'gross'
         );
 
         $fields_values = array_merge($fields_values, $this->getTwoSurchargeFormValues());
@@ -1827,7 +2036,7 @@ class Twopayment extends PaymentModule
         return in_array((int) $stored, $this->getAvailablePaymentTerms(), true) ? $stored : '';
     }
 
-    protected function validTwoPaymentSettingsFormValues()
+    protected function validTwoPaymentTermsFormValues()
     {
         // Validate payment terms
         $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
@@ -1842,42 +2051,6 @@ class Twopayment extends PaymentModule
             $this->errors[] = $this->l('You must select at least one payment term.');
         }
 
-        // Minimum order value (TWO-24775): numeric and non-negative always;
-        // at least the platform floor when one is resolved AND expressible in
-        // the shop default currency. A floor that cannot be converted (no
-        // rate) skips the numeric check - the checkout gate enforces both
-        // minima independently (magento-plugin beforeSave parity).
-        $raw_minimum = trim((string) Tools::getValue('PS_TWO_MERCHANT_MIN_ORDER'));
-        if ($raw_minimum !== '') {
-            $normalised = str_replace(',', '.', $raw_minimum);
-            if (!is_numeric($normalised) || (float) $normalised < 0) {
-                $this->errors[] = $this->l('Minimum Order Value must be a non-negative number.');
-            } elseif ((float) $normalised > 0) {
-                $platform_minimum = $this->getPlatformMinimumOrder();
-                if ($platform_minimum) {
-                    $floor = $this->convertTwoAmountBetweenCurrencies(
-                        $platform_minimum['amount'],
-                        $platform_minimum['currency'],
-                        $this->getTwoShopDefaultCurrencyIso()
-                    );
-                    if ($floor !== null && (float) $normalised < $floor) {
-                        $this->errors[] = sprintf(
-                            $this->l('Minimum Order Value must be at least the platform minimum of %1$s, %2$s tax.'),
-                            $floor . ' ' . $this->getTwoShopDefaultCurrencyIso()
-                                . ($this->getTwoShopDefaultCurrencyIso() !== $platform_minimum['currency']
-                                    ? ' (' . $platform_minimum['amount'] . ' ' . $platform_minimum['currency'] . ')'
-                                    : ''),
-                            $platform_minimum['basis'] === 'gross' ? $this->l('including') : $this->l('excluding')
-                        );
-                    }
-                }
-            }
-        }
-        $basis = (string) Tools::getValue('PS_TWO_MERCHANT_MIN_ORDER_BASIS');
-        if ($basis !== '' && !in_array($basis, array('net', 'gross'), true)) {
-            $this->errors[] = $this->l('Minimum Order Value Tax Basis must be either including or excluding tax.');
-        }
-
         // Custom payment term days (TWO-25386 #9): empty is a legitimate "no
         // custom term" state; anything non-empty must be a positive integer.
         $raw_custom_days = trim((string) Tools::getValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS'));
@@ -1888,23 +2061,13 @@ class Twopayment extends PaymentModule
         $this->validTwoSurchargeFormValues();
     }
 
-    protected function saveTwoPaymentSettingsFormValues()
+    protected function saveTwoPaymentTermsFormValues()
     {
         // Save payment term type (STANDARD or EOM)
         $term_type = Tools::getValue('PS_TWO_PAYMENT_TERM_TYPE');
         if ($term_type === 'STANDARD' || $term_type === 'EOM') {
             Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', $term_type);
         }
-
-        // Checkout fields (moved from the former "Other Settings" tab).
-        // Standard field order, same as the form inputs and the checkout tile.
-        Configuration::updateValue('PS_TWO_ENABLE_INVOICE_EMAIL', Tools::getValue('PS_TWO_ENABLE_INVOICE_EMAIL'));
-        Configuration::updateValue('PS_TWO_ENABLE_PO_NUMBER', Tools::getValue('PS_TWO_ENABLE_PO_NUMBER'));
-        Configuration::updateValue('PS_TWO_ENABLE_PROJECT', Tools::getValue('PS_TWO_ENABLE_PROJECT'));
-        Configuration::updateValue('PS_TWO_ENABLE_DEPARTMENT', Tools::getValue('PS_TWO_ENABLE_DEPARTMENT'));
-        Configuration::updateValue('PS_TWO_SHOW_ABOUT_LINK', (int) Tools::getValue('PS_TWO_SHOW_ABOUT_LINK', 1));
-        Configuration::updateValue('PS_TWO_DISPLAY_TOOLTIPS', (int) Tools::getValue('PS_TWO_DISPLAY_TOOLTIPS', 0));
-        Configuration::updateValue('PS_TWO_ENABLE_ORDER_INTENT', (int) Tools::getValue('PS_TWO_ENABLE_ORDER_INTENT', 1));
 
         // Save payment terms checkboxes. Iterate ONLY the terms the admin form
         // actually rendered (the backend-restricted offerable source), NOT the
@@ -1921,7 +2084,7 @@ class Twopayment extends PaymentModule
         }
 
         // Custom payment term days (TWO-25386 #9). Passed
-        // validTwoPaymentSettingsFormValues above (digits-only, > 0, or
+        // validTwoPaymentTermsFormValues above (digits-only, > 0, or
         // empty).
         $raw_custom_days = trim((string) Tools::getValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS'));
         Configuration::updateValue(
@@ -1948,25 +2111,12 @@ class Twopayment extends PaymentModule
         }
         Configuration::updateValue('PS_TWO_DEFAULT_PAYMENT_TERM', $default_term_to_store);
 
-        // Minimum order value (TWO-24775). Normalise the decimal comma; store
-        // '' when empty (no merchant minimum). Values reaching here passed
-        // validTwoPaymentSettingsFormValues (the caller aborts on errors).
-        $raw_minimum = trim((string) Tools::getValue('PS_TWO_MERCHANT_MIN_ORDER'));
-        Configuration::updateValue(
-            self::CONFIG_MERCHANT_MIN_ORDER,
-            $raw_minimum === '' ? '' : str_replace(',', '.', $raw_minimum)
-        );
-        $basis = (string) Tools::getValue('PS_TWO_MERCHANT_MIN_ORDER_BASIS');
-        if (in_array($basis, array('net', 'gross'), true)) {
-            Configuration::updateValue(self::CONFIG_MERCHANT_MIN_ORDER_BASIS, $basis);
-        }
-
         $this->saveTwoSurchargeFormValues();
 
-        $this->output .= $this->displayConfirmation($this->l('Payment settings are updated.'));
+        $this->output .= $this->displayConfirmation($this->l('Payment terms settings are updated.'));
     }
 
-    protected function renderTwoOtherForm()
+    protected function renderTwoCompanyLookupForm()
     {
         $helper = new HelperForm();
         $helper->show_toolbar = false;
@@ -1975,25 +2125,30 @@ class Twopayment extends PaymentModule
         $helper->module = $this;
         $helper->allow_employee_form_lang = Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG') ? Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG') : 0;
         $helper->identifier = $this->identifier;
-        $helper->submit_action = 'submitTwoOtherForm';
+        $helper->submit_action = 'submitTwoCompanyLookupForm';
         $helper->currentIndex = $this->context->link->getAdminLink('AdminModules', false) . '&configure=' . $this->name . '&tab_module=' . $this->tab . '&module_name=' . $this->name;
         $helper->token = Tools::getAdminTokenLite('AdminModules');
         $helper->tpl_vars = array(
             'uri' => $this->getPathUri(),
-            'fields_value' => $this->getTwoOtherFormValues(),
+            'fields_value' => $this->getTwoCompanyLookupFormValues(),
             'languages' => $this->context->controller->getLanguages(),
             'id_language' => $this->context->language->id,
         );
-        return $helper->generateForm(array($this->getTwoOtherForm()));
+        return $helper->generateForm(array($this->getTwoCompanyLookupForm()));
     }
 
-    protected function getTwoOtherForm()
+    /**
+     * Section C - Company Lookup (TWO-25386 Part 1): company search
+     * placement and address auto-complete - relocated here from the former
+     * "Advanced Settings" panel.
+     */
+    protected function getTwoCompanyLookupForm()
     {
         $fields_form = array(
             'form' => array(
                 'legend' => array(
-                    'title' => $this->l('Advanced Settings'),
-                    'icon' => 'icon-cogs',
+                    'title' => $this->l('Company Lookup'),
+                    'icon' => 'icon-building',
                 ),
                 'input' => array(
                     array(
@@ -2062,12 +2217,60 @@ class Twopayment extends PaymentModule
                             ),
                         ),
                     ),
+                ),
+                'submit' => array(
+                    'title' => $this->l('Save'),
+                ),
+            ),
+        );
+
+        return $fields_form;
+    }
+
+    protected function renderTwoOrderManagementForm()
+    {
+        $helper = new HelperForm();
+        $helper->show_toolbar = false;
+        $helper->table = $this->table;
+        $helper->default_form_language = (int) Configuration::get('PS_LANG_DEFAULT');
+        $helper->module = $this;
+        $helper->allow_employee_form_lang = Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG') ? Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG') : 0;
+        $helper->identifier = $this->identifier;
+        $helper->submit_action = 'submitTwoOrderManagementForm';
+        $helper->currentIndex = $this->context->link->getAdminLink('AdminModules', false) . '&configure=' . $this->name . '&tab_module=' . $this->tab . '&module_name=' . $this->name;
+        $helper->token = Tools::getAdminTokenLite('AdminModules');
+        $helper->tpl_vars = array(
+            'uri' => $this->getPathUri(),
+            'fields_value' => $this->getTwoOrderManagementFormValues(),
+            'languages' => $this->context->controller->getLanguages(),
+            'id_language' => $this->context->language->id,
+        );
+        return $helper->generateForm(array($this->getTwoOrderManagementForm()));
+    }
+
+    /**
+     * Section E - Order Management (TWO-25386 Part 1): fulfilment trigger,
+     * tax subtotals and the shipping-tax fallback - relocated here from the
+     * former "Advanced Settings" panel. Fulfilment statuses and the
+     * Two -> platform state mapping remain the separate Order Status
+     * Mapping form (getTwoOrderStatusForm), rendered directly below this
+     * one on the same "Order Management" tab.
+     */
+    protected function getTwoOrderManagementForm()
+    {
+        $fields_form = array(
+            'form' => array(
+                'legend' => array(
+                    'title' => $this->l('Order Management'),
+                    'icon' => 'icon-truck',
+                ),
+                'input' => array(
                     array(
                         'type' => 'switch',
                         'label' => $this->l('Automatically fulfill orders with Two'),
                         'name' => 'PS_TWO_FINALIZE_PURCHASE',
                         'is_bool' => true,
-                        'desc' => $this->l('When enabled, orders are automatically marked as fulfilled in Two when their status changes to one of your configured fulfillment trigger statuses (see Order Status Mapping). This activates buyer payment terms and begins the payout cycle. If disabled, you must fulfill orders manually in Two\'s Merchant Portal.'),
+                        'desc' => $this->l('When enabled, orders are automatically marked as fulfilled in Two when their status changes to one of your configured fulfillment trigger statuses (see Fulfilment Statuses below). This activates buyer payment terms and begins the payout cycle. If disabled, you must fulfill orders manually in Two\'s Merchant Portal.'),
                         'required' => true,
                         'values' => array(
                             array(
@@ -2102,43 +2305,94 @@ class Twopayment extends PaymentModule
                             ),
                         ),
                     ),
+                ),
+                'submit' => array(
+                    'title' => $this->l('Save'),
+                ),
+            ),
+        );
+
+        // Hidden unless the install opts in (TWO-25200). Ordinary shops
+        // declare shipping VAT on their carriers and must not be offered a
+        // second place to do it; the field exists for merchants who price
+        // shipping outside the carrier table entirely.
+        if ($this->isTwoDefaultShippingTaxCodeFieldEnabled()) {
+            $fields_form['form']['input'][] = array(
+                'type' => 'select',
+                'label' => $this->l('Default shipping tax code'),
+                'name' => self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP,
+                'desc' => $this->l('Tax rules group ASSUMED FOR SHIPPING ONLY when the carrier\'s tax rate cannot be resolved for the order - for example when shipping is priced outside PrestaShop\'s carrier table, so no carrier declares a tax rules group. It is never used when a carrier does declare one: the carrier\'s own group always wins. Leave unset to keep refusing such orders rather than assuming a rate.'),
+                'options' => array(
+                    'query' => $this->getTwoDefaultShippingTaxRulesGroupOptions(),
+                    'id' => 'id',
+                    'name' => 'name',
+                ),
+            );
+        }
+
+        return $fields_form;
+    }
+
+    protected function renderTwoDiagnosticsForm()
+    {
+        $helper = new HelperForm();
+        $helper->show_toolbar = false;
+        $helper->table = $this->table;
+        $helper->default_form_language = (int) Configuration::get('PS_LANG_DEFAULT');
+        $helper->module = $this;
+        $helper->allow_employee_form_lang = Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG') ? Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG') : 0;
+        $helper->identifier = $this->identifier;
+        $helper->submit_action = 'submitTwoDiagnosticsForm';
+        $helper->currentIndex = $this->context->link->getAdminLink('AdminModules', false) . '&configure=' . $this->name . '&tab_module=' . $this->tab . '&module_name=' . $this->name;
+        $helper->token = Tools::getAdminTokenLite('AdminModules');
+        $helper->tpl_vars = array(
+            'uri' => $this->getPathUri(),
+            'fields_value' => $this->getTwoDiagnosticsFormValues(),
+            'languages' => $this->context->controller->getLanguages(),
+            'id_language' => $this->context->language->id,
+        );
+        return $helper->generateForm(array($this->getTwoDiagnosticsForm()));
+    }
+
+    /**
+     * Section F - Diagnostics (TWO-25386 Part 1): debug/API logging, skip
+     * confirm nonce, clear on deactivation and the error log link -
+     * relocated here from the former "General Settings"/"Advanced
+     * Settings" panels. The version/plugin-info panel and the install
+     * health checklist (renderTwoPluginInfo/renderTwoPluginHealthChecklist)
+     * render directly below this form on the same "Diagnostics" tab.
+     */
+    protected function getTwoDiagnosticsForm()
+    {
+        return array(
+            'form' => array(
+                'legend' => array(
+                    'title' => $this->l('Diagnostics'),
+                    'icon' => 'icon-stethoscope',
+                ),
+                'input' => array(
+                    // Debug mode (relocated from the former "General
+                    // Settings" panel, alongside the other diagnostic
+                    // controls).
                     array(
                         'type' => 'switch',
-                        'label' => $this->l('Disable SSL Verification (Corporate Networks Only)'),
-                        'name' => 'PS_TWO_DISABLE_SSL_VERIFY',
+                        'label' => $this->l('Enable Debug Mode'),
+                        'name' => 'PS_TWO_DEBUG_MODE',
                         'is_bool' => true,
-                        'desc' => $this->l('WARNING: Only enable this if you are behind a corporate proxy with custom SSL certificates. This disables SSL certificate verification and is a SECURITY RISK. NOT RECOMMENDED for production.'),
-                        'required' => true,
+                        'desc' => $this->l('Enable detailed logging for troubleshooting. Logs tax calculations and other diagnostic data. Only enable when requested by Two support.'),
+                        'required' => false,
                         'values' => array(
                             array(
-                                'id' => 'PS_TWO_DISABLE_SSL_VERIFY_ON',
+                                'id' => 'PS_TWO_DEBUG_MODE_ON',
                                 'value' => 1,
-                                'label' => $this->l('Yes (Not Recommended)')
+                                'label' => $this->l('Yes')
                             ),
                             array(
-                                'id' => 'PS_TWO_DISABLE_SSL_VERIFY_OFF',
+                                'id' => 'PS_TWO_DEBUG_MODE_OFF',
                                 'value' => 0,
-                                'label' => $this->l('No (Secure)')
+                                'label' => $this->l('No')
                             ),
                         ),
-                    ),
-                    // Checkout sort order (TWO-25386 #6, ported from
-                    // magento-plugin's Advanced > sort_order). Best-effort:
-                    // PrestaShop core has no per-module sort_order config path
-                    // for payment methods the way Magento does - the native
-                    // mechanism is the hook_module position table, normally
-                    // reordered by dragging in Payment > Preferences. Saving
-                    // this field asks core to move this module to that
-                    // position on the paymentOptions hook (see
-                    // applyTwoCheckoutSortOrder()); it is stored regardless so
-                    // the value survives even where the move itself cannot be
-                    // applied.
-                    array(
-                        'type' => 'text',
-                        'label' => $this->l('Checkout sort order'),
-                        'name' => 'PS_TWO_CHECKOUT_SORT_ORDER',
-                        'required' => false,
-                        'desc' => $this->l('Optional. A lower number shows Two earlier among the payment methods offered at checkout. Leave empty to use PrestaShop\'s own Payment > Preferences ordering.'),
                     ),
                     // Skip confirm-order nonce/token check (TWO-25386 #4,
                     // ported from woocommerce-plugin's `skip_confirm_auth`).
@@ -2193,26 +2447,6 @@ class Twopayment extends PaymentModule
                 ),
             ),
         );
-
-        // Hidden unless the install opts in (TWO-25200). Ordinary shops
-        // declare shipping VAT on their carriers and must not be offered a
-        // second place to do it; the field exists for merchants who price
-        // shipping outside the carrier table entirely.
-        if ($this->isTwoDefaultShippingTaxCodeFieldEnabled()) {
-            $fields_form['form']['input'][] = array(
-                'type' => 'select',
-                'label' => $this->l('Default shipping tax code'),
-                'name' => self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP,
-                'desc' => $this->l('Tax rules group ASSUMED FOR SHIPPING ONLY when the carrier\'s tax rate cannot be resolved for the order - for example when shipping is priced outside PrestaShop\'s carrier table, so no carrier declares a tax rules group. It is never used when a carrier does declare one: the carrier\'s own group always wins. Leave unset to keep refusing such orders rather than assuming a rate.'),
-                'options' => array(
-                    'query' => $this->getTwoDefaultShippingTaxRulesGroupOptions(),
-                    'id' => 'id',
-                    'name' => 'name',
-                ),
-            );
-        }
-
-        return $fields_form;
     }
 
     /**
@@ -2261,7 +2495,7 @@ class Twopayment extends PaymentModule
      * existing switch rather than adding a new one is a deliberate BEHAVIOUR
      * CHANGE for shops that already have it set to "No": that used to turn
      * company search off entirely, and now relocates it to the payment tile
-     * instead (see the switch's own 'desc' in getTwoOtherForm()).
+     * instead (see the switch's own 'desc' in getTwoCompanyLookupForm()).
      *
      * An absent row resolves to '1' (address area) - the install default,
      * and the only behaviour that ever existed before this switch could mean
@@ -2394,7 +2628,7 @@ class Twopayment extends PaymentModule
         return $configured === null ? '' : (string) $configured;
     }
 
-    protected function getTwoOtherFormValues()
+    protected function getTwoCompanyLookupFormValues()
     {
         $fields_values = array();
         // Read through the same default-on resolver the checkout uses, so an
@@ -2412,12 +2646,43 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_ADDRESS_LOOKUP'] = $this->isAddressLookupSettingAvailable()
             ? Tools::getValue('PS_TWO_ADDRESS_LOOKUP', $this->getAddressLookupEnabled())
             : '0';
+        return $fields_values;
+    }
+
+    protected function validTwoCompanyLookupFormValues()
+    {
+        // Nothing to validate: both switches are booleans.
+    }
+
+    protected function saveTwoCompanyLookupFormValues()
+    {
+        // BEFORE the writes below: the gate reads the submitted (or, absent a
+        // submission, the currently stored) company-search position, and
+        // updateValue() would otherwise have already overwritten the stored
+        // row this falls back to.
+        $address_lookup_available = $this->isAddressLookupSettingAvailable();
+
+        Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME'));
+        // Server-side half of the "unavailable when the search is not in the
+        // address area" gate (TWO-25326 §7.1 follow-up). The admin JS greys
+        // the switch out, and a disabled control posts nothing - but a
+        // hand-crafted or replayed POST can still carry a ticked box, and it
+        // must not take effect. Matched by the same gate in
+        // getTwoCompanyLookupFormValues() so the rendered position never
+        // disagrees with what is stored.
+        Configuration::updateValue(
+            'PS_TWO_ADDRESS_LOOKUP',
+            $address_lookup_available ? (int) Tools::getValue('PS_TWO_ADDRESS_LOOKUP', 1) : 0
+        );
+
+        $this->output .= $this->displayConfirmation($this->l('Company lookup settings are updated.'));
+    }
+
+    protected function getTwoOrderManagementFormValues()
+    {
+        $fields_values = array();
         $fields_values['PS_TWO_FINALIZE_PURCHASE'] = Tools::getValue('PS_TWO_FINALIZE_PURCHASE', Configuration::get('PS_TWO_FINALIZE_PURCHASE'));
         $fields_values['PS_TWO_ENABLE_TAX_SUBTOTALS'] = Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
-        $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
-        $fields_values['PS_TWO_CHECKOUT_SORT_ORDER'] = Tools::getValue('PS_TWO_CHECKOUT_SORT_ORDER', Configuration::get('PS_TWO_CHECKOUT_SORT_ORDER'));
-        $fields_values['PS_TWO_SKIP_CONFIRM_NONCE_CHECK'] = Tools::getValue('PS_TWO_SKIP_CONFIRM_NONCE_CHECK', Configuration::get('PS_TWO_SKIP_CONFIRM_NONCE_CHECK'));
-        $fields_values['PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION'] = Tools::getValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', $this->isTwoBooleanConfigEnabledByDefault('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION'));
         if ($this->isTwoDefaultShippingTaxCodeFieldEnabled()) {
             // Kept a STRING: an (int) cast would turn the unselected state
             // into 0 and silently pre-select "No tax".
@@ -2429,10 +2694,8 @@ class Twopayment extends PaymentModule
         return $fields_values;
     }
 
-    protected function validTwoOtherFormValues()
+    protected function validTwoOrderManagementFormValues()
     {
-        $this->validTwoCheckoutSortOrderValue();
-
         if (!$this->isTwoDefaultShippingTaxCodeFieldEnabled()) {
             return;
         }
@@ -2452,61 +2715,16 @@ class Twopayment extends PaymentModule
         }
     }
 
-    /**
-     * Validate the checkout sort order field (TWO-25386 #6): empty (no
-     * preference) or a plain integer, positive or negative.
-     */
-    protected function validTwoCheckoutSortOrderValue()
+    protected function saveTwoOrderManagementFormValues()
     {
-        $raw = trim((string) Tools::getValue('PS_TWO_CHECKOUT_SORT_ORDER'));
-        if ($raw === '') {
-            return;
-        }
-        if (!preg_match('/^-?\d+$/', $raw)) {
-            $this->errors[] = $this->l('Checkout sort order must be a whole number, or left empty.');
-        }
-    }
-
-    protected function saveTwoOtherFormValues()
-    {
-        // BEFORE the writes below: the gate reads the submitted (or, absent a
-        // submission, the currently stored) company-search position, and
-        // updateValue() would otherwise have already overwritten the stored
-        // row this falls back to.
-        $address_lookup_available = $this->isAddressLookupSettingAvailable();
-
-        Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME'));
-        // Server-side half of the "unavailable when the search is not in the
-        // address area" gate (TWO-25326 §7.1 follow-up). The admin JS greys
-        // the switch out, and a disabled control posts nothing - but a
-        // hand-crafted or replayed POST can still carry a ticked box, and it
-        // must not take effect. Matched by the same gate in
-        // getTwoOtherFormValues() so the rendered position never disagrees
-        // with what is stored.
-        Configuration::updateValue(
-            'PS_TWO_ADDRESS_LOOKUP',
-            $address_lookup_available ? (int) Tools::getValue('PS_TWO_ADDRESS_LOOKUP', 1) : 0
-        );
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', Tools::getValue('PS_TWO_FINALIZE_PURCHASE'));
         Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', (int) Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
-        Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
-        Configuration::updateValue('PS_TWO_SKIP_CONFIRM_NONCE_CHECK', (int) Tools::getValue('PS_TWO_SKIP_CONFIRM_NONCE_CHECK', 0));
-        Configuration::updateValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', (int) Tools::getValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', 1));
-
-        // Checkout sort order (TWO-25386 #6). Passed validTwoCheckoutSortOrderValue
-        // above (empty, or a plain integer).
-        $raw_sort_order = trim((string) Tools::getValue('PS_TWO_CHECKOUT_SORT_ORDER'));
-        Configuration::updateValue(
-            'PS_TWO_CHECKOUT_SORT_ORDER',
-            ($raw_sort_order !== '' && preg_match('/^-?\d+$/', $raw_sort_order)) ? $raw_sort_order : ''
-        );
-        $this->applyTwoCheckoutSortOrder();
 
         // Write the default shipping tax code ONLY when the field was
         // actually rendered AND actually submitted. A form that never showed
         // the field posts nothing for it, and blindly writing Tools::getValue
         // with a '' default there would wipe a stored declaration on the next
-        // unrelated advanced-settings save - exactly the failure mode the
+        // unrelated order-management save - exactly the failure mode the
         // payment-terms checkbox loop was fixed for under TWO-24813.
         if ($this->isTwoDefaultShippingTaxCodeFieldEnabled()) {
             $raw = Tools::getValue(self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP, false);
@@ -2523,7 +2741,45 @@ class Twopayment extends PaymentModule
             }
         }
 
-        $this->output .= $this->displayConfirmation($this->l('Advanced settings are updated.'));
+        $this->output .= $this->displayConfirmation($this->l('Order management settings are updated.'));
+    }
+
+    /**
+     * Validate the checkout sort order field (TWO-25386 #6): empty (no
+     * preference) or a plain integer, positive or negative.
+     */
+    protected function validTwoCheckoutSortOrderValue()
+    {
+        $raw = trim((string) Tools::getValue('PS_TWO_CHECKOUT_SORT_ORDER'));
+        if ($raw === '') {
+            return;
+        }
+        if (!preg_match('/^-?\d+$/', $raw)) {
+            $this->errors[] = $this->l('Checkout sort order must be a whole number, or left empty.');
+        }
+    }
+
+    protected function getTwoDiagnosticsFormValues()
+    {
+        $fields_values = array();
+        $fields_values['PS_TWO_DEBUG_MODE'] = Tools::getValue('PS_TWO_DEBUG_MODE', Configuration::get('PS_TWO_DEBUG_MODE'));
+        $fields_values['PS_TWO_SKIP_CONFIRM_NONCE_CHECK'] = Tools::getValue('PS_TWO_SKIP_CONFIRM_NONCE_CHECK', Configuration::get('PS_TWO_SKIP_CONFIRM_NONCE_CHECK'));
+        $fields_values['PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION'] = Tools::getValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', $this->isTwoBooleanConfigEnabledByDefault('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION'));
+        return $fields_values;
+    }
+
+    protected function validTwoDiagnosticsFormValues()
+    {
+        // Nothing to validate: all three fields are booleans / an html link.
+    }
+
+    protected function saveTwoDiagnosticsFormValues()
+    {
+        Configuration::updateValue('PS_TWO_DEBUG_MODE', Tools::getValue('PS_TWO_DEBUG_MODE'));
+        Configuration::updateValue('PS_TWO_SKIP_CONFIRM_NONCE_CHECK', (int) Tools::getValue('PS_TWO_SKIP_CONFIRM_NONCE_CHECK', 0));
+        Configuration::updateValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', (int) Tools::getValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', 1));
+
+        $this->output .= $this->displayConfirmation($this->l('Diagnostics settings are updated.'));
     }
 
     /**
@@ -2665,7 +2921,7 @@ class Twopayment extends PaymentModule
                     <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Buyer rejected?') . '</strong> ' . $this->l('The company may have reached their credit limit or failed Two\'s credit check') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Company not found?') . '</strong> ' . $this->l('Customer must enter their official registered company name') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Phone invalid?') . '</strong> ' . $this->l('Ensure the phone number includes country code and is in a valid format') . '</li>
-                    <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Amount mismatch errors?') . '</strong> ' . $this->l('Enable Debug Mode in General Settings and contact Two support with the logs') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Amount mismatch errors?') . '</strong> ' . $this->l('Enable Debug Mode in Diagnostics and contact Two support with the logs') . '</li>
                 </ul>
             </div>
         </div>
@@ -2882,7 +3138,7 @@ class Twopayment extends PaymentModule
         if (!$api_verified) {
             $html .= '<div class="alert alert-warning" style="margin-top:12px;margin-bottom:0;">';
             $html .= '<strong>' . $this->l('Action required:') . '</strong> ';
-            $html .= $this->l('API key is not verified. Checkout requests may fail until the General Settings are saved with a valid key.');
+            $html .= $this->l('API key is not verified. Checkout requests may fail until the General settings are saved with a valid key.');
             $html .= '</div>';
         }
 
@@ -12907,7 +13163,7 @@ class Twopayment extends PaymentModule
         }
         // The RENDERED term set, not getAvailablePaymentTerms(): the grid
         // renders (and therefore posts) a row per OFFERABLE term, and the
-        // ticked subset is rewritten by saveTwoPaymentSettingsFormValues()
+        // ticked subset is rewritten by saveTwoPaymentTermsFormValues()
         // BEFORE saveTwoSurchargeFormValues() reads it. Validating the stored
         // subset therefore skipped any cell on a term ticked in the same
         // submit - so a cap of 0 typed on a newly-ticked term was stored

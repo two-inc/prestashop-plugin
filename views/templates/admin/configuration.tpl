@@ -7,11 +7,12 @@
 <div class="row">
     <div id="two-tabs" class="col-lg-2 col-md-3">
         <div class="list-group">
-            <a class="list-group-item {if $twotabvalue == 1}active{/if}" href="#general-settings" aria-controls="general-settings" role="tab" data-toggle="tab">{l s='General Settings' mod='twopayment'}</a>
-            <a class="list-group-item {if $twotabvalue == 5}active{/if}" href="#payment-settings" aria-controls="payment-settings" role="tab" data-toggle="tab">{l s='Payment Settings' mod='twopayment'}</a>
-            <a class="list-group-item {if $twotabvalue == 2}active{/if}" href="#other-settings" aria-controls="other-settings" role="tab" data-toggle="tab">{l s='Advanced Settings' mod='twopayment'}</a>
-            <a class="list-group-item {if $twotabvalue == 3}active{/if}" href="#order-status-settings" aria-controls="order-status-settings" role="tab" data-toggle="tab">{l s='Order Status Settings' mod='twopayment'}</a>
-            <a class="list-group-item {if $twotabvalue == 4}active{/if}" href="#plugin-info" aria-controls="plugin-info" role="tab" data-toggle="tab">{l s='Plugin Information' mod='twopayment'}</a>
+            <a class="list-group-item {if $twotabvalue == 1}active{/if}" href="#general-settings" aria-controls="general-settings" role="tab" data-toggle="tab">{l s='General' mod='twopayment'}</a>
+            <a class="list-group-item {if $twotabvalue == 2}active{/if}" href="#checkout-fields-settings" aria-controls="checkout-fields-settings" role="tab" data-toggle="tab">{l s='Checkout Fields' mod='twopayment'}</a>
+            <a class="list-group-item {if $twotabvalue == 3}active{/if}" href="#company-lookup-settings" aria-controls="company-lookup-settings" role="tab" data-toggle="tab">{l s='Company Lookup' mod='twopayment'}</a>
+            <a class="list-group-item {if $twotabvalue == 4}active{/if}" href="#payment-terms-settings" aria-controls="payment-terms-settings" role="tab" data-toggle="tab">{l s='Payment Terms' mod='twopayment'}</a>
+            <a class="list-group-item {if $twotabvalue == 5}active{/if}" href="#order-management-settings" aria-controls="order-management-settings" role="tab" data-toggle="tab">{l s='Order Management' mod='twopayment'}</a>
+            <a class="list-group-item {if $twotabvalue == 6}active{/if}" href="#diagnostics-settings" aria-controls="diagnostics-settings" role="tab" data-toggle="tab">{l s='Diagnostics' mod='twopayment'}</a>
         </div>
     </div>
     <div class="col-lg-10 col-md-9">
@@ -43,16 +44,21 @@
                 {/if}
                 {$renderTwoGeneralForm nofilter}
             </div>
-            <div id="payment-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 5}active{/if}">
-                {$renderTwoPaymentSettingsForm nofilter}
+            <div id="checkout-fields-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 2}active{/if}">
+                {$renderTwoCheckoutFieldsForm nofilter}
             </div>
-            <div id="other-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 2}active{/if}">
-                {$renderTwoOtherForm nofilter}
+            <div id="company-lookup-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 3}active{/if}">
+                {$renderTwoCompanyLookupForm nofilter}
             </div>
-            <div id="order-status-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 3}active{/if}">
+            <div id="payment-terms-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 4}active{/if}">
+                {$renderTwoPaymentTermsForm nofilter}
+            </div>
+            <div id="order-management-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 5}active{/if}">
+                {$renderTwoOrderManagementForm nofilter}
                 {$renderTwoOrderStatusForm nofilter}
             </div>
-            <div id="plugin-info" role="tabpanel" class="tab-pane {if $twotabvalue == 4}active{/if}">
+            <div id="diagnostics-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 6}active{/if}">
+                {$renderTwoDiagnosticsForm nofilter}
                 {$renderTwoPluginInfo nofilter}
             </div>
         </div>

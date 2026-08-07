@@ -50,7 +50,7 @@ final class AddressLookupConfigSpec
     /** @return array<string,mixed> */
     private static function formValues(TwopaymentTestHarness $module): array
     {
-        $method = new ReflectionMethod(Twopayment::class, 'getTwoOtherFormValues');
+        $method = new ReflectionMethod(Twopayment::class, 'getTwoCompanyLookupFormValues');
 
         return $method->invoke($module);
     }
@@ -58,7 +58,7 @@ final class AddressLookupConfigSpec
     private static function save(TwopaymentTestHarness $module, $posted): void
     {
         Tools::setTestValue('PS_TWO_ADDRESS_LOOKUP', $posted);
-        $method = new ReflectionMethod(Twopayment::class, 'saveTwoOtherFormValues');
+        $method = new ReflectionMethod(Twopayment::class, 'saveTwoCompanyLookupFormValues');
         $method->invoke($module);
     }
 

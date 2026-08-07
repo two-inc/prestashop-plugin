@@ -132,9 +132,9 @@ final class OrderBuilderSpec
         self::testGetTwoCheckoutCompanyDataUsesValidatedCookieFallback();
         self::testGetTwoCheckoutCompanyDataClearsStaleCookieOnCountryMismatch();
         self::testGetTwoCheckoutCompanyDataIgnoresStaleCookieWhenAddressCompanyChangesSameCountry();
-        self::testSaveGeneralFormDoesNotChangeSslVerificationFlag();
-        self::testSaveOtherFormUpdatesSslVerificationFlag();
-        self::testOtherSettingsFormDoesNotExposeOrderIntentToggle();
+        self::testSaveGeneralFormUpdatesSslVerificationFlag();
+        self::testSaveOrderManagementFormUpdatesTaxSubtotalsFlag();
+        self::testOrderManagementFormDoesNotExposeOrderIntentToggle();
         self::testHookActionAdminControllerSetMediaRegistersCssOnModuleConfigPage();
         self::testHookActionAdminControllerSetMediaSkipsUnrelatedAdminPage();
         self::testHookPaymentOptionsAllowsTwoCoveredCurrencies();
@@ -4547,8 +4547,12 @@ final class OrderBuilderSpec
         TinyAssert::same('ES', $data['country_iso']);
     }
 
-    private static function testSaveGeneralFormDoesNotChangeSslVerificationFlag(): void
+    private static function testSaveGeneralFormUpdatesSslVerificationFlag(): void
     {
+        // TWO-25386 Part 1 section regroup: Disable SSL Verification now
+        // renders under, and is saved by, the General panel (Section A)
+        // alongside the other connection-level controls (key, environment) -
+        // it moved out of the former "Advanced Settings"/"Other" panel.
         self::reset();
         $module = new class extends TwopaymentTestHarness {
             public function saveGeneralForTest(): void
@@ -4557,11 +4561,9 @@ final class OrderBuilderSpec
             }
         };
 
-        Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', 1);
-        Tools::setTestValue('PS_TWO_DISABLE_SSL_VERIFY', 0);
+        Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', 0);
+        Tools::setTestValue('PS_TWO_DISABLE_SSL_VERIFY', 1);
         Tools::setTestValue('PS_TWO_ENVIRONMENT', 'development');
-        Tools::setTestValue('PS_TWO_TITLE_1', 'Two title');
-        Tools::setTestValue('PS_TWO_SUB_TITLE_1', 'Two subtitle');
         Tools::setTestValue('PS_TWO_MERCHANT_SHORT_NAME', 'merchant');
         Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', 'api-key');
 
@@ -4570,38 +4572,42 @@ final class OrderBuilderSpec
         TinyAssert::same(1, (int) Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
     }
 
-    private static function testSaveOtherFormUpdatesSslVerificationFlag(): void
+    private static function testSaveOrderManagementFormUpdatesTaxSubtotalsFlag(): void
     {
+        // TWO-25386 Part 1 section regroup: "Send tax subtotals in request
+        // payloads" now renders under, and is saved by, the Order Management
+        // panel (Section E) - it moved out of the former "Advanced
+        // Settings"/"Other" panel, which no longer exists as a single form.
         self::reset();
         $module = new class extends TwopaymentTestHarness {
-            public function saveOtherForTest(): void
+            public function saveOrderManagementForTest(): void
             {
-                $this->saveTwoOtherFormValues();
+                $this->saveTwoOrderManagementFormValues();
             }
         };
 
-        Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', 0);
         Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1);
-        Tools::setTestValue('PS_TWO_DISABLE_SSL_VERIFY', 1);
         Tools::setTestValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 0);
 
-        $module->saveOtherForTest();
+        $module->saveOrderManagementForTest();
 
-        TinyAssert::same(1, (int) Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
         TinyAssert::same(0, (int) Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS'));
     }
 
-    private static function testOtherSettingsFormDoesNotExposeOrderIntentToggle(): void
+    private static function testOrderManagementFormDoesNotExposeOrderIntentToggle(): void
     {
+        // Order intent lives in the Checkout Fields panel (Section B), not
+        // Order Management (Section E) - regression guard carried over from
+        // the pre-TWO-25386 "Other Settings" panel this replaced.
         self::reset();
         $module = new class extends TwopaymentTestHarness {
-            public function getOtherFormForTest(): array
+            public function getOrderManagementFormForTest(): array
             {
-                return $this->getTwoOtherForm();
+                return $this->getTwoOrderManagementForm();
             }
         };
 
-        $form = $module->getOtherFormForTest();
+        $form = $module->getOrderManagementFormForTest();
         $inputNames = array_map(function ($field) {
             return isset($field['name']) ? (string) $field['name'] : '';
         }, $form['form']['input']);
