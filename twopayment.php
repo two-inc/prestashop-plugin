@@ -3970,6 +3970,20 @@ class Twopayment extends PaymentModule
             return [];
         }
 
+        // Country-restriction gate (TWO-25387). The merchant's native per-module
+        // country allowlist was only enforced by core at final order submission,
+        // so a buyer outside it saw the tile and was refused at the last step.
+        // Withhold it at display time instead, exactly like the currency check
+        // above. See checkCountry().
+        if (!$this->checkCountry($cart)) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Payment option hidden - billing country not enabled for this module, cart '
+                . (int)$cart->id,
+                2
+            );
+            return [];
+        }
+
         // Minimum-order gate (TWO-24775): hide the payment option when the
         // cart is below the platform minimum (API-resolved, cache-only read
         // primed by the checkout media hook) or the merchant's own configured
@@ -4313,6 +4327,59 @@ class Twopayment extends PaymentModule
         }
 
         return false;
+    }
+
+    /**
+     * Check if the cart's billing country is allowed for this module according to
+     * PrestaShop's native per-module payment restrictions (the `module_country`
+     * table, edited from the back office's Payment Restrictions screen). This is
+     * a separate allowlist from the shop's own active-country list.
+     *
+     * Deliberately matched on the INVOICE address country and the current shop,
+     * because that is exactly the pair core matches on at final order
+     * submission - and the submission gate in controllers/front/payment.php
+     * defers to core for that verdict. Core's display-time filter matches
+     * module_country against the *contextual* country instead, so a shop whose
+     * context country differs from the buyer's billing country renders the tile
+     * and then refuses the order at the last step. This closes that gap at
+     * display time (TWO-25387), the same way checkCurrency() withholds the tile
+     * rather than letting an unsupported currency fail at submission.
+     *
+     * Fail-closed on every inconclusive input, unlike most gates in this file:
+     * a lookup that cannot be resolved here would not resolve for core at
+     * submission either, so showing the tile would only move the same refusal
+     * to a worse place in the flow.
+     *
+     * @param Cart $cart
+     * @return bool
+     */
+    private function checkCountry($cart)
+    {
+        if (!Validate::isLoadedObject($cart) || (int) $cart->id_address_invoice <= 0) {
+            return false;
+        }
+
+        $billing_address = new Address((int) $cart->id_address_invoice);
+        if (!Validate::isLoadedObject($billing_address)) {
+            return false;
+        }
+
+        $id_country = (int) $billing_address->id_country;
+        if ($id_country <= 0) {
+            return false;
+        }
+
+        // No convenience helper exists for this. Core exposes Module::getCurrency()
+        // for the currency allowlist but nothing equivalent for module_country -
+        // every core reader of that table inlines the query - so this one does
+        // too, scoped to this module and this shop.
+        $sql = 'SELECT `id_country` FROM `' . _DB_PREFIX_ . 'module_country`'
+            . ' WHERE `id_module` = ' . (int) $this->id
+            . ' AND `id_country` = ' . $id_country
+            . ' AND `id_shop` = ' . (isset($this->context->shop->id) ? (int) $this->context->shop->id : 0)
+            . ' LIMIT 1';
+
+        return (int) Db::getInstance()->getValue($sql) === $id_country;
     }
 
     /**

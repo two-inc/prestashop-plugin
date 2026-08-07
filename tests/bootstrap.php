@@ -137,6 +137,21 @@ namespace {
          */
         public static array $cartDeliveryOptionListThrows = [];
         public static array $moduleCurrencies = [];
+        /**
+         * `module_country` rows, as PrestaShop's Payment Restrictions screen
+         * writes them: [['id_module' => int, 'id_shop' => int, 'id_country' =>
+         * int], ...]. Read by the Db::getValue() stub, so a spec restricts the
+         * module to a country subset the same way a merchant does.
+         *
+         * NULL (the default) is NOT "the table is empty" - it means no spec has
+         * expressed an opinion, so every country resolves as enabled. That is the
+         * PrestaShop install default: PaymentModule::install() populates a row per
+         * active country. An empty ARRAY is the genuinely-empty table, which core
+         * treats as "no country enabled".
+         *
+         * @var array<int,array<string,int>>|null
+         */
+        public static ?array $moduleCountries = null;
         public static array $productCategories = [];
         public static array $images = [];
         /**
@@ -259,6 +274,7 @@ namespace {
                     ['id_currency' => 978], // EUR
                 ],
             ];
+            self::$moduleCountries = null;
             self::$productCategories = [];
             self::$images = [];
             self::$taxRuleRates = [];
@@ -280,6 +296,7 @@ namespace {
             self::$nextId = 90000;
 
             $context = Context::getContext();
+            $context->shop = new Shop();
             $context->cookie = new Cookie();
             $context->link = new Link();
             $context->controller = new \stdClass();
@@ -466,6 +483,11 @@ namespace {
         // deprecates - and a deprecation notice on every suite run is noise the
         // next real one hides in.
         public $country;
+        // Core has one on every request. Declared for the same reason as
+        // $country above: the module scopes its module_country lookup to the
+        // current shop (TWO-25387), and a dynamic property would raise a PHP
+        // 8.2 deprecation on every suite run.
+        public $shop;
 
         private static ?self $instance = null;
 
@@ -473,6 +495,7 @@ namespace {
         {
             if (self::$instance === null) {
                 self::$instance = new self();
+                self::$instance->shop = new Shop();
                 self::$instance->cookie = new Cookie();
                 self::$instance->link = new Link();
                 self::$instance->controller = new \stdClass();
@@ -1683,6 +1706,9 @@ namespace {
     {
         public const CONTEXT_ALL = 1;
 
+        /** Core's per-shop id; 1 is the default single-shop install. */
+        public int $id = 1;
+
         public static function isFeatureActive(): bool
         {
             return false;
@@ -1754,6 +1780,27 @@ namespace {
             }
             if (preg_match("/FROM information_schema\.TRIGGERS.*TRIGGER_NAME = '([^']+)'/s", $sql, $m)) {
                 return isset(StubStore::$dbTriggers[$m[1]]) ? '1' : '0';
+            }
+            // Native per-module payment restrictions (TWO-25387). Core returns the
+            // matched id_country, or false when no row matches.
+            if (preg_match(
+                '/SELECT `id_country` FROM `' . _DB_PREFIX_ . 'module_country`'
+                . ' WHERE `id_module` = (\d+) AND `id_country` = (\d+) AND `id_shop` = (\d+)/',
+                $sql,
+                $m
+            )) {
+                if (StubStore::$moduleCountries === null) {
+                    return $m[2]; // unrestricted - see StubStore::$moduleCountries
+                }
+                foreach (StubStore::$moduleCountries as $row) {
+                    if ((int) ($row['id_module'] ?? 0) === (int) $m[1]
+                        && (int) ($row['id_country'] ?? 0) === (int) $m[2]
+                        && (int) ($row['id_shop'] ?? 0) === (int) $m[3]
+                    ) {
+                        return $m[2];
+                    }
+                }
+                return false;
             }
             return false;
         }
