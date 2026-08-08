@@ -30,8 +30,36 @@
  * row can appear on first paint with no round trip of its own. That
  * container renders no visible chips or toggle any more; it now exists only
  * to host the prompt/status/error messaging shown once enrolment starts.
+ *
+ * `.two-sole-trader` ONLY EVER exists on the payment step (it is rendered by
+ * paymentinfo.tpl and nowhere else) - the address-editor page has no such
+ * element at all (TWO-40 follow-up; live bug reported by Doug). Resolving
+ * availability must not depend on that container existing: refreshAvailability()
+ * below resolves and caches the answer for whatever page it runs on, and only
+ * the enrolment-status rendering (showPrompt()/hidePrompt()/showStatus()/
+ * showError()) - which genuinely has nowhere to draw without it - stays
+ * gated on the container being present. See refreshAvailability()'s own doc.
+ *
+ * The availability answer is ALSO cached in localStorage per ISO country
+ * code with a 24h TTL (Doug's own follow-up request), namespaced by
+ * `config.checkoutHost` so staging/production/sandbox never share an entry -
+ * see availabilityStorageKey()'s doc for why that split is the right one and
+ * not a finer, per-merchant one. This is what lets the FIRST page a buyer
+ * lands on skip the round trip entirely once any earlier page (or an earlier
+ * visit, within the TTL) has already resolved that country.
  */
 class TwoSoleTrader {
+    /**
+     * How long a persisted availability answer (see
+     * readPersistedAvailability()/writePersistedAvailability()) stays valid,
+     * per Doug's request (TWO-40 follow-up): the registry round trip fired on
+     * every fresh page load was the visible latency, and a 24h TTL matches the
+     * server-side registry cookie's own cache window closely enough that the
+     * two rarely disagree while still bounding how long a stale answer can
+     * survive a real registry change.
+     */
+    static AVAILABILITY_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
     constructor(config) {
         this.config = {
             checkoutHost: '',
@@ -168,10 +196,17 @@ class TwoSoleTrader {
         if (!/^[A-Z]{2}$/.test(country)) {
             return;
         }
-        this.availabilityByCountry[country] = (answer === '1');
+        const available = (answer === '1');
+        this.availabilityByCountry[country] = available;
         this.renderedForCountry = country;
         this.renderedContainer = container;
         this._adoptGeneration += 1;
+        // A server-rendered answer is a genuine registry answer, exactly like
+        // a successful soleTraderAvailability response - persist it the same
+        // way so a LATER page with no `.two-sole-trader` container (e.g. the
+        // address-editor page, TWO-40 follow-up) can paint from cache too,
+        // not only a page that happens to render this container itself.
+        this.writePersistedAvailability(country, available);
     }
 
     init() {
@@ -407,32 +442,62 @@ class TwoSoleTrader {
      * Resolve availability for the current billing country and cache it.
      * Availability is resolved server-side; fail-soft to "not available" so
      * checkout never blocks.
+     *
+     * Deliberately does NOT require `.two-sole-trader` to exist on the page
+     * (TWO-40 follow-up, live bug on the address-editor page). That container
+     * only ever hosts enrolment prompt/status/error messaging (see the class
+     * doc) - resolving and caching the availability ANSWER is a completely
+     * separate concern from having somewhere to draw enrolment UI, and
+     * TwoCompanySearch.js's isAvailableForCurrentCountry() read has no
+     * dependency on that container at all. Early-returning here when it was
+     * absent meant `availabilityByCountry` never resolved for ANY country on
+     * any page that never renders it - which is every page except the payment
+     * step - so the "I'm a sole trader" row could never appear anywhere else,
+     * regardless of country. apply() (called below, and from the adopt paths)
+     * still resolves `this.container()` itself and every render helper it
+     * calls (showPrompt()/hidePrompt()/showStatus()/showError()) already
+     * null-guards on it, so this degrades to "no enrolment UI, correct
+     * availability" rather than throwing.
      */
     refreshAvailability() {
-        const container = this.container();
-        if (!container) {
-            return;
-        }
         // Also here, not only in the observer callback: this method is reached
         // from the country-change listener too, which can fire after a fragment
         // replacement the observer's debounce has not drained yet. Idempotent.
+        // A no-op when there is no container at all (see above).
         this.adoptReplacedContainer();
         const country = this.billingCountry();
         if (!country) {
             this.apply('', false);
             return;
         }
+        const container = this.container();
         // Settled means "this container, for this country" - not the country
         // alone (TWO-25326 bug 9). A country-only check reported the answer as
         // settled after PrestaShop had replaced the container out from under it,
         // until some unrelated later trigger happened to re-adopt it - which is
         // the render / disappear / reappear cycle Doug saw on the old chips,
-        // distinct from the tile-level mount/unmount guard.
-        if (country === this.renderedForCountry && this.isSettledFor(container)) {
+        // distinct from the tile-level mount/unmount guard. Guarded on
+        // `container` truthy (TWO-40 follow-up): with no container at all there
+        // is nothing to have settled INTO, so this must fall through to the
+        // in-memory/persisted-cache/fetch checks below every time, exactly as a
+        // page that has never resolved this country would.
+        if (container && country === this.renderedForCountry && this.isSettledFor(container)) {
             return;
         }
         if (country in this.availabilityByCountry) {
             this.apply(country, this.availabilityByCountry[country]);
+            return;
+        }
+        // Persistent cross-page-load cache, per Doug's request (TWO-40
+        // follow-up): checked BEFORE the network fetch, so a fresh page load -
+        // address editor, payment step, or a later visit - can paint the "I'm a
+        // sole trader" row on first evaluation instead of waiting out another
+        // round trip for an answer this browser already has. A miss (absent,
+        // malformed, or expired) falls through to the fetch exactly as before.
+        const persisted = this.readPersistedAvailability(country);
+        if (persisted !== null) {
+            this.availabilityByCountry[country] = persisted;
+            this.apply(country, persisted);
             return;
         }
         // One request in flight per country (TWO-25326 bug 9). The observer
@@ -483,6 +548,10 @@ class TwoSoleTrader {
                 }
                 const available = !!(json && json.success && json.available);
                 self.availabilityByCountry[country] = available;
+                // A resolved server response - true or false - is a real
+                // answer about this country, unlike the transport-failure
+                // path below; persist it (TWO-40 follow-up, 24h TTL).
+                self.writePersistedAvailability(country, available);
                 // The buyer may have changed country mid-request; only
                 // apply if the answer is still for the current one.
                 if (self.billingCountry() === country) {
@@ -490,10 +559,12 @@ class TwoSoleTrader {
                 }
             })
             .catch(function () {
-                // NOT cached: a transport failure is not an answer about this
-                // country, and caching it would make one blip permanent for the
-                // rest of the page's life. Only the pending marker clears, so a
-                // later mutation or country change can ask again.
+                // NOT cached - in EITHER cache, in-memory or persisted: a
+                // transport failure is not an answer about this country, and
+                // caching it would make one blip permanent for the rest of the
+                // page's life (in-memory) or for a full day (persisted). Only
+                // the pending marker clears, so a later mutation or country
+                // change can ask again.
                 self.releasePending(country);
                 if (superseded()) {
                     return;
@@ -530,6 +601,90 @@ class TwoSoleTrader {
      */
     isSettledFor(container) {
         return !!(container && container === this.renderedContainer && container.isConnected);
+    }
+
+    /**
+     * The localStorage key an availability answer for `country` is stored
+     * under (TWO-40 follow-up).
+     *
+     * Namespaced by `config.checkoutHost` (e.g.
+     * https://checkout.two.inc vs https://checkout.staging.two.inc vs a
+     * sandbox host), NOT further by shop or merchant. The registry answer
+     * behind this cache is resolved per classes/TwoSoleTrader.php's
+     * `isAvailable()` from `GET /registry/v1/supported-company-types/<ISO>` -
+     * country-level legal truth with, by that class's own doc, "deliberately
+     * no merchant admin toggle": two merchants talking to the SAME
+     * environment always get the same answer for a given country, so
+     * namespacing any finer would only fragment the cache for no safety
+     * benefit. The environment split is real, though: staging and
+     * production (and any sandbox) are separate Two backends that can
+     * legitimately disagree on which countries are enrolled, and staging/dev
+     * shops on this repo are routinely tested from one shared browser
+     * profile (`.worktrees/*` dev shops, staging.two.inc) - so an answer
+     * cached for one environment must never be read back for another.
+     * `checkoutHost` is already resolved per-environment server-side
+     * (Twopayment::getTwoCheckoutHostUrl(), handed over as
+     * `window.twopayment.checkout_host`) and is already on `this.config`,
+     * so no new server-side plumbing is needed to get it.
+     *
+     * @param {string} country ISO-2, already uppercased by the caller
+     * @returns {string}
+     */
+    availabilityStorageKey(country) {
+        return 'two_sole_trader_availability::' + (this.config.checkoutHost || '') + '::' + country;
+    }
+
+    /**
+     * The cached availability answer for `country`, if one is on record and
+     * still inside the 24h TTL - null on a miss, an expired entry, or
+     * anything unparseable (an older cache-format version, a theme/extension
+     * writing to the same key, corrupted storage). Never throws: a buyer
+     * with localStorage disabled (private browsing, quota exceeded, some
+     * locked-down browser policy) degrades to exactly today's fetch-every-load
+     * behaviour rather than breaking anything.
+     *
+     * @param {string} country ISO-2, already uppercased by the caller
+     * @returns {?boolean}
+     */
+    readPersistedAvailability(country) {
+        try {
+            const raw = window.localStorage.getItem(this.availabilityStorageKey(country));
+            if (!raw) {
+                return null;
+            }
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed.available !== 'boolean' || typeof parsed.ts !== 'number') {
+                return null;
+            }
+            if (Date.now() - parsed.ts >= TwoSoleTrader.AVAILABILITY_CACHE_TTL_MS) {
+                return null;
+            }
+            return parsed.available;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /**
+     * Persist a REAL availability answer for `country` - never a
+     * transport-failure fallback (see the callers: the fetch success
+     * handler and adoptServerRenderedToggle(), never the fetch catch()).
+     * Best-effort and silent: a write failure (quota, disabled storage) must
+     * not affect checkout, only the latency this cache is there to cut.
+     *
+     * @param {string} country ISO-2, already uppercased by the caller
+     * @param {boolean} available
+     * @returns {void}
+     */
+    writePersistedAvailability(country, available) {
+        try {
+            window.localStorage.setItem(
+                this.availabilityStorageKey(country),
+                JSON.stringify({ available: !!available, ts: Date.now() })
+            );
+        } catch (e) {
+            // no-op: presentation-only cache, never a gate.
+        }
     }
 
     apply(country, available) {

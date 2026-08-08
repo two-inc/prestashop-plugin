@@ -114,6 +114,10 @@ afterEach(() => {
     document.body.innerHTML = '';
     delete global.window.fetch;
     delete global.fetch;
+    // TWO-40 follow-up: see the identical comment in
+    // sole-trader-toggle-flicker.test.js - the persistent cache is real
+    // cross-test state now and must not leak between cases.
+    global.window.localStorage.clear();
 });
 
 describe('a server-rendered answer is adopted, not re-fetched', () => {

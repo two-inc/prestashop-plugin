@@ -116,6 +116,11 @@ afterEach(() => {
     document.body.innerHTML = '';
     delete global.window.fetch;
     delete global.fetch;
+    // TWO-40 follow-up: the persistent availability cache is real
+    // cross-test-case state now (localStorage, not the instance) - without
+    // clearing it a later test's fetch assertions would silently see a hit
+    // from an earlier test's write instead of the network call under test.
+    global.window.localStorage.clear();
 });
 
 describe('the availability cache survives a payment-fragment replacement', () => {
