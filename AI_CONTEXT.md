@@ -79,10 +79,16 @@ Reliable B2B invoice checkout via Two, with:
 - `views/js/modules/TwoCompanySearch.js`
   - Company discovery and selection
 - `views/js/modules/TwoSoleTrader.js`
-  - Business / sole-trader toggle behaviour and enrolment prompt. The toggle's
-    visibility and its two chips are rendered SERVER-side by `paymentinfo.tpl`
-    (TWO-25326) and adopted here; this module re-resolves them only when the
-    billing country changes
+  - Sole-trader enrolment mechanics and the availability answer
+    `TwoCompanySearch.js`'s "I'm a sole trader" row reads (TWO-40 removed the
+    old upfront chip UI this module used to render itself). Availability
+    resolution does NOT depend on `.two-sole-trader` existing on the page
+    (TWO-40 follow-up) - that container, rendered only by `paymentinfo.tpl`,
+    exists solely to host enrolment prompt/status/error messaging. The answer
+    is adopted server-side on first paint where the container IS present
+    (TWO-25326), resolved over `soleTraderAvailability` otherwise, and cached
+    both in memory and in localStorage per country (24h TTL, namespaced per
+    checkout environment) so a later page load can skip the round trip
 - `views/js/modules/TwoOptionalFields.js`
   - Optional buyer reference fields in the payment tile: mirrors each visible
     input into its hidden twin inside the payment form (the tile is a sibling

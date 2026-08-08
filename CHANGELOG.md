@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The "Sole Trader" row in company search never appeared on the address-editor page, for any country** (TWO-40 follow-up, live bug on staging)
+  - Root cause: `TwoSoleTrader.js`'s availability resolution (`refreshAvailability()`) early-returned whenever `.two-sole-trader` was absent from the page, before it ever resolved the billing country or fired the availability request. That container is rendered only by `paymentinfo.tpl` on the payment step - never on the address editor - so availability could never resolve anywhere else, however eligible the country. The container now only gates the enrolment prompt/status/error messaging it actually hosts; resolving and caching the availability answer no longer depends on it existing at all
+- **The availability round trip re-fired on every fresh page load, delaying the chip's first appearance** (Doug's own follow-up request)
+  - The per-country answer is now also cached in `localStorage` with a 24h TTL, namespaced per checkout environment (`checkoutHost`) so staging/production/sandbox never share an entry. A cache hit populates availability and skips the network call entirely; a transport failure is never persisted (a blip must not become a day-long "not available"), matching the existing in-memory cache's own rule
+
 ### Changed
 - **The upfront "Registered business" / "Sole trader" chip choice is removed; a three-chip mode selector - "Sole Trader" / "Registered Company" / "Enter Manually" - is folded directly into the company search control instead** (TWO-40, pilot for the plugin-parity rollout)
   - Company search is now the single entry point regardless of business type. There is no separate chip to pick before searching: opening TwoCompanySearch.js's dropdown shows all three mode chips immediately (no waiting for characters typed, unlike Magento's equivalent link). "Registered Company" is the default; it and "Enter Manually" (which replaces the old plain-wording "My company is not on the list" link/button) are always in the set. "Sole Trader" is added only when the registry says the currently-selected billing country supports sole traders, and removed again the moment the country selector changes to one that does not - reactivity is inherited from the existing country-change handling, which already closes the panel on every change, so the next open always re-evaluates against the current country
