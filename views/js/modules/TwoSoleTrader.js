@@ -949,8 +949,24 @@ class TwoSoleTrader {
                     && String(buyer.email).toLowerCase() === entered);
                 if (matches) {
                     self.applyBuyer(buyer, generation);
-                } else {
+                } else if (self.container() && self.container().querySelector('.two-sole-trader__prompt')) {
                     self.showPrompt();
+                } else {
+                    // TWO-40 follow-up: on the address-editor page there is no
+                    // `.two-sole-trader` container at all (it is only rendered
+                    // by the payment-step template, paymentinfo.tpl), so
+                    // showPrompt()'s querySelector always comes back null and
+                    // the buyer's chip click dead-ends silently - tokens get
+                    // minted, this lookup fires, and nothing else happens.
+                    // Empirically verified in real Chrome against staging
+                    // (chained fetch()->fetch()->window.open() off a real
+                    // click survives Chrome's transient-activation window
+                    // under normal latency) that opening the popup directly
+                    // here, still async off the original click, is not
+                    // blocked in practice. Payment-step keeps the two-click
+                    // showPrompt()->openPopup() flow unchanged since its
+                    // container/prompt element exists there.
+                    self.openPopup();
                 }
             })
             .catch(function () {
@@ -1115,8 +1131,16 @@ class TwoSoleTrader {
         );
         if (!popup) {
             // Popup blocked despite opening from a click - surface it
-            // rather than failing silently.
+            // rather than failing silently. showError() itself no-ops
+            // without a `.two-sole-trader__error` element (containerless
+            // address-page path, TWO-40 follow-up) - console.error is the
+            // only signal left there, so it is not a completely silent
+            // dead end even in that edge case.
             this.showError();
+            if (!this.container()) {
+                // eslint-disable-next-line no-console
+                console.error('Two: sole-trader signup popup was blocked and no on-page error UI is available here.');
+            }
         }
         return popup;
     }

@@ -88,7 +88,12 @@ Reliable B2B invoice checkout via Two, with:
     is adopted server-side on first paint where the container IS present
     (TWO-25326), resolved over `soleTraderAvailability` otherwise, and cached
     both in memory and in localStorage per country (24h TTL, namespaced per
-    checkout environment) so a later page load can skip the round trip
+    checkout environment) so a later page load can skip the round trip.
+    Enrolment (`startEnrollment()`/`getCurrentBuyer()`) also has to work with
+    no container at all - on the address-editor page, where the chip lives
+    (`TwoCompanySearch.js`) but `.two-sole-trader` never renders - so a
+    no-match buyer lookup there calls `openPopup()` directly instead of the
+    payment-step's two-click `showPrompt()`->`openPopup()` (TWO-40 follow-up)
 - `views/js/modules/TwoOptionalFields.js`
   - Optional buyer reference fields in the payment tile: mirrors each visible
     input into its hidden twin inside the payment form (the tile is a sibling
