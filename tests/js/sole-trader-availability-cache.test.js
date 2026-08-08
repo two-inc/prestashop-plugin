@@ -261,6 +261,64 @@ describe('a stale (>24h) cache entry is not used', () => {
         expect(fetchCalls).toHaveLength(1);
         instance.destroy();
     });
+
+    test('a FUTURE `ts` (skewed clock, or planted by another script) is rejected, not treated as fresher-than-fresh', async () => {
+        // Adversarial review finding: `Date.now() - parsed.ts` going negative
+        // must not read as "not yet expired" - that would pin this answer
+        // for the country indefinitely, however long it actually sat there.
+        seedCache('GB', true, -60 * 1000); // ts is 1 minute in the FUTURE
+        buildCountry('GB');
+        TwoSoleTrader = loadSoleTrader();
+        const instance = build();
+
+        expect(instance.availabilityByCountry.GB).toBeUndefined();
+
+        await drain();
+
+        expect(fetchCalls).toHaveLength(1);
+        expect(instance.isAvailableForCurrentCountry()).toBe(true);
+        instance.destroy();
+    });
+});
+
+describe('the cache is a no-op, not a shared key, when checkoutHost is unknown', () => {
+    test('no cache read/write happens when config.checkoutHost is empty', async () => {
+        buildCountry('GB');
+        TwoSoleTrader = loadSoleTrader();
+        // No `checkoutHost` at all - a real page always has one
+        // (window.twopayment.checkout_host), but this must degrade safely
+        // rather than fall back to a shared '' namespace segment that a
+        // DIFFERENT, also-unidentified environment could also fall into.
+        const instance = build({ checkoutHost: '' });
+
+        await drain();
+        expect(fetchCalls).toHaveLength(1);
+        // The successful answer must not have been written anywhere
+        // guessable - confirm no entry exists under the "collapsed" key an
+        // unguarded fallback would have used.
+        expect(window.localStorage.getItem('two_sole_trader_availability::::GB')).toBeNull();
+        instance.destroy();
+    });
+
+    test('a pre-existing entry under the collapsed "::" key is never read back', async () => {
+        // Simulates an entry a pre-fix build (or another unidentified
+        // environment) could have left behind under the shared fallback key.
+        window.localStorage.setItem(
+            'two_sole_trader_availability::::GB',
+            JSON.stringify({ available: false, ts: Date.now() })
+        );
+        buildCountry('GB');
+        TwoSoleTrader = loadSoleTrader();
+        const instance = build({ checkoutHost: '' });
+
+        await drain();
+
+        // Must still hit the network - a stale/foreign answer under the
+        // collapsed key must never be adopted as this environment's own.
+        expect(fetchCalls).toHaveLength(1);
+        expect(instance.isAvailableForCurrentCountry()).toBe(true);
+        instance.destroy();
+    });
 });
 
 describe('a transport failure is never persisted to the cache', () => {
@@ -360,6 +418,83 @@ describe('the cache is namespaced per checkout environment, not shared across th
 
         await drain();
         expect(fetchCalls).toHaveLength(1);
+        instance.destroy();
+    });
+});
+
+describe('the persisted cache never outranks a settled, container-present answer (adversarial review, "Han" finding)', () => {
+    test('a fresh server-rendered adoption wins over a DISAGREEING persisted-cache entry', async () => {
+        const { buildPaymentTileWithSoleTraderAnswer } = require('./ps-harness');
+        // The persisted cache says "no" for GB...
+        seedCache('GB', false, 60 * 1000);
+        // ...but the server just rendered "yes" into the markup this load.
+        // adoptServerRenderedToggle() runs in the constructor, before
+        // refreshAvailability() ever gets to the persisted-cache read at
+        // all - the settled-container check short-circuits first.
+        buildPaymentTileWithSoleTraderAnswer('1', 'GB');
+        buildCountry('GB');
+        TwoSoleTrader = loadSoleTrader();
+        const instance = build();
+
+        expect(instance.isAvailableForCurrentCountry()).toBe(true);
+        expect(fetchCalls).toEqual([]);
+
+        await drain();
+
+        // Still true - the disagreeing cache entry never won, and the fresh
+        // answer overwrote it (see the "no redundant write" comment on
+        // adoptServerRenderedToggle - it writes here because the value
+        // actually changed).
+        expect(instance.isAvailableForCurrentCountry()).toBe(true);
+        const cached = JSON.parse(window.localStorage.getItem(storageKey('GB')));
+        expect(cached.available).toBe(true);
+        instance.destroy();
+    });
+});
+
+describe('a superseded in-flight request is not resurrected by a concurrent cache write (adversarial review, "Han" finding)', () => {
+    test("an outstanding request's answer, once superseded, never reaches the persisted cache either", async () => {
+        // Mirrors sole-trader-server-rendered-toggle.test.js's in-memory
+        // version of this invariant, but checks the PERSISTED cache too -
+        // the brief specifically asked whether a concurrent cache write
+        // could resurrect a request that lost the in-memory race.
+        let settle;
+        global.window.fetch = (url) => {
+            fetchCalls.push(url);
+            return new Promise((resolve) => { settle = resolve; });
+        };
+        global.fetch = global.window.fetch;
+
+        buildCountry('GB');
+        TwoSoleTrader = loadSoleTrader();
+        const instance = build();
+        jest.advanceTimersByTime(150);
+        await flushPromises();
+        expect(fetchCalls).toHaveLength(1);
+        // Nothing settled yet - no container to adopt a server answer from,
+        // and no fetch response either.
+        expect(window.localStorage.getItem(storageKey('GB'))).toBeNull();
+
+        // A container now appears carrying a FRESH server-rendered answer
+        // (e.g. PrestaShop swapped in the payment fragment mid-request) -
+        // this bumps `_adoptGeneration`, superseding the outstanding fetch.
+        const { buildPaymentTileWithSoleTraderAnswer } = require('./ps-harness');
+        buildPaymentTileWithSoleTraderAnswer('0', 'GB');
+        await flushPromises();
+        expect(instance.isAvailableForCurrentCountry()).toBe(false);
+        const afterAdopt = JSON.parse(window.localStorage.getItem(storageKey('GB')));
+        expect(afterAdopt.available).toBe(false);
+
+        // The original request now resolves with the OPPOSITE answer. It
+        // must not win in memory (pre-existing invariant) OR overwrite the
+        // cache with its now-stale answer (the new invariant this test
+        // pins).
+        settle({ json: () => Promise.resolve({ success: true, available: true }) });
+        await drain();
+
+        expect(instance.isAvailableForCurrentCountry()).toBe(false);
+        const afterSettle = JSON.parse(window.localStorage.getItem(storageKey('GB')));
+        expect(afterSettle.available).toBe(false);
         instance.destroy();
     });
 });
