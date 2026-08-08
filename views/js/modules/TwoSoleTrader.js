@@ -51,14 +51,28 @@
 class TwoSoleTrader {
     /**
      * How long a persisted availability answer (see
-     * readPersistedAvailability()/writePersistedAvailability()) stays valid,
-     * per Doug's request (TWO-40 follow-up): the registry round trip fired on
-     * every fresh page load was the visible latency, and a 24h TTL matches the
-     * server-side registry cookie's own cache window closely enough that the
-     * two rarely disagree while still bounding how long a stale answer can
-     * survive a real registry change.
+     * readPersistedAvailability()/writePersistedAvailability()) stays valid -
+     * an explicit 24h, per Doug's own request (TWO-40 follow-up): the
+     * registry round trip fired on every fresh page load was the visible
+     * latency this cache exists to cut, and 24h bounds how long a stale
+     * answer can survive a real registry change.
+     *
+     * Deliberately NOT claimed to match the server-side registry cookie's
+     * own cache window (`classes/TwoSoleTrader.php::CACHE_TTL_SECONDS`,
+     * currently 3600s/1h - adversarial review, "Han" finding: an earlier
+     * draft of this comment claimed the two "closely" agreed, which is off
+     * by a factor of 24 and was never actually checked against the PHP
+     * constant). The two TTLs are independent by design: this one bounds
+     * the CLIENT's browser cache, the server one bounds ITS OWN registry
+     * lookup: a shorter server TTL just means the server itself may re-ask
+     * the registry several times inside one client TTL window, which is a
+     * server-side cost, not a correctness gap here - whichever one answers
+     * first is what this cache is populated from.
      */
-    static AVAILABILITY_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+    // Underscore-prefixed to match this file's/TwoCompanySearch.js's own
+    // convention for an internal-only static (adversarial review, "Yoda"
+    // finding) - this is read by nobody outside readPersistedAvailability().
+    static _AVAILABILITY_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
     constructor(config) {
         this.config = {
@@ -206,7 +220,21 @@ class TwoSoleTrader {
         // way so a LATER page with no `.two-sole-trader` container (e.g. the
         // address-editor page, TWO-40 follow-up) can paint from cache too,
         // not only a page that happens to render this container itself.
-        this.writePersistedAvailability(country, available);
+        //
+        // Skipped when the persisted cache already agrees (adversarial
+        // review, "Han" finding). adoptReplacedContainer() calls this method
+        // EVERY time PrestaShop swaps `.two-sole-trader` for a fresh copy,
+        // undebounced, from the MutationObserver callback - and per this
+        // file's own comments that happens "constantly" while a checkout
+        // step settles. Most of those replacements carry the SAME answer as
+        // the one before, so writing to localStorage on every single one is
+        // a burst of synchronous main-thread writes for no state change.
+        // readPersistedAvailability() already re-validates freshness, so a
+        // stale-but-matching entry still gets its `ts` refreshed rather than
+        // being (wrongly) treated as "no write needed".
+        if (this.readPersistedAvailability(country) !== available) {
+            this.writePersistedAvailability(country, available);
+        }
     }
 
     init() {
@@ -627,11 +655,25 @@ class TwoSoleTrader {
      * `window.twopayment.checkout_host`) and is already on `this.config`,
      * so no new server-side plumbing is needed to get it.
      *
+     * Returns null when `checkoutHost` is not known yet (adversarial review,
+     * "Vader" finding): TwoCompanySearch.js already treats a missing
+     * `checkoutHost` as "nothing safe to do here" for the same reason
+     * (`if (!this.config.checkoutHost) return;`) - the environment split
+     * above is the whole point of this cache, and defaulting to a shared
+     * `''` segment when it is absent would let two DIFFERENT, unidentified
+     * environments silently read and overwrite each other's answers, which
+     * is exactly the cross-contamination this namespacing exists to
+     * prevent. Callers must treat a null return as "cache unavailable", not
+     * as a key to use.
+     *
      * @param {string} country ISO-2, already uppercased by the caller
-     * @returns {string}
+     * @returns {?string}
      */
     availabilityStorageKey(country) {
-        return 'two_sole_trader_availability::' + (this.config.checkoutHost || '') + '::' + country;
+        if (!this.config.checkoutHost) {
+            return null;
+        }
+        return 'two_sole_trader_availability::' + this.config.checkoutHost + '::' + country;
     }
 
     /**
@@ -648,7 +690,11 @@ class TwoSoleTrader {
      */
     readPersistedAvailability(country) {
         try {
-            const raw = window.localStorage.getItem(this.availabilityStorageKey(country));
+            const key = this.availabilityStorageKey(country);
+            if (!key) {
+                return null;
+            }
+            const raw = window.localStorage.getItem(key);
             if (!raw) {
                 return null;
             }
@@ -656,7 +702,17 @@ class TwoSoleTrader {
             if (!parsed || typeof parsed.available !== 'boolean' || typeof parsed.ts !== 'number') {
                 return null;
             }
-            if (Date.now() - parsed.ts >= TwoSoleTrader.AVAILABILITY_CACHE_TTL_MS) {
+            // A FUTURE `ts` (adversarial review, "Vader"/"Yoda" finding: a
+            // corrected/skewed system clock, or a value planted by another
+            // same-origin script) must not be treated as fresher than now -
+            // `Date.now() - parsed.ts` would be negative and this entry would
+            // never expire, pinning one answer for a country indefinitely
+            // regardless of what the registry actually says. Reject it
+            // outright rather than clamping it forward: a cache write this
+            // module itself never makes (it always stamps `Date.now()` at
+            // write time) is not an answer to trust at all.
+            const age = Date.now() - parsed.ts;
+            if (age < 0 || age >= TwoSoleTrader._AVAILABILITY_CACHE_TTL_MS) {
                 return null;
             }
             return parsed.available;
@@ -678,10 +734,11 @@ class TwoSoleTrader {
      */
     writePersistedAvailability(country, available) {
         try {
-            window.localStorage.setItem(
-                this.availabilityStorageKey(country),
-                JSON.stringify({ available: !!available, ts: Date.now() })
-            );
+            const key = this.availabilityStorageKey(country);
+            if (!key) {
+                return;
+            }
+            window.localStorage.setItem(key, JSON.stringify({ available: !!available, ts: Date.now() }));
         } catch (e) {
             // no-op: presentation-only cache, never a gate.
         }
