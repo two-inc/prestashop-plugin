@@ -402,6 +402,35 @@ describe('a server-rendered adoption also persists to the cache', () => {
         expect(fetchCalls).toEqual([]);
         instance.destroy();
     });
+
+    test('a matching re-adoption does NOT rewrite the cache entry (adversarial review, "Han" finding, round 2)', async () => {
+        // Round 1 fixed adoptServerRenderedToggle() writing to localStorage on
+        // EVERY container swap, even an unchanged answer - the file's own
+        // comments say PrestaShop swaps `.two-sole-trader` "constantly" while
+        // a checkout step settles, undebounced. Round 2 review noted nothing
+        // actually pinned that skip: this proves a same-value re-adoption
+        // leaves the stored `ts` untouched rather than rewriting it.
+        const { buildPaymentTileWithSoleTraderAnswer } = require('./ps-harness');
+        buildPaymentTileWithSoleTraderAnswer('1', 'GB');
+        buildCountry('GB');
+        TwoSoleTrader = loadSoleTrader();
+        const instance = build();
+
+        const firstWrite = window.localStorage.getItem(storageKey('GB'));
+        expect(firstWrite).not.toBeNull();
+
+        // Re-adopt the SAME answer directly - same shape as the observer's
+        // adoptReplacedContainer() -> adoptServerRenderedToggle() path,
+        // without needing to fake a real DOM swap.
+        instance.adoptServerRenderedToggle();
+        instance.adoptServerRenderedToggle();
+
+        const secondWrite = window.localStorage.getItem(storageKey('GB'));
+        // Byte-identical: not just "still available: true" but the exact
+        // same `ts`, proving no redundant setItem() actually ran.
+        expect(secondWrite).toBe(firstWrite);
+        instance.destroy();
+    });
 });
 
 describe('the cache is namespaced per checkout environment, not shared across them', () => {
