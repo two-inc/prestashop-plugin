@@ -698,8 +698,8 @@ class TwoCompanySearch {
             .text(this.getSoleTraderEntryText());
 
         const modeChips = $('<div class="two-company-mode-chips"></div>')
-            .append(soleTraderEntry)
             .append(registeredEntry)
+            .append(soleTraderEntry)
             .append(notListed);
 
         // Positioned AFTER the results host, not before the query field

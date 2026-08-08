@@ -81,6 +81,25 @@ describe('the two unconditional chips', () => {
     });
 });
 
+describe('chip DOM order (TWO-40 follow-up: Doug wants Registered/Sole Trader/Enter Manually)', () => {
+    test('modeChips renders Registered Company, then Sole Trader, then Enter Manually', () => {
+        makeInstance();
+        openPanel();
+
+        const chips = panelParts().modeChips.children().toArray();
+        const classesInOrder = chips.map((el) => el.className);
+
+        expect(classesInOrder).toHaveLength(3);
+        expect(classesInOrder[0]).toContain('two-company-registered-entry');
+        expect(classesInOrder[1]).toContain('two-company-sole-trader-entry');
+        expect(classesInOrder[2]).toContain('two-company-not-listed');
+
+        // No `order:` CSS on these chips (views/css/two.css) - visual order
+        // is DOM order, so pinning the DOM sequence is sufficient; there is
+        // no separate flex/grid `order` property to also assert against.
+    });
+});
+
 describe('default selection (TWO-40: "Default selected chip: Registered Company")', () => {
     test('"Registered Company" carries the selected class on a fresh open', () => {
         makeInstance();
