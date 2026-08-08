@@ -52,6 +52,9 @@ afterEach(() => {
     delete global.window.fetch;
     delete global.window.TwoCompanyNumber;
     document.body.innerHTML = '';
+    // TWO-40 follow-up: see the identical comment in
+    // sole-trader-toggle-flicker.test.js.
+    global.window.localStorage.clear();
 });
 
 test('a buyer lookup resolving AFTER the buyer picked a real company does not overwrite that selection', async () => {
