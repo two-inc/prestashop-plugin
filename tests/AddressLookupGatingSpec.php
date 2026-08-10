@@ -7,7 +7,7 @@ declare(strict_types=1);
  * company search is not in the address area - TWO-25326 §7.1 follow-up.
  *
  * PS_TWO_ADDRESS_LOOKUP governs one thing: what a company selection writes
- * into the checkout ADDRESS step. Once PS_TWO_ENABLE_COMPANY_NAME moves the
+ * into the checkout ADDRESS step. Once PS_TWO_COMPANY_SEARCH_LOCATION moves the
  * search itself into the payment tile there is no address-area lookup left to
  * govern, so leaving the switch independently settable let a merchant tick a
  * box the module then ignored. woocommerce-plugin's admin.js already disables
@@ -85,7 +85,7 @@ final class AddressLookupGatingSpec
         $module = new TwopaymentTestHarness();
         Configuration::updateValue('PS_TWO_ADDRESS_LOOKUP', 1);
 
-        Tools::setTestValue('PS_TWO_ENABLE_COMPANY_NAME', '0');
+        Tools::setTestValue('PS_TWO_COMPANY_SEARCH_LOCATION', '0');
         Tools::setTestValue('PS_TWO_ADDRESS_LOOKUP', '1');
         self::save($module);
 
@@ -102,7 +102,7 @@ final class AddressLookupGatingSpec
         self::reset();
         $module = new TwopaymentTestHarness();
 
-        Tools::setTestValue('PS_TWO_ENABLE_COMPANY_NAME', '1');
+        Tools::setTestValue('PS_TWO_COMPANY_SEARCH_LOCATION', '1');
         Tools::setTestValue('PS_TWO_ADDRESS_LOOKUP', '1');
         self::save($module);
 
@@ -122,11 +122,11 @@ final class AddressLookupGatingSpec
         self::reset();
         $module = new TwopaymentTestHarness();
         // Stored state: search in the address area, lookup on.
-        Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', 1);
+        Configuration::updateValue('PS_TWO_COMPANY_SEARCH_LOCATION', 1);
         Configuration::updateValue('PS_TWO_ADDRESS_LOOKUP', 1);
 
         // This save is the one that relocates the search.
-        Tools::setTestValue('PS_TWO_ENABLE_COMPANY_NAME', '0');
+        Tools::setTestValue('PS_TWO_COMPANY_SEARCH_LOCATION', '0');
         Tools::setTestValue('PS_TWO_ADDRESS_LOOKUP', '1');
         self::save($module);
 
@@ -135,7 +135,7 @@ final class AddressLookupGatingSpec
         // And the reverse: a save that moves it BACK must not be gated by the
         // stored '0' it is replacing.
         Tools::resetTestValues();
-        Tools::setTestValue('PS_TWO_ENABLE_COMPANY_NAME', '1');
+        Tools::setTestValue('PS_TWO_COMPANY_SEARCH_LOCATION', '1');
         Tools::setTestValue('PS_TWO_ADDRESS_LOOKUP', '1');
         self::save($module);
 
@@ -152,7 +152,7 @@ final class AddressLookupGatingSpec
     {
         self::reset();
         $module = new TwopaymentTestHarness();
-        Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', 0);
+        Configuration::updateValue('PS_TWO_COMPANY_SEARCH_LOCATION', 0);
         Configuration::updateValue('PS_TWO_ADDRESS_LOOKUP', 1);
 
         TinyAssert::same('0', self::resolve($module));
@@ -160,7 +160,7 @@ final class AddressLookupGatingSpec
         // Not steerable from the request: this resolver runs on the FRONT
         // office, where a query parameter must not be able to re-enable a
         // lookup the stored configuration has turned off.
-        Tools::setTestValue('PS_TWO_ENABLE_COMPANY_NAME', '1');
+        Tools::setTestValue('PS_TWO_COMPANY_SEARCH_LOCATION', '1');
         TinyAssert::same('0', self::resolve($module));
     }
 
@@ -168,7 +168,7 @@ final class AddressLookupGatingSpec
     {
         self::reset();
         $module = new TwopaymentTestHarness();
-        Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', 0);
+        Configuration::updateValue('PS_TWO_COMPANY_SEARCH_LOCATION', 0);
         Configuration::updateValue('PS_TWO_ADDRESS_LOOKUP', 1);
 
         // The merchant must not read a ticked switch the module is ignoring.
@@ -178,9 +178,9 @@ final class AddressLookupGatingSpec
         // search shows the position that POST will produce, not the stored one.
         self::reset();
         $module = new TwopaymentTestHarness();
-        Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', 1);
+        Configuration::updateValue('PS_TWO_COMPANY_SEARCH_LOCATION', 1);
         Configuration::updateValue('PS_TWO_ADDRESS_LOOKUP', 1);
-        Tools::setTestValue('PS_TWO_ENABLE_COMPANY_NAME', '0');
+        Tools::setTestValue('PS_TWO_COMPANY_SEARCH_LOCATION', '0');
         Tools::setTestValue('PS_TWO_ADDRESS_LOOKUP', '1');
 
         TinyAssert::same('0', self::formValues($module)['PS_TWO_ADDRESS_LOOKUP']);
@@ -209,7 +209,7 @@ final class AddressLookupGatingSpec
         TinyAssert::true(
             strpos(
                 $tpl,
-                "$('input[name=\"PS_TWO_ENABLE_COMPANY_NAME\"]').on('change', function () {\n"
+                "$('input[name=\"PS_TWO_COMPANY_SEARCH_LOCATION\"]').on('change', function () {\n"
                 . '                updateAddressLookupAvailability(true);'
             ) !== false
         );
@@ -263,7 +263,7 @@ final class AddressLookupGatingSpec
             }
         }
 
-        TinyAssert::same('Enable company search in address entry', $labels['PS_TWO_ENABLE_COMPANY_NAME']);
+        TinyAssert::same('Enable company search in address entry', $labels['PS_TWO_COMPANY_SEARCH_LOCATION']);
         TinyAssert::same('Autofill company address', $labels['PS_TWO_ADDRESS_LOOKUP']);
 
         // Every label on this form, not only the two this change touched: the

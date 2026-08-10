@@ -259,14 +259,14 @@ class TwoOrderIntent {
         const isCurrent = () => seq === this.requestSeq;
 
         // CRITICAL FIX: Always let the backend try to resolve company data
-        // The backend can check address fields (dni, vat_number) that the frontend can't see
+        // The backend can check address fields (dni, companyid) that the frontend can't see
         // Backend will return appropriate status codes if company data is missing
         return this.collectFormData(seq)
             .then(formData => {
                 // Always proceed to backend - it will check:
                 // 1. Form data (company, companyid)
                 // 2. Session cookie
-                // 3. Address fields (dni, vat_number) and verify via Two API
+                // 3. Address fields (dni, companyid) and verify via Two API
                 // Backend returns status codes: 'no_company', 'incomplete_company' if needed
                 return this.fetchOrderIntentPayload(formData);
             })
@@ -1036,7 +1036,7 @@ class TwoOrderIntent {
                 }
                 
                 // CRITICAL FIX: Always let the backend check for company data
-                // Backend can find org numbers in address fields (dni, vat_number) 
+                // Backend can find org numbers in address fields (dni, companyid) 
                 // that the frontend can't see, and verify them via Two API
                 this.checkOrderIntent();
             }

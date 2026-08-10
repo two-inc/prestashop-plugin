@@ -3687,61 +3687,6 @@ class TwoCompanySearch {
     }
     
     /**
-     * Company data is now handled by form fields - no complex server persistence needed
-     * PrestaShop's standard address saving will handle persistence automatically
-     */
-    
-    /**
-     * Get current company data from form fields (simplified)
-     */
-    getCompanyData() {
-        return {
-            company: this.companyField ? this.companyField.val() : '',
-            companyid: this.organizationField ? this.organizationField.val() : ''
-        };
-    }
-    
-    /**
-     * Check if current company data is valid
-     */
-    isValidCompanyData() {
-        const data = this.getCompanyData();
-        return !!(data.company && data.companyid);
-    }
-    
-    /**
-     * Reset company selection
-     */
-    reset() {
-        if (this.companyField) this.companyField.val('');
-        if (this.organizationField) {
-            this.organizationField.val('');
-            this.organizationField.removeAttr('data-two-company-name');
-        }
-        this.setCompanyIdHint('');
-    }
-    
-    /**
-     * Store company data in session storage for persistence across checkout steps
-     */
-    storeCompanyDataInSession(companyData) {
-        try {
-            sessionStorage.setItem('two_company_data', JSON.stringify(companyData));
-            // Company data stored in session storage
-        } catch (e) {
-            
-        }
-    }
-
-    /**
-     * Retrieve company data from session storage
-     */
-    getCompanyDataFromSession() {
-        // Deprecated in favor of cookie persistence via controller
-        return null;
-    }
-
-    /**
      * Setup event listener for country changes to refresh autocomplete
      */
     setupCountryChangeListener(retryCount = 0) {
