@@ -854,7 +854,24 @@ class TwoSoleTrader {
         // again the instant they land, defeating bindPopupMessageListener()'s
         // whole check.
         const generation = this._enrollGeneration;
-        fetch(this.moduleUrl('soleTraderTokens'), { method: 'POST' })
+        // Post the country the buyer currently has selected (TWO-40). On the
+        // address-editor page - where the sole-trader entry actually gets
+        // clicked - the cart has no invoice address yet, so this is the only
+        // country the server has to gate on; it uses the cart's invoice
+        // address ahead of this whenever there is one, and re-checks the
+        // registry either way.
+        //
+        // Deliberately billingCountry(): that is the SAME resolver
+        // isAvailableForCurrentCountry() answers the chip's visibility from,
+        // so the country the mint is authorised against and the country the
+        // chip was shown for cannot disagree by construction. Sent
+        // urlencoded, the way applyBuyer() posts to saveCompany.
+        const body = new URLSearchParams({ country: this.billingCountry() });
+        fetch(this.moduleUrl('soleTraderTokens'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString()
+        })
             .then(function (response) { return response.json(); })
             .then(function (json) {
                 if (json && json.success && json.autofill_token) {
@@ -988,10 +1005,14 @@ class TwoSoleTrader {
      *    an empty company, so fall back to the organization number - the
      *    org-number prefix is what carries the sole-trader semantics
      *    server-side anyway (TWO-24749).
-     *  - the country MUST be the token response's server-resolved invoice
-     *    country, not a DOM guess: getTwoValidatedSessionCompanyData()
-     *    wipes the whole session company the moment the saved country
-     *    disagrees with the cart's actual invoice-address country.
+     *  - the country MUST be the one the token response reports, not a DOM
+     *    guess. That value is whichever tier the server resolved the mint
+     *    against (the cart's invoice address, the posted country, or the
+     *    cart's delivery address) - and it is the only country this browser
+     *    can know the mint was actually authorised for.
+     *    getTwoValidatedSessionCompanyData() wipes the whole session company
+     *    the moment the saved country disagrees with the cart's own
+     *    invoice-address country, so guessing here loses the enrolment.
      */
     /**
      * @param {Object} buyer

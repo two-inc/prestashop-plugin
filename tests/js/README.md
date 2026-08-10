@@ -344,6 +344,21 @@ form (which it does for something as ordinary as a country change):
   in `tests/SessionCompanyClearSpec.php`. That split is deliberate: a source grep
   cannot see an early `return` above the work it greps for, and did not.
 
+`sole-trader-mint-country.test.js` — TWO-40's browser half of "a sole trader can start
+enrolment from the address-editor page":
+
+- the mint request carries the country `billingCountry()` resolves, urlencoded, and it is
+  asserted as an *equality* against that resolver rather than a second hardcoded ISO code —
+  the token gate and the chip's visibility gate have to agree by construction, so a mint that
+  grew its own country source has to break here.
+- driven through the real `fetchTokens()`, with the country reachable only from the DOM select,
+  so a regression to a config-time value — or to no country at all — fails here rather than
+  passing on a hardcoded fixture.
+
+The server half is in `tests/SoleTraderTokenPreconditionSpec.php`, which drives the mint
+action through the controller's own switch: the tier ordering, the shape check on the posted
+country, and that a posted country is still gated by the registry rather than trusted.
+
 ## Known gaps
 
 Deliberately out of scope for this suite, which covers company-search resilience and
