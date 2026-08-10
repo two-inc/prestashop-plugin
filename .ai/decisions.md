@@ -178,10 +178,18 @@
 
 **Status: DESIGN ONLY, awaiting Doug's review. No code has been written for anything below.**
 Written 2026-08-10 against `origin/staging` @ `0ddad20`. Items are numbered per Doug's own
-consolidated list (#6/#9, #8, #12, #13). Every `file:line` below was read at that ref.
+consolidated list (#6/#9, #8, #12, #13).
 
-Items #1, #3 and #7 of the same list ARE implemented — see PR #154 — and nothing here depends
-on them beyond the config key's new name (`PS_TWO_COMPANY_SEARCH_LOCATION`).
+Items **#3 and #7** of the same list are implemented — see PR #154. **Item #1, the config-key rename,
+was attempted and WITHDRAWN** (see the WITHDRAWN section at the end), so the key is still spelled
+`PS_TWO_ENABLE_COMPANY_NAME` everywhere in live code. Where the designs below name that key they use
+that spelling; if #1 is ever revived it lands independently of everything here.
+
+**Every `file:line` below is a HINT, verified against `origin/staging` @ `0ddad20` and nothing else.**
+PR #154 itself deletes ~55 lines from `TwoCompanySearch.js` and ~10 from `TwoCheckoutManager.js`, so
+anything after those points shifts once it merges. Re-derive with `git grep -n <symbol> <ref>` against a
+freshly fetched ref before acting on any of them — never from a working tree. Several numbers in the
+first draft of this document were already wrong for exactly that reason.
 
 ---
 
@@ -196,14 +204,13 @@ Four cookie keys, all written server-side, all sharing one expiry:
 | `two_company_name` | `controllers/front/orderintent.php:371` (`ajaxProcessSaveCompany`), `:976` (`storeCompanyDataInSession`), `twopayment.php:15825` (`hookActionCustomerAddressSave`) |
 | `two_company_id` | `orderintent.php:372`, `:977` |
 | `two_company_country` | `orderintent.php:374`, `:995` |
-| `two_company_address_id` | `orderintent.php:378`, `:999` |
+| `two_company_address_id` | `orderintent.php:377`, `:997` |
 
 Expiry is `Twopayment::COOKIE_EXPIRY_ONE_HOUR = 3600` (`twopayment.php:282`), re-stamped on
 every write: `orderintent.php:293`, `:379`, `:1002`, `twopayment.php:14569`, `:14593`, `:15868`.
 
 The browser writes them by calling `ajaxProcessSaveCompany` fire-and-forget from
-`TwoCompanySearch.persistCompanyToCookie()` (`views/js/modules/TwoCompanySearch.js:3951`,
-called at `:3459` and `:3593`) and clears them via `clearPersistedCompany()` (`:2376`, called
+`TwoCompanySearch.persistCompanyToCookie()` (`views/js/modules/TwoCompanySearch.js:4006`) and clears them via `clearPersistedCompany()` (`:2376`, called
 from `clearSelectedCompany()` at `:2341`).
 
 The cookie is the **first** source consulted by both readers — `Twopayment::getCompanyDataWithFallbacks()`
@@ -300,7 +307,8 @@ audited the confirmation path for that.
 
 There are **two independent questions** and the code currently answers them with one value:
 
-- *Where does the search UI render?* — `PS_TWO_COMPANY_SEARCH_LOCATION` (address area vs payment tile).
+- *Where does the search UI render?* — `PS_TWO_ENABLE_COMPANY_NAME` (address area vs payment tile; the
+  name is historical, see #1).
 - *May a company selection write into the address form's fields?* — `PS_TWO_ADDRESS_LOOKUP`,
   admin label "Autofill company address".
 
@@ -316,7 +324,7 @@ Every site where the first currently decides the second:
 | `twopayment.php:2243` (admin `desc`) | tells the merchant in prose that the setting "is unavailable and forced off" in tile mode |
 
 The two consumers of the resulting flag are `TwoCompanySearch.writeOrganizationToAddressIdentifiers()`
-(`views/js/modules/TwoCompanySearch.js:1644`) and `autoFillAddress()` (`:3627`), both via
+(`views/js/modules/TwoCompanySearch.js:1643`) and `autoFillAddress()` (`:3624`), both via
 `isAddressLookupEnabled()` (`:1631-1632`).
 
 ### Why the current gate was chosen, and why Doug is right that it is wrong
@@ -331,7 +339,7 @@ But it made it impossible by removing the merchant's control instead of fixing t
 merchant has a switch that means exactly "populate the address from the company"; if they turn it
 on, populating the address is what they asked for, wherever the search happens to render. And the
 current shape has a concrete cost beyond principle: a shop that has never re-saved its advanced
-settings since the search moved to the tile now reports `'0'` for a setting whose stored row says
+settings since the search moved to the tile reports `'0'` for a setting whose stored row says
 `1` — the comment at `twopayment.php:2531-2534` describes the read-side gate as existing
 specifically to stop the admin form, the stored row and the checkout JS disagreeing. That is
 a workaround for the conflation, not a feature.
@@ -355,14 +363,14 @@ a workaround for the conflation, not a feature.
    root rather than by global selector. Concretely: give `TwoCompanySearch` an
    `addressFormRoot` config (the form element containing the mounted field for the address-area
    mount; the checkout's address form for the tile mount) and scope every
-   `input[name='…']` lookup in `autoFillAddress()` (`:3627`ff) and
-   `addressIdentifierFields()` (`:1693`) to it. Without this, (3) reintroduces the exact defect
+   `input[name='…']` lookup in `autoFillAddress()` (`:3624`ff) and
+   `addressIdentifierFields()` (`:1692`) to it. Without this, (3) reintroduces the exact defect
    the hardcoded `false` was protecting against.
 
 **Open question for Doug:** in tile mode the address form is usually **not on the page** at the
 payment step. With the gate removed and the merchant switch on, the correct behaviour is "write
 if the fields are there, no-op if they are not" — which is already what the existing
-`if (field.length === 0) return;` guards do (`TwoCompanySearch.js:1657`, `:1719`). Confirm that
+`if (field.length === 0) return;` guards do (`TwoCompanySearch.js:1654`, `:1717`). Confirm that
 silently no-op'ing is what you want, rather than deferring the write until the address form
 reappears.
 
@@ -434,7 +442,7 @@ whatever the browser posts; the browser-side decision about *which* select to re
 
 ### Doug's clarification restated as a contract
 
-| `PS_TWO_COMPANY_SEARCH_LOCATION` | what this mode is about | behaviour |
+| `PS_TWO_ENABLE_COMPANY_NAME` (renamed only if #1 is revived) | what this mode is about | behaviour |
 |---|---|---|
 | **enabled** (`'1'`, address area) | **WRITING** | the buyer searches in the address they see first/by default; the *other* address, if they have indicated the two differ, is auto-populated to match (company + country) |
 | **disabled** (`'0'`, tile) | **READING** | address-field layout and behaviour are untouched — tile UI exactly as today; the tile search's and the sole-trader flow's country comes from whichever country is **currently selected on the page** for the billing/invoice address field |
@@ -459,12 +467,12 @@ that platform, see the parity flags below.
 ### Enabled mode — the WRITE side, concretely
 
 Search runs in the shipping address block (the default-visible one). On a confirmed selection,
-`TwoCompanySearch.onCompanySelected()` (`views/js/modules/TwoCompanySearch.js:3451`ff) currently
+`TwoCompanySearch.onCompanySelected()` (`views/js/modules/TwoCompanySearch.js:3398`) currently
 writes company + identifiers + address fields into whatever `input[name='…']` it finds globally.
 
 What would change:
 
-- **`autoFillAddress()` (`:3627`) and `addressIdentifierFields()` (`:1693`) become root-scoped**,
+- **`autoFillAddress()` (`:3624`) and `addressIdentifierFields()` (`:1692`) become root-scoped**,
   exactly as `#8` step 4 requires. Same prerequisite, one implementation — do `#8` and `#13`
   together or not at all.
 - **A new mirror step** runs after the primary fill: if the billing block is present and revealed
@@ -490,9 +498,9 @@ What would change:
 Nothing about address-field layout or behaviour changes. What changes is which DOM node the
 country resolvers read.
 
-- `TwoCompanySearch.getCurrentCountry()` (`:3295-3353`), `TwoSoleTrader.billingCountry()`
-  (`views/js/modules/TwoSoleTrader.js:372-430`) and
-  `TwoOrderIntent.getCurrentAddressCountryISO()` (`views/js/modules/TwoOrderIntent.js:560-606`)
+- `TwoCompanySearch.getCurrentCountry()` (`:3295`), `TwoSoleTrader.billingCountry()`
+  (`views/js/modules/TwoSoleTrader.js:372`) and
+  `TwoOrderIntent.getCurrentAddressCountryISO()` (`views/js/modules/TwoOrderIntent.js:560`)
   all currently start from `select[name='id_country'], select[name='country']` — the **first
   match in the document**, which in shipping-first PrestaShop is the shipping select.
 - In disabled mode the contract says read the **billing/invoice** select when one is present and
@@ -509,7 +517,7 @@ country resolvers read.
 The read-side change has to be made in **four** places today, not three:
 `TwoCompanySearch.getCurrentCountry()` (`:3295`), `TwoSoleTrader.billingCountry()` (`:372`),
 `TwoOrderIntent.getCurrentAddressCountryISO()` (`:560`), and
-`TwoCheckoutManager.getSelectedCountryIso()` (`views/js/modules/TwoCheckoutManager.js:2605-2620`,
+`TwoCheckoutManager.getSelectedCountryIso()` (`views/js/modules/TwoCheckoutManager.js:2605`,
 which delegates to `TwoOrderIntent` when available and otherwise re-implements the chain inline).
 They already disagree — `TwoCompanySearch.js:3312` reads only `data-iso-code`/`data-iso` while
 `TwoSoleTrader.js:380`, `TwoOrderIntent.js:584` and `TwoCheckoutManager.js:2614` also read
@@ -605,7 +613,7 @@ off, and the design above already assumes the corrected version.
 
 6. **`controllers/front/orderintent.php:573`'s `incomplete_company` message says "go back to your
    billing address and search for your company name".** That instruction is impossible to follow
-   when `PS_TWO_COMPANY_SEARCH_LOCATION='0'` — there is no search in the address step, it is in
+   when `PS_TWO_ENABLE_COMPANY_NAME='0'` — there is no search in the address step, it is in
    the payment tile the buyer is already looking at. Pre-existing, but removing the `vat_number`
    fallback makes this branch materially more reachable, and the merchants newly hitting it are
    exactly the ones whose buyers cannot act on the wording. Same text at `twopayment.php:14222`
