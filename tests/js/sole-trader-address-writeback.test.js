@@ -28,6 +28,7 @@ const {
     loadScript,
     buildAddressForm,
     releaseWidgets,
+    stubAjax,
     flushPromises
 } = require('./ps-harness');
 
@@ -150,7 +151,7 @@ describe('address-form placement adopts a completed enrolment', () => {
             companyFieldSelector: "input[name='company']"
         });
 
-        dispatchReady({ company: 'Sole Trader AS', companyid: '923456789' });
+        dispatchReady({ company: 'Sole Trader AS', companyName: 'Sole Trader AS', companyid: '923456789' });
 
         expect(companyValue()).toBe('Sole Trader AS');
         expect(dniValue()).toBe('923456789');
@@ -179,7 +180,7 @@ describe('address-form placement adopts a completed enrolment', () => {
             companyFieldSelector: "input[name='company']"
         });
 
-        dispatchReady({ company: 'Sole Trader AS', companyid: '923456789' });
+        dispatchReady({ company: 'Sole Trader AS', companyName: 'Sole Trader AS', companyid: '923456789' });
 
         expect(
             document.querySelector("input[name='company']")
@@ -205,10 +206,122 @@ describe('address-form placement adopts a completed enrolment', () => {
             companyFieldSelector: "input[name='company']"
         });
 
-        dispatchReady({ company: 'Sole Trader AS', companyid: '923456789' });
+        dispatchReady({ company: 'Sole Trader AS', companyName: 'Sole Trader AS', companyid: '923456789' });
 
         expect(dniValue()).toBe('');
         expect(companyValue()).toBe('Sole Trader AS');
+        search.destroy();
+    });
+
+    /**
+     * The regression guard for the defect adversarial review probe-proved: a
+     * buyer who had already confirmed a registered company earlier in the
+     * session, and then enrols as a sole trader.
+     *
+     * The visible company write announces `input`, and that handler runs the
+     * stale-selection check - which, finding the PREVIOUS company's number
+     * still tagged with the PREVIOUS company's name, cleared the entire
+     * selection: a `clearCompany` POST that undid the save the enrolment had
+     * just made, and a blank published selection that the order-intent payload
+     * is built from. Writing the number and its name tag FIRST leaves nothing
+     * stale to find.
+     */
+    test('adopting an enrolment over an earlier confirmed company neither clears nor blanks it', () => {
+        buildAddressForm({ country: 'GB' });
+        window.twopayment = {
+            order_intent_url: ORDER_INTENT_URL,
+            ajax_token: 'test-token'
+        };
+        const search = new TwoCompanySearch({
+            checkoutHost: CHECKOUT_HOST,
+            companySearchInAddressArea: true,
+            companyFieldSelector: "input[name='company']"
+        });
+
+        // The state a completed search selection leaves behind: name, number,
+        // and the number tagged with the name it belongs to.
+        $("input[name='company']").val('Earlier Registered Ltd');
+        $("input[name='companyid']")
+            .val('999888777')
+            .attr('data-two-company-name', 'Earlier Registered Ltd');
+
+        const publishes = [];
+        global.window.TwoCheckoutManager_Instance = {
+            setConfirmedCompanySelection(selection) {
+                publishes.push(selection);
+            }
+        };
+        const ajax = stubAjax($);
+
+        try {
+            dispatchReady({ company: 'Sole Trader AS', companyName: 'Sole Trader AS', companyid: '923456789' });
+
+            const actions = ajax.calls.map((call) => (call.settings.data || {}).action);
+            expect(actions).not.toContain('clearCompany');
+            expect(publishes[publishes.length - 1]).toEqual({
+                company: 'Sole Trader AS',
+                companyid: '923456789'
+            });
+            expect(companyValue()).toBe('Sole Trader AS');
+            expect(dniValue()).toBe('923456789');
+        } finally {
+            ajax.restore();
+            delete global.window.TwoCheckoutManager_Instance;
+            search.destroy();
+        }
+    });
+
+    /**
+     * A sole trader with no trading name of their own. The enrolment's `company`
+     * label falls back to the organisation number, and for such a buyer that
+     * number is the SYNTHETIC internal identifier - which must never be shown
+     * to them, let alone saved onto their address, where PrestaShop would then
+     * print it on the invoice.
+     *
+     * So the visible field is written from `companyName` only, and left alone
+     * when there is none. The number itself still travels: it is what the
+     * credit decision is asked about.
+     */
+    test('a synthetic identifier standing in for a missing name never reaches the visible field', () => {
+        buildAddressForm({ country: 'GB' });
+        const search = new TwoCompanySearch({
+            checkoutHost: CHECKOUT_HOST,
+            companySearchInAddressArea: true,
+            companyFieldSelector: "input[name='company']"
+        });
+
+        // Exactly what applyBuyer() dispatches for a buyer whose company_name
+        // is blank: the label IS the organisation number.
+        dispatchReady({ company: 'TWO:ST123456', companyName: '', companyid: 'TWO:ST123456' });
+
+        expect(companyValue()).toBe('');
+        expect(companyValue()).not.toContain('TWO:');
+        // The number still reaches the identifier field and the hidden field.
+        expect(dniValue()).toBe('TWO:ST123456');
+        expect(document.querySelector("input[name='companyid']").value).toBe('TWO:ST123456');
+        search.destroy();
+    });
+
+    /**
+     * Manual entry is the buyer typing their own company details because search
+     * could not find them. Enrolment is asynchronous, so it can complete while
+     * they are mid-field - and every other write path in the module stands down
+     * on this flag for exactly that reason.
+     */
+    test('an enrolment completing during manual entry does not overwrite what the buyer typed', () => {
+        buildAddressForm({ country: 'GB' });
+        const search = new TwoCompanySearch({
+            checkoutHost: CHECKOUT_HOST,
+            companySearchInAddressArea: true,
+            companyFieldSelector: "input[name='company']"
+        });
+        search.enterManualEntryMode();
+        $("input[name='company']").val('Typed By Buyer Ltd');
+
+        dispatchReady({ company: 'Sole Trader AS', companyName: 'Sole Trader AS', companyid: '923456789' });
+
+        expect(companyValue()).toBe('Typed By Buyer Ltd');
+        expect(dniValue()).toBe('');
         search.destroy();
     });
 
@@ -247,35 +360,23 @@ describe('payment-tile placement never writes into the address form', () => {
         );
     }
 
-    test('nothing is written into the address form\'s company or identifier fields', () => {
-        buildTileAlongsideAddressForm();
-        const search = new TwoCompanySearch({
-            checkoutHost: CHECKOUT_HOST,
-            companySearchInAddressArea: false,
-            addressLookupEnabled: false,
-            companyFieldSelector: '#two_tile_company'
-        });
-
-        dispatchReady({ company: 'Sole Trader AS', companyid: '923456789' });
-
-        expect(companyValue()).toBe('');
-        expect(dniValue()).toBe('');
-        expect(document.querySelector("input[name='vat_number']").value).toBe('');
-        expect(
-            document.querySelector("input[name='company']")
-                .hasAttribute(TwoCompanySearch.AUTOFILL_MARKER_ATTR)
-        ).toBe(false);
-        search.destroy();
-    });
-
     /**
-     * The placement flag on its own, with the address-lookup toggle left at its
-     * default. The two defences overlap in production - the real tile mount
-     * hardcodes `addressLookupEnabled: false` as well - and the case above
-     * therefore cannot tell them apart: with the lookup off, removing the
-     * placement guard changes nothing it can see. This one isolates the guard,
-     * so a tile mount that ever reached here with the lookup toggle on (a
-     * merchant default, a future mount) is still refused.
+     * ONE tile case, with the address-lookup toggle left at its DEFAULT (on).
+     *
+     * There used to be a second, `addressLookupEnabled: false` case beside this
+     * one. Adversarial review proved it vacuous: with the tile's own selector
+     * on the company field and the lookup off, deleting the placement guard
+     * changed none of its four expectations - the visible write goes to the
+     * tile input, and both identifier writes were already gated off by the
+     * toggle. It asserted the overlap of the two defences rather than either of
+     * them, so it is gone rather than repaired.
+     *
+     * `dniValue()` is the load-bearing assertion here, and the only one:
+     * without the placement guard, the organisation number reaches the address
+     * form's `dni` through the (now un-gated) identifier writer.
+     * `companyValue()` beside it is INERT for the same reason the deleted case
+     * was - the visible write targets `#two_tile_company` - and is kept only to
+     * document that the address company field is expected to stay untouched.
      */
     test('the placement flag alone is enough, with the address-lookup toggle on', () => {
         buildTileAlongsideAddressForm();
@@ -285,7 +386,7 @@ describe('payment-tile placement never writes into the address form', () => {
             companyFieldSelector: '#two_tile_company'
         });
 
-        dispatchReady({ company: 'Sole Trader AS', companyid: '923456789' });
+        dispatchReady({ company: 'Sole Trader AS', companyName: 'Sole Trader AS', companyid: '923456789' });
 
         expect(dniValue()).toBe('');
         expect(companyValue()).toBe('');
@@ -304,7 +405,7 @@ describe('payment-tile placement never writes into the address form', () => {
             companyFieldSelector: "input[name='company']"
         });
 
-        dispatchReady({ company: 'Sole Trader AS', companyid: '923456789' });
+        dispatchReady({ company: 'Sole Trader AS', companyName: 'Sole Trader AS', companyid: '923456789' });
 
         expect(companyValue()).toBe('Sole Trader AS');
         expect(dniValue()).toBe('923456789');
@@ -443,11 +544,13 @@ describe('a destroyed instance ignores the event', () => {
         });
         search.destroy();
 
-        dispatchReady({ company: 'Sole Trader AS', companyid: '923456789' });
+        dispatchReady({ company: 'Sole Trader AS', companyName: 'Sole Trader AS', companyid: '923456789' });
         expect(companyValue()).toBe('');
         expect(dniValue()).toBe('');
 
-        search.onSoleTraderReady({ detail: { company: 'Sole Trader AS', companyid: '923456789' } });
+        search.onSoleTraderReady({
+            detail: { company: 'Sole Trader AS', companyName: 'Sole Trader AS', companyid: '923456789' }
+        });
         expect(companyValue()).toBe('');
         expect(dniValue()).toBe('');
     });

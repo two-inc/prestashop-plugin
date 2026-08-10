@@ -44,7 +44,9 @@ final class SoleTraderTokenPreconditionSpec
     {
         $tests = [
             'testInvoiceAddressWinsOverAPostedCountry',
+            'testUnresolvableInvoiceAddressFallsThroughToThePostedCountry',
             'testNoInvoiceAddressMintsFromAValidPostedCountry',
+            'testLowercasePostedCountryIsAccepted',
             'testGarbagePostedCountryFallsBackToTheDeliveryAddress',
             'testAbsentPostedCountryFallsBackToTheDeliveryAddress',
             'testNothingResolvableIsRefused',
@@ -97,6 +99,33 @@ final class SoleTraderTokenPreconditionSpec
         );
     }
 
+    /**
+     * The documented fall-through: a cart that HAS an invoice address, from
+     * which no country resolves (here an id_country with no ISO code - a
+     * deleted or never-configured country row). An unresolvable address is not
+     * an answer, so the search continues down the tiers rather than refusing.
+     *
+     * Untested until adversarial review, and cheaply so: with tier 1 returning
+     * whatever it resolved unconditionally, every other case here stays green
+     * because they all resolve tier 1 fine or have no invoice address at all.
+     */
+    private static function testUnresolvableInvoiceAddressFallsThroughToThePostedCountry(): void
+    {
+        self::seedCart(null, null);
+        $cart = Context::getContext()->cart;
+        // Loads as an object, but its country is not in the country table.
+        StubStore::$addresses[self::INVOICE_ADDRESS_ID] = ['id_country' => 4199];
+        $cart->id_address_invoice = self::INVOICE_ADDRESS_ID;
+
+        $emitted = self::mint(['country' => self::ISO_GB]);
+
+        TinyAssert::true(
+            $emitted['success'],
+            'an invoice address that resolves to no country must fall through, not refuse'
+        );
+        TinyAssert::same(self::ISO_GB, $emitted['country']);
+    }
+
     /* ---- tier 2: the posted country ---- */
 
     /**
@@ -116,6 +145,23 @@ final class SoleTraderTokenPreconditionSpec
         TinyAssert::same(self::ISO_GB, $emitted['country']);
         TinyAssert::same('del-token', $emitted['delegation_token']);
         TinyAssert::same('autofill-token', $emitted['autofill_token']);
+    }
+
+    /**
+     * The one input the upper-casing is load-bearing for. The alpha-2 shape
+     * check only accepts upper case, so a lower-case selection - which is what
+     * some themes' country markup carries - would fall straight through to
+     * tier 3 and refuse on a cart with no delivery address. `'gb-'` is already
+     * covered above and must still be rejected; plain `'gb'` must not be.
+     */
+    private static function testLowercasePostedCountryIsAccepted(): void
+    {
+        self::seedCart(null, null);
+
+        $emitted = self::mint(['country' => 'gb']);
+
+        TinyAssert::true($emitted['success'], 'a lower-case posted country must still resolve');
+        TinyAssert::same(self::ISO_GB, $emitted['country'], 'the resolved country must be normalised');
     }
 
     /* ---- tier 3: the cart's delivery address ---- */
