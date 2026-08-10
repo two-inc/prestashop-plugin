@@ -4,6 +4,7 @@ global $_MODULE;
 $_MODULE = array();
 $_MODULE['<{twopayment}prestashop>twopayment_52563a872dfbca393bed4ff3b7868687'] = 'Esta tienda no ha podido conectar con la API de %s (red, DNS o firewall). La clave API en sí no se ha evaluado.';
 $_MODULE['<{twopayment}prestashop>twopayment_3a0c5e2bdce061b37cb6888280037851'] = '%1$s ha rechazado esta clave API. Puede que no sea válida o haya caducado: comprueba la clave en tu portal de %1$s.';
+$_MODULE['<{twopayment}prestashop>twopayment_876bf0d6ed002da6532dbb047cd14f4a'] = 'No se pudo determinar el país de facturación de este pedido';
 $_MODULE['<{twopayment}prestashop>twopayment_8effea9a4ab719b4272d74ad33f5b897'] = 'No se ha podido verificar la clave API.';
 $_MODULE['<{twopayment}prestashop>twopayment_ff917d30c610c32938987db6b6693541'] = '%s ha devuelto una respuesta inesperada al verificar la clave API (HTTP %d).';
 $_MODULE['<{twopayment}prestashop>twopayment_c98cbec0a99d4afa98e4e976ac205ef5'] = 'Introduce tu clave API de %1$s para activar %1$s.';

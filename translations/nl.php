@@ -100,6 +100,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_00a48186e87d34e1df0a6484f553bafc'] 
 $_MODULE['<{twopayment}prestashop>twopayment_00d23a76e43b46dae9ec7aa9dcbebb32'] = 'Ingeschakeld';
 $_MODULE['<{twopayment}prestashop>twopayment_00f301094c777099ef21325f575d1c3d'] = 'De belastingregelgroep die op de vergoeding voor de betaaltermijn wordt toegepast - dezelfde belastingregelgroepen die je aan producten toewijst. Regels per land en staat, gecombineerde tarieven en nultarief werken precies zoals bij elk product. Wil je de vergoeding onbelast laten, maak dan een belastingregelgroep aan met een tarief van 0 procent en selecteer die hier. Zolang toeslagen zijn ingeschakeld, is een keuze verplicht.';
 $_MODULE['<{twopayment}prestashop>twopayment_016e561b39ff316fdf1b182819189cdb'] = 'Vul een subtitel in.';
+$_MODULE['<{twopayment}prestashop>twopayment_876bf0d6ed002da6532dbb047cd14f4a'] = 'Kon het factuurland voor deze bestelling niet bepalen';
 $_MODULE['<{twopayment}prestashop>twopayment_d20922a3a72f62b9a6762066afdb9776'] = 'Wil je met %s betalen? Ga dan terug naar je factuuradres en zoek op je bedrijfsnaam. Selecteer je bedrijf uit de resultaten om je onderneming te verifiëren.';
 $_MODULE['<{twopayment}prestashop>twopayment_03ac21a9797a06114f0aedd391a1e2a3'] = 'Geen resultaat gevonden';
 $_MODULE['<{twopayment}prestashop>twopayment_0621f4c8187eba906e65147337b8ead4'] = 'Rond de toeslagregel voor de koper af op een net interval. Kies Geen voor standaardbedragen met twee decimalen.';
@@ -325,7 +326,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_9f67feb76396d9f95843662cb1a3cbee'] 
 $_MODULE['<{twopayment}prestashop>twopayment_a002c8066738bc8f9d9394abdcef7ea8'] = 'Je betaaltermijn start zodra je bestelling is uitgeleverd';
 $_MODULE['<{twopayment}prestashop>twopayment_e412b2297545dc9825fbed8089790105'] = 'Geverifieerd - Klaar voor uitlevering → %s: Geverifieerd - Klaar voor uitlevering';
 $_MODULE['<{twopayment}prestashop>twopayment_a18b98ac865c5099d00d15aa7955772e'] = 'De opgevraagde bestelling kan niet worden gevonden; neem contact op met de winkeleigenaar.';
-$_MODULE['<{twopayment}prestashop>twopayment_a27e23cbfc35671fad9f198723675df3'] = 'Geen factuuradres ingesteld voor deze bestelling';
 $_MODULE['<{twopayment}prestashop>twopayment_a39746aced7f2b7acba1b2f715654995'] = 'Beschikbare betaaltermijnen';
 $_MODULE['<{twopayment}prestashop>twopayment_a49e05d4125474b3a6cfc0caacc5a48f'] = 'De aangemaakte bestelling kan niet worden geladen. Neem contact op met support.';
 $_MODULE['<{twopayment}prestashop>twopayment_a4f2f007d16e05710980a4141c331168'] = 'SSL-verificatie';

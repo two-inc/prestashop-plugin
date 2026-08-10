@@ -100,6 +100,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_00a48186e87d34e1df0a6484f553bafc'] 
 $_MODULE['<{twopayment}prestashop>twopayment_00d23a76e43b46dae9ec7aa9dcbebb32'] = 'Aktivert';
 $_MODULE['<{twopayment}prestashop>twopayment_00f301094c777099ef21325f575d1c3d'] = 'Avgiftsregelgruppen som brukes på gebyret for betalingsvilkår – de samme avgiftsregelgruppene som du tilordner produkter. Land- og delstatsregler, kombinerte satser og nullsats gjelder på nøyaktig samme måte som for et produkt. Hvis gebyret skal være uten avgift, oppretter du en avgiftsregelgruppe med en sats på 0 prosent og velger den her. Et valg er påkrevd så lenge tillegg er aktivert.';
 $_MODULE['<{twopayment}prestashop>twopayment_016e561b39ff316fdf1b182819189cdb'] = 'Skriv inn en undertittel.';
+$_MODULE['<{twopayment}prestashop>twopayment_876bf0d6ed002da6532dbb047cd14f4a'] = 'Kunne ikke fastslå fakturalandet for denne ordren';
 $_MODULE['<{twopayment}prestashop>twopayment_d20922a3a72f62b9a6762066afdb9776'] = 'For å betale med %s må du gå tilbake til fakturaadressen og søke opp firmanavnet ditt. Velg firmaet ditt fra resultatene for å verifisere virksomheten.';
 $_MODULE['<{twopayment}prestashop>twopayment_03ac21a9797a06114f0aedd391a1e2a3'] = 'Ingen resultater funnet';
 $_MODULE['<{twopayment}prestashop>twopayment_0621f4c8187eba906e65147337b8ead4'] = 'Rund tilleggslinjen for kjøperen til et rent intervall. Velg Ingen for vanlige beløp med to desimaler.';
@@ -325,7 +326,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_9f67feb76396d9f95843662cb1a3cbee'] 
 $_MODULE['<{twopayment}prestashop>twopayment_a002c8066738bc8f9d9394abdcef7ea8'] = 'Betalingsperioden din starter når ordren er oppfylt';
 $_MODULE['<{twopayment}prestashop>twopayment_e412b2297545dc9825fbed8089790105'] = 'Verifisert – klar for oppfyllelse → %s: Verifisert – klar for oppfyllelse';
 $_MODULE['<{twopayment}prestashop>twopayment_a18b98ac865c5099d00d15aa7955772e'] = 'Finner ikke den forespurte ordren, kontakt butikkeieren.';
-$_MODULE['<{twopayment}prestashop>twopayment_a27e23cbfc35671fad9f198723675df3'] = 'Ingen fakturaadresse er angitt for denne ordren';
 $_MODULE['<{twopayment}prestashop>twopayment_a39746aced7f2b7acba1b2f715654995'] = 'Tilgjengelige betalingsvilkår';
 $_MODULE['<{twopayment}prestashop>twopayment_a49e05d4125474b3a6cfc0caacc5a48f'] = 'Kunne ikke laste den opprettede ordren. Kontakt kundestøtte.';
 $_MODULE['<{twopayment}prestashop>twopayment_a4f2f007d16e05710980a4141c331168'] = 'SSL-verifisering';
