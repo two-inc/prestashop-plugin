@@ -127,7 +127,7 @@ final class OrderBuilderSpec
         self::testAddTwoBackOfficeWarningReturnsFalseWhenNoController();
         self::testApplyTwoCancelledOrderStateProfileToStatusObjectUsesConfiguredCancelledState();
         self::testForceTwoCancelledOrderHistoryStateBeforeInsertRewritesPendingStatus();
-        self::testGetTwoCheckoutCompanyDataUsesAddressVatNumberForAnyCountry();
+        self::testGetTwoCheckoutCompanyDataNeverSourcesOrgNumberFromVatNumber();
         self::testGetTwoCheckoutCompanyDataPrefersCurrentAddressOrgNumberOverSessionCompany();
         self::testGetTwoCheckoutCompanyDataUsesValidatedCookieFallback();
         self::testGetTwoCheckoutCompanyDataClearsStaleCookieOnCountryMismatch();
@@ -159,8 +159,8 @@ final class OrderBuilderSpec
         self::testGetTwoProductItemsThrowsOnNegativeReduction();
         self::testGetTwoProductItemsAllowsPositiveDiscount();
         self::testGetTwoProductItemsToleratesUnitPriceRoundingDrift();
-        self::testExtractOrgNumberFromAddressKeepsNonCountryPrefixVatNumber();
-        self::testExtractOrgNumberFromAddressStripsMatchingCountryPrefixVatNumber();
+        self::testExtractOrgNumberFromAddressNeverUsesVatNumber();
+        self::testExtractOrgNumberFromAddressUsesInMemoryCompanyid();
         self::testGetTwoRequestHeadersSkipAuthForOrderIntent();
         self::testGetAvailablePaymentTermsIntersectsBackendWithAdminSubset();
         self::testGetAvailablePaymentTermsWithdrawnBackendTermDrops();
@@ -4425,7 +4425,19 @@ final class OrderBuilderSpec
         TinyAssert::true($order->updated);
     }
 
-    private static function testGetTwoCheckoutCompanyDataUsesAddressVatNumberForAnyCountry(): void
+    /**
+     * A VAT number on the address is NOT an organisation number (TWO-40).
+     *
+     * This test previously asserted the opposite - that GB123456789 in
+     * `vat_number` became organisation number 123456789. That fallback is gone:
+     * the two identifiers come from different registers and coincide only by
+     * accident, so relaying one as the other asks Two to credit-check a number
+     * that does not identify the buyer's company. The company NAME still
+     * resolves; only the number is withheld, and an empty number is the correct
+     * answer because it lets Two's own resolution fail loudly instead of being
+     * papered over.
+     */
+    private static function testGetTwoCheckoutCompanyDataNeverSourcesOrgNumberFromVatNumber(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
@@ -4442,7 +4454,7 @@ final class OrderBuilderSpec
         $data = $module->getTwoCheckoutCompanyData($address);
 
         TinyAssert::same('Acme UK Ltd', $data['company_name']);
-        TinyAssert::same('123456789', $data['organization_number']);
+        TinyAssert::same('', $data['organization_number']);
         TinyAssert::same('GB', $data['country_iso']);
     }
 
@@ -4457,12 +4469,17 @@ final class OrderBuilderSpec
         $module->context->cookie->two_company_country = 'GB';
         $module->context->cookie->two_company_address_id = '28';
 
-        // Current selected address is Spanish and has org number in VAT field
+        // Current selected address is Spanish and carries its org number in the
+        // `dni` field. This fixture used to hold 'ESB12345678' in `vat_number`
+        // instead; the VAT-number fallback was retired in TWO-40, so the source
+        // moved to the identifier field that legitimately carries an
+        // organisation number. What this test pins is unchanged: the CURRENT
+        // address's org number beats a stale session company.
         StubStore::$countries[34] = 'ES';
         StubStore::$addresses[29] = [
             'id_country' => 34,
             'company' => 'Queso y Abejas S.L.',
-            'vat_number' => 'ESB12345678',
+            'dni' => 'B12345678',
             'loaded' => true,
         ];
 
@@ -5450,42 +5467,72 @@ final class OrderBuilderSpec
         TinyAssert::same([], $items[0]['details']['barcodes']);
     }
 
-    private static function testExtractOrgNumberFromAddressKeepsNonCountryPrefixVatNumber(): void
+    /**
+     * `vat_number` is never a source for the organisation number (TWO-40).
+     *
+     * Both shapes the retired fallback used to accept are pinned here, because
+     * both of them looked like a working feature: a VAT number whose two-letter
+     * prefix does NOT match the address country was returned verbatim, and one
+     * whose prefix DID match had the prefix stripped first. Neither is an
+     * organisation number. Do not re-add either branch - assert the empty
+     * string so a reintroduction is a red test rather than a silent behaviour
+     * change.
+     */
+    private static function testExtractOrgNumberFromAddressNeverUsesVatNumber(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
 
         StubStore::$countries[826] = 'GB';
+
+        // Prefix that does not match the address country.
         StubStore::$addresses[812] = [
             'id_country' => 826,
             'company' => 'Cheese Box Ltd',
             'vat_number' => 'SC806781',
             'loaded' => true,
         ];
+        TinyAssert::same('', $module->extractOrgNumberFromAddress(new Address(812), 'GB'));
 
-        $address = new Address(812);
-        $orgNumber = $module->extractOrgNumberFromAddress($address, 'GB');
-
-        TinyAssert::same('SC806781', $orgNumber);
-    }
-
-    private static function testExtractOrgNumberFromAddressStripsMatchingCountryPrefixVatNumber(): void
-    {
-        self::reset();
-        $module = new TwopaymentTestHarness();
-
-        StubStore::$countries[826] = 'GB';
+        // Prefix that does match the address country.
         StubStore::$addresses[813] = [
             'id_country' => 826,
             'company' => 'Cheese Box Ltd',
             'vat_number' => 'GB123456789',
             'loaded' => true,
         ];
+        TinyAssert::same('', $module->extractOrgNumberFromAddress(new Address(813), 'GB'));
+    }
 
-        $address = new Address(813);
-        $orgNumber = $module->extractOrgNumberFromAddress($address, 'GB');
+    /**
+     * `companyid` IS a source, and the branch reading it is not dead code.
+     *
+     * There is no `companyid` column on `ps_address`, which is why the reader is
+     * behind a `property_exists()` guard - and why it reads as unreachable on a
+     * quick inspection. It is reached on every form-first order intent: the
+     * order-intent controller assigns `$address->companyid` on the loaded
+     * Address object in memory, immediately before handing that object to the
+     * payload builder, so the buyer's just-typed organisation number reaches the
+     * payload without the address being saved first. This test exists so the
+     * next dead-code sweep deletes a red test instead of that path.
+     */
+    private static function testExtractOrgNumberFromAddressUsesInMemoryCompanyid(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
 
-        TinyAssert::same('123456789', $orgNumber);
+        StubStore::$countries[826] = 'GB';
+        StubStore::$addresses[814] = [
+            'id_country' => 826,
+            'company' => 'Cheese Box Ltd',
+            'loaded' => true,
+        ];
+
+        $address = new Address(814);
+        // Exactly what controllers/front/orderintent.php does before building the payload.
+        $address->companyid = '  912345678  ';
+
+        TinyAssert::same('912345678', $module->extractOrgNumberFromAddress($address, 'GB'));
     }
 
     private static function testGetTwoRequestHeadersSkipAuthForOrderIntent(): void

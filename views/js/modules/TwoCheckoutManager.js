@@ -2620,16 +2620,6 @@ class TwoCheckoutManager {
     }
     
     /**
-     * Get company data (for compatibility)
-     */
-    getCompanyData() {
-        if (this.companySearch && this.companySearch.getCompanyData) {
-            return this.companySearch.getCompanyData();
-        }
-        return { company: '', companyid: '' };
-    }
-    
-    /**
      * Check if Two payment is available
      */
     isTwoPaymentAvailable() {

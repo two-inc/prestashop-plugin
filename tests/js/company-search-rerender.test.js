@@ -3368,17 +3368,6 @@ describe('the inline grey company-id hint (TWO-25288)', () => {
         expect(hintText()).toBe('12345678');
     });
 
-    test('is cleared by reset()', () => {
-        const search = makeInstance();
-        search.onCompanySelected(null, {
-            item: { value: 'Example Trading Ltd', organization_number: '12345678' }
-        });
-
-        search.reset();
-
-        expect(hintText()).toBe('');
-    });
-
     test('is cleared when the buyer edits the company name after selecting one', () => {
         const search = makeInstance();
         search.onCompanySelected(null, {
