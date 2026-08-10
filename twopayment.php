@@ -16051,11 +16051,20 @@ class Twopayment extends PaymentModule
     }
     
     /**
-     * Extract organization number from address fields
-     * Checks various PrestaShop address fields where org numbers might be stored
-     * 
+     * Extract organization number from address fields.
+     *
+     * Reads `dni`, then the in-memory `companyid` (see below). NEVER `vat_number`
+     * - that fallback was removed in TWO-40 and must not come back.
+     *
      * @param Address $address PrestaShop address object
-     * @param string $countryIso Country ISO code for context-aware extraction
+     * @param string $countryIso Country ISO, for log context ONLY. It stopped
+     *                           influencing any branch when the vat_number
+     *                           fallback went: that was the only tier whose
+     *                           behaviour depended on the country, because it
+     *                           stripped a VAT prefix when it matched. Kept in the
+     *                           signature because callers pass it and the log lines
+     *                           are the trail for "where did this org number come
+     *                           from".
      * @return string Organization number or empty string
      */
     public function extractOrgNumberFromAddress($address, $countryIso)
