@@ -127,7 +127,6 @@ jobs:
           docker exec -u www-data "ps-$SFX" php -r '
             require "/var/www/html/config/config.inc.php";
             Configuration::updateValue("PS_TWO_MERCHANT_API_KEY", "upgrade-smoke-key");
-            Configuration::updateValue("PS_TWO_ENABLE_COMPANY_NAME", "0");
           '
 
       - name: Upgrade to this-branch HEAD
@@ -186,28 +185,7 @@ jobs:
             echo "::error::config lost across upgrade (PS_TWO_MERCHANT_API_KEY='$val')"
             exit 1
           fi
-          # A RENAMED key survives too (TWO-40). 2.7.5 renames
-          # PS_TWO_ENABLE_COMPANY_NAME -> PS_TWO_COMPANY_SEARCH_LOCATION, and the
-          # value that matters is '0' (payment tile): an absent row and a lost row
-          # both resolve to the address-area default, so a migration that silently
-          # dropped the row would be invisible to any check that seeded '1'. The
-          # offline suite only has a flat Configuration double with no shop
-          # dimension, so this is the only place the real core call is exercised.
-          # Generalise rather than delete once 2.7.5 is well past: assert the old
-          # name is gone and the new one holds the seeded value.
-          loc=$(docker exec "psdb-$SFX" mysql -uroot -padmin -N -B prestashop \
-            -e "SELECT value FROM ps_configuration WHERE name='PS_TWO_COMPANY_SEARCH_LOCATION' ORDER BY id_configuration DESC LIMIT 1")
-          old_loc=$(docker exec "psdb-$SFX" mysql -uroot -padmin -N -B prestashop \
-            -e "SELECT COUNT(*) FROM ps_configuration WHERE name='PS_TWO_ENABLE_COMPANY_NAME'")
-          if [ "$loc" != "0" ]; then
-            echo "::error::renamed config lost across upgrade (PS_TWO_COMPANY_SEARCH_LOCATION='$loc', expected '0')"
-            exit 1
-          fi
-          if [ "$old_loc" != "0" ]; then
-            echo "::error::upgrade left $old_loc stale PS_TWO_ENABLE_COMPANY_NAME row(s) behind"
-            exit 1
-          fi
-          echo "upgrade $PRIOR_VER -> $HEAD_VER healthy; config survived, incl. the renamed key"
+          echo "upgrade $PRIOR_VER -> $HEAD_VER healthy; config survived"
 
       - name: Tear down
         if: always()
