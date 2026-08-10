@@ -309,7 +309,7 @@ final class DefaultShippingTaxCodeSpec
         $module = new DefaultShippingTaxCodeHarness();
         // A perfectly ordinary Advanced Settings save: the other switches are
         // submitted, this field is not in the form at all.
-        Tools::setTestValue('PS_TWO_COMPANY_SEARCH_LOCATION', 1);
+        Tools::setTestValue('PS_TWO_ENABLE_COMPANY_NAME', 1);
         Tools::setTestValue('PS_TWO_FINALIZE_PURCHASE', 1);
         $module->exposeSaveOrderManagementFormValues();
 

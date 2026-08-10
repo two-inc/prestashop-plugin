@@ -599,7 +599,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_MERCHANT_ID', '');
         Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 0);
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', 0); // Default: SSL verification enabled (secure)
-        Configuration::updateValue('PS_TWO_COMPANY_SEARCH_LOCATION', 1);
+        Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', 1);
         // Optional buyer reference fields, all four rendered in the Two
         // payment tile. Default ON, deliberately: they are the fields a B2B
         // buyer needs to get an invoice routed and reconciled internally, and
@@ -872,13 +872,6 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName(self::CONFIG_API_KEY_STATUS);
         Configuration::deleteByName(self::CONFIG_API_KEY_STATUS_TS);
         Configuration::deleteByName('PS_TWO_DISABLE_SSL_VERIFY');
-        Configuration::deleteByName('PS_TWO_COMPANY_SEARCH_LOCATION');
-        // Pre-2.7.5 spelling of the line above - DELETE IN 2.8.0, with the read
-        // shim in isCompanySearchInAddressArea(). A shop whose upgrade script
-        // never ran (files swapped, back office never opened) still holds this
-        // row; without this line an uninstall leaves it orphaned forever, and a
-        // later reinstall writes the new key = 1, silently discarding a
-        // tile-mode choice still sitting in the DB under the old name.
         Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_NAME');
         Configuration::deleteByName('PS_TWO_ADDRESS_LOOKUP');
         // Retired admin toggle (TWO-25190) - the org.id auto-complete switch
@@ -2196,7 +2189,7 @@ class Twopayment extends PaymentModule
                     array(
                         'type' => 'switch',
                         'label' => $this->l('Enable company search in address entry'),
-                        'name' => 'PS_TWO_COMPANY_SEARCH_LOCATION',
+                        'name' => 'PS_TWO_ENABLE_COMPANY_NAME',
                         'is_bool' => true,
                         // TWO-25326 §7.1 (2026-08-03 design ruling): this switch now
                         // governs WHERE the one company-search control (dropdown /
@@ -2222,12 +2215,12 @@ class Twopayment extends PaymentModule
                         'required' => true,
                         'values' => array(
                             array(
-                                'id' => 'PS_TWO_COMPANY_SEARCH_LOCATION_ON',
+                                'id' => 'PS_TWO_ENABLE_COMPANY_NAME_ON',
                                 'value' => 1,
                                 'label' => $this->l('Yes')
                             ),
                             array(
-                                'id' => 'PS_TWO_COMPANY_SEARCH_LOCATION_OFF',
+                                'id' => 'PS_TWO_ENABLE_COMPANY_NAME_OFF',
                                 'value' => 0,
                                 'label' => $this->l('No')
                             ),
@@ -2550,7 +2543,7 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Effective value of PS_TWO_COMPANY_SEARCH_LOCATION, as the '1'/'0' string
+     * Effective value of PS_TWO_ENABLE_COMPANY_NAME, as the '1'/'0' string
      * the checkout JS compares against - '1' means the company-search
      * control renders in the address area, '0' means it has relocated to
      * the payment tile (TWO-25326 §7.1, 2026-08-03 design ruling).
@@ -2570,36 +2563,9 @@ class Twopayment extends PaymentModule
      */
     protected function isCompanySearchInAddressArea()
     {
-        $value = Configuration::get('PS_TWO_COMPANY_SEARCH_LOCATION');
+        $value = Configuration::get('PS_TWO_ENABLE_COMPANY_NAME');
 
         if ($value === false || $value === null || $value === '') {
-            // LEGACY-KEY READ SHIM - DELETE IN 2.8.0, along with the matching
-            // line in uninstallTwoSettings(). CompanySearchLocationConfigSpec
-            // turns red the moment $this->version reaches 2.8.0, so this
-            // expires by enforcement rather than by anyone remembering.
-            //
-            // 2.7.5 renamed PS_TWO_ENABLE_COMPANY_NAME to
-            // PS_TWO_COMPANY_SEARCH_LOCATION and upgrade-2.7.5.php migrates the
-            // row. But a PrestaShop upgrade script runs only when the web Module
-            // Manager (or dev/ci/upgrade-module.sh) runs it - NOT when a deploy
-            // merely swaps the module files, which is how the git-synced shops
-            // update. Between the file swap and someone opening the back office,
-            // the new key is absent while the old row still sits in the DB.
-            //
-            // Without this shim, that window silently flips a merchant who chose
-            // the payment tile back to the address area AND re-enables address
-            // autofill (getAddressLookupEnabled() keys off this method), on a
-            // live storefront, for as long as nobody visits the back office.
-            //
-            // This is a READ of the old key, not an alias: nothing writes it, the
-            // migration still deletes it, and the module has exactly one place
-            // that spells the old name in a live code path - here.
-            $legacy = Configuration::get('PS_TWO_ENABLE_COMPANY_NAME');
-
-            if ($legacy !== false && $legacy !== null && $legacy !== '') {
-                return ((int) $legacy) === 1 ? '1' : '0';
-            }
-
             return '1';
         }
 
@@ -2627,7 +2593,7 @@ class Twopayment extends PaymentModule
      */
     protected function isAddressLookupSettingAvailable()
     {
-        $posted = Tools::getValue('PS_TWO_COMPANY_SEARCH_LOCATION', $this->isCompanySearchInAddressArea());
+        $posted = Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME', $this->isCompanySearchInAddressArea());
 
         return (string) $posted === '1';
     }
@@ -2727,7 +2693,7 @@ class Twopayment extends PaymentModule
         // install whose upgrade script has not run yet renders the switch in
         // the position it is actually behaving in (TWO-25326 §7.1: this is
         // also the address-area/payment-tile location switch now).
-        $fields_values['PS_TWO_COMPANY_SEARCH_LOCATION'] = Tools::getValue('PS_TWO_COMPANY_SEARCH_LOCATION', $this->isCompanySearchInAddressArea());
+        $fields_values['PS_TWO_ENABLE_COMPANY_NAME'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME', $this->isCompanySearchInAddressArea());
         // Rendered through the same gate the save enforces, so the switch is
         // never drawn in a position the module will not honour: the
         // address-area lookup is unavailable, and shown off, whenever the
@@ -2754,7 +2720,7 @@ class Twopayment extends PaymentModule
         // row this falls back to.
         $address_lookup_available = $this->isAddressLookupSettingAvailable();
 
-        Configuration::updateValue('PS_TWO_COMPANY_SEARCH_LOCATION', Tools::getValue('PS_TWO_COMPANY_SEARCH_LOCATION'));
+        Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME'));
         // Server-side half of the "unavailable when the search is not in the
         // address area" gate (TWO-25326 §7.1 follow-up). The admin JS greys
         // the switch out, and a disabled control posts nothing - but a
@@ -4478,7 +4444,7 @@ class Twopayment extends PaymentModule
                 // (default, unchanged behaviour), '0' = the same control
                 // relocates into the payment tile. Never a second control,
                 // never fully off.
-                'company_search_in_address_area' => $this->isCompanySearchInAddressArea(),
+                'company_name_search' => $this->isCompanySearchInAddressArea(),
                 // TWO-25326: may the company-search affordance render? A real
                 // PHP bool, so addJsDef emits a real JS boolean.
                 //
@@ -4520,7 +4486,7 @@ class Twopayment extends PaymentModule
                 // company-search control anyway, so a cache-only answer costs
                 // them nothing.
                 'api_key_verified' => $this->isTwoCompanySearchAffordanceWarranted($is_checkout_page),
-                // Separate from company_search_in_address_area: that (now) gates only
+                // Separate from company_name_search: that (now) gates only
                 // WHERE the search widget renders, this gates only what a
                 // selection writes into the address step (TWO-25203) - and
                 // only matters at all when the control is in the address area.
@@ -4936,7 +4902,7 @@ class Twopayment extends PaymentModule
             'two_optional_fields' => $optional_fields,
             // TWO-25326 §7.1 (2026-08-03 ruling): "here vs there" for the ONE
             // company-search control (TwoCompanySearch.js), driven by the
-            // EXISTING PS_TWO_COMPANY_SEARCH_LOCATION switch rather than a new
+            // EXISTING PS_TWO_ENABLE_COMPANY_NAME switch rather than a new
             // setting. When true, the tile renders its own mount point for
             // that control and the address-area control is suppressed
             // client-side.
@@ -16135,11 +16101,13 @@ class Twopayment extends PaymentModule
         // coincide in some countries is a coincidence rather than a rule -
         // relaying one as the other means asking Two to credit-check a number
         // that does not identify the buyer's company. The write side already
-        // refused to touch vat_number for the mirror-image reason (see
-        // TwoCompanySearch.addressIdentifierFields()); the read side now
-        // agrees with it. Do not re-add this as a fallback: an unresolvable
-        // org number must surface as empty and let Two's own resolution fail
-        // loudly, not be papered over with a number of a different kind.
+        // refused to touch vat_number for the mirror-image reason (a non-empty
+        // vat_number on a foreign address makes core apply a B2B reverse charge,
+        // silently zeroing VAT for a buyer who is not VAT-registered); the read
+        // side now agrees with it. Do not re-add this as a fallback: an
+        // unresolvable org number must surface as empty and let Two's own
+        // resolution fail loudly, not be papered over with a number of a
+        // different kind.
 
         return '';
     }

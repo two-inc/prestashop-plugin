@@ -198,7 +198,7 @@ describe('the bootstrap translation of the server payload', () => {
     });
 
     test('the location and lookup switches keep their own string semantics', () => {
-        const config = buildConfig({ company_search_in_address_area: '0', address_lookup: '0', api_key_verified: true });
+        const config = buildConfig({ company_name_search: '0', address_lookup: '0', api_key_verified: true });
 
         expect(config.companySearchInAddressArea).toBe(false);
         expect(config.addressLookupEnabled).toBe(false);
