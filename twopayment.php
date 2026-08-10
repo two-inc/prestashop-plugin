@@ -322,8 +322,6 @@ class Twopayment extends PaymentModule
     /** @var string|false */
     public $api_key;
     /** @var string|false */
-    public $enable_company_name;
-    /** @var string|false */
     public $enable_department;
     /** @var string|false */
     public $enable_project;
@@ -336,7 +334,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.7.4';
+        $this->version = '2.7.5';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -348,7 +346,6 @@ class Twopayment extends PaymentModule
         $this->description = sprintf($this->l('This module allows any merchant to accept payments with %s payment gateway.'), $this->getTwoBrandConfig('product_name'));
         $this->merchant_short_name = Configuration::get('PS_TWO_MERCHANT_SHORT_NAME');
         $this->api_key = Configuration::get('PS_TWO_MERCHANT_API_KEY');
-        $this->enable_company_name = Configuration::get('PS_TWO_ENABLE_COMPANY_NAME');
         $this->enable_department = Configuration::get('PS_TWO_ENABLE_DEPARTMENT');
         $this->enable_project = Configuration::get('PS_TWO_ENABLE_PROJECT');
         // The two optional-field switches added in 2.7.0
@@ -8760,11 +8757,11 @@ class Twopayment extends PaymentModule
 
     /**
      * Get company name and organization number with fallback chain
-     * Priority: Cookie (verified) → Address fields (dni, vat_number) → Cookie (unverified)
+     * Priority: Cookie (verified) → Address fields (dni, companyid) → Cookie (unverified)
      * 
      * ENHANCED: Now checks multiple address fields for org numbers across all countries,
      * not just dni for Spain. This supports addresses where org numbers are stored in
-     * dni, vat_number, or other fields.
+     * dni or companyid (never vat_number - see extractOrgNumberFromAddress()).
      * 
      * @param Address $address Invoice or delivery address
      * @return array ['company_name' => string, 'organization_number' => string, 'country_iso' => string]
@@ -8812,7 +8809,7 @@ class Twopayment extends PaymentModule
             }
         }
         
-        // Priority 2: Extract org number from address fields (dni, vat_number, companyid)
+        // Priority 2: Extract org number from address fields (dni, companyid - never vat_number)
         // This uses the enhanced extraction method that works across all countries
         $org_number = $this->extractOrgNumberFromAddress($address, $country_iso);
         
@@ -16054,11 +16051,20 @@ class Twopayment extends PaymentModule
     }
     
     /**
-     * Extract organization number from address fields
-     * Checks various PrestaShop address fields where org numbers might be stored
-     * 
+     * Extract organization number from address fields.
+     *
+     * Reads `dni`, then the in-memory `companyid` (see below). NEVER `vat_number`
+     * - that fallback was removed in TWO-40 and must not come back.
+     *
      * @param Address $address PrestaShop address object
-     * @param string $countryIso Country ISO code for context-aware extraction
+     * @param string $countryIso Country ISO, for log context ONLY. It stopped
+     *                           influencing any branch when the vat_number
+     *                           fallback went: that was the only tier whose
+     *                           behaviour depended on the country, because it
+     *                           stripped a VAT prefix when it matched. Kept in the
+     *                           signature because callers pass it and the log lines
+     *                           are the trail for "where did this org number come
+     *                           from".
      * @return string Organization number or empty string
      */
     public function extractOrgNumberFromAddress($address, $countryIso)
@@ -16082,26 +16088,14 @@ class Twopayment extends PaymentModule
             }
         }
         
-        // Priority 2: vat_number field (if available in address)
-        if (property_exists($address, 'vat_number') && !empty($address->vat_number)) {
-            $vatNumber = trim($address->vat_number);
-            // VAT numbers often have a country prefix (e.g. GB123...). Only strip when it matches address country.
-            if (preg_match('/^([A-Z]{2})([A-Z0-9\-]{3,})$/i', $vatNumber, $matches)) {
-                $prefix = strtoupper($matches[1]);
-                if ($prefix === $countryIso) {
-                    $vatNumber = $matches[2];
-                }
-            }
-            if (preg_match('/^[A-Z0-9\-]{5,20}$/i', $vatNumber)) {
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Found org number in vat_number field: ' . $vatNumber . ' for ' . $countryIso,
-                    1
-                );
-                return $vatNumber;
-            }
-        }
-        
-        // Priority 3: companyid field (if it was set previously)
+        // Priority 2: companyid, set on the Address object IN MEMORY by the
+        // order-intent controller before it hands the address to the payload
+        // builder (controllers/front/orderintent.php, the `$address->companyid =`
+        // assignment next to `$address->company =`). There is no such column on
+        // ps_address, which is why the property_exists() guard is here - but this
+        // branch is NOT dead code: it is how the form-first path gets the
+        // buyer's just-typed org number into the payload without saving the
+        // address first. Third-party modules that add a real column land here too.
         if (property_exists($address, 'companyid') && !empty($address->companyid)) {
             PrestaShopLogger::addLog(
                 'TwoPayment: Found org number in companyid field: ' . $address->companyid . ' for ' . $countryIso,
@@ -16109,7 +16103,21 @@ class Twopayment extends PaymentModule
             );
             return trim($address->companyid);
         }
-        
+
+        // vat_number is NOT a source here, deliberately (TWO-40, 2026-08-10
+        // ruling). A VAT number and an organisation number are different
+        // identifiers, issued by different registers, and the fact that they
+        // coincide in some countries is a coincidence rather than a rule -
+        // relaying one as the other means asking Two to credit-check a number
+        // that does not identify the buyer's company. The write side already
+        // refused to touch vat_number for the mirror-image reason (a non-empty
+        // vat_number on a foreign address makes core apply a B2B reverse charge,
+        // silently zeroing VAT for a buyer who is not VAT-registered); the read
+        // side now agrees with it. Do not re-add this as a fallback: an
+        // unresolvable org number must surface as empty and let Two's own
+        // resolution fail loudly, not be papered over with a number of a
+        // different kind.
+
         return '';
     }
 }
