@@ -854,7 +854,24 @@ class TwoSoleTrader {
         // again the instant they land, defeating bindPopupMessageListener()'s
         // whole check.
         const generation = this._enrollGeneration;
-        fetch(this.moduleUrl('soleTraderTokens'), { method: 'POST' })
+        // Post the country the buyer currently has selected (TWO-40). On the
+        // address-editor page - where the sole-trader entry actually gets
+        // clicked - the cart has no invoice address yet, so this is the only
+        // country the server has to gate on; it uses the cart's invoice
+        // address ahead of this whenever there is one, and re-checks the
+        // registry either way.
+        //
+        // Deliberately billingCountry(): that is the SAME resolver
+        // isAvailableForCurrentCountry() answers the chip's visibility from,
+        // so the country the mint is authorised against and the country the
+        // chip was shown for cannot disagree by construction. Sent
+        // urlencoded, the way applyBuyer() posts to saveCompany.
+        const body = new URLSearchParams({ country: this.billingCountry() });
+        fetch(this.moduleUrl('soleTraderTokens'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString()
+        })
             .then(function (response) { return response.json(); })
             .then(function (json) {
                 if (json && json.success && json.autofill_token) {
@@ -1058,7 +1075,17 @@ class TwoSoleTrader {
                     // hide this status. See cancelEnrollment()'s no-op guard.
                     self.enrolling = false;
                     self.stopObserving();
-                    document.dispatchEvent(new CustomEvent('two:sole-trader-ready'));
+                    // Carries the enrolled identity so a listener does not
+                    // have to go looking for it (TWO-40). TwoCompanySearch
+                    // subscribes to this and - only when it is mounted on the
+                    // address form - writes the pair into the address fields,
+                    // which nothing else in the flow does.
+                    document.dispatchEvent(new CustomEvent('two:sole-trader-ready', {
+                        detail: {
+                            company: companyLabel,
+                            companyid: buyer.organization_number || ''
+                        }
+                    }));
                 } else {
                     self.showError();
                 }

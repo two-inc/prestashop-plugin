@@ -344,6 +344,42 @@ form (which it does for something as ordinary as a country change):
   in `tests/SessionCompanyClearSpec.php`. That split is deliberate: a source grep
   cannot see an early `return` above the work it greps for, and did not.
 
+`sole-trader-address-writeback.test.js` — TWO-40's two address-editor halves:
+
+- the mint request carries the country `billingCountry()` resolves, urlencoded, and it is
+  asserted as an *equality* against that resolver rather than a second hardcoded ISO code —
+  the token gate and the chip's visibility gate have to agree by construction, so a mint that
+  grew its own country source has to break here.
+- a completed enrolment lands in the address form: the name in `company` (marked with the
+  autofill attribute and announced with `input`/`change`), the number in `companyid` and
+  `dni` — never `vat_number` — and the number mirror honouring the address-lookup toggle
+  because it goes through the existing gated writer rather than around it.
+- **the payment-tile placement writes nothing into the address form.** Asserted with the
+  address form present, so the write has somewhere to land, and asserted *twice*: once on the
+  real tile config and once with the address-lookup toggle left ON. The second case is the
+  load-bearing one — the two defences overlap in production, so with the lookup off, deleting
+  the placement guard changes nothing the first case can see. Its mirror image (the same
+  event, same DOM, address-form placement, which DOES write) rules out the whole handler
+  simply being dead.
+- the flag comes from `TwoCheckoutManager`, per mount. Every other case constructs
+  `TwoCompanySearch` directly, so a tile mount that merely *omitted* the flag would inherit
+  the address-form default and write into the form in production with the suite green.
+- one case drives the real enrolment end to end — mint, buyer lookup, `saveCompany` — into a
+  real control on a real form, because each side of the event seam is stubbed everywhere
+  else: nothing else here would notice a dispatch that carried no payload at all.
+- a destroyed instance ignores the event, on both defences: the listener is detached by
+  `destroy()` (asserted through a real dispatch) and the handler stands down on `_destroyed`
+  if reached anyway — `document` outlives every instance and the dispatcher lives on it, so
+  nothing guarantees teardown ran first.
+
+The server half is in `tests/SoleTraderTokenPreconditionSpec.php`, which drives the mint
+action through the controller's own switch: the tier ordering, the shape check on the posted
+country, and that a posted country is still gated by the registry rather than trusted.
+
+Instances built here are `destroy()`ed explicitly, including in the manager cases. `document`
+is shared for the whole file, so an instance left listening answers a *later* test's dispatch
+— which it did, writing `dni` from a detached form, before those calls were added.
+
 ## Known gaps
 
 Deliberately out of scope for this suite, which covers company-search resilience and

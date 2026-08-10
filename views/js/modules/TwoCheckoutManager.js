@@ -2398,6 +2398,11 @@ class TwoCheckoutManager {
                 // company picked in the tile silently rewrite an address the
                 // buyer is not even looking at.
                 addressLookupEnabled: false,
+                // Explicit, for the same one exception (TWO-40): a completed
+                // sole-trader enrolment writes the enrolled company into the
+                // ADDRESS FORM's own fields, and this mount must never do
+                // that. See TwoCompanySearch.onSoleTraderReady().
+                companySearchInAddressArea: false,
                 companyFieldSelector: '#two_tile_company'
             });
             return;
@@ -2405,6 +2410,10 @@ class TwoCheckoutManager {
         this.companySearch = new TwoCompanySearch({
             checkoutHost: this.config.checkoutHost,
             addressLookupEnabled: this.config.addressLookupEnabled !== false,
+            // Explicit rather than left to the default (TWO-40): this is the
+            // mount that IS the address form, so it is the one placement
+            // allowed to adopt a completed sole-trader enrolment into it.
+            companySearchInAddressArea: true,
             companyFieldSelector: "input[name='company']"
         });
     }

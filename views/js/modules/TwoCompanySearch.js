@@ -146,6 +146,18 @@ class TwoCompanySearch {
             // mirroring the server-side resolver: the fill was unconditional
             // before the toggle existed, so an omitted value keeps it on.
             addressLookupEnabled: true,
+            // WHERE this one shared control is mounted (TWO-40). Both mounts
+            // in TwoCheckoutManager.initializeCompanySearch() pass it
+            // explicitly; the default matches the address-form mount, which is
+            // the shop default.
+            //
+            // Read by the `two:sole-trader-ready` handler and nothing else: a
+            // completed sole-trader enrolment writes the enrolled company into
+            // the address form, and the payment-tile mount must NEVER do that
+            // (`#two_tile_company` is not part of the address form, and the
+            // write goes to the address form's own inputs by global selector -
+            // the same reasoning that pins addressLookupEnabled: false there).
+            companySearchInAddressArea: true,
             ...config
         };
         
@@ -153,6 +165,9 @@ class TwoCompanySearch {
         this.organizationField = null;
         this.isInitialized = false;
         this.countryListener = null;
+        // Held so destroy() can detach it by reference (TWO-40) - see
+        // setupSoleTraderReadyListener().
+        this._soleTraderReadyHandler = null;
 
         // Race-condition guards for company search (see searchCompanies())
         this._companySearchSeq = 0;
@@ -242,7 +257,91 @@ class TwoCompanySearch {
         this.setupAddressIdentifierSync();
         this.setupAutocomplete();
         this.setupCountryChangeListener();
+        this.setupSoleTraderReadyListener();
         this.isInitialized = true;
+    }
+
+    /**
+     * Adopt a completed sole-trader enrolment into the address form (TWO-40).
+     *
+     * TwoSoleTrader.applyBuyer() persists the enrolled company server-side and
+     * publishes it to TwoCheckoutManager, but nothing wrote it into the FORM -
+     * so the buyer was left looking at an empty company field after enrolling,
+     * and the address they saved carried no company at all.
+     *
+     * Held on the instance and detached in destroy(), the same way the country
+     * change listener is: `document` outlives every instance, and the manager
+     * builds a fresh one on every address-form re-render.
+     */
+    setupSoleTraderReadyListener() {
+        if (this._soleTraderReadyHandler) {
+            document.removeEventListener('two:sole-trader-ready', this._soleTraderReadyHandler);
+        }
+        this._soleTraderReadyHandler = (event) => {
+            this.onSoleTraderReady(event);
+        };
+        document.addEventListener('two:sole-trader-ready', this._soleTraderReadyHandler);
+    }
+
+    /**
+     * @param {CustomEvent} event carrying `{ company, companyid }`
+     */
+    onSoleTraderReady(event) {
+        try {
+            if (this._destroyed) {
+                return;
+            }
+            // The invariant this flag is passed explicitly from both mounts
+            // for: the payment-tile placement must
+            // never write into the address form. This single check is what
+            // enforces it - everything below writes address-form fields.
+            if (this.config.companySearchInAddressArea === false) {
+                return;
+            }
+            const detail = event && event.detail ? event.detail : {};
+            const company = String(detail.company == null ? '' : detail.company);
+            const orgNumber = String(detail.companyid == null ? '' : detail.companyid);
+
+            if (company !== '' && this.companyField && this.companyField.length) {
+                // The marked-write convention autoFillAddress() uses: record
+                // the value as ours even when it already matches, so a later
+                // fill/clear can still tell it from something the buyer typed,
+                // and only announce a change that actually happened.
+                const current = String(this.companyField.val() == null ? '' : this.companyField.val());
+                this.companyField.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR, company);
+                if (current !== company) {
+                    this.companyField.val(company);
+                    this.companyField.trigger('input');
+                    this.companyField.trigger('change');
+                }
+            }
+
+            if (orgNumber !== '') {
+                if (this.organizationField && this.organizationField.length) {
+                    this.organizationField.val(orgNumber);
+                    this.organizationField.attr(
+                        'data-two-company-name',
+                        this.companyField && this.companyField.length ? (this.companyField.val() || '') : ''
+                    );
+                }
+                // Through the existing writer, never around it: it carries the
+                // PS_TWO_ADDRESS_LOOKUP gate and the `dni`-only field list.
+                this.writeOrganizationToAddressIdentifiers(orgNumber);
+                this.setCompanyIdHint(orgNumber);
+            }
+
+            // The same companions autoFillAddressIfNeeded() runs after it
+            // adopts an organisation number: the chip gating reads
+            // hasConfirmedSelection(), which only becomes true once the
+            // number and its name tag exist.
+            this.syncNotListedVisibility();
+            this.syncSoleTraderEntryVisibility();
+            this.syncRegisteredEntryVisibility();
+        } catch (e) {
+            // Fail-soft, like every other defensive path in this file: a
+            // failure to mirror the enrolment into the form must not take the
+            // checkout down with it.
+        }
     }
     
     /**
@@ -3956,6 +4055,21 @@ class TwoCompanySearch {
             clearTimeout(this._widthRefreshTimeoutId);
             this._widthRefreshTimeoutId = null;
             document.documentElement.style.removeProperty('--two-company-search-width');
+        } catch (e) {
+            // no-op
+        }
+        // Its own try for the same reason as the others: a live `document`
+        // listener outliving this instance. Unbound by FUNCTION REFERENCE -
+        // `document` is a page-wide singleton, so removing the event name
+        // alone is not an option (see setupWidthRefreshListener()). The
+        // handler also checks `_destroyed` in its own right, because
+        // TwoSoleTrader dispatches on `document` and nothing guarantees this
+        // teardown ran first.
+        try {
+            if (this._soleTraderReadyHandler) {
+                document.removeEventListener('two:sole-trader-ready', this._soleTraderReadyHandler);
+                this._soleTraderReadyHandler = null;
+            }
         } catch (e) {
             // no-op
         }
