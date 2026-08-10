@@ -380,7 +380,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`PS_TWO_ENABLE_SOLE_TRADER` admin setting retired - sole trader is gated on country only** (TWO-25166, umbrella TWO-25163)
   - The "Enable sole trader checkout" switch is removed from the module configuration page. Whether a buyer can check out as a sole trader is Two's registry answer for their billing country (`GET /registry/v1/supported-company-types/<ISO>`, TWO-24753 - the UK and US currently), never a merchant preference; this matches Magento's toggle-less behaviour, the cross-plugin target state
-  - `TwoSoleTrader::isEnabled()` is gone and `isAvailable()` now consults the registry alone. The registry country check was already the barrier the order-intent controller enforced before minting delegated-authority tokens, so removing the toggle does not widen access to that endpoint - the country gate is unchanged and still fails closed on a cart with no invoice address
+  - `TwoSoleTrader::isEnabled()` is gone and `isAvailable()` now consults the registry alone. The registry country check was already the barrier the order-intent controller enforced before minting delegated-authority tokens, so removing the toggle does not widen access to that endpoint - the country gate is still the only barrier, and it resolves that country from the cart's invoice address, a posted country, or the cart's delivery address, failing closed when none of them resolve
   - Both PrestaShop staging shops had the feature invisible because `install()` and the 2.6.1 upgrade both wrote an explicit `0` default; the 2.6.3 upgrade script deletes the stored row, and uninstall still clears it for shops that never ran the upgrade
   - Module version bumped to `2.6.3`
 
