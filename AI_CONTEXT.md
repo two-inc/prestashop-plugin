@@ -97,15 +97,7 @@ Reliable B2B invoice checkout via Two, with:
     Minting posts the buyer's currently selected country, because the cart has
     no invoice address on that page - the server resolves invoice address ->
     posted country -> delivery address and refuses if none resolves, with the
-    registry check still the only authorisation gate (TWO-40 follow-up). On
-    completion the module dispatches `two:sole-trader-ready` carrying the
-    enrolled organisation number; `TwoCompanySearch.js` mirrors it into the
-    address `dni` field through `writeOrganizationToAddressIdentifiers()`, so
-    the gate is the merchant's "Autofill company address" setting
-    (`PS_TWO_ADDRESS_LOOKUP`) and NOT where company search is mounted. A
-    synthetic internal identifier is refused, and nothing is written into the
-    visible company field - see `.ai/decisions.md` for the wider adoption that
-    was withdrawn
+    registry check still the only authorisation gate (TWO-40 follow-up)
 - `views/js/modules/TwoOptionalFields.js`
   - Optional buyer reference fields in the payment tile: mirrors each visible
     input into its hidden twin inside the payment form (the tile is a sibling

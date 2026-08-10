@@ -1079,20 +1079,7 @@ class TwoSoleTrader {
                     // hide this status. See cancelEnrollment()'s no-op guard.
                     self.enrolling = false;
                     self.stopObserving();
-                    // Carries the enrolled identity so a listener does not have
-                    // to go looking for it (TWO-40). TwoCompanySearch mirrors
-                    // `companyid` into the address identification field, gated
-                    // on the merchant's "Autofill company address" setting.
-                    // `company` is the persisted label, which falls back to the
-                    // organisation number and so may carry the synthetic
-                    // internal identifier - never write it into a field the
-                    // buyer sees or an address they save.
-                    document.dispatchEvent(new CustomEvent('two:sole-trader-ready', {
-                        detail: {
-                            company: companyLabel,
-                            companyid: buyer.organization_number || ''
-                        }
-                    }));
+                    document.dispatchEvent(new CustomEvent('two:sole-trader-ready'));
                 } else {
                     self.showError();
                 }

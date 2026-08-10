@@ -359,35 +359,6 @@ The server half is in `tests/SoleTraderTokenPreconditionSpec.php`, which drives 
 action through the controller's own switch: the tier ordering, the shape check on the posted
 country, and that a posted country is still gated by the registry rather than trusted.
 
-`sole-trader-org-number-mirror.test.js` — TWO-40's other half: a completed enrolment mirrors
-its organisation number into the address `dni` field, and does nothing else.
-
-- **the gate is the merchant's "Autofill company address" setting** (`PS_TWO_ADDRESS_LOOKUP`,
-  surfaced as `addressLookupEnabled`), not where company search is mounted. The ON/OFF pair is
-  the load-bearing assertion here: deleting the `isAddressLookupEnabled()` check at the top of
-  `writeOrganizationToAddressIdentifiers()`, or routing the handler around that writer, fails
-  the OFF case. There is deliberately no placement assertion to write — the handler contains no
-  placement check, because the setting being forced off in the payment tile is a coincidence.
-- **a synthetic internal identifier never reaches `dni`.** The event's company *label* falls
-  back to the organisation number, and for a sole trader with no registered number that is the
-  internal identifier — which PrestaShop would then save onto the address and print.
-- **no `clearCompany` request on any path,** asserted over a pre-existing confirmed selection
-  (the previous company's number tagged with the previous company's name). The withdrawn wider
-  adoption announced `input` on the visible company field, and that handler cleared the whole
-  selection — the enrolment's own save included. Re-introducing an announced visible write
-  fails this case.
-- **`_manualEntry` is respected**, and a destroyed instance ignores the event on both defences:
-  the listener is detached by `destroy()`, and the handler stands down on `_destroyed` if
-  reached anyway — `document` outlives every instance and the dispatcher lives on it.
-- one case drives the real enrolment end to end — mint, buyer lookup, `saveCompany` — into a
-  real control on a real form, because every other case dispatches the event by hand: nothing
-  else here would notice a dispatch that carried no payload at all.
-
-Instances are registered as they are built and `destroy()`ed in `afterEach`, not at the end of
-each case. `document` is shared for the whole file, so an instance left listening because an
-assertion threw first answers a *later* test's dispatch — which is how a detached form got
-written to during review.
-
 ## Known gaps
 
 Deliberately out of scope for this suite, which covers company-search resilience and

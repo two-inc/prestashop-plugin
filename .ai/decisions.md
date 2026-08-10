@@ -19,25 +19,27 @@
 
 ---
 
-## [2026-08-10] Sole-Trader Enrolment Mirrors Only Its Organisation Number Into The Address Form
+## [2026-08-10] Sole-Trader Enrolment Does Not Write Back Into The Address Form
 
-**Context**: A completed sole-trader enrolment left the address form untouched (TWO-40). A wide adoption of the enrolled identity into the form - the trading name into the visible `company` field, plus a publish and a cookie write as a backstop - was built and then withdrawn.
+**Context**: A completed sole-trader enrolment leaves the address form untouched (TWO-40). Adopting the enrolled identity into that form was attempted three times - first the trading name into the visible `company` field plus a publish and a cookie write as a backstop, then the same without the cookie write, then the organisation number alone mirrored into the address `dni` field - and withdrawn each time. The delivered fix is the token-mint precondition change only.
 
-**Decision**: Keep only the organisation-number mirror into the address `dni` field, performed through the existing `writeOrganizationToAddressIdentifiers()` writer. That writer is already gated on the merchant's "Autofill company address" setting (`PS_TWO_ADDRESS_LOOKUP`) and writes with no `input`/`change` announcement, which is what makes the reduced version safe. The gate is that setting - explicitly NOT where company search is mounted: the setting happens to be forced off when search moves to the payment tile, but the two are separate questions and the coincidence must not be relied on.
+**Decision**: No write-back at all. `two:sole-trader-ready` stays a bare notification with no payload, and `TwoCompanySearch` does not listen for it.
 
 **Alternatives Considered**:
-- The wide adoption, gated on the mount being the address form (implemented, then withdrawn)
-- A true street/postcode/city autofill from the buyer-autofill response (not possible today - that endpoint carries no address payload, so it needs an API contract confirmation first)
+- Name + number adoption with a publish and cookie backstop (implemented, withdrawn)
+- The same without the cookie write (implemented, withdrawn)
+- Organisation number alone, through the already-gated `writeOrganizationToAddressIdentifiers()` writer (implemented, withdrawn)
+- A true street/postcode/city autofill from the buyer-autofill response - not possible as that endpoint is consumed today, because the response carries no address payload at all; it needs an API contract confirmation before it can be designed
 
 **Rationale**:
-- The visible-name write entangles with three live state machines at once: the stale-selection clear driven by that field's own `input` handler, the manual-entry guard, and `hasConfirmedSelection()`'s name/number tag agreement.
-- Each fix round produced a *new* defect class rather than converging - a country clobber through the cookie writer's DOM-guessed country, an `id_address` pinned to the wrong address, a mismatched name/number tag that made `hasConfirmedSelection()` lie, and a nameless sole trader's enrolment destroyed by their own next keystroke.
-- Nothing downstream needs the visible field written: the enrolled company already reaches the order through the session cookie and the selection the enrolment itself publishes, which is how the payment-step path and the other platform plugins behave.
+- The blocker is not the write itself but what `TwoCompanySearch` already does around it. Its address-form submit handler adopts the identification field's value into the submitted organisation number, and it deliberately does not tag that adoption with a confirmed company name. Its stale-pairing check then reads company-set / number-set / tag-absent as "the buyer has edited past a stale selection" and clears the selection outright - dropping the identifier, dropping the number, and posting a company clear that destroys the session company. So any identifier an enrolment writes becomes a value the buyer's own next keystroke in the company field wipes.
+- Making that safe means changing that pre-existing state machine - either stopping the submit-time adoption from taking an enrolment-written identifier, or stopping the stale check from treating a marked-but-untagged pairing as buyer-stale. That is a change to behaviour this ticket did not come to change, so it belongs to its own piece of work rather than to a guard bolted onto the new write.
+- Each narrowing round produced a *new* defect class rather than converging: a country clobber through the cookie writer's DOM-guessed country, an address identifier pinned to the wrong address, a mismatched name/number pairing that made the confirmed-selection check lie, an unconditional overwrite of a number the buyer had typed themselves, and a feature detection that failed open. Three fresh sets of findings in three rounds is evidence the approach was wrong, not that the guards were incomplete.
+- Nothing downstream needs it: the enrolled company already reaches the order through the session record and the selection the enrolment itself publishes, which is how the payment-step path behaves.
 
 **Consequences**:
-- The buyer still sees an empty company field on the address form after enrolling; the order itself is unaffected.
-- A synthetic internal identifier is refused rather than mirrored, because the identification field is saved onto the address and can be printed.
-- Revisiting the name write needs the state machine untangled first; any address autofill needs the API contract confirmed.
+- The buyer still sees an empty company field and an empty identification field on the address form after enrolling. The order itself is unaffected.
+- Revisiting adoption requires the submit-time adoption and stale-pairing behaviour to be settled first; a street/postcode/city autofill additionally requires the API contract to be confirmed.
 
 ---
 
