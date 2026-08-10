@@ -46,15 +46,22 @@
  * a copy predating that.
  *
  * NOTHING ELSE. In particular this script does NOT rename any configuration key.
- * The PS_TWO_ENABLE_COMPANY_NAME -> PS_TWO_COMPANY_SEARCH_LOCATION rename was
- * developed here and then WITHDRAWN, because a safe rename turned out to be a
- * much harder problem than it looks and three adversarial review rounds each
- * found a different silent merchant-data-loss variant in it. Read
- * `.ai/decisions.md` before attempting it again - in short: `deleteByName()` is
- * name-wide while every writer is tier-scoped, PrestaShop has THREE
- * configuration tiers (global / shop-group / shop), and neither the resolving
- * API nor the offline test double can tell those tiers apart. The rename needs a
- * tier-exact SQL migration and multistore CI coverage, on its own ticket.
+ * The company-search location key's rename was developed here, withdrawn from
+ * this version, and then landed in 2.7.6 as
+ * PS_TWO_ENABLE_COMPANY_NAME -> PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS - in a
+ * deliberately SIMPLIFIED, GLOBAL-TIER-ONLY form, on Doug's explicit ruling
+ * that with no live merchants the tier-exact migration is not worth its risk.
+ *
+ * The reason a SAFE rename is hard still stands and is still the record: three
+ * adversarial review rounds each found a different silent merchant-data-loss
+ * variant in it, because `deleteByName()` is name-wide while every writer is
+ * tier-scoped, PrestaShop has THREE configuration tiers (global / shop-group /
+ * shop), and neither the resolving API nor the offline test double can tell
+ * those tiers apart. A rename that must not lose a multistore merchant's
+ * per-shop or per-group override needs a tier-exact SQL migration and
+ * multistore CI coverage. Read `.ai/decisions.md` before assuming 2.7.6's
+ * script covers that case - it deliberately does not, and says so in its own
+ * header.
  *
  * IDEMPOTENCY
  *

@@ -334,7 +334,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.7.5';
+        $this->version = '2.7.6';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -599,7 +599,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_MERCHANT_ID', '');
         Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 0);
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', 0); // Default: SSL verification enabled (secure)
-        Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', 1);
+        Configuration::updateValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS', 1);
         // Optional buyer reference fields, all four rendered in the Two
         // payment tile. Default ON, deliberately: they are the fields a B2B
         // buyer needs to get an invoice routed and reconciled internally, and
@@ -872,7 +872,7 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName(self::CONFIG_API_KEY_STATUS);
         Configuration::deleteByName(self::CONFIG_API_KEY_STATUS_TS);
         Configuration::deleteByName('PS_TWO_DISABLE_SSL_VERIFY');
-        Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_NAME');
+        Configuration::deleteByName('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS');
         Configuration::deleteByName('PS_TWO_ADDRESS_LOOKUP');
         // Retired admin toggle (TWO-25190) - the org.id auto-complete switch
         // was rendered and stored but no JavaScript ever read the
@@ -2189,7 +2189,7 @@ class Twopayment extends PaymentModule
                     array(
                         'type' => 'switch',
                         'label' => $this->l('Enable company search in address entry'),
-                        'name' => 'PS_TWO_ENABLE_COMPANY_NAME',
+                        'name' => 'PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS',
                         'is_bool' => true,
                         // TWO-25326 §7.1 (2026-08-03 design ruling): this switch now
                         // governs WHERE the one company-search control (dropdown /
@@ -2215,12 +2215,12 @@ class Twopayment extends PaymentModule
                         'required' => true,
                         'values' => array(
                             array(
-                                'id' => 'PS_TWO_ENABLE_COMPANY_NAME_ON',
+                                'id' => 'PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS_ON',
                                 'value' => 1,
                                 'label' => $this->l('Yes')
                             ),
                             array(
-                                'id' => 'PS_TWO_ENABLE_COMPANY_NAME_OFF',
+                                'id' => 'PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS_OFF',
                                 'value' => 0,
                                 'label' => $this->l('No')
                             ),
@@ -2543,7 +2543,7 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Effective value of PS_TWO_ENABLE_COMPANY_NAME, as the '1'/'0' string
+     * Effective value of PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS, as the '1'/'0' string
      * the checkout JS compares against - '1' means the company-search
      * control renders in the address area, '0' means it has relocated to
      * the payment tile (TWO-25326 §7.1, 2026-08-03 design ruling).
@@ -2563,7 +2563,7 @@ class Twopayment extends PaymentModule
      */
     protected function isCompanySearchInAddressArea()
     {
-        $value = Configuration::get('PS_TWO_ENABLE_COMPANY_NAME');
+        $value = Configuration::get('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS');
 
         if ($value === false || $value === null || $value === '') {
             return '1';
@@ -2593,7 +2593,7 @@ class Twopayment extends PaymentModule
      */
     protected function isAddressLookupSettingAvailable()
     {
-        $posted = Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME', $this->isCompanySearchInAddressArea());
+        $posted = Tools::getValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS', $this->isCompanySearchInAddressArea());
 
         return (string) $posted === '1';
     }
@@ -2693,7 +2693,7 @@ class Twopayment extends PaymentModule
         // install whose upgrade script has not run yet renders the switch in
         // the position it is actually behaving in (TWO-25326 §7.1: this is
         // also the address-area/payment-tile location switch now).
-        $fields_values['PS_TWO_ENABLE_COMPANY_NAME'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME', $this->isCompanySearchInAddressArea());
+        $fields_values['PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS'] = Tools::getValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS', $this->isCompanySearchInAddressArea());
         // Rendered through the same gate the save enforces, so the switch is
         // never drawn in a position the module will not honour: the
         // address-area lookup is unavailable, and shown off, whenever the
@@ -2720,7 +2720,7 @@ class Twopayment extends PaymentModule
         // row this falls back to.
         $address_lookup_available = $this->isAddressLookupSettingAvailable();
 
-        Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME'));
+        Configuration::updateValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS', Tools::getValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS'));
         // Server-side half of the "unavailable when the search is not in the
         // address area" gate (TWO-25326 §7.1 follow-up). The admin JS greys
         // the switch out, and a disabled control posts nothing - but a
@@ -4902,7 +4902,7 @@ class Twopayment extends PaymentModule
             'two_optional_fields' => $optional_fields,
             // TWO-25326 §7.1 (2026-08-03 ruling): "here vs there" for the ONE
             // company-search control (TwoCompanySearch.js), driven by the
-            // EXISTING PS_TWO_ENABLE_COMPANY_NAME switch rather than a new
+            // EXISTING PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS switch rather than a new
             // setting. When true, the tile renders its own mount point for
             // that control and the address-area control is suppressed
             // client-side.
