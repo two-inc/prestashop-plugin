@@ -186,7 +186,7 @@ was attempted and WITHDRAWN** (see the WITHDRAWN section at the end), so the key
 that spelling; if #1 is ever revived it lands independently of everything here.
 
 **Every `file:line` below is a HINT, verified against `origin/staging` @ `0ddad20` and nothing else.**
-PR #154 touches five of the files cited below — it deletes ~55 lines from `TwoCompanySearch.js`, ~72
+PR #154 touches most of the files cited below — it deletes ~55 lines from `TwoCompanySearch.js`, ~72
 from `override/classes/form/CustomerAddressFormatter.php`, ~20 from
 `controllers/front/orderintent.php` (which carries most of §#12's citations) and ~10 from
 `TwoCheckoutManager.js`, and rewrites ~32 lines of `twopayment.php` — so essentially every number here
@@ -425,7 +425,7 @@ So promoting the posted tier has **no security consequence**. It is purely a cor
 3. **Delivery address becomes the sole last-resort tier**, reached only when no country was
    posted at all — an older cached script, a stripped body. Keep the fall-through rule from
    `:241-243` (an address that has no resolvable ISO falls through rather than terminating).
-4. **Rewrite the docblock at `:139-171` and `:210-234`.** It currently argues at length for the
+4. **Rewrite both docblocks — `ajaxProcessSoleTraderTokens()`'s and `resolveSoleTraderCountryIso()`'s own.** It currently argues at length for the
    invoice-address-first ordering, including the now-obsolete framing of the posted tier as a
    grudging middle-ground concession. Leaving that text in place after inverting the code is the
    exact failure mode that sent an agent chasing a fixed regression in the VAT design doc.
@@ -648,7 +648,7 @@ worth doing — just not the way it was attempted.
 per-shop, per-group or per-tier variant. Every writer (`updateValue`, `updateGlobalValue`) and every
 reader (`get`, `getGlobalValue`, `hasKey`) is tier-scoped. So the obvious read-write-delete rename
 reads one tier's value and destroys every other tier's. Nothing else in the module hits this: the other
-196 `Configuration::get()` calls in `twopayment.php` only ever READ, so being context-scoped merely
+every other `Configuration::get()` call in `twopayment.php` only ever READS, so being context-scoped merely
 makes them narrow, not lossy.
 
 **The hidden dimension.** PrestaShop has **three** configuration tiers, not two:
