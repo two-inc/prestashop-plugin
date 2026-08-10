@@ -153,9 +153,6 @@ class TwoCompanySearch {
         this.organizationField = null;
         this.isInitialized = false;
         this.countryListener = null;
-        // Held so destroy() can detach it by reference (TWO-40) - see
-        // setupSoleTraderReadyListener().
-        this._soleTraderReadyHandler = null;
 
         // Race-condition guards for company search (see searchCompanies())
         this._companySearchSeq = 0;
@@ -245,83 +242,9 @@ class TwoCompanySearch {
         this.setupAddressIdentifierSync();
         this.setupAutocomplete();
         this.setupCountryChangeListener();
-        this.setupSoleTraderReadyListener();
         this.isInitialized = true;
     }
-
-    /**
-     * Mirror a completed sole-trader enrolment's organisation number into the
-     * address identification field (TWO-40).
-     *
-     * Held on the instance and detached in destroy(), the same way the country
-     * change listener is: `document` outlives every instance, and the manager
-     * builds a fresh one on every address-form re-render.
-     */
-    setupSoleTraderReadyListener() {
-        if (this._soleTraderReadyHandler) {
-            document.removeEventListener('two:sole-trader-ready', this._soleTraderReadyHandler);
-        }
-        this._soleTraderReadyHandler = (event) => {
-            this.onSoleTraderReady(event);
-        };
-        document.addEventListener('two:sole-trader-ready', this._soleTraderReadyHandler);
-    }
-
-    /**
-     * Deliberately the organisation-number mirror and NOTHING else.
-     *
-     * No write into the visible `company` field, no publish, no cookie: an
-     * earlier, wider version of this handler wrote all of those and each fix
-     * round produced a new defect (see `.ai/decisions.md`). Everything here
-     * goes through writeOrganizationToAddressIdentifiers(), which is what
-     * makes it safe:
-     *  - it is ALREADY gated on the merchant's "Autofill company address"
-     *    setting (PS_TWO_ADDRESS_LOOKUP) via isAddressLookupEnabled(), so the
-     *    gate is that control rather than any placement check. Where company
-     *    search happens to be mounted is not the question, and the fact that
-     *    the setting is forced off in the payment tile today is a coincidence
-     *    this must not lean on.
-     *  - it writes with `.val()` plus the autofill marker and fires no
-     *    `input`/`change`, so nothing cascades into
-     *    clearStaleOrganizationSelection().
-     *
-     * @param {CustomEvent} event carrying `{ company, companyid }`
-     */
-    onSoleTraderReady(event) {
-        try {
-            // `_manualEntry` for the same reason every other write path in this
-            // file carries it: the buyer is typing their own company details,
-            // and an enrolment landing mid-typing must not overwrite them.
-            // Enrolment is asynchronous and the buyer is free to move on while
-            // it is in flight, so this is reachable.
-            if (this._destroyed || this._manualEntry) {
-                return;
-            }
-            const detail = event && event.detail ? event.detail : {};
-            const orgNumber = String(detail.companyid == null ? '' : detail.companyid).trim();
-            if (orgNumber === '') {
-                return;
-            }
-            // A sole trader with no registered number enrols under a synthetic
-            // internal identifier. PrestaShop saves `dni` onto the address and
-            // can print it, so that value must not land there any more than it
-            // may land in a field the buyer sees. Feature-detected: this module
-            // loads at a lower priority than TwoCompanyNumber on the real page,
-            // but nothing in this class requires it to be present.
-            if (window.TwoCompanyNumber
-                && typeof window.TwoCompanyNumber.isInternal === 'function'
-                && window.TwoCompanyNumber.isInternal(orgNumber)) {
-                return;
-            }
-            // Through the existing writer, never around it: it carries the
-            // PS_TWO_ADDRESS_LOOKUP gate and the `dni`-only field list.
-            this.writeOrganizationToAddressIdentifiers(orgNumber);
-        } catch (e) {
-            // Fail-soft, like every other defensive path in this file: a
-            // failure to mirror the enrolment must not take the checkout down.
-        }
-    }
-
+    
     /**
      * The marker class the `.ui-autocomplete` this field's widget builds gets,
      * so the CSS below can clamp THIS field's dropdown without also clamping
@@ -4033,21 +3956,6 @@ class TwoCompanySearch {
             clearTimeout(this._widthRefreshTimeoutId);
             this._widthRefreshTimeoutId = null;
             document.documentElement.style.removeProperty('--two-company-search-width');
-        } catch (e) {
-            // no-op
-        }
-        // Its own try for the same reason as the others: a live `document`
-        // listener outliving this instance. Unbound by FUNCTION REFERENCE -
-        // `document` is a page-wide singleton, so removing the event name
-        // alone is not an option (see setupWidthRefreshListener()). The
-        // handler also checks `_destroyed` in its own right, because
-        // TwoSoleTrader dispatches on `document` and nothing guarantees this
-        // teardown ran first.
-        try {
-            if (this._soleTraderReadyHandler) {
-                document.removeEventListener('two:sole-trader-ready', this._soleTraderReadyHandler);
-                this._soleTraderReadyHandler = null;
-            }
         } catch (e) {
             // no-op
         }
