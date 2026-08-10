@@ -322,7 +322,7 @@ class Twopayment extends PaymentModule
     /** @var string|false */
     public $api_key;
     /** @var string|false */
-    public $enable_company_name;
+    public $company_search_in_address_area;
     /** @var string|false */
     public $enable_department;
     /** @var string|false */
@@ -336,7 +336,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.7.4';
+        $this->version = '2.7.5';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -348,7 +348,7 @@ class Twopayment extends PaymentModule
         $this->description = sprintf($this->l('This module allows any merchant to accept payments with %s payment gateway.'), $this->getTwoBrandConfig('product_name'));
         $this->merchant_short_name = Configuration::get('PS_TWO_MERCHANT_SHORT_NAME');
         $this->api_key = Configuration::get('PS_TWO_MERCHANT_API_KEY');
-        $this->enable_company_name = Configuration::get('PS_TWO_ENABLE_COMPANY_NAME');
+        $this->company_search_in_address_area = Configuration::get('PS_TWO_COMPANY_SEARCH_LOCATION');
         $this->enable_department = Configuration::get('PS_TWO_ENABLE_DEPARTMENT');
         $this->enable_project = Configuration::get('PS_TWO_ENABLE_PROJECT');
         // The two optional-field switches added in 2.7.0
@@ -602,7 +602,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_MERCHANT_ID', '');
         Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 0);
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', 0); // Default: SSL verification enabled (secure)
-        Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', 1);
+        Configuration::updateValue('PS_TWO_COMPANY_SEARCH_LOCATION', 1);
         // Optional buyer reference fields, all four rendered in the Two
         // payment tile. Default ON, deliberately: they are the fields a B2B
         // buyer needs to get an invoice routed and reconciled internally, and
@@ -875,7 +875,7 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName(self::CONFIG_API_KEY_STATUS);
         Configuration::deleteByName(self::CONFIG_API_KEY_STATUS_TS);
         Configuration::deleteByName('PS_TWO_DISABLE_SSL_VERIFY');
-        Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_NAME');
+        Configuration::deleteByName('PS_TWO_COMPANY_SEARCH_LOCATION');
         Configuration::deleteByName('PS_TWO_ADDRESS_LOOKUP');
         // Retired admin toggle (TWO-25190) - the org.id auto-complete switch
         // was rendered and stored but no JavaScript ever read the
@@ -2192,7 +2192,7 @@ class Twopayment extends PaymentModule
                     array(
                         'type' => 'switch',
                         'label' => $this->l('Enable company search in address entry'),
-                        'name' => 'PS_TWO_ENABLE_COMPANY_NAME',
+                        'name' => 'PS_TWO_COMPANY_SEARCH_LOCATION',
                         'is_bool' => true,
                         // TWO-25326 §7.1 (2026-08-03 design ruling): this switch now
                         // governs WHERE the one company-search control (dropdown /
@@ -2218,12 +2218,12 @@ class Twopayment extends PaymentModule
                         'required' => true,
                         'values' => array(
                             array(
-                                'id' => 'PS_TWO_ENABLE_COMPANY_NAME_ON',
+                                'id' => 'PS_TWO_COMPANY_SEARCH_LOCATION_ON',
                                 'value' => 1,
                                 'label' => $this->l('Yes')
                             ),
                             array(
-                                'id' => 'PS_TWO_ENABLE_COMPANY_NAME_OFF',
+                                'id' => 'PS_TWO_COMPANY_SEARCH_LOCATION_OFF',
                                 'value' => 0,
                                 'label' => $this->l('No')
                             ),
@@ -2546,7 +2546,7 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Effective value of PS_TWO_ENABLE_COMPANY_NAME, as the '1'/'0' string
+     * Effective value of PS_TWO_COMPANY_SEARCH_LOCATION, as the '1'/'0' string
      * the checkout JS compares against - '1' means the company-search
      * control renders in the address area, '0' means it has relocated to
      * the payment tile (TWO-25326 §7.1, 2026-08-03 design ruling).
@@ -2566,7 +2566,7 @@ class Twopayment extends PaymentModule
      */
     protected function isCompanySearchInAddressArea()
     {
-        $value = Configuration::get('PS_TWO_ENABLE_COMPANY_NAME');
+        $value = Configuration::get('PS_TWO_COMPANY_SEARCH_LOCATION');
 
         if ($value === false || $value === null || $value === '') {
             return '1';
@@ -2596,7 +2596,7 @@ class Twopayment extends PaymentModule
      */
     protected function isAddressLookupSettingAvailable()
     {
-        $posted = Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME', $this->isCompanySearchInAddressArea());
+        $posted = Tools::getValue('PS_TWO_COMPANY_SEARCH_LOCATION', $this->isCompanySearchInAddressArea());
 
         return (string) $posted === '1';
     }
@@ -2696,7 +2696,7 @@ class Twopayment extends PaymentModule
         // install whose upgrade script has not run yet renders the switch in
         // the position it is actually behaving in (TWO-25326 §7.1: this is
         // also the address-area/payment-tile location switch now).
-        $fields_values['PS_TWO_ENABLE_COMPANY_NAME'] = Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME', $this->isCompanySearchInAddressArea());
+        $fields_values['PS_TWO_COMPANY_SEARCH_LOCATION'] = Tools::getValue('PS_TWO_COMPANY_SEARCH_LOCATION', $this->isCompanySearchInAddressArea());
         // Rendered through the same gate the save enforces, so the switch is
         // never drawn in a position the module will not honour: the
         // address-area lookup is unavailable, and shown off, whenever the
@@ -2723,7 +2723,7 @@ class Twopayment extends PaymentModule
         // row this falls back to.
         $address_lookup_available = $this->isAddressLookupSettingAvailable();
 
-        Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', Tools::getValue('PS_TWO_ENABLE_COMPANY_NAME'));
+        Configuration::updateValue('PS_TWO_COMPANY_SEARCH_LOCATION', Tools::getValue('PS_TWO_COMPANY_SEARCH_LOCATION'));
         // Server-side half of the "unavailable when the search is not in the
         // address area" gate (TWO-25326 §7.1 follow-up). The admin JS greys
         // the switch out, and a disabled control posts nothing - but a
@@ -4447,7 +4447,7 @@ class Twopayment extends PaymentModule
                 // (default, unchanged behaviour), '0' = the same control
                 // relocates into the payment tile. Never a second control,
                 // never fully off.
-                'company_name_search' => $this->isCompanySearchInAddressArea(),
+                'company_search_in_address_area' => $this->isCompanySearchInAddressArea(),
                 // TWO-25326: may the company-search affordance render? A real
                 // PHP bool, so addJsDef emits a real JS boolean.
                 //
@@ -4489,7 +4489,7 @@ class Twopayment extends PaymentModule
                 // company-search control anyway, so a cache-only answer costs
                 // them nothing.
                 'api_key_verified' => $this->isTwoCompanySearchAffordanceWarranted($is_checkout_page),
-                // Separate from company_name_search: that (now) gates only
+                // Separate from company_search_in_address_area: that (now) gates only
                 // WHERE the search widget renders, this gates only what a
                 // selection writes into the address step (TWO-25203) - and
                 // only matters at all when the control is in the address area.
@@ -4905,7 +4905,7 @@ class Twopayment extends PaymentModule
             'two_optional_fields' => $optional_fields,
             // TWO-25326 §7.1 (2026-08-03 ruling): "here vs there" for the ONE
             // company-search control (TwoCompanySearch.js), driven by the
-            // EXISTING PS_TWO_ENABLE_COMPANY_NAME switch rather than a new
+            // EXISTING PS_TWO_COMPANY_SEARCH_LOCATION switch rather than a new
             // setting. When true, the tile renders its own mount point for
             // that control and the address-area control is suppressed
             // client-side.
@@ -8760,11 +8760,11 @@ class Twopayment extends PaymentModule
 
     /**
      * Get company name and organization number with fallback chain
-     * Priority: Cookie (verified) → Address fields (dni, vat_number) → Cookie (unverified)
+     * Priority: Cookie (verified) → Address fields (dni, companyid) → Cookie (unverified)
      * 
      * ENHANCED: Now checks multiple address fields for org numbers across all countries,
      * not just dni for Spain. This supports addresses where org numbers are stored in
-     * dni, vat_number, or other fields.
+     * dni or companyid (never vat_number - see extractOrgNumberFromAddress()).
      * 
      * @param Address $address Invoice or delivery address
      * @return array ['company_name' => string, 'organization_number' => string, 'country_iso' => string]
@@ -8812,7 +8812,7 @@ class Twopayment extends PaymentModule
             }
         }
         
-        // Priority 2: Extract org number from address fields (dni, vat_number, companyid)
+        // Priority 2: Extract org number from address fields (dni, companyid - never vat_number)
         // This uses the enhanced extraction method that works across all countries
         $org_number = $this->extractOrgNumberFromAddress($address, $country_iso);
         
@@ -16082,26 +16082,14 @@ class Twopayment extends PaymentModule
             }
         }
         
-        // Priority 2: vat_number field (if available in address)
-        if (property_exists($address, 'vat_number') && !empty($address->vat_number)) {
-            $vatNumber = trim($address->vat_number);
-            // VAT numbers often have a country prefix (e.g. GB123...). Only strip when it matches address country.
-            if (preg_match('/^([A-Z]{2})([A-Z0-9\-]{3,})$/i', $vatNumber, $matches)) {
-                $prefix = strtoupper($matches[1]);
-                if ($prefix === $countryIso) {
-                    $vatNumber = $matches[2];
-                }
-            }
-            if (preg_match('/^[A-Z0-9\-]{5,20}$/i', $vatNumber)) {
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Found org number in vat_number field: ' . $vatNumber . ' for ' . $countryIso,
-                    1
-                );
-                return $vatNumber;
-            }
-        }
-        
-        // Priority 3: companyid field (if it was set previously)
+        // Priority 2: companyid, set on the Address object IN MEMORY by the
+        // order-intent controller before it hands the address to the payload
+        // builder (controllers/front/orderintent.php, the `$address->companyid =`
+        // assignment next to `$address->company =`). There is no such column on
+        // ps_address, which is why the property_exists() guard is here - but this
+        // branch is NOT dead code: it is how the form-first path gets the
+        // buyer's just-typed org number into the payload without saving the
+        // address first. Third-party modules that add a real column land here too.
         if (property_exists($address, 'companyid') && !empty($address->companyid)) {
             PrestaShopLogger::addLog(
                 'TwoPayment: Found org number in companyid field: ' . $address->companyid . ' for ' . $countryIso,
@@ -16109,7 +16097,19 @@ class Twopayment extends PaymentModule
             );
             return trim($address->companyid);
         }
-        
+
+        // vat_number is NOT a source here, deliberately (TWO-40, 2026-08-10
+        // ruling). A VAT number and an organisation number are different
+        // identifiers, issued by different registers, and the fact that they
+        // coincide in some countries is a coincidence rather than a rule -
+        // relaying one as the other means asking Two to credit-check a number
+        // that does not identify the buyer's company. The write side already
+        // refused to touch vat_number for the mirror-image reason (see
+        // TwoCompanySearch.addressIdentifierFields()); the read side now
+        // agrees with it. Do not re-add this as a fallback: an unresolvable
+        // org number must surface as empty and let Two's own resolution fail
+        // loudly, not be papered over with a number of a different kind.
+
         return '';
     }
 }

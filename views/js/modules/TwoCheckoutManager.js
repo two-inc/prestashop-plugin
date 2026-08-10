@@ -10,7 +10,7 @@ class TwoCheckoutManager {
             // so an omitted value must not turn it off.
             addressLookupEnabled: true,
             // TWO-25326 §7.1 (2026-08-03 ruling): the EXISTING
-            // PS_TWO_ENABLE_COMPANY_NAME switch now decides WHERE the ONE
+            // PS_TWO_COMPANY_SEARCH_LOCATION switch now decides WHERE the ONE
             // company-search control renders, not whether it exists - the
             // control is never off. true (default): address area, unchanged
             // from before this ticket. false: the same control relocates
@@ -2617,16 +2617,6 @@ class TwoCheckoutManager {
             }
         }
         return '';
-    }
-    
-    /**
-     * Get company data (for compatibility)
-     */
-    getCompanyData() {
-        if (this.companySearch && this.companySearch.getCompanyData) {
-            return this.companySearch.getCompanyData();
-        }
-        return { company: '', companyid: '' };
     }
     
     /**

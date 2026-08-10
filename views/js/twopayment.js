@@ -29,7 +29,7 @@
             // from before this ticket; '0' = the same control relocates into
             // the payment tile instead. Absent reads as address-area, matching
             // the server-side resolver.
-            companySearchInAddressArea: config.company_name_search !== '0',
+            companySearchInAddressArea: config.company_search_in_address_area !== '0',
             // Separate toggle from companySearchInAddressArea (TWO-25203):
             // the address / DNI / VAT fill can be on or off independent of
             // where the search widget itself renders, and only matters at

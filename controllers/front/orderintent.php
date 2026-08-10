@@ -816,7 +816,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
      * Priority: Form data → Session → Address fields → Partial session → Partial form
      *
      * When a logged-in user checks out against an existing address, an organization
-     * number stored in that address (dni, vat_number, companyid) is taken as-is and
+     * number stored in that address (dni, companyid - vat_number is deliberately not a source) is taken as-is and
      * handed to Two, which validates its format and resolves it against the company
      * registry on the order-intent request (TWO-25206). This module makes no company
      * lookup of its own on this path.
@@ -908,7 +908,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             $countryIso = Country::getIsoById($address->id_country);
 
             if ($countryIso && is_string($countryIso)) {
-                // Look for an organization number in dni, vat_number, companyid.
+                // Look for an organization number in dni or companyid (vat_number is deliberately not a source).
                 $existingOrgNumber = $this->module->extractOrgNumberFromAddress($address, $countryIso);
 
                 if (!empty($existingOrgNumber)) {
@@ -1003,23 +1003,5 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             
             PrestaShopLogger::addLog('TwoPayment: Company data stored in PrestaShop session', 1);
         }
-    }
-    
-    /**
-     * Try to retrieve stored company ID for a given company name
-     * This could be enhanced with a database lookup in the future
-     */
-    private function getStoredCompanyId($companyName)
-    {
-        // For now, check session storage first
-        if (isset($this->context->cookie->two_company_id)) {
-            return $this->context->cookie->two_company_id;
-        }
-        
-        // Future enhancement: Database lookup
-        // $sql = 'SELECT companyid FROM ' . _DB_PREFIX_ . 'two_company_cache WHERE company_name = "' . pSQL($companyName) . '"';
-        // return Db::getInstance()->getValue($sql);
-        
-        return null;
     }
 }

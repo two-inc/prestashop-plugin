@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **`vat_number` is no longer accepted as an organisation-number fallback** (TWO-40, Doug's explicit ruling)
+  - `Twopayment::extractOrgNumberFromAddress()` used to fall back to the address's `vat_number` when `dni` held nothing usable, returning it verbatim when its two-letter prefix did not match the address country and stripping the prefix when it did. Both branches are gone
+  - **A VAT number is not an organisation number.** They are issued by different registers and coincide only in some countries, by accident rather than by rule. Relaying one as the other asks Two to run a credit decision on a number that does not identify the buyer's company — convenient when it happens to work, wrong in principle either way
+  - **This narrows the fallback chain and is a real behaviour change.** An order where `vat_number` held the only org-number-shaped value on the address now sends no organisation number at all, and Two's own resolution decides what happens next — which is the intended outcome: an unresolvable org number should fail loudly rather than be papered over with a number of a different kind. Merchants in countries where the two identifiers do coincide may see orders that used to resolve silently now require the buyer to pick their company from the search
+  - The write side already refused to touch `vat_number`, for the mirror-image reason (a non-empty `vat_number` on a foreign address makes core apply a B2B reverse charge, silently zeroing VAT for a buyer who is not VAT-registered). The read side now agrees with it. The remaining chain is `dni`, then the in-memory `companyid` the order-intent controller sets — **`companyid` is NOT dead code** despite there being no such column on `ps_address`, and there is now a test saying so by name
+- **Dead code removed** (TWO-40): `TwoCompanySearch.getCompanyData()`, `.isValidCompanyData()`, `.reset()`, `.storeCompanyDataInSession()` (and with it the last `sessionStorage['two_company_data']` write) and `.getCompanyDataFromSession()`; `TwoCheckoutManager.getCompanyData()`; `TwoOrderIntentModuleFrontController::getStoredCompanyId()`; and three unreachable private helpers on the `CustomerAddressFormatter` override — `addConstraints()`, `addMaxLength()`, `getFieldLabel()` — plus the `$definition` property that existed only to feed them. `TwoOrderIntent.reset()` is a different method, is in use, and is untouched
+
+### Changed
+- **Configuration key `PS_TWO_ENABLE_COMPANY_NAME` is renamed to `PS_TWO_COMPANY_SEARCH_LOCATION`** (TWO-40)
+  - The key has not meant "enable company name" since TWO-25326 §7.1. It selects WHERE the one company-search control renders — the checkout address area (`1`) or the payment tile (`0`) — and the control exists either way. A key named `ENABLE_` reads as an on/off switch to everyone who meets it, including the next person deciding whether it is safe to turn off
+  - **Value semantics, the admin label and every behaviour are unchanged.** A merchant who had chosen the payment tile still has the payment tile
+  - Real rename, not an alias: `upgrade/upgrade-2.7.5.php` reads the old key once, writes the value under the new name and deletes the old row. Nothing reads the old spelling afterwards. An absent row stays absent and keeps resolving to the address-area default, rather than having a decision invented for it
+  - The derived Smarty/JS payload key `company_name_search` is renamed to `company_search_in_address_area` in the same pass; the JS-side config name `companySearchInAddressArea` was already correct and is untouched
+
 ### Fixed
 - **Clicking "I'm a sole trader" on the address-editor page dead-ended in silence** (TWO-40 follow-up, live bug on staging)
   - Root cause: the token-mint endpoint refused any cart with no `id_address_invoice`, which on the address editor is *most* carts - the buyer is editing the very address the check demanded. The browser then had nowhere to render the refusal (the error element lives in the payment tile's `.two-sole-trader` container, which never exists on that page), so the entry point looked simply dead
