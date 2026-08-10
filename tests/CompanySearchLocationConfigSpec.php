@@ -36,6 +36,11 @@ final class CompanySearchLocationConfigSpec
         self::testUpgradeRenamesTheLegacyKeyAndCarriesTheValue();
         self::testUpgradeLeavesAnUnsetLegacyKeyUnset();
         self::testUpgradeIsIdempotentAndDoesNotResurrectTheLegacyKey();
+        self::testLegacyKeyIsStillHonouredBeforeTheUpgradeScriptRuns();
+        self::testLegacyKeyShimIsRetiredInTwoPointEight();
+        self::testUninstallRemovesBothSpellings();
+        self::testNewKeyWinsOverALingeringLegacyRow();
+        self::testUpgradeFinishesEvenWhenTheOverrideRefreshThrows();
     }
 
     private static function reset(): void
@@ -222,5 +227,159 @@ final class CompanySearchLocationConfigSpec
 
         TinyAssert::false(Configuration::hasKey('PS_TWO_ENABLE_COMPANY_NAME'));
         TinyAssert::same('1', (string) Configuration::get('PS_TWO_COMPANY_SEARCH_LOCATION'));
+    }
+
+    /**
+     * The window between a file-swap deploy and the upgrade script running.
+     *
+     * A PrestaShop upgrade script runs only when the web Module Manager (or
+     * dev/ci/upgrade-module.sh) runs it - NOT when a deploy merely replaces the
+     * module directory, which is how the git-synced shops update. In that window
+     * the new key is absent while the old row is still in the DB, and without the
+     * read shim a merchant who chose the payment tile is silently flipped back to
+     * the address area AND has address autofill re-enabled, on a live storefront.
+     */
+    private static function testLegacyKeyIsStillHonouredBeforeTheUpgradeScriptRuns(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        // Files swapped, upgrade script not yet run.
+        Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', '0');
+        TinyAssert::false(Configuration::hasKey('PS_TWO_COMPANY_SEARCH_LOCATION'));
+
+        TinyAssert::same('0', self::resolve($module));
+
+        // The NEW key always wins once it exists, even while the old row lingers -
+        // the shim is a fallback, never an override.
+        Configuration::updateValue('PS_TWO_COMPANY_SEARCH_LOCATION', '1');
+        TinyAssert::same('1', self::resolve($module));
+
+        // And an empty legacy row is "absent", not a tile pick - the same
+        // distinction the migration itself must preserve.
+        self::reset();
+        $module = new TwopaymentTestHarness();
+        Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', '');
+        TinyAssert::same('1', self::resolve($module));
+    }
+
+    /**
+     * The shim expires by ENFORCEMENT, not by anyone remembering.
+     *
+     * It is a compatibility read of a key this module no longer writes, and it
+     * exists only to cover shops upgrading across 2.7.5. Once the declared
+     * version reaches 2.8.0 every such shop has had a release to migrate, and
+     * leaving the old spelling in a live code path becomes exactly the "two
+     * spellings of one setting in the tree forever" that the rename was for.
+     *
+     * When this test goes red, DELETE: the legacy branch in
+     * isCompanySearchInAddressArea(), the extra deleteByName() in
+     * uninstallTwoSettings(), this test, and
+     * testLegacyKeyIsStillHonouredBeforeTheUpgradeScriptRuns(). Do NOT bump the
+     * boundary to keep it green.
+     */
+    private static function testLegacyKeyShimIsRetiredInTwoPointEight(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        TinyAssert::true(
+            version_compare((string) $module->version, '2.8.0', '<'),
+            'The declared module version has reached 2.8.0: delete the PS_TWO_ENABLE_COMPANY_NAME'
+            . ' read shim in isCompanySearchInAddressArea(), the matching deleteByName() in'
+            . ' uninstallTwoSettings(), and the two tests covering them. Do not bump this boundary.'
+        );
+    }
+
+    /**
+     * Uninstall must remove BOTH spellings for as long as the shim lives.
+     *
+     * A shop whose upgrade script never ran still holds the old row. Without
+     * this, uninstall orphans it and a later reinstall writes the new key = 1,
+     * discarding a tile-mode choice that is still in the DB.
+     */
+    private static function testUninstallRemovesBothSpellings(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', '0');
+        Configuration::updateValue('PS_TWO_COMPANY_SEARCH_LOCATION', '0');
+
+        $method = new ReflectionMethod(Twopayment::class, 'uninstallTwoSettings');
+        $method->invoke($module);
+
+        TinyAssert::false(Configuration::hasKey('PS_TWO_ENABLE_COMPANY_NAME'));
+        TinyAssert::false(Configuration::hasKey('PS_TWO_COMPANY_SEARCH_LOCATION'));
+    }
+
+    /**
+     * NEWER WINS: a merchant who saved the position after the files landed but
+     * before the upgrade script ran must not have that save reverted when it
+     * finally runs (adversarial review, MAJOR: ordering hazard). The 2.7.5 admin
+     * form writes the new key immediately; the script may run much later.
+     *
+     * The stale old row is still deleted - kept-and-orphaned would be the
+     * uninstall bug this same spec covers, one release later.
+     */
+    private static function testNewKeyWinsOverALingeringLegacyRow(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        // Files landed with the merchant previously on the payment tile...
+        Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', '0');
+        // ...and the merchant then moved it to the address area through the new form.
+        Configuration::updateValue('PS_TWO_COMPANY_SEARCH_LOCATION', '1');
+
+        self::runUpgrade($module);
+
+        TinyAssert::same('1', (string) Configuration::get('PS_TWO_COMPANY_SEARCH_LOCATION'));
+        TinyAssert::same('1', self::resolve($module));
+        TinyAssert::false(Configuration::hasKey('PS_TWO_ENABLE_COMPANY_NAME'));
+    }
+
+    /**
+     * The override refresh is housekeeping ON TOP of an upgrade that has already
+     * succeeded, so nothing it can hit may propagate - a throw here leaves the
+     * module version un-bumped and the shop in a state no later script can reason
+     * about. Errors included, not just exceptions.
+     *
+     * This also pins the ORDER: the key rename must have completed before the
+     * refresh is attempted, so a broken override tree cannot cost the merchant
+     * their setting. Mirrors OverrideMigrationSpec's equivalent test for 2.7.3;
+     * the migrator itself is shared and covered there.
+     */
+    private static function testUpgradeFinishesEvenWhenTheOverrideRefreshThrows(): void
+    {
+        self::reset();
+        PrestaShopLogger::reset();
+
+        $module = new class extends TwopaymentTestHarness {
+            public function getLocalPath()
+            {
+                throw new TypeError('anything at all, from anywhere in the migrator');
+            }
+        };
+
+        Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', '0');
+
+        require_once dirname(__DIR__) . '/upgrade/upgrade-2.7.5.php';
+        TinyAssert::true(
+            upgrade_module_2_7_5($module),
+            'an upgrade script must finish the upgrade even when its housekeeping raises an Error'
+        );
+
+        // The rename still happened, and is not undone by the failure below it.
+        TinyAssert::same('0', (string) Configuration::get('PS_TWO_COMPANY_SEARCH_LOCATION'));
+        TinyAssert::false(Configuration::hasKey('PS_TWO_ENABLE_COMPANY_NAME'));
+
+        $logged = false;
+        foreach (PrestaShopLogger::$logs as $entry) {
+            if (strpos($entry['message'], 'override refresh raised') !== false) {
+                $logged = true;
+            }
+        }
+        TinyAssert::true($logged, 'and it must say so, or the shop is silently stale');
     }
 }
