@@ -186,8 +186,11 @@ was attempted and WITHDRAWN** (see the WITHDRAWN section at the end), so the key
 that spelling; if #1 is ever revived it lands independently of everything here.
 
 **Every `file:line` below is a HINT, verified against `origin/staging` @ `0ddad20` and nothing else.**
-PR #154 itself deletes ~55 lines from `TwoCompanySearch.js` and ~10 from `TwoCheckoutManager.js`, so
-anything after those points shifts once it merges. Re-derive with `git grep -n <symbol> <ref>` against a
+PR #154 touches five of the files cited below — it deletes ~55 lines from `TwoCompanySearch.js`, ~72
+from `override/classes/form/CustomerAddressFormatter.php`, ~20 from
+`controllers/front/orderintent.php` (which carries most of §#12's citations) and ~10 from
+`TwoCheckoutManager.js`, and rewrites ~32 lines of `twopayment.php` — so essentially every number here
+shifts once it merges. Re-derive with `git grep -n <symbol> <ref>` against a
 freshly fetched ref before acting on any of them — never from a working tree. Several numbers in the
 first draft of this document were already wrong for exactly that reason.
 
@@ -265,8 +268,8 @@ happens to keep doing so for an hour afterwards as a side effect.
    payment term and stays, `:1002`, `twopayment.php:15868`) need separating from the ones that
    are not; today they are literally the same call.
 3. **Keep the two existing invalidation guards and make them cheaper, not weaker.** The
-   country-mismatch wipe and the address-switch wipe (`twopayment.php:8798-8808` compares
-   `two_company_address_id` against the current address) exist because the cookie can outlive
+   country-mismatch wipe and the address-switch wipe (`twopayment.php:8789` reads
+   `two_company_address_id`; `:8799` compares it against the current address) exist because the cookie can outlive
    the state it described. Cart-scoping does not replace them — a buyer can switch address inside
    one cart — so they stay. But `two_company_address_id` becomes a field of the cart-scoped
    record instead of an independent key that can drift out of step with the other three.
@@ -380,7 +383,7 @@ reappears.
 
 ### What PR #153 established, and what reverses
 
-`resolveSoleTraderCountryIso()` (`controllers/front/orderintent.php:235-259`) is a three-tier
+`resolveSoleTraderCountryIso()` (`controllers/front/orderintent.php:235-256`) is a three-tier
 trust-ordered chain:
 
 | tier | source | line |
@@ -399,7 +402,7 @@ escalation, and the code confirms every claim:
 
 - **`mintTokens()` takes no country at all** — `classes/TwoSoleTrader.php:335`, signature
   `mintTokens($module)`. It posts to `/registry/v1/delegation` and `/autofill/v1/delegation`
-  with fixed scope payloads (`:336-343`); no country is in either body. The tokens are
+  with fixed scope payloads (`:337-344`); no country is in either body. The tokens are
   country-independent, so there is no per-country capability to escalate into.
 - **Country is used only for the availability gate**, server-side, on every call:
   `TwoSoleTrader::isAvailable($this->module, $countryIso)` at `orderintent.php:187`. A posted
@@ -421,8 +424,8 @@ So promoting the posted tier has **no security consequence**. It is purely a cor
    current bug wearing different clothes.
 3. **Delivery address becomes the sole last-resort tier**, reached only when no country was
    posted at all — an older cached script, a stripped body. Keep the fall-through rule from
-   `:243` (an address that has no resolvable ISO falls through rather than terminating).
-4. **Rewrite the docblock at `:143-171` and `:212-234`.** It currently argues at length for the
+   `:241-243` (an address that has no resolvable ISO falls through rather than terminating).
+4. **Rewrite the docblock at `:139-171` and `:210-234`.** It currently argues at length for the
    invoice-address-first ordering, including the now-obsolete framing of the posted tier as a
    grudging middle-ground concession. Leaving that text in place after inverting the code is the
    exact failure mode that sent an agent chasing a fixed regression in the VAT design doc.
@@ -454,7 +457,7 @@ the *read* falling back to a server-saved value instead of the live one.
 ### Platform default-address confirmation
 
 Doug's premise holds for PrestaShop, and the repo states it in its own words:
-`override/classes/form/CustomerAddressFormatter.php:89-92` — *"PrestaShop collects the SHIPPING
+`override/classes/form/CustomerAddressFormatter.php:90-93` — *"PrestaShop collects the SHIPPING
 address first and only reveals the billing block when the buyer ticks 'Billing address differs
 from shipping address', so most buyers never saw either field"*. That comment is the record of a
 real defect — two fields were moved out of the billing block for exactly this reason — so it is
@@ -600,7 +603,7 @@ off, and the design above already assumes the corrected version.
    divergence, and the language lists are long enough that a partial edit looks complete.
 4. **#12 — the security precondition is confirmed disproven, from the code rather than the
    comment.** `TwoSoleTrader::mintTokens($module)` (`classes/TwoSoleTrader.php:335`) takes no
-   country parameter and neither delegation payload carries one (`:336-343`). Country is used
+   country parameter and neither delegation payload carries one (`:337-344`). Country is used
    only for `TwoSoleTrader::isAvailable()` at `controllers/front/orderintent.php:187`. So there
    is nothing for a spoofed country to escalate into.
 5. **#8 — the admin `desc` for "Autofill company address" is wrong on a second count**, beyond
@@ -611,7 +614,7 @@ off, and the design above already assumes the corrected version.
 
 ### One more open question, from the #154 review
 
-6. **`controllers/front/orderintent.php:573`'s `incomplete_company` message says "go back to your
+6. **`controllers/front/orderintent.php:574`'s `incomplete_company` message says "go back to your
    billing address and search for your company name".** That instruction is impossible to follow
    when `PS_TWO_ENABLE_COMPANY_NAME='0'` — there is no search in the address step, it is in
    the payment tile the buyer is already looking at. Pre-existing, but removing the `vat_number`
@@ -645,7 +648,7 @@ worth doing — just not the way it was attempted.
 per-shop, per-group or per-tier variant. Every writer (`updateValue`, `updateGlobalValue`) and every
 reader (`get`, `getGlobalValue`, `hasKey`) is tier-scoped. So the obvious read-write-delete rename
 reads one tier's value and destroys every other tier's. Nothing else in the module hits this: the other
-198 `Configuration::get()` calls in `twopayment.php` only ever READ, so being context-scoped merely
+196 `Configuration::get()` calls in `twopayment.php` only ever READ, so being context-scoped merely
 makes them narrow, not lossy.
 
 **The hidden dimension.** PrestaShop has **three** configuration tiers, not two:
@@ -743,12 +746,22 @@ the SQL migration, both CI/test prerequisites, and its own PR — not a bundle w
 `$idLang = self::isLangKey($key) ? (int) $idLang : 0`, and `isLangKey()` is false for every
 non-multilingual key, so the stray argument is discarded and the call returns core's own `false`.
 
-Six sites, of which **two actually lose an intended truthy default**: `twopayment.php:2743` and
-`:8623`, both `Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS', 1)`. Currently harmless in practice
-only because `install()` seeds that key. The other four pass falsy defaults and are harmless by accident; four further
-sites are legitimate `$idLang` uses. Re-derive all of them with
-`grep -nE "Configuration::get\\([^)]*," twopayment.php` rather than trusting these
-line numbers, which have already drifted once.
+Ten sites pass a non-null second argument. Classified against `origin/staging` @ `0ddad20`:
+
+| class | count | sites |
+|---|---|---|
+| loses an intended TRUTHY default | **4** | `twopayment.php:2746`, `:8626` (both `PS_TWO_ENABLE_TAX_SUBTOTALS`, default `1`); `:3093`, `:13978` (both `PS_TWO_ENVIRONMENT`, default `'development'`) |
+| falsy default, harmless by accident | 2 | `:13977` (`false`), `:14750` (`0`) |
+| legitimate `$idLang` use | 4 | `:1748`, `:1749`, `:4818`, `:4819` |
+
+The `PS_TWO_ENABLE_TAX_SUBTOTALS` pair is harmless in practice only because `install()` seeds that key.
+The `'development'` pair is the more interesting one: an unseeded environment reads as `false` rather
+than development, and nothing seeds it on an upgrade path predating the key.
+
+Re-derive rather than trusting these numbers — an earlier draft of this paragraph carried HEAD line
+numbers while claiming to cite `origin/staging`, which is the exact failure the header warns about:
+
+    git grep -nE "Configuration::get\('[A-Z_0-9]+', *[^)]" origin/staging -- twopayment.php
 
 The old test double implemented `get($key, $default = null)` — the signature the module wished for —
 which is exactly what hid this. Wants its own small ticket.
