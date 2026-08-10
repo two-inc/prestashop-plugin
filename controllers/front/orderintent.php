@@ -137,12 +137,37 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
      * (TWO-24755) and hand the browser what it needs to open the hosted
      * signup popup and autofill the buyer. The merchant API key stays
      * server-side; tokens are scoped and short-lived by the Two API.
-     * Defence-in-depth: minting requires the flow to actually be available
-     * for the CART'S billing country (never a client-supplied one), so
-     * this endpoint cannot be used as a token oracle where the feature is
-     * off, the country is ineligible, or there is no invoice address yet
-     * to check against - fails closed in that last case rather than
-     * trusting an unvalidated 'country' request param.
+     *
+     * The one authorisation gate on minting is
+     * TwoSoleTrader::isAvailable($this->module, $iso) - the registry's answer
+     * for a billing country, re-evaluated SERVER-SIDE on every call. It is
+     * never taken from the browser, and a country that does not resolve at
+     * all is refused rather than defaulted. That is what stops this endpoint
+     * being a token oracle where the flow is off or the country ineligible.
+     *
+     * What the country is resolved FROM is a trust ordering, not a security
+     * boundary (TWO-40): the cart's invoice address first, then a posted
+     * `country`, then the cart's delivery address. Accepting a posted country
+     * in the middle tier grants no privilege at all:
+     *
+     *  - the mint itself takes no country - the tokens are country-independent,
+     *    so there is no per-country capability to escalate into;
+     *  - the registry check still runs here, on the server, so a spoofed
+     *    country only ever permits minting in a country the registry ALREADY
+     *    supports sole traders in;
+     *  - and the browser can already learn exactly that set for any country it
+     *    likes from the `soleTraderAvailability` action, which answers a
+     *    client-supplied country by design.
+     *
+     * So the posted value can move the answer from "unresolved" to "the
+     * registry's own answer for some real country", and nothing else. The
+     * other Two plugins' equivalent handlers resolve it the same way.
+     *
+     * Why the middle tier has to exist: on the checkout address-editor page
+     * the cart usually has NO invoice address yet, which is precisely when the
+     * buyer clicks "I'm a sole trader". Requiring one refused every single
+     * one of those attempts, and the browser has no place to show that error
+     * on that page, so the entry point simply dead-ended in silence.
      */
     public function ajaxProcessSoleTraderTokens()
     {
@@ -154,13 +179,11 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Only POST requests allowed')]));
             return;
         }
-        $cart = $this->context->cart;
-        if (!$cart || !(int) $cart->id_address_invoice) {
-            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('No billing address set for this order')]));
+        $countryIso = $this->resolveSoleTraderCountryIso();
+        if ($countryIso === '') {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Could not determine the billing country for this order')]));
             return;
         }
-        $address = new Address((int) $cart->id_address_invoice);
-        $countryIso = (string) Country::getIsoById((int) $address->id_country);
         if (!TwoSoleTrader::isAvailable($this->module, $countryIso)) {
             $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Sole trader checkout is not available')]));
             return;
@@ -175,12 +198,77 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             'delegation_token' => $tokens['delegation_token'],
             'autofill_token' => $tokens['autofill_token'],
             'signup_url' => TwoSoleTrader::getSignupPageUrl(),
-            // Server-resolved invoice-address country: the JS must use
+            // The country this mint was authorised against, as resolved
+            // server-side by resolveSoleTraderCountryIso(): the JS must use
             // THIS, not a DOM guess, when it later saves the enrolled
             // company - getTwoValidatedSessionCompanyData() wipes the
             // session company on any country mismatch.
             'country' => $countryIso,
         ]));
+    }
+
+    /**
+     * The billing country the sole-trader gate is evaluated against, from the
+     * most trustworthy source available (TWO-40). See
+     * ajaxProcessSoleTraderTokens() for why the middle tier is not a privilege
+     * escalation.
+     *
+     * Ordering:
+     *   1. the cart's invoice address - a value the buyer already committed to
+     *      the cart, and never overridden by anything the request carries;
+     *   2. a posted `country`, accepted only in exactly the ISO-3166-1 alpha-2
+     *      shape (two upper-case letters). This is the address-editor case,
+     *      where no invoice address exists yet and the buyer's currently
+     *      selected country is the only answer there is;
+     *   3. the cart's delivery address, for a POST that carried no usable
+     *      country at all (an older cached script, a stripped body).
+     *
+     * A tier that HAS an address but cannot resolve a country from it (an
+     * address row that no longer loads, an id_country with no ISO) falls
+     * through to the next tier rather than terminating the search: an
+     * unresolvable address is not an answer, and the tiers below it are no
+     * less trustworthy than the nothing it produced.
+     *
+     * @return string ISO-3166-1 alpha-2 code, or '' when nothing resolves -
+     *                which the caller refuses on, rather than defaulting
+     */
+    private function resolveSoleTraderCountryIso()
+    {
+        $cart = $this->context->cart;
+
+        if ($cart && (int) $cart->id_address_invoice > 0) {
+            $iso = $this->addressCountryIso((int) $cart->id_address_invoice);
+            if ($iso !== '') {
+                return $iso;
+            }
+        }
+
+        $posted = Tools::strtoupper(trim((string) Tools::getValue('country')));
+        if (preg_match('/^[A-Z]{2}$/', $posted)) {
+            return $posted;
+        }
+
+        if ($cart && (int) $cart->id_address_delivery > 0) {
+            return $this->addressCountryIso((int) $cart->id_address_delivery);
+        }
+
+        return '';
+    }
+
+    /**
+     * @param int $idAddress
+     *
+     * @return string the address's country ISO code, or '' if the address does
+     *                not load or its country has no ISO code
+     */
+    private function addressCountryIso($idAddress)
+    {
+        $address = new Address((int) $idAddress);
+        if (!Validate::isLoadedObject($address)) {
+            return '';
+        }
+
+        return (string) Country::getIsoById((int) $address->id_country);
     }
 
     /**

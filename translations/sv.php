@@ -100,6 +100,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_00a48186e87d34e1df0a6484f553bafc'] 
 $_MODULE['<{twopayment}prestashop>twopayment_00d23a76e43b46dae9ec7aa9dcbebb32'] = 'Aktiverad';
 $_MODULE['<{twopayment}prestashop>twopayment_00f301094c777099ef21325f575d1c3d'] = 'Momsregelgrupp som tillämpas på avgiften för betalningsvillkor - samma momsregelgrupper som du tilldelar produkter. Land- och delstatsregler, kombinerade satser och nollsats gäller precis som för vilken produkt som helst. Om du vill lämna avgiften obeskattad, skapa och välj här en momsregelgrupp med satsen 0 %. Ett val krävs så länge tilläggsavgifter är aktiverade.';
 $_MODULE['<{twopayment}prestashop>twopayment_016e561b39ff316fdf1b182819189cdb'] = 'Ange en underrubrik.';
+$_MODULE['<{twopayment}prestashop>twopayment_876bf0d6ed002da6532dbb047cd14f4a'] = 'Kunde inte fastställa faktureringslandet för denna order';
 $_MODULE['<{twopayment}prestashop>twopayment_d20922a3a72f62b9a6762066afdb9776'] = 'För att betala med %s, gå tillbaka till din fakturaadress och sök efter ditt företagsnamn. Välj ditt företag bland resultaten för att verifiera din verksamhet.';
 $_MODULE['<{twopayment}prestashop>twopayment_03ac21a9797a06114f0aedd391a1e2a3'] = 'Inget resultat hittades';
 $_MODULE['<{twopayment}prestashop>twopayment_0621f4c8187eba906e65147337b8ead4'] = 'Avrunda köparens tilläggsavgiftsrad till ett jämnt steg. Välj Ingen för vanliga belopp med två decimaler.';
@@ -325,7 +326,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_9f67feb76396d9f95843662cb1a3cbee'] 
 $_MODULE['<{twopayment}prestashop>twopayment_a002c8066738bc8f9d9394abdcef7ea8'] = 'Din betalningsperiod börjar när din order levereras';
 $_MODULE['<{twopayment}prestashop>twopayment_e412b2297545dc9825fbed8089790105'] = 'Verifierad - klar för leverans → %s: Verifierad - klar för leverans';
 $_MODULE['<{twopayment}prestashop>twopayment_a18b98ac865c5099d00d15aa7955772e'] = 'Kunde inte hitta den efterfrågade ordern, kontakta butiksägaren.';
-$_MODULE['<{twopayment}prestashop>twopayment_a27e23cbfc35671fad9f198723675df3'] = 'Ingen fakturaadress är angiven för denna order';
 $_MODULE['<{twopayment}prestashop>twopayment_a39746aced7f2b7acba1b2f715654995'] = 'Tillgängliga betalningsvillkor';
 $_MODULE['<{twopayment}prestashop>twopayment_a49e05d4125474b3a6cfc0caacc5a48f'] = 'Kunde inte läsa in den skapade ordern. Kontakta supporten.';
 $_MODULE['<{twopayment}prestashop>twopayment_a4f2f007d16e05710980a4141c331168'] = 'SSL-verifiering';
