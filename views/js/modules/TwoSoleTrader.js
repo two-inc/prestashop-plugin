@@ -1005,10 +1005,14 @@ class TwoSoleTrader {
      *    an empty company, so fall back to the organization number - the
      *    org-number prefix is what carries the sole-trader semantics
      *    server-side anyway (TWO-24749).
-     *  - the country MUST be the token response's server-resolved invoice
-     *    country, not a DOM guess: getTwoValidatedSessionCompanyData()
-     *    wipes the whole session company the moment the saved country
-     *    disagrees with the cart's actual invoice-address country.
+     *  - the country MUST be the one the token response reports, not a DOM
+     *    guess. That value is whichever tier the server resolved the mint
+     *    against (the cart's invoice address, the posted country, or the
+     *    cart's delivery address) - and it is the only country this browser
+     *    can know the mint was actually authorised for.
+     *    getTwoValidatedSessionCompanyData() wipes the whole session company
+     *    the moment the saved country disagrees with the cart's own
+     *    invoice-address country, so guessing here loses the enrolment.
      */
     /**
      * @param {Object} buyer
@@ -1082,7 +1086,20 @@ class TwoSoleTrader {
                     // which nothing else in the flow does.
                     document.dispatchEvent(new CustomEvent('two:sole-trader-ready', {
                         detail: {
+                            // BOTH names, because they are not the same thing
+                            // and the listener needs each for a different job
+                            // (adversarial review, TWO-40):
+                            //  - `company` is the label above, which falls
+                            //    back to the organisation number and so may
+                            //    carry the synthetic internal identifier. It
+                            //    is what was persisted, so it is what the
+                            //    listener's publish/persist must agree with.
+                            //  - `companyName` is the buyer's real trading
+                            //    name and NOTHING else - empty when they have
+                            //    none. Only this may be written into a field
+                            //    the buyer sees, or saved onto their address.
                             company: companyLabel,
+                            companyName: buyer.company_name || '',
                             companyid: buyer.organization_number || ''
                         }
                     }));

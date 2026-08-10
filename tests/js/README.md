@@ -355,12 +355,30 @@ form (which it does for something as ordinary as a country change):
   `dni` — never `vat_number` — and the number mirror honouring the address-lookup toggle
   because it goes through the existing gated writer rather than around it.
 - **the payment-tile placement writes nothing into the address form.** Asserted with the
-  address form present, so the write has somewhere to land, and asserted *twice*: once on the
-  real tile config and once with the address-lookup toggle left ON. The second case is the
-  load-bearing one — the two defences overlap in production, so with the lookup off, deleting
-  the placement guard changes nothing the first case can see. Its mirror image (the same
-  event, same DOM, address-form placement, which DOES write) rules out the whole handler
+  address form present, so the write has somewhere to land, and with the address-lookup toggle
+  left ON — the only configuration that isolates the placement guard. `dniValue()` is the
+  load-bearing assertion and the only one; `companyValue()` beside it can never change, because
+  the visible write targets the tile's own input. A second case on the real tile config
+  (`addressLookupEnabled: false`) used to sit here and was **deleted as vacuous**: with the
+  lookup off, deleting the placement guard changed none of its four expectations, so it
+  asserted the overlap of the two defences rather than either of them. The mirror image (the
+  same event, same DOM, address-form placement, which DOES write) rules out the whole handler
   simply being dead.
+- **adopting an enrolment does not void it.** The visible company write announces `input`, and
+  that handler clears the whole selection — a `clearCompany` POST and a blanked in-memory
+  selection — unless the organisation number and its name tag already agree with the name in
+  the field. So a buyer who had confirmed a company earlier in the session had their enrolment
+  undone by the very write that adopted it. The number and tag are now written *first*; the
+  case asserts no `clearCompany` request is made and that the published selection names the
+  enrolment. It also pins the publish/cookie backstop that runs at the end of the handler.
+- **a synthetic internal identifier never reaches the visible field.** The event's `company` is
+  a label that falls back to the organisation number, which for a sole trader with no trading
+  name is the internal `TWO:`-prefixed identifier — so the field the buyer sees, and the
+  address they save, are written from the separate `companyName` only, and left alone when it
+  is empty. The number itself still reaches `dni` and `companyid`.
+- **an enrolment completing during manual entry writes nothing.** Enrolment is asynchronous and
+  the buyer may be typing their own details by the time it lands, so the handler stands down on
+  `_manualEntry` like every other write path in the module.
 - the flag comes from `TwoCheckoutManager`, per mount. Every other case constructs
   `TwoCompanySearch` directly, so a tile mount that merely *omitted* the flag would inherit
   the address-form default and write into the form in production with the suite green.

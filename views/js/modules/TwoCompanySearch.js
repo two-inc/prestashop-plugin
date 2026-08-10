@@ -284,11 +284,16 @@ class TwoCompanySearch {
     }
 
     /**
-     * @param {CustomEvent} event carrying `{ company, companyid }`
+     * @param {CustomEvent} event carrying `{ company, companyName, companyid }`
      */
     onSoleTraderReady(event) {
         try {
-            if (this._destroyed) {
+            // `_manualEntry` for the same reason every other write path in this
+            // file carries it: the buyer is typing their own company details,
+            // and an enrolment landing mid-typing must not overwrite them.
+            // Enrolment is asynchronous and the buyer is free to move on while
+            // it is in flight, so this is reachable.
+            if (this._destroyed || this._manualEntry) {
                 return;
             }
             // The invariant this flag is passed explicitly from both mounts
@@ -299,35 +304,72 @@ class TwoCompanySearch {
                 return;
             }
             const detail = event && event.detail ? event.detail : {};
+            // The persisted label. May be the synthetic internal identifier,
+            // because it falls back to the organisation number for a sole
+            // trader with no trading name - so it is used ONLY where that
+            // value legitimately travels (the publish and the cookie, which
+            // must agree with what the enrolment already saved), never in a
+            // field the buyer sees or an address they save.
             const company = String(detail.company == null ? '' : detail.company);
+            // The real trading name, or '' when they have none.
+            const companyName = String(detail.companyName == null ? '' : detail.companyName);
             const orgNumber = String(detail.companyid == null ? '' : detail.companyid);
 
-            if (company !== '' && this.companyField && this.companyField.length) {
+            const hasCompanyField = !!(this.companyField && this.companyField.length);
+            const currentName = hasCompanyField
+                ? String(this.companyField.val() == null ? '' : this.companyField.val())
+                : '';
+            // What the visible field will hold once this handler is finished:
+            // the enrolled name when there is one, otherwise whatever is
+            // already there (we never blank it, and never write the label).
+            const settledName = companyName !== '' ? companyName : currentName;
+
+            // FIRST, before the visible write, and that ordering is the fix
+            // rather than a tidy-up (adversarial review, TWO-40).
+            //
+            // The visible write below triggers `input`, whose handler runs
+            // clearStaleOrganizationSelection() - which clears the whole
+            // selection (including a `clearCompany` POST that undoes the
+            // enrolment's own save) unless the organisation number and its
+            // `data-two-company-name` tag already agree with the name in the
+            // field. Writing the pair first means there is nothing stale left
+            // for it to find, so it stands down instead of firing.
+            if (orgNumber !== '' && this.organizationField && this.organizationField.length) {
+                this.organizationField.val(orgNumber);
+                this.organizationField.attr('data-two-company-name', settledName);
+            }
+
+            if (companyName !== '' && hasCompanyField) {
                 // The marked-write convention autoFillAddress() uses: record
                 // the value as ours even when it already matches, so a later
                 // fill/clear can still tell it from something the buyer typed,
                 // and only announce a change that actually happened.
-                const current = String(this.companyField.val() == null ? '' : this.companyField.val());
-                this.companyField.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR, company);
-                if (current !== company) {
-                    this.companyField.val(company);
+                this.companyField.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR, companyName);
+                if (currentName !== companyName) {
+                    this.companyField.val(companyName);
                     this.companyField.trigger('input');
                     this.companyField.trigger('change');
                 }
             }
 
             if (orgNumber !== '') {
-                if (this.organizationField && this.organizationField.length) {
-                    this.organizationField.val(orgNumber);
-                    this.organizationField.attr(
-                        'data-two-company-name',
-                        this.companyField && this.companyField.length ? (this.companyField.val() || '') : ''
-                    );
-                }
                 // Through the existing writer, never around it: it carries the
                 // PS_TWO_ADDRESS_LOOKUP gate and the `dni`-only field list.
                 this.writeOrganizationToAddressIdentifiers(orgNumber);
                 this.setCompanyIdHint(orgNumber);
+            }
+
+            // BACKSTOP, not the mechanism - the ordering above is what stops
+            // the clear happening at all. This only guarantees that the
+            // in-memory selection and the session cookie end up naming the
+            // enrolment whatever the input handler did, mirroring what
+            // onCompanySelected() does for a search selection. Deliberately
+            // second best: if a `clearCompany` POST ever did fire above, this
+            // `saveCompany` races it and the loser wins, which is why the
+            // prevention has to be the real fix.
+            if (company !== '' && orgNumber !== '') {
+                this.publishConfirmedSelection(company, orgNumber);
+                this.persistCompanyToCookie({ company: company, companyid: orgNumber });
             }
 
             // The same companions autoFillAddressIfNeeded() runs after it
