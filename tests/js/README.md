@@ -344,59 +344,49 @@ form (which it does for something as ordinary as a country change):
   in `tests/SessionCompanyClearSpec.php`. That split is deliberate: a source grep
   cannot see an early `return` above the work it greps for, and did not.
 
-`sole-trader-address-writeback.test.js` — TWO-40's two address-editor halves:
+`sole-trader-mint-country.test.js` — TWO-40's browser half of "a sole trader can start
+enrolment from the address-editor page":
 
 - the mint request carries the country `billingCountry()` resolves, urlencoded, and it is
   asserted as an *equality* against that resolver rather than a second hardcoded ISO code —
   the token gate and the chip's visibility gate have to agree by construction, so a mint that
   grew its own country source has to break here.
-- a completed enrolment lands in the address form: the name in `company` (marked with the
-  autofill attribute and announced with `input`/`change`), the number in `companyid` and
-  `dni` — never `vat_number` — and the number mirror honouring the address-lookup toggle
-  because it goes through the existing gated writer rather than around it.
-- **the payment-tile placement writes nothing into the address form.** Asserted with the
-  address form present, so the write has somewhere to land, and with the address-lookup toggle
-  left ON — the only configuration that isolates the placement guard. `dniValue()` is the
-  load-bearing assertion and the only one; `companyValue()` beside it can never change, because
-  the visible write targets the tile's own input. A second case on the real tile config
-  (`addressLookupEnabled: false`) used to sit here and was **deleted as vacuous**: with the
-  lookup off, deleting the placement guard changed none of its four expectations, so it
-  asserted the overlap of the two defences rather than either of them. The mirror image (the
-  same event, same DOM, address-form placement, which DOES write) rules out the whole handler
-  simply being dead.
-- **adopting an enrolment does not void it.** The visible company write announces `input`, and
-  that handler clears the whole selection — a `clearCompany` POST and a blanked in-memory
-  selection — unless the organisation number and its name tag already agree with the name in
-  the field. So a buyer who had confirmed a company earlier in the session had their enrolment
-  undone by the very write that adopted it. The number and tag are now written *first*; the
-  case asserts no `clearCompany` request is made and that the published selection names the
-  enrolment. It also pins the publish/cookie backstop that runs at the end of the handler.
-- **a synthetic internal identifier never reaches the visible field.** The event's `company` is
-  a label that falls back to the organisation number, which for a sole trader with no trading
-  name is the internal `TWO:`-prefixed identifier — so the field the buyer sees, and the
-  address they save, are written from the separate `companyName` only, and left alone when it
-  is empty. The number itself still reaches `dni` and `companyid`.
-- **an enrolment completing during manual entry writes nothing.** Enrolment is asynchronous and
-  the buyer may be typing their own details by the time it lands, so the handler stands down on
-  `_manualEntry` like every other write path in the module.
-- the flag comes from `TwoCheckoutManager`, per mount. Every other case constructs
-  `TwoCompanySearch` directly, so a tile mount that merely *omitted* the flag would inherit
-  the address-form default and write into the form in production with the suite green.
-- one case drives the real enrolment end to end — mint, buyer lookup, `saveCompany` — into a
-  real control on a real form, because each side of the event seam is stubbed everywhere
-  else: nothing else here would notice a dispatch that carried no payload at all.
-- a destroyed instance ignores the event, on both defences: the listener is detached by
-  `destroy()` (asserted through a real dispatch) and the handler stands down on `_destroyed`
-  if reached anyway — `document` outlives every instance and the dispatcher lives on it, so
-  nothing guarantees teardown ran first.
+- driven through the real `fetchTokens()`, with the country reachable only from the DOM select,
+  so a regression to a config-time value — or to no country at all — fails here rather than
+  passing on a hardcoded fixture.
 
 The server half is in `tests/SoleTraderTokenPreconditionSpec.php`, which drives the mint
 action through the controller's own switch: the tier ordering, the shape check on the posted
 country, and that a posted country is still gated by the registry rather than trusted.
 
-Instances built here are `destroy()`ed explicitly, including in the manager cases. `document`
-is shared for the whole file, so an instance left listening answers a *later* test's dispatch
-— which it did, writing `dni` from a detached form, before those calls were added.
+`sole-trader-org-number-mirror.test.js` — TWO-40's other half: a completed enrolment mirrors
+its organisation number into the address `dni` field, and does nothing else.
+
+- **the gate is the merchant's "Autofill company address" setting** (`PS_TWO_ADDRESS_LOOKUP`,
+  surfaced as `addressLookupEnabled`), not where company search is mounted. The ON/OFF pair is
+  the load-bearing assertion here: deleting the `isAddressLookupEnabled()` check at the top of
+  `writeOrganizationToAddressIdentifiers()`, or routing the handler around that writer, fails
+  the OFF case. There is deliberately no placement assertion to write — the handler contains no
+  placement check, because the setting being forced off in the payment tile is a coincidence.
+- **a synthetic internal identifier never reaches `dni`.** The event's company *label* falls
+  back to the organisation number, and for a sole trader with no registered number that is the
+  internal identifier — which PrestaShop would then save onto the address and print.
+- **no `clearCompany` request on any path,** asserted over a pre-existing confirmed selection
+  (the previous company's number tagged with the previous company's name). The withdrawn wider
+  adoption announced `input` on the visible company field, and that handler cleared the whole
+  selection — the enrolment's own save included. Re-introducing an announced visible write
+  fails this case.
+- **`_manualEntry` is respected**, and a destroyed instance ignores the event on both defences:
+  the listener is detached by `destroy()`, and the handler stands down on `_destroyed` if
+  reached anyway — `document` outlives every instance and the dispatcher lives on it.
+- one case drives the real enrolment end to end — mint, buyer lookup, `saveCompany` — into a
+  real control on a real form, because every other case dispatches the event by hand: nothing
+  else here would notice a dispatch that carried no payload at all.
+
+Instances are registered as they are built and `destroy()`ed in `afterEach`, not at the end of
+each case. `document` is shared for the whole file, so an instance left listening because an
+assertion threw first answers a *later* test's dispatch — which is how a detached form got
+written to during review.
 
 ## Known gaps
 
