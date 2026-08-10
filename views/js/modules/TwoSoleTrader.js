@@ -1079,27 +1079,17 @@ class TwoSoleTrader {
                     // hide this status. See cancelEnrollment()'s no-op guard.
                     self.enrolling = false;
                     self.stopObserving();
-                    // Carries the enrolled identity so a listener does not
-                    // have to go looking for it (TWO-40). TwoCompanySearch
-                    // subscribes to this and - only when it is mounted on the
-                    // address form - writes the pair into the address fields,
-                    // which nothing else in the flow does.
+                    // Carries the enrolled identity so a listener does not have
+                    // to go looking for it (TWO-40). TwoCompanySearch mirrors
+                    // `companyid` into the address identification field, gated
+                    // on the merchant's "Autofill company address" setting.
+                    // `company` is the persisted label, which falls back to the
+                    // organisation number and so may carry the synthetic
+                    // internal identifier - never write it into a field the
+                    // buyer sees or an address they save.
                     document.dispatchEvent(new CustomEvent('two:sole-trader-ready', {
                         detail: {
-                            // BOTH names, because they are not the same thing
-                            // and the listener needs each for a different job
-                            // (adversarial review, TWO-40):
-                            //  - `company` is the label above, which falls
-                            //    back to the organisation number and so may
-                            //    carry the synthetic internal identifier. It
-                            //    is what was persisted, so it is what the
-                            //    listener's publish/persist must agree with.
-                            //  - `companyName` is the buyer's real trading
-                            //    name and NOTHING else - empty when they have
-                            //    none. Only this may be written into a field
-                            //    the buyer sees, or saved onto their address.
                             company: companyLabel,
-                            companyName: buyer.company_name || '',
                             companyid: buyer.organization_number || ''
                         }
                     }));

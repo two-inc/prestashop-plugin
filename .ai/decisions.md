@@ -19,6 +19,28 @@
 
 ---
 
+## [2026-08-10] Sole-Trader Enrolment Mirrors Only Its Organisation Number Into The Address Form
+
+**Context**: A completed sole-trader enrolment left the address form untouched (TWO-40). A wide adoption of the enrolled identity into the form - the trading name into the visible `company` field, plus a publish and a cookie write as a backstop - was built and then withdrawn.
+
+**Decision**: Keep only the organisation-number mirror into the address `dni` field, performed through the existing `writeOrganizationToAddressIdentifiers()` writer. That writer is already gated on the merchant's "Autofill company address" setting (`PS_TWO_ADDRESS_LOOKUP`) and writes with no `input`/`change` announcement, which is what makes the reduced version safe. The gate is that setting - explicitly NOT where company search is mounted: the setting happens to be forced off when search moves to the payment tile, but the two are separate questions and the coincidence must not be relied on.
+
+**Alternatives Considered**:
+- The wide adoption, gated on the mount being the address form (implemented, then withdrawn)
+- A true street/postcode/city autofill from the buyer-autofill response (not possible today - that endpoint carries no address payload, so it needs an API contract confirmation first)
+
+**Rationale**:
+- The visible-name write entangles with three live state machines at once: the stale-selection clear driven by that field's own `input` handler, the manual-entry guard, and `hasConfirmedSelection()`'s name/number tag agreement.
+- Each fix round produced a *new* defect class rather than converging - a country clobber through the cookie writer's DOM-guessed country, an `id_address` pinned to the wrong address, a mismatched name/number tag that made `hasConfirmedSelection()` lie, and a nameless sole trader's enrolment destroyed by their own next keystroke.
+- Nothing downstream needs the visible field written: the enrolled company already reaches the order through the session cookie and the selection the enrolment itself publishes, which is how the payment-step path and the other platform plugins behave.
+
+**Consequences**:
+- The buyer still sees an empty company field on the address form after enrolling; the order itself is unaffected.
+- A synthetic internal identifier is refused rather than mirrored, because the identification field is saved onto the address and can be printed.
+- Revisiting the name write needs the state machine untangled first; any address autofill needs the API contract confirmed.
+
+---
+
 ## [2026-01-22] Consolidate AI Context into CLAUDE.md
 
 **Context**: Had both `.cursor/rules/prestashop.mdc` and `CLAUDE.md` with overlapping content.

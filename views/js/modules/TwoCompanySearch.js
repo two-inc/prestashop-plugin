@@ -146,18 +146,6 @@ class TwoCompanySearch {
             // mirroring the server-side resolver: the fill was unconditional
             // before the toggle existed, so an omitted value keeps it on.
             addressLookupEnabled: true,
-            // WHERE this one shared control is mounted (TWO-40). Both mounts
-            // in TwoCheckoutManager.initializeCompanySearch() pass it
-            // explicitly; the default matches the address-form mount, which is
-            // the shop default.
-            //
-            // Read by the `two:sole-trader-ready` handler and nothing else: a
-            // completed sole-trader enrolment writes the enrolled company into
-            // the address form, and the payment-tile mount must NEVER do that
-            // (`#two_tile_company` is not part of the address form, and the
-            // write goes to the address form's own inputs by global selector -
-            // the same reasoning that pins addressLookupEnabled: false there).
-            companySearchInAddressArea: true,
             ...config
         };
         
@@ -262,12 +250,8 @@ class TwoCompanySearch {
     }
 
     /**
-     * Adopt a completed sole-trader enrolment into the address form (TWO-40).
-     *
-     * TwoSoleTrader.applyBuyer() persists the enrolled company server-side and
-     * publishes it to TwoCheckoutManager, but nothing wrote it into the FORM -
-     * so the buyer was left looking at an empty company field after enrolling,
-     * and the address they saved carried no company at all.
+     * Mirror a completed sole-trader enrolment's organisation number into the
+     * address identification field (TWO-40).
      *
      * Held on the instance and detached in destroy(), the same way the country
      * change listener is: `document` outlives every instance, and the manager
@@ -284,7 +268,24 @@ class TwoCompanySearch {
     }
 
     /**
-     * @param {CustomEvent} event carrying `{ company, companyName, companyid }`
+     * Deliberately the organisation-number mirror and NOTHING else.
+     *
+     * No write into the visible `company` field, no publish, no cookie: an
+     * earlier, wider version of this handler wrote all of those and each fix
+     * round produced a new defect (see `.ai/decisions.md`). Everything here
+     * goes through writeOrganizationToAddressIdentifiers(), which is what
+     * makes it safe:
+     *  - it is ALREADY gated on the merchant's "Autofill company address"
+     *    setting (PS_TWO_ADDRESS_LOOKUP) via isAddressLookupEnabled(), so the
+     *    gate is that control rather than any placement check. Where company
+     *    search happens to be mounted is not the question, and the fact that
+     *    the setting is forced off in the payment tile today is a coincidence
+     *    this must not lean on.
+     *  - it writes with `.val()` plus the autofill marker and fires no
+     *    `input`/`change`, so nothing cascades into
+     *    clearStaleOrganizationSelection().
+     *
+     * @param {CustomEvent} event carrying `{ company, companyid }`
      */
     onSoleTraderReady(event) {
         try {
@@ -296,96 +297,31 @@ class TwoCompanySearch {
             if (this._destroyed || this._manualEntry) {
                 return;
             }
-            // The invariant this flag is passed explicitly from both mounts
-            // for: the payment-tile placement must
-            // never write into the address form. This single check is what
-            // enforces it - everything below writes address-form fields.
-            if (this.config.companySearchInAddressArea === false) {
+            const detail = event && event.detail ? event.detail : {};
+            const orgNumber = String(detail.companyid == null ? '' : detail.companyid).trim();
+            if (orgNumber === '') {
                 return;
             }
-            const detail = event && event.detail ? event.detail : {};
-            // The persisted label. May be the synthetic internal identifier,
-            // because it falls back to the organisation number for a sole
-            // trader with no trading name - so it is used ONLY where that
-            // value legitimately travels (the publish and the cookie, which
-            // must agree with what the enrolment already saved), never in a
-            // field the buyer sees or an address they save.
-            const company = String(detail.company == null ? '' : detail.company);
-            // The real trading name, or '' when they have none.
-            const companyName = String(detail.companyName == null ? '' : detail.companyName);
-            const orgNumber = String(detail.companyid == null ? '' : detail.companyid);
-
-            const hasCompanyField = !!(this.companyField && this.companyField.length);
-            const currentName = hasCompanyField
-                ? String(this.companyField.val() == null ? '' : this.companyField.val())
-                : '';
-            // What the visible field will hold once this handler is finished:
-            // the enrolled name when there is one, otherwise whatever is
-            // already there (we never blank it, and never write the label).
-            const settledName = companyName !== '' ? companyName : currentName;
-
-            // FIRST, before the visible write, and that ordering is the fix
-            // rather than a tidy-up (adversarial review, TWO-40).
-            //
-            // The visible write below triggers `input`, whose handler runs
-            // clearStaleOrganizationSelection() - which clears the whole
-            // selection (including a `clearCompany` POST that undoes the
-            // enrolment's own save) unless the organisation number and its
-            // `data-two-company-name` tag already agree with the name in the
-            // field. Writing the pair first means there is nothing stale left
-            // for it to find, so it stands down instead of firing.
-            if (orgNumber !== '' && this.organizationField && this.organizationField.length) {
-                this.organizationField.val(orgNumber);
-                this.organizationField.attr('data-two-company-name', settledName);
+            // A sole trader with no registered number enrols under a synthetic
+            // internal identifier. PrestaShop saves `dni` onto the address and
+            // can print it, so that value must not land there any more than it
+            // may land in a field the buyer sees. Feature-detected: this module
+            // loads at a lower priority than TwoCompanyNumber on the real page,
+            // but nothing in this class requires it to be present.
+            if (window.TwoCompanyNumber
+                && typeof window.TwoCompanyNumber.isInternal === 'function'
+                && window.TwoCompanyNumber.isInternal(orgNumber)) {
+                return;
             }
-
-            if (companyName !== '' && hasCompanyField) {
-                // The marked-write convention autoFillAddress() uses: record
-                // the value as ours even when it already matches, so a later
-                // fill/clear can still tell it from something the buyer typed,
-                // and only announce a change that actually happened.
-                this.companyField.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR, companyName);
-                if (currentName !== companyName) {
-                    this.companyField.val(companyName);
-                    this.companyField.trigger('input');
-                    this.companyField.trigger('change');
-                }
-            }
-
-            if (orgNumber !== '') {
-                // Through the existing writer, never around it: it carries the
-                // PS_TWO_ADDRESS_LOOKUP gate and the `dni`-only field list.
-                this.writeOrganizationToAddressIdentifiers(orgNumber);
-                this.setCompanyIdHint(orgNumber);
-            }
-
-            // BACKSTOP, not the mechanism - the ordering above is what stops
-            // the clear happening at all. This only guarantees that the
-            // in-memory selection and the session cookie end up naming the
-            // enrolment whatever the input handler did, mirroring what
-            // onCompanySelected() does for a search selection. Deliberately
-            // second best: if a `clearCompany` POST ever did fire above, this
-            // `saveCompany` races it and the loser wins, which is why the
-            // prevention has to be the real fix.
-            if (company !== '' && orgNumber !== '') {
-                this.publishConfirmedSelection(company, orgNumber);
-                this.persistCompanyToCookie({ company: company, companyid: orgNumber });
-            }
-
-            // The same companions autoFillAddressIfNeeded() runs after it
-            // adopts an organisation number: the chip gating reads
-            // hasConfirmedSelection(), which only becomes true once the
-            // number and its name tag exist.
-            this.syncNotListedVisibility();
-            this.syncSoleTraderEntryVisibility();
-            this.syncRegisteredEntryVisibility();
+            // Through the existing writer, never around it: it carries the
+            // PS_TWO_ADDRESS_LOOKUP gate and the `dni`-only field list.
+            this.writeOrganizationToAddressIdentifiers(orgNumber);
         } catch (e) {
             // Fail-soft, like every other defensive path in this file: a
-            // failure to mirror the enrolment into the form must not take the
-            // checkout down with it.
+            // failure to mirror the enrolment must not take the checkout down.
         }
     }
-    
+
     /**
      * The marker class the `.ui-autocomplete` this field's widget builds gets,
      * so the CSS below can clamp THIS field's dropdown without also clamping
