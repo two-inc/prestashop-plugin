@@ -45,6 +45,7 @@ final class SoleTraderTokenPreconditionSpec
         $tests = [
             'testInvoiceAddressWinsOverAPostedCountry',
             'testUnresolvableInvoiceAddressFallsThroughToThePostedCountry',
+            'testInvoiceAddressThatNoLongerLoadsFallsThroughToThePostedCountry',
             'testNoInvoiceAddressMintsFromAValidPostedCountry',
             'testLowercasePostedCountryIsAccepted',
             'testGarbagePostedCountryFallsBackToTheDeliveryAddress',
@@ -122,6 +123,34 @@ final class SoleTraderTokenPreconditionSpec
         TinyAssert::true(
             $emitted['success'],
             'an invoice address that resolves to no country must fall through, not refuse'
+        );
+        TinyAssert::same(self::ISO_GB, $emitted['country']);
+    }
+
+    /**
+     * The other half of the same fall-through: a cart that still carries an
+     * `id_address_invoice` pointing at a row that no longer loads at all - a
+     * since-deleted address, or one belonging to a different shop. The address
+     * object is not loaded, so no country resolves from it, and the search must
+     * continue down the tiers rather than refuse.
+     *
+     * Distinct from the case above, which loads fine and fails on the country
+     * lookup: this one is the `Validate::isLoadedObject()` guard, and deleting
+     * that guard leaves every other case here green.
+     */
+    private static function testInvoiceAddressThatNoLongerLoadsFallsThroughToThePostedCountry(): void
+    {
+        self::seedCart(null, null);
+        $cart = Context::getContext()->cart;
+        // Deliberately never seeded into StubStore::$addresses, so the address
+        // object comes back unloaded.
+        $cart->id_address_invoice = 4198;
+
+        $emitted = self::mint(['country' => self::ISO_GB]);
+
+        TinyAssert::true(
+            $emitted['success'],
+            'an invoice address that does not load must fall through, not refuse'
         );
         TinyAssert::same(self::ISO_GB, $emitted['country']);
     }
