@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * Coverage for the company-search location behaviour of PS_TWO_ENABLE_COMPANY_NAME
+ * Coverage for the company-search location behaviour of PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS
  * - TWO-25326 §7.1 (2026-08-03 design ruling).
  *
  * No new setting was added. Doug's explicit correction: reuse the EXISTING
@@ -59,7 +59,7 @@ final class CompanySearchLocationConfigSpec
 
     private static function save(TwopaymentTestHarness $module, $posted): void
     {
-        Tools::setTestValue('PS_TWO_ENABLE_COMPANY_NAME', $posted);
+        Tools::setTestValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS', $posted);
         $method = new ReflectionMethod(Twopayment::class, 'saveTwoCompanyLookupFormValues');
         $method->invoke($module);
     }
@@ -72,8 +72,8 @@ final class CompanySearchLocationConfigSpec
         $method = new ReflectionMethod(Twopayment::class, 'installTwoSettings');
         TinyAssert::true($method->invoke($module));
 
-        TinyAssert::true(Configuration::hasKey('PS_TWO_ENABLE_COMPANY_NAME'));
-        TinyAssert::same(1, Configuration::get('PS_TWO_ENABLE_COMPANY_NAME'));
+        TinyAssert::true(Configuration::hasKey('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS'));
+        TinyAssert::same(1, Configuration::get('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS'));
         TinyAssert::same('1', self::resolve($module));
     }
 
@@ -82,12 +82,12 @@ final class CompanySearchLocationConfigSpec
         self::reset();
         $module = new TwopaymentTestHarness();
 
-        TinyAssert::false(Configuration::hasKey('PS_TWO_ENABLE_COMPANY_NAME'));
+        TinyAssert::false(Configuration::hasKey('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS'));
         TinyAssert::same('1', self::resolve($module));
-        TinyAssert::same('1', self::formValues($module)['PS_TWO_ENABLE_COMPANY_NAME']);
+        TinyAssert::same('1', self::formValues($module)['PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS']);
 
         // An empty stored value is the same case, not a deliberate tile pick.
-        Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', '');
+        Configuration::updateValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS', '');
         TinyAssert::same('1', self::resolve($module));
     }
 
@@ -97,15 +97,15 @@ final class CompanySearchLocationConfigSpec
         $module = new TwopaymentTestHarness();
 
         self::save($module, '0');
-        TinyAssert::same('0', (string) Configuration::get('PS_TWO_ENABLE_COMPANY_NAME'));
+        TinyAssert::same('0', (string) Configuration::get('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS'));
         TinyAssert::same('0', self::resolve($module));
-        TinyAssert::same('0', self::formValues($module)['PS_TWO_ENABLE_COMPANY_NAME']);
+        TinyAssert::same('0', self::formValues($module)['PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS']);
 
         Tools::resetTestValues();
         self::save($module, '1');
-        TinyAssert::same('1', (string) Configuration::get('PS_TWO_ENABLE_COMPANY_NAME'));
+        TinyAssert::same('1', (string) Configuration::get('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS'));
         TinyAssert::same('1', self::resolve($module));
-        TinyAssert::same('1', self::formValues($module)['PS_TWO_ENABLE_COMPANY_NAME']);
+        TinyAssert::same('1', self::formValues($module)['PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS']);
     }
 
     private static function testResolvedValueIsTheStringTheJsCompares(): void
@@ -117,7 +117,7 @@ final class CompanySearchLocationConfigSpec
         // so the payload value has to be an exact '1'/'0' string whichever
         // shape the configuration row happens to hold.
         foreach ([1, '1', true] as $addressArea) {
-            Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', $addressArea);
+            Configuration::updateValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS', $addressArea);
             TinyAssert::same('1', self::resolve($module));
         }
 
@@ -128,7 +128,7 @@ final class CompanySearchLocationConfigSpec
         // enabled (see testAbsentKeyResolvesToAddressArea). Matches
         // AddressLookupConfigSpec's identical omission for the same reason.
         foreach ([0, '0'] as $tile) {
-            Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', $tile);
+            Configuration::updateValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS', $tile);
             TinyAssert::same('0', self::resolve($module));
         }
     }
@@ -145,7 +145,7 @@ final class CompanySearchLocationConfigSpec
         $module = new TwopaymentTestHarness();
 
         foreach (['1' => false, '0' => true] as $addressAreaValue => $expectedTileFlag) {
-            Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', $addressAreaValue);
+            Configuration::updateValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS', $addressAreaValue);
             TinyAssert::same(
                 $expectedTileFlag,
                 self::resolve($module) !== '1',

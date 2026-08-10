@@ -8,7 +8,7 @@ import { completeGuestStep, twoPaymentOption } from "../pages/checkout.js";
 /**
  * TWO-25326 §7.1 (2026-08-03 design ruling, with two follow-up corrections
  * from Doug). No new admin setting was added - the EXISTING
- * PS_TWO_ENABLE_COMPANY_NAME switch ("Enable Company Search In Address
+ * PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS switch ("Enable Company Search In Address
  * Entry") now decides WHERE the one shared company-search control renders:
  *
  *   - Yes (default): the control (dropdown/query field/manual entry) is in
@@ -39,7 +39,7 @@ function setCompanySearchInAddressArea(enabled: boolean): void {
     "-d",
     "memory_limit=512M",
     "-r",
-    `require "/var/www/html/config/config.inc.php"; Configuration::updateValue("PS_TWO_ENABLE_COMPANY_NAME", ${enabled ? 1 : 0});`
+    `require "/var/www/html/config/config.inc.php"; Configuration::updateValue("PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS", ${enabled ? 1 : 0});`
   ]);
   execFileSync("docker", ["exec", container, "bash", "-c", "rm -rf /var/www/html/var/cache/*"]);
 }
@@ -120,7 +120,7 @@ test.describe("TWO-25326 §7.1 company-search location", () => {
     await twoPaymentOption(page).check({ force: true });
     await page.waitForLoadState("networkidle");
 
-    // The tile mount: rendered only because PS_TWO_ENABLE_COMPANY_NAME=0,
+    // The tile mount: rendered only because PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS=0,
     // per paymentinfo.tpl's {if $company_search_tile}.
     const tileField = page.locator("#two_tile_company");
     await expect(tileField).toBeVisible({ timeout: 15_000 });
