@@ -83,6 +83,8 @@ namespace {
     final class StubStore
     {
         public static array $configuration = [];
+        /** Per-shop configuration rows (core's id_shop-scoped rows): [idShop][key] => value. */
+        public static array $configurationByShop = [];
         public static array $countries = [];
         public static array $states = [];
         public static array $customers = [];
@@ -268,6 +270,11 @@ namespace {
                 'PS_OS_CANCELED' => 6,
                 'PS_TAX' => 1, // core default: taxes enabled shop-wide
             ];
+            self::$configurationByShop = [];
+            // Multistore is off unless a spec turns it on; leaving it on would
+            // change the resolution path for every other spec in the suite.
+            Shop::$featureActive = false;
+            Shop::$shopIds = [1, 2];
             self::$countries = [34 => 'ES', 47 => 'NO', 56 => 'BE'];
             self::$states = [
                 1 => 'Madrid',
@@ -640,14 +647,85 @@ namespace {
         }
     }
 
+    /**
+     * Mirrors core's SHOP DIMENSION, not just its method names (TWO-40).
+     *
+     * StubStore::$configuration is the GLOBAL tier (core's id_shop NULL rows), so
+     * every existing spec that calls get($key) / updateValue($key, $value) keeps
+     * behaving exactly as before. StubStore::$configurationByShop holds rows that
+     * genuinely belong to one shop.
+     *
+     * The two behaviours below are the ones a rename migration depends on, and
+     * getting them wrong is how two rounds of silent multistore data loss reached a
+     * green suite:
+     *
+     *   - get() with an $idShop RESOLVES: per-shop row first, then the global row.
+     *   - hasKey() does NOT resolve. With an $idShop it answers only "is there a row
+     *     belonging to this shop"; without one, only "is there a global row". Core
+     *     is a bare isset() on the respective cache, verified identical in 1.7.8,
+     *     8.1 and 9.0.
+     *
+     * deleteByName() is all-shops and unconditional, as in core - that asymmetry
+     * against the shop-scoped writers is the whole hazard.
+     */
     class Configuration
     {
-        public static function get($key, $default = null)
+        /**
+         * DELIBERATELY BUG-COMPATIBLE ON ARGUMENT 2, and that needs saying out loud.
+         *
+         * Core's signature is get($key, $idLang, $idShopGroup, $idShop) - argument 2
+         * is a LANGUAGE ID and core has no default-value parameter at all. But about
+         * ten production call sites in twopayment.php pass a fallback there
+         * (`Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS', 1)`,
+         * `Configuration::get('PS_TWO_ENVIRONMENT', 'development')`, ...), which
+         * against real core asks for language 1 / language 'development' and returns
+         * the row for it, NOT the fallback. That is a real pre-existing bug, and the
+         * previous version of this stub - `get($key, $default = null)` - is what hid
+         * it: it implemented the signature the module wished for.
+         *
+         * Fixing those call sites is a separate change. Until then this stub honours
+         * BOTH readings, so the shop dimension below can exist without turning ten
+         * latent bugs into a red suite in an unrelated PR: an $idShop resolves
+         * per-shop-then-global, and a non-null argument 2 still acts as a fallback
+         * for a missing key. Do not "tidy" this into core's signature without fixing
+         * those call sites in the same commit.
+         *
+         * Returns null rather than core's false for an unresolvable key - also kept
+         * as it was, because two specs assert on that null and every resolver in the
+         * module treats null and false identically.
+         */
+        public static function get($key, $idLangOrDefault = null, $idShopGroup = null, $idShop = null)
         {
-            return array_key_exists($key, StubStore::$configuration) ? StubStore::$configuration[$key] : $default;
+            if ($idShop !== null
+                && isset(StubStore::$configurationByShop[(int) $idShop])
+                && array_key_exists($key, StubStore::$configurationByShop[(int) $idShop])) {
+                return StubStore::$configurationByShop[(int) $idShop][$key];
+            }
+
+            if (array_key_exists($key, StubStore::$configuration)) {
+                return StubStore::$configuration[$key];
+            }
+
+            return $idLangOrDefault;
         }
 
-        public static function updateValue($key, $value): bool
+        public static function getGlobalValue($key, $idLang = null)
+        {
+            return array_key_exists($key, StubStore::$configuration) ? StubStore::$configuration[$key] : null;
+        }
+
+        public static function updateValue($key, $value, $html = false, $idShopGroup = null, $idShop = null): bool
+        {
+            if ($idShop !== null) {
+                StubStore::$configurationByShop[(int) $idShop][$key] = $value;
+                return true;
+            }
+
+            StubStore::$configuration[$key] = $value;
+            return true;
+        }
+
+        public static function updateGlobalValue($key, $value, $html = false): bool
         {
             StubStore::$configuration[$key] = $value;
             return true;
@@ -655,12 +733,20 @@ namespace {
 
         public static function hasKey($key, $idLang = null, $idShopGroup = null, $idShop = null): bool
         {
+            if ($idShop !== null) {
+                return isset(StubStore::$configurationByShop[(int) $idShop])
+                    && array_key_exists($key, StubStore::$configurationByShop[(int) $idShop]);
+            }
+
             return array_key_exists($key, StubStore::$configuration);
         }
 
         public static function deleteByName($key): bool
         {
             unset(StubStore::$configuration[$key]);
+            foreach (StubStore::$configurationByShop as $idShop => $rows) {
+                unset(StubStore::$configurationByShop[$idShop][$key]);
+            }
             return true;
         }
     }
@@ -1751,9 +1837,21 @@ namespace {
         /** Core's per-shop id; 1 is the default single-shop install. */
         public int $id = 1;
 
+        /** Multistore off by default - the shape every other spec assumes. */
+        public static bool $featureActive = false;
+
+        /** @var array<int,int> */
+        public static array $shopIds = [1, 2];
+
         public static function isFeatureActive(): bool
         {
-            return false;
+            return self::$featureActive;
+        }
+
+        /** @return array<int,int> */
+        public static function getCompleteListOfShopsID(): array
+        {
+            return self::$shopIds;
         }
 
         public static function setContext($context): void

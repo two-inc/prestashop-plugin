@@ -42,6 +42,9 @@ final class CompanySearchLocationConfigSpec
         self::testNewKeyWinsOverALingeringLegacyRow();
         self::testAnEmptyNewKeyRowDoesNotSuppressTheCarry();
         self::testUpgradeFinishesEvenWhenTheOverrideRefreshThrows();
+        self::testMultistoreGlobalOnlyRowStaysGlobal();
+        self::testMultistorePerShopOverrideSurvivesIndependently();
+        self::testMultistoreNewerWinsIsEvaluatedPerShop();
     }
 
     private static function reset(): void
@@ -438,5 +441,100 @@ final class CompanySearchLocationConfigSpec
             }
         }
         TinyAssert::true($logged, 'and it must say so, or the shop is silently stale');
+    }
+
+    /**
+     * @param array<int,string> $perShop
+     */
+    private static function multistore(?string $globalOld, array $perShop): TwopaymentTestHarness
+    {
+        self::reset();
+        Shop::$featureActive = true;
+        Shop::$shopIds = [1, 2];
+
+        if ($globalOld !== null) {
+            Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', $globalOld);
+        }
+        foreach ($perShop as $idShop => $value) {
+            Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', $value, false, null, $idShop);
+        }
+
+        return new TwopaymentTestHarness();
+    }
+
+    /**
+     * A GLOBAL old row must migrate to a GLOBAL new row - it must not be
+     * materialised as one per-shop row per shop (adversarial review round 3).
+     *
+     * This is not cosmetic. Per-shop rows take precedence over the global row in
+     * Configuration::get(), so inventing them permanently breaks the merchant's
+     * "all shops" back-office save: they change the setting for all shops, core
+     * writes the global row, and the invented per-shop rows shadow it - the save
+     * silently does nothing, forever.
+     *
+     * The reason this is easy to get wrong: get($key, ..., $idShop) resolves
+     * THROUGH the global row, so a per-shop read of a global-only value returns the
+     * value and looks like a per-shop row exists. hasKey($key, ..., $idShop) is the
+     * question that distinguishes them.
+     */
+    private static function testMultistoreGlobalOnlyRowStaysGlobal(): void
+    {
+        $module = self::multistore('0', []);
+
+        self::runUpgrade($module);
+
+        TinyAssert::same('0', (string) Configuration::getGlobalValue('PS_TWO_COMPANY_SEARCH_LOCATION'));
+        TinyAssert::false(
+            Configuration::hasKey('PS_TWO_COMPANY_SEARCH_LOCATION', null, null, 1),
+            'a global-only value must NOT be materialised as a per-shop row'
+        );
+        TinyAssert::false(Configuration::hasKey('PS_TWO_COMPANY_SEARCH_LOCATION', null, null, 2));
+
+        // Both shops still resolve the tile, through the global tier.
+        TinyAssert::same('0', (string) Configuration::get('PS_TWO_COMPANY_SEARCH_LOCATION', null, null, 1));
+        TinyAssert::same('0', (string) Configuration::get('PS_TWO_COMPANY_SEARCH_LOCATION', null, null, 2));
+        TinyAssert::false(Configuration::hasKey('PS_TWO_ENABLE_COMPANY_NAME'));
+    }
+
+    /**
+     * A per-shop override must survive as a per-shop override, alongside a
+     * different global default. This is the state the whole loop exists for: the
+     * naive read-write-delete collapsed both onto one value, because
+     * deleteByName() is global while the reads are shop-scoped.
+     */
+    private static function testMultistorePerShopOverrideSurvivesIndependently(): void
+    {
+        // Global says payment tile; shop 2's merchant chose the address area.
+        $module = self::multistore('0', [2 => '1']);
+
+        self::runUpgrade($module);
+
+        TinyAssert::same('0', (string) Configuration::getGlobalValue('PS_TWO_COMPANY_SEARCH_LOCATION'));
+        TinyAssert::same('1', (string) Configuration::get('PS_TWO_COMPANY_SEARCH_LOCATION', null, null, 2));
+        // Shop 1 never had its own row and must not have acquired one.
+        TinyAssert::false(Configuration::hasKey('PS_TWO_COMPANY_SEARCH_LOCATION', null, null, 1));
+        TinyAssert::same('0', (string) Configuration::get('PS_TWO_COMPANY_SEARCH_LOCATION', null, null, 1));
+
+        // Both spellings of the old key are gone, on every shop.
+        TinyAssert::false(Configuration::hasKey('PS_TWO_ENABLE_COMPANY_NAME'));
+        TinyAssert::false(Configuration::hasKey('PS_TWO_ENABLE_COMPANY_NAME', null, null, 2));
+    }
+
+    /**
+     * Newer-wins is a PER-SHOP decision. A shop that already resolves a value under
+     * the new name keeps it; a sibling shop that does not still gets its old value
+     * carried. Evaluating this once for the whole context is how the round-1 fix
+     * reverted a merchant's save.
+     */
+    private static function testMultistoreNewerWinsIsEvaluatedPerShop(): void
+    {
+        $module = self::multistore(null, [1 => '0', 2 => '0']);
+        // Shop 1's merchant already moved it back to the address area post-upgrade.
+        Configuration::updateValue('PS_TWO_COMPANY_SEARCH_LOCATION', '1', false, null, 1);
+
+        self::runUpgrade($module);
+
+        TinyAssert::same('1', (string) Configuration::get('PS_TWO_COMPANY_SEARCH_LOCATION', null, null, 1));
+        TinyAssert::same('0', (string) Configuration::get('PS_TWO_COMPANY_SEARCH_LOCATION', null, null, 2));
     }
 }
