@@ -103,31 +103,68 @@ if (!defined('_PS_VERSION_')) {
     exit;
 }
 
+/**
+ * Is a Configuration value "set" in the sense Twopayment::isCompanySearchInAddressArea()
+ * means it?
+ *
+ * Deliberately NOT Configuration::hasKey(): a row holding the empty string is
+ * present to hasKey() but resolves to the address-area DEFAULT in the module, so
+ * treating it as set makes an empty row look like a deliberate choice. Every
+ * decision in this migration uses this predicate; hasKey() is used only to ask
+ * "is there a row to delete", which is the one question it answers correctly.
+ *
+ * Guarded on function_exists because PrestaShop includes every in-range upgrade
+ * script into the same request, and a later version's script may want the same
+ * helper.
+ *
+ * @param mixed $value
+ * @return bool
+ */
+if (!function_exists('two_config_is_set')) {
+    function two_config_is_set($value)
+    {
+        return !($value === false || $value === null || $value === '');
+    }
+}
+
 function upgrade_module_2_7_5($module)
 {
     $old_key = 'PS_TWO_ENABLE_COMPANY_NAME';
     $new_key = 'PS_TWO_COMPANY_SEARCH_LOCATION';
 
-    // PER SHOP, not once for the context. This is the whole reason this block is
-    // a loop rather than three lines (adversarial review, MAJOR):
+    // PER SHOP, and every read goes through Configuration::get(), never
+    // hasKey(). Both halves of that are corrections to real defects found in
+    // review, and neither is obvious from the call sites, so:
     //
-    //   - Configuration::get() resolves ONE value out of the current shop
-    //     context;
-    //   - Configuration::updateValue() writes across the context's shop list;
-    //   - Configuration::deleteByName() removes the row for EVERY shop,
-    //     unconditionally.
+    //  1. deleteByName() is GLOBAL and unconditional - there is no per-shop
+    //     variant. get()/updateValue() are shop-scoped. So a context-scoped read
+    //     followed by a global delete collapses a multistore install onto
+    //     whichever value the upgrade happened to run in: shop A on the payment
+    //     tile and shop B in the address area both come out as one of the two,
+    //     silently. Hence the loop.
     //
-    // So a context-scoped read followed by a global delete collapses a
-    // multistore install onto whichever value the upgrade happened to run in:
-    // shop A on the payment tile and shop B in the address area come out both
-    // set to one of the two, silently. install() seeds its defaults at
-    // Shop::CONTEXT_ALL, but the admin save path is a plain updateValue(), so
-    // per-shop rows genuinely exist on any multistore shop whose merchant has
-    // saved these settings in a single-shop context.
+    //  2. hasKey($key, null, null, $idShop) is a bare isset() on the per-shop
+    //     cache with NO fallback to the global (id_shop NULL) row - verified
+    //     identical in 1.7.8, 8.1 and 9.0. get() DOES fall back
+    //     shop -> group -> global. install() seeds its defaults under
+    //     Shop::CONTEXT_ALL, i.e. GLOBAL rows, so on a multistore install
+    //     hasKey-per-shop answers false for every shop even though every shop
+    //     reads a value - and the round of this fix that used hasKey() therefore
+    //     found nothing to carry, then deleted the global row anyway. get() per
+    //     shop is the only read that sees what that shop actually resolves.
     //
-    // Read every shop's value FIRST, then write, then delete once at the end -
-    // the delete cannot be inside the loop, because the first iteration would
-    // wipe the rows the later iterations still need to read.
+    //  3. "Set" means what the RESOLVER means by it, not what hasKey() means. A
+    //     row holding '' is present to hasKey() but is treated as ABSENT by
+    //     Twopayment::isCompanySearchInAddressArea(), which resolves it to the
+    //     address-area default. Gating newer-wins on hasKey() therefore let an
+    //     EMPTY new-key row - a shape saveTwoCompanyLookupFormValues() can write
+    //     from a POST that omits the field - suppress the copy and lose the
+    //     merchant's tile choice. two_config_is_set() below is the resolver's
+    //     own notion, and it is the only one used for a decision.
+    //
+    // Read every shop FIRST, then write, then delete once at the end: the delete
+    // cannot be inside the loop, because the first iteration would wipe the rows
+    // the later iterations still need to read.
     $shop_ids = array();
     if (Shop::isFeatureActive()) {
         $shop_ids = (array) Shop::getCompleteListOfShopsID();
@@ -139,45 +176,39 @@ function upgrade_module_2_7_5($module)
         $shop_ids = array(null);
     }
 
-    // A value already stored under the NEW name always wins, and the old row is
-    // then deleted without being copied (adversarial review, MAJOR: ordering
-    // hazard). The 2.7.5 admin form reads and writes the new key from the moment
-    // the files land, but this script runs only when the module upgrade is
-    // actually triggered - so a merchant who saves the position inside that
-    // window would otherwise have their save overwritten by the stale old-key
-    // value when the script finally runs. Newer wins; nothing is lost either way.
-    $new_key_already_set = Configuration::hasKey($new_key);
-
     $carried = array();
     foreach ($shop_ids as $id_shop) {
-        if ($id_shop === null) {
-            if (!Configuration::hasKey($old_key)) {
-                continue;
-            }
-            if ($new_key_already_set) {
-                continue;
-            }
-            // Read as a string and write it back unchanged. Casting to int here
-            // would turn a row holding '' - which the resolver treats as
-            // "absent", i.e. address area - into a 0, which means the payment
-            // tile. That is the one transformation this migration must not
-            // perform.
-            $carried[] = array(null, Configuration::get($old_key));
+        // NEWER WINS, evaluated per shop. The 2.7.5 admin form reads and writes
+        // the new key from the moment the files land, but this script runs only
+        // when the module upgrade is actually triggered - so a merchant who saves
+        // the position inside that window must not have it overwritten by the
+        // stale old-key value when the script finally runs.
+        $existing_new = ($id_shop === null)
+            ? Configuration::get($new_key)
+            : Configuration::get($new_key, null, null, (int) $id_shop);
+        if (two_config_is_set($existing_new)) {
             continue;
         }
 
-        if (!Configuration::hasKey($old_key, null, null, (int) $id_shop)) {
+        // Read as a string and write it back unchanged. Casting to int here
+        // would turn a row holding '' - which the resolver treats as "absent",
+        // i.e. address area - into a 0, which means the payment tile. That is the
+        // one transformation this migration must not perform.
+        $stored_old = ($id_shop === null)
+            ? Configuration::get($old_key)
+            : Configuration::get($old_key, null, null, (int) $id_shop);
+        if (!two_config_is_set($stored_old)) {
             continue;
         }
-        if (Configuration::hasKey($new_key, null, null, (int) $id_shop)) {
-            continue;
-        }
-        $carried[] = array((int) $id_shop, Configuration::get($old_key, null, null, (int) $id_shop));
+
+        $carried[] = array($id_shop === null ? null : (int) $id_shop, $stored_old);
     }
 
-    // The delete below is global, so it must happen whenever ANY old row exists -
-    // not only when something was carried. A shop whose value was skipped because
-    // the new key already held one still needs its stale old row gone.
+    // The delete is global, so it must fire whenever ANY old row exists at all -
+    // not only when something was carried. A shop skipped by newer-wins, and a
+    // row holding '' that was skipped as unset, both still need the stale old row
+    // gone. hasKey() is the right question HERE and only here: this asks "is
+    // there a row to delete", which is exactly what it answers.
     $any_old_row = Configuration::hasKey($old_key);
     foreach ($shop_ids as $id_shop) {
         if ($id_shop !== null && Configuration::hasKey($old_key, null, null, (int) $id_shop)) {
@@ -207,8 +238,10 @@ function upgrade_module_2_7_5($module)
 
         PrestaShopLogger::addLog(
             'Two Payment v2.7.5 upgrade: retired configuration key ' . $old_key . ' in favour of '
-            . $new_key . '; ' . count($carried) . ' shop row(s) carried across unchanged'
-            . (empty($summary) ? ' (all shops already held a value under the new name)' : ': ' . implode(', ', $summary))
+            . $new_key . '; ' . count($carried) . ' shop value(s) carried across unchanged'
+            . (empty($summary)
+                ? ' (every shop already resolved a value under the new name, or held no usable old value)'
+                : ': ' . implode(', ', $summary))
             . ' (TWO-40)',
             1,
             null,

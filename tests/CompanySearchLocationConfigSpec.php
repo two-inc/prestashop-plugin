@@ -40,6 +40,7 @@ final class CompanySearchLocationConfigSpec
         self::testLegacyKeyShimIsRetiredInTwoPointEight();
         self::testUninstallRemovesBothSpellings();
         self::testNewKeyWinsOverALingeringLegacyRow();
+        self::testAnEmptyNewKeyRowDoesNotSuppressTheCarry();
         self::testUpgradeFinishesEvenWhenTheOverrideRefreshThrows();
     }
 
@@ -280,14 +281,36 @@ final class CompanySearchLocationConfigSpec
      */
     private static function testLegacyKeyShimIsRetiredInTwoPointEight(): void
     {
-        self::reset();
-        $module = new TwopaymentTestHarness();
+        // Read the DECLARED version out of the source files, never off the test
+        // harness. TwopaymentTestHarness hardcodes $this->version = '2.4.0' and
+        // never calls parent::__construct(), so a version-compare against
+        // $module->version can never trip however far the real version moves -
+        // this test was exactly that vacuous when first written (adversarial
+        // review round 2, BLOCKER), meaning the shim had no expiry at all.
+        // Same source-of-truth helpers as UpgradeScriptVersionSpec.
+        $php = (string) file_get_contents(dirname(__DIR__) . '/twopayment.php');
+        TinyAssert::true(
+            (bool) preg_match('/\$this->version\s*=\s*\'(\d+\.\d+\.\d+)\'\s*;/', $php, $m),
+            'Could not read $this->version from twopayment.php.'
+        );
+        $declared = $m[1];
+
+        // bumpver stamps config.xml from the same source, so a bump that moved
+        // only one of them would otherwise let this slip through.
+        $xml = (string) file_get_contents(dirname(__DIR__) . '/config.xml');
+        TinyAssert::true(
+            (bool) preg_match('/<version>\s*<!\[CDATA\[(\d+\.\d+\.\d+)\]\]>\s*<\/version>/', $xml, $x),
+            'Could not read <version> from config.xml.'
+        );
+        $highest = version_compare($declared, $x[1], '>') ? $declared : $x[1];
 
         TinyAssert::true(
-            version_compare((string) $module->version, '2.8.0', '<'),
-            'The declared module version has reached 2.8.0: delete the PS_TWO_ENABLE_COMPANY_NAME'
-            . ' read shim in isCompanySearchInAddressArea(), the matching deleteByName() in'
-            . ' uninstallTwoSettings(), and the two tests covering them. Do not bump this boundary.'
+            version_compare($highest, '2.8.0', '<'),
+            'The declared module version has reached 2.8.0 (' . $highest . '): delete the'
+            . ' PS_TWO_ENABLE_COMPANY_NAME read shim in isCompanySearchInAddressArea(), the'
+            . ' matching deleteByName() in uninstallTwoSettings(),'
+            . ' testLegacyKeyIsStillHonouredBeforeTheUpgradeScriptRuns() and this test.'
+            . ' Do not bump this boundary to keep it green.'
         );
     }
 
@@ -336,6 +359,40 @@ final class CompanySearchLocationConfigSpec
 
         TinyAssert::same('1', (string) Configuration::get('PS_TWO_COMPANY_SEARCH_LOCATION'));
         TinyAssert::same('1', self::resolve($module));
+        TinyAssert::false(Configuration::hasKey('PS_TWO_ENABLE_COMPANY_NAME'));
+    }
+
+    /**
+     * An EMPTY new-key row must not suppress the carry (adversarial review round 2,
+     * MAJOR - a silent data-loss defect introduced by the round-1 newer-wins fix).
+     *
+     * `Configuration::hasKey()` counts an empty row as SET, but
+     * isCompanySearchInAddressArea() treats '' as ABSENT and resolves it to the
+     * address-area default. So gating newer-wins on hasKey() let an empty new-key
+     * row look like a deliberate merchant choice, skip the copy, and then have the
+     * legacy row deleted uncopied - turning a payment-tile shop into an
+     * address-area shop with nothing on screen saying so.
+     *
+     * '' is a reachable state, not a theoretical one:
+     * saveTwoCompanyLookupFormValues() writes whatever `Tools::getValue()` returns
+     * and a POST omitting the field yields ''. The migration therefore uses the
+     * resolver's own notion of "set", not hasKey()'s.
+     */
+    private static function testAnEmptyNewKeyRowDoesNotSuppressTheCarry(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        Configuration::updateValue('PS_TWO_ENABLE_COMPANY_NAME', '0');
+        Configuration::updateValue('PS_TWO_COMPANY_SEARCH_LOCATION', '');
+
+        // Before: the shim resolves the legacy row, so the shop is on the tile.
+        TinyAssert::same('0', self::resolve($module));
+
+        self::runUpgrade($module);
+
+        TinyAssert::same('0', (string) Configuration::get('PS_TWO_COMPANY_SEARCH_LOCATION'));
+        TinyAssert::same('0', self::resolve($module), 'the tile choice must survive an empty new-key row');
         TinyAssert::false(Configuration::hasKey('PS_TWO_ENABLE_COMPANY_NAME'));
     }
 
