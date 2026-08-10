@@ -322,8 +322,6 @@ class Twopayment extends PaymentModule
     /** @var string|false */
     public $api_key;
     /** @var string|false */
-    public $company_search_in_address_area;
-    /** @var string|false */
     public $enable_department;
     /** @var string|false */
     public $enable_project;
@@ -348,7 +346,6 @@ class Twopayment extends PaymentModule
         $this->description = sprintf($this->l('This module allows any merchant to accept payments with %s payment gateway.'), $this->getTwoBrandConfig('product_name'));
         $this->merchant_short_name = Configuration::get('PS_TWO_MERCHANT_SHORT_NAME');
         $this->api_key = Configuration::get('PS_TWO_MERCHANT_API_KEY');
-        $this->company_search_in_address_area = Configuration::get('PS_TWO_COMPANY_SEARCH_LOCATION');
         $this->enable_department = Configuration::get('PS_TWO_ENABLE_DEPARTMENT');
         $this->enable_project = Configuration::get('PS_TWO_ENABLE_PROJECT');
         // The two optional-field switches added in 2.7.0
@@ -876,6 +873,13 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName(self::CONFIG_API_KEY_STATUS_TS);
         Configuration::deleteByName('PS_TWO_DISABLE_SSL_VERIFY');
         Configuration::deleteByName('PS_TWO_COMPANY_SEARCH_LOCATION');
+        // Pre-2.7.5 spelling of the line above - DELETE IN 2.8.0, with the read
+        // shim in isCompanySearchInAddressArea(). A shop whose upgrade script
+        // never ran (files swapped, back office never opened) still holds this
+        // row; without this line an uninstall leaves it orphaned forever, and a
+        // later reinstall writes the new key = 1, silently discarding a
+        // tile-mode choice still sitting in the DB under the old name.
+        Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_NAME');
         Configuration::deleteByName('PS_TWO_ADDRESS_LOOKUP');
         // Retired admin toggle (TWO-25190) - the org.id auto-complete switch
         // was rendered and stored but no JavaScript ever read the
@@ -2569,6 +2573,33 @@ class Twopayment extends PaymentModule
         $value = Configuration::get('PS_TWO_COMPANY_SEARCH_LOCATION');
 
         if ($value === false || $value === null || $value === '') {
+            // LEGACY-KEY READ SHIM - DELETE IN 2.8.0, along with the matching
+            // line in uninstallTwoSettings(). CompanySearchLocationConfigSpec
+            // turns red the moment $this->version reaches 2.8.0, so this
+            // expires by enforcement rather than by anyone remembering.
+            //
+            // 2.7.5 renamed PS_TWO_ENABLE_COMPANY_NAME to
+            // PS_TWO_COMPANY_SEARCH_LOCATION and upgrade-2.7.5.php migrates the
+            // row. But a PrestaShop upgrade script runs only when the web Module
+            // Manager (or dev/ci/upgrade-module.sh) runs it - NOT when a deploy
+            // merely swaps the module files, which is how the git-synced shops
+            // update. Between the file swap and someone opening the back office,
+            // the new key is absent while the old row still sits in the DB.
+            //
+            // Without this shim, that window silently flips a merchant who chose
+            // the payment tile back to the address area AND re-enables address
+            // autofill (getAddressLookupEnabled() keys off this method), on a
+            // live storefront, for as long as nobody visits the back office.
+            //
+            // This is a READ of the old key, not an alias: nothing writes it, the
+            // migration still deletes it, and the module has exactly one place
+            // that spells the old name in a live code path - here.
+            $legacy = Configuration::get('PS_TWO_ENABLE_COMPANY_NAME');
+
+            if ($legacy !== false && $legacy !== null && $legacy !== '') {
+                return ((int) $legacy) === 1 ? '1' : '0';
+            }
+
             return '1';
         }
 
