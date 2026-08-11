@@ -2701,12 +2701,12 @@ class TwoCompanySearch {
             this.markOrganizationFieldSelected(selection.company, selection.companyid);
         }
         // Whether the number actually LANDED, taken from the writer rather than
-        // assumed from having called it. The gate declines an internal `TWO:`
-        // identifier, which it must (it is never shown to the buyer) and which a
-        // sole-trader selection carries by default - so assuming the write
-        // succeeded would record a number the form does not hold, and the next
-        // render would read the empty field as buyer tampering and pin the whole
-        // address on the strength of a write that never happened.
+        // assumed from having called it. No value is refused any more - an internal
+        // `TWO:` identifier writes like any other - but the write can still decline
+        // for its own reasons: the address-lookup switch being off, or every
+        // candidate field skipped by `onlyIfEmpty`. Recording a number the form does
+        // not hold would have the next render read the empty field as buyer tampering
+        // and pin the whole address on the strength of a write that never happened.
         let wroteNumber = false;
         if (wroteCompany && identifierFields.length > 0) {
             // Through the single gate every other organisation-number write goes
@@ -5648,19 +5648,22 @@ class TwoCompanySearch {
      * no billing address - it is null in the completions captured so far, and a
      * null must never be allowed to blank anything.
      *
-     * Only `address1`/`postcode`/`city` are written, which is not a shortcut. The
-     * fields the plugin may write are exactly the ones it can ATTRIBUTE - the
-     * MIRRORED_ADDRESS_FIELDS record and the server-side keys behind it. The
-     * response also carries `building`, `apartment` and `region`, and PrestaShop
-     * has an `address2` and a state field that could hold them, but a value written
-     * into a field outside that record cannot be recognised as ours on the next
-     * render: it reads as buyer-authored and PINS the whole secondary address.
-     * Widening the record changes the mirror's own pin surface and belongs to its
-     * own piece of work rather than to this fix.
+     * EVERY field of the response lands somewhere (Doug's ruling). `street`,
+     * `building`, `apartment`, `postal_code` and `city` are handled here;
+     * `region` is applied by autoFillRegion() after this returns, because on a form
+     * with no state field it appends to the CITY this fill has just written.
      *
-     * The address shape is handed to autoFillAddress() untranslated, because that
-     * method already coalesces every key spelling this response uses (`street`,
-     * `postal_code`, `city`) - one mapping, in one place, for both callers.
+     * `address2` and `state` were added to MIRRORED_ADDRESS_FIELDS and to
+     * `Twopayment::MIRROR_WRITE_SESSION_KEYS` so these writes stay ATTRIBUTABLE
+     * across a page load, and so the pin judges them: a buyer typing a second
+     * address line is stating an independent answer exactly as much as one typing a
+     * city. A writable field missing from that record would have made the
+     * address-wide rule miss real buyer-entered data.
+     *
+     * Beyond the line routing the address is handed to autoFillAddress()
+     * untranslated, because that method already coalesces every key spelling this
+     * response uses (`street`, `postal_code`, `city`) - one mapping, in one place,
+     * for both callers.
      *
      * @param {Object} buyer
      * @param {?Element} secondaryRoot
@@ -5839,10 +5842,11 @@ class TwoCompanySearch {
      * What of the name/number pair actually reached the secondary address, read
      * back off the form rather than assumed.
      *
-     * Read back deliberately: both writes above can decline (an absent field, the
-     * address-lookup switch off, an internal identifier that may not be shown), and
-     * reporting a value that never landed is worse than reporting none - it tells
-     * the next render to treat a field the buyer may yet fill as already ours.
+     * Read back deliberately: both writes above can decline (an absent field, or the
+     * address-lookup switch being off - no value is refused for its own sake any
+     * more), and reporting a value that never landed is worse than reporting none -
+     * it tells the next render to treat a field the buyer may yet fill as already
+     * ours.
      *
      * @param {string} name
      * @param {string} number
