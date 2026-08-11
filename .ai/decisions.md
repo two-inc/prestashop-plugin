@@ -174,9 +174,16 @@
 
 ---
 
-# PROPOSED — NOT IMPLEMENTED — company-search / sole-trader restructuring (TWO-40)
+# company-search / sole-trader restructuring (TWO-40)
 
-**Status: DESIGN ONLY, awaiting Doug's review. No code has been written for anything below.**
+**Status, per item — the design below is NO LONGER uniformly unimplemented:**
+`#6`/`#9` **SHIPPED** (see its own "as built"), `#12` **SHIPPED**, `#13` **SHIPPED**
+(read side needed no code; write side shipped in a different shape — read the
+corrections section first), `#8` **DEFERRED by Doug, deliberately not built**, `#1`
+**WITHDRAWN**. Each item's own "as built" subsection is the authority on what
+actually exists; the proposals above them are kept for their reasoning, not as a
+description of the code.
+
 Written 2026-08-10 against `origin/staging` @ `0ddad20`. Items are numbered per Doug's own
 consolidated list (#6/#9, #8, #12, #13).
 
@@ -194,6 +201,60 @@ from `override/classes/form/CustomerAddressFormatter.php`, ~20 from
 shifts once it merges. Re-derive with `git grep -n <symbol> <ref>` against a
 freshly fetched ref before acting on any of them — never from a working tree. Several numbers in the
 first draft of this document were already wrong for exactly that reason.
+
+---
+
+## Corrections to this document's premises, verified against PrestaShop core
+
+Extracted from the official `1.7.8.11`, `8-apache` and `9-apache` images —
+`themes/classic/templates/checkout/_partials/steps/addresses.tpl`,
+`checkout/_partials/address-form.tpl`, `_partials/form-fields.tpl` and
+`classes/checkout/CheckoutAddressesStep.php`. The two checkout templates are
+byte-identical between 8 and 9; 1.7.8.11 differs only by one extra attribute and
+a hook, so all three supported majors behave the same here. **Where the designs
+below disagree with this section, this section wins** — they were written on a
+wrong premise.
+
+**A. PrestaShop NEVER renders two editable address forms at once.** The delivery
+and invoice form flags are set in mutually exclusive branches of
+`CheckoutAddressesStep::handleRequest()` and of the address-count block that
+follows it. The other side is always a radio selector over saved addresses, or
+absent. So `#13`-enabled's mirror as designed — copy company + country from the
+block the search ran in into the billing block — is **not implementable**: when
+the delivery form is on screen there are no invoice inputs to write into. The
+mirror has to be a **cross-page-load** operation, seeding the invoice form when it
+later becomes the editable one. As a corollary, Doug's "no silent population of a
+hidden block" is satisfied for free: there is no hidden block. The comment on
+`TwoCheckoutManager.neutralizeCompanySearchAffordance()` claiming a second
+`name='company'` input appears once the buyer states the addresses differ was
+wrong, and is the premise this document inherited; it has been corrected in place.
+
+**B. There is no "addresses differ" checkbox to listen to.** `use_same_address` is
+a server-side Smarty flag expressed by two different controls.
+`address-form.tpl` renders the checkbox **only** under `{if $type ===
+"delivery"}`, i.e. only while the delivery form is the editable one, and its
+polarity is **checked = the addresses are the SAME**. On every later pass core
+renders a LINK instead (`data-link-action="different-invoice-address"`), which is
+an `href` performing a full page navigation. So the reveal is a page load and
+there is no client-side event to hook, which is why the mirror has no reactivity
+half.
+
+**C. `TwoCountry.js` must NOT be extracted, and was not.** The design called it a
+prerequisite of `#13`. It is not one: because only one address form is ever
+rendered, there is only ever ONE `select[name='id_country'], select[name='country']`
+on the page, so the four resolvers' first-match-in-document read cannot pick the
+wrong select. All four were checked and all four already prefer the live select
+when one exists. Dropped rather than deferred — the reason it was wanted has been
+removed, not postponed. The duplicated country-name→ISO maps are untouched and
+remain Doug's separate item.
+
+**D. `window.twopayment.billing_country` was already the right source.**
+`Twopayment::getCheckoutBillingCountryIso()` derives it from the cart's
+`id_address_invoice`, so it is the INVOICE address's country, not the delivery
+one. Verified, left alone, and now pinned by a spec asserting exactly that — with
+both addresses set to different countries, so the assertion identifies which field
+was read. Nothing guarded it before, and it is the terminal fallback for every
+country resolver in the checkout JS.
 
 ---
 
@@ -364,7 +425,22 @@ of a cookie it never wrote, and that line is simply deleted.
 
 ---
 
-## #8 — tile-mode's address-side layer is gated on the wrong thing
+## #8 — DEFERRED, not pending — tile-mode's address-side layer is gated on the wrong thing
+
+**Status: considered and explicitly deferred by Doug (2026-08-11). Nothing below
+is being worked on, and the design was NOT implemented.** His ruling: there are no
+plans at present to let the admin enable address population while the company
+search is in the payment tile, so the current no-op is fine. The tile-mode
+inertness stays exactly as it is — address-field writes force-disabled from the
+mount location, `isAddressLookupSettingAvailable()` retained, the tile mount's
+hardcoded `addressLookupEnabled: false` retained.
+
+Recorded rather than deleted so that the analysis is not re-derived from scratch,
+and marked deferred so it is not re-investigated as though it were outstanding
+work. Revive it only if an admin path actually needs the two questions separated;
+note in that case that step 4 (root-scoping the address writes) is the load-bearing
+part and cannot be skipped — though `#13`-enabled's mirror already scopes its own
+writes to the visible form element, so there is a working precedent for it now.
 
 ### The conflation, precisely
 
@@ -441,6 +517,8 @@ reappears.
 
 ## #12 — sole-trader country must come from the live form, never a saved value
 
+**SHIPPED as proposed. See "#12 — as built" at the end of this item.**
+
 ### What PR #153 established, and what reverses
 
 `resolveSoleTraderCountryIso()` (`controllers/front/orderintent.php:235-256`) is a three-tier
@@ -499,9 +577,39 @@ So promoting the posted tier has **no security consequence**. It is purely a cor
 the billing select is decided by `#13`, not here. `resolveSoleTraderCountryIso()` only sees
 whatever the browser posts; the browser-side decision about *which* select to read is `#13`'s.
 
+### As built
+
+**Shipped, all five points, exactly as proposed.** The posted country is tier 1,
+the invoice-address tier is deleted rather than demoted, the cart's delivery
+address is the sole last resort, both docblocks were rewritten rather than left
+arguing for the old ordering, and the shape check is byte-for-byte unchanged.
+
+The three claims the docblock now makes about there being no privilege to escalate
+were each re-verified in the code before being written down, not carried over from
+the previous comment: `TwoSoleTrader::mintTokens()` takes only a module and both
+delegation payloads it posts are fixed scope lists with no country; the registry
+availability check runs on every call inside the token action; and
+`ajaxProcessSoleTraderAvailability()` answers a client-supplied country by design,
+with a docblock of its own saying so.
+
+Spec changes: the two invoice-address-first cases are replaced by their mirrors
+(a posted country beats a committed invoice address; a cart carrying only an
+eligible invoice address mints nothing, which is the proof the tier was deleted
+and not demoted), the two address-resolution-failure cases moved onto the delivery
+tier, and `testPostedCountryCannotConjureAvailability` is unchanged and is now the
+more load-bearing of the pair. Note the coupling to `#13` resolved itself: per
+correction C there is only ever one country select, so "which select" was never a
+question on PrestaShop.
+
 ---
 
 ## #13 — two distinct modes: ENABLED writes, DISABLED reads
+
+**SHIPPED, but not in this shape.** Corrections A, B and C at the top of this
+section invalidate three of the proposals below — the selection-time mirror, the
+reveal listener, and the `TwoCountry.js` prerequisite. Jump to "#13 — as built" for
+what exists; the contract table immediately below is still accurate and is the
+requirement the built version satisfies.
 
 ### Doug's clarification restated as a contract
 
@@ -616,16 +724,88 @@ countries, en/es/fr/nl/no/sv. They ride along in the same extraction.
 
 ---
 
+### #13 — as built, and where the design above was wrong
+
+Read corrections A–D at the top of this section first; three of them rewrite this
+item.
+
+**The READ side (disabled mode) needed no code at all.** All four country
+resolvers — `TwoCompanySearch.getCurrentCountry()`,
+`TwoSoleTrader.billingCountry()`, `TwoOrderIntent.getCurrentAddressCountryISO()`
+and `TwoCheckoutManager.getSelectedCountryIso()` — were checked and every one
+already prefers the live select over its own terminal fallback. Because only one
+address form is ever rendered there is only one select to find, so the
+"which select do I read" decision the design worried about does not exist here, and
+the `TwoCountry.js` extraction it wanted as a prerequisite is dropped (correction
+C). What was missing was a guard on the fallback's *source*, so a spec now pins
+that `window.twopayment.billing_country` comes from the cart's invoice address and
+never its delivery one (correction D). No resolver was modified.
+
+**The WRITE side (enabled mode) shipped as a cross-page-load mirror**, because
+correction A makes the designed selection-time mirror unimplementable. It runs when
+the company-search control mounts, not on selection, and not on a reveal event —
+there is none (correction B).
+
+Shape as built, all on `TwoCompanySearch`:
+
+- `buyerStatesInvoiceAddressDiffers()` — the signal. Resolution order: the
+  shared-address control's NEGATION when that control is in the DOM at all; else the
+  presence of an invoice block of either shape (form or selector); else **false**,
+  i.e. no-op, because an unclear signal is not evidence the addresses differ. It
+  carries a comment naming PrestaShop's polarity (checked = SAME) and the fact that
+  another platform in this family inverts it, as the reason the abstraction exists
+  at all. **Language convention, and it is a code requirement rather than a
+  reporting one: "when the buyer states" / "when the buyer's current selection
+  indicates" throughout — never "ticked" or "checked".** Doug's reason: the checkbox
+  appears on the first pass only and another platform inverts its polarity, so
+  checkbox language actively misleads whoever ports this.
+- `visibleAddressFormType()` — which address the one editable form is for, read from
+  the hidden field core's address form emits carrying exactly that word.
+- `visibleAddressFormRoot()` — the scope for every field lookup. Innermost-first,
+  and it resolves to the block element rather than the form, because core nests the
+  rendered address form's own `<form>` inside the step's outer one and HTML drops
+  the inner tag.
+- `mirrorConfirmedCompanyToInvoiceAddress()` — the mirror, plus
+  `writeMirroredValue()`, `mirrorCountryIntoForm()` and
+  `countryOptionValueForIso()`. Company name and country only; gated on the
+  merchant's address-population switch as the design required, which also makes it
+  inert on the tile mount for free.
+
+Two things worth knowing before touching it:
+
+- **"Empty" is a real state for the country select**, which is what makes the marker
+  rule usable on one: core's `countrySelect` field emits a disabled, empty-valued
+  "Please choose" option ahead of the real countries. Had it not, the marker rule as
+  written would have made the country half dead code, since a select always has a
+  value.
+- **The selection cannot come from `TwoCheckoutManager._confirmedCompanySelection`
+  alone** — it is page-lifetime and the mirror exists to cross a navigation. The
+  manager now seeds it from the cart-scoped record the module publishes into the JS
+  config, through the validated read plus the address-switch comparison, so a record
+  either guard would reject is never published. The getter is INJECTED into the
+  search mount rather than reached for on `window`: the search is constructed from
+  inside the manager's own constructor, before `TwoCheckoutManager_Instance` is
+  assigned, so a global lookup would find nothing on the one call that matters.
+
+**Not built, deliberately:** the reactivity half (no event to bind — correction B),
+the `TwoCountry.js` extraction (correction C), and any change to
+`autoFillAddress()`'s existing street/postcode/city contract. The mirror is a
+separate write path alongside it, not a modification of it.
+
 ## Cross-cutting: what has to land together
 
-- `#8` step 4 (root-scoping the address writes) is a **hard prerequisite** for both `#8` step 3
-  and `#13`-enabled. Landing either without it reintroduces the tile-rewrites-a-hidden-address
-  defect.
-- `#12` (server trusts posted country) and `#13`-disabled (browser posts the *right* country) are
-  two halves of one feature.
-- `TwoCountry.js` extraction is a prerequisite of `#13`-disabled unless we are content to make the
-  same decision in four already-divergent chains.
-- `#6`/`#9` is independent of all of the above and can ship on its own.
+Superseded by what actually shipped — kept because the reasoning is still worth
+reading, but do not act on it:
+
+- `#8` step 4 (root-scoping the address writes) was a **hard prerequisite** for
+  `#8` step 3 and for `#13`-enabled. `#8` is deferred, and `#13`-enabled's mirror
+  scopes its own writes to the visible form element rather than relying on that
+  step, so it stands alone.
+- `#12` and `#13`-disabled being two halves of one feature held, but the browser
+  half turned out to need no change (correction C): the resolvers already read the
+  live select, and there is only ever one of them to read.
+- `TwoCountry.js` extraction: dropped, not deferred (correction C).
+- `#6`/`#9` is independent of all of the above and shipped on its own.
 
 ## Open questions for Doug
 
@@ -633,10 +813,14 @@ countries, en/es/fr/nl/no/sv. They ride along in the same extraction.
    (confirmation page, admin)? Cart-scoping makes it unreadable and I have not audited that path.
 2. **`#8`:** with the gate removed and the merchant switch on, tile-mode writes should silently
    no-op when the address form is not on the page. Confirm, rather than deferring the write.
+   **Moot — `#8` is deferred; no admin path needs the separation yet.**
 3. **`#13`-enabled:** the mirror copies company **name + country** only. Confirm that street /
    postcode / city are deliberately excluded when the buyer has said the addresses differ.
-4. **`#13`-enabled:** when the buyer has NOT ticked "addresses differ", there is one address and
+   **Confirmed by Doug, and built that way.**
+4. **`#13`-enabled:** when the buyer has NOT stated the addresses differ, there is one address and
    nothing to mirror. Confirm that is a no-op and not "populate a hidden billing block anyway".
+   **Confirmed: a true no-op. It is also moot as a risk — per correction A there is no hidden
+   block to populate.**
 5. **`#10` correction:** there are **two** hand-mirrored country-name maps, not three. Confirm
    nothing is expected in a third place (PHP, a `.tpl`) — I swept the whole tree and found none.
 
