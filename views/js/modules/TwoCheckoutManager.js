@@ -1352,6 +1352,18 @@ class TwoCheckoutManager {
     
     /**
      * Check if company data is missing (org number not selected)
+     *
+     * TWO-40: TWO carriers, not one. The hidden `companyid` input is the DOM's
+     * copy; the page-lifetime holder is the other, and it can legitimately hold a
+     * real selection while the DOM field is empty or absent altogether - on the
+     * payment step, where PrestaShop has removed the address form, the selection
+     * comes from seedConfirmedCompanySelectionFromServer() adopting the server's
+     * cart-scoped record. Reading only the DOM there misreports a genuine
+     * order-intent failure (a 500, a timeout) as "you didn't pick a company", and
+     * in tile mode showOrderIntentError() then swallows that branch entirely
+     * (suppressCompanyRelocationPrompt() returns early) - so the buyer is shown
+     * nothing at all for a real failure.
+     *
      * @returns {boolean} True if company org number is missing
      */
     isCompanyDataMissing() {
@@ -1369,6 +1381,16 @@ class TwoCheckoutManager {
         const companyIdField = document.querySelector("input[name='companyid']");
         if (companyIdField && companyIdField.value) {
             orgNumber = companyIdField.value.trim();
+        }
+
+        if (!orgNumber) {
+            // The second carrier - see this method's docblock. Through the same
+            // getter every other consumer of the selection reads, so the two
+            // cannot answer differently.
+            const confirmed = this.getConfirmedCompanySelection();
+            if (confirmed && confirmed.companyid) {
+                orgNumber = String(confirmed.companyid).trim();
+            }
         }
 
         return !orgNumber;
