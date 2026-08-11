@@ -1642,15 +1642,19 @@ class TwoCompanySearch {
      * @param {boolean} [onlyIfEmpty] Leave a value the customer typed alone.
      * @param {Element} [root] confine the write to one address block. Omitted -
      *        the document-wide default every existing caller relies on.
+     * @returns {boolean} whether the value actually reached a field. Callers that
+     *        RECORD the write must take their answer from this and not assume it,
+     *        or the record claims a value the form does not hold - which the next
+     *        render reads as buyer tampering and pins the whole address on.
      */
     writeOrganizationToAddressIdentifiers(orgNumber, onlyIfEmpty, root) {
         if (!this.isAddressLookupEnabled()) {
-            return;
+            return false;
         }
 
         const value = String(orgNumber || '').trim();
         if (!value) {
-            return;
+            return false;
         }
         // An INTERNAL identifier is never written into an address field, because
         // `dni` is a field the buyer reads and answers for, and a `TWO:`-prefixed
@@ -1667,9 +1671,10 @@ class TwoCompanySearch {
         // number reaches the payload through the session record and the published
         // selection, never through this field.
         if (window.TwoCompanyNumber && window.TwoCompanyNumber.isInternal(value)) {
-            return;
+            return false;
         }
 
+        let wrote = false;
         this.addressIdentifierFields(root).forEach(field => {
             if (field.length === 0) {
                 return;
@@ -1682,7 +1687,10 @@ class TwoCompanySearch {
             }
             field.val(value);
             field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR, value);
+            wrote = true;
         });
+
+        return wrote;
     }
 
     /**
@@ -2591,13 +2599,21 @@ class TwoCompanySearch {
             // markOrganizationFieldSelected().
             this.markOrganizationFieldSelected(selection.company, selection.companyid);
         }
+        // Whether the number actually LANDED, taken from the writer rather than
+        // assumed from having called it. The gate declines an internal `TWO:`
+        // identifier, which it must (it is never shown to the buyer) and which a
+        // sole-trader selection carries by default - so assuming the write
+        // succeeded would record a number the form does not hold, and the next
+        // render would read the empty field as buyer tampering and pin the whole
+        // address on the strength of a write that never happened.
+        let wroteNumber = false;
         if (wroteCompany && identifierFields.length > 0) {
             // Through the single gate every other organisation-number write goes
             // through, given a root so it stays inside this block. onlyIfEmpty is
             // false because writability was decided above, by the marker rule -
             // which, unlike "only if empty", lets a NEW company replace the
             // previous mirror's untouched number.
-            this.writeOrganizationToAddressIdentifiers(selection.companyid, false, root);
+            wroteNumber = this.writeOrganizationToAddressIdentifiers(selection.companyid, false, root);
         }
         const countryValue = this.mirrorCountryIntoForm(root, selection.countryIso);
         if (!wroteCompany && !countryValue) {
@@ -2606,12 +2622,18 @@ class TwoCompanySearch {
 
         memory.companyid = selection.companyid;
         memory.company = wroteCompany ? selection.company : '';
-        memory.organization = (wroteCompany && identifierFields.length > 0) ? selection.companyid : '';
+        memory.organization = wroteNumber ? selection.companyid : '';
         // A name written onto a form with no identification field leaves the number
         // half owing. Usually there is nowhere for it to go and it stays owing
         // harmlessly - but a mirrored COUNTRY write can rebuild this form into one
         // that does have the field, and then it is owed to a form that can take it.
-        memory.organizationPending = (wroteCompany && identifierFields.length === 0)
+        //
+        // An identifier the GATE refused is a different thing from one with nowhere
+        // to go, and must not be recorded as owing: no future form will ever be
+        // allowed to take it, so a debt is a retry on every mount that can never
+        // succeed. Only the genuinely-nowhere-to-put-it case owes.
+        memory.organizationPending = (wroteCompany && identifierFields.length === 0
+            && !(window.TwoCompanyNumber && window.TwoCompanyNumber.isInternal(selection.companyid)))
             ? selection.companyid
             : '';
         memory.countryValue = countryValue;
@@ -2715,9 +2737,16 @@ class TwoCompanySearch {
         // it from the name, and a number placed here with no `companyid` behind it
         // is invisible to the stale-selection guard too.
         this.markOrganizationFieldSelected(recordedName, pending);
-        this.writeOrganizationToAddressIdentifiers(pending, false, root);
-        memory.organization = pending;
+        // Answer taken from the writer, never assumed - see the same treatment in
+        // populateInvoiceAddressFromConfirmedCompany() above. A gate refusal here
+        // settles the debt rather than leaving it owing: the value is one no form
+        // will ever be allowed to take, so retrying on every mount cannot succeed.
+        const placed = this.writeOrganizationToAddressIdentifiers(pending, false, root);
+        memory.organization = placed ? pending : '';
         memory.organizationPending = '';
+        if (!placed) {
+            return false;
+        }
         // The number half has only now reached a field, so the record has to say so
         // - otherwise the next page load reads it as a number the buyer typed and
         // pins the whole address on the strength of the mirror's own write.
