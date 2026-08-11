@@ -52,6 +52,14 @@ class TwoCheckoutManager {
         // the page's lifetime rather than on the search instance that a
         // re-render replaces. See getConfirmedCompanySelection().
         this._confirmedCompanySelection = null;
+        // TWO-40: what the invoice-address mirror has already written on this page.
+        // Lives HERE, not on the search instance, because this class destroys and
+        // rebuilds that instance on every `updatedAddressForm` - and the mirror's
+        // two rules both need to outlive the rebuild: do not populate a second time
+        // (a cleared field must stay cleared), and re-mark a value core's own form
+        // rebuild stripped the marker off. See
+        // TwoCompanySearch.mirrorConfirmedCompanyToInvoiceAddress().
+        this._invoiceMirrorMemory = {};
         // TWO-40: and where the server has one for this cart, start from it. Must
         // run before init(), which is what constructs the modules that read the
         // selection back out.
@@ -2413,7 +2421,12 @@ class TwoCheckoutManager {
             // own constructor, so `window.TwoCheckoutManager_Instance` is not
             // assigned yet at that moment - a global lookup would find nothing on
             // the one call that matters, the mirror at mount time.
-            getConfirmedCompany: () => this.getConfirmedCompanySelection()
+            getConfirmedCompany: () => this.getConfirmedCompanySelection(),
+            // Page-lifetime, and deliberately the SAME object across every rebuild
+            // of the search: it is what stops the mirror re-populating a field the
+            // buyer cleared, and what lets it re-mark its own writes after core
+            // rebuilds the address form.
+            mirrorMemory: this._invoiceMirrorMemory
         });
     }
 

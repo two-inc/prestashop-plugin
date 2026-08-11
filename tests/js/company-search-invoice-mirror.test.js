@@ -27,6 +27,7 @@
 const {
     loadCompanySearch,
     buildAddressesStep,
+    rebuildAddressesStepAsCoreDoes,
     stubAjax,
     releaseWidgets
 } = require('./ps-harness');
@@ -285,9 +286,12 @@ describe('the marker guard: buyer input is never overwritten', () => {
 
     test('DOES replace a value a previous mirror wrote and the buyer has not touched', () => {
         buildAddressesStep({ editing: 'invoice' });
+        // One page, one memory - the manager's, shared across every rebuild of the
+        // search. A genuinely DIFFERENT company still mirrors.
+        const memory = {};
 
-        mount(PICKED);
-        mount({ company: 'Beta Holdings AS', companyid: '99', countryIso: 'FR' });
+        mount(PICKED, { mirrorMemory: memory });
+        mount({ company: 'Beta Holdings AS', companyid: '99', countryIso: 'FR' }, { mirrorMemory: memory });
 
         expect(companyField().val()).toBe('Beta Holdings AS');
         expect(countrySelect().val()).toBe(FR_OPTION);
@@ -295,17 +299,101 @@ describe('the marker guard: buyer input is never overwritten', () => {
 
     test('stops replacing once the buyer edits what a previous mirror wrote', () => {
         buildAddressesStep({ editing: 'invoice' });
+        const memory = {};
 
-        mount(PICKED);
+        mount(PICKED, { mirrorMemory: memory });
         companyField().val('Renamed By The Buyer');
 
-        mount({ company: 'Beta Holdings AS', companyid: '99', countryIso: 'FR' });
+        mount({ company: 'Beta Holdings AS', companyid: '99', countryIso: 'FR' }, { mirrorMemory: memory });
 
         expect(companyField().val()).toBe('Renamed By The Buyer');
     });
 });
 
+describe('populating and re-marking are two different operations', () => {
+    /**
+     * Core's `.js-country` handler is delegated on `body`, so the mirror's own
+     * country write triggers it: it POSTs `action=addressForm`, replaces every
+     * `.js-address-form` with the server's response, and restores the previous
+     * values with an INPUT-only, VALUE-only loop. See
+     * rebuildAddressesStepAsCoreDoes() for the reproduction and its source.
+     */
+    test('re-marks the company core restored, without restoring the marker itself', () => {
+        buildAddressesStep({ editing: 'invoice' });
+        const memory = {};
+        mount(PICKED, { mirrorMemory: memory });
+
+        expect(companyField().attr(MARKER)).toBe('Acme Trading Ltd');
+
+        // The buyer changes country; core rebuilds the form around them.
+        rebuildAddressesStepAsCoreDoes({ editing: 'invoice', countryId: FR_OPTION });
+
+        expect(companyField().val()).toBe('Acme Trading Ltd');
+        expect(companyField().attr(MARKER)).toBeUndefined();
+
+        // ...and the manager rebuilds the search on `updatedAddressForm`.
+        mount(PICKED, { mirrorMemory: memory });
+
+        expect(companyField().attr(MARKER)).toBe('Acme Trading Ltd');
+    });
+
+    test('does not re-mirror the country the buyer just changed to', () => {
+        buildAddressesStep({ editing: 'invoice' });
+        const memory = {};
+        mount(PICKED, { mirrorMemory: memory });
+
+        expect(countrySelect().val()).toBe(GB_OPTION);
+
+        rebuildAddressesStepAsCoreDoes({ editing: 'invoice', countryId: FR_OPTION });
+        mount(PICKED, { mirrorMemory: memory });
+
+        // The buyer's new country stands, and is not claimed as ours: a populate
+        // that ran again would see it as "still what the server rendered" and put
+        // the company's country back, overruling them.
+        expect(countrySelect().val()).toBe(FR_OPTION);
+        expect(countrySelect().attr(MARKER)).toBeUndefined();
+    });
+
+    test('does not re-fill a company the buyer deliberately cleared', () => {
+        buildAddressesStep({ editing: 'invoice' });
+        const memory = {};
+        mount(PICKED, { mirrorMemory: memory });
+
+        companyField().val('');
+        rebuildAddressesStepAsCoreDoes({ editing: 'invoice', countryId: FR_OPTION });
+        mount(PICKED, { mirrorMemory: memory });
+
+        expect(companyField().val()).toBe('');
+        expect(companyField().attr(MARKER)).toBeUndefined();
+    });
+
+    test('the re-mark never populates: an empty field stays empty and unclaimed', () => {
+        buildAddressesStep({ editing: 'invoice' });
+        const memory = { companyid: '12345678', company: 'Acme Trading Ltd', countryValue: GB_OPTION };
+
+        const instance = mount(null, { mirrorMemory: memory });
+        expect(instance.reapplyMirrorMarkers(instance.visibleAddressFormRoot())).toBe(false);
+
+        expect(companyField().val()).toBe('');
+        expect(companyField().attr(MARKER)).toBeUndefined();
+        expect(countrySelect().val()).toBe(SERVER_RENDERED_OPTION);
+    });
+});
+
 describe('when the mirror must be a true no-op', () => {
+    test('when the selection carries a company name with no organisation number', () => {
+        // Every other guard on this selection requires the PAIR - the manager's
+        // setter and the intent check both do - and a name that travels without
+        // its number is exactly what a weaker guard here would produce.
+        buildAddressesStep({ editing: 'invoice' });
+
+        mount({ company: 'Acme Trading Ltd', companyid: '', countryIso: 'GB' });
+
+        expect(companyField().val()).toBe('');
+        expect(companyField().attr(MARKER)).toBeUndefined();
+        expect(countrySelect().val()).toBe(SERVER_RENDERED_OPTION);
+    });
+
     test('on the delivery pass, even with everything else in place', () => {
         buildAddressesStep({ editing: 'delivery', sameAddress: false });
 

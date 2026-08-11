@@ -371,6 +371,46 @@ function buildAddressesStep(options) {
 }
 
 /**
+ * Rebuild the addresses step the way core's OWN country-change handler does, so
+ * a test can observe what that handler leaves behind (TWO-40).
+ *
+ * Reproduced from `themes/_core/js/address.js`, which is what runs when anything
+ * fires `change` on a `.js-country` select - our own mirrored country write
+ * included, since core binds it delegated on `body`:
+ *
+ *   1. read every `.js-address-form input`'s value into a map keyed by `name`;
+ *   2. `$('.js-address-form').replaceWith(resp.address_form)` - a fresh
+ *      server-rendered form, so the newly chosen country is the one rendered as
+ *      selected, and nothing the browser had added to the old nodes exists;
+ *   3. write the saved values back over the new `.js-address-form input` set.
+ *
+ * The load-bearing detail is that step 3 is INPUT-only and VALUE-only: `<select>`
+ * elements are not restored at all, and no ATTRIBUTE is. So a value the plugin
+ * wrote survives while the `data-two-autofilled-value` marker recording that the
+ * plugin wrote it does not - which is the whole reason the mirror has a re-mark
+ * operation. Modelling this with a simplified stand-in would prove nothing.
+ *
+ * @param {Object} [options] forwarded to buildAddressesStep - the SERVER's new
+ *        render, so pass the country the buyer just chose as `countryId`
+ * @returns {void}
+ */
+function rebuildAddressesStepAsCoreDoes(options) {
+    const saved = {};
+    document.querySelectorAll('.js-address-form input').forEach(function (input) {
+        saved[input.getAttribute('name')] = input.value;
+    });
+
+    buildAddressesStep(options);
+
+    document.querySelectorAll('.js-address-form input').forEach(function (input) {
+        const name = input.getAttribute('name');
+        if (Object.prototype.hasOwnProperty.call(saved, name)) {
+            input.value = saved[name];
+        }
+    });
+}
+
+/**
  * Replace the address form's DOM, as PrestaShop does on `updatedAddressForm`.
  *
  * The company input the caller held a jQuery object for is detached by this;
@@ -849,6 +889,7 @@ module.exports = {
     installStylesheet: installStylesheet,
     buildAddressForm: buildAddressForm,
     buildAddressesStep: buildAddressesStep,
+    rebuildAddressesStepAsCoreDoes: rebuildAddressesStepAsCoreDoes,
     replaceAddressForm: replaceAddressForm,
     stubAjax: stubAjax,
     callbackRecorder: callbackRecorder,
