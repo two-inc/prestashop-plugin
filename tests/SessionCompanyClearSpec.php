@@ -80,6 +80,8 @@ final class SessionCompanyClearSpec
         self::testBrowserSelectionWithholdsACountryMismatchedRecord();
         self::testBrowserSelectionWithholdsARecordCapturedAgainstAnotherAddress();
         self::testBrowserSelectionWithholdsAHalfRecord();
+        self::testBrowserSelectionIsReadOnlyOnACountryMismatch();
+        self::testBrowserSelectionIsReadOnlyOnAMissingCountryMarker();
     }
 
     /* ---- TWO-40 #13: what the browser is allowed to be told ---- */
@@ -176,6 +178,76 @@ final class SessionCompanyClearSpec
             null,
             $module->getTwoBrowserCompanySelection(),
             'a company name with no organisation number must not be published'
+        );
+    }
+
+    /**
+     * The publish path runs on EVERY checkout render, from the setMedia hook. So
+     * it has to be read-only: if withholding a record also destroyed it, merely
+     * drawing a page would throw away the buyer's confirmed selection whenever the
+     * cart's committed invoice address country disagreed with it - and that
+     * committed snapshot is the value this same work declares untrustworthy.
+     *
+     * Withheld AND intact, therefore. Clearing stays with the paths that consume a
+     * company, where it was before.
+     */
+    private static function testBrowserSelectionIsReadOnlyOnACountryMismatch(): void
+    {
+        // A GB company record against a cart billing to France.
+        self::seedBillingAddress('fr');
+        $cookie = Context::getContext()->cookie;
+        $module = self::makeModule(self::CART_ID);
+
+        TinyAssert::same(
+            null,
+            $module->getTwoBrowserCompanySelection(),
+            'a country-mismatched record must still be withheld'
+        );
+
+        foreach (self::COMPANY_COOKIE_KEYS as $key) {
+            TinyAssert::true(
+                isset($cookie->{$key}),
+                'rendering a page must not destroy the buyer\'s selection: ' . $key . ' was cleared'
+            );
+        }
+        TinyAssert::same(
+            '12345678',
+            (string) $cookie->two_company_id,
+            'the withheld record must survive the render intact'
+        );
+        // And the consuming path must still be able to reach its own verdict on it
+        // afterwards - which it cannot if the render already wiped the evidence.
+        $validated = $module->getTwoValidatedSessionCompanyData('FR');
+        TinyAssert::same('', (string) $validated['company_name']);
+        TinyAssert::false(
+            isset($cookie->two_company_id),
+            'the consuming path keeps the clear'
+        );
+    }
+
+    /**
+     * Same requirement on the other country guard: a record with no country marker
+     * is withheld from the browser without being destroyed.
+     */
+    private static function testBrowserSelectionIsReadOnlyOnAMissingCountryMarker(): void
+    {
+        self::seedBillingAddress('gb');
+        $cookie = Context::getContext()->cookie;
+        unset($cookie->two_company_country);
+        $module = self::makeModule(self::CART_ID);
+
+        TinyAssert::same(
+            null,
+            $module->getTwoBrowserCompanySelection(),
+            'a record with no country marker must be withheld'
+        );
+        TinyAssert::true(
+            isset($cookie->two_company_id),
+            'rendering a page must not destroy a record carrying no country marker'
+        );
+        TinyAssert::true(
+            isset($cookie->two_company_name),
+            'rendering a page must not destroy a record carrying no country marker'
         );
     }
 

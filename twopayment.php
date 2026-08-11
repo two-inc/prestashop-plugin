@@ -8977,18 +8977,39 @@ class Twopayment extends PaymentModule
      * server's cart-scoped record to the JS is what lets the invoice form be
      * seeded from the company the buyer already chose.
      *
-     * Deliberately routed through getTwoValidatedSessionCompanyData() rather
-     * than the raw reader, and with the address-switch comparison applied on top
-     * of it, so this cannot publish a record either guard would have rejected:
+     * READ-ONLY, and that is the whole reason the guard comparisons below are
+     * written out here instead of borrowing getTwoValidatedSessionCompanyData().
+     * That method DESTROYS the record when its country guards reject it, which is
+     * right on the paths that CONSUME a company - they are about to build an order
+     * payload - and wrong here. This runs from
+     * hookActionFrontControllerSetMedia(), i.e. on every checkout render, so a
+     * destructive read would mean that merely drawing a page throws the buyer's
+     * confirmed selection away whenever the cart's COMMITTED invoice address is in
+     * a different country from the company they picked. That committed snapshot is
+     * exactly the value TWO-40 already declares untrustworthy for the sole-trader
+     * gate, so deciding a selection is dead on its evidence - permanently, on a
+     * render - is not a decision this method is entitled to make.
      *
-     *  - the validated read discards a record whose country disagrees with the
-     *    cart's billing country, and one carrying no country marker at all;
-     *  - the address comparison below is the same one the order-payload path
-     *    applies, and for the same reason - an organisation number captured
-     *    against one address must not be attached to another. Compared only
-     *    when both sides are known, because 0 on either side is not evidence of
-     *    a switch (the address-editor page routinely has no invoice address on
-     *    the cart at all).
+     * So: the same three questions, asked and not acted upon. A record that fails
+     * any of them is withheld from the browser and left in place for the consuming
+     * path to judge, and to clear if it still disagrees.
+     *
+     *  - a company name with no organisation number beside it is half a record and
+     *    nothing the browser can act on;
+     *  - the country comparison is getTwoValidatedSessionCompanyData()'s, minus
+     *    its clear: a record whose country disagrees with the cart's billing
+     *    country is withheld, and so is one carrying no country marker at all;
+     *  - the address comparison is the one the order-payload path applies, and for
+     *    the same reason - an organisation number captured against one address
+     *    must not be attached to another. Compared only when both sides are known,
+     *    because 0 on either side is not evidence of a switch (the address-editor
+     *    page routinely has no invoice address on the cart at all).
+     *
+     * readTwoCartScopedCompany() is still the reader, and it does clear a record
+     * stamped with a DIFFERENT cart. That is not the destructive behaviour this
+     * method avoids: such a record is unusable by every path on this request, on
+     * this cart, whatever any of them decides - so there is nothing for a later
+     * consumer to judge differently.
      *
      * @return array|null ['company' => string, 'companyid' => string,
      *                    'country' => string, 'address_id' => int]
@@ -9000,9 +9021,17 @@ class Twopayment extends PaymentModule
             return null;
         }
 
-        $country_iso = $this->getCheckoutBillingCountryIso();
-        $validated = $this->getTwoValidatedSessionCompanyData($country_iso);
-        if (Tools::isEmpty($validated['company_name']) || Tools::isEmpty($validated['organization_number'])) {
+        $company_name = trim((string) $stored['name']);
+        $organization_number = trim((string) $stored['id']);
+        if (Tools::isEmpty($company_name) || Tools::isEmpty($organization_number)) {
+            return null;
+        }
+
+        $stored_country = Tools::strtoupper(trim((string) $stored['country']));
+        $country_iso = Tools::strtoupper(trim((string) $this->getCheckoutBillingCountryIso()));
+        if (!Tools::isEmpty($country_iso)
+            && (Tools::isEmpty($stored_country) || $stored_country !== $country_iso)
+        ) {
             return null;
         }
 
@@ -9014,9 +9043,9 @@ class Twopayment extends PaymentModule
         }
 
         return array(
-            'company' => $validated['company_name'],
-            'companyid' => $validated['organization_number'],
-            'country' => Tools::strtoupper(trim((string) $stored['country'])),
+            'company' => $company_name,
+            'companyid' => $organization_number,
+            'country' => $stored_country,
             'address_id' => $captured_address_id,
         );
     }
