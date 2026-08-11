@@ -242,6 +242,7 @@ class TwoCompanySearch {
         this.setupAddressIdentifierSync();
         this.setupAutocomplete();
         this.setupCountryChangeListener();
+        this.mirrorConfirmedCompanyToInvoiceAddress();
         this.isInitialized = true;
     }
     
@@ -1729,6 +1730,288 @@ class TwoCompanySearch {
             field.trigger('input');
             field.trigger('change');
         });
+    }
+
+    /**
+     * Whether the buyer's current state says their invoice address is a
+     * DIFFERENT address from the one they are shipping to (TWO-40).
+     *
+     * Named and worded for what the buyer has STATED, never for the state of a
+     * checkbox, and that is a requirement rather than a preference. Two reasons,
+     * both of which mislead anyone who reads this as "is the box ticked":
+     *
+     *  1. PrestaShop offers the checkbox on the FIRST pass only, while the
+     *     delivery form is being edited, and its polarity is inverted from the
+     *     question asked here - CHECKED means the two addresses are the SAME. On
+     *     every later pass there is no checkbox at all: core renders a link
+     *     ("billing address differs from shipping address") whose href navigates,
+     *     so the invoice side is revealed by a page load and there is no
+     *     client-side toggle to observe.
+     *  2. Another platform in this plugin family expresses the same buyer
+     *     statement with a checkbox of the OPPOSITE polarity, so an engineer
+     *     porting this and reading "checked" here would wire it up backwards.
+     *     The abstraction exists to make that impossible.
+     *
+     * Resolution, deliberately polarity-neutral in the path that matters:
+     *
+     *  1. if the shared-address control is in the DOM at all, the buyer's live
+     *     statement is its NEGATION - it asks the opposite question;
+     *  2. else, the presence of an invoice block of either shape - an editable
+     *     form or a selector over saved addresses - IS the statement, because
+     *     core renders that block only when the two addresses are not shared;
+     *  3. else false. An unclear signal is not evidence that the addresses
+     *     differ, and everything downstream of this treats false as a no-op.
+     *
+     * @returns {boolean}
+     */
+    buyerStatesInvoiceAddressDiffers() {
+        const sharedAddressControl = document.querySelector("input[name='use_same_address']");
+        if (sharedAddressControl) {
+            return !sharedAddressControl.checked;
+        }
+
+        // `.js-invoice-address` is a tolerance for themes that keep core's
+        // structure but not its ids. Nothing else is accepted: these are the
+        // shapes core's own templates emit, and inventing selectors it never
+        // emits would make this answer true on pages where it is false.
+        return !!document.querySelector('#invoice-address, #invoice-addresses, .js-invoice-address');
+    }
+
+    /**
+     * Which address the one editable form on the page is for - 'delivery',
+     * 'invoice', or '' when there is no editable form (TWO-40).
+     *
+     * Read from the hidden field core's address form emits carrying exactly that
+     * word. There is only ever ONE editable address form on a PrestaShop
+     * checkout - the flags for the two are set in mutually exclusive branches -
+     * so a single unscoped read is unambiguous.
+     *
+     * @returns {string}
+     */
+    visibleAddressFormType() {
+        const marker = document.querySelector("input[name='saveAddress']");
+        if (!marker) {
+            return '';
+        }
+        return String(marker.value || '').trim().toLowerCase();
+    }
+
+    /**
+     * The element to scope the visible address form's field lookups to, or null.
+     *
+     * Innermost-first, because core nests the rendered address form's own
+     * `<form>` inside the step's outer one (HTML drops the inner tag, so the
+     * block element is the reliable boundary, not the form).
+     *
+     * @returns {?Element}
+     */
+    visibleAddressFormRoot() {
+        const marker = document.querySelector("input[name='saveAddress']");
+        if (!marker || typeof marker.closest !== 'function') {
+            return null;
+        }
+        return marker.closest('#invoice-address, #delivery-address, .js-invoice-address, form, .js-address-form');
+    }
+
+    /**
+     * Carry a company selection made on the shipping pass over to the invoice
+     * address form (TWO-40). Company NAME and COUNTRY only.
+     *
+     * This is a CROSS-PAGE-LOAD operation, and it has to be: PrestaShop never
+     * renders two editable address forms at once, so at the moment the buyer
+     * picks a company there are no invoice fields in the document to write into.
+     * The invoice form arrives later, on its own page load, and this runs when it
+     * does - at mount, from init(). There is no reveal event to listen for.
+     *
+     * Nothing happens unless all of these hold:
+     *
+     *  - the merchant has address population switched on. This writes into the
+     *    address form, so it belongs behind the address-population switch like
+     *    every other write here - which also makes it inert on the payment tile
+     *    mount, where that switch is forced off;
+     *  - the editable form on screen is the INVOICE one. On the shipping pass
+     *    there is nothing to carry anything to yet;
+     *  - the buyer's current state says the two addresses differ. When they do
+     *    not there is one address and nothing to mirror, and this is a true
+     *    no-op - it does not populate anything speculatively;
+     *  - a company selection exists for this cart.
+     *
+     * Street, postcode and city are deliberately NOT mirrored. The buyer has
+     * just said this is a different address; its street is legitimately not the
+     * company's registered one, and writing it would be the plugin overruling
+     * a statement the buyer made explicitly.
+     *
+     * @returns {void}
+     */
+    mirrorConfirmedCompanyToInvoiceAddress() {
+        if (this._destroyed) {
+            return;
+        }
+        if (!this.isAddressLookupEnabled()) {
+            return;
+        }
+        if (this.visibleAddressFormType() !== 'invoice') {
+            return;
+        }
+        if (!this.buyerStatesInvoiceAddressDiffers()) {
+            return;
+        }
+        const root = this.visibleAddressFormRoot();
+        if (!root) {
+            return;
+        }
+        const selection = this.confirmedCompanyForMirror();
+        if (!selection) {
+            return;
+        }
+
+        // Scoped to the form element, never document-wide: a write by global
+        // selector with no awareness of which block it landed in is the defect
+        // class this whole feature has to avoid.
+        this.writeMirroredValue($(root).find("input[name='company']").first(), selection.company);
+        this.mirrorCountryIntoForm(root, selection.countryIso);
+    }
+
+    /**
+     * The confirmed selection the mirror may act on, or null.
+     *
+     * Through the injected getter, so it comes from the page-lifetime holder
+     * (seeded from the server's cart-scoped record on this load) with every check
+     * that holder's consumers already apply, rather than from this instance -
+     * which is younger than the navigation the mirror exists to cross.
+     *
+     * @returns {?{company: string, countryIso: string}}
+     */
+    confirmedCompanyForMirror() {
+        const getter = this.config.getConfirmedCompany;
+        if (typeof getter !== 'function') {
+            return null;
+        }
+        let selection = null;
+        try {
+            selection = getter();
+        } catch (e) {
+            return null;
+        }
+        if (!selection) {
+            return null;
+        }
+        const company = selection.company ? String(selection.company).trim() : '';
+        if (!company) {
+            return null;
+        }
+        return {
+            company: company,
+            countryIso: selection.countryIso ? String(selection.countryIso).toUpperCase() : ''
+        };
+    }
+
+    /**
+     * Write one mirrored value, respecting the autofill marker.
+     *
+     * Only into a field that is EMPTY, or whose current value is still exactly
+     * what a previous fill recorded writing there. Anything else is the buyer's
+     * own answer and is left alone - overwriting a company name the buyer typed
+     * by hand would be the same class of bug as a company picked in one place
+     * rewriting an address the buyer is not looking at.
+     *
+     * Marks what it writes, same attribute and same meaning as every other write
+     * in this class, so a later pass can recognise it in turn.
+     *
+     * @param {Object} field jQuery object, possibly empty
+     * @param {string} value
+     * @returns {boolean} whether the value was written
+     */
+    writeMirroredValue(field, value) {
+        const incoming = String(value == null ? '' : value).trim();
+        if (!incoming) {
+            return false;
+        }
+        if (!field || field.length === 0) {
+            return false;
+        }
+        const current = String(field.val() == null ? '' : field.val());
+        const written = field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR);
+        const oursAndUntouched = typeof written !== 'undefined' && written === current;
+        if (current !== '' && !oursAndUntouched) {
+            return false;
+        }
+        field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR, incoming);
+        if (current !== incoming) {
+            field.val(incoming);
+            field.trigger('input');
+            field.trigger('change');
+        }
+        return true;
+    }
+
+    /**
+     * Mirror the country into the visible form's country select.
+     *
+     * Core's country select carries a disabled placeholder option with an empty
+     * value, which is what "empty" means for a select here: an address form the
+     * buyer has not answered the country question on yet. Once the select holds a
+     * real country, the marker rule applies exactly as it does to a text field -
+     * a value that is not ours and untouched is the buyer's answer, and is left.
+     *
+     * @param {Element} root the visible address form's scope
+     * @param {string} iso
+     * @returns {boolean} whether the country was written
+     */
+    mirrorCountryIntoForm(root, iso) {
+        const target = String(iso == null ? '' : iso).trim().toUpperCase();
+        if (!/^[A-Z]{2}$/.test(target)) {
+            return false;
+        }
+        const select = $(root).find("select[name='id_country'], select[name='country']").first();
+        if (select.length === 0) {
+            return false;
+        }
+        const optionValue = this.countryOptionValueForIso(select[0], target);
+        if (optionValue === null) {
+            return false;
+        }
+        return this.writeMirroredValue(select, optionValue);
+    }
+
+    /**
+     * The value of the option in a country select standing for an ISO code, or
+     * null when the select has no such option.
+     *
+     * Same three resolution strategies the country READ side uses, in the same
+     * order, because they have to agree: the option's own ISO attribute (all
+     * three spellings themes use), then the server-built id-to-ISO map, then the
+     * option's visible text. The placeholder option is skipped - it has no value
+     * and stands for no country.
+     *
+     * @param {HTMLSelectElement} select
+     * @param {string} iso uppercase alpha-2
+     * @returns {?string}
+     */
+    countryOptionValueForIso(select, iso) {
+        const options = select.options || [];
+        for (let index = 0; index < options.length; index++) {
+            const option = options[index];
+            if (!option.value) {
+                continue;
+            }
+            const attrIso = option.getAttribute('data-iso-code')
+                || option.getAttribute('data-iso')
+                || option.getAttribute('data-country-iso');
+            if (attrIso && String(attrIso).toUpperCase() === iso) {
+                return option.value;
+            }
+            const mapped = (window.twopayment && window.twopayment.countries)
+                ? window.twopayment.countries[option.value]
+                : null;
+            if (mapped && String(mapped).toUpperCase() === iso) {
+                return option.value;
+            }
+            if (this.extractCountryFromText(String(option.textContent || '')) === iso) {
+                return option.value;
+            }
+        }
+        return null;
     }
 
     /**
