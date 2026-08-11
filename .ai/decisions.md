@@ -636,6 +636,28 @@ tier-exact migration is not worth its risk or its complexity. `upgrade/upgrade-2
 resolving read, one `updateValue()`, and a name-wide `deleteByName()`, and its own header states the
 loss it accepts.
 
+## A failed copy keeps the old row and reports it — it does NOT fail the upgrade
+
+The one path with no good outcome: `Configuration::updateValue()` answers falsy or raises, so the value
+never reaches the new key. The script keeps the old row there (it is then the only copy of the position
+the merchant chose) and logs at severity 3 — **and still returns `true`**.
+
+Returning `false` was weighed and rejected. It *would* make the script re-runnable: core captures the
+return value, only a truthy one advances the `upgraded_to` it writes to `ps_module.version`, and the
+version-gated discovery would therefore offer `upgrade-2.7.6.php` again on the next attempt. But before
+that, core calls `disable()` on the module for a falsy return — which deletes its `module_shop` rows, so
+the payment method leaves the storefront, and (because this module ships an `override/` directory) also
+runs `uninstallOverrides()` and strips the module's overrides out of the shop's override tree. Trading a
+working checkout for the automatic recovery of one config row is the wrong way round; the module's rule
+that a shop which cannot be tidied must still finish upgrading holds here.
+
+The consequence is that **the kept row is a record, not a remedy**: nothing re-runs the script (no
+re-run, and Doug ruled out a read shim), so recovery is a human re-selecting the position on the
+module's configuration page, or copying the value across in `ps_configuration`. The log message says
+that and deliberately promises nothing automatic. Both write-failure shapes — falsy return and raised
+exception — leave the same shop state and so are reported identically; the offline spec pins that, and
+pins the `true` return on every path.
+
 **Everything below this heading stands as the record of what a SAFE rename requires**, if the plugin
 ever acquires multistore merchants — at which point the shipped script is not sufficient and this is
 the work. It is also the record of three real defects, kept because each of them was found by review

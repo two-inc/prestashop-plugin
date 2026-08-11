@@ -181,6 +181,19 @@ namespace {
          */
         public static array $configurationUpdateFailsOnce = [];
         /**
+         * Config key names whose NEXT Configuration::updateValue() must THROW a
+         * PrestaShopDatabaseException instead of answering. The other real shape
+         * of a failed write (core's Db can raise as well as return an
+         * accumulated result), and the one that skips everything after the call
+         * inside a try - so a caller that records its state inside the try
+         * reports a state the shop is not in (TWO-40).
+         *
+         * One-shot, like $configurationUpdateFailsOnce. Value is the message.
+         *
+         * @var array<string,string>
+         */
+        public static array $configurationUpdateThrowsOnce = [];
+        /**
          * Same, for Configuration::deleteByName(): the name whose next delete
          * answers `false` and leaves the row in place.
          *
@@ -325,6 +338,7 @@ namespace {
             self::$images = [];
             self::$taxRuleRates = [];
             self::$configurationUpdateFailsOnce = [];
+            self::$configurationUpdateThrowsOnce = [];
             self::$configurationDeleteFailsOnce = [];
             self::$dbExecuteSResponses = [];
             self::$dbLastExecuteS = [];
@@ -671,6 +685,14 @@ namespace {
 
         public static function updateValue($key, $value): bool
         {
+            // Core's Db can also RAISE on a failed write; see
+            // StubStore::$configurationUpdateThrowsOnce.
+            if (!empty(StubStore::$configurationUpdateThrowsOnce[$key])) {
+                $message = StubStore::$configurationUpdateThrowsOnce[$key];
+                unset(StubStore::$configurationUpdateThrowsOnce[$key]);
+                throw new PrestaShopDatabaseException($message);
+            }
+
             // Core can answer falsy here without throwing; see
             // StubStore::$configurationUpdateFailsOnce.
             if (!empty(StubStore::$configurationUpdateFailsOnce[$key])) {

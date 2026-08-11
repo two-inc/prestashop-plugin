@@ -33,7 +33,14 @@ declare(strict_types=1);
  *    by removing it;
  *  - a copy that FAILS without throwing keeps the old row instead - it is then
  *    the only surviving copy of the value - and says so in the log at the
- *    raised severity;
+ *    raised severity, naming a recovery a human can actually perform and NOT
+ *    promising a re-run (the script cannot re-run: it returns true, so core
+ *    records the module at 2.7.6 and only runs scripts above the recorded
+ *    version - see the script header's WHY NOT RETURN false section);
+ *  - a copy that THROWS is reported as the SAME state as one that answered
+ *    falsy, at the same severity: the value is uncarried and the old row is
+ *    untouched either way, so a log that distinguished them would be describing
+ *    the implementation, not the shop;
  *  - a delete that FAILS after a successful copy is reported rather than being
  *    folded into a success message;
  *  - a second run changes nothing.
@@ -56,6 +63,7 @@ final class CompanySearchLocationKeyMigrationSpec
         self::testEmptyOldRowCountsAsAbsent();
         self::testExistingNewValueWinsOverTheOldRow();
         self::testFailedCopyKeepsTheOldRow();
+        self::testCopyThatThrowsIsReportedAsTheSameStateAsAFalsyCopy();
         self::testFailedDeleteAfterASuccessfulCopyIsReported();
         self::testSecondRunChangesNothing();
     }
@@ -67,10 +75,21 @@ final class CompanySearchLocationKeyMigrationSpec
         Tools::resetTestValues();
     }
 
+    /**
+     * The `true` here is load-bearing, not boilerplate: it pins the decision
+     * that this script reports every outcome and fails NONE of them. Core
+     * disables the module on a falsy return (and, since this module ships an
+     * `override/` directory, strips its overrides out of the shop) - so a failed
+     * config write must not answer false, however recoverable that would make
+     * the setting. See the script header's WHY NOT RETURN false section.
+     */
     private static function upgrade(TwopaymentTestHarness $module): void
     {
         require_once dirname(__DIR__) . '/upgrade/upgrade-2.7.6.php';
-        TinyAssert::true(upgrade_module_2_7_6($module));
+        TinyAssert::true(
+            upgrade_module_2_7_6($module),
+            'the migration must never fail the upgrade, on any path'
+        );
     }
 
     private static function resolve(TwopaymentTestHarness $module): string
@@ -233,9 +252,69 @@ final class CompanySearchLocationKeyMigrationSpec
             'the old row is the only surviving copy of the value and must be kept'
         );
         TinyAssert::same('0', (string) Configuration::get(self::OLD_KEY));
+        self::assertKeptRowReportedWithAHumanRecovery();
+    }
+
+    /**
+     * The other real write-failure shape: core's Db raises as well as returning
+     * an accumulated result. The SHOP is in the same state as above - nothing on
+     * the new key, the old row untouched and uncarried - so the report must be
+     * the same too. It was not: the kept-old-row state used to be recorded
+     * inside the try, after the write, so a throw skipped it and the log claimed
+     * "the delete never ran" at severity 2 instead.
+     */
+    private static function testCopyThatThrowsIsReportedAsTheSameStateAsAFalsyCopy(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        Configuration::updateValue(self::OLD_KEY, '0');
+        StubStore::$configurationUpdateThrowsOnce[self::NEW_KEY] = 'MySQL server has gone away';
+
+        self::upgrade($module);
+
+        TinyAssert::false(
+            Configuration::hasKey(self::NEW_KEY),
+            'a write that threw must not leave a row on the new key'
+        );
         TinyAssert::true(
-            strpos(self::lastLogMessage(), 'deliberately KEPT') !== false,
-            'the kept old row must be logged as deliberate, with a re-run instruction'
+            Configuration::hasKey(self::OLD_KEY),
+            'the old row is the only surviving copy of the value and must be kept'
+        );
+        TinyAssert::same('0', (string) Configuration::get(self::OLD_KEY));
+        TinyAssert::true(
+            strpos(self::lastLogMessage(), 'MySQL server has gone away') !== false,
+            'the raised message must reach the log - it is the only clue to the cause'
+        );
+        TinyAssert::true(
+            strpos(self::lastLogMessage(), 'the delete never ran') === false,
+            'a throw from the copy must not be reported as a state where nothing was attempted'
+        );
+        self::assertKeptRowReportedWithAHumanRecovery();
+    }
+
+    /**
+     * Shared by both write-failure shapes on purpose: the assertion is that they
+     * are INDISTINGUISHABLE in the log, because the shop state they leave is.
+     */
+    private static function assertKeptRowReportedWithAHumanRecovery(): void
+    {
+        $message = self::lastLogMessage();
+
+        TinyAssert::true(
+            strpos($message, 'deliberately KEPT') !== false,
+            'the kept old row must be logged as deliberate'
+        );
+        // The script returns true, so core records 2.7.6 and never runs this
+        // again: an instruction to re-run the upgrade cannot be followed and
+        // must not be given.
+        TinyAssert::true(
+            strpos($message, 're-run') === false,
+            'the log must not offer a re-run of an upgrade that can never run again'
+        );
+        TinyAssert::true(
+            strpos($message, 're-select the company-search position') !== false,
+            'the log must name a recovery a human can actually perform'
         );
         TinyAssert::same(
             3,

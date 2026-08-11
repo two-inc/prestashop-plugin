@@ -20,12 +20,25 @@
  *
  * The delete is the LAST thing that happens and it is conditional on the copy:
  * `Configuration::updateValue()` returns an accumulated Db result and can be
- * falsy WITHOUT throwing, so when a copy was attempted and did not land, the
- * old row is the only surviving copy of the merchant's position and is kept
- * deliberately - logged at severity 3, telling the operator to re-run. Deleting
- * it there would destroy the value the script exists to preserve. On every
- * other path (nothing usable to carry, or the new key already holding a usable
- * value) the old row carries nothing and is removed.
+ * falsy WITHOUT throwing (and can also throw), so when a copy was attempted and
+ * did not land, the old row is the only surviving copy of the merchant's
+ * position and is kept deliberately - logged at severity 3. Deleting it there
+ * would destroy the value the script exists to preserve. On every other path
+ * (nothing usable to carry, or the new key already holding a usable value) the
+ * old row carries nothing and is removed.
+ *
+ * THE KEPT ROW IS A RECORD, NOT AN AUTOMATIC RECOVERY
+ *
+ * There is no re-run. This function returns true on every path (see the last
+ * paragraph before IDEMPOTENCY for why), so core records the module at 2.7.6,
+ * and upgrade scripts only run for versions strictly ABOVE the recorded one -
+ * so nothing executes `upgrade_module_2_7_6()` a second time, and there is no
+ * read shim for the old key. The kept row is therefore the surviving RECORD of
+ * the position the merchant chose, for a human to act on: once the write
+ * failure is resolved, re-select the position on the module's configuration
+ * page, or copy the value into the new key's `ps_configuration` row by hand.
+ * The log message says exactly that and deliberately does not promise an
+ * automatic remedy.
  *
  * DELIBERATELY GLOBAL-TIER-ONLY - READ THIS BEFORE CALLING IT A BUG
  *
@@ -92,9 +105,13 @@
  *
  * IDEMPOTENCY
  *
- * A second run finds no old key at all: `Configuration::get()` returns false,
- * nothing is copied, and `deleteByName()` on an absent name is a no-op. A
- * fresh 2.7.6 install never reaches this script.
+ * Running this twice is harmless on every path where the old key was removed:
+ * `Configuration::get()` returns false, nothing is copied, and `deleteByName()`
+ * on an absent name is a no-op. Where the old row was KEPT or its delete failed
+ * the row is still there, and a second run would carry it - which is correct,
+ * not a defect, but it is also hypothetical: core never runs this script twice
+ * (see THE KEPT ROW above), so a second run only happens if a human arranges
+ * one. A fresh 2.7.6 install never reaches this script.
  *
  * The copy is guarded on BOTH keys - the old one having a usable value AND the
  * new one having none yet. The second half is not just re-run protection: the
@@ -109,6 +126,26 @@
  * true unconditionally, same reasoning as the 2.7.1-2.7.5 scripts. A shop
  * whose setting could not be carried must still finish upgrading - it lands on
  * the default, which is a wrong position, not a broken shop.
+ *
+ * WHY NOT RETURN false ON A FAILED COPY, WHICH WOULD MAKE IT RE-RUNNABLE
+ *
+ * Returning false genuinely would leave this version un-bumped and the script
+ * re-runnable: `Module::runUpgradeModule()` captures the return value, and only
+ * a truthy one advances `upgraded_to`, which is the value it then writes to
+ * `ps_module.version` - a falsy return leaves the recorded version where it
+ * was, so `Module::needUpgrade()`/`loadUpgradeVersionList()` would offer
+ * `upgrade-2.7.6.php` again on the next attempt. It is rejected anyway, because
+ * of what core does with a falsy return BEFORE that: it calls
+ * `$this->disable()` on the module. That deletes the module's `module_shop`
+ * rows - the payment method disappears from the storefront - and, because this
+ * module ships an `override/` directory, `disable()` also runs
+ * `uninstallOverrides()` and strips the module's overrides out of the shop's
+ * override tree. So a single failed `ps_configuration` write would take the
+ * payment method offline in exchange for making one setting recoverable
+ * automatically. That trade is the wrong way round: the setting landing on its
+ * default is a wrong position, and disabling the module is the broken shop the
+ * paragraph above exists to prevent. The kept old row plus a severity-3 log
+ * gets the value recovered by hand without breaking checkout.
  *
  * Created: 2026-08-11
  *
@@ -133,7 +170,6 @@ function upgrade_module_2_7_6($module)
     $newAlreadySet = false;
     $copyAttempted = false;
     $carried = false;
-    $keptOldRow = false;
     $deleteAttempted = false;
     $deleted = false;
     $threw = null;
@@ -176,8 +212,13 @@ function upgrade_module_2_7_6($module)
         // there would be the data loss this whole script exists to avoid. On
         // every other path - nothing usable to carry, or the new key already
         // holding a usable value - the old row is redundant and goes.
-        $keptOldRow = ($copyAttempted && !$carried);
-        if (!$keptOldRow) {
+        //
+        // Gated on the expression rather than on $keptOldRow, which is derived
+        // from the same expression AFTER the catch: updateValue() can THROW as
+        // well as answer falsy, and a $keptOldRow assigned in here would still
+        // be false on that path and make the log describe a state the shop is
+        // not in.
+        if (!($copyAttempted && !$carried)) {
             $deleteAttempted = true;
             // Returns false without throwing on a Validate failure or a failed
             // Db::execute, in which case the old row is still there and the log
@@ -192,6 +233,13 @@ function upgrade_module_2_7_6($module)
         // WHERE the throw came from.
         $threw = $e->getMessage();
     }
+
+    // Derived out here, where BOTH the normal path and the throw path pass
+    // through. A throw from updateValue() - the likelier write-failure shape -
+    // leaves the value uncarried with the old row untouched, which is exactly
+    // the state a falsy updateValue() leaves, so it must be reported as the same
+    // state: the old row kept, at the raised severity, with the recovery wording.
+    $keptOldRow = ($copyAttempted && !$carried);
 
     $severity = 1;
 
@@ -219,16 +267,24 @@ function upgrade_module_2_7_6($module)
     if ($deleted) {
         $outcome .= '; the old key PS_TWO_ENABLE_COMPANY_NAME was removed';
     } elseif ($keptOldRow) {
+        // No automatic remedy is offered on purpose: this function returns true,
+        // so the module is recorded at 2.7.6 and no upgrade script runs again.
+        // See the script header's THE KEPT ROW IS A RECORD section.
         $outcome .= '; PS_TWO_ENABLE_COMPANY_NAME was deliberately KEPT because it now holds the only'
-            . ' copy of the value - re-run this upgrade once the write failure is resolved';
+            . ' copy of the value, and this upgrade will NOT run again - once the write failure is'
+            . ' resolved, recover the setting by hand: re-select the company-search position on the'
+            . ' Two Payment configuration page, or copy the value onto'
+            . ' PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS in ps_configuration';
         $severity = 3;
     } elseif ($deleteAttempted) {
         $outcome .= '; deleting the old key FAILED, so PS_TWO_ENABLE_COMPANY_NAME may still be present in'
-            . ' ps_configuration and a later run of this script will see it again';
+            . ' ps_configuration - harmless, nothing reads it, but this upgrade will not run again to'
+            . ' remove it';
         $severity = max($severity, 2);
     } else {
         $outcome .= '; the delete never ran, so PS_TWO_ENABLE_COMPANY_NAME may still be present in'
-            . ' ps_configuration and a later run of this script will see it again';
+            . ' ps_configuration - harmless, nothing reads it, but this upgrade will not run again to'
+            . ' remove it';
         $severity = max($severity, 2);
     }
 
