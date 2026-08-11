@@ -577,6 +577,70 @@ describe('scope: the pin only applies where there is a secondary address', () =>
     });
 
     /**
+     * TWO-40, round 1 of the content-match rework.
+     *
+     * "No secondary address on screen" and "the invoice form IS on screen but the
+     * scope resolution failed closed" are different states, and the fill used to
+     * treat them as one - so on a theme that flattens the block containers away, the
+     * document-wide fill wrote into exactly the markup visibleAddressFormRoot() had
+     * just refused to scope to, with the other address inside it. It fails closed
+     * now, the same way the mirror does.
+     */
+    test('a fill on an invoice form whose scope failed closed writes nothing, anywhere', () => {
+        buildAddressesStep({
+            editing: 'invoice',
+            countryId: GB_OPTION,
+            blockContainers: false,
+            blockIds: false
+        });
+        publishMirrorWrites(null);
+        const search = mount(PICKED);
+
+        // The premise, both halves: the invoice form is the editable one, and no
+        // single-address scope resolves for it.
+        expect(search.visibleAddressFormType()).toBe('invoice');
+        expect(search.visibleAddressFormRoot()).toBeNull();
+
+        search.autoFillAddressIfNeeded({
+            addresses: [{ street_address: '1 Register Street', postal_code: 'EC1A 1BB', city: 'London' }]
+        }, undefined);
+
+        expect($("input[name='address1']").val()).toBe('');
+        expect($("input[name='postcode']").val()).toBe('');
+        expect($("input[name='city']").val()).toBe('');
+        expect($("input[name='address1']").attr(MARKER)).toBeUndefined();
+        expect(reportedWrites()).toHaveLength(0);
+        // And the other address, which is what a document-wide write here would be
+        // reaching into, still names only the saved address the buyer picked.
+        expect($("input[name='id_address_delivery']").val()).toBe('7');
+    });
+
+    /**
+     * The same flattened theme with the OTHER address gone, so the scope resolves
+     * again - the companion that stops the skip above from passing because the
+     * fixture is inert rather than because the guard fired.
+     */
+    test('the same flattened form still fills when it is the page\'s only address', () => {
+        buildAddressesStep({
+            editing: 'invoice',
+            countryId: GB_OPTION,
+            blockContainers: false,
+            blockIds: false
+        });
+        document.querySelector('.js-address-selector').remove();
+        publishMirrorWrites(null);
+        const search = mount(PICKED);
+
+        expect(search.visibleAddressFormRoot()).not.toBeNull();
+
+        search.autoFillAddressIfNeeded({
+            addresses: [{ street_address: '1 Register Street', postal_code: 'EC1A 1BB', city: 'London' }]
+        }, undefined);
+
+        expect($("input[name='address1']").val()).toBe('1 Register Street');
+    });
+
+    /**
      * And the fill's own writes must not then pin the address they just filled.
      */
     test('a street the fill wrote does not pin the address on the next render', () => {
