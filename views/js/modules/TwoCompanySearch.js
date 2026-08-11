@@ -1819,9 +1819,40 @@ class TwoCompanySearch {
      *
      * Used to recognise a candidate scope that is really the STEP: anything with
      * one of these INSIDE it spans more than one address, and is not a scope.
+     *
+     * The ids alone are NOT enough, and an id-only list missed the guard's own
+     * motivating case (TWO-40, round 6). A theme is free to drop core's ids while
+     * keeping the rest of its markup, and then the widest candidate - the step's
+     * outer wrapper, which core emits itself - looks blockless while still
+     * containing the other address. So this also names every CLASS core puts on a
+     * saved-address selector and on the address items inside it, and the radio
+     * that carries the other address's id. That radio is the sturdiest of the
+     * three kinds of marker: it is a form field name, not a styling hook or a
+     * document id, so a theme cannot drop it without breaking its own submission.
+     *
+     * Nothing here can reject a legitimate scope: not one of these appears
+     * anywhere in the markup of core's address FORM
+     * (`customer/_partials/address-form.tpl` and the checkout override of it),
+     * which is all a correctly resolved scope ever contains.
      */
-    static ADDRESS_BLOCK_SELECTOR =
-        '#delivery-address, #delivery-addresses, #invoice-address, #invoice-addresses, .js-invoice-address';
+    static ADDRESS_BLOCK_SELECTOR = [
+        // The four block ids `checkout/_partials/steps/addresses.tpl` emits.
+        '#delivery-address',
+        '#delivery-addresses',
+        '#invoice-address',
+        '#invoice-addresses',
+        // The classes it emits on the two selector blocks, and the ones
+        // `address-selector-block.tpl` emits on each saved address inside them.
+        '.address-selector',
+        '.js-address-selector',
+        '.js-address-item',
+        '.address-item',
+        // The radio naming the other address. Load-bearing, not decorative.
+        "input[name='id_address_delivery']",
+        "input[name='id_address_invoice']",
+        // A tolerance for themes that keep core's structure but not its ids.
+        '.js-invoice-address',
+    ].join(', ');
 
     /**
      * The element to scope the visible address form's field lookups to, or null.

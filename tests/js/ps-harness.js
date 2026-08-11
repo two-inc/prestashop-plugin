@@ -336,6 +336,12 @@ function buildAddressForm(options) {
  *        spans BOTH address blocks. Core does not produce this, but a theme
  *        overriding the address-form template can, and a mirror that widened its
  *        scope to it would write into an address the buyer is not looking at.
+ * @param {boolean} [options.blockIds] whether the address blocks carry the ids
+ *        core gives them (default true, which is core). Pass false for a theme that
+ *        keeps core's structure and classes but not its ids - nothing stops a theme
+ *        from doing that, and combined with blockContainers:false it is the shape
+ *        that defeats a scope guard recognising address blocks by id alone: the only
+ *        candidate left is the step wrapper, and the other address is still in it.
  * @returns {void}
  */
 function buildAddressesStep(options) {
@@ -347,6 +353,7 @@ function buildAddressesStep(options) {
     const isoAttrs = opts.countryIsoAttrs === true;
     const company = opts.company || '';
     const blockContainers = opts.blockContainers !== false;
+    const blockIds = opts.blockIds !== false;
 
     const countryOption = function (value, label, iso) {
         const attr = isoAttrs ? ' data-iso-code="' + iso + '"' : '';
@@ -358,7 +365,7 @@ function buildAddressesStep(options) {
         const lines = [];
         if (blockContainers) {
             lines.push(
-                '      <div id="' + type + '-address">',
+                '      <div' + (blockIds ? ' id="' + type + '-address"' : '') + '>',
                 // The rendered form's own wrapper, inside the block id - core's
                 // `address_form` block emits it, and it is what the innermost-first
                 // root resolution actually lands on.
@@ -408,8 +415,11 @@ function buildAddressesStep(options) {
     const addressSelector = function (type) {
         const name = type === 'invoice' ? 'id_address_invoice' : 'id_address_delivery';
         return [
-            '      <div id="' + type + '-addresses" class="address-selector js-address-selector">',
-            '        <article class="address-item">',
+            '      <div' + (blockIds ? ' id="' + type + '-addresses"' : '')
+                + ' class="address-selector js-address-selector">',
+            // Both classes, in core's order - `address-selector-block.tpl` emits
+            // the `js-` hook and the presentational one together.
+            '        <article class="js-address-item address-item">',
             '          <label><span class="custom-radio">',
             '            <input type="radio" name="' + name + '" value="7" checked>',
             '          </span><div class="address">Saved address</div></label>',

@@ -260,6 +260,61 @@ describe('the scope fails closed rather than widening', () => {
         expect($("input[name='companyid']").val()).toBe('');
     });
 
+    // Round 6. The guard above recognised address blocks by their ids only, so the
+    // very case it was written for got through: drop core's ids, keep the rest of
+    // its markup, and the step wrapper - which core emits itself - looks blockless
+    // while the other address is still inside it. Probed at HEAD before the fix: the
+    // root resolved to `js-address-form` with the delivery radio inside the scope.
+    test('resolves nothing when the other block kept core\'s classes but lost its ids', () => {
+        buildAddressesStep({
+            editing: 'invoice',
+            countryId: ES_OPTION,
+            blockContainers: false,
+            blockIds: false
+        });
+
+        // The premise, stated both ways round: no id anywhere for an id-only guard
+        // to find, and the other address block nonetheless present and reachable.
+        expect(document.querySelector('#invoice-address')).toBeNull();
+        expect(document.querySelector('#delivery-addresses')).toBeNull();
+        expect(document.querySelector('.js-address-selector')).not.toBeNull();
+        expect(document.querySelectorAll("input[name='id_address_delivery']").length).toBe(1);
+
+        expect(mount(PICKED).visibleAddressFormRoot()).toBeNull();
+    });
+
+    test('and writes nothing, anywhere, on that markup either', () => {
+        buildAddressesStep({
+            editing: 'invoice',
+            countryId: ES_OPTION,
+            blockContainers: false,
+            blockIds: false
+        });
+        // Same trap as the test above, and the same reason it is defused here:
+        // flattening the containers also removes the structural signal for "the
+        // buyer says the addresses differ", which would no-op the mirror for the
+        // WRONG reason and make every assertion below pass vacuously. So put the
+        // live control in and assert the resolver is true FIRST.
+        document.querySelector("input[name='saveAddress']").insertAdjacentHTML(
+            'beforebegin',
+            '<input name="use_same_address" type="checkbox" value="1">'
+        );
+        expect(mount(PICKED).buyerStatesInvoiceAddressDiffers()).toBe(true);
+
+        mount(PICKED);
+
+        expect($("input[name='company']").val()).toBe('');
+        expect($("input[name='company']").attr(MARKER)).toBeUndefined();
+        expect($("input[name='dni']").val()).toBe('');
+        expect($("input[name='dni']").attr(MARKER)).toBeUndefined();
+        expect($("select[name='id_country']").val()).toBe(ES_OPTION);
+        expect($("select[name='id_country']").attr(MARKER)).toBeUndefined();
+        expect($("input[name='companyid']").val()).toBe('');
+        // And the other address is untouched - the radio still names the saved
+        // address the buyer picked, with nothing written alongside it.
+        expect($("input[name='id_address_delivery']").val()).toBe('7');
+    });
+
     test('still resolves the wrapper when it is the page\'s ONLY address block', () => {
         // The guard is about a candidate SPANNING two addresses, not about the block
         // ids as such: a buyer with no saved addresses gets one form and no
