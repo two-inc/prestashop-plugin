@@ -250,40 +250,85 @@ describe('the survival test: the pair must outlive an ordinary input event, but 
 });
 
 /**
- * THE REVERSAL (Doug's ruling, TWO-40). An internal (`TWO:`) organisation number is
- * handled EXACTLY like any other everywhere except display.
+ * TWO-40, Doug's ruling, OPTION A. An internal (`TWO:`) organisation number is
+ * handled EXACTLY like any other everywhere except one place: it is never written
+ * into the visible `dni` field.
  *
- * An earlier round refused to WRITE one, on the reasoning that an internal
- * identifier must never be shown to the buyer. Refusing the write was the wrong
- * lever: it sent a sole trader's number down a different path through storage,
- * pairing, mirroring and submission from a registered company's, and left a
- * REQUIRED identification field empty and unfillable on the countries that demand
- * one. The tests below pin the inverse, so a re-introduction of the gate fails
- * here rather than shipping.
+ * Why that one field, verified against core: `Address` declares `dni` with
+ * `validate => isDniLite, size => 16`, and `Validate::isDniLite()` is
+ * `/^[0-9A-Za-z-.]{1,16}$/U`. `TWO:ST123456789012` fails it twice - a colon is not in
+ * the character class, and it is 18 characters - so core REFUSES TO SAVE THE ADDRESS,
+ * and the error lands on a field the round that wrote it there was hiding: an
+ * invisible, unfixable dead-end at checkout. It was pointless anyway, because this
+ * plugin's own reader validates `dni` against `/^[A-Z0-9\-]{5,20}$/i` and rejects the
+ * colon too. And it is the wrong field: `isNeedDniByCountryId()` is country-level, so
+ * `dni` is required of EVERY buyer in such a country - it is the buyer's own fiscal
+ * number, which they fill themselves.
+ *
+ * NOT the earlier reverted approach, which ALSO withheld the pairing and the name and
+ * broke the "name and number travel together" invariant. Everything but `dni` stays
+ * uniform here, and the tests below pin that uniformity as hard as they pin the skip.
  */
-describe('an internal (`TWO:`) identifier is written like any other number, and only HIDDEN', () => {
-    test('a TWO:-prefixed number IS written into the identification field, marked, alongside the hidden pairing', () => {
+describe('an internal (`TWO:`) identifier: uniform everywhere except the visible `dni`', () => {
+    test('a TWO:-prefixed number is NOT written into the identification field', () => {
         buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION });
 
         mount().adoptSoleTraderBuyer(BUYER_INTERNAL_NUMBER);
 
-        expect(identifierField().val()).toBe('TWO:ST123456789012');
-        expect(identifierField().attr(MARKER)).toBe('TWO:ST123456789012');
-        expect(organizationField().val()).toBe('TWO:ST123456789012');
+        expect(identifierField().length).toBe(1);
+        expect(identifierField().val()).toBe('');
+        // Unclaimed too: a marker on an empty field would let the clear path believe
+        // it had work of its own to undo.
+        expect(identifierField().attr(MARKER)).toBeUndefined();
     });
 
-    test('and the field holding it is hidden by its wrapper, so the buyer never reads it', () => {
+    /**
+     * THE KEY ONE. The hidden `companyid` and its `data-two-company-name` pairing tag
+     * are written for a `TWO:` value exactly as for any other. An untagged non-empty
+     * `companyid` is read by clearStaleOrganizationSelection() as "the buyer has
+     * edited past a stale selection" and wiped on their very next input event - the
+     * single mechanism that killed three previous attempts at this write-back.
+     */
+    test('but the hidden pairing IS written for it, byte-identically, with its name tag', () => {
+        buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION });
+
+        mount().adoptSoleTraderBuyer(BUYER_INTERNAL_NUMBER);
+
+        expect(organizationField().val()).toBe('TWO:ST123456789012');
+        expect(organizationField().attr('data-two-company-name')).toBe('Sole Trader Test Co');
+        expect(companyField().val()).toBe('Sole Trader Test Co');
+    });
+
+    test('and the pair survives an input event in the company field', () => {
+        buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION });
+        mount().adoptSoleTraderBuyer(BUYER_INTERNAL_NUMBER);
+
+        companyField().get(0).dispatchEvent(new window.Event('input', { bubbles: true }));
+
+        expect(organizationField().val()).toBe('TWO:ST123456789012');
+        expect(organizationField().attr('data-two-company-name')).toBe('Sole Trader Test Co');
+    });
+
+    /**
+     * There is NO visibility rule any more, and this is the inverse of the test that
+     * used to stand here. Re-introducing the hide fails this. It could never have
+     * been complete: core renders `dni` into address blocks, invoice PDFs and order
+     * confirmation emails through `AddressFormat::generateAddress()`, which no CSS
+     * rule of ours reaches.
+     */
+    test('the identification field stays VISIBLE - there is nothing to hide', () => {
         buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION, formGroups: true });
 
         mount().adoptSoleTraderBuyer(BUYER_INTERNAL_NUMBER);
 
         const group = identifierField().closest('.form-group');
         expect(group.length).toBe(1);
-        expect(group.css('display')).toBe('none');
-        expect(group.attr(TwoCompanySearch.INTERNAL_HIDDEN_ATTR)).toBe('1');
-        // The INPUT itself is untouched: hiding it alone would leave an orphaned
-        // "Identification number" label with nothing under it.
+        expect(group.get(0).style.display).toBe('');
+        expect(window.getComputedStyle(group.get(0)).display).not.toBe('none');
         expect(identifierField().get(0).style.display).toBe('');
+        // Nor is the buyer's label orphaned: the field it belongs to is still there
+        // for them to fill in themselves.
+        expect(group.find('label').length).toBe(1);
     });
 
     test('a real register number IS written into the visible identification field, marked, and left visible', () => {
@@ -294,8 +339,7 @@ describe('an internal (`TWO:`) identifier is written like any other number, and 
         expect(identifierField().val()).toBe(REGISTER_NUMBER);
         expect(identifierField().attr(MARKER)).toBe(REGISTER_NUMBER);
         const group = identifierField().closest('.form-group');
-        expect(group.css('display')).not.toBe('none');
-        expect(group.attr(TwoCompanySearch.INTERNAL_HIDDEN_ATTR)).toBeUndefined();
+        expect(group.get(0).style.display).toBe('');
     });
 });
 
@@ -549,24 +593,44 @@ describe('soleTraderPairReport(): three outcomes for the identification field, n
     });
 
     /**
-     * The internal-identifier case is NO LONGER one of the three (Doug's ruling,
-     * TWO-40): a `TWO:` number lands in the field like any other, so it takes the
-     * LANDED branch. The EMPTY branch is reached the way the production comment
-     * names it instead - the nameless-buyer clear.
+     * EMPTY, for an internal identifier (TWO-40, Option A). A `TWO:` number never
+     * enters the visible `dni` field, so the report reads the field back as empty and
+     * says `''` - the truthful answer, and the reason the report is read off the form
+     * rather than assumed from having called the writer.
+     *
+     * `''` and not an ABSENT key: `''` is the only value that retracts a number an
+     * earlier mirror pass recorded writing there. Absent means "unchanged", which
+     * would leave the record claiming a number the form does not hold - the exact
+     * mismatch the pin reads as buyer tampering.
+     *
+     * The NAME half is still reported, because it is still written. Only `dni` is
+     * skipped.
      */
-    test('LANDED: an internal (`TWO:`) number is reported as itself, exactly as a real one is', () => {
+    test('EMPTY: an internal (`TWO:`) number is reported as \'\', because it never reached the field', () => {
         buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
 
         mount().adoptSoleTraderBuyer(BUYER_INTERNAL_NUMBER);
 
-        expect($("#invoice-address input[name='dni']").val()).toBe('TWO:ST123456789012');
+        expect($("#invoice-address input[name='dni']").val()).toBe('');
         expect(window.twopayment.mirror_writes).toEqual({
             company: 'Sole Trader Test Co',
-            organization: 'TWO:ST123456789012',
+            organization: '',
             address1: 'Wharf Lane',
             postcode: 'TN23 1AA',
             city: 'Ashford'
         });
+        // And the pair the order actually travels on is intact.
+        expect(organizationField().val()).toBe('TWO:ST123456789012');
+        expect(organizationField().attr('data-two-company-name')).toBe('Sole Trader Test Co');
+    });
+
+    test('LANDED: a real register number is reported as itself', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+
+        mount().adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
+
+        expect($("#invoice-address input[name='dni']").val()).toBe(REGISTER_NUMBER);
+        expect(window.twopayment.mirror_writes.organization).toBe(REGISTER_NUMBER);
     });
 
     test('EMPTY: the nameless-buyer clear empties the field, so `organization` is RETRACTED', () => {
@@ -1093,28 +1157,32 @@ describe('the submit-time sync passes through the same single gate', () => {
     }
 
     /**
-     * THE INVERSE of what an earlier round pinned here. The old assertion was that a
-     * `TWO:` companyid is NOT copied into the identification field at submit; Doug's
-     * ruling (TWO-40) is that it is copied like any other number and only hidden. A
-     * re-introduction of the refusal fails this test.
+     * The submit-time sync goes through writeOrganizationToAddressIdentifiers() and
+     * therefore inherits its one carve-out: a `TWO:` companyid is NOT copied into
+     * `dni` (TWO-40, Option A). Core's `isDniLite` would refuse the resulting address
+     * outright, so a copy here would turn "submit the address step" into a dead end.
+     *
+     * The pairing this test sets up is deliberately NOT disturbed by the sync - that
+     * is the uniformity half, and it is what carries the selection to the order.
      */
-    test('an internal (`TWO:`) companyid IS copied into the identification field at submit, and hidden there', () => {
+    test('an internal (`TWO:`) companyid is NOT copied into the identification field at submit', () => {
         buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION, formGroups: true });
         const search = mount();
         // The pair a selection establishes, through the class's own writer, leaving the
-        // identification field empty for the submit sync to fill.
+        // identification field empty for the submit sync to consider.
         search.markOrganizationFieldSelected('Sole Trader Test Co', 'TWO:ST123456789012');
         expect(identifierField().val()).toBe('');
 
         submitAddressForm();
 
-        expect(identifierField().val()).toBe('TWO:ST123456789012');
-        expect(identifierField().attr(MARKER)).toBe('TWO:ST123456789012');
-        // Written, then hidden - the sync calls the same visibility pass the write
-        // side does.
+        expect(identifierField().val()).toBe('');
+        expect(identifierField().attr(MARKER)).toBeUndefined();
+        // Visible, because nothing internal ever reached it.
         const group = identifierField().closest('.form-group');
-        expect(group.css('display')).toBe('none');
-        expect(group.attr(TwoCompanySearch.INTERNAL_HIDDEN_ATTR)).toBe('1');
+        expect(group.get(0).style.display).toBe('');
+        // And the pair the order needs is intact - the sync left it exactly as it was.
+        expect(organizationField().val()).toBe('TWO:ST123456789012');
+        expect(organizationField().attr('data-two-company-name')).toBe('Sole Trader Test Co');
     });
 
     test('a REAL organisation number still reaches it at submit - the gate did not break the ordinary path', () => {

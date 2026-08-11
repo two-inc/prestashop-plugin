@@ -21,6 +21,12 @@ namespace {
     if (!defined('_DB_PREFIX_')) {
         define('_DB_PREFIX_', 'ps_');
     }
+    // Upgrade scripts and ensureTwoOrderCompanyColumns() interpolate this into
+    // their information_schema existence checks, so it has to exist offline for
+    // those paths to be testable at all.
+    if (!defined('_DB_NAME_')) {
+        define('_DB_NAME_', 'prestashop');
+    }
 }
 
 namespace PrestaShop\PrestaShop\Core\Payment {
@@ -288,6 +294,34 @@ namespace {
         public static array $orders = [];
         /** @var array<string,string> Existing DB triggers by name => CREATE sql */
         public static array $dbTriggers = [];
+        /**
+         * Columns the simulated schema has, keyed "table.column". Maintained by
+         * Db::execute() from the DDL the module actually issues (CREATE TABLE and
+         * ALTER TABLE ... ADD), and read back by the information_schema lookups
+         * in the upgrade scripts, so "install, then upgrade, then upgrade again"
+         * is a real round trip rather than three unrelated assertions.
+         *
+         * @var array<string,bool>
+         */
+        public static array $dbColumns = [];
+        /**
+         * Rows of `ps_twopayment`, keyed by id_order - the module's own
+         * order-scoped table, persisted here so setTwoOrderPaymentData() and
+         * getTwoOrderPaymentData() round-trip. Without this, a spec cannot tell
+         * "wrote an empty value" from "left the stored value alone", which is the
+         * entire distinction the presence-conditional write turns on (TWO-40).
+         *
+         * @var array<int,array<string,mixed>>
+         */
+        public static array $twoPaymentRows = [];
+        /**
+         * Every write aimed at `ps_twopayment`, in order, as
+         * ['op' => 'insert'|'update', 'data' => array]. Lets a spec assert on the
+         * COLUMN LIST of a write, not just its outcome.
+         *
+         * @var array<int,array{op:string,data:array}>
+         */
+        public static array $twoPaymentWrites = [];
         /** @var int Shared auto-increment for ObjectModel-style stubs */
         public static int $nextId = 90000;
 
@@ -358,6 +392,9 @@ namespace {
             self::$orderStates = [];
             self::$dbExecuted = [];
             self::$dbTriggers = [];
+            self::$dbColumns = [];
+            self::$twoPaymentRows = [];
+            self::$twoPaymentWrites = [];
             self::$orders = [];
             self::$nextId = 90000;
 
@@ -1853,7 +1890,31 @@ namespace {
             if (preg_match('/^\s*DROP TRIGGER IF EXISTS `([^`]+)`/', $sql, $m)) {
                 unset(StubStore::$dbTriggers[$m[1]]);
             }
+            self::recordSchema($sql);
             return true;
+        }
+
+        /**
+         * Track which columns the simulated schema has, from the DDL the module
+         * issues. Only the two shapes this module ever writes are recognised -
+         * `CREATE TABLE ... (...)` and `ALTER TABLE ... ADD \`col\``; anything
+         * else is ignored rather than half-parsed.
+         */
+        private static function recordSchema(string $sql): void
+        {
+            if (preg_match('/CREATE TABLE (?:IF NOT EXISTS )?`([^`]+)`\s*\((.*)\)\s*ENGINE/is', $sql, $m)) {
+                foreach ((array) preg_split('/,\s*\n/', $m[2]) as $definition) {
+                    if (preg_match('/^\s*`([^`]+)`\s+\S/', (string) $definition, $c)) {
+                        StubStore::$dbColumns[$m[1] . '.' . $c[1]] = true;
+                    }
+                }
+
+                return;
+            }
+
+            if (preg_match('/ALTER TABLE `([^`]+)`\s+ADD\s+`([^`]+)`/i', $sql, $m)) {
+                StubStore::$dbColumns[$m[1] . '.' . $m[2]] = true;
+            }
         }
 
         /**
@@ -1917,6 +1978,17 @@ namespace {
             if (preg_match("/FROM information_schema\.TRIGGERS.*TRIGGER_NAME = '([^']+)'/s", $sql, $m)) {
                 return isset(StubStore::$dbTriggers[$m[1]]) ? '1' : '0';
             }
+            // Column existence, as the upgrade scripts and
+            // ensureTwoOrderCompanyColumns() ask it. Answered from the schema
+            // Db::execute() has recorded, so an already-added column reads as
+            // present and the guarded ALTER is genuinely skipped.
+            if (preg_match(
+                "/FROM INFORMATION_SCHEMA\.COLUMNS.*TABLE_NAME = '([^']+)'.*COLUMN_NAME = '([^']+)'/is",
+                $sql,
+                $m
+            )) {
+                return isset(StubStore::$dbColumns[$m[1] . '.' . $m[2]]) ? '1' : '0';
+            }
             // Native per-module payment restrictions (TWO-25387). Core returns the
             // matched id_country, or false when no row matches.
             if (preg_match(
@@ -1962,13 +2034,53 @@ namespace {
             return StubStore::$dbErrno === 0 ? '' : 'stubbed driver error ' . StubStore::$dbErrno;
         }
 
+        /**
+         * Core returns the first row, or false when nothing matches. Only the
+         * module's own order-scoped table is modelled; every other query answers
+         * false, exactly as core does on an empty result.
+         */
+        public function getRow($sql, $useCache = true)
+        {
+            $sql = (string) $sql;
+            StubStore::$dbLastGetValue[] = $sql;
+
+            if (preg_match(
+                '/SELECT \* FROM `' . _DB_PREFIX_ . 'twopayment` WHERE `id_order` = (\d+)/',
+                $sql,
+                $m
+            )) {
+                return StubStore::$twoPaymentRows[(int) $m[1]] ?? false;
+            }
+
+            return false;
+        }
+
         public function insert($table, $data): bool
         {
+            if ((string) $table === 'twopayment') {
+                StubStore::$twoPaymentWrites[] = ['op' => 'insert', 'data' => $data];
+                StubStore::$twoPaymentRows[(int) $data['id_order']] = $data;
+            }
+
             return true;
         }
 
         public function update($table, $data, $where): bool
         {
+            if ((string) $table === 'twopayment'
+                && preg_match('/id_order = (\d+)/', (string) $where, $m)
+            ) {
+                StubStore::$twoPaymentWrites[] = ['op' => 'update', 'data' => $data];
+                // MERGED, not replaced - a real UPDATE only touches the columns
+                // it names, and that is the whole property the
+                // presence-conditional write depends on.
+                $id_order = (int) $m[1];
+                StubStore::$twoPaymentRows[$id_order] = array_merge(
+                    StubStore::$twoPaymentRows[$id_order] ?? [],
+                    $data
+                );
+            }
+
             return true;
         }
     }
