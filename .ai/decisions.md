@@ -1625,7 +1625,11 @@ The earlier version of this note listed seven judgment calls. Their disposition:
   postcode and city were the only writes in the class still made by a document-wide
   selector, so a value in one of them could not be attributed to a BLOCK at all — and R1
   makes attributing them mandatory. The document-wide branch is unchanged and is what
-  runs everywhere except on the secondary address form itself.
+  runs on the shipping pass, on the payment tile and on any page with no address form
+  at all. It does NOT run when the invoice form is on screen and the scope resolution
+  fails closed: there is no block to attribute the writes to, and writing document-wide
+  there would land in the very markup the scope guard refused to scope to. That fill is
+  skipped instead — no scope means no write, the same answer the mirror gives.
 - **`mirrorMemory()`'s role** stays page-lifetime and stays on `TwoCheckoutManager`, but
   it is no longer the record of "may I write" — only of "what did I write on this page",
   for the re-mark and completion operations.

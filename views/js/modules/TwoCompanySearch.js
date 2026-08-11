@@ -4806,16 +4806,30 @@ class TwoCompanySearch {
             // different fields, and this response can carry both.
             const addresses = (details && (details.addresses || (details.company && details.company.addresses))) || [];
             if (Array.isArray(addresses) && addresses.length > 0 && stillOnSameCompany) {
-                // When the form on screen IS the secondary address, the fill's
-                // writes are writes into the address the pin judges, and they have
-                // to be attributable to a block and reported as ours. Everywhere
-                // else - the shipping pass, the payment tile - the original
-                // document-wide branch is what runs, unchanged.
+                // THREE states here, not two, and the two that look alike are not
+                // (TWO-40, round 1 of the content-match rework):
+                //
+                //  - the form on screen IS the secondary address: the fill's writes
+                //    go into the address the pin judges, so they have to be
+                //    attributable to a block and reported as ours;
+                //  - the invoice form is on screen but the scope resolution FAILED
+                //    CLOSED: there is no single-address block to attribute a write
+                //    to, and the document-wide branch would write into exactly the
+                //    markup visibleAddressFormRoot() has just refused to scope to -
+                //    a theme's flattened step, with the other address inside it. So
+                //    this fill is SKIPPED. No scope means no write, the same answer
+                //    the mirror gives, rather than the widest possible write;
+                //  - anywhere else - the shipping pass, the payment tile, a page
+                //    with no address form at all - the original document-wide
+                //    branch is what runs, unchanged.
                 const secondaryRoot = this.secondaryAddressFormRoot();
-                if (!secondaryRoot) {
-                    this.autoFillAddress(addresses);
-                } else {
+                const invoiceFormWithNoScope = !secondaryRoot
+                    && this.visibleAddressFormType() === 'invoice'
+                    && !this.visibleAddressFormRoot();
+                if (secondaryRoot) {
                     this.recordMirrorWrites(this.autoFillAddress(addresses, secondaryRoot));
+                } else if (!invoiceFormWithNoScope) {
+                    this.autoFillAddress(addresses);
                 }
             }
         } catch (e) {
