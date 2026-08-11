@@ -483,12 +483,71 @@ describe('a sole trader with NO trading name: no identity, no residue, but the a
     });
 });
 
-describe('soleTraderPairReport(): a number that did not land is OMITTED, never reported empty', () => {
-    test('an internal (`TWO:`) number leaves no `organization` key in the mirror record', () => {
+describe('soleTraderPairReport(): three outcomes for the identification field, never two', () => {
+    /**
+     * recordMirrorWrites() reads a reported '' as a positive statement - "nothing of
+     * ours is in that field any more" - and an ABSENT key as "unchanged". So the
+     * three cases below are genuinely distinct, and conflating any pair of them
+     * either pins the address or leaves the record claiming a number the form does
+     * not hold:
+     *
+     *  - LANDED  -> `organization: <number>`
+     *  - EMPTY   -> `organization: ''`   (the retraction; truthful)
+     *  - ANOTHER
+     *    VALUE   -> key absent            (not ours to claim or to retract)
+     */
+    test('LANDED: a real number that reached the field is reported as itself', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+
+        mount().adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
+
+        const record = window.twopayment.mirror_writes;
+        expect($("#invoice-address input[name='dni']").val()).toBe(REGISTER_NUMBER);
+        expect(record.organization).toBe(REGISTER_NUMBER);
+    });
+
+    test('EMPTY: an internal (`TWO:`) number is suppressed, so `organization` is reported EMPTY', () => {
         buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
 
         mount().adoptSoleTraderBuyer(BUYER_INTERNAL_NUMBER);
 
+        // The gate declined the write, so the field is empty - and '' is the truthful
+        // report, and the only thing that retracts a number an earlier mirror pass
+        // recorded writing there.
+        expect($("#invoice-address input[name='dni']").val()).toBe('');
+        const record = window.twopayment.mirror_writes;
+        expect(Object.prototype.hasOwnProperty.call(record, 'organization')).toBe(true);
+        expect(record).toEqual({
+            company: 'Sole Trader Test Co',
+            organization: '',
+            address1: 'Wharf Lane',
+            postcode: 'TN23 1AA',
+            city: 'Ashford'
+        });
+    });
+
+    test('EMPTY: the address-lookup switch being off reports `organization` empty too', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+
+        mount({ addressLookupEnabled: false }).adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
+
+        expect($("#invoice-address input[name='dni']").val()).toBe('');
+        const record = window.twopayment.mirror_writes;
+        expect(Object.prototype.hasOwnProperty.call(record, 'organization')).toBe(true);
+        expect(record).toEqual({ company: 'Sole Trader Test Co', organization: '' });
+    });
+
+    test('ANOTHER VALUE: a number the gate declined to replace is OMITTED, not claimed and not retracted', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        // The buyer's own identification number, already in the invoice block. The
+        // buyer below carries an internal (`TWO:`) number, so the gate declines the
+        // write and this value survives - which is the third outcome: the field holds
+        // SOMETHING, but not ours.
+        $("#invoice-address input[name='dni']").val('BUYER-OWN-ID');
+
+        mount().adoptSoleTraderBuyer(BUYER_INTERNAL_NUMBER);
+
+        expect($("#invoice-address input[name='dni']").val()).toBe('BUYER-OWN-ID');
         const record = window.twopayment.mirror_writes;
         expect(Object.prototype.hasOwnProperty.call(record, 'organization')).toBe(false);
         expect(record).toEqual({
@@ -497,16 +556,6 @@ describe('soleTraderPairReport(): a number that did not land is OMITTED, never r
             postcode: 'TN23 1AA',
             city: 'Ashford'
         });
-    });
-
-    test('the address-lookup switch being off leaves no `organization` key either', () => {
-        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
-
-        mount({ addressLookupEnabled: false }).adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
-
-        const record = window.twopayment.mirror_writes;
-        expect(Object.prototype.hasOwnProperty.call(record, 'organization')).toBe(false);
-        expect(record).toEqual({ company: 'Sole Trader Test Co' });
     });
 });
 
@@ -623,25 +672,119 @@ describe('the scoped writes reach ONE address block and no other', () => {
     });
 });
 
-describe('THE PIN: a secondary address the buyer has made their own is never written into', () => {
-    test('one buyer-authored field freezes the whole address, enrolment or not', () => {
-        // A city the SERVER rendered into the invoice form - i.e. the buyer's own
-        // saved billing address - with no marker and nothing on record as having
-        // been written there. That is the content match the pin is decided on.
-        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION, city: 'Buyer Own City' });
+describe('a pre-filled secondary address is still written into (the pin does not apply here)', () => {
+    /**
+     * The INVERSE of an earlier review round's fix, and the reason is recorded in
+     * adoptSoleTraderBuyer() itself so it is not reinstated.
+     *
+     * secondaryAddressFormRoot() resolves non-null ONLY when the invoice form is
+     * the VISIBLE, editable form - so consulting the mirror's pin here would gate
+     * the form the buyer is looking at and has just acted on. Worse, an invoice
+     * form core pre-filled from a saved billing address carries street, postcode
+     * and city with nothing on record as having written them, which reads as
+     * buyer-authored and so is pinned BY DEFAULT: the adoption would write nothing
+     * for every buyer editing an existing billing address, which is the originally
+     * reported bug ("absolutely nothing is being populated") reinstated.
+     *
+     * Every test here therefore asserts secondaryAddressIsPinned() is TRUE and the
+     * adoption writes ANYWAY. Reinstating the early return fails all three.
+     */
+    test('a saved billing address - pinned by the mirror\'s own rule - is written into regardless', () => {
+        // Street, postcode and city the SERVER rendered into the invoice form, with
+        // no marker and nothing on record as having written them. That is exactly
+        // the content mismatch the mirror's pin is decided on.
+        buildAddressesStep({
+            editing: 'invoice',
+            countryId: ES_OPTION,
+            address1: 'Buyer Own Street',
+            postcode: 'ZZ1 1ZZ',
+            city: 'Buyer Own City'
+        });
         const search = mount();
         expect(search.secondaryAddressIsPinned(search.secondaryAddressFormRoot())).toBe(true);
 
         const wrote = search.adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
 
-        expect(wrote).toBe(false);
-        expect(companyField().val()).toBe('');
-        expect(companyField().attr(MARKER)).toBeUndefined();
+        expect(wrote).toBe(true);
+        // The identity half.
+        expect(companyField().val()).toBe('Sole Trader Test Co');
+        expect(companyField().attr(MARKER)).toBe('Sole Trader Test Co');
+        expect(organizationField().val()).toBe(REGISTER_NUMBER);
+        expect(organizationField().attr('data-two-company-name')).toBe('Sole Trader Test Co');
+        expect($("#invoice-address input[name='dni']").val()).toBe(REGISTER_NUMBER);
+        // The address half - the registered address replaces what was rendered.
+        expect($("#invoice-address input[name='address1']").val()).toBe('Wharf Lane');
+        expect($("#invoice-address input[name='postcode']").val()).toBe('TN23 1AA');
+        expect($("#invoice-address input[name='city']").val()).toBe('Ashford');
+    });
+
+    test('and the whole write is reported into the mirror record, so the next render owns it', () => {
+        buildAddressesStep({
+            editing: 'invoice',
+            countryId: ES_OPTION,
+            address1: 'Buyer Own Street',
+            postcode: 'ZZ1 1ZZ',
+            city: 'Buyer Own City'
+        });
+        const search = mount();
+        expect(search.secondaryAddressIsPinned(search.secondaryAddressFormRoot())).toBe(true);
+
+        search.adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
+
+        expect(window.twopayment.mirror_writes).toEqual({
+            company: 'Sole Trader Test Co',
+            organization: REGISTER_NUMBER,
+            address1: 'Wharf Lane',
+            postcode: 'TN23 1AA',
+            city: 'Ashford'
+        });
+    });
+
+    /**
+     * The ORDERING that the removed early return used to sit above.
+     *
+     * A nameless sole trader clears the previous selection's residue from the form -
+     * the hidden pair, its tag, the visible hint and the identification number the
+     * lookup itself wrote - because the buyer has moved off that company and the
+     * resolver's address tier reads the form. With no pin check there is nothing
+     * above that clear, so it runs even on a secondary address the buyer has since
+     * edited: the residue of the abandoned company goes, and the nameless buyer's
+     * own registered address lands.
+     */
+    test('the nameless-buyer residue clear runs on an edited secondary address too', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        enableEndpointCalls();
+        const search = mount();
+
+        // A real selection this class wrote itself, into an address that was still
+        // pristine at the time.
+        expect(search.adoptSoleTraderBuyer(BUYER_REAL_NUMBER)).toBe(true);
+        expect(organizationField().val()).toBe(REGISTER_NUMBER);
+        expect(organizationField().attr('data-two-company-name')).toBe('Sole Trader Test Co');
+        expect($("#invoice-address input[name='dni']").val()).toBe(REGISTER_NUMBER);
+        expect(hintField().text()).toBe(REGISTER_NUMBER);
+
+        // The buyer then types a city of their own over the one the fill wrote. The
+        // record no longer matches the form, so by the mirror's rule this address is
+        // now pinned - and the adoption below must still run.
+        $("#invoice-address input[name='city']").val('Bristol');
+        expect(search.secondaryAddressIsPinned(search.secondaryAddressFormRoot())).toBe(true);
+
+        const wrote = search.adoptSoleTraderBuyer(BUYER_NAMELESS);
+
+        expect(wrote).toBe(true);
+        // The residue of the abandoned company is gone.
         expect(organizationField().val()).toBe('');
-        expect(identifierField().val()).toBe('');
-        expect($("#invoice-address input[name='address1']").val()).toBe('');
-        expect($("#invoice-address input[name='city']").val()).toBe('Buyer Own City');
-        expect(window.twopayment.mirror_writes).toBeUndefined();
+        expect(organizationField().attr('data-two-company-name')).toBeUndefined();
+        expect($("#invoice-address input[name='dni']").val()).toBe('');
+        expect($("#invoice-address input[name='dni']").attr(MARKER)).toBeUndefined();
+        expect(hintField().text()).toBe('');
+        // And the nameless buyer's own registered address lands.
+        expect($("#invoice-address input[name='address1']").val()).toBe('Second Registered Street');
+        expect($("#invoice-address input[name='postcode']").val()).toBe('CT16 1AA');
+        expect($("#invoice-address input[name='city']").val()).toBe('Dover');
+        // Still never the server session company `saveCompany` has just written.
+        expect(ajaxCallsFor('clearCompany')).toEqual([]);
     });
 });
 
