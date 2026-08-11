@@ -1857,7 +1857,7 @@ class TwoCompanySearch {
      * company's registered one, and writing it would be the plugin overruling
      * a statement the buyer made explicitly.
      *
-     * TWO SEPARATE OPERATIONS, and keeping them separate is the whole design:
+     * THREE SEPARATE OPERATIONS, and keeping them separate is the whole design:
      *
      *  - RE-MARK (reapplyMirrorMarkers) re-establishes the autofill marker on a
      *    value still recognisable as one this page's mirror wrote. It never writes
@@ -1874,9 +1874,20 @@ class TwoCompanySearch {
      *    round: cleared field, country change, form replaced, empty value
      *    restored, search rebuilt, init() again - and a populate keyed only on
      *    "the field is empty" would silently undo the clear.
+     *  - COMPLETE (completeMirroredOrganizationNumber) places the NUMBER half
+     *    when the rebuild is what separated it from the name. It exists because
+     *    the identification field's presence is decided by the COUNTRY: core
+     *    appends `dni` to the address format only when the country carries
+     *    `need_identification_number`, so the mirror's own country write can hand
+     *    back a form with an identification field the previous render did not have
+     *    (or take one away, which core's INPUT-only restore loop cannot put back).
+     *    Left to the once-per-company populate gate, that is a company name on the
+     *    order with no organisation number beside it.
      *
      * Re-mark first, so a populate for a genuinely NEW company can still
      * recognise the previous mirror's values as ours rather than as the buyer's.
+     * Complete LAST, so a populate that has just placed the pair for a new company
+     * settles the number half before the completion looks at it.
      *
      * @returns {void}
      */
@@ -1900,6 +1911,7 @@ class TwoCompanySearch {
 
         this.reapplyMirrorMarkers(root);
         this.populateInvoiceAddressFromConfirmedCompany(root);
+        this.completeMirroredOrganizationNumber(root);
     }
 
     /**
@@ -1911,8 +1923,15 @@ class TwoCompanySearch {
      * back to an instance-local object so a search mounted without a manager still
      * behaves, rather than throwing.
      *
-     * @returns {Object} `{companyid, company, organization, countryValue}`, partly
-     *          filled
+     * The two halves of the pair are recorded SEPARATELY and deliberately:
+     * `organization` is a number the mirror has PLACED in an identification field
+     * on this page, `organizationPending` one it has not been able to place in any
+     * field yet. Under one key they cannot be told apart, and the completion below
+     * needs exactly that distinction - a placed number the buyer then cleared must
+     * stay cleared, while an unplaced one still has to reach the form.
+     *
+     * @returns {Object} `{companyid, company, organization, organizationPending,
+     *          countryValue}`, partly filled
      */
     mirrorMemory() {
         const injected = this.config.mirrorMemory;
@@ -1963,6 +1982,22 @@ class TwoCompanySearch {
         };
 
         let reapplied = remark($(root).find("input[name='company']").first(), memory.company);
+        if (memory.organization && this.addressIdentifierFields(root).every(
+            field => !field || field.length === 0
+        )) {
+            // The rebuild rendered a country whose address format has NO
+            // identification field, and core's restore loop cannot restore a field
+            // the new render does not emit - so the number the mirror had placed is
+            // now placed nowhere. Back to pending, not dropped: the buyer can
+            // return to a country that does have the field, and the name is still
+            // in the form waiting for its number.
+            //
+            // Only from the field being ABSENT, never from a present field whose
+            // value no longer matches. That second case is the buyer having
+            // cleared or changed the number, and it must stay their answer.
+            memory.organizationPending = memory.organization;
+            memory.organization = '';
+        }
         this.addressIdentifierFields(root).forEach(field => {
             // The organisation number needs this as much as the name does: the
             // marker is what clearLookupWrittenAddressIdentifiers() uses to tell
@@ -2046,7 +2081,99 @@ class TwoCompanySearch {
         memory.companyid = selection.companyid;
         memory.company = wroteCompany ? selection.company : '';
         memory.organization = (wroteCompany && identifierFields.length > 0) ? selection.companyid : '';
+        // A name written onto a form with no identification field leaves the number
+        // half owing. Usually there is nowhere for it to go and it stays owing
+        // harmlessly - but a mirrored COUNTRY write can rebuild this form into one
+        // that does have the field, and then it is owed to a form that can take it.
+        memory.organizationPending = (wroteCompany && identifierFields.length === 0)
+            ? selection.companyid
+            : '';
         memory.countryValue = countryValue;
+
+        return true;
+    }
+
+    /**
+     * Place the organisation number the mirror still owes this form, when the
+     * form has acquired somewhere to put it.
+     *
+     * The case, which core produces on its own: whether the form carries an
+     * identification field is decided by the COUNTRY, not by the shop.
+     * `AddressFormat::getFormat()` appends `dni` to the country's address format
+     * when `Country::isNeedDniByCountryId()` is true, and nothing in the stock
+     * address formats mentions `dni` otherwise - so on stock data the field is
+     * present exactly when the country requires it, and absent everywhere else.
+     * The mirror's own country write is therefore a write that can change which
+     * fields exist: a form rendered for a country without the field, mirrored to a
+     * country with it, comes back from core's rebuild carrying an empty and
+     * REQUIRED identification field. The once-per-company populate gate then
+     * forbids ever filling it, and the name goes to the order alone.
+     *
+     * GATED ON THE MARKED NAME, never on the identification field being empty, and
+     * that is the whole point of the method existing separately. "The field is
+     * empty" is the very test the populate gate exists to refuse, because a field
+     * the buyer deliberately cleared and an unanswered one are the same empty
+     * string. What this gate asks instead is whether the NAME currently in the form
+     * is still, exactly, the one the mirror recorded writing AND still carries the
+     * marker saying so - i.e. whether the pair this method is completing is still
+     * the mirror's own pair. The buyer-cleared rule keeps its own separate
+     * condition: the number must be one the mirror never placed anywhere
+     * (`organizationPending`, see mirrorMemory()), and the field it goes into must
+     * be empty with NO marker of any kind - so a field the mirror once wrote and
+     * the buyer then cleared, which carries a stale marker, is never refilled here.
+     *
+     * The residual case is narrow and benign by construction: a buyer who clears
+     * the number, leaves for a country with no identification field and returns
+     * gets it back. The field is only ever absent on countries that do not require
+     * it and only ever pending-completed on countries that do, and core rejects an
+     * empty required identification number at save - so the cleared state they are
+     * "losing" is one they could not have submitted.
+     *
+     * @param {Element} root the visible address form's scope
+     * @returns {boolean} whether the number was written
+     */
+    completeMirroredOrganizationNumber(root) {
+        const memory = this.mirrorMemory();
+        const pending = memory.organizationPending ? String(memory.organizationPending) : '';
+        if (!pending) {
+            return false;
+        }
+
+        const recordedName = memory.company ? String(memory.company) : '';
+        if (!recordedName) {
+            return false;
+        }
+        const companyField = $(root).find("input[name='company']").first();
+        if (companyField.length === 0) {
+            return false;
+        }
+        const name = String(companyField.val() == null ? '' : companyField.val());
+        if (name !== recordedName
+            || companyField.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR) !== name) {
+            return false;
+        }
+
+        const identifierFields = this.addressIdentifierFields(root).filter(
+            field => field && field.length > 0
+        );
+        if (identifierFields.length === 0) {
+            return false;
+        }
+        const unwritten = identifierFields.every(
+            field => String(field.val() == null ? '' : field.val()) === ''
+                && typeof field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR) === 'undefined'
+        );
+        if (!unwritten) {
+            // The buyer's own number is already there, or one this page wrote and
+            // they then edited. Either way the field is theirs and the debt is
+            // settled - stop owing it rather than retrying on every mount.
+            memory.organizationPending = '';
+            return false;
+        }
+
+        this.writeOrganizationToAddressIdentifiers(pending, false, root);
+        memory.organization = pending;
+        memory.organizationPending = '';
 
         return true;
     }
