@@ -303,6 +303,47 @@ placement (order confirmation page, admin re-render)? Cart-scoping makes it unre
 anything downstream reads the cookie post-placement this design breaks it, and I have not
 audited the confirmation path for that.
 
+**Resolved:** unreadable post-placement is fine. The selection is only needed up to the point of
+order placement and nothing further, so no additional lifetime handling is needed.
+
+### As built — and where the proposal above was wrong
+
+Cart-scoping shipped. Steps 1, 2 and 4 above did **not**, and should not be revived from this
+document without re-deciding them:
+
+- **Step 1 (one `two_company` blob) — not done.** A single new key, `two_company_cart_id`, is written
+  alongside the existing four instead. Restructuring the record would have rewritten the shape every
+  read site consumes for no gain the requirement asks for. The keys are centralised in
+  `Twopayment::COMPANY_SESSION_KEYS` so they cannot drift, which is what the blob was really for.
+- **Step 2 (drop the company writes' `setExpire`) — not done, and it was wrong.** PrestaShop's cookie
+  has one expiry for the whole cookie, not one per key, so removing those calls would not shorten the
+  company record's life at all; it would lengthen the *whole* cookie back to the front-office default
+  and silently extend unrelated caches that depend on the hour. Every `setExpire` call and
+  `COOKIE_EXPIRY_ONE_HOUR` are untouched. Cart-scoping is the entire fix.
+- **Step 3 (keep both invalidation guards) — done.** The country-mismatch wipe and the
+  no-country-marker wipe are unchanged and have their own regression cover, because a buyer can change
+  address country inside one cart.
+- **Step 4 (drop the unverified-cookie name tier) — not done, deliberately.** It is not a duplicate
+  read. It fires when the validated read declined for a reason other than an address switch, and it
+  re-reads *after* the guards have had their chance to clear, so it observes post-clear state rather
+  than a snapshot. Removing it would lose the company name on the path where a stored name has no
+  organisation number beside it and the address carries no company.
+
+Shape as built, all on `Twopayment` and reached from the front controller via `$this->module`:
+`storeTwoCartScopedCompany()` (stamps the current cart alongside whatever fields it is given; a field
+passed as null is removed), `readTwoCartScopedCompany()` (returns the record only when the stamp
+equals the current cart id, otherwise clears and reports absent), `clearTwoCartScopedCompany()`.
+
+A cookie written before this change carries no stamp, so it reads as absent and is cleared. That is
+intended — there is no migration, and the whole cost is that the buyer re-picks their company.
+
+Also removed as part of this: `TwoCheckoutManager.isCompanyDataMissing()`'s
+`document.cookie.match(/two_company_id=.../)` fallback. Nothing ever wrote a browser cookie of that
+name — PrestaShop serialises server-side session keys into one encrypted cookie under its own name,
+and no code sets one directly — so the fallback could only ever be satisfied by a test that
+fabricated it, which two Jest specs did. They now exercise the real carrier, the hidden
+`input[name='companyid']`.
+
 ---
 
 ## #8 — tile-mode's address-side layer is gated on the wrong thing
