@@ -4527,6 +4527,14 @@ class Twopayment extends PaymentModule
                 // whenever one is on the page (a buyer mid-edit may have
                 // picked a country that is not saved yet).
                 'billing_country' => $this->getCheckoutBillingCountryIso(),
+                // The company the buyer already confirmed for THIS cart, or null
+                // (TWO-40). The browser's own record of a selection dies with the
+                // page, and the address step is a sequence of real document
+                // loads, so this is what survives the navigation that reveals the
+                // invoice address form. Published through the validated read, so a
+                // record either invalidation guard would reject is not published
+                // at all - see getTwoBrowserCompanySelection().
+                'confirmed_company' => $this->getTwoBrowserCompanySelection(),
                 'order_intent_url' => $this->context->link->getModuleLink($this->name, 'orderintent'),
                 'ajax_token' => Tools::getToken(false),
                 'module_dir' => $this->_path,
@@ -8954,6 +8962,62 @@ class Twopayment extends PaymentModule
         return array(
             'company_name' => $session_company,
             'organization_number' => $session_company_id,
+        );
+    }
+
+    /**
+     * The stored company selection, in the shape the checkout JS consumes, or
+     * null when there is nothing it may use (TWO-40).
+     *
+     * This exists because the browser's own record of what the buyer picked is
+     * PAGE-LIFETIME ONLY, and PrestaShop's address step is a sequence of real
+     * document loads: the buyer states their invoice address differs from their
+     * shipping one by following a LINK, so the invoice form arrives on a fresh
+     * page with every trace of the selection gone from memory. Handing the
+     * server's cart-scoped record to the JS is what lets the invoice form be
+     * seeded from the company the buyer already chose.
+     *
+     * Deliberately routed through getTwoValidatedSessionCompanyData() rather
+     * than the raw reader, and with the address-switch comparison applied on top
+     * of it, so this cannot publish a record either guard would have rejected:
+     *
+     *  - the validated read discards a record whose country disagrees with the
+     *    cart's billing country, and one carrying no country marker at all;
+     *  - the address comparison below is the same one the order-payload path
+     *    applies, and for the same reason - an organisation number captured
+     *    against one address must not be attached to another. Compared only
+     *    when both sides are known, because 0 on either side is not evidence of
+     *    a switch (the address-editor page routinely has no invoice address on
+     *    the cart at all).
+     *
+     * @return array|null ['company' => string, 'companyid' => string,
+     *                    'country' => string, 'address_id' => int]
+     */
+    public function getTwoBrowserCompanySelection()
+    {
+        $stored = $this->readTwoCartScopedCompany();
+        if ($stored === null) {
+            return null;
+        }
+
+        $country_iso = $this->getCheckoutBillingCountryIso();
+        $validated = $this->getTwoValidatedSessionCompanyData($country_iso);
+        if (Tools::isEmpty($validated['company_name']) || Tools::isEmpty($validated['organization_number'])) {
+            return null;
+        }
+
+        $captured_address_id = ($stored['address_id'] !== '') ? (int) $stored['address_id'] : 0;
+        $cart = isset($this->context->cart) ? $this->context->cart : null;
+        $current_address_id = Validate::isLoadedObject($cart) ? (int) $cart->id_address_invoice : 0;
+        if ($captured_address_id > 0 && $current_address_id > 0 && $captured_address_id !== $current_address_id) {
+            return null;
+        }
+
+        return array(
+            'company' => $validated['company_name'],
+            'companyid' => $validated['organization_number'],
+            'country' => Tools::strtoupper(trim((string) $stored['country'])),
+            'address_id' => $captured_address_id,
         );
     }
 
