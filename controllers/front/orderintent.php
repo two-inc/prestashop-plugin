@@ -55,6 +55,9 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             case 'clearCompany':
                 $this->ajaxProcessClearCompany();
                 break;
+            case 'saveMirrorWrites':
+                $this->ajaxProcessSaveMirrorWrites();
+                break;
             case 'getCompany':
                 $this->ajaxProcessGetCompany();
                 break;
@@ -426,6 +429,70 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $this->sendJsonResponse(json_encode([
             'success' => true
         ]));
+    }
+
+    /**
+     * Record what the mirror has just written into the secondary address, so the
+     * next page load can still tell those values apart from ones the buyer typed
+     * (TWO-40).
+     *
+     * Its own action rather than a field on `saveCompany`, because the two records
+     * have different invalidation rules and `saveCompany` rejects a body with no
+     * company in it - see Twopayment::MIRROR_WRITE_SESSION_KEYS.
+     *
+     * Every field is optional and a field the body does not carry is left exactly
+     * as it was, so the browser can report one field's write without republishing
+     * the rest. An EMPTY string is a real value here, not an omission: it is how the
+     * browser disowns a value it has just cleared out of the form.
+     */
+    public function ajaxProcessSaveMirrorWrites()
+    {
+        if (!$this->validateAjaxToken()) {
+            $this->sendJsonResponse(json_encode([
+                'success' => false,
+                'error' => $this->module->l('Invalid token')
+            ]));
+            return;
+        }
+        if (!$this->isPost()) {
+            $this->sendJsonResponse(json_encode([
+                'success' => false,
+                'error' => $this->module->l('Only POST requests allowed')
+            ]));
+            return;
+        }
+
+        $fields = [];
+        foreach (array_keys(Twopayment::MIRROR_WRITE_SESSION_KEYS) as $field) {
+            $posted = Tools::getValue($field, null);
+            if ($posted === null || $posted === false) {
+                continue;
+            }
+            $value = trim((string) $posted);
+            $fields[$field] = ($field === 'country') ? Tools::strtoupper($value) : $value;
+        }
+
+        if (empty($fields)) {
+            // A machine code rather than a translated sentence, deliberately: this
+            // endpoint is fire-and-forget bookkeeping and its body is never rendered
+            // to a buyer, so a translatable string here would add rows to every
+            // catalogue that nobody will ever read.
+            $this->sendJsonResponse(json_encode([
+                'success' => false,
+                'error' => 'no_mirrored_values'
+            ]));
+            return;
+        }
+
+        $this->module->storeTwoCartScopedMirrorWrites($fields);
+        // Explicit write, for the same reason ajaxProcessSoleTraderAvailability()
+        // does it: the destructor-driven write is contingent on headers still being
+        // unsent, which depends on output buffering rather than on this endpoint.
+        if ($this->context->cookie) {
+            $this->context->cookie->write();
+        }
+
+        $this->sendJsonResponse(json_encode(['success' => true]));
     }
 
     /**
