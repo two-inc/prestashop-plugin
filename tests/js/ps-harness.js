@@ -243,6 +243,121 @@ function buildAddressForm(options) {
 }
 
 /**
+ * The checkout addresses step, in PrestaShop's OWN markup (TWO-40).
+ *
+ * Reproduced from core's `checkout/_partials/steps/addresses.tpl`,
+ * `checkout/_partials/address-form.tpl` and `_partials/form-fields.tpl` as
+ * shipped in the official 8 and 9 images (byte-identical between them; 1.7.8.11
+ * differs only by an extra attribute and a hook). A fixture invented here would
+ * prove nothing about a plugin whose whole job is to read and write that markup,
+ * so the structural facts the module depends on are all present and all real:
+ *
+ *  - exactly ONE editable address form, never two: core sets the delivery and
+ *    invoice form flags in mutually exclusive branches, and the other side is a
+ *    radio selector over saved addresses (`#delivery-addresses` /
+ *    `#invoice-addresses`) or absent;
+ *  - the editable form lives in `#delivery-address` / `#invoice-address` and
+ *    emits `<input type="hidden" name="saveAddress" value="delivery|invoice">`;
+ *  - the shared-address checkbox is emitted ONLY while the delivery form is the
+ *    editable one, and CHECKED means the two addresses are the same;
+ *  - the country select carries a disabled, empty-valued "Please choose"
+ *    placeholder option ahead of the real countries;
+ *  - the step's outer `<form>` and the rendered address form's own `<form>` are
+ *    nested, which is why the block div - not the form - is the usable scope.
+ *
+ * @param {Object} [options]
+ * @param {string} [options.editing] 'delivery' (default) or 'invoice' - which
+ *        side gets the editable form; the other gets a selector
+ * @param {boolean} [options.sameAddress] the state the shared-address control
+ *        reports, i.e. TRUE means the buyer says both addresses are one. Only
+ *        rendered when the delivery form is the editable one, exactly as core
+ *        does. Default false.
+ * @param {boolean} [options.invoiceBlock] whether an invoice block exists at
+ *        all. Default: true unless sameAddress.
+ * @param {?string} [options.countryId] pre-selected country option value; null
+ *        (default) leaves the placeholder selected, i.e. an unanswered country
+ * @param {boolean} [options.countryIsoAttrs] give the country options
+ *        `data-iso-code` (default false - core's classic theme does not)
+ * @param {string} [options.company] initial value of the company input
+ * @returns {void}
+ */
+function buildAddressesStep(options) {
+    const opts = options || {};
+    const editing = opts.editing || 'delivery';
+    const sameAddress = opts.sameAddress === true;
+    const invoiceBlock = 'invoiceBlock' in opts ? opts.invoiceBlock : !sameAddress;
+    const countryId = 'countryId' in opts ? opts.countryId : null;
+    const isoAttrs = opts.countryIsoAttrs === true;
+    const company = opts.company || '';
+
+    const countryOption = function (value, label, iso) {
+        const attr = isoAttrs ? ' data-iso-code="' + iso + '"' : '';
+        const selected = (countryId !== null && String(countryId) === value) ? ' selected' : '';
+        return '        <option value="' + value + '"' + attr + selected + '>' + label + '</option>';
+    };
+
+    const addressForm = function (type) {
+        const lines = [
+            '      <div id="' + type + '-address">',
+            '        <form method="POST" data-id-address="0">',
+            '        <input type="text" name="company" id="field-company" value="' + company + '">',
+            '        <input type="text" name="dni" id="field-dni" value="">',
+            '        <input type="text" name="vat_number" id="field-vat_number" value="">',
+            '        <input type="text" name="address1" id="field-address1" value="">',
+            '        <input type="text" name="postcode" id="field-postcode" value="">',
+            '        <input type="text" name="city" id="field-city" value="">',
+            '        <select id="field-id_country" class="form-control form-control-select js-country" name="id_country" required>',
+            '        <option value disabled' + (countryId === null ? ' selected' : '') + '>Please choose</option>',
+            countryOption('17', 'United Kingdom', 'GB'),
+            countryOption('8', 'France', 'FR'),
+            countryOption('1', 'Germany', 'DE'),
+            '        </select>',
+            '        <input type="hidden" name="saveAddress" value="' + type + '">'
+        ];
+        if (type === 'delivery') {
+            lines.push(
+                '        <div class="form-group row"><div class="col-md-9 col-md-offset-3">',
+                '        <input name="use_same_address" id="use_same_address" type="checkbox" value="1"'
+                    + (sameAddress ? ' checked' : '') + '>',
+                '        <label for="use_same_address">Use this address for invoice too</label>',
+                '        </div></div>'
+            );
+        }
+        lines.push('        </form>', '      </div>');
+        return lines.join('\n');
+    };
+
+    const addressSelector = function (type) {
+        const name = type === 'invoice' ? 'id_address_invoice' : 'id_address_delivery';
+        return [
+            '      <div id="' + type + '-addresses" class="address-selector js-address-selector">',
+            '        <article class="address-item">',
+            '          <label><span class="custom-radio">',
+            '            <input type="radio" name="' + name + '" value="7" checked>',
+            '          </span><div class="address">Saved address</div></label>',
+            '        </article>',
+            '      </div>'
+        ].join('\n');
+    };
+
+    const html = ['<div class="js-address-form">', '  <form method="POST" data-id-address="0">'];
+    html.push(editing === 'delivery' ? addressForm('delivery') : addressSelector('delivery'));
+    if (invoiceBlock) {
+        html.push(editing === 'invoice' ? addressForm('invoice') : addressSelector('invoice'));
+    } else {
+        // core's `$use_same_address` branch: a link, not a toggle. Its href
+        // navigates - which is why the mirror has to be a cross-page-load
+        // operation and cannot listen for a reveal.
+        html.push(
+            '      <p><a data-link-action="different-invoice-address" href="/order?use_same_address=0">',
+            '        Billing address differs from shipping address</a></p>'
+        );
+    }
+    html.push('  </form>', '</div>');
+    document.body.innerHTML = html.join('\n');
+}
+
+/**
  * Replace the address form's DOM, as PrestaShop does on `updatedAddressForm`.
  *
  * The company input the caller held a jQuery object for is detached by this;
@@ -720,6 +835,7 @@ module.exports = {
     loadScript: loadScript,
     installStylesheet: installStylesheet,
     buildAddressForm: buildAddressForm,
+    buildAddressesStep: buildAddressesStep,
     replaceAddressForm: replaceAddressForm,
     stubAjax: stubAjax,
     callbackRecorder: callbackRecorder,

@@ -75,6 +75,108 @@ final class SessionCompanyClearSpec
         self::testCountryMismatchStillWipesTheRecord();
         self::testLegacyRecordWithoutCountryMarkerStillWipesTheRecord();
         self::testMatchingCountryStillReturnsTheRecord();
+        self::testBrowserSelectionPublishesTheCurrentCartsRecord();
+        self::testBrowserSelectionWithholdsARecordFromAnotherCart();
+        self::testBrowserSelectionWithholdsACountryMismatchedRecord();
+        self::testBrowserSelectionWithholdsARecordCapturedAgainstAnotherAddress();
+        self::testBrowserSelectionWithholdsAHalfRecord();
+    }
+
+    /* ---- TWO-40 #13: what the browser is allowed to be told ---- */
+
+    /**
+     * The record handed to the checkout JS is what lets a company chosen on the
+     * shipping pass survive the page load that reveals the invoice address form.
+     * Happy path first, so the withholding cases below cannot pass by publishing
+     * nothing ever.
+     */
+    private static function testBrowserSelectionPublishesTheCurrentCartsRecord(): void
+    {
+        self::seedBillingAddress('gb');
+        $module = self::makeModule(self::CART_ID);
+
+        $published = $module->getTwoBrowserCompanySelection();
+
+        TinyAssert::true(is_array($published), 'a valid record must be published to the browser');
+        TinyAssert::same('Example Trading Ltd', (string) $published['company']);
+        TinyAssert::same('12345678', (string) $published['companyid']);
+        TinyAssert::same('GB', (string) $published['country']);
+        TinyAssert::same(self::ADDRESS_ID, (int) $published['address_id']);
+    }
+
+    /**
+     * Cart scoping applies here as everywhere: a record chosen on another cart is
+     * not published, so a page load cannot restore a selection from a previous
+     * order.
+     */
+    private static function testBrowserSelectionWithholdsARecordFromAnotherCart(): void
+    {
+        self::seedBillingAddress('gb', self::OTHER_CART_ID);
+        $module = self::makeModule(self::CART_ID);
+
+        TinyAssert::same(
+            null,
+            $module->getTwoBrowserCompanySelection(),
+            'a record from another cart must not be published to the browser'
+        );
+    }
+
+    /**
+     * The country guard, reached because the publish path goes through the
+     * VALIDATED read rather than the raw cookie reader. A record the order payload
+     * would refuse must not be handed to the browser either - anything the browser
+     * mirrors into the invoice form would then be a company the server has already
+     * decided not to use.
+     */
+    private static function testBrowserSelectionWithholdsACountryMismatchedRecord(): void
+    {
+        // A GB company record against a cart billing to France.
+        self::seedBillingAddress('fr');
+        $module = self::makeModule(self::CART_ID);
+
+        TinyAssert::same(
+            null,
+            $module->getTwoBrowserCompanySelection(),
+            'a record whose country disagrees with the cart must not be published'
+        );
+    }
+
+    /**
+     * And the address-switch guard, the same comparison the order-payload path
+     * applies: an organisation number captured against one address must not be
+     * carried onto another.
+     */
+    private static function testBrowserSelectionWithholdsARecordCapturedAgainstAnotherAddress(): void
+    {
+        self::seedBillingAddress('gb');
+        $cookie = Context::getContext()->cookie;
+        $cookie->two_company_address_id = (string) (self::ADDRESS_ID + 500);
+        $module = self::makeModule(self::CART_ID);
+
+        TinyAssert::same(
+            null,
+            $module->getTwoBrowserCompanySelection(),
+            'a record captured against a different address must not be published'
+        );
+    }
+
+    /**
+     * A name with no organisation number beside it is not a selection the browser
+     * can act on - mirroring a company name whose number the payload will not
+     * carry would put an unverified name in front of the buyer as a confirmed one.
+     */
+    private static function testBrowserSelectionWithholdsAHalfRecord(): void
+    {
+        self::seedBillingAddress('gb');
+        $cookie = Context::getContext()->cookie;
+        unset($cookie->two_company_id);
+        $module = self::makeModule(self::CART_ID);
+
+        TinyAssert::same(
+            null,
+            $module->getTwoBrowserCompanySelection(),
+            'a company name with no organisation number must not be published'
+        );
     }
 
     /* ---- TWO-40: the record is scoped to the cart it was chosen in ---- */
@@ -632,6 +734,26 @@ final class SessionCompanyClearSpec
         self::attachCart(self::CART_ID);
 
         return $cookie;
+    }
+
+    /**
+     * A seeded company record PLUS a cart whose invoice address resolves to a real
+     * country, which is what the browser-publish path needs in order to run its
+     * country guard at all.
+     *
+     * @param string $addressCountryIso lower-case, as PrestaShop's country table
+     *                                  stores it
+     * @param int    $recordCartId      the cart the company record is stamped with
+     */
+    private static function seedBillingAddress(
+        string $addressCountryIso,
+        int $recordCartId = self::CART_ID
+    ): void {
+        StubStore::reset();
+        Tools::resetTestValues();
+        StubStore::$countries[7401] = $addressCountryIso;
+        StubStore::$addresses[self::ADDRESS_ID] = ['id_country' => 7401];
+        self::seedSessionCompany($recordCartId);
     }
 
     /**
