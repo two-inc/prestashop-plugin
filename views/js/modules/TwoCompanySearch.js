@@ -242,6 +242,7 @@ class TwoCompanySearch {
         this.setupAddressIdentifierSync();
         this.setupAutocomplete();
         this.setupCountryChangeListener();
+        this.mirrorConfirmedCompanyToInvoiceAddress();
         this.isInitialized = true;
     }
     
@@ -1639,8 +1640,10 @@ class TwoCompanySearch {
      *
      * @param {string} orgNumber
      * @param {boolean} [onlyIfEmpty] Leave a value the customer typed alone.
+     * @param {Element} [root] confine the write to one address block. Omitted -
+     *        the document-wide default every existing caller relies on.
      */
-    writeOrganizationToAddressIdentifiers(orgNumber, onlyIfEmpty) {
+    writeOrganizationToAddressIdentifiers(orgNumber, onlyIfEmpty, root) {
         if (!this.isAddressLookupEnabled()) {
             return;
         }
@@ -1650,7 +1653,7 @@ class TwoCompanySearch {
             return;
         }
 
-        this.addressIdentifierFields().forEach(field => {
+        this.addressIdentifierFields(root).forEach(field => {
             if (field.length === 0) {
                 return;
             }
@@ -1687,9 +1690,23 @@ class TwoCompanySearch {
      * walk exactly the fields the write walks. A field present in one list and
      * absent from the other is a disowned organisation number left in the form.
      *
+     * Document-wide by DEFAULT, which is what every caller but the invoice mirror
+     * wants: there is only ever one editable address form on a PrestaShop
+     * checkout, so an unscoped read is unambiguous there. The mirror passes a root
+     * because it writes as a PAIR into one specific block and must not widen that
+     * to the document - and the default is left exactly as it was rather than
+     * narrowed for everyone, because narrowing it silently would change callers
+     * that run on pages where the org-number field is not inside an address block
+     * at all.
+     *
+     * @param {Element} [root] confine the lookup to one address block
      * @returns {Array<Object>} jQuery objects, any of which may be empty
      */
-    addressIdentifierFields() {
+    addressIdentifierFields(root) {
+        if (root) {
+            return [$(root).find("input[name='dni']").first()];
+        }
+
         return [$("input[name='dni']")];
     }
 
@@ -1729,6 +1746,1203 @@ class TwoCompanySearch {
             field.trigger('input');
             field.trigger('change');
         });
+    }
+
+    /**
+     * Whether the buyer's current state says their invoice address is a
+     * DIFFERENT address from the one they are shipping to (TWO-40).
+     *
+     * Named and worded for what the buyer has STATED, never for the state of a
+     * checkbox, and that is a requirement rather than a preference. Two reasons,
+     * both of which mislead anyone who reads this as "is the box ticked":
+     *
+     *  1. PrestaShop offers the checkbox on the FIRST pass only, while the
+     *     delivery form is being edited, and its polarity is inverted from the
+     *     question asked here - CHECKED means the two addresses are the SAME. On
+     *     every later pass there is no checkbox at all: core renders a link
+     *     ("billing address differs from shipping address") whose href navigates,
+     *     so the invoice side is revealed by a page load and there is no
+     *     client-side toggle to observe.
+     *  2. Another platform in this plugin family expresses the same buyer
+     *     statement with a checkbox of the OPPOSITE polarity, so an engineer
+     *     porting this and reading "checked" here would wire it up backwards.
+     *     The abstraction exists to make that impossible.
+     *
+     * Resolution, deliberately polarity-neutral in the path that matters:
+     *
+     *  1. if the shared-address control is in the DOM at all, the buyer's live
+     *     statement is its NEGATION - it asks the opposite question;
+     *  2. else, the presence of an invoice block of either shape - an editable
+     *     form or a selector over saved addresses - IS the statement, because
+     *     core renders that block only when the two addresses are not shared;
+     *  3. else false. An unclear signal is not evidence that the addresses
+     *     differ, and everything downstream of this treats false as a no-op.
+     *
+     * @returns {boolean}
+     */
+    buyerStatesInvoiceAddressDiffers() {
+        const sharedAddressControl = document.querySelector("input[name='use_same_address']");
+        if (sharedAddressControl) {
+            return !sharedAddressControl.checked;
+        }
+
+        // `.js-invoice-address` is a tolerance for themes that keep core's
+        // structure but not its ids. Nothing else is accepted: these are the
+        // shapes core's own templates emit, and inventing selectors it never
+        // emits would make this answer true on pages where it is false.
+        return !!document.querySelector('#invoice-address, #invoice-addresses, .js-invoice-address');
+    }
+
+    /**
+     * Which address the one editable form on the page is for - 'delivery',
+     * 'invoice', or '' when there is no editable form (TWO-40).
+     *
+     * Read from the hidden field core's address form emits carrying exactly that
+     * word. There is only ever ONE editable address form on a PrestaShop
+     * checkout - the flags for the two are set in mutually exclusive branches -
+     * so a single unscoped read is unambiguous.
+     *
+     * @returns {string}
+     */
+    visibleAddressFormType() {
+        const marker = document.querySelector("input[name='saveAddress']");
+        if (!marker) {
+            return '';
+        }
+        return String(marker.value || '').trim().toLowerCase();
+    }
+
+    /**
+     * The address blocks core's addresses step can render - the editable form for
+     * either side, and the radio selector over saved addresses that stands in for
+     * the other side.
+     *
+     * Used to recognise a candidate scope that is really the STEP: anything with
+     * one of these INSIDE it spans more than one address, and is not a scope.
+     *
+     * The ids alone are NOT enough, and an id-only list missed the guard's own
+     * motivating case (TWO-40, round 6). A theme is free to drop core's ids while
+     * keeping the rest of its markup, and then the widest candidate - the step's
+     * outer wrapper, which core emits itself - looks blockless while still
+     * containing the other address. So this also names every CLASS core puts on a
+     * saved-address selector and on the address items inside it, and the radio
+     * that carries the other address's id. That radio is the sturdiest of the
+     * three kinds of marker: it is a form field name, not a styling hook or a
+     * document id, so a theme cannot drop it without breaking its own submission.
+     *
+     * Nothing here can reject a legitimate scope: not one of these appears
+     * anywhere in the markup of core's address FORM
+     * (`customer/_partials/address-form.tpl` and the checkout override of it),
+     * which is all a correctly resolved scope ever contains.
+     */
+    static ADDRESS_BLOCK_SELECTOR = [
+        // The four block ids `checkout/_partials/steps/addresses.tpl` emits.
+        '#delivery-address',
+        '#delivery-addresses',
+        '#invoice-address',
+        '#invoice-addresses',
+        // The classes it emits on the two selector blocks, and the ones
+        // `address-selector-block.tpl` emits on each saved address inside them.
+        '.address-selector',
+        '.js-address-selector',
+        '.js-address-item',
+        '.address-item',
+        // The radio naming the other address. Load-bearing, not decorative.
+        "input[name='id_address_delivery']",
+        "input[name='id_address_invoice']",
+        // A tolerance for themes that keep core's structure but not its ids.
+        '.js-invoice-address',
+    ].join(', ');
+
+    /**
+     * The element to scope the visible address form's field lookups to, or null.
+     *
+     * Innermost-first, because core nests the rendered address form's own
+     * `<form>` inside the step's outer one (HTML drops the inner tag, so the
+     * block element is the reliable boundary, not the form).
+     *
+     * FAILS CLOSED, and that is the point of the second half of this method
+     * (TWO-40, round 5). The candidate list used to end in `form`, so a theme whose
+     * markup does not carry the block ids resolved to the step's OUTER form - which
+     * contains BOTH address blocks, and writing into it is precisely the
+     * document-wide write this whole feature exists to prevent. The same is true of
+     * the outer `.js-address-form` wrapper, which core itself emits around the
+     * whole step. So a candidate that CONTAINS another address block is rejected
+     * outright rather than used: no scope means no mirror, which is a visible
+     * no-op, where a widened scope is a silent write into an address the buyer is
+     * not looking at.
+     *
+     * Note the guard bites exactly when it matters: a page whose only address block
+     * is the visible form has nothing else for a wide scope to reach, and resolves
+     * normally.
+     *
+     * @returns {?Element}
+     */
+    visibleAddressFormRoot() {
+        const marker = document.querySelector("input[name='saveAddress']");
+        if (!marker || typeof marker.closest !== 'function') {
+            return null;
+        }
+        const root = marker.closest(
+            '#invoice-address, #delivery-address, .js-invoice-address, .js-address-form'
+        );
+        if (!root || typeof root.querySelector !== 'function') {
+            return null;
+        }
+        if (root.querySelector(TwoCompanySearch.ADDRESS_BLOCK_SELECTOR)) {
+            return null;
+        }
+
+        return root;
+    }
+
+    /**
+     * The scope of the SECONDARY address - the one PrestaShop does not have the
+     * buyer edit by default - or null when the buyer is not looking at it (TWO-40).
+     *
+     * On PrestaShop the address playing the billing/invoice role is the secondary
+     * one, so the two coincide here. That is a platform fact and not a general one:
+     * another platform in this family is billing-FIRST, and there its billing
+     * address is the PRIMARY. Anything phrased in terms of the billing ROLE ports;
+     * anything phrased in terms of primary/secondary position does not.
+     *
+     * Three conditions, all of them about what the buyer has stated rather than
+     * about any control's state:
+     *
+     *  - the one editable form on the page is the invoice one. On the shipping pass
+     *    there is no secondary address in the document at all;
+     *  - the buyer's current selection indicates the two addresses are different
+     *    ones. When they say the addresses are the same there is one address, and
+     *    there is no secondary to write into or to protect;
+     *  - the form resolves to a scope that does not span another address block.
+     *    Fails closed: no scope means no write.
+     *
+     * @returns {?Element}
+     */
+    secondaryAddressFormRoot() {
+        if (this.visibleAddressFormType() !== 'invoice') {
+            return null;
+        }
+        if (!this.buyerStatesInvoiceAddressDiffers()) {
+            return null;
+        }
+
+        return this.visibleAddressFormRoot();
+    }
+
+    /**
+     * The fields of the secondary address whose contents decide whether it is still
+     * in sync (TWO-40), in the short-name vocabulary the server's mirror-write
+     * record uses (`Twopayment::MIRROR_WRITE_SESSION_KEYS`).
+     *
+     * These are exactly the fields the plugin can ATTRIBUTE. A value in one of them
+     * is either one the mirror or the ordinary company lookup put there - in which
+     * case the last-written record says so - or one the buyer authored. Every other
+     * field of a PrestaShop address (the name fields, the phone) is one the plugin
+     * never writes, so every value in it is buyer-authored by definition: counting
+     * them would pin the secondary address the moment the buyer typed the name they
+     * are obliged to type before they can save it at all, on the very first render.
+     */
+    static MIRRORED_ADDRESS_FIELDS = [
+        'company',
+        'organization',
+        'country',
+        'address1',
+        'postcode',
+        'city',
+    ];
+
+    /**
+     * What the mirror last wrote into the secondary address on this cart, as the
+     * server published it (TWO-40).
+     *
+     * This, and not the primary address's live value, is the comparison basis for
+     * the pin - see `Twopayment::MIRROR_WRITE_SESSION_KEYS` for why comparing
+     * against the primary is provably self-defeating.
+     *
+     * @returns {Object} short field name to last-written value; missing keys mean
+     *          nothing was ever written there
+     */
+    persistedMirrorWrites() {
+        const published = (window.twopayment && window.twopayment.mirror_writes) || null;
+        if (!published || typeof published !== 'object') {
+            return {};
+        }
+
+        return published;
+    }
+
+    /**
+     * Trim, and fold case. Both are Doug's ruling on how a content match is
+     * decided: the buyer retyping "acme trading ltd" over "Acme Trading Ltd", or
+     * leaving a trailing space behind, has not authored a different answer.
+     *
+     * @param {*} value
+     * @returns {string}
+     */
+    normalizeMirroredValue(value) {
+        return String(value == null ? '' : value).trim().toLowerCase();
+    }
+
+    /**
+     * The ISO code an option VALUE in a country select stands for, or ''.
+     *
+     * The inverse of countryOptionValueForIso(), with the same three resolution
+     * strategies in the same order, because the two have to agree. Comparisons are
+     * made on the ISO and never on the option's visible text: the id is shop-local
+     * and the label is locale-dependent, so either one would make the record
+     * unreadable on a shop or a language other than the one that wrote it.
+     *
+     * @param {HTMLSelectElement} select
+     * @param {string} optionValue
+     * @returns {string} uppercase alpha-2, or ''
+     */
+    countryIsoForOptionValue(select, optionValue) {
+        const value = String(optionValue == null ? '' : optionValue).trim();
+        if (!value || !select || !select.options) {
+            return '';
+        }
+        for (let index = 0; index < select.options.length; index++) {
+            const option = select.options[index];
+            if (option.value !== value) {
+                continue;
+            }
+            const attrIso = option.getAttribute('data-iso-code')
+                || option.getAttribute('data-iso')
+                || option.getAttribute('data-country-iso');
+            if (attrIso) {
+                return String(attrIso).toUpperCase();
+            }
+            const mapped = (window.twopayment && window.twopayment.countries)
+                ? window.twopayment.countries[option.value]
+                : null;
+            if (mapped) {
+                return String(mapped).toUpperCase();
+            }
+            return this.extractCountryFromText(String(option.textContent || '')) || '';
+        }
+
+        return '';
+    }
+
+    /**
+     * Every comparable field of the secondary address, paired with the values the
+     * plugin has on record as having written there (TWO-40).
+     *
+     * A field the form does not have is not in the list: there is nothing to
+     * compare, and treating an absent field as a mismatch would pin every address
+     * whose country's format has no identification field.
+     *
+     * Two sources of "what we last wrote", and both are consulted:
+     *
+     *  - the field's own marker attribute, which is this PAGE's record. It is the
+     *    only one that exists for a write made since the last render, and it is
+     *    destroyed by core's form rebuild;
+     *  - the cart-scoped record the server published, which is the only one that
+     *    survives a page load - and the pin is evaluated on a page load.
+     *
+     * Each state also carries the field's UNANSWERED value, which counts only while
+     * nothing at all is on record as having been written there. For a text input
+     * that is the empty string. For the country select it is whatever the server
+     * rendered as selected - see serverRenderedSelectValue() for why an empty
+     * country select does not exist on a real PrestaShop form, so emptiness is not
+     * an available test there.
+     *
+     * The "only while nothing was written" condition is what makes the country
+     * pinnable at all: core re-renders the form on every country change, so the
+     * value the server rendered is, after the first change, always the value the
+     * buyer just chose. Accepting it unconditionally would mean the country could
+     * never read as buyer-authored.
+     *
+     * Text inputs deliberately get no server-rendered baseline of their own: a
+     * non-empty street the server rendered is a street the buyer's saved address
+     * owns, and treating it as unanswered is exactly how an existing billing address
+     * gets silently overwritten.
+     *
+     * @param {Element} root the secondary address form's scope
+     * @returns {Array<{name: string, current: string, written: Array<string>,
+     *          unanswered: string}>}
+     */
+    mirroredAddressFieldStates(root) {
+        const persisted = this.persistedMirrorWrites();
+        const states = [];
+        const record = (name, field, current, unanswered, convert) => {
+            if (!field || field.length === 0) {
+                return;
+            }
+            const marker = field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR);
+            const written = [];
+            if (typeof marker !== 'undefined') {
+                written.push(typeof convert === 'function' ? convert(marker) : marker);
+            }
+            if (typeof persisted[name] !== 'undefined') {
+                written.push(persisted[name]);
+            }
+            states.push({
+                name: name,
+                current: current,
+                written: written.filter(value => String(value == null ? '' : value) !== ''),
+                unanswered: unanswered || ''
+            });
+        };
+        const liveValue = field => String(field.val() == null ? '' : field.val());
+
+        const companyField = $(root).find("input[name='company']").first();
+        record('company', companyField, liveValue(companyField), '');
+
+        this.addressIdentifierFields(root).forEach(field => {
+            record('organization', field, liveValue(field), '');
+        });
+
+        ['address1', 'postcode', 'city'].forEach(name => {
+            const field = $(root).find(`input[name='${name}']`).first();
+            record(name, field, liveValue(field), '');
+        });
+
+        const select = $(root).find("select[name='id_country'], select[name='country']").first();
+        if (select.length > 0) {
+            const toIso = value => this.countryIsoForOptionValue(select[0], value);
+            record(
+                'country',
+                select,
+                toIso(liveValue(select)),
+                toIso(this.serverRenderedSelectValue(select[0])),
+                toIso
+            );
+        }
+
+        return states;
+    }
+
+    /**
+     * Whether one field still holds what the plugin last put there.
+     *
+     * @param {{current: string, written: Array<string>, unanswered: string}} state
+     * @returns {boolean}
+     */
+    mirroredFieldStillHoldsWhatWeWrote(state) {
+        const current = this.normalizeMirroredValue(state.current);
+        if (state.written.some(value => this.normalizeMirroredValue(value) === current)) {
+            return true;
+        }
+        if (state.written.length > 0) {
+            // Something of ours was written here and this is not it. Includes the
+            // field having been emptied: the buyer deleting our value is an edit like
+            // any other, and refilling it on the next render would be the plugin
+            // arguing with them.
+            return false;
+        }
+
+        // Nothing was ever written here, so "still holds what we wrote" is decided by
+        // whether the buyer has answered the field at all. This is the ordinary state
+        // of a brand-new billing address form.
+        return current === '' || current === this.normalizeMirroredValue(state.unanswered);
+    }
+
+    /**
+     * The values a mirrored write into one field may overwrite, besides one the
+     * field's own marker still claims (TWO-40).
+     *
+     * The same rule the pin applies, expressed for the per-field write layer so the
+     * two cannot drift: the value on record as last written there, and - only when
+     * there is none - that field's unanswered value.
+     *
+     * @param {string} recordName short field name in the mirror-write record
+     * @param {string} [unansweredValue] what counts as unanswered for this field
+     * @param {Function} [convert] maps a recorded value into the field's own
+     *        vocabulary, for a field that does not store what it displays
+     * @returns {Array<string>}
+     */
+    mirrorWriteAcceptedValues(recordName, unansweredValue, convert) {
+        const recorded = this.persistedMirrorWrites()[recordName];
+        const value = String(recorded == null ? '' : recorded);
+        if (value !== '') {
+            const mapped = typeof convert === 'function' ? convert(value) : value;
+            return mapped ? [String(mapped)] : [];
+        }
+
+        return unansweredValue ? [String(unansweredValue)] : [];
+    }
+
+    /**
+     * Whether the secondary address is PINNED - the buyer has made it their own,
+     * and nothing may be written into any of its fields (TWO-40).
+     *
+     * ADDRESS-WIDE, not per-field, and that is Doug's ruling rather than an
+     * implementation convenience: any address field the buyer has entered pins the
+     * address, and the test for "entered" is a content match. Put together, ONE
+     * field that no longer holds what the plugin put there pins the WHOLE secondary
+     * address and no field is synced.
+     *
+     * The consequence, stated plainly because it is the behaviour and not a corner:
+     * the mirror only ever writes into a PRISTINE secondary address, and once the
+     * buyer touches anything in it, it stays frozen for the rest of the cart unless
+     * the contents come back to matching.
+     *
+     * @param {Element} root the secondary address form's scope
+     * @returns {boolean}
+     */
+    secondaryAddressIsPinned(root) {
+        return this.mirroredAddressFieldStates(root).some(
+            state => !this.mirroredFieldStillHoldsWhatWeWrote(state)
+        );
+    }
+
+    /**
+     * Report what the mirror has just written into the secondary address, so the
+     * NEXT page load can still tell those values from ones the buyer authored
+     * (TWO-40).
+     *
+     * Fire-and-forget, like clearPersistedCompany() beside it, and the failure mode
+     * is deliberately the safe one: a request that never arrives leaves the next
+     * render seeing non-empty fields with nothing on record as having written them,
+     * which reads as buyer-authored and PINS the address. A lost report costs one
+     * missed re-sync; the opposite default would cost the buyer's own data.
+     *
+     * Takes a partial record. A field the caller does not mention is left exactly as
+     * it was, so a country-only write does not have to republish the company. An
+     * empty string IS reported and IS meaningful: it says nothing of ours is in that
+     * field any more.
+     *
+     * @param {Object} values keyed by MIRRORED_ADDRESS_FIELDS names
+     * @returns {boolean} whether anything was reported
+     */
+    recordMirrorWrites(values) {
+        const written = {};
+        Object.keys(values || {}).forEach(name => {
+            if (TwoCompanySearch.MIRRORED_ADDRESS_FIELDS.indexOf(name) === -1) {
+                return;
+            }
+            written[name] = String(values[name] == null ? '' : values[name]);
+        });
+        if (Object.keys(written).length === 0) {
+            return false;
+        }
+
+        // Keep the published copy in step, so a second evaluation on THIS page
+        // reaches the same answer the server will give on the next one. Without
+        // this, the re-mount that core's own rebuild triggers would judge the
+        // mirror's own fresh writes against a record that predates them.
+        if (window.twopayment) {
+            window.twopayment.mirror_writes = Object.assign(
+                {}, this.persistedMirrorWrites(), written
+            );
+        }
+
+        try {
+            if (!window.twopayment || !window.twopayment.order_intent_url || !window.twopayment.ajax_token) {
+                return false;
+            }
+            $.ajax({
+                url: window.twopayment.order_intent_url,
+                method: 'POST',
+                data: Object.assign({
+                    ajax: 1,
+                    action: 'saveMirrorWrites',
+                    token: window.twopayment.ajax_token
+                }, written),
+                timeout: 10000
+            });
+        } catch (e) {
+            // no-op
+        }
+
+        return true;
+    }
+
+    /**
+     * Carry a company selection made on the shipping pass over to the invoice
+     * address form (TWO-40). Company NAME and COUNTRY only.
+     *
+     * This is a CROSS-PAGE-LOAD operation, and it has to be: PrestaShop never
+     * renders two editable address forms at once, so at the moment the buyer
+     * picks a company there are no invoice fields in the document to write into.
+     * The invoice form arrives later, on its own page load, and this runs when it
+     * does - at mount, from init(). There is no reveal event to listen for.
+     *
+     * Nothing happens unless all of these hold:
+     *
+     *  - the merchant has address population switched on. This writes into the
+     *    address form, so it belongs behind the address-population switch like
+     *    every other write here - which also makes it inert on the payment tile
+     *    mount, where that switch is forced off;
+     *  - the editable form on screen is the INVOICE one. On the shipping pass
+     *    there is nothing to carry anything to yet;
+     *  - the buyer's current state says the two addresses differ. When they do
+     *    not there is one address and nothing to mirror, and this is a true
+     *    no-op - it does not populate anything speculatively;
+     *  - a company selection exists for this cart.
+     *
+     * Street, postcode and city are deliberately NOT mirrored. The buyer has
+     * just said this is a different address; its street is legitimately not the
+     * company's registered one, and writing it would be the plugin overruling
+     * a statement the buyer made explicitly.
+     *
+     * FOUR SEPARATE OPERATIONS, and keeping them separate is the whole design:
+     *
+     *  - RE-MARK (reapplyMirrorMarkers) re-establishes the autofill marker on a
+     *    value still recognisable as one this page's mirror wrote. It never writes
+     *    a value and never touches an empty field. It exists because a successful
+     *    country write triggers core's own form rebuild: core's `.js-country`
+     *    handler POSTs `action=addressForm`, replaces every `.js-address-form`
+     *    with the response, and restores the previous values with an INPUT-only
+     *    loop that copies values and not attributes. The company name survives;
+     *    its marker does not. Without a re-mark the plugin reads its own write as
+     *    buyer-typed and can no longer disown it.
+     *  - POPULATE (populateInvoiceAddressFromConfirmedCompany) fills unanswered
+     *    fields, at most once per company per page. It must NOT re-run after that,
+     *    because the same rebuild is how a buyer's deliberate CLEAR comes back
+     *    round: cleared field, country change, form replaced, empty value
+     *    restored, search rebuilt, init() again - and a populate keyed only on
+     *    "the field is empty" would silently undo the clear.
+     *  - COMPLETE (completeMirroredOrganizationNumber) places the NUMBER half
+     *    when the rebuild is what separated it from the name. It exists because
+     *    the identification field's presence is decided by the COUNTRY: core
+     *    appends `dni` to the address format only when the country carries
+     *    `need_identification_number`, so the mirror's own country write can hand
+     *    back a form with an identification field the previous render did not have
+     *    (or take one away, which core's INPUT-only restore loop cannot put back).
+     *    Left to the once-per-company populate gate, that is a company name on the
+     *    order with no organisation number beside it.
+     *  - RE-PUBLISH (republishMirroredSelection) puts the hidden `companyid` field
+     *    and its pairing tag back after the same rebuild destroys them. Separate
+     *    because it is about the plugin's own selection bookkeeping rather than
+     *    about any address field, and because it must run whatever the other three
+     *    decided.
+     *
+     * Re-mark first, so a populate for a genuinely NEW company can still
+     * recognise the previous mirror's values as ours rather than as the buyer's.
+     * Complete before the re-publish, so a populate that has just placed the pair
+     * for a new company settles the number half before the completion looks at it,
+     * and the re-publish sees the settled memory.
+     *
+     * The mirror deliberately does NOT publish the selection to
+     * TwoCheckoutManager. The selection it is acting on has just been RESTORED
+     * from the server's cart-scoped record, and setConfirmedCompanySelection()
+     * re-derives the captured address and country from the CURRENT page - which is
+     * precisely what seedConfirmedCompanySelectionFromServer() exists to avoid,
+     * because it would stamp the record with the page it is being restored onto
+     * and neuter both invalidation checks it must remain subject to.
+     *
+     * @returns {void}
+     */
+    mirrorConfirmedCompanyToInvoiceAddress() {
+        if (this._destroyed) {
+            return;
+        }
+        if (!this.isAddressLookupEnabled()) {
+            return;
+        }
+        const root = this.secondaryAddressFormRoot();
+        if (!root) {
+            return;
+        }
+
+        this.reapplyMirrorMarkers(root);
+        // THE PIN, address-wide, and the gate in front of the populate only. The
+        // other three operations are rebuild REPAIR rather than sync: none of them
+        // introduces a value the mirror has not already placed on this page.
+        //
+        // Two of them are genuinely inert on a pinned address, for their own
+        // reasons: RE-MARK never writes a value at all, and RE-PUBLISH restores the
+        // hidden pair only behind a company name that is still, exactly, the marked
+        // one the mirror recorded writing - which a pin caused by the company field
+        // rules out.
+        //
+        // COMPLETE is NOT inert on a pinned address, and that is deliberate rather
+        // than an oversight (TWO-40, round 1 of the content-match rework). A pin
+        // raised by a DIFFERENT field - a city the buyer typed - leaves the marked
+        // company name untouched, so the completion still fires there. It is
+        // bounded instead of gated: it writes only the NUMBER half of a pair the
+        // plugin itself created, only while the name half is still the mirror's own
+        // marked value, and only into an identification field that is empty and
+        // carries no marker of any kind. Gating it on the pin would put back the
+        // defect it was written to close - a mirrored company name reaching the
+        // order payload with no organisation number beside it, on a form where core
+        // requires one - and protecting that pair is worth more than the pin's
+        // reach here, because an empty unmarked field holds no answer of the
+        // buyer's to protect.
+        if (!this.secondaryAddressIsPinned(root)) {
+            this.populateInvoiceAddressFromConfirmedCompany(root);
+        }
+        this.completeMirroredOrganizationNumber(root);
+        this.republishMirroredSelection();
+    }
+
+    /**
+     * Put the hidden `companyid` field and its pairing tag back when core's
+     * rebuild has taken them away, but the mirror's own name is still in the form.
+     *
+     * The FOURTH operation, and not an optional tidy-up: the hidden field the
+     * mirror publishes through lives inside `.js-address-form` (it is inserted
+     * after the company input), so core's country-change rebuild destroys it, and
+     * its INPUT-only restore loop cannot put back a field the new render does not
+     * emit. init() then builds a fresh EMPTY one. Since the mirror's own country
+     * write is what triggers that rebuild, this is the ordinary path rather than a
+     * corner: without this, every mirrored selection is invisible to
+     * clearStaleOrganizationSelection() from the first country write onwards -
+     * which is the whole defect the mirror's publish path exists to close.
+     *
+     * Gated exactly as completeMirroredOrganizationNumber() is - on the name in
+     * the form still being, exactly, the marked one the mirror recorded writing -
+     * so a name the buyer has since made their own never gets an organisation
+     * number re-attached to it.
+     *
+     * @returns {boolean} whether the pair was re-published
+     */
+    republishMirroredSelection() {
+        const memory = this.mirrorMemory();
+        const recordedName = memory.company ? String(memory.company) : '';
+        const number = String(memory.organization || memory.organizationPending || '');
+        if (!recordedName || !number) {
+            return false;
+        }
+        if (!this.companyField || this.companyField.length === 0) {
+            return false;
+        }
+        const name = String(this.companyField.val() == null ? '' : this.companyField.val());
+        if (name !== recordedName
+            || this.companyField.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR) !== name) {
+            return false;
+        }
+
+        return this.markOrganizationFieldSelected(recordedName, number);
+    }
+
+    /**
+     * Where the mirror records what it has already done, for this page.
+     *
+     * The manager injects its own object, because the manager outlives the search:
+     * it destroys and rebuilds this instance on every `updatedAddressForm`, so a
+     * record kept on the instance would be gone exactly when it is needed. Falls
+     * back to an instance-local object so a search mounted without a manager still
+     * behaves, rather than throwing.
+     *
+     * The two halves of the pair are recorded SEPARATELY and deliberately:
+     * `organization` is a number the mirror has PLACED in an identification field
+     * on this page, `organizationPending` one it has not been able to place in any
+     * field yet. Under one key they cannot be told apart, and the completion below
+     * needs exactly that distinction - a placed number the buyer then cleared must
+     * stay cleared, while an unplaced one still has to reach the form.
+     *
+     * @returns {Object} `{companyid, company, organization, organizationPending,
+     *          countryValue}`, partly filled
+     */
+    mirrorMemory() {
+        const injected = this.config.mirrorMemory;
+        if (injected && typeof injected === 'object') {
+            return injected;
+        }
+        if (!this._ownMirrorMemory) {
+            this._ownMirrorMemory = {};
+        }
+        return this._ownMirrorMemory;
+    }
+
+    /**
+     * Re-establish the autofill marker on values still recognisable as this
+     * page's own mirrored writes. NEVER writes a value.
+     *
+     * The operation exists because core strips the marker. Its rule is
+     * deliberately narrow: the field's current value must equal, exactly, what
+     * the mirror recorded writing there. A field the buyer has since edited does
+     * not match and is not claimed; nor is one core re-rendered with a different
+     * value, which is what a country select looks like after the buyer changes
+     * country - so the buyer's new country is never re-marked as ours.
+     *
+     * @param {Element} root the visible address form's scope
+     * @returns {boolean} whether any marker was re-established
+     */
+    reapplyMirrorMarkers(root) {
+        const memory = this.mirrorMemory();
+        if (!memory.companyid) {
+            return false;
+        }
+
+        const remark = (field, recorded) => {
+            const value = String(recorded == null ? '' : recorded);
+            if (!value || !field || field.length === 0) {
+                return false;
+            }
+            const current = String(field.val() == null ? '' : field.val());
+            if (current !== value) {
+                return false;
+            }
+            if (field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR) === current) {
+                return false;
+            }
+            field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR, current);
+
+            return true;
+        };
+
+        let reapplied = remark($(root).find("input[name='company']").first(), memory.company);
+        if (memory.organization && this.addressIdentifierFields(root).every(
+            field => !field || field.length === 0
+        )) {
+            // The rebuild rendered a country whose address format has NO
+            // identification field, and core's restore loop cannot restore a field
+            // the new render does not emit - so the number the mirror had placed is
+            // now placed nowhere. Back to pending, not dropped: the buyer can
+            // return to a country that does have the field, and the name is still
+            // in the form waiting for its number.
+            //
+            // Only from the field being ABSENT, never from a present field whose
+            // value no longer matches. That second case is the buyer having
+            // cleared or changed the number, and it must stay their answer.
+            memory.organizationPending = memory.organization;
+            memory.organization = '';
+        }
+        this.addressIdentifierFields(root).forEach(field => {
+            // The organisation number needs this as much as the name does: the
+            // marker is what clearLookupWrittenAddressIdentifiers() uses to tell
+            // a number the lookup wrote from one the buyer typed, and losing it
+            // leaves a disowned number in the form that nothing may delete.
+            reapplied = remark(field, memory.organization) || reapplied;
+        });
+        const countrySelect = $(root).find("select[name='id_country'], select[name='country']").first();
+        reapplied = remark(countrySelect, memory.countryValue) || reapplied;
+
+        return reapplied;
+    }
+
+    /**
+     * Fill the invoice form's unanswered company fields from the confirmed
+     * selection, at most once per company per page.
+     *
+     * The once-per-company rule is recorded on the page-lifetime memory rather
+     * than inferred from the DOM, because the DOM cannot answer the question: a
+     * field the buyer deliberately cleared and an unanswered field are the same
+     * empty string. Keyed on the organisation number so that a buyer who picks a
+     * genuinely DIFFERENT company on this page is still mirrored.
+     *
+     * @param {Element} root the visible address form's scope
+     * @returns {boolean} whether anything was written
+     */
+    populateInvoiceAddressFromConfirmedCompany(root) {
+        const selection = this.confirmedCompanyForMirror();
+        if (!selection) {
+            return false;
+        }
+        const memory = this.mirrorMemory();
+        if (memory.companyid && memory.companyid === selection.companyid) {
+            return false;
+        }
+
+        // Scoped to the form element, never document-wide: a write by global
+        // selector with no awareness of which block it landed in is the defect
+        // class this whole feature has to avoid.
+        const companyField = $(root).find("input[name='company']").first();
+        const identifierFields = this.addressIdentifierFields(root).filter(
+            field => field && field.length > 0
+        );
+
+        // The NAME and the NUMBER travel together, or neither travels.
+        //
+        // The order payload is why. Once the buyer saves this address, the
+        // resolver can reach the tier that reads the company off the ADDRESS -
+        // `company` for the name, the identification field for the number - and a
+        // mirrored name with no number beside it means an order carrying a company
+        // the buyer never typed and no organisation number at all. That is worse
+        // than not mirroring, so a form whose identification field already holds
+        // the buyer's own number gets neither write.
+        //
+        // A form with NO identification field is a different case and does get the
+        // name: the field's presence is decided by the country's address format,
+        // there is nowhere to put a number on such a form, and the ordinary
+        // company lookup has always behaved this way on those countries.
+        if (!this.mirrorTargetIsWritable(companyField, this.mirrorWriteAcceptedValues('company'))) {
+            return false;
+        }
+        const identifierAccepted = this.mirrorWriteAcceptedValues('organization');
+        const blocked = identifierFields.some(
+            field => !this.mirrorTargetIsWritable(field, identifierAccepted)
+        );
+        if (blocked) {
+            return false;
+        }
+
+        const wroteCompany = this.writeMirroredValue(
+            companyField, selection.company, this.mirrorWriteAcceptedValues('company')
+        );
+        if (wroteCompany) {
+            // The hidden `companyid` field and its pairing tag, through the one
+            // path a real selection uses - NOT conditional on there being an
+            // identification field, because this half of the write is what makes
+            // the mirrored selection visible to clearStaleOrganizationSelection()
+            // and it is needed on every country. See
+            // markOrganizationFieldSelected().
+            this.markOrganizationFieldSelected(selection.company, selection.companyid);
+        }
+        if (wroteCompany && identifierFields.length > 0) {
+            // Through the single gate every other organisation-number write goes
+            // through, given a root so it stays inside this block. onlyIfEmpty is
+            // false because writability was decided above, by the marker rule -
+            // which, unlike "only if empty", lets a NEW company replace the
+            // previous mirror's untouched number.
+            this.writeOrganizationToAddressIdentifiers(selection.companyid, false, root);
+        }
+        const countryValue = this.mirrorCountryIntoForm(root, selection.countryIso);
+        if (!wroteCompany && !countryValue) {
+            return false;
+        }
+
+        memory.companyid = selection.companyid;
+        memory.company = wroteCompany ? selection.company : '';
+        memory.organization = (wroteCompany && identifierFields.length > 0) ? selection.companyid : '';
+        // A name written onto a form with no identification field leaves the number
+        // half owing. Usually there is nowhere for it to go and it stays owing
+        // harmlessly - but a mirrored COUNTRY write can rebuild this form into one
+        // that does have the field, and then it is owed to a form that can take it.
+        memory.organizationPending = (wroteCompany && identifierFields.length === 0)
+            ? selection.companyid
+            : '';
+        memory.countryValue = countryValue;
+
+        // Report what just went into the secondary address, so the pin can still
+        // recognise these values as ours after the next page load has taken every
+        // marker with it. Partial: only the halves that were actually written.
+        const reported = {};
+        if (wroteCompany) {
+            reported.company = selection.company;
+            reported.organization = memory.organization;
+        }
+        if (countryValue) {
+            reported.country = selection.countryIso;
+        }
+        this.recordMirrorWrites(reported);
+
+        return true;
+    }
+
+    /**
+     * Place the organisation number the mirror still owes this form, when the
+     * form has acquired somewhere to put it.
+     *
+     * The case, which core produces on its own: whether the form carries an
+     * identification field is decided by the COUNTRY, not by the shop.
+     * `AddressFormat::getFormat()` appends `dni` to the country's address format
+     * when `Country::isNeedDniByCountryId()` is true, and nothing in the stock
+     * address formats mentions `dni` otherwise - so on stock data the field is
+     * present exactly when the country requires it, and absent everywhere else.
+     * The mirror's own country write is therefore a write that can change which
+     * fields exist: a form rendered for a country without the field, mirrored to a
+     * country with it, comes back from core's rebuild carrying an empty and
+     * REQUIRED identification field. The once-per-company populate gate then
+     * forbids ever filling it, and the name goes to the order alone.
+     *
+     * GATED ON THE MARKED NAME, never on the identification field being empty, and
+     * that is the whole point of the method existing separately. "The field is
+     * empty" is the very test the populate gate exists to refuse, because a field
+     * the buyer deliberately cleared and an unanswered one are the same empty
+     * string. What this gate asks instead is whether the NAME currently in the form
+     * is still, exactly, the one the mirror recorded writing AND still carries the
+     * marker saying so - i.e. whether the pair this method is completing is still
+     * the mirror's own pair. The buyer-cleared rule keeps its own separate
+     * condition: the number must be one the mirror never placed anywhere
+     * (`organizationPending`, see mirrorMemory()), and the field it goes into must
+     * be empty with NO marker of any kind - so a field the mirror once wrote and
+     * the buyer then cleared, which carries a stale marker, is never refilled here.
+     *
+     * The residual case is narrow and benign by construction: a buyer who clears
+     * the number, leaves for a country with no identification field and returns
+     * gets it back. The field is only ever absent on countries that do not require
+     * it and only ever pending-completed on countries that do, and core rejects an
+     * empty required identification number at save - so the cleared state they are
+     * "losing" is one they could not have submitted.
+     *
+     * @param {Element} root the visible address form's scope
+     * @returns {boolean} whether the number was written
+     */
+    completeMirroredOrganizationNumber(root) {
+        const memory = this.mirrorMemory();
+        const pending = memory.organizationPending ? String(memory.organizationPending) : '';
+        if (!pending) {
+            return false;
+        }
+
+        const recordedName = memory.company ? String(memory.company) : '';
+        if (!recordedName) {
+            return false;
+        }
+        const companyField = $(root).find("input[name='company']").first();
+        if (companyField.length === 0) {
+            return false;
+        }
+        const name = String(companyField.val() == null ? '' : companyField.val());
+        if (name !== recordedName
+            || companyField.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR) !== name) {
+            return false;
+        }
+
+        const identifierFields = this.addressIdentifierFields(root).filter(
+            field => field && field.length > 0
+        );
+        if (identifierFields.length === 0) {
+            return false;
+        }
+        const unwritten = identifierFields.every(
+            field => String(field.val() == null ? '' : field.val()) === ''
+                && typeof field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR) === 'undefined'
+        );
+        if (!unwritten) {
+            // The buyer's own number is already there, or one this page wrote and
+            // they then edited. Either way the field is theirs and the debt is
+            // settled - stop owing it rather than retrying on every mount.
+            memory.organizationPending = '';
+            return false;
+        }
+
+        // Same publish path as the populate above, for the same reason: this is
+        // the branch that places the number when core's rebuild is what separated
+        // it from the name, and a number placed here with no `companyid` behind it
+        // is invisible to the stale-selection guard too.
+        this.markOrganizationFieldSelected(recordedName, pending);
+        this.writeOrganizationToAddressIdentifiers(pending, false, root);
+        memory.organization = pending;
+        memory.organizationPending = '';
+        // The number half has only now reached a field, so the record has to say so
+        // - otherwise the next page load reads it as a number the buyer typed and
+        // pins the whole address on the strength of the mirror's own write.
+        this.recordMirrorWrites({ organization: pending });
+
+        return true;
+    }
+
+    /**
+     * The confirmed selection the mirror may act on, or null.
+     *
+     * Through the injected getter, so it comes from the page-lifetime holder
+     * (seeded from the server's cart-scoped record on this load) with every check
+     * that holder's consumers already apply, rather than from this instance -
+     * which is younger than the navigation the mirror exists to cross.
+     *
+     * Requires the company/organisation-number PAIR, exactly as
+     * TwoCheckoutManager.setConfirmedCompanySelection() and
+     * TwoOrderIntent.getConfirmedCompanySelection() do. Every other guard on this
+     * selection insists on both halves, and a weaker one here is precisely the
+     * divergence that would let a company name travel into the address form with
+     * no number beside it.
+     *
+     * @returns {?{company: string, companyid: string, countryIso: string}}
+     */
+    confirmedCompanyForMirror() {
+        const getter = this.config.getConfirmedCompany;
+        if (typeof getter !== 'function') {
+            return null;
+        }
+        let selection = null;
+        try {
+            selection = getter();
+        } catch (e) {
+            return null;
+        }
+        if (!selection) {
+            return null;
+        }
+        const company = selection.company ? String(selection.company).trim() : '';
+        const companyid = selection.companyid ? String(selection.companyid).trim() : '';
+        if (!company || !companyid) {
+            return null;
+        }
+        return {
+            company: company,
+            companyid: companyid,
+            countryIso: selection.countryIso ? String(selection.countryIso).toUpperCase() : ''
+        };
+    }
+
+    /**
+     * Whether a mirrored write into this field would overwrite the buyer's own
+     * answer.
+     *
+     * Writable when the field is UNANSWERED, or when its current value is still
+     * exactly what a previous fill recorded writing there. Anything else is the
+     * buyer's own answer and is left alone - overwriting a company name the buyer
+     * typed by hand would be the same class of bug as a company picked in one
+     * place rewriting an address the buyer is not looking at.
+     *
+     * "Unanswered" is empty for a text input, and for a `<select>` it ALSO
+     * includes "still exactly the value the server rendered" - see
+     * serverRenderedSelectValue() for why an empty country select does not exist
+     * on a real PrestaShop form.
+     *
+     * Comparisons trim and fold case, on Doug's ruling: a buyer who retyped the same
+     * answer in a different case, or left a trailing space, has not authored a
+     * different answer, and the value is still the plugin's to replace.
+     *
+     * @param {Object} field jQuery object, possibly empty
+     * @param {string|Array<string>} [unansweredValues] value or values that also
+     *        count as unanswered for this field - typically what the last-written
+     *        record holds for it, from mirrorWriteAcceptedValues()
+     * @returns {boolean}
+     */
+    mirrorTargetIsWritable(field, unansweredValues) {
+        if (!field || field.length === 0) {
+            return false;
+        }
+        const current = this.normalizeMirroredValue(field.val());
+        const written = field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR);
+        if (typeof written !== 'undefined' && this.normalizeMirroredValue(written) === current) {
+            return true;
+        }
+        if (current === '') {
+            return true;
+        }
+        const accepted = Array.isArray(unansweredValues)
+            ? unansweredValues
+            : (typeof unansweredValues === 'string' ? [unansweredValues] : []);
+
+        return accepted.some(
+            value => value !== '' && this.normalizeMirroredValue(value) === current
+        );
+    }
+
+    /**
+     * Write one mirrored value, respecting the autofill marker.
+     *
+     * Marks what it writes, same attribute and same meaning as every other write
+     * in this class, so a later pass can recognise it in turn.
+     *
+     * @param {Object} field jQuery object, possibly empty
+     * @param {string} value
+     * @param {string|Array<string>} [unansweredValues] forwarded to
+     *        mirrorTargetIsWritable()
+     * @returns {boolean} whether the value was written
+     */
+    writeMirroredValue(field, value, unansweredValues) {
+        const incoming = String(value == null ? '' : value).trim();
+        if (!incoming) {
+            return false;
+        }
+        if (!this.mirrorTargetIsWritable(field, unansweredValues)) {
+            return false;
+        }
+        const current = String(field.val() == null ? '' : field.val());
+        field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR, incoming);
+        if (current !== incoming) {
+            field.val(incoming);
+            field.trigger('input');
+            field.trigger('change');
+        }
+        return true;
+    }
+
+    /**
+     * The value the SERVER rendered as selected in a select, or '' when it
+     * rendered no real option as selected.
+     *
+     * This is what "the buyer has not answered the country question" has to mean
+     * on PrestaShop, and the reason the mirror cannot test a country select for
+     * emptiness. Verified against core: `_partials/form-fields.tpl` emits a
+     * disabled, empty-valued placeholder option that is ALWAYS `selected`, and
+     * then marks the option matching the field's value `selected` as well - and
+     * `CustomerAddressFormatter` sets that value unconditionally, to the
+     * address's own country id. Two selected options, last one wins, so
+     * `select.value` on a fresh unanswered address form is the rendered country
+     * id and never `''`. An emptiness test therefore never fires: the mirror
+     * would see a non-empty unmarked value, read it as the buyer's answer, and
+     * refuse - every time, on every real form.
+     *
+     * Read from the `selected` ATTRIBUTE rather than snapshotted at mount,
+     * deliberately: the attribute is what the server said, and it survives any
+     * later programmatic change to the select's value. A snapshot cannot tell a
+     * buyer's in-page change from a value some other code set before the mirror
+     * ran.
+     *
+     * @param {HTMLSelectElement} select
+     * @returns {string}
+     */
+    serverRenderedSelectValue(select) {
+        if (!select || typeof select.querySelectorAll !== 'function') {
+            return '';
+        }
+        // LAST wins, as the HTML parser resolves it.
+        const marked = select.querySelectorAll('option[selected]');
+        let rendered = '';
+        for (let index = 0; index < marked.length; index++) {
+            if (marked[index].value) {
+                rendered = marked[index].value;
+            }
+        }
+        return rendered;
+    }
+
+    /**
+     * Mirror the country into the visible form's country select.
+     *
+     * Unanswered means "still the country the server rendered", not "empty" -
+     * see serverRenderedSelectValue(). Once the buyer has changed it, the marker
+     * rule applies exactly as it does to a text field: a value that is not ours
+     * and untouched is the buyer's answer, and is left.
+     *
+     * @param {Element} root the visible address form's scope
+     * @param {string} iso
+     * @returns {string} the option value written, or '' when nothing was written
+     */
+    mirrorCountryIntoForm(root, iso) {
+        const target = String(iso == null ? '' : iso).trim().toUpperCase();
+        if (!/^[A-Z]{2}$/.test(target)) {
+            return '';
+        }
+        const select = $(root).find("select[name='id_country'], select[name='country']").first();
+        if (select.length === 0) {
+            return '';
+        }
+        const optionValue = this.countryOptionValueForIso(select[0], target);
+        if (optionValue === null) {
+            return '';
+        }
+        // The record wins over the server's render when there is one, for the reason
+        // mirroredAddressFieldStates() gives: core re-renders the form on every
+        // country change, so after the first one the server-rendered country IS the
+        // buyer's own choice and accepting it would make the country unpinnable.
+        const accepted = this.mirrorWriteAcceptedValues(
+            'country',
+            this.serverRenderedSelectValue(select[0]),
+            iso => this.countryOptionValueForIso(select[0], String(iso).toUpperCase())
+        );
+        return this.writeMirroredValue(select, optionValue, accepted) ? optionValue : '';
+    }
+
+    /**
+     * The value of the option in a country select standing for an ISO code, or
+     * null when the select has no such option.
+     *
+     * Same three resolution strategies the country READ side uses, in the same
+     * order, because they have to agree: the option's own ISO attribute (all
+     * three spellings themes use), then the server-built id-to-ISO map, then the
+     * option's visible text. The placeholder option is skipped - it has no value
+     * and stands for no country.
+     *
+     * @param {HTMLSelectElement} select
+     * @param {string} iso uppercase alpha-2
+     * @returns {?string}
+     */
+    countryOptionValueForIso(select, iso) {
+        const options = select.options || [];
+        for (let index = 0; index < options.length; index++) {
+            const option = options[index];
+            if (!option.value) {
+                continue;
+            }
+            const attrIso = option.getAttribute('data-iso-code')
+                || option.getAttribute('data-iso')
+                || option.getAttribute('data-country-iso');
+            if (attrIso && String(attrIso).toUpperCase() === iso) {
+                return option.value;
+            }
+            const mapped = (window.twopayment && window.twopayment.countries)
+                ? window.twopayment.countries[option.value]
+                : null;
+            if (mapped && String(mapped).toUpperCase() === iso) {
+                return option.value;
+            }
+            if (this.extractCountryFromText(String(option.textContent || '')) === iso) {
+                return option.value;
+            }
+        }
+        return null;
     }
 
     /**
@@ -3447,9 +4661,7 @@ class TwoCompanySearch {
 
         // Set organization number immediately if available
         if (ui.item.organization_number) {
-            this.organizationField.val(ui.item.organization_number);
-            this.organizationField.attr('data-two-company-name', ui.item.value);
-            this.setCompanyIdHint(ui.item.organization_number);
+            this.markOrganizationFieldSelected(ui.item.value, ui.item.organization_number);
 
             // Publish BEFORE the cookie write and before the intent trigger:
             // this is the copy the intent check will actually read (bug 8).
@@ -3576,9 +4788,10 @@ class TwoCompanySearch {
             if (natIdVal && stillOnSameCompany) {
                 const currentOrgNumber = this.organizationField.val();
                 if (!currentOrgNumber || currentOrgNumber !== natIdVal) {
-                    this.organizationField.val(natIdVal);
-                    this.organizationField.attr('data-two-company-name', this.companyField ? this.companyField.val() : '');
-                    this.setCompanyIdHint(natIdVal);
+                    this.markOrganizationFieldSelected(
+                        this.companyField ? this.companyField.val() : '',
+                        natIdVal
+                    );
                     this.writeOrganizationToAddressIdentifiers(natIdVal);
                     // Deferred (GB) path: the number only exists now, so this
                     // is where the confirmed pair becomes publishable - and it
@@ -3610,7 +4823,31 @@ class TwoCompanySearch {
             // different fields, and this response can carry both.
             const addresses = (details && (details.addresses || (details.company && details.company.addresses))) || [];
             if (Array.isArray(addresses) && addresses.length > 0 && stillOnSameCompany) {
-                this.autoFillAddress(addresses);
+                // THREE states here, not two, and the two that look alike are not
+                // (TWO-40, round 1 of the content-match rework):
+                //
+                //  - the form on screen IS the secondary address: the fill's writes
+                //    go into the address the pin judges, so they have to be
+                //    attributable to a block and reported as ours;
+                //  - the invoice form is on screen but the scope resolution FAILED
+                //    CLOSED: there is no single-address block to attribute a write
+                //    to, and the document-wide branch would write into exactly the
+                //    markup visibleAddressFormRoot() has just refused to scope to -
+                //    a theme's flattened step, with the other address inside it. So
+                //    this fill is SKIPPED. No scope means no write, the same answer
+                //    the mirror gives, rather than the widest possible write;
+                //  - anywhere else - the shipping pass, the payment tile, a page
+                //    with no address form at all - the original document-wide
+                //    branch is what runs, unchanged.
+                const secondaryRoot = this.secondaryAddressFormRoot();
+                const invoiceFormWithNoScope = !secondaryRoot
+                    && this.visibleAddressFormType() === 'invoice'
+                    && !this.visibleAddressFormRoot();
+                if (secondaryRoot) {
+                    this.recordMirrorWrites(this.autoFillAddress(addresses, secondaryRoot));
+                } else if (!invoiceFormWithNoScope) {
+                    this.autoFillAddress(addresses);
+                }
             }
         } catch (e) {
             // ignore
@@ -3619,13 +4856,30 @@ class TwoCompanySearch {
     
     
     /**
-     * Auto-fill address fields with company address data
+     * Auto-fill address fields with company address data.
+     *
+     * Optionally confined to ONE address block (TWO-40). Street, postcode and city
+     * were the only writes in this class still made by a document-wide selector,
+     * which meant a value in one of them could not be attributed to a block at all -
+     * and the secondary address's pin has to attribute every field it judges, or a
+     * street the lookup itself wrote reads as one the buyer authored.
+     *
+     * The document-wide branch is kept EXACTLY as it was and is what every caller
+     * that passes no root still takes, the same way the organisation-number writer
+     * was handled: narrowing the default silently would change callers that run on
+     * pages where these fields are not inside an address block at all.
+     *
+     * @param {Array<Object>} addresses
+     * @param {Element} [root] confine the writes to one address block
+     * @returns {Object} what this fill now owns, keyed by field name - the value it
+     *          wrote, or '' for a value of its own that it cleared. A field it left
+     *          alone is absent.
      */
-    autoFillAddress(addresses) {
+    autoFillAddress(addresses, root) {
         // Single gate for the address-field writes (TWO-25203). Both call
         // paths into the fill land here.
         if (!this.isAddressLookupEnabled()) {
-            return;
+            return {};
         }
 
         // Prefer business/registered/visiting; fallback to first
@@ -3634,7 +4888,7 @@ class TwoCompanySearch {
             String(addr.type).toUpperCase().includes('REGISTERED') ||
             String(addr.type).toUpperCase().includes('VISITING')
         ))) || addresses[0];
-        if (!address) return;
+        if (!address) return {};
         // Normalize key variants
         const street = address.street_address || address.streetAddress || address.street || address.address_line_1 || address.addressLine1 || '';
         const postal = address.postal_code || address.postalCode || address.zip || address.zip_code || '';
@@ -3644,8 +4898,13 @@ class TwoCompanySearch {
             'postcode': postal,
             'city': city
         };
+        const owned = {};
         Object.entries(fieldMappings).forEach(([fieldName, value]) => {
-            const field = $(`input[name='${fieldName}']`);
+            // The document-wide read is the ORIGINAL and stays byte-for-byte what it
+            // was; a root, when one is given, is the only thing that narrows it.
+            const field = root
+                ? $(root).find(`input[name='${fieldName}']`).first()
+                : $(`input[name='${fieldName}']`);
             if (field.length === 0) {
                 return;
             }
@@ -3671,6 +4930,7 @@ class TwoCompanySearch {
                     field.val('');
                     field.trigger('input');
                     field.trigger('change');
+                    owned[fieldName] = '';
                 }
                 return;
             }
@@ -3678,14 +4938,17 @@ class TwoCompanySearch {
             // Record the value as ours even when it already matches, so a later
             // fill can still recognise it as autofilled rather than typed.
             field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR, incoming);
+            owned[fieldName] = incoming;
             if (current !== incoming) {
                 field.val(incoming);
                 field.trigger('input');
                 field.trigger('change');
             }
         });
+
+        return owned;
     }
-    
+
     /**
      * Setup event listener for country changes to refresh autocomplete
      */
@@ -3946,6 +5209,50 @@ class TwoCompanySearch {
         } catch (e) {
             // no-op: this is a checkout convenience, never a gate.
         }
+    }
+
+    /**
+     * Record a confirmed company/organisation-number pair on the BROWSER side of
+     * the selection: the hidden `companyid` input the address form submits, the
+     * pairing tag that says which company name that number belongs to, and the
+     * visible number hint beside the field.
+     *
+     * The one path for that, deliberately, and the reason it exists as a method
+     * rather than three lines repeated: `data-two-company-name` is not decoration.
+     * It is the whole input to clearStaleOrganizationSelection(), which is what
+     * drops a selection once the buyer retypes the company name over it - and that
+     * guard reads `companyid` FIRST and returns immediately when it is empty. So a
+     * caller that places an organisation number anywhere else and skips these two
+     * writes does not merely miss a hint: it produces a selection the stale-
+     * selection guard cannot see at all, which is a credit check on one company
+     * under another company's name. That is exactly what the invoice-address
+     * mirror did before it was routed through here (TWO-40, round 5).
+     *
+     * Does NOT publish to the manager and does NOT persist to the session: those
+     * are separate concerns with separate ordering requirements, and one caller -
+     * the mirror - must not do either. See mirrorConfirmedCompanyToInvoiceAddress()
+     * for why re-publishing a RESTORED selection would corrupt it.
+     *
+     * @param {string} company the confirmed company NAME this number belongs to
+     * @param {string} companyid the organisation number
+     * @returns {boolean} whether the pair was recorded
+     */
+    markOrganizationFieldSelected(company, companyid) {
+        if (!this.organizationField || this.organizationField.length === 0) {
+            return false;
+        }
+        const number = String(companyid == null ? '' : companyid).trim();
+        if (!number) {
+            return false;
+        }
+        this.organizationField.val(number);
+        this.organizationField.attr(
+            'data-two-company-name',
+            String(company == null ? '' : company)
+        );
+        this.setCompanyIdHint(number);
+
+        return true;
     }
 
     persistCompanyToCookie(data) {

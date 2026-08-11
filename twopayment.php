@@ -4527,6 +4527,22 @@ class Twopayment extends PaymentModule
                 // whenever one is on the page (a buyer mid-edit may have
                 // picked a country that is not saved yet).
                 'billing_country' => $this->getCheckoutBillingCountryIso(),
+                // The company the buyer already confirmed for THIS cart, or null
+                // (TWO-40). The browser's own record of a selection dies with the
+                // page, and the address step is a sequence of real document
+                // loads, so this is what survives the navigation that reveals the
+                // invoice address form. Published through the validated read, so a
+                // record either invalidation guard would reject is not published
+                // at all - see getTwoBrowserCompanySelection().
+                'confirmed_company' => $this->getTwoBrowserCompanySelection(),
+                // What the mirror last wrote into each field of the secondary
+                // address on this cart, or null (TWO-40). The browser compares the
+                // secondary address's live contents against this to decide whether
+                // the buyer has since made any of those fields their own - and it
+                // has to come from here rather than from the DOM markers, because
+                // the pin is evaluated on a page load, by which time every marker
+                // the previous page wrote has gone with the nodes.
+                'mirror_writes' => $this->readTwoCartScopedMirrorWrites(),
                 'order_intent_url' => $this->context->link->getModuleLink($this->name, 'orderintent'),
                 'ajax_token' => Tools::getToken(false),
                 'module_dir' => $this->_path,
@@ -8893,6 +8909,187 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * The cookie keys holding the LAST VALUE THE MIRROR WROTE into each field of
+     * the secondary address, keyed by the short field name the helpers below take
+     * and return (TWO-40).
+     *
+     * This record is the comparison basis for the secondary address's sync pin, and
+     * the reason it has to exist server-side at all is timing: the pin is evaluated
+     * when the invoice form APPEARS, which on PrestaShop is a page load. At that
+     * moment every `data-two-autofilled-value` marker the browser had written is
+     * gone with the nodes that carried them, and page memory is empty. So the
+     * question "does this field still hold what the mirror last put here" has no
+     * answer unless the answer outlived the navigation.
+     *
+     * Why the comparison basis is the mirror's LAST-WRITTEN value and not the
+     * primary address's live value: comparing against the primary is
+     * self-defeating. The instant the primary changes, the secondary cannot equal
+     * it any more, so every legitimate re-sync would read as a buyer edit and
+     * syncing would stop forever after the first divergence. Only "still holds what
+     * we put there" makes "still matches, so still synced" true.
+     *
+     * SEPARATE from COMPANY_SESSION_KEYS, deliberately, and it must stay separate.
+     * The company record is destructible by design - the country guards clear it
+     * outright, and the address-save hook drops part of it - whereas this record has
+     * to outlive all of that: a buyer who typed their own street into the secondary
+     * address still owns that street after changing company. Folding the two
+     * together would mean either a clear site exempting one of its own keys, which
+     * contradicts the contract that a clear cannot miss a field, or this record
+     * dying on a path that has nothing to do with it.
+     *
+     * The country is stored as an ISO-3166-1 alpha-2 code, never as a country id or
+     * an option label: the id is shop-local and the label is locale-dependent, and
+     * the browser resolves the live select to an ISO before comparing.
+     */
+    const MIRROR_WRITE_SESSION_KEYS = array(
+        'company' => 'two_mirror_company',
+        'organization' => 'two_mirror_org',
+        'country' => 'two_mirror_country',
+        'address1' => 'two_mirror_address1',
+        'postcode' => 'two_mirror_postcode',
+        'city' => 'two_mirror_city',
+    );
+
+    /**
+     * The cart id a stored mirror-write record is scoped to (TWO-40).
+     */
+    const MIRROR_WRITE_SESSION_CART_KEY = 'two_mirror_cart_id';
+
+    /**
+     * Record what the mirror has written into the secondary address, against the
+     * current cart (TWO-40).
+     *
+     * Takes any subset of the short field names in MIRROR_WRITE_SESSION_KEYS; a
+     * field given as null is removed rather than written, which is how a caller
+     * disowns a value it has just cleared. Same stamp discipline as
+     * storeTwoCartScopedCompany(), and declined the same way when there is no cart
+     * to stamp against.
+     *
+     * @param array $fields
+     * @return void
+     */
+    public function storeTwoCartScopedMirrorWrites(array $fields)
+    {
+        if (!isset($this->context->cookie)) {
+            return;
+        }
+
+        $cartId = $this->getTwoCurrentCartId();
+        if ($cartId <= 0) {
+            // A record stamped 0 is unreadable by construction, and the first read
+            // that DOES have a cart would see the mismatch and clear it - taking
+            // any earlier record with it. Writing nothing is the only outcome that
+            // leaves an existing record exactly as it was.
+            return;
+        }
+
+        foreach ($fields as $field => $value) {
+            if (!isset(self::MIRROR_WRITE_SESSION_KEYS[$field])) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Ignored unknown mirror-write session field "' . (string) $field
+                    . '" - known fields are ' . implode(', ', array_keys(self::MIRROR_WRITE_SESSION_KEYS)),
+                    2
+                );
+                continue;
+            }
+
+            $key = self::MIRROR_WRITE_SESSION_KEYS[$field];
+            if ($value === null) {
+                unset($this->context->cookie->$key);
+                continue;
+            }
+
+            $this->context->cookie->$key = (string) $value;
+        }
+
+        $cartKey = self::MIRROR_WRITE_SESSION_CART_KEY;
+        $this->context->cookie->$cartKey = (string) $cartId;
+    }
+
+    /**
+     * Read what the mirror has written into the secondary address on this cart
+     * (TWO-40).
+     *
+     * Absent - null - unless a stored record carries a stamp equal to the current
+     * cart id, exactly as readTwoCartScopedCompany() decides absence. A record
+     * belonging to another cart is cleared on the way out; with no cart on the
+     * request nothing is read and nothing is destroyed.
+     *
+     * @return array|null keyed by the short field names of MIRROR_WRITE_SESSION_KEYS
+     */
+    public function readTwoCartScopedMirrorWrites()
+    {
+        if (!isset($this->context->cookie)) {
+            return null;
+        }
+
+        $cartKey = self::MIRROR_WRITE_SESSION_CART_KEY;
+        $storedCartId = isset($this->context->cookie->$cartKey)
+            ? (int) $this->context->cookie->$cartKey
+            : 0;
+        $cartId = $this->getTwoCurrentCartId();
+
+        if ($cartId <= 0) {
+            return null;
+        }
+
+        if ($storedCartId > 0 && $storedCartId === $cartId) {
+            $record = array();
+            foreach (self::MIRROR_WRITE_SESSION_KEYS as $field => $key) {
+                $record[$field] = isset($this->context->cookie->$key)
+                    ? (string) $this->context->cookie->$key
+                    : '';
+            }
+
+            return $record;
+        }
+
+        $hasStoredRecord = $storedCartId !== 0;
+        if (!$hasStoredRecord) {
+            foreach (self::MIRROR_WRITE_SESSION_KEYS as $key) {
+                if (isset($this->context->cookie->$key)) {
+                    $hasStoredRecord = true;
+                    break;
+                }
+            }
+        }
+
+        if ($hasStoredRecord) {
+            $this->clearTwoCartScopedMirrorWrites();
+        }
+
+        return null;
+    }
+
+    /**
+     * Forget what the mirror wrote, stamp included (TWO-40).
+     *
+     * NOT called from clearTwoCartScopedCompany(), and that omission is the design:
+     * the company record is cleared whenever a country guard rejects it or the
+     * buyer retypes a company name, and none of those events makes the buyer stop
+     * owning the street they typed into their billing address.
+     *
+     * @return void
+     */
+    public function clearTwoCartScopedMirrorWrites()
+    {
+        if (!isset($this->context->cookie)) {
+            return;
+        }
+
+        foreach (self::MIRROR_WRITE_SESSION_KEYS as $key) {
+            unset($this->context->cookie->$key);
+        }
+
+        $cartKey = self::MIRROR_WRITE_SESSION_CART_KEY;
+        unset($this->context->cookie->$cartKey);
+
+        if (method_exists($this->context->cookie, 'write')) {
+            $this->context->cookie->write();
+        }
+    }
+
+    /**
      * Retrieve validated company data from session cookie for a given country.
      *
      * @param string $country_iso
@@ -8954,6 +9151,91 @@ class Twopayment extends PaymentModule
         return array(
             'company_name' => $session_company,
             'organization_number' => $session_company_id,
+        );
+    }
+
+    /**
+     * The stored company selection, in the shape the checkout JS consumes, or
+     * null when there is nothing it may use (TWO-40).
+     *
+     * This exists because the browser's own record of what the buyer picked is
+     * PAGE-LIFETIME ONLY, and PrestaShop's address step is a sequence of real
+     * document loads: the buyer states their invoice address differs from their
+     * shipping one by following a LINK, so the invoice form arrives on a fresh
+     * page with every trace of the selection gone from memory. Handing the
+     * server's cart-scoped record to the JS is what lets the invoice form be
+     * seeded from the company the buyer already chose.
+     *
+     * READ-ONLY, and that is the whole reason the guard comparisons below are
+     * written out here instead of borrowing getTwoValidatedSessionCompanyData().
+     * That method DESTROYS the record when its country guards reject it, which is
+     * right on the paths that CONSUME a company - they are about to build an order
+     * payload - and wrong here. This runs from
+     * hookActionFrontControllerSetMedia(), i.e. on every checkout render, so a
+     * destructive read would mean that merely drawing a page throws the buyer's
+     * confirmed selection away whenever the cart's COMMITTED invoice address is in
+     * a different country from the company they picked. That committed snapshot is
+     * exactly the value TWO-40 already declares untrustworthy for the sole-trader
+     * gate, so deciding a selection is dead on its evidence - permanently, on a
+     * render - is not a decision this method is entitled to make.
+     *
+     * So: the same three questions, asked and not acted upon. A record that fails
+     * any of them is withheld from the browser and left in place for the consuming
+     * path to judge, and to clear if it still disagrees.
+     *
+     *  - a company name with no organisation number beside it is half a record and
+     *    nothing the browser can act on;
+     *  - the country comparison is getTwoValidatedSessionCompanyData()'s, minus
+     *    its clear: a record whose country disagrees with the cart's billing
+     *    country is withheld, and so is one carrying no country marker at all;
+     *  - the address comparison is the one the order-payload path applies, and for
+     *    the same reason - an organisation number captured against one address
+     *    must not be attached to another. Compared only when both sides are known,
+     *    because 0 on either side is not evidence of a switch (the address-editor
+     *    page routinely has no invoice address on the cart at all).
+     *
+     * readTwoCartScopedCompany() is still the reader, and it does clear a record
+     * stamped with a DIFFERENT cart. That is not the destructive behaviour this
+     * method avoids: such a record is unusable by every path on this request, on
+     * this cart, whatever any of them decides - so there is nothing for a later
+     * consumer to judge differently.
+     *
+     * @return array|null ['company' => string, 'companyid' => string,
+     *                    'country' => string, 'address_id' => int]
+     */
+    public function getTwoBrowserCompanySelection()
+    {
+        $stored = $this->readTwoCartScopedCompany();
+        if ($stored === null) {
+            return null;
+        }
+
+        $company_name = trim((string) $stored['name']);
+        $organization_number = trim((string) $stored['id']);
+        if (Tools::isEmpty($company_name) || Tools::isEmpty($organization_number)) {
+            return null;
+        }
+
+        $stored_country = Tools::strtoupper(trim((string) $stored['country']));
+        $country_iso = Tools::strtoupper(trim((string) $this->getCheckoutBillingCountryIso()));
+        if (!Tools::isEmpty($country_iso)
+            && (Tools::isEmpty($stored_country) || $stored_country !== $country_iso)
+        ) {
+            return null;
+        }
+
+        $captured_address_id = ($stored['address_id'] !== '') ? (int) $stored['address_id'] : 0;
+        $cart = isset($this->context->cart) ? $this->context->cart : null;
+        $current_address_id = Validate::isLoadedObject($cart) ? (int) $cart->id_address_invoice : 0;
+        if ($captured_address_id > 0 && $current_address_id > 0 && $captured_address_id !== $current_address_id) {
+            return null;
+        }
+
+        return array(
+            'company' => $company_name,
+            'companyid' => $organization_number,
+            'country' => $stored_country,
+            'address_id' => $captured_address_id,
         );
     }
 

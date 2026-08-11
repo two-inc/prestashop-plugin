@@ -52,6 +52,18 @@ class TwoCheckoutManager {
         // the page's lifetime rather than on the search instance that a
         // re-render replaces. See getConfirmedCompanySelection().
         this._confirmedCompanySelection = null;
+        // TWO-40: what the invoice-address mirror has already written on this page.
+        // Lives HERE, not on the search instance, because this class destroys and
+        // rebuilds that instance on every `updatedAddressForm` - and the mirror's
+        // two rules both need to outlive the rebuild: do not populate a second time
+        // (a cleared field must stay cleared), and re-mark a value core's own form
+        // rebuild stripped the marker off. See
+        // TwoCompanySearch.mirrorConfirmedCompanyToInvoiceAddress().
+        this._invoiceMirrorMemory = {};
+        // TWO-40: and where the server has one for this cart, start from it. Must
+        // run before init(), which is what constructs the modules that read the
+        // selection back out.
+        this.seedConfirmedCompanySelectionFromServer();
         // Monotonic sequence for surcharge cart-line syncs: only the LATEST
         // selection's response may drive the UI (last-wins against re-ordered
         // AJAX responses when the buyer clicks between options quickly), and
@@ -1340,11 +1352,26 @@ class TwoCheckoutManager {
     
     /**
      * Check if company data is missing (org number not selected)
+     *
+     * TWO-40: TWO carriers, not one. The hidden `companyid` input is the DOM's
+     * copy; the page-lifetime holder is the other, and it can legitimately hold a
+     * real selection while the DOM field is empty or absent altogether - on the
+     * payment step, where PrestaShop has removed the address form, the selection
+     * comes from seedConfirmedCompanySelectionFromServer() adopting the server's
+     * cart-scoped record. Reading only the DOM there misreports a genuine
+     * order-intent failure (a 500, a timeout) as "you didn't pick a company", and
+     * in tile mode showOrderIntentError() then swallows that branch entirely
+     * (suppressCompanyRelocationPrompt() returns early) - so the buyer is shown
+     * nothing at all for a real failure.
+     *
      * @returns {boolean} True if company org number is missing
      */
     isCompanyDataMissing() {
-        // The hidden `companyid` field is the only carrier of the selection the
-        // browser can read. There used to be a `document.cookie` fallback here
+        // The hidden `companyid` field is the FIRST of the two carriers named in
+        // this method's docblock, and it is consulted before the page-lifetime
+        // selection below: while the address form is on screen the DOM field is the
+        // live one, and the seeded selection stands in for it only once the field is
+        // empty or gone. There used to be a `document.cookie` fallback here
         // looking for a bare `two_company_id`; nothing ever wrote one. PrestaShop
         // serialises every server-side session key into a single encrypted cookie
         // under its own name, so a server write of that key never produces a
@@ -1357,6 +1384,16 @@ class TwoCheckoutManager {
         const companyIdField = document.querySelector("input[name='companyid']");
         if (companyIdField && companyIdField.value) {
             orgNumber = companyIdField.value.trim();
+        }
+
+        if (!orgNumber) {
+            // The second carrier - see this method's docblock. Through the same
+            // getter every other consumer of the selection reads, so the two
+            // cannot answer differently.
+            const confirmed = this.getConfirmedCompanySelection();
+            if (confirmed && confirmed.companyid) {
+                orgNumber = String(confirmed.companyid).trim();
+            }
         }
 
         return !orgNumber;
@@ -2403,7 +2440,18 @@ class TwoCheckoutManager {
         this.companySearch = new TwoCompanySearch({
             checkoutHost: this.config.checkoutHost,
             addressLookupEnabled: this.config.addressLookupEnabled !== false,
-            companyFieldSelector: "input[name='company']"
+            companyFieldSelector: "input[name='company']",
+            // TWO-40: read through a getter, and injected rather than reached for
+            // on `window`. This instance is constructed from inside the manager's
+            // own constructor, so `window.TwoCheckoutManager_Instance` is not
+            // assigned yet at that moment - a global lookup would find nothing on
+            // the one call that matters, the mirror at mount time.
+            getConfirmedCompany: () => this.getConfirmedCompanySelection(),
+            // Page-lifetime, and deliberately the SAME object across every rebuild
+            // of the search: it is what stops the mirror re-populating a field the
+            // buyer cleared, and what lets it re-mark its own writes after core
+            // rebuilds the address form.
+            mirrorMemory: this._invoiceMirrorMemory
         });
     }
 
@@ -2423,9 +2471,13 @@ class TwoCheckoutManager {
             this.t('company_search_placeholder', 'Enter company name to search'),
             'Enter company name to search'
         ];
-        // ALL of them: PrestaShop renders a second address form, with its own
-        // `name='company'`, as soon as the buyer ticks "billing address differs
-        // from shipping address".
+        // ALL of them, though PrestaShop only ever renders one: the claim this
+        // comment used to make - that a second editable address form with its own
+        // `name='company'` appears once the buyer states the two addresses differ
+        // - is wrong (TWO-40, verified against core). Core sets the delivery and
+        // invoice form flags in mutually exclusive branches, so the other side is
+        // always a radio selector over saved addresses, never a second form.
+        // Walking all matches stays correct regardless, and costs nothing.
         document.querySelectorAll("input[name='company']").forEach(function (field) {
             const current = field.getAttribute('placeholder');
             if (current && ours.indexOf(current) !== -1) {
@@ -2490,6 +2542,56 @@ class TwoCheckoutManager {
      */
     getConfirmedCompanySelection() {
         return this._confirmedCompanySelection || null;
+    }
+
+    /**
+     * Adopt the server's cart-scoped company record as the confirmed selection,
+     * when this page load has none of its own (TWO-40).
+     *
+     * The in-memory selection above is page-lifetime, and PrestaShop's address
+     * step is a sequence of real document loads - the buyer states their invoice
+     * address differs by following a link, which navigates. So on the page where
+     * the invoice form finally appears, nothing the buyer picked earlier is in
+     * memory any more, and every consumer of getConfirmedCompanySelection()
+     * (the intent check's payload, the invoice-form mirror) is looking at null.
+     *
+     * The record arrives already guard-checked: the server publishes it only
+     * through its validated read, so a selection whose country disagrees with
+     * the cart's billing country, or which was captured against a different
+     * address, is absent rather than seeded. The per-consumer checks
+     * TwoOrderIntent.getConfirmedCompanySelection() applies still run on top of
+     * it, unchanged - the captured address and country are carried through here
+     * precisely so they can.
+     *
+     * Never overwrites a selection this page already has: an in-page pick is
+     * newer than anything the server stored before the page loaded.
+     *
+     * @returns {void}
+     */
+    seedConfirmedCompanySelectionFromServer() {
+        if (this._confirmedCompanySelection) {
+            return;
+        }
+        const seed = this.config.confirmedCompany;
+        if (!seed) {
+            return;
+        }
+        const company = seed.company ? String(seed.company).trim() : '';
+        const companyid = seed.companyid ? String(seed.companyid).trim() : '';
+        if (!company || !companyid) {
+            return;
+        }
+        this._confirmedCompanySelection = {
+            company: company,
+            companyid: companyid,
+            // The server's own values, NOT re-derived from this page's DOM: the
+            // point of the record is what was true when the buyer picked, and
+            // re-reading the DOM here would stamp the selection with the address
+            // and country of the page it is being restored onto - which would
+            // defeat both invalidation checks it is meant to remain subject to.
+            addressId: seed.address_id ? parseInt(seed.address_id, 10) : 0,
+            countryIso: seed.country ? String(seed.country).toUpperCase() : ''
+        };
     }
 
     /**

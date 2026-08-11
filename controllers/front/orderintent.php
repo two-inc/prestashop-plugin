@@ -55,6 +55,9 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             case 'clearCompany':
                 $this->ajaxProcessClearCompany();
                 break;
+            case 'saveMirrorWrites':
+                $this->ajaxProcessSaveMirrorWrites();
+                break;
             case 'getCompany':
                 $this->ajaxProcessGetCompany();
                 break;
@@ -145,29 +148,39 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
      * all is refused rather than defaulted. That is what stops this endpoint
      * being a token oracle where the flow is off or the country ineligible.
      *
-     * What the country is resolved FROM is a trust ordering, not a security
-     * boundary (TWO-40): the cart's invoice address first, then a posted
-     * `country`, then the cart's delivery address. Accepting a posted country
-     * in the middle tier grants no privilege at all:
+     * What the country is resolved FROM is a correctness question, not a
+     * security boundary (TWO-40): the country the request POSTS is the answer
+     * whenever it has the shape of one, and the cart's delivery address is a
+     * last resort for a request that carried no usable country at all. The
+     * buyer's live in-page selection is the only value that describes the
+     * address this order will actually be billed to; a country already
+     * committed to the cart is a snapshot that the buyer may be in the middle
+     * of changing, which is the bug this ordering exists to close.
      *
-     *  - the mint itself takes no country - the tokens are country-independent,
-     *    so there is no per-country capability to escalate into;
-     *  - the registry check still runs here, on the server, so a spoofed
-     *    country only ever permits minting in a country the registry ALREADY
-     *    supports sole traders in;
+     * Preferring the posted value grants no privilege whatsoever:
+     *
+     *  - the mint itself takes no country - TwoSoleTrader::mintTokens() has a
+     *    single `$module` parameter and both delegation payloads it posts are
+     *    fixed scope lists with no country in them, so the tokens are
+     *    country-independent and there is no per-country capability to
+     *    escalate into;
+     *  - the registry check still runs here, on the server, on every call, so
+     *    a spoofed country only ever permits minting in a country the registry
+     *    ALREADY supports sole traders in;
      *  - and the browser can already learn exactly that set for any country it
-     *    likes from the `soleTraderAvailability` action, which answers a
+     *    likes from the `soleTraderAvailability` action above, which answers a
      *    client-supplied country by design.
      *
      * So the posted value can move the answer from "unresolved" to "the
      * registry's own answer for some real country", and nothing else. The
      * other Two plugins' equivalent handlers resolve it the same way.
      *
-     * Why the middle tier has to exist: on the checkout address-editor page
-     * the cart usually has NO invoice address yet, which is precisely when the
-     * buyer clicks "I'm a sole trader". Requiring one refused every single
-     * one of those attempts, and the browser has no place to show that error
-     * on that page, so the entry point simply dead-ended in silence.
+     * Why a posted country has to be usable at all: on the checkout
+     * address-editor page the cart usually has NO invoice address yet, which
+     * is precisely when the buyer clicks "I'm a sole trader". Requiring one
+     * refused every single one of those attempts, and the browser has no place
+     * to show that error on that page, so the entry point simply dead-ended in
+     * silence.
      */
     public function ajaxProcessSoleTraderTokens()
     {
@@ -208,46 +221,46 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
     }
 
     /**
-     * The billing country the sole-trader gate is evaluated against, from the
-     * most trustworthy source available (TWO-40). See
-     * ajaxProcessSoleTraderTokens() for why the middle tier is not a privilege
-     * escalation.
+     * The billing country the sole-trader gate is evaluated against (TWO-40).
+     * See ajaxProcessSoleTraderTokens() for why preferring what the request
+     * carries is not a privilege escalation.
      *
      * Ordering:
-     *   1. the cart's invoice address - a value the buyer already committed to
-     *      the cart, and never overridden by anything the request carries;
-     *   2. a posted `country`, accepted only in exactly the ISO-3166-1 alpha-2
-     *      shape (two upper-case letters). This is the address-editor case,
-     *      where no invoice address exists yet and the buyer's currently
-     *      selected country is the only answer there is;
-     *   3. the cart's delivery address, for a POST that carried no usable
-     *      country at all (an older cached script, a stripped body).
+     *   1. a posted `country`, accepted only in exactly the ISO-3166-1 alpha-2
+     *      shape (two upper-case letters). This is the buyer's live selection
+     *      in the address they are looking at, and it wins outright: it is the
+     *      only source that describes the address this order will be billed
+     *      to as it stands right now.
+     *   2. the cart's delivery address, and ONLY when no usable country was
+     *      posted at all - an older cached script, a stripped body. It is a
+     *      last resort, not a preference.
      *
-     * A tier that HAS an address but cannot resolve a country from it (an
-     * address row that no longer loads, an id_country with no ISO) falls
-     * through to the next tier rather than terminating the search: an
-     * unresolvable address is not an answer, and the tiers below it are no
-     * less trustworthy than the nothing it produced.
+     * The cart's INVOICE address is deliberately not consulted, at any tier. A
+     * committed invoice address is precisely the stale value this ordering
+     * rules out, and keeping it as a lower tier would let it silently win
+     * whenever a POST is missing a country for an innocuous reason - the same
+     * bug in different clothes.
+     *
+     * The shape check is what stops junk reaching the registry, and it is the
+     * only thing it was ever doing: a value that is not exactly two letters is
+     * treated as though nothing was posted.
+     *
+     * An address that cannot resolve a country (a row that no longer loads, an
+     * id_country with no ISO) yields nothing rather than terminating the search
+     * with a wrong answer - with one address tier left that means '', which the
+     * caller refuses on.
      *
      * @return string ISO-3166-1 alpha-2 code, or '' when nothing resolves -
      *                which the caller refuses on, rather than defaulting
      */
     private function resolveSoleTraderCountryIso()
     {
-        $cart = $this->context->cart;
-
-        if ($cart && (int) $cart->id_address_invoice > 0) {
-            $iso = $this->addressCountryIso((int) $cart->id_address_invoice);
-            if ($iso !== '') {
-                return $iso;
-            }
-        }
-
         $posted = Tools::strtoupper(trim((string) Tools::getValue('country')));
         if (preg_match('/^[A-Z]{2}$/', $posted)) {
             return $posted;
         }
 
+        $cart = $this->context->cart;
         if ($cart && (int) $cart->id_address_delivery > 0) {
             return $this->addressCountryIso((int) $cart->id_address_delivery);
         }
@@ -416,6 +429,70 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $this->sendJsonResponse(json_encode([
             'success' => true
         ]));
+    }
+
+    /**
+     * Record what the mirror has just written into the secondary address, so the
+     * next page load can still tell those values apart from ones the buyer typed
+     * (TWO-40).
+     *
+     * Its own action rather than a field on `saveCompany`, because the two records
+     * have different invalidation rules and `saveCompany` rejects a body with no
+     * company in it - see Twopayment::MIRROR_WRITE_SESSION_KEYS.
+     *
+     * Every field is optional and a field the body does not carry is left exactly
+     * as it was, so the browser can report one field's write without republishing
+     * the rest. An EMPTY string is a real value here, not an omission: it is how the
+     * browser disowns a value it has just cleared out of the form.
+     */
+    public function ajaxProcessSaveMirrorWrites()
+    {
+        if (!$this->validateAjaxToken()) {
+            $this->sendJsonResponse(json_encode([
+                'success' => false,
+                'error' => $this->module->l('Invalid token')
+            ]));
+            return;
+        }
+        if (!$this->isPost()) {
+            $this->sendJsonResponse(json_encode([
+                'success' => false,
+                'error' => $this->module->l('Only POST requests allowed')
+            ]));
+            return;
+        }
+
+        $fields = [];
+        foreach (array_keys(Twopayment::MIRROR_WRITE_SESSION_KEYS) as $field) {
+            $posted = Tools::getValue($field, null);
+            if ($posted === null || $posted === false) {
+                continue;
+            }
+            $value = trim((string) $posted);
+            $fields[$field] = ($field === 'country') ? Tools::strtoupper($value) : $value;
+        }
+
+        if (empty($fields)) {
+            // A machine code rather than a translated sentence, deliberately: this
+            // endpoint is fire-and-forget bookkeeping and its body is never rendered
+            // to a buyer, so a translatable string here would add rows to every
+            // catalogue that nobody will ever read.
+            $this->sendJsonResponse(json_encode([
+                'success' => false,
+                'error' => 'no_mirrored_values'
+            ]));
+            return;
+        }
+
+        $this->module->storeTwoCartScopedMirrorWrites($fields);
+        // Explicit write, for the same reason ajaxProcessSoleTraderAvailability()
+        // does it: the destructor-driven write is contingent on headers still being
+        // unsent, which depends on output buffering rather than on this endpoint.
+        if ($this->context->cookie) {
+            $this->context->cookie->write();
+        }
+
+        $this->sendJsonResponse(json_encode(['success' => true]));
     }
 
     /**

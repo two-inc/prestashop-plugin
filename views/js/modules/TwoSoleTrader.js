@@ -854,11 +854,11 @@ class TwoSoleTrader {
         // again the instant they land, defeating bindPopupMessageListener()'s
         // whole check.
         const generation = this._enrollGeneration;
-        // Post the country the buyer currently has selected (TWO-40). On the
-        // address-editor page - where the sole-trader entry actually gets
-        // clicked - the cart has no invoice address yet, so this is the only
-        // country the server has to gate on; it uses the cart's invoice
-        // address ahead of this whenever there is one, and re-checks the
+        // Post the country the buyer currently has selected (TWO-40). The
+        // server prefers THIS over anything it holds: the invoice-address tier
+        // that used to outrank it was deleted, not demoted, so the posted
+        // country wins outright and the cart's DELIVERY address is consulted
+        // only when no usable country was posted at all. It re-checks the
         // registry either way.
         //
         // Deliberately billingCountry(): that is the SAME resolver
