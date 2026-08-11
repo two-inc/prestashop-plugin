@@ -181,9 +181,10 @@ Written 2026-08-10 against `origin/staging` @ `0ddad20`. Items are numbered per 
 consolidated list (#6/#9, #8, #12, #13).
 
 Items **#3 and #7** of the same list are implemented — see PR #154. **Item #1, the config-key rename,
-was attempted and WITHDRAWN** (see the WITHDRAWN section at the end), so the key is still spelled
-`PS_TWO_ENABLE_COMPANY_NAME` everywhere in live code. Where the designs below name that key they use
-that spelling; if #1 is ever revived it lands independently of everything here.
+shipped separately in 2.7.6**: the key is now spelled `PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS` everywhere
+in live code, in a deliberately simple global-tier-only form (see the SUPERSEDED section at the end for
+what a tier-safe rename would have required, and why it was not built). The designs below use the new
+spelling; item #1 landed independently of everything here.
 
 **Every `file:line` below is a HINT, verified against `origin/staging` @ `0ddad20` and nothing else.**
 PR #154 touches most of the files cited below — it deletes ~55 lines from `TwoCompanySearch.js`, ~72
@@ -310,8 +311,8 @@ audited the confirmation path for that.
 
 There are **two independent questions** and the code currently answers them with one value:
 
-- *Where does the search UI render?* — `PS_TWO_ENABLE_COMPANY_NAME` (address area vs payment tile; the
-  name is historical, see #1).
+- *Where does the search UI render?* — `PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS` (address area vs payment
+  tile; renamed from `PS_TWO_ENABLE_COMPANY_NAME` in 2.7.6, see #1).
 - *May a company selection write into the address form's fields?* — `PS_TWO_ADDRESS_LOOKUP`,
   admin label "Autofill company address".
 
@@ -445,7 +446,7 @@ whatever the browser posts; the browser-side decision about *which* select to re
 
 ### Doug's clarification restated as a contract
 
-| `PS_TWO_ENABLE_COMPANY_NAME` (renamed only if #1 is revived) | what this mode is about | behaviour |
+| `PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS` (renamed in 2.7.6, per #1) | what this mode is about | behaviour |
 |---|---|---|
 | **enabled** (`'1'`, address area) | **WRITING** | the buyer searches in the address they see first/by default; the *other* address, if they have indicated the two differ, is auto-populated to match (company + country) |
 | **disabled** (`'0'`, tile) | **READING** | address-field layout and behaviour are untouched — tile UI exactly as today; the tile search's and the sole-trader flow's country comes from whichever country is **currently selected on the page** for the billing/invoice address field |
@@ -616,7 +617,7 @@ off, and the design above already assumes the corrected version.
 
 6. **`controllers/front/orderintent.php:574`'s `incomplete_company` message says "go back to your
    billing address and search for your company name".** That instruction is impossible to follow
-   when `PS_TWO_ENABLE_COMPANY_NAME='0'` — there is no search in the address step, it is in
+   when `PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS='0'` — there is no search in the address step, it is in
    the payment tile the buyer is already looking at. Pre-existing, but removing the `vat_number`
    fallback makes this branch materially more reachable, and the merchants newly hitting it are
    exactly the ones whose buyers cannot act on the wording. Same text at `twopayment.php:14222`
@@ -626,21 +627,53 @@ off, and the design above already assumes the corrected version.
 
 ---
 
-# WITHDRAWN — #1, the PS_TWO_ENABLE_COMPANY_NAME rename (TWO-40)
+# SUPERSEDED — #1, the company-search location key rename (TWO-40)
 
-**Status: attempted, reviewed three times, WITHDRAWN from PR #154. Needs its own ticket.**
+**Status: the rename SHIPPED in 2.7.6 as `PS_TWO_ENABLE_COMPANY_NAME` -> `PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS`,
+in a deliberately SIMPLE global-tier-only form — not the tier-exact design worked out below.** Doug's
+explicit ruling: with no live merchants on this plugin there is no multistore override to lose, so the
+tier-exact migration is not worth its risk or its complexity. `upgrade/upgrade-2.7.6.php` does a
+resolving read, one `updateValue()`, and a name-wide `deleteByName()`, and its own header states the
+loss it accepts.
 
-Doug's #1 asked for a rename of `PS_TWO_ENABLE_COMPANY_NAME` to `PS_TWO_COMPANY_SEARCH_LOCATION` with
-a real migration, and classified it as mechanical/safe. **The premise is right and the classification
-is wrong.** The rename itself is two seds; the *migration* is genuinely hard, and three adversarial
-review rounds each found a different variant of silent merchant data loss in it. Every finding in all
-three rounds was in this item — `#3` and `#7` were clean throughout, which is why they shipped and
+## A failed copy keeps the old row and reports it — it does NOT fail the upgrade
+
+The one path with no good outcome: `Configuration::updateValue()` answers falsy or raises, so the value
+never reaches the new key. The script keeps the old row there (it is then the only copy of the position
+the merchant chose) and logs at severity 3 — **and still returns `true`**.
+
+Returning `false` was weighed and rejected. It *would* make the script re-runnable: core captures the
+return value, only a truthy one advances the `upgraded_to` it writes to `ps_module.version`, and the
+version-gated discovery would therefore offer `upgrade-2.7.6.php` again on the next attempt. But before
+that, core calls `disable()` on the module for a falsy return — which deletes its `module_shop` rows, so
+the payment method leaves the storefront, and (because this module ships an `override/` directory) also
+runs `uninstallOverrides()` and strips the module's overrides out of the shop's override tree. Trading a
+working checkout for the automatic recovery of one config row is the wrong way round; the module's rule
+that a shop which cannot be tidied must still finish upgrading holds here.
+
+The consequence is that **the kept row is a record, not a remedy**: nothing re-runs the script (no
+re-run, and Doug ruled out a read shim), so recovery is a human re-selecting the position on the
+module's configuration page, or copying the value across in `ps_configuration`. The log message says
+that and deliberately promises nothing automatic. Both write-failure shapes — falsy return and raised
+exception — leave the same shop state and so are reported identically; the offline spec pins that, and
+pins the `true` return on every path.
+
+**Everything below this heading stands as the record of what a SAFE rename requires**, if the plugin
+ever acquires multistore merchants — at which point the shipped script is not sufficient and this is
+the work. It is also the record of three real defects, kept because each of them was found by review
+rather than by tests, and none of the tests could have found them.
+
+Doug's #1 originally asked for the rename to `PS_TWO_COMPANY_SEARCH_LOCATION` with a real migration,
+and classified it as mechanical/safe. **The premise is right and the classification is wrong.** The
+rename itself is two seds; a *tier-safe migration* is genuinely hard, and three adversarial review
+rounds each found a different variant of silent merchant data loss in it. Every finding in all three
+rounds was in this item — `#3` and `#7` were clean throughout, which is why they shipped first and
 this did not.
 
 The confirmation that the rename is purely a location switch **does hold**: `isCompanySearchInAddressArea()`
 resolves to the `'1'`/`'0'` string the checkout JS compares against, `'1'` = address area, `'0'` =
-payment tile, and the one shared control exists either way. The name is genuinely misleading. This is
-worth doing — just not the way it was attempted.
+payment tile, and the one shared control exists either way. The old name was genuinely misleading,
+which is why the rename was worth doing at all.
 
 ## Why it is hard: one asymmetry and one hidden dimension
 
@@ -688,7 +721,7 @@ SELECT id_configuration, id_shop_group, id_shop, value
   FROM ps_configuration WHERE name = 'PS_TWO_ENABLE_COMPANY_NAME'
 ```
 
-For each row: if no `PS_TWO_COMPANY_SEARCH_LOCATION` row exists at the *same* `(id_shop_group, id_shop)`
+For each row: if no `PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS` row exists at the *same* `(id_shop_group, id_shop)`
 tier (NULL-safe compare — MySQL `<=>`) and the value is usable, rename that row in place
 (`UPDATE ... SET name = <new> WHERE id_configuration = <id>`). Then
 `DELETE FROM ps_configuration WHERE name = <old>` and `Configuration::loadConfiguration()` to refresh
@@ -714,13 +747,31 @@ makes core substitute the ambient shop rather than NULL. That is why this has to
 ## The file-swap window, which is a separate problem and does not go away
 
 A deploy that only replaces module files does **not** run upgrade scripts; that needs the back-office
-Module Manager or `dev/ci/upgrade-module.sh`. The git-synced shops update by file swap. So between the
-swap and someone opening the back office, the new key is absent while the old row is still in the DB —
-and because `getAddressLookupEnabled()` keys off the same resolver, a tile-mode merchant would get the
-search back in the address area **and** address autofill re-enabled, on a live storefront, silently,
-for as long as nobody visits the back office.
+**Module Manager → Upgrade** action or `dev/ci/upgrade-module.sh`, and nothing else — in particular the
+module's own *configuration* page does not run them, no PrestaShop code path executes `upgrade/*.php`
+from there. The git-synced shops update by file swap. So between the swap and the upgrade actually being
+run, the new key is absent while the old row is still in the DB, and a tile-mode merchant gets the
+search back in the address area, on a live storefront, silently, for as long as nobody runs the upgrade.
 
-Doug's instruction was "not a permanent alias". Three options, and this needs his ruling before code:
+Address autofill comes back with it **only where `PS_TWO_ADDRESS_LOOKUP` is absent or `1`**.
+`getAddressLookupEnabled()` force-returns `'0'` while the search is not in the address area, so once the
+resolver flips back to the address-area default it reads that row again — but a shop that picked tile
+mode *through the admin form* had the row written to `0` by the same save (the write is gated on
+`isAddressLookupSettingAvailable()`), so autofill stays off there. The autofill half of the window
+therefore bites shops whose tile mode was seeded programmatically, as the e2e tile-location spec does,
+not ones that clicked it in the back office.
+
+The same window is also why the 2.7.6 copy is guarded on the **new** key, not only on the old one: a
+merchant can save a position through the config page before any upgrade runs, and an unguarded copy
+would later put the stale old row back over it. The guard uses the resolving read and treats `''` as
+absent, deliberately not `Configuration::hasKey()` — which counts an empty row as set and would suppress
+a copy the module itself needs.
+
+**Doug ruled: no shim.** His instruction was "not a permanent alias", and 2.7.6 shipped with no read
+shim of any kind — the window is real, unmitigated in code, and documented instead (in
+`upgrade/upgrade-2.7.6.php`'s header and the CHANGELOG entry): running the upgrade once after a
+file-swap deploy — Module Manager → Upgrade, or `dev/ci/upgrade-module.sh` — is a mandatory release
+step. That is option two below. The three options are kept as the record of what was weighed.
 
 - **A self-expiring read shim** — the resolver reads the old key when the new one is absent, with a
   spec that turns red once the declared version reaches 2.8.0 and names what to delete. Built and
@@ -736,8 +787,12 @@ Doug's instruction was "not a permanent alias". Three options, and this needs hi
   `isCompanySearchInAddressArea()` explaining that the key's name is historical buys most of the
   readability for none of the risk.
 
-**Recommendation: option three unless Doug wants the rename specifically.** If it goes ahead, it wants
-the SQL migration, both CI/test prerequisites, and its own PR — not a bundle with unrelated cleanup.
+**The standing recommendation at the time was option three, don't rename at all.** Doug overruled it and
+took the rename with option two's file-swap handling and a global-tier-only migration, on the grounds
+that there are no live merchants to lose data belonging to. It landed as its own PR, not bundled with
+unrelated cleanup, which was the other half of the recommendation. The SQL migration and both CI/test
+prerequisites were NOT built — they remain the price of admission the day this plugin has a multistore
+merchant.
 
 ## Unrelated pre-existing bug found while doing this
 

@@ -13,6 +13,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The version comparison that decides whether the upgrade leg exercises a
+  # version-gated migration or skips it. Unit-tested in its own job (no docker,
+  # a second) and gating the leg that uses it, the way version-bump.yml gates its
+  # bump on test-decide-bump-level.sh: a mis-comparison here does not fail the
+  # smoke job, it makes it pass having asserted nothing.
+  self-test:
+    name: Test the version gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: .github/scripts/test-version-lt.sh
+
   # Install-smoke (TWO-25109): provision a real PrestaShop, install this
   # branch's module fresh, assert it activates with no fatal and the Two
   # payment method registers (paymentOptions hook). Shares its harness
@@ -63,6 +76,7 @@ jobs:
   # versions), and assert no broken state and that config survives.
   upgrade-smoke:
     name: Upgrade smoke (latest release → HEAD)
+    needs: self-test
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -128,6 +142,43 @@ jobs:
             require "/var/www/html/config/config.inc.php";
             Configuration::updateValue("PS_TWO_MERCHANT_API_KEY", "upgrade-smoke-key");
           '
+          # PS_TWO_ENABLE_COMPANY_NAME is seeded to "0" on purpose (TWO-40):
+          # that is the pre-2.7.6 name of the company-search location setting,
+          # and "0" is its falsy-but-MEANINGFUL value ("the search lives in the
+          # payment tile"). upgrade-2.7.6.php must carry it to the new name
+          # PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS rather than drop it for being
+          # falsy, and must remove the old row. Asserted in the next step
+          # against real core, not just the offline Configuration double.
+          #
+          # ONLY when the prior release is strictly below 2.7.6: PrestaShop runs
+          # upgrade/upgrade-<v>.php only for versions ABOVE the installed one, so
+          # once 2.7.6 or later is the newest tag, the prior leg installs it,
+          # install() seeds the NEW key itself, upgrade_module_2_7_6() never runs
+          # again, and seeding the old key here would leave a row nothing removes
+          # — a permanent red build. Skipped loudly, not silently.
+          #
+          # The comparison is a script with a self-test (see the self-test job
+          # above) rather than an inline function: inverting it does not go red,
+          # it goes GREEN having asserted nothing about the migration.
+          #
+          # THIS GATE DECAYS, ON PURPOSE, AND THAT IS NOT THIS PR'S PROBLEM.
+          # Once 2.7.6 is the newest release tag the skip branch is taken
+          # forever, and this migration permanently loses its real-core coverage
+          # (the offline spec keeps covering it). That is a generic property of
+          # EVERY version-gated migration in a "latest release → HEAD" job, not
+          # something this migration introduced. The durable answer, if it ever
+          # matters, is a second upgrade leg pinned to a fixed pre-migration tag
+          # — a change to this job's shape, deliberately not made here.
+          if .github/scripts/version-lt.sh "$prior_ver" 2.7.6; then
+            echo "MIGRATION_2_7_6_IN_RANGE=1" >> "$GITHUB_ENV"
+            docker exec -u www-data "ps-$SFX" php -r '
+              require "/var/www/html/config/config.inc.php";
+              Configuration::updateValue("PS_TWO_ENABLE_COMPANY_NAME", "0");
+            '
+          else
+            echo "MIGRATION_2_7_6_IN_RANGE=0" >> "$GITHUB_ENV"
+            echo "::notice::prior release $prior_ver is not below 2.7.6, so upgrade_module_2_7_6() is out of range for this leg — the config-key rename seed and assertions are deliberately skipped (the offline spec still covers the migration)"
+          fi
 
       - name: Upgrade to this-branch HEAD
         run: |
@@ -185,7 +236,36 @@ jobs:
             echo "::error::config lost across upgrade (PS_TWO_MERCHANT_API_KEY='$val')"
             exit 1
           fi
-          echo "upgrade $PRIOR_VER -> $HEAD_VER healthy; config survived"
+          # The 2.7.6 config-key rename (TWO-40), against real core: the
+          # deliberately falsy "0" seeded on the OLD name must land on the new
+          # name, and no row of the old name may survive. Only asserted when the
+          # seed step decided the migration was in range for this prior release
+          # (see its version-lt.sh gate); an unset flag means the steps disagree, which
+          # is a workflow bug and must not pass quietly.
+          if [ -z "${MIGRATION_2_7_6_IN_RANGE:-}" ]; then
+            echo "::error::MIGRATION_2_7_6_IN_RANGE was never exported by the seed step"
+            exit 1
+          fi
+          if [ "$MIGRATION_2_7_6_IN_RANGE" = "1" ]; then
+            # Scoped to the GLOBAL row, which is the only tier this migration
+            # promises to carry (upgrade-2.7.6.php header). A highest-id row can
+            # be a per-shop row and would pass while the global carry failed.
+            loc=$(docker exec "psdb-$SFX" mysql -uroot -padmin -N -B prestashop \
+              -e "SELECT value FROM ps_configuration WHERE name='PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS' AND id_shop IS NULL AND id_shop_group IS NULL")
+            if [ "$loc" != "0" ]; then
+              echo "::error::company-search location not carried across the 2.7.6 rename (global PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS='$loc', expected '0')"
+              exit 1
+            fi
+            old_rows=$(docker exec "psdb-$SFX" mysql -uroot -padmin -N -B prestashop \
+              -e "SELECT COUNT(*) FROM ps_configuration WHERE name='PS_TWO_ENABLE_COMPANY_NAME'")
+            if [ "$old_rows" != "0" ]; then
+              echo "::error::pre-2.7.6 company-search key still present after upgrade ($old_rows row(s) of PS_TWO_ENABLE_COMPANY_NAME)"
+              exit 1
+            fi
+            echo "upgrade $PRIOR_VER -> $HEAD_VER healthy; config survived; 2.7.6 key rename carried '0' across"
+          else
+            echo "::notice::upgrade $PRIOR_VER -> $HEAD_VER healthy; config survived; 2.7.6 key-rename assertions skipped, migration out of range for prior release $PRIOR_VER"
+          fi
 
       - name: Tear down
         if: always()

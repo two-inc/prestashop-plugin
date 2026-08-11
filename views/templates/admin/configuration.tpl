@@ -99,7 +99,7 @@
             // on save, silently keeping auto-fill off after the merchant just
             // turned company search back on.
             function updateAddressLookupAvailability(isUserToggle) {
-                var inAddressArea = $('input[name="PS_TWO_ENABLE_COMPANY_NAME"]:checked').val();
+                var inAddressArea = $('input[name="PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS"]:checked').val();
                 var lookupInputs = $('input[name="PS_TWO_ADDRESS_LOOKUP"]');
                 if (!lookupInputs.length) {
                     return;
@@ -125,7 +125,7 @@
                 row.addClass('two-setting-unavailable');
             }
             updateAddressLookupAvailability(false);
-            $('input[name="PS_TWO_ENABLE_COMPANY_NAME"]').on('change', function () {
+            $('input[name="PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS"]').on('change', function () {
                 updateAddressLookupAvailability(true);
             });
 
