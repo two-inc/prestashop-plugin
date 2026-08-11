@@ -261,7 +261,15 @@ function buildAddressForm(options) {
  *  - the shared-address checkbox is emitted ONLY while the delivery form is the
  *    editable one, and CHECKED means the two addresses are the same;
  *  - the country select carries a disabled, empty-valued "Please choose"
- *    placeholder option ahead of the real countries;
+ *    placeholder option, ALWAYS `selected`, ahead of the real countries - and a
+ *    real country option that also carries `selected`, because
+ *    `CustomerAddressFormatter` sets that field's value unconditionally
+ *    (`setValue($this->country->id)`) and `form-fields.tpl` marks the option
+ *    matching it. Two selected options, last one wins, so a fresh unanswered
+ *    country select reads as the shop's default country id and NEVER as `''`.
+ *    Getting this wrong is not cosmetic: a fixture where the placeholder is the
+ *    only selected option makes any "the field is still empty" rule look like it
+ *    works, on a state core cannot produce;
  *  - the step's outer `<form>` and the rendered address form's own `<form>` are
  *    nested, which is why the block div - not the form - is the usable scope.
  *
@@ -274,8 +282,11 @@ function buildAddressForm(options) {
  *        does. Default false.
  * @param {boolean} [options.invoiceBlock] whether an invoice block exists at
  *        all. Default: true unless sameAddress.
- * @param {?string} [options.countryId] pre-selected country option value; null
- *        (default) leaves the placeholder selected, i.e. an unanswered country
+ * @param {?string} [options.countryId] the country option the SERVER rendered as
+ *        selected. Defaults to '1' (Germany) - a real pre-selected country, which
+ *        is what core always emits. Pass null for the deliberate EXCEPTION case:
+ *        a theme whose form leaves only the placeholder selected. Core does not
+ *        produce that state, so any test using it must say why.
  * @param {boolean} [options.countryIsoAttrs] give the country options
  *        `data-iso-code` (default false - core's classic theme does not)
  * @param {string} [options.company] initial value of the company input
@@ -286,7 +297,7 @@ function buildAddressesStep(options) {
     const editing = opts.editing || 'delivery';
     const sameAddress = opts.sameAddress === true;
     const invoiceBlock = 'invoiceBlock' in opts ? opts.invoiceBlock : !sameAddress;
-    const countryId = 'countryId' in opts ? opts.countryId : null;
+    const countryId = 'countryId' in opts ? opts.countryId : '1';
     const isoAttrs = opts.countryIsoAttrs === true;
     const company = opts.company || '';
 
@@ -307,7 +318,9 @@ function buildAddressesStep(options) {
             '        <input type="text" name="postcode" id="field-postcode" value="">',
             '        <input type="text" name="city" id="field-city" value="">',
             '        <select id="field-id_country" class="form-control form-control-select js-country" name="id_country" required>',
-            '        <option value disabled' + (countryId === null ? ' selected' : '') + '>Please choose</option>',
+            // `selected` unconditionally, as core emits it - see this function's
+            // docblock. The real country option below carries it too.
+            '        <option value disabled selected>Please choose</option>',
             countryOption('17', 'United Kingdom', 'GB'),
             countryOption('8', 'France', 'FR'),
             countryOption('1', 'Germany', 'DE'),

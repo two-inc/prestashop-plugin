@@ -1907,35 +1907,62 @@ class TwoCompanySearch {
     }
 
     /**
-     * Write one mirrored value, respecting the autofill marker.
+     * Whether a mirrored write into this field would overwrite the buyer's own
+     * answer.
      *
-     * Only into a field that is EMPTY, or whose current value is still exactly
-     * what a previous fill recorded writing there. Anything else is the buyer's
-     * own answer and is left alone - overwriting a company name the buyer typed
-     * by hand would be the same class of bug as a company picked in one place
-     * rewriting an address the buyer is not looking at.
+     * Writable when the field is UNANSWERED, or when its current value is still
+     * exactly what a previous fill recorded writing there. Anything else is the
+     * buyer's own answer and is left alone - overwriting a company name the buyer
+     * typed by hand would be the same class of bug as a company picked in one
+     * place rewriting an address the buyer is not looking at.
+     *
+     * "Unanswered" is empty for a text input, and for a `<select>` it ALSO
+     * includes "still exactly the value the server rendered" - see
+     * serverRenderedSelectValue() for why an empty country select does not exist
+     * on a real PrestaShop form.
+     *
+     * @param {Object} field jQuery object, possibly empty
+     * @param {string} [unansweredValue] a non-empty value that also counts as
+     *        unanswered for this field
+     * @returns {boolean}
+     */
+    mirrorTargetIsWritable(field, unansweredValue) {
+        if (!field || field.length === 0) {
+            return false;
+        }
+        const current = String(field.val() == null ? '' : field.val());
+        const written = field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR);
+        if (typeof written !== 'undefined' && written === current) {
+            return true;
+        }
+        if (current === '') {
+            return true;
+        }
+        return typeof unansweredValue === 'string'
+            && unansweredValue !== ''
+            && current === unansweredValue;
+    }
+
+    /**
+     * Write one mirrored value, respecting the autofill marker.
      *
      * Marks what it writes, same attribute and same meaning as every other write
      * in this class, so a later pass can recognise it in turn.
      *
      * @param {Object} field jQuery object, possibly empty
      * @param {string} value
+     * @param {string} [unansweredValue] forwarded to mirrorTargetIsWritable()
      * @returns {boolean} whether the value was written
      */
-    writeMirroredValue(field, value) {
+    writeMirroredValue(field, value, unansweredValue) {
         const incoming = String(value == null ? '' : value).trim();
         if (!incoming) {
             return false;
         }
-        if (!field || field.length === 0) {
+        if (!this.mirrorTargetIsWritable(field, unansweredValue)) {
             return false;
         }
         const current = String(field.val() == null ? '' : field.val());
-        const written = field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR);
-        const oursAndUntouched = typeof written !== 'undefined' && written === current;
-        if (current !== '' && !oursAndUntouched) {
-            return false;
-        }
         field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR, incoming);
         if (current !== incoming) {
             field.val(incoming);
@@ -1946,32 +1973,72 @@ class TwoCompanySearch {
     }
 
     /**
+     * The value the SERVER rendered as selected in a select, or '' when it
+     * rendered no real option as selected.
+     *
+     * This is what "the buyer has not answered the country question" has to mean
+     * on PrestaShop, and the reason the mirror cannot test a country select for
+     * emptiness. Verified against core: `_partials/form-fields.tpl` emits a
+     * disabled, empty-valued placeholder option that is ALWAYS `selected`, and
+     * then marks the option matching the field's value `selected` as well - and
+     * `CustomerAddressFormatter` sets that value unconditionally, to the
+     * address's own country id. Two selected options, last one wins, so
+     * `select.value` on a fresh unanswered address form is the rendered country
+     * id and never `''`. An emptiness test therefore never fires: the mirror
+     * would see a non-empty unmarked value, read it as the buyer's answer, and
+     * refuse - every time, on every real form.
+     *
+     * Read from the `selected` ATTRIBUTE rather than snapshotted at mount,
+     * deliberately: the attribute is what the server said, and it survives any
+     * later programmatic change to the select's value. A snapshot cannot tell a
+     * buyer's in-page change from a value some other code set before the mirror
+     * ran.
+     *
+     * @param {HTMLSelectElement} select
+     * @returns {string}
+     */
+    serverRenderedSelectValue(select) {
+        if (!select || typeof select.querySelectorAll !== 'function') {
+            return '';
+        }
+        // LAST wins, as the HTML parser resolves it.
+        const marked = select.querySelectorAll('option[selected]');
+        let rendered = '';
+        for (let index = 0; index < marked.length; index++) {
+            if (marked[index].value) {
+                rendered = marked[index].value;
+            }
+        }
+        return rendered;
+    }
+
+    /**
      * Mirror the country into the visible form's country select.
      *
-     * Core's country select carries a disabled placeholder option with an empty
-     * value, which is what "empty" means for a select here: an address form the
-     * buyer has not answered the country question on yet. Once the select holds a
-     * real country, the marker rule applies exactly as it does to a text field -
-     * a value that is not ours and untouched is the buyer's answer, and is left.
+     * Unanswered means "still the country the server rendered", not "empty" -
+     * see serverRenderedSelectValue(). Once the buyer has changed it, the marker
+     * rule applies exactly as it does to a text field: a value that is not ours
+     * and untouched is the buyer's answer, and is left.
      *
      * @param {Element} root the visible address form's scope
      * @param {string} iso
-     * @returns {boolean} whether the country was written
+     * @returns {string} the option value written, or '' when nothing was written
      */
     mirrorCountryIntoForm(root, iso) {
         const target = String(iso == null ? '' : iso).trim().toUpperCase();
         if (!/^[A-Z]{2}$/.test(target)) {
-            return false;
+            return '';
         }
         const select = $(root).find("select[name='id_country'], select[name='country']").first();
         if (select.length === 0) {
-            return false;
+            return '';
         }
         const optionValue = this.countryOptionValueForIso(select[0], target);
         if (optionValue === null) {
-            return false;
+            return '';
         }
-        return this.writeMirroredValue(select, optionValue);
+        const unanswered = this.serverRenderedSelectValue(select[0]);
+        return this.writeMirroredValue(select, optionValue, unanswered) ? optionValue : '';
     }
 
     /**
