@@ -19,7 +19,146 @@
 
 ---
 
+## [2026-08-11] Sole-Trader Enrolment Writes Its Identity And Address Into The Form
+
+> **Supersedes the 2026-08-10 entry below**, which recorded the opposite decision and one
+> statement of fact that was simply wrong. Both corrections are set out here rather than by
+> quietly editing that entry, so the reversal is legible.
+
+**Context**: A completed sole-trader enrolment populated nothing at all. `applyBuyer()` in
+`TwoSoleTrader.js` received the completion response, read `company_name` and
+`organization_number` off it with the right field paths, and then wrote neither of them - nor
+any address field - to any input. It posted to the `saveCompany` session action, published an
+in-memory selection through `TwoCheckoutManager`, called container-scoped status/prompt UI that
+silently no-ops on the address-editor page, and dispatched a `two:sole-trader-ready` event with
+no listener anywhere. Reported as: *"Sole trader workflow is not actually populating company name
+or address from the autofill call... It's not just address that is failing to populate. It's
+company name/number as well. Absolutely nothing is being populated. Critical bug."*
+
+**The 2026-08-10 entry's factual error, corrected**: it claimed a street/postcode/city autofill
+was "not possible as that endpoint is consumed today, because the response carries no address
+payload at all". That is false. `/autofill/v1/buyer/current` carries a full address payload.
+Captured live from a real signup completion against staging:
+
+```json
+{
+    "billing_address": {"apartment":"","building":"Wharf Lane","city":"Ashford","country":null,"organization_name":null,"postal_code":"TN23 1AA","region":"","street":"Wharf Lane"},
+    "company_name": "Sole Trader Test Co",
+    "country_code": "GB",
+    "email": "buyer@example.test",
+    "first_name": "Alex",
+    "last_name": "Buyer",
+    "organization_number": "TWO:ST123456789012",
+    "phone_number": "+440000000000",
+    "shipping_address": null
+}
+```
+
+No API contract confirmation was needed; the data was already there.
+
+The payload above is the captured one with **every personal value replaced** - name, email, phone,
+address and the synthetic identifier are all substitutes. This is a public repository; the SHAPE is
+the finding, and the shape is what is reproduced. The same substitutes are used in
+`tests/js/sole-trader-writeback.test.js` so the fixture and this record agree.
+
+**Decision**: The completion adopts the enrolled identity into the form the buyer is looking at,
+through `TwoCompanySearch.adoptSoleTraderBuyer()`. `two:sole-trader-ready` is unchanged and still
+has no listener - the adoption is a direct call from `applyBuyer()`, not an event contract.
+
+What is written:
+
+| Response field | Destination | Notes |
+| --- | --- | --- |
+| `company_name` | visible `company` input | marked `data-two-autofilled-value` |
+| `organization_number` | hidden `companyid` + `data-two-company-name` tag | via `markOrganizationFieldSelected()` |
+| `organization_number` | visible `dni` input | via `writeOrganizationToAddressIdentifiers()`; **skipped for `TWO:` values** |
+| `billing_address.street` | `address1` | via `autoFillAddress()` |
+| `billing_address.postal_code` | `postcode` | via `autoFillAddress()` |
+| `billing_address.city` | `city` | via `autoFillAddress()` |
+
+What is deliberately NOT written:
+
+- **`country_code`.** The registered country is not the country this enrolment was authorised
+  for. The token, and the session company `saveCompany` has just stored, were minted against the
+  country resolved from the LIVE FORM (decision `#12`), and
+  `getTwoValidatedSessionCompanyData()` discards the entire session company the moment the saved
+  country disagrees with the cart's invoice-address country. Writing the registered country over
+  the form's would destroy the enrolment it is completing. The two agreeing needs no write; the
+  two disagreeing is exactly where writing is wrong.
+- **`building`, `apartment`, `region`.** PrestaShop has an `address2` and a state field that could
+  hold them, but the fields the plugin may write are the ones it can ATTRIBUTE -
+  `MIRRORED_ADDRESS_FIELDS` and `Twopayment::MIRROR_WRITE_SESSION_KEYS` behind it. A value written
+  outside that record is unrecognisable as ours on the next render, reads as buyer-authored, and
+  PINS the whole secondary address. Widening the record changes the mirror's own pin surface and is
+  its own piece of work. Known gap, not an oversight.
+- **A `TWO:` organisation number into any visible field.** It is an internal identifier and must
+  never be shown to the buyer anywhere (TWO-25326 §12, `TwoCompanyNumber`). It still travels in the
+  hidden `companyid` and in the order payload, which is data rather than display.
+
+**Alternatives Considered**:
+- Leaving it as it was, per the 2026-08-10 decision. Rejected: it makes the flow pointless. The
+  buyer completes a signup and sees an empty form.
+- Hand-rolling the writes inside `TwoSoleTrader`. Rejected - this is exactly what the three
+  withdrawn attempts did.
+- Listening for `two:sole-trader-ready` in `TwoCompanySearch` and writing from there. Rejected: an
+  event with no payload and one publisher is indirection with no second consumer to justify it, and
+  the ordering against `publishConfirmedSelection()` matters (see below).
+
+**Rationale**:
+- **The 2026-08-10 blocker is real and is closed by the pairing tag, not worked around.** That
+  entry correctly identified `clearStaleOrganizationSelection()` reading company-set /
+  number-set / tag-absent as "the buyer has edited past a stale selection" and wiping the write on
+  their next keystroke. Every withdrawn attempt wrote an UNTAGGED `companyid`. PR #157 landed
+  `markOrganizationFieldSelected()`, which sets the field and its `data-two-company-name` tag
+  together as one operation; a write through it presents a VALID pairing, and the guard leaves it
+  alone. The guard itself is untouched - a buyer who genuinely retypes a different name still
+  clears the selection.
+- **Every write goes through the writer a real search selection already uses.** No new write path,
+  no new marker vocabulary, no new scope resolution. The address fill reuses `autoFillAddress()`
+  with the same three-state scope logic `autoFillAddressIfNeeded()` applies, and reports through
+  `recordMirrorWrites()` when the form written into is the secondary address - so the plugin's own
+  values are recognised as its own on the next render instead of pinning the address.
+- **The tag must match what is IN the company field, not the label posted to the server.**
+  `applyBuyer()` falls back to the organisation number when `company_name` is blank, and that
+  fallback is where the synthetic `TWO:` identifier appears. Tagging with that label while the
+  visible field holds something else would have the guard wipe the pair just as surely as no tag.
+- **The company-name write is unconditional, unlike the invoice mirror's.** The mirror writes into
+  an address the buyer is not looking at, so it must not overwrite their answer. This runs off a
+  signup the buyer has just completed in front of them, and the company field on the payment tile
+  IS the search box - a writability rule would refuse the one case the flow exists for: a buyer who
+  typed a name, found nothing, and enrolled instead.
+- **Order matters: adopt before publishing.** `setConfirmedCompanySelection()` re-derives the
+  captured address from the CURRENT page, so it has to see the written values rather than the empty
+  form they replaced.
+- **Works on both mounts.** The address-editor page renders no `.two-sole-trader` container, so
+  anything gated on one silently no-ops there - the same trap the TWO-40 follow-up in
+  `getCurrentBuyer()` fixed. Only status/prompt UI stays container-scoped, which is right: there is
+  nothing to show where there is no container.
+- **Fails soft.** The search instance is resolved lazily at call time (the manager destroys and
+  rebuilds it on every `updatedAddressForm`, and the enrolment spans a popup round trip). A missing
+  instance costs the fill, never the enrolment - the identity still reaches the order through the
+  session record and the published selection.
+
+**Consequences**:
+- A blank `company_name` still leaves the visible company field empty, and the pairing tag empty
+  with it, so the hidden number remains wipeable by the buyer's next keystroke in that field. The
+  order is unaffected (session record plus published selection), which is today's behaviour, so
+  this is a carried-forward limitation rather than a regression. Fixing it means deciding what a
+  nameless sole trader's company field should say - and the two available answers are writing an
+  internal identifier the buyer must never see, or inventing a name from their personal name.
+  Needs a ruling.
+- With the address-lookup switch off, the address fields and `dni` are not written; the company
+  name and hidden pairing still are. That is the existing meaning of that switch, applied here
+  unchanged.
+- `building`, `apartment` and `region` are dropped (above). In the captured completion `building`
+  equals `street` and the other two are empty, so nothing was lost in the reported case.
+
+---
+
 ## [2026-08-10] Sole-Trader Enrolment Does Not Write Back Into The Address Form
+
+> **SUPERSEDED by the 2026-08-11 entry above.** The write-back now exists. One bullet below is
+> also factually wrong and is corrected in place - see the marked line.
 
 **Context**: A completed sole-trader enrolment leaves the address form untouched (TWO-40). Adopting the enrolled identity into that form was attempted three times - first the trading name into the visible `company` field plus a publish and a cookie write as a backstop, then the same without the cookie write, then the organisation number alone mirrored into the address `dni` field - and withdrawn each time. The delivered fix is the token-mint precondition change only.
 
@@ -29,7 +168,7 @@
 - Name + number adoption with a publish and cookie backstop (implemented, withdrawn)
 - The same without the cookie write (implemented, withdrawn)
 - Organisation number alone, through the already-gated `writeOrganizationToAddressIdentifiers()` writer (implemented, withdrawn)
-- A true street/postcode/city autofill from the buyer-autofill response - not possible as that endpoint is consumed today, because the response carries no address payload at all; it needs an API contract confirmation before it can be designed
+- ~~A true street/postcode/city autofill from the buyer-autofill response - not possible as that endpoint is consumed today, because the response carries no address payload at all; it needs an API contract confirmation before it can be designed~~ **WRONG, corrected 2026-08-11.** The response carries a full `billing_address` object (street, city, postal_code, building, apartment, region) plus `country_code`. No contract confirmation was needed. See the 2026-08-11 entry for the captured payload; the autofill is now implemented.
 
 **Rationale**:
 - The blocker is not the write itself but what `TwoCompanySearch` already does around it. Its address-form submit handler adopts the identification field's value into the submitted organisation number, and it deliberately does not tag that adoption with a confirmed company name. Its stale-pairing check then reads company-set / number-set / tag-absent as "the buyer has edited past a stale selection" and clears the selection outright - dropping the identifier, dropping the number, and posting a company clear that destroys the session company. So any identifier an enrolment writes becomes a value the buyer's own next keystroke in the company field wipes.
