@@ -113,32 +113,96 @@ inconvenient to attribute:
   mean a buyer-typed second address line now freezes the secondary address where it previously did
   not — that is the intended consequence, not a side effect.
 
-**A `TWO:`-prefixed identifier is ordinary data, not a special case (Doug's ruling).** In Doug's
-words: *"why are you treating a sole trader number as any different from a registered company's org
-number? You should handle, store and route them exactly the same as each other."* It is not even a
-sole-trader concept — registered companies in some countries (the US among them) carry one too.
+**A `TWO:`-prefixed identifier is ordinary data (Doug's ruling), with ONE platform-forced exception.**
+In Doug's words: *"why are you treating a sole trader number as any different from a registered
+company's org number? You should handle, store and route them exactly the same as each other."* It is
+not even a sole-trader concept — registered companies in some countries (the US among them) carry one
+too. And on stripping the prefix to make it fit: *"we cannot strip the TWO: prefix because it is an
+integral part of the company number. Without it, the number is meaningless to the API."*
 
-So it is written, stored, paired, mirrored, validated and submitted through exactly the same code
-path as any other organisation number, with **no branch anywhere** in the write, pairing or
-validation logic. The only difference is cosmetic: `syncInternalIdentifierVisibility()` hides the
-field holding it, keyed on the value and never on how it was captured. It reuses
-`TwoCompanyNumber.isInternal()`, the same predicate the three existing display sites already use
-(the hint under the company field, the search result rows, the order-intent sentence), rather than a
-fourth copy of the prefix test. The wrapper is hidden rather than the input, because PrestaShop
-renders each address field as a `.form-group` holding a label and a control and hiding the input
-alone leaves an orphaned "Identification number" label. `display: none`, not `display: hidden` —
-the latter is not a valid value for that property.
+So it is stored, paired, mirrored, routed and submitted through exactly the same code path as any
+other organisation number, byte-identical, prefix intact — **except that it is never written into the
+visible `dni` address field.** That exception is forced by the platform, not chosen:
 
-**This replaces an earlier round that refused the WRITE**, and that reversal is the important part
-of this record. Refusing the write sent a sole trader's number down a different path from a
-registered company's, and every defect that followed came from that one divergence: a mismatched
-name/number pair left in the invoice form; the "name and number travel together" invariant broken;
-and, worst, a REQUIRED and empty identification field on countries whose address format demands one
-(`Country::isNeedDniByCountryId()`), which the buyer could not fill because the value was
-deliberately hidden from them — a hard dead-end at checkout. Keeping the real value in the field is
-precisely what leaves the required field satisfied and the pair complete. Two of the three "blocker"
-items an earlier review round raised were consequences of the special-casing and disappeared with
-it, rather than needing fixes of their own.
+- **Core rejects it.** `Address` declares `'dni' => ['validate' => 'isDniLite', 'size' => 16]` and
+  `Validate::isDniLite()` is `/^[0-9A-Za-z-.]{1,16}$/U`. `TWO:ST123456789012` fails twice — a colon
+  is not in the character class, and it is 18 characters. Writing it makes core **refuse to save the
+  address**, and an earlier round paired that with hiding the field, producing an invisible and
+  unfixable dead-end at checkout.
+- **It is unreadable there anyway.** `extractOrgNumberFromAddress()` validates `dni` against
+  `/^[A-Z0-9\-]{5,20}$/i`, which also rejects the colon. The value could never be read back, so
+  persisting it there achieved nothing even when it did not break the save.
+- **It is not our field.** `Country::isNeedDniByCountryId()` is country-level, so `dni` is required of
+  *every* buyer in such a country. It is their own fiscal number (NIF/CIF). Leaving it alone blocks
+  nobody — the buyer fills it as they always must — which is why this exception costs nothing while
+  both alternatives (writing an invalid value, or leaving a hidden required field empty) blocked
+  checkout outright.
+
+**There is consequently no display rule on that field, and that is a deletion rather than an
+omission.** An earlier round added `syncInternalIdentifierVisibility()` to hide it. With the value no
+longer reaching it there is nothing to hide — and the hiding could never have been complete, because
+PrestaShop renders `dni` into address blocks, invoice PDFs and order emails through
+`AddressFormat::generateAddress()`, which no stylesheet reaches. The three genuine display surfaces
+(the hint under the company field, the search result rows, the order-intent sentence) continue to
+suppress the value through `TwoCompanyNumber.forDisplay()`, which is where a display rule belongs.
+
+**Where the value DOES live:** the hidden `companyid` input (JS-created, no validation, not a
+column), the cart-scoped session record, the in-memory `$address->companyid` the order-intent
+controller sets, the order-scoped record described below, and the API payload. The prefix survives all
+of them unchanged.
+
+**The earlier round that refused the write for its own sake is superseded**, and the distinction
+matters: that round also withheld the pairing and the name, and every defect that followed came from
+*that* divergence — a mismatched name/number pair in the invoice form, the "name and number travel
+together" invariant broken, and the required-field dead-end above. Here the hidden pair, its tag, the
+session record, the mirror and the routing all stay completely uniform. Only the buyer's own fiscal
+field is left alone.
+
+**The billing organisation number is persisted on the ORDER, keyed by order id.** Two columns on
+`ps_twopayment` — the module's own order-keyed table. No core table altered, no class override, per
+`createTwoTables()`'s standing rule.
+
+Why it is needed: `getTwoUpdateOrderData()` runs in admin/webhook context after placement, when core
+has rotated the cart, so the cart-scoped session company is gone and the resolver falls to
+`ps_address.dni` — empty for an internal identifier and empty entirely on most countries. So
+`hookActionOrderEdited` and `hookActionAdminOrdersTrackingNumberUpdate` were PUTting an empty
+organisation number. **That was the status quo for every buyer on any country without
+`need_identification_number`, not only for sole traders**, so this is a broader fix than the ticket.
+
+**It is the pattern that method already uses.** `two_day_on_invoice` is persisted and read back as
+`$storedTerm` for precisely this reason, with the comment *"the update path runs in admin/webhook
+context with no buyer term cookie… otherwise the fee would be recomputed"*. Same problem, same shape,
+same method. This is not a new mechanism.
+
+Design constraints, all load-bearing:
+
+- **The value is the BILLING/INVOICE address's**, per Doug: *"the company number we want to persist is
+  the same as the one that drives the intent and the order: the one associated with billing/invoice
+  address."* Captured via `getTwoCheckoutCompanyData(new Address($cart->id_address_invoice))`, a
+  fail-soft wrapper over the very resolver that builds the payload — not a second resolution path, and
+  not the raw submitted field. Fail-soft matters here: a throw inside order confirmation would cost the
+  buyer an already-approved order.
+- **Captured in the same request as order creation**, while the cart-scoped record is still readable.
+  Later is too late: a rotated cart reports absent *and clears the record on the way out*.
+- **Writes are presence-conditional.** Eight of the nine `setTwoOrderPaymentData()` call sites are
+  status/webhook updates that know nothing about the company. An absent key means "unchanged", never
+  "overwrite with empty" — otherwise the next status change silently erases the value. Same
+  absent-means-unchanged discipline as the mirror-write record.
+- **Reads prefer the stored value and fall back to live resolution when empty**, so orders placed
+  before this release behave exactly as they do now. No backfill, deliberately: the value is only
+  knowable from the buyer's own request.
+- **Keyed by ORDER id, not address id.** `CustomerAddressPersister::save()` clones an address to a new
+  row and soft-deletes the old one whenever it is edited after being used on an order, which would
+  orphan anything keyed by the old address id. An order id is stable for the life of the order. This is
+  the specific risk that ruled out the address-scoped variant.
+
+Rejected alternatives, with the reasons, so they are not revisited blind: a column on `ps_address`
+would need an `Address` class override, and this repo's override machinery (`TwoOverrideMigrator`, its
+CI gate) never installs a NEW override on an existing shop — `Module::runUpgradeModule()` does not call
+`installOverrides()`, the migrator returns early when nothing was removed, and the CI check only
+inspects modified and deleted overrides. It would also silently no-op on any shop where another module
+co-owns `override/classes/Address.php`, which the migrator deliberately refuses to touch. A module table
+keyed by `id_address` avoids the override but hits the clone-and-re-key path above.
 
 **The address-wide pin is deliberately NOT consulted, and that is a REVERSAL of a review fix.**
 Round 1 of the adversarial review added `secondaryAddressIsPinned()` as an early return, reasoning by

@@ -31,13 +31,14 @@ class TwoCompanySearch {
     // blanking an answer the buyer gave us.
     static AUTOFILL_MARKER_ATTR = 'data-two-autofilled-value';
 
-    /**
-     * Marks a field wrapper this class hid because it holds an internal
-     * (`TWO:`-prefixed) identifier, so the un-hide can only ever undo its own work
-     * and never reveal something the theme or merchant hid. See
-     * syncInternalIdentifierVisibility().
-     */
-    static INTERNAL_HIDDEN_ATTR = 'data-two-internal-hidden';
+    // THERE IS NO "hide the identification field" MARKER HERE, AND MUST NOT BE
+    // ONE (TWO-40, Doug's ruling, Option A). An internal (`TWO:`-prefixed)
+    // identifier is never written into the visible `dni` field in the first
+    // place, so there is nothing to hide. A hiding rule was tried and removed:
+    // it could never have been complete, because core renders `dni` into address
+    // blocks, invoice PDFs and order emails through
+    // AddressFormat::generateAddress(), which no CSS rule of ours reaches. See
+    // writeOrganizationToAddressIdentifiers().
 
     /**
      * Company-search result cache, held on the CLASS rather than inside
@@ -251,11 +252,10 @@ class TwoCompanySearch {
         this.setupAutocomplete();
         this.setupCountryChangeListener();
         this.mirrorConfirmedCompanyToInvoiceAddress();
-        // At MOUNT as well as after every write: the value can arrive from the SERVER,
-        // on an address the buyer saved earlier whose identification number is an
-        // internal identifier. Nothing wrote it on this page, so a write-side call
-        // alone would leave it on screen after every reload and every re-render.
-        this.syncInternalIdentifierVisibility();
+        // No visibility pass over the identification field here. Nothing this class
+        // writes can put an internal (`TWO:`) identifier into it (see
+        // writeOrganizationToAddressIdentifiers), and a value the SERVER rendered
+        // there is the buyer's own fiscal number, which is theirs to see and edit.
         this.isInitialized = true;
     }
     
@@ -1658,7 +1658,9 @@ class TwoCompanySearch {
      * @returns {boolean} whether the value actually reached a field. Callers that
      *        RECORD the write must take their answer from this and not assume it,
      *        or the record claims a value the form does not hold - which the next
-     *        render reads as buyer tampering and pins the whole address on.
+     *        render reads as buyer tampering and pins the whole address on. An
+     *        internal (`TWO:`) identifier is skipped here and therefore answers
+     *        `false`, which is load-bearing for exactly that reason.
      */
     writeOrganizationToAddressIdentifiers(orgNumber, onlyIfEmpty, root) {
         if (!this.isAddressLookupEnabled()) {
@@ -1669,25 +1671,48 @@ class TwoCompanySearch {
         if (!value) {
             return false;
         }
-        // NO SPECIAL CASE FOR `TWO:`-PREFIXED IDENTIFIERS HERE, and that is Doug's
-        // ruling rather than an omission (TWO-40). An earlier round refused to write
-        // them, reasoning that an internal identifier must never be shown to the
-        // buyer. Refusing the WRITE was the wrong lever: it sent a sole trader's
-        // number down a different path through storage, pairing, mirroring and
-        // submission from a registered company's, and every one of the defects that
-        // followed came from that divergence - a mismatched name/number pair left in
-        // the invoice form, the "name and number travel together" invariant broken,
-        // and a REQUIRED identification field left empty and unfillable on countries
-        // whose address format demands one.
+        // AN INTERNAL (`TWO:`-PREFIXED) IDENTIFIER IS NEVER WRITTEN INTO THE VISIBLE
+        // `dni` FIELD (TWO-40, Doug's ruling, Option A). This is the ONE place `TWO:`
+        // is treated specially in the write path, and everything else about such a
+        // number stays byte-identical to any other: the hidden `companyid`, its
+        // `data-two-company-name` pairing tag, the session record, the mirror and the
+        // routing are all completely uniform. Only the buyer's own fiscal field is
+        // left alone. Three reasons, in order of severity:
         //
-        // A `TWO:` number IS an organisation number and is stored, paired, mirrored,
-        // validated and routed identically to any other - including for registered
-        // companies in countries that legitimately carry one, which is why this is not
-        // a sole-trader concept at all. The only difference is COSMETIC: the field
-        // holding it is hidden from the buyer by
-        // syncInternalIdentifierVisibility(), which changes presentation and nothing
-        // else. Keeping the real value in the field is precisely what leaves a
-        // required field satisfied and a pair complete.
+        //  1. CORE REFUSES TO SAVE IT. `Address` declares `dni` with
+        //     `validate => isDniLite, size => 16`, and `Validate::isDniLite()` is
+        //     `/^[0-9A-Za-z-.]{1,16}$/U`. `TWO:ST123456789012` fails that twice - a
+        //     colon is not in the character class, and it is 18 characters. Writing
+        //     it there makes core reject the address, and the error lands on a field
+        //     the plugin was hiding: an invisible, unfixable dead-end at checkout.
+        //  2. IT COULD NEVER BE READ BACK. This plugin's own reader,
+        //     extractOrgNumberFromAddress(), validates `dni` against
+        //     `/^[A-Z0-9\-]{5,20}$/i`, which rejects the colon too. So the value was
+        //     write-only even when the write appeared to succeed.
+        //  3. IT IS THE WRONG FIELD. `Country::isNeedDniByCountryId()` is purely
+        //     country-level, so `dni` is required of EVERY buyer in such a country.
+        //     It is the buyer's own fiscal number (NIF/CIF), not a slot for our
+        //     identifier. The buyer fills it themselves, which is why leaving it
+        //     alone blocks nobody - the required field still gets satisfied, by its
+        //     rightful owner.
+        //
+        // This is NOT the earlier reverted approach. That one also withheld the
+        // pairing and the name, sending a sole trader's selection down a different
+        // path through storage, pairing, mirroring and submission - and every defect
+        // that followed came from that divergence. Here only this one field is
+        // skipped.
+        //
+        // `window.TwoCompanyNumber` is dereferenced UNGUARDED, matching every other
+        // use of it in this file. A feature-test would fail OPEN - i.e. would write
+        // the `TWO:` value into `dni` on the very load where the helper failed to
+        // arrive - which is the outcome this gate exists to prevent.
+        if (window.TwoCompanyNumber.isInternal(value)) {
+            // `false`, not a bare `return`. The invoice mirror takes `wroteNumber`
+            // from this answer; recording a write that did not happen makes the next
+            // render read the empty field as buyer tampering and pin the whole
+            // secondary address.
+            return false;
+        }
 
         let wrote = false;
         this.addressIdentifierFields(root).forEach(field => {
@@ -1705,76 +1730,22 @@ class TwoCompanySearch {
             wrote = true;
         });
 
-        this.syncInternalIdentifierVisibility(root);
-
         return wrote;
     }
 
-    /**
-     * Hide the identification field when it holds an INTERNAL (`TWO:`-prefixed)
-     * identifier, and show it again when it does not (TWO-40, Doug's ruling).
-     *
-     * This is the ONLY place `TWO:` is treated specially, and it is purely
-     * presentation. The value is stored, paired, mirrored, validated and submitted
-     * exactly as any other organisation number - which is what keeps the pair
-     * complete and a required field satisfied. Nothing here reads or changes a
-     * value.
-     *
-     * Not a sole-trader rule: registered companies in some countries (the US, for
-     * one) legitimately carry a `TWO:` identifier too, so this is keyed on the value
-     * and never on how it was captured.
-     *
-     * Reuses `TwoCompanyNumber.isInternal()`, the same predicate the other three
-     * display sites already go through (the hint under the company field, the search
-     * result rows, the order-intent sentence), rather than a second prefix test. A
-     * fourth copy of the rule is how one of them stops getting the next change to it.
-     *
-     * The WRAPPER is hidden, not the input. PrestaShop renders each address field as
-     * a `.form-group` holding a label and the control, so hiding the input alone
-     * leaves an orphaned "Identification number" label with nothing under it. Falls
-     * back to the input itself on a theme that does not use that class - worse
-     * looking than an orphan label is a visible internal identifier.
-     *
-     * `display: none`, not `display: hidden` - the latter is not a valid value for
-     * that property and does nothing at all.
-     *
-     * Only ever un-hides what it hid itself, tracked by its own attribute, so a
-     * field the THEME or the merchant has hidden for their own reasons is left alone.
-     *
-     * @param {Element} [root] confine to one address block
-     * @returns {void}
-     */
-    syncInternalIdentifierVisibility(root) {
-        this.addressIdentifierFields(root).forEach(fields => {
-            if (!fields || fields.length === 0) {
-                return;
-            }
-            // PER ELEMENT, via each(). The unscoped selector returns EVERY matching
-            // input as one set, and jQuery is asymmetric across it: `.val()` reads the
-            // FIRST match while `.css()`/`.attr()` write to ALL of them. Deciding once
-            // and applying to the set would let the first field's value govern the
-            // second's visibility - either revealing an internal identifier, or
-            // hiding a required field that is EMPTY, which browsers refuse to focus
-            // and which therefore kills form submission with no visible error. The
-            // same asymmetry is called out for the company field further down; it must
-            // not be reintroduced here.
-            fields.each((index, element) => {
-                const field = $(element);
-                const value = String(field.val() == null ? '' : field.val());
-                const group = field.closest('.form-group');
-                const target = group.length > 0 ? group : field;
-                if (window.TwoCompanyNumber.isInternal(value)) {
-                    target.attr(TwoCompanySearch.INTERNAL_HIDDEN_ATTR, '1');
-                    target.css('display', 'none');
-                    return;
-                }
-                if (typeof target.attr(TwoCompanySearch.INTERNAL_HIDDEN_ATTR) !== 'undefined') {
-                    target.removeAttr(TwoCompanySearch.INTERNAL_HIDDEN_ATTR);
-                    target.css('display', '');
-                }
-            });
-        });
-    }
+    // THERE IS NO VISIBILITY RULE FOR THE IDENTIFICATION FIELD HERE, AND ADDING
+    // ONE BACK WOULD BE A MISTAKE (TWO-40, Option A). A previous round hid the
+    // field's `.form-group` whenever it held an internal (`TWO:`) identifier.
+    // Two reasons it is gone:
+    //
+    //  1. Nothing puts such a value there any more - see
+    //     writeOrganizationToAddressIdentifiers() - so there is nothing to hide.
+    //     Whatever `dni` holds is the buyer's own fiscal number, which is theirs
+    //     to see and to correct.
+    //  2. The hiding could never have been COMPLETE. Core renders `dni` into
+    //     address blocks, invoice PDFs and order confirmation emails via
+    //     AddressFormat::generateAddress(), none of which any CSS rule of ours
+    //     reaches. A checkout-only hide would have been a false sense of one.
 
     /**
      * The address inputs a company selection mirrors its organisation number
@@ -1854,11 +1825,9 @@ class TwoCompanySearch {
             field.trigger('input');
             field.trigger('change');
         });
-
-        // The field may have been hidden for holding an internal identifier; it is
-        // empty now, so it has to come back. Paired with the write side so the two
-        // cannot drift.
-        this.syncInternalIdentifierVisibility();
+        // No visibility pass to undo here: this class never hides the
+        // identification field, because it never writes an internal (`TWO:`)
+        // identifier into it.
     }
 
     /**
@@ -2720,12 +2689,12 @@ class TwoCompanySearch {
             this.markOrganizationFieldSelected(selection.company, selection.companyid);
         }
         // Whether the number actually LANDED, taken from the writer rather than
-        // assumed from having called it. No value is refused any more - an internal
-        // `TWO:` identifier writes like any other - but the write can still decline
-        // for its own reasons: the address-lookup switch being off, or every
-        // candidate field skipped by `onlyIfEmpty`. Recording a number the form does
-        // not hold would have the next render read the empty field as buyer tampering
-        // and pin the whole address on the strength of a write that never happened.
+        // assumed from having called it. The write declines for several reasons: the
+        // value being an internal (`TWO:`) identifier, which never enters the visible
+        // `dni` field at all; the address-lookup switch being off; or every candidate
+        // field skipped by `onlyIfEmpty`. Recording a number the form does not hold
+        // would have the next render read the empty field as buyer tampering and pin
+        // the whole address on the strength of a write that never happened.
         let wroteNumber = false;
         if (wroteCompany && identifierFields.length > 0) {
             // Through the single gate every other organisation-number write goes
@@ -2750,7 +2719,23 @@ class TwoCompanySearch {
         //
         // No `TWO:` carve-out here either: with the write gate gone, an internal
         // identifier owes and settles exactly as any other number does.
-        memory.organizationPending = (wroteCompany && identifierFields.length === 0)
+        // Owed whenever the name landed and the number did NOT, which is now two
+        // shapes rather than one:
+        //
+        //  - the form has NO identification field at all (the original case): there
+        //    is nowhere for the number to go, and usually it stays owing harmlessly -
+        //    but a mirrored COUNTRY write can rebuild this form into one that does
+        //    have the field, and then it is owed to a form that can take it.
+        //  - the field EXISTS but the write skipped it, because the value is an
+        //    internal (`TWO:`) identifier that never enters `dni` (TWO-40, Option A).
+        //
+        // The second shape is why this is keyed on `!wroteNumber` and not on
+        // `identifierFields.length === 0`. `organizationPending` is the other half of
+        // the mirror's memory, and republishMirroredSelection() reads
+        // `organization || organizationPending` to restore the hidden `companyid`
+        // pair after core's country-change rebuild. Leaving both halves empty for a
+        // sole trader would take that restore away entirely.
+        memory.organizationPending = (wroteCompany && !wroteNumber)
             ? selection.companyid
             : '';
         memory.countryValue = countryValue;
@@ -2855,12 +2840,20 @@ class TwoCompanySearch {
         // is invisible to the stale-selection guard too.
         this.markOrganizationFieldSelected(recordedName, pending);
         // Answer taken from the writer, never assumed - see the same treatment in
-        // populateInvoiceAddressFromConfirmedCompany() above. A gate refusal here
-        // settles the debt rather than leaving it owing: the value is one no form
-        // will ever be allowed to take, so retrying on every mount cannot succeed.
+        // populateInvoiceAddressFromConfirmedCompany() above.
         const placed = this.writeOrganizationToAddressIdentifiers(pending, false, root);
         memory.organization = placed ? pending : '';
-        memory.organizationPending = '';
+        // A refusal LEAVES THE DEBT OWING rather than settling it, and that is
+        // deliberate. The dominant refusal is an internal (`TWO:`) identifier, which
+        // never enters `dni` (TWO-40, Option A) - so `organizationPending` is the
+        // only surviving record of the number, and republishMirroredSelection() reads
+        // it to restore the hidden `companyid` pair after the NEXT rebuild too.
+        // Clearing it here would work exactly once and then lose the pair. Retrying
+        // is cheap and idempotent: markOrganizationFieldSelected() above is the part
+        // that has to run on every mount anyway.
+        if (placed) {
+            memory.organizationPending = '';
+        }
         if (!placed) {
             return false;
         }
@@ -5450,14 +5443,18 @@ class TwoCompanySearch {
      * input event in the company field. That single mechanism is what killed all
      * three previous attempts.
      *
-     * A `TWO:`-prefixed organisation number is written like ANY OTHER, into both the
-     * hidden `companyid` and the visible identification field (Doug's ruling,
-     * TWO-40). It is not a sole-trader concept - registered companies in some
-     * countries carry one too - and treating it as ordinary data is what keeps the
-     * name/number pair complete and a required identification field satisfied. The
-     * only concession is cosmetic: syncInternalIdentifierVisibility() hides the field
-     * holding it. An earlier round refused the write instead, and every defect that
-     * followed came from that one divergence.
+     * A `TWO:`-prefixed organisation number goes into the hidden `companyid` and its
+     * `data-two-company-name` pairing tag like ANY OTHER, and is NOT written into the
+     * visible identification (`dni`) field (Doug's ruling, TWO-40, Option A). That
+     * one field is the only asymmetry - storage, pairing, the mirror, the session
+     * record and the routing are all uniform. It is not a sole-trader concept either:
+     * registered companies in some countries carry a `TWO:` identifier too, so the
+     * rule is keyed on the value and never on how it was captured. The reasoning for
+     * skipping `dni` (core's isDniLite validator rejects the value, our own reader
+     * rejects it too, and the field belongs to the buyer) lives on
+     * writeOrganizationToAddressIdentifiers(). An earlier round withheld the PAIRING
+     * and the NAME as well, and every defect that followed came from that divergence;
+     * this is deliberately not that.
      *
      * One value in the response IS deliberately not written, and it is a ruling
      * rather than an omission:
@@ -5611,9 +5608,10 @@ class TwoCompanySearch {
 
             // Visible identification field, through the single gate every other
             // organisation-number write uses, so the address-lookup switch governs
-            // this exactly as it governs the rest. No value is exempt - an internal
-            // identifier goes in like any other and is hidden from view there, not
-            // withheld from the field.
+            // this exactly as it governs the rest. That gate declines an internal
+            // (`TWO:`) identifier - the common case for a sole trader - and answers
+            // `false`; nothing here records the write, so there is nothing to keep
+            // in step. The pairing above is what carries the selection.
             this.writeOrganizationToAddressIdentifiers(number, false, secondaryRoot || undefined);
         }
 
@@ -5866,11 +5864,12 @@ class TwoCompanySearch {
      * What of the name/number pair actually reached the secondary address, read
      * back off the form rather than assumed.
      *
-     * Read back deliberately: both writes above can decline (an absent field, or the
-     * address-lookup switch being off - no value is refused for its own sake any
-     * more), and reporting a value that never landed is worse than reporting none -
-     * it tells the next render to treat a field the buyer may yet fill as already
-     * ours.
+     * Read back deliberately: both writes above can decline - an absent field, the
+     * address-lookup switch being off, or the number being an internal (`TWO:`)
+     * identifier, which never enters the visible `dni` field at all (TWO-40, Option
+     * A) and is the common case for a sole trader. Reporting a value that never
+     * landed is worse than reporting none: it tells the next render to treat a field
+     * the buyer may yet fill as already ours.
      *
      * @param {string} name
      * @param {string} number
