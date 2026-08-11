@@ -36,6 +36,10 @@ const MARKER = 'data-two-autofilled-value';
 
 const GB_OPTION = '17';
 const FR_OPTION = '8';
+// What the fixture's server rendered as selected, as core always does: a real
+// country, never the placeholder alone. So an "unanswered" country select on a
+// PrestaShop form reads as THIS, not as ''.
+const SERVER_RENDERED_OPTION = '1';
 
 let TwoCompanySearch;
 let $;
@@ -195,7 +199,8 @@ describe('the mirror, on the invoice pass', () => {
         mount({ company: 'Acme Trading Ltd', companyid: '1', countryIso: 'NO' });
 
         expect(companyField().val()).toBe('Acme Trading Ltd');
-        expect(countrySelect().val()).toBeFalsy();
+        expect(countrySelect().val()).toBe(SERVER_RENDERED_OPTION);
+        expect(countrySelect().attr(MARKER)).toBeUndefined();
     });
 
     test('writes only inside the visible form, never by global selector', () => {
@@ -219,7 +224,8 @@ describe('the mirror, on the invoice pass', () => {
 
         mount({ company: 'Acme Trading Ltd', companyid: '1', countryIso: 'not-a-country' });
 
-        expect(countrySelect().val()).toBeFalsy();
+        expect(countrySelect().val()).toBe(SERVER_RENDERED_OPTION);
+        expect(countrySelect().attr(MARKER)).toBeUndefined();
     });
 });
 
@@ -236,12 +242,45 @@ describe('the marker guard: buyer input is never overwritten', () => {
     });
 
     test('leaves a country the buyer already answered alone', () => {
-        buildAddressesStep({ editing: 'invoice', countryId: FR_OPTION });
+        // "Answered" cannot mean "non-empty" on a PrestaShop form - core renders a
+        // real country selected, so the select is non-empty from the start. It
+        // means the buyer has MOVED it off what the server rendered.
+        buildAddressesStep({ editing: 'invoice' });
+        countrySelect().val(FR_OPTION);
 
         mount(PICKED);
 
         expect(countrySelect().val()).toBe(FR_OPTION);
         expect(countrySelect().attr(MARKER)).toBeUndefined();
+    });
+
+    test('DOES write over the country the server rendered, which is the whole point', () => {
+        // The regression this guards: on a real form the country select is never
+        // empty, so a mirror that only writes into an empty select never fires at
+        // all. Verified against core - `form-fields.tpl` marks the placeholder
+        // `selected` AND the option matching the field's value, which
+        // `CustomerAddressFormatter` always sets, so last-selected wins.
+        buildAddressesStep({ editing: 'invoice' });
+
+        expect(countrySelect().val()).toBe(SERVER_RENDERED_OPTION);
+
+        mount(PICKED);
+
+        expect(countrySelect().val()).toBe(GB_OPTION);
+        expect(countrySelect().attr(MARKER)).toBe(GB_OPTION);
+    });
+
+    test('writes into a placeholder-only select too, for themes that render one', () => {
+        // The EXCEPTION case, named as one: core does not emit a form with no real
+        // country selected. A theme that overrides the country field block can, so
+        // an empty select stays writable - it is just not the case that matters.
+        buildAddressesStep({ editing: 'invoice', countryId: null });
+
+        expect(countrySelect().val()).toBeFalsy();
+
+        mount(PICKED);
+
+        expect(countrySelect().val()).toBe(GB_OPTION);
     });
 
     test('DOES replace a value a previous mirror wrote and the buyer has not touched', () => {
@@ -273,7 +312,8 @@ describe('when the mirror must be a true no-op', () => {
         mount(PICKED);
 
         expect($("#delivery-address input[name='company']").val()).toBe('');
-        expect($("#delivery-address select[name='id_country']").val()).toBeFalsy();
+        expect($("#delivery-address select[name='id_country']").val()).toBe(SERVER_RENDERED_OPTION);
+        expect($("#delivery-address select[name='id_country']").attr(MARKER)).toBeUndefined();
     });
 
     test('when the buyer has not stated the addresses differ', () => {
