@@ -1897,6 +1897,360 @@ class TwoCompanySearch {
     }
 
     /**
+     * The scope of the SECONDARY address - the one PrestaShop does not have the
+     * buyer edit by default - or null when the buyer is not looking at it (TWO-40).
+     *
+     * On PrestaShop the address playing the billing/invoice role is the secondary
+     * one, so the two coincide here. That is a platform fact and not a general one:
+     * another platform in this family is billing-FIRST, and there its billing
+     * address is the PRIMARY. Anything phrased in terms of the billing ROLE ports;
+     * anything phrased in terms of primary/secondary position does not.
+     *
+     * Three conditions, all of them about what the buyer has stated rather than
+     * about any control's state:
+     *
+     *  - the one editable form on the page is the invoice one. On the shipping pass
+     *    there is no secondary address in the document at all;
+     *  - the buyer's current selection indicates the two addresses are different
+     *    ones. When they say the addresses are the same there is one address, and
+     *    there is no secondary to write into or to protect;
+     *  - the form resolves to a scope that does not span another address block.
+     *    Fails closed: no scope means no write.
+     *
+     * @returns {?Element}
+     */
+    secondaryAddressFormRoot() {
+        if (this.visibleAddressFormType() !== 'invoice') {
+            return null;
+        }
+        if (!this.buyerStatesInvoiceAddressDiffers()) {
+            return null;
+        }
+
+        return this.visibleAddressFormRoot();
+    }
+
+    /**
+     * The fields of the secondary address whose contents decide whether it is still
+     * in sync (TWO-40), in the short-name vocabulary the server's mirror-write
+     * record uses (`Twopayment::MIRROR_WRITE_SESSION_KEYS`).
+     *
+     * These are exactly the fields the plugin can ATTRIBUTE. A value in one of them
+     * is either one the mirror or the ordinary company lookup put there - in which
+     * case the last-written record says so - or one the buyer authored. Every other
+     * field of a PrestaShop address (the name fields, the phone) is one the plugin
+     * never writes, so every value in it is buyer-authored by definition: counting
+     * them would pin the secondary address the moment the buyer typed the name they
+     * are obliged to type before they can save it at all, on the very first render.
+     */
+    static MIRRORED_ADDRESS_FIELDS = [
+        'company',
+        'organization',
+        'country',
+        'address1',
+        'postcode',
+        'city',
+    ];
+
+    /**
+     * What the mirror last wrote into the secondary address on this cart, as the
+     * server published it (TWO-40).
+     *
+     * This, and not the primary address's live value, is the comparison basis for
+     * the pin - see `Twopayment::MIRROR_WRITE_SESSION_KEYS` for why comparing
+     * against the primary is provably self-defeating.
+     *
+     * @returns {Object} short field name to last-written value; missing keys mean
+     *          nothing was ever written there
+     */
+    persistedMirrorWrites() {
+        const published = (window.twopayment && window.twopayment.mirror_writes) || null;
+        if (!published || typeof published !== 'object') {
+            return {};
+        }
+
+        return published;
+    }
+
+    /**
+     * Trim, and fold case. Both are Doug's ruling on how a content match is
+     * decided: the buyer retyping "acme trading ltd" over "Acme Trading Ltd", or
+     * leaving a trailing space behind, has not authored a different answer.
+     *
+     * @param {*} value
+     * @returns {string}
+     */
+    normalizeMirroredValue(value) {
+        return String(value == null ? '' : value).trim().toLowerCase();
+    }
+
+    /**
+     * The ISO code an option VALUE in a country select stands for, or ''.
+     *
+     * The inverse of countryOptionValueForIso(), with the same three resolution
+     * strategies in the same order, because the two have to agree. Comparisons are
+     * made on the ISO and never on the option's visible text: the id is shop-local
+     * and the label is locale-dependent, so either one would make the record
+     * unreadable on a shop or a language other than the one that wrote it.
+     *
+     * @param {HTMLSelectElement} select
+     * @param {string} optionValue
+     * @returns {string} uppercase alpha-2, or ''
+     */
+    countryIsoForOptionValue(select, optionValue) {
+        const value = String(optionValue == null ? '' : optionValue).trim();
+        if (!value || !select || !select.options) {
+            return '';
+        }
+        for (let index = 0; index < select.options.length; index++) {
+            const option = select.options[index];
+            if (option.value !== value) {
+                continue;
+            }
+            const attrIso = option.getAttribute('data-iso-code')
+                || option.getAttribute('data-iso')
+                || option.getAttribute('data-country-iso');
+            if (attrIso) {
+                return String(attrIso).toUpperCase();
+            }
+            const mapped = (window.twopayment && window.twopayment.countries)
+                ? window.twopayment.countries[option.value]
+                : null;
+            if (mapped) {
+                return String(mapped).toUpperCase();
+            }
+            return this.extractCountryFromText(String(option.textContent || '')) || '';
+        }
+
+        return '';
+    }
+
+    /**
+     * Every comparable field of the secondary address, paired with the values the
+     * plugin has on record as having written there (TWO-40).
+     *
+     * A field the form does not have is not in the list: there is nothing to
+     * compare, and treating an absent field as a mismatch would pin every address
+     * whose country's format has no identification field.
+     *
+     * Two sources of "what we last wrote", and both are consulted:
+     *
+     *  - the field's own marker attribute, which is this PAGE's record. It is the
+     *    only one that exists for a write made since the last render, and it is
+     *    destroyed by core's form rebuild;
+     *  - the cart-scoped record the server published, which is the only one that
+     *    survives a page load - and the pin is evaluated on a page load.
+     *
+     * Each state also carries the field's UNANSWERED value, which counts only while
+     * nothing at all is on record as having been written there. For a text input
+     * that is the empty string. For the country select it is whatever the server
+     * rendered as selected - see serverRenderedSelectValue() for why an empty
+     * country select does not exist on a real PrestaShop form, so emptiness is not
+     * an available test there.
+     *
+     * The "only while nothing was written" condition is what makes the country
+     * pinnable at all: core re-renders the form on every country change, so the
+     * value the server rendered is, after the first change, always the value the
+     * buyer just chose. Accepting it unconditionally would mean the country could
+     * never read as buyer-authored.
+     *
+     * Text inputs deliberately get no server-rendered baseline of their own: a
+     * non-empty street the server rendered is a street the buyer's saved address
+     * owns, and treating it as unanswered is exactly how an existing billing address
+     * gets silently overwritten.
+     *
+     * @param {Element} root the secondary address form's scope
+     * @returns {Array<{name: string, current: string, written: Array<string>,
+     *          unanswered: string}>}
+     */
+    mirroredAddressFieldStates(root) {
+        const persisted = this.persistedMirrorWrites();
+        const states = [];
+        const record = (name, field, current, unanswered, convert) => {
+            if (!field || field.length === 0) {
+                return;
+            }
+            const marker = field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR);
+            const written = [];
+            if (typeof marker !== 'undefined') {
+                written.push(typeof convert === 'function' ? convert(marker) : marker);
+            }
+            if (typeof persisted[name] !== 'undefined') {
+                written.push(persisted[name]);
+            }
+            states.push({
+                name: name,
+                current: current,
+                written: written.filter(value => String(value == null ? '' : value) !== ''),
+                unanswered: unanswered || ''
+            });
+        };
+        const liveValue = field => String(field.val() == null ? '' : field.val());
+
+        const companyField = $(root).find("input[name='company']").first();
+        record('company', companyField, liveValue(companyField), '');
+
+        this.addressIdentifierFields(root).forEach(field => {
+            record('organization', field, liveValue(field), '');
+        });
+
+        ['address1', 'postcode', 'city'].forEach(name => {
+            const field = $(root).find(`input[name='${name}']`).first();
+            record(name, field, liveValue(field), '');
+        });
+
+        const select = $(root).find("select[name='id_country'], select[name='country']").first();
+        if (select.length > 0) {
+            const toIso = value => this.countryIsoForOptionValue(select[0], value);
+            record(
+                'country',
+                select,
+                toIso(liveValue(select)),
+                toIso(this.serverRenderedSelectValue(select[0])),
+                toIso
+            );
+        }
+
+        return states;
+    }
+
+    /**
+     * Whether one field still holds what the plugin last put there.
+     *
+     * @param {{current: string, written: Array<string>, unanswered: string}} state
+     * @returns {boolean}
+     */
+    mirroredFieldStillHoldsWhatWeWrote(state) {
+        const current = this.normalizeMirroredValue(state.current);
+        if (state.written.some(value => this.normalizeMirroredValue(value) === current)) {
+            return true;
+        }
+        if (state.written.length > 0) {
+            // Something of ours was written here and this is not it. Includes the
+            // field having been emptied: the buyer deleting our value is an edit like
+            // any other, and refilling it on the next render would be the plugin
+            // arguing with them.
+            return false;
+        }
+
+        // Nothing was ever written here, so "still holds what we wrote" is decided by
+        // whether the buyer has answered the field at all. This is the ordinary state
+        // of a brand-new billing address form.
+        return current === '' || current === this.normalizeMirroredValue(state.unanswered);
+    }
+
+    /**
+     * The values a mirrored write into one field may overwrite, besides one the
+     * field's own marker still claims (TWO-40).
+     *
+     * The same rule the pin applies, expressed for the per-field write layer so the
+     * two cannot drift: the value on record as last written there, and - only when
+     * there is none - that field's unanswered value.
+     *
+     * @param {string} recordName short field name in the mirror-write record
+     * @param {string} [unansweredValue] what counts as unanswered for this field
+     * @param {Function} [convert] maps a recorded value into the field's own
+     *        vocabulary, for a field that does not store what it displays
+     * @returns {Array<string>}
+     */
+    mirrorWriteAcceptedValues(recordName, unansweredValue, convert) {
+        const recorded = this.persistedMirrorWrites()[recordName];
+        const value = String(recorded == null ? '' : recorded);
+        if (value !== '') {
+            const mapped = typeof convert === 'function' ? convert(value) : value;
+            return mapped ? [String(mapped)] : [];
+        }
+
+        return unansweredValue ? [String(unansweredValue)] : [];
+    }
+
+    /**
+     * Whether the secondary address is PINNED - the buyer has made it their own,
+     * and nothing may be written into any of its fields (TWO-40).
+     *
+     * ADDRESS-WIDE, not per-field, and that is Doug's ruling rather than an
+     * implementation convenience: any address field the buyer has entered pins the
+     * address, and the test for "entered" is a content match. Put together, ONE
+     * field that no longer holds what the plugin put there pins the WHOLE secondary
+     * address and no field is synced.
+     *
+     * The consequence, stated plainly because it is the behaviour and not a corner:
+     * the mirror only ever writes into a PRISTINE secondary address, and once the
+     * buyer touches anything in it, it stays frozen for the rest of the cart unless
+     * the contents come back to matching.
+     *
+     * @param {Element} root the secondary address form's scope
+     * @returns {boolean}
+     */
+    secondaryAddressIsPinned(root) {
+        return this.mirroredAddressFieldStates(root).some(
+            state => !this.mirroredFieldStillHoldsWhatWeWrote(state)
+        );
+    }
+
+    /**
+     * Report what the mirror has just written into the secondary address, so the
+     * NEXT page load can still tell those values from ones the buyer authored
+     * (TWO-40).
+     *
+     * Fire-and-forget, like clearPersistedCompany() beside it, and the failure mode
+     * is deliberately the safe one: a request that never arrives leaves the next
+     * render seeing non-empty fields with nothing on record as having written them,
+     * which reads as buyer-authored and PINS the address. A lost report costs one
+     * missed re-sync; the opposite default would cost the buyer's own data.
+     *
+     * Takes a partial record. A field the caller does not mention is left exactly as
+     * it was, so a country-only write does not have to republish the company. An
+     * empty string IS reported and IS meaningful: it says nothing of ours is in that
+     * field any more.
+     *
+     * @param {Object} values keyed by MIRRORED_ADDRESS_FIELDS names
+     * @returns {boolean} whether anything was reported
+     */
+    recordMirrorWrites(values) {
+        const written = {};
+        Object.keys(values || {}).forEach(name => {
+            if (TwoCompanySearch.MIRRORED_ADDRESS_FIELDS.indexOf(name) === -1) {
+                return;
+            }
+            written[name] = String(values[name] == null ? '' : values[name]);
+        });
+        if (Object.keys(written).length === 0) {
+            return false;
+        }
+
+        // Keep the published copy in step, so a second evaluation on THIS page
+        // reaches the same answer the server will give on the next one. Without
+        // this, the re-mount that core's own rebuild triggers would judge the
+        // mirror's own fresh writes against a record that predates them.
+        if (window.twopayment) {
+            window.twopayment.mirror_writes = Object.assign(
+                {}, this.persistedMirrorWrites(), written
+            );
+        }
+
+        try {
+            if (!window.twopayment || !window.twopayment.order_intent_url || !window.twopayment.ajax_token) {
+                return false;
+            }
+            $.ajax({
+                url: window.twopayment.order_intent_url,
+                method: 'POST',
+                data: Object.assign({
+                    ajax: 1,
+                    action: 'saveMirrorWrites',
+                    token: window.twopayment.ajax_token
+                }, written),
+                timeout: 10000
+            });
+        } catch (e) {
+            // no-op
+        }
+
+        return true;
+    }
+
+    /**
      * Carry a company selection made on the shipping pass over to the invoice
      * address form (TWO-40). Company NAME and COUNTRY only.
      *
@@ -1979,19 +2333,21 @@ class TwoCompanySearch {
         if (!this.isAddressLookupEnabled()) {
             return;
         }
-        if (this.visibleAddressFormType() !== 'invoice') {
-            return;
-        }
-        if (!this.buyerStatesInvoiceAddressDiffers()) {
-            return;
-        }
-        const root = this.visibleAddressFormRoot();
+        const root = this.secondaryAddressFormRoot();
         if (!root) {
             return;
         }
 
         this.reapplyMirrorMarkers(root);
-        this.populateInvoiceAddressFromConfirmedCompany(root);
+        // THE PIN, address-wide, and the gate in front of the populate only. The
+        // other three operations are rebuild REPAIR rather than sync: they never
+        // introduce a value the mirror has not already placed on this page, and each
+        // is separately gated on the mirror's own marked name still being in the
+        // form - so on a pinned address, where no populate has run, they are inert
+        // by construction rather than by this condition.
+        if (!this.secondaryAddressIsPinned(root)) {
+            this.populateInvoiceAddressFromConfirmedCompany(root);
+        }
         this.completeMirroredOrganizationNumber(root);
         this.republishMirroredSelection();
     }
@@ -2178,15 +2534,20 @@ class TwoCompanySearch {
         // name: the field's presence is decided by the country's address format,
         // there is nowhere to put a number on such a form, and the ordinary
         // company lookup has always behaved this way on those countries.
-        if (!this.mirrorTargetIsWritable(companyField)) {
+        if (!this.mirrorTargetIsWritable(companyField, this.mirrorWriteAcceptedValues('company'))) {
             return false;
         }
-        const blocked = identifierFields.some(field => !this.mirrorTargetIsWritable(field));
+        const identifierAccepted = this.mirrorWriteAcceptedValues('organization');
+        const blocked = identifierFields.some(
+            field => !this.mirrorTargetIsWritable(field, identifierAccepted)
+        );
         if (blocked) {
             return false;
         }
 
-        const wroteCompany = this.writeMirroredValue(companyField, selection.company);
+        const wroteCompany = this.writeMirroredValue(
+            companyField, selection.company, this.mirrorWriteAcceptedValues('company')
+        );
         if (wroteCompany) {
             // The hidden `companyid` field and its pairing tag, through the one
             // path a real selection uses - NOT conditional on there being an
@@ -2220,6 +2581,19 @@ class TwoCompanySearch {
             ? selection.companyid
             : '';
         memory.countryValue = countryValue;
+
+        // Report what just went into the secondary address, so the pin can still
+        // recognise these values as ours after the next page load has taken every
+        // marker with it. Partial: only the halves that were actually written.
+        const reported = {};
+        if (wroteCompany) {
+            reported.company = selection.company;
+            reported.organization = memory.organization;
+        }
+        if (countryValue) {
+            reported.country = selection.countryIso;
+        }
+        this.recordMirrorWrites(reported);
 
         return true;
     }
@@ -2310,6 +2684,10 @@ class TwoCompanySearch {
         this.writeOrganizationToAddressIdentifiers(pending, false, root);
         memory.organization = pending;
         memory.organizationPending = '';
+        // The number half has only now reached a field, so the record has to say so
+        // - otherwise the next page load reads it as a number the buyer typed and
+        // pins the whole address on the strength of the mirror's own write.
+        this.recordMirrorWrites({ organization: pending });
 
         return true;
     }
@@ -2372,26 +2750,35 @@ class TwoCompanySearch {
      * serverRenderedSelectValue() for why an empty country select does not exist
      * on a real PrestaShop form.
      *
+     * Comparisons trim and fold case, on Doug's ruling: a buyer who retyped the same
+     * answer in a different case, or left a trailing space, has not authored a
+     * different answer, and the value is still the plugin's to replace.
+     *
      * @param {Object} field jQuery object, possibly empty
-     * @param {string} [unansweredValue] a non-empty value that also counts as
-     *        unanswered for this field
+     * @param {string|Array<string>} [unansweredValues] value or values that also
+     *        count as unanswered for this field - typically what the last-written
+     *        record holds for it, from mirrorWriteAcceptedValues()
      * @returns {boolean}
      */
-    mirrorTargetIsWritable(field, unansweredValue) {
+    mirrorTargetIsWritable(field, unansweredValues) {
         if (!field || field.length === 0) {
             return false;
         }
-        const current = String(field.val() == null ? '' : field.val());
+        const current = this.normalizeMirroredValue(field.val());
         const written = field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR);
-        if (typeof written !== 'undefined' && written === current) {
+        if (typeof written !== 'undefined' && this.normalizeMirroredValue(written) === current) {
             return true;
         }
         if (current === '') {
             return true;
         }
-        return typeof unansweredValue === 'string'
-            && unansweredValue !== ''
-            && current === unansweredValue;
+        const accepted = Array.isArray(unansweredValues)
+            ? unansweredValues
+            : (typeof unansweredValues === 'string' ? [unansweredValues] : []);
+
+        return accepted.some(
+            value => value !== '' && this.normalizeMirroredValue(value) === current
+        );
     }
 
     /**
@@ -2402,15 +2789,16 @@ class TwoCompanySearch {
      *
      * @param {Object} field jQuery object, possibly empty
      * @param {string} value
-     * @param {string} [unansweredValue] forwarded to mirrorTargetIsWritable()
+     * @param {string|Array<string>} [unansweredValues] forwarded to
+     *        mirrorTargetIsWritable()
      * @returns {boolean} whether the value was written
      */
-    writeMirroredValue(field, value, unansweredValue) {
+    writeMirroredValue(field, value, unansweredValues) {
         const incoming = String(value == null ? '' : value).trim();
         if (!incoming) {
             return false;
         }
-        if (!this.mirrorTargetIsWritable(field, unansweredValue)) {
+        if (!this.mirrorTargetIsWritable(field, unansweredValues)) {
             return false;
         }
         const current = String(field.val() == null ? '' : field.val());
@@ -2488,8 +2876,16 @@ class TwoCompanySearch {
         if (optionValue === null) {
             return '';
         }
-        const unanswered = this.serverRenderedSelectValue(select[0]);
-        return this.writeMirroredValue(select, optionValue, unanswered) ? optionValue : '';
+        // The record wins over the server's render when there is one, for the reason
+        // mirroredAddressFieldStates() gives: core re-renders the form on every
+        // country change, so after the first one the server-rendered country IS the
+        // buyer's own choice and accepting it would make the country unpinnable.
+        const accepted = this.mirrorWriteAcceptedValues(
+            'country',
+            this.serverRenderedSelectValue(select[0]),
+            iso => this.countryOptionValueForIso(select[0], String(iso).toUpperCase())
+        );
+        return this.writeMirroredValue(select, optionValue, accepted) ? optionValue : '';
     }
 
     /**
