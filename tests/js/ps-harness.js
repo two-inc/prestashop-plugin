@@ -329,6 +329,13 @@ function buildAddressForm(options) {
  * @param {boolean} [options.countryIsoAttrs] give the country options
  *        `data-iso-code` (default false - core's classic theme does not)
  * @param {string} [options.company] initial value of the company input
+ * @param {boolean} [options.blockContainers] whether the editable form is wrapped
+ *        in its block id div and its own `.js-address-form` (default true, which is
+ *        core). Pass false for a THEME that flattens both away: the only scope left
+ *        for the field lookups to resolve to is then the step's own wrapper, which
+ *        spans BOTH address blocks. Core does not produce this, but a theme
+ *        overriding the address-form template can, and a mirror that widened its
+ *        scope to it would write into an address the buyer is not looking at.
  * @returns {void}
  */
 function buildAddressesStep(options) {
@@ -339,6 +346,7 @@ function buildAddressesStep(options) {
     const countryId = 'countryId' in opts ? opts.countryId : '1';
     const isoAttrs = opts.countryIsoAttrs === true;
     const company = opts.company || '';
+    const blockContainers = opts.blockContainers !== false;
 
     const countryOption = function (value, label, iso) {
         const attr = isoAttrs ? ' data-iso-code="' + iso + '"' : '';
@@ -347,15 +355,20 @@ function buildAddressesStep(options) {
     };
 
     const addressForm = function (type) {
-        const lines = [
-            '      <div id="' + type + '-address">',
-            // The rendered form's own wrapper, inside the block id - core's
-            // `address_form` block emits it, and it is what the innermost-first
-            // root resolution actually lands on.
-            '        <div class="js-address-form">',
+        const lines = [];
+        if (blockContainers) {
+            lines.push(
+                '      <div id="' + type + '-address">',
+                // The rendered form's own wrapper, inside the block id - core's
+                // `address_form` block emits it, and it is what the innermost-first
+                // root resolution actually lands on.
+                '        <div class="js-address-form">'
+            );
+        }
+        lines.push(
             '        <form method="POST" data-id-address="0">',
             '        <input type="text" name="company" id="field-company" value="' + company + '">'
-        ];
+        );
         if (DNI_COUNTRY_IDS.indexOf(String(countryId)) !== -1) {
             lines.push('        <input type="text" name="dni" id="field-dni" value="" required>');
         }
@@ -385,7 +398,10 @@ function buildAddressesStep(options) {
                 '        </div></div>'
             );
         }
-        lines.push('        </form>', '        </div>', '      </div>');
+        lines.push('        </form>');
+        if (blockContainers) {
+            lines.push('        </div>', '      </div>');
+        }
         return lines.join('\n');
     };
 

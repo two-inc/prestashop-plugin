@@ -1813,11 +1813,37 @@ class TwoCompanySearch {
     }
 
     /**
+     * The address blocks core's addresses step can render - the editable form for
+     * either side, and the radio selector over saved addresses that stands in for
+     * the other side.
+     *
+     * Used to recognise a candidate scope that is really the STEP: anything with
+     * one of these INSIDE it spans more than one address, and is not a scope.
+     */
+    static ADDRESS_BLOCK_SELECTOR =
+        '#delivery-address, #delivery-addresses, #invoice-address, #invoice-addresses, .js-invoice-address';
+
+    /**
      * The element to scope the visible address form's field lookups to, or null.
      *
      * Innermost-first, because core nests the rendered address form's own
      * `<form>` inside the step's outer one (HTML drops the inner tag, so the
      * block element is the reliable boundary, not the form).
+     *
+     * FAILS CLOSED, and that is the point of the second half of this method
+     * (TWO-40, round 5). The candidate list used to end in `form`, so a theme whose
+     * markup does not carry the block ids resolved to the step's OUTER form - which
+     * contains BOTH address blocks, and writing into it is precisely the
+     * document-wide write this whole feature exists to prevent. The same is true of
+     * the outer `.js-address-form` wrapper, which core itself emits around the
+     * whole step. So a candidate that CONTAINS another address block is rejected
+     * outright rather than used: no scope means no mirror, which is a visible
+     * no-op, where a widened scope is a silent write into an address the buyer is
+     * not looking at.
+     *
+     * Note the guard bites exactly when it matters: a page whose only address block
+     * is the visible form has nothing else for a wide scope to reach, and resolves
+     * normally.
      *
      * @returns {?Element}
      */
@@ -1826,7 +1852,17 @@ class TwoCompanySearch {
         if (!marker || typeof marker.closest !== 'function') {
             return null;
         }
-        return marker.closest('#invoice-address, #delivery-address, .js-invoice-address, form, .js-address-form');
+        const root = marker.closest(
+            '#invoice-address, #delivery-address, .js-invoice-address, .js-address-form'
+        );
+        if (!root || typeof root.querySelector !== 'function') {
+            return null;
+        }
+        if (root.querySelector(TwoCompanySearch.ADDRESS_BLOCK_SELECTOR)) {
+            return null;
+        }
+
+        return root;
     }
 
     /**

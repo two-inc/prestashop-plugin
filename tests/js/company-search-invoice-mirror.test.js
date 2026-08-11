@@ -192,6 +192,72 @@ describe('the scope every field lookup is confined to', () => {
     });
 });
 
+/**
+ * TWO-40, adversarial review round 5, B6.
+ *
+ * The scope resolution's candidate list used to end in `form`, so a theme whose
+ * markup does not carry core's block ids resolved to the step's OUTER form - the
+ * one that contains BOTH address blocks. A mirror scoped to that is a
+ * document-wide write, which is the single defect class this whole feature exists
+ * to prevent. It went unnoticed because every fixture carried the block ids, so
+ * the fallback was never the path taken.
+ *
+ * It now fails CLOSED: no identifiable single-address scope means no mirror.
+ */
+describe('the scope fails closed rather than widening', () => {
+    test('resolves nothing when the only candidate spans both address blocks', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION, blockContainers: false });
+
+        // The premise: the step wrapper is the only ancestor left, and the OTHER
+        // address block - the delivery selector over saved addresses - is inside it.
+        expect(document.querySelector('#invoice-address')).toBeNull();
+        expect(document.querySelector('#delivery-addresses')).not.toBeNull();
+
+        expect(mount(PICKED).visibleAddressFormRoot()).toBeNull();
+    });
+
+    test('and therefore writes nothing, anywhere', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION, blockContainers: false });
+        // The live shared-address control, reporting NOT shared. Load-bearing, not
+        // scenery: flattening the block containers also removes the structural
+        // signal the mirror reads for "the buyer says the addresses differ", so
+        // without this the mirror no-ops for that reason instead and the assertions
+        // below hold no matter what the scope resolution answers.
+        document.querySelector("input[name='saveAddress']").insertAdjacentHTML(
+            'beforebegin',
+            '<input name="use_same_address" type="checkbox" value="1">'
+        );
+        expect(mount(PICKED).buyerStatesInvoiceAddressDiffers()).toBe(true);
+
+        mount(PICKED);
+
+        expect($("input[name='company']").val()).toBe('');
+        expect($("input[name='company']").attr(MARKER)).toBeUndefined();
+        expect($("input[name='dni']").val()).toBe('');
+        expect($("input[name='dni']").attr(MARKER)).toBeUndefined();
+        expect($("select[name='id_country']").val()).toBe(ES_OPTION);
+        expect($("select[name='id_country']").attr(MARKER)).toBeUndefined();
+        expect($("input[name='companyid']").val()).toBe('');
+    });
+
+    test('still resolves the wrapper when it is the page\'s ONLY address block', () => {
+        // The guard is about a candidate SPANNING two addresses, not about the block
+        // ids as such: a buyer with no saved addresses gets one form and no
+        // selector, and there is then nothing a wide scope could reach. Asserted on
+        // the resolver rather than through a mirrored write, because this flattened
+        // shape also strips the structural signal the mirror reads for "the buyer
+        // says the addresses differ" - a separate no-op, and not the one under test.
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION, blockContainers: false });
+        document.querySelector('#delivery-addresses').remove();
+
+        const root = mount(PICKED).visibleAddressFormRoot();
+
+        expect(root).not.toBeNull();
+        expect(root.className).toBe('js-address-form');
+        expect(root.querySelectorAll("input[name='company']").length).toBe(1);
+    });
+});
+
 describe('the mirror, on the invoice pass', () => {
     test('writes the company name, its organisation number and the country, and nothing else', () => {
         // Rendered for Spain, because that is what puts an identification field on
