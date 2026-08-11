@@ -1652,6 +1652,23 @@ class TwoCompanySearch {
         if (!value) {
             return;
         }
+        // An INTERNAL identifier is never written into an address field, because
+        // `dni` is a field the buyer reads and answers for, and a `TWO:`-prefixed
+        // number must never be shown to them anywhere (TWO-25326 §12, see
+        // TwoCompanyNumber). The rule belongs HERE, at the single gate every
+        // organisation-number write already passes through, and not at each caller:
+        // there are four of them (the selection handler, the details refinement,
+        // the invoice mirror's populate and completion, and the submit-time sync),
+        // the sole-trader enrolment has published a `TWO:` companyid since
+        // TWO-25326 bug 8, and the submit-time sync in particular copies whatever
+        // `companyid` holds straight into `dni` - so a caller-side test would leave
+        // the value reaching the buyer by three other routes. Suppression is a
+        // display rule and costs the order nothing: an enrolled sole trader's
+        // number reaches the payload through the session record and the published
+        // selection, never through this field.
+        if (window.TwoCompanyNumber && window.TwoCompanyNumber.isInternal(value)) {
+            return;
+        }
 
         this.addressIdentifierFields(root).forEach(field => {
             if (field.length === 0) {
@@ -5333,6 +5350,22 @@ class TwoCompanySearch {
             && this.visibleAddressFormType() === 'invoice'
             && !this.visibleAddressFormRoot();
 
+        // THE PIN, honoured here as the invoice mirror honours it. Address-wide and
+        // content-matched: any field of the secondary address the buyer has made
+        // their own freezes the whole address, and nothing may be written into any
+        // of it (TWO-40, Doug's ruling).
+        //
+        // Applied even though the buyer has just asked for this enrolment, because
+        // the pin is not about what they asked for on THIS form - it is about an
+        // address they have already answered for and are not currently looking at.
+        // The enrolment still completes and still reaches the order through the
+        // session record and the published selection; only the write into a
+        // buyer-owned invoice address is declined. Nothing is skipped on the
+        // delivery form or the payment tile, which the pin never judges.
+        if (secondaryRoot && this.secondaryAddressIsPinned(secondaryRoot)) {
+            return false;
+        }
+
         let wrote = false;
 
         // The NAME is what makes the pair writable, and a blank one takes the whole
@@ -5352,6 +5385,34 @@ class TwoCompanySearch {
         // did - through the session record `saveCompany` has just written and the
         // selection published beside this call - and the ADDRESS below is still
         // filled, because an address fill carries no pairing and no such hazard.
+        //
+        // Writing nothing is NOT the same as leaving the form alone, though, and
+        // that distinction is a review finding rather than a subtlety: whatever
+        // selection was standing before the buyer enrolled is still in the form -
+        // hidden pair, tag, and the lookup's own identification number - all of it
+        // belonging to a company the buyer has just moved off. The session and the
+        // manager now say sole trader while the form still says the abandoned
+        // company, and the resolver's address tier reads the form.
+        //
+        // Cleared field by field, and deliberately NOT through
+        // clearSelectedCompany(). That method is the right shape but the wrong
+        // reach here: it also calls clearPersistedCompany(), which POSTs a clear of
+        // the SERVER session company - the very record `saveCompany` has just
+        // written for this enrolment, moments earlier and asynchronously. The clear
+        // would land after it and destroy the enrolment this method is completing.
+        // (Its publishConfirmedSelection('', '') would be harmless, since
+        // applyBuyer() republishes immediately after this returns, but the session
+        // clear is not.) Form residue only, therefore, which is what is actually
+        // stale.
+        if (!name) {
+            if (this.organizationField && this.organizationField.length) {
+                this.organizationField.val('');
+                this.organizationField.removeAttr('data-two-company-name');
+            }
+            this.setCompanyIdHint('');
+            this.clearLookupWrittenAddressIdentifiers();
+        }
+
         if (name && this.companyField && this.companyField.length > 0) {
             // UNCONDITIONAL, unlike the invoice mirror's own writes, and that is
             // the difference between the two features rather than an
@@ -5370,11 +5431,15 @@ class TwoCompanySearch {
             // have the guard judge the new name against the PREVIOUS selection's
             // tag and wipe the pair this method is in the middle of establishing.
             // A real search selection does not trigger on this field either.
-            const current = String(this.companyField.val() == null ? '' : this.companyField.val());
+            // Value written UNCONDITIONALLY rather than only when it differs, and
+            // the marker set from the same statement, so the two can never disagree.
+            // `this.companyField` is a document-wide selector: a getter reads the
+            // FIRST match while `.attr()` marks EVERY one, so a "skip the write when
+            // it already matches" test could mark a field it had not written - a
+            // marker beside a value we did not put there is precisely what the pin
+            // reads as tampering, and it would fire on this very page.
+            this.companyField.val(name);
             this.companyField.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR, name);
-            if (current !== name) {
-                this.companyField.val(name);
-            }
             wrote = true;
 
             // The pairing. Tagged with the name now IN the field, which is the only
@@ -5383,12 +5448,14 @@ class TwoCompanySearch {
                 wrote = true;
             }
 
-            // Visible identification field: real register numbers only (above), and
-            // through the single gate every other organisation-number write uses, so
-            // the address-lookup switch governs this exactly as it governs the rest.
-            if (!window.TwoCompanyNumber.isInternal(number)) {
-                this.writeOrganizationToAddressIdentifiers(number, false, secondaryRoot || undefined);
-            }
+            // Visible identification field, through the single gate every other
+            // organisation-number write uses - so the address-lookup switch governs
+            // this exactly as it governs the rest, AND the internal-identifier
+            // suppression lives in one place instead of at this call site. It has to
+            // be at the gate: the submit-time sync copies whatever `companyid` holds
+            // straight into `dni`, so a test here alone would let a `TWO:` number
+            // reach the buyer by another route.
+            this.writeOrganizationToAddressIdentifiers(number, false, secondaryRoot || undefined);
         }
 
         const filled = scopelessInvoiceForm
@@ -5409,8 +5476,12 @@ class TwoCompanySearch {
             ));
         }
 
-        // hasConfirmedSelection() has just changed answer - the same three
-        // re-evaluations autoFillAddressIfNeeded() runs after its own write.
+        // Re-evaluate the dropdown's own rows after a state change, the same three
+        // calls autoFillAddressIfNeeded() makes after its own write. Deliberately
+        // NOT justified on hasConfirmedSelection() having changed answer: none of
+        // the three reads it any more (they gate on the dropdown being open and on
+        // country availability), and a comment claiming otherwise would send the
+        // next reader looking for a dependency that is not there.
         this.syncNotListedVisibility();
         this.syncSoleTraderEntryVisibility();
         this.syncRegisteredEntryVisibility();
@@ -5481,7 +5552,20 @@ class TwoCompanySearch {
                 && String(field.val() == null ? '' : field.val()).trim() === number
                 && field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR) === number
         );
-        report.organization = placed ? number : '';
+        // OMITTED rather than reported empty when the number did not land, and the
+        // difference is load-bearing: recordMirrorWrites() treats '' as a positive
+        // statement - "nothing of ours is in that field any more" - and merges it
+        // over whatever the record already held. An internal identifier (the DEFAULT
+        // sole-trader case, since the number is skipped for `dni`) or the
+        // address-lookup switch being off would therefore un-record an organisation
+        // number a previous mirror pass really did write and really did leave in the
+        // form. On the next load the marker is gone, the record says nothing was
+        // written, the field still holds the number - which reads as buyer-authored
+        // and pins the WHOLE secondary address. An absent key means "unchanged",
+        // which is the truth here.
+        if (placed) {
+            report.organization = number;
+        }
 
         return report;
     }
