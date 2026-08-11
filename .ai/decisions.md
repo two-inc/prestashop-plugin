@@ -597,9 +597,27 @@ Spec changes: the two invoice-address-first cases are replaced by their mirrors
 eligible invoice address mints nothing, which is the proof the tier was deleted
 and not demoted), the two address-resolution-failure cases moved onto the delivery
 tier, and `testPostedCountryCannotConjureAvailability` is unchanged and is now the
-more load-bearing of the pair. Note the coupling to `#13` resolved itself: per
-correction C there is only ever one country select, so "which select" was never a
-question on PrestaShop.
+more load-bearing of the pair.
+
+**The coupling to `#13`, and the trade-off it leaves — accepted, not absent**
+(corrected in round 5; an earlier revision of this paragraph said "which select" was
+"never a question on PrestaShop", which is true but incomplete, and reads as a claim
+that nothing can go wrong here). Per correction C there is only ever ONE country
+select on the page, so the browser cannot post the wrong one. But *which* address
+that one select belongs to depends on which pass the buyer is on: on the
+delivery-address-editing pass it is the DELIVERY country. So a buyer whose billing
+address differs from their shipping address, clicking the sole-trader chip while
+editing delivery, is now gated against their **shipping** country rather than their
+real billing country. That is a genuine behaviour change from before this PR, where
+the committed invoice address was tier 1.
+
+It is accepted under Doug's explicit ruling that the live in-page value wins, and it
+has **no security consequence** — minting takes no country parameter at all
+(re-verified: `TwoSoleTrader::mintTokens($module)`), so the country only selects
+which registry answer the availability gate reads, and the browser can already ask
+for any country's answer through `soleTraderAvailability` by design. Recorded here as
+a trade-off precisely so it is not "fixed" back into an invoice-address tier later:
+reintroducing that tier is the stale-value bug this item removed.
 
 ---
 
@@ -815,7 +833,22 @@ Four things worth knowing before touching it:
     field being empty: "empty" is the very test the populate gate exists to refuse,
     and only a number the mirror never placed anywhere may be completed, into a
     field carrying no marker of any kind. A number the mirror wrote and the buyer
-    then cleared is not owed and is never refilled.
+    then cleared is not owed and is never refilled **on a form that kept its
+    identification field** — which is the case the gate is about.
+  - **The residual, stated rather than claimed away** (round 5): the re-mark path
+    re-pends a placed number when the rebuild renders a country whose format has NO
+    identification field, and it does so from the field being ABSENT, without
+    consulting the value it held. So a number the buyer cleared themselves, followed
+    by a trip to a country without the field and back, IS owed again and IS
+    refilled. Accepted, and narrow by construction: the field is only ever absent on
+    countries that do not require it and only ever pending-completed on countries
+    that do, and core rejects an empty required identification number at save
+    (`CustomerAddressFormatter` marks it required, `AbstractForm` errors on an empty
+    required field, and `Address` rejects it independently) — so the cleared state
+    the buyer is "losing" is one they could not have submitted. The absolute wording
+    that used to stand here, and its copy in `CHANGELOG.md`, described a guarantee
+    the code does not make; `completeMirroredOrganizationNumber()`'s own docblock
+    always described the residual correctly.
 - **A successful country write triggers core's own form rebuild**, which is why the
   re-mark operation exists: core's `.js-country` handler is delegated on `body`,
   POSTs `action=addressForm`, replaces every `.js-address-form`, and restores the
@@ -1125,3 +1158,73 @@ priority 2 in `extractOrgNumberFromAddress()` and documents it as load-bearing, 
 ever starts emitting deprecations (or stops working under a future PHP), the read is the thing that
 silently returns empty. Worth ten minutes against a real PS 8.2+ shop; a typed column or an explicit
 carrier would be the durable fix.
+
+## Round 5 (independent adversarial review): what was fixed, and what was noted instead
+
+Five reproducible defects, not findings. All of the below are re-derived against this
+branch's HEAD, not carried over from the review's own line numbers.
+
+- **The mirrored organisation number was invisible to the stale-selection guard.**
+  The mirror wrote the address `dni` and its autofill marker but never the hidden
+  `companyid` input or its `data-two-company-name` pairing tag — and
+  `clearStaleOrganizationSelection()` reads `companyid` first and returns
+  immediately when it is empty. So "the buyer retyped the company name over a
+  selection" could never fire for a mirrored value: company A's organisation number
+  shipped attached to a name the buyer typed afterwards, and neither the marked
+  `dni` residue nor the cart-scoped server record was dropped, so the next address
+  step re-mirrored the name the buyer had just cleared. Fixed by routing the mirror
+  through the same browser-side publish path a real selection uses
+  (`markOrganizationFieldSelected()`), NOT by special-casing the guard. Both writes
+  go together and must: a non-empty `companyid` with no pairing tag reads to the
+  guard as "the buyer has edited past a stale selection", so tagging is what stops
+  the mirror destroying its own write on the `input` event it fires.
+  - A FOURTH mirror operation came with it, `republishMirroredSelection()`. The
+    hidden field lives inside `.js-address-form`, which core's country-change
+    rebuild replaces wholesale — and the mirror's own country write is what triggers
+    that rebuild — so without a re-publish every mirrored selection went blind again
+    on the first country write. Gated on the marked name exactly as the completion
+    is.
+  - The mirror deliberately does NOT publish to `TwoCheckoutManager`.
+    `setConfirmedCompanySelection()` re-derives the captured address and country
+    from the current page, which is the very thing
+    `seedConfirmedCompanySelectionFromServer()` exists to avoid.
+- **A real API failure was reported as "you didn't pick a company", and in tile mode
+  as nothing at all.** `isCompanyDataMissing()` read only the DOM `companyid` input,
+  while the seed gave the page-lifetime holder a second legitimate claim to a real
+  selection — decisive on the payment step, where PrestaShop has removed the address
+  form. Misclassified failures then hit `suppressCompanyRelocationPrompt()`, which
+  returns early, so the buyer saw an empty panel for a 500. It now consults
+  `getConfirmedCompanySelection()` too.
+- **The scope resolution's `closest('form')` fallback reintroduced the
+  document-wide write.** A theme without core's block ids resolved to the step's
+  OUTER form, which contains both address blocks. It now fails CLOSED: `form` is off
+  the candidate list, and any candidate that CONTAINS another address block is
+  rejected, so an unidentifiable scope means no mirror rather than a wide one. It
+  was untested because every fixture carried `#invoice-address`;
+  `buildAddressesStep({blockContainers: false})` now models the flattened theme.
+- **Two doc absolutes were understating accepted trade-offs** — the `#12` sole-trader
+  country coupling and the cleared-number residual. Both reworded above, in place,
+  rather than annotated here.
+
+### Noted, deliberately NOT fixed in this round
+
+- **Selection state lives in roughly six places with independently-copied validity
+  logic** — the hidden `companyid` input plus its pairing tag, the address
+  identification field plus its autofill marker, the mirror's page-lifetime memory,
+  `TwoCheckoutManager._confirmedCompanySelection`, the session cookie, and the
+  server's cart-scoped record. Each carries its own notion of "is this selection
+  usable", and that duplication is the root cause of the first defect above: the
+  mirror satisfied one copy's rules and was invisible to another's. Consolidating
+  them is a refactor with a wide blast radius and this PR is five rounds deep, so it
+  is a follow-up, recorded here so it is not lost. The fix above deliberately reuses
+  the existing publish path instead of adding a seventh place.
+- **A theme with no `input[name='saveAddress']` gets a silent no-op with no log.**
+  Left as-is rather than logged, because the cheap version is not cheap: the mirror
+  exits on the same condition for the ordinary delivery pass, so a one-line log at
+  that point would fire on every normal page. Telling "no marker at all" from "this
+  is the delivery form" needs a branch of its own, which is more than this round is
+  taking on.
+- **The per-mirror-write server round-trip form rebuild** is by design — core owns
+  the rebuild and the mirror's country write legitimately triggers it.
+- **The cookie last-writer-wins race under concurrent AJAX** is pre-existing and
+  unrelated; untouched.
