@@ -103,9 +103,6 @@ afterEach(() => {
     ajax.restore();
     document.body.innerHTML = '';
     delete window.twopayment;
-    // jsdom keeps cookies for the whole file, so a selection set by one test
-    // would otherwise decide whether the next one's prompt is suppressed.
-    document.cookie = 'two_company_id=; expires=Thu, 01 Jan 1970 00:00:00 GMT';
 });
 
 describe('Bug 3: the tile-mounted control actually searches', () => {
@@ -298,11 +295,33 @@ describe('Bug 2: no "go back to your billing address" prompt in tile mode', () =
      * or a declined checkout shows nothing at all.
      */
     test('a genuine error with a company selected is still shown', () => {
-        // The cookie, not a `companyid` input: in tile mode the selection is
-        // persisted through `two_company_id` (TwoCompanySearch's own hidden
-        // input is created empty and stale-cleared on mount), and that cookie
-        // is the fallback isCompanyDataMissing() reads.
-        document.cookie = 'two_company_id=11111111';
+        // The hidden `companyid` input is the real carrier of the selection, and
+        // the only thing isCompanyDataMissing() reads. This test used to fabricate
+        // a `two_company_id` browser cookie instead, which nothing in the module
+        // ever writes - PrestaShop serialises server-side session keys into one
+        // encrypted cookie of its own name - so it was asserting against a source
+        // that cannot exist outside this file.
+        // Set the field the tile already mounted rather than appending a second
+        // one: the reader takes the FIRST match, so a duplicate would leave the
+        // empty original answering for it.
+        let orgField = document.querySelector("input[name='companyid']");
+        if (!orgField) {
+            orgField = document.createElement('input');
+            orgField.type = 'hidden';
+            orgField.name = 'companyid';
+            document.body.appendChild(orgField);
+        }
+        orgField.value = '11111111';
+        // The selection marker goes with it. A number with no marker beside it is
+        // what a stale value left over from a form re-render looks like, and the
+        // search control clears exactly that on mount - so a fixture without the
+        // marker would have its own value wiped before the assertion runs.
+        orgField.setAttribute('data-two-company-name', 'Example Trading Ltd');
+        // And the visible name the marker is tagged against. The search control
+        // treats a number whose marker does not match the company field as left
+        // over from a re-render and clears it, so a half-built fixture would be
+        // dismantled on mount and the test would pass for the wrong reason.
+        document.querySelector('#two_tile_company').value = 'Example Trading Ltd';
 
         manager(false).showOrderIntentError('Something went wrong upstream');
 

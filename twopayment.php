@@ -8662,6 +8662,237 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * The cookie keys that make up one stored company selection, keyed by the
+     * short field name the helpers below take and return.
+     *
+     * Centralised (TWO-40) so that a write site cannot add a field without the
+     * cart stamp, and a clear site cannot miss one.
+     */
+    const COMPANY_SESSION_KEYS = array(
+        'name' => 'two_company_name',
+        'id' => 'two_company_id',
+        'country' => 'two_company_country',
+        'address_id' => 'two_company_address_id',
+    );
+
+    /**
+     * The cart id a stored company selection is scoped to (TWO-40).
+     */
+    const COMPANY_SESSION_CART_KEY = 'two_company_cart_id';
+
+    /**
+     * Cart the current request belongs to, or 0 when there is no loaded cart.
+     *
+     * @return int
+     */
+    public function getTwoCurrentCartId()
+    {
+        if (!isset($this->context->cart) || !is_object($this->context->cart)) {
+            return 0;
+        }
+
+        return (int) $this->context->cart->id;
+    }
+
+    /**
+     * Store a company selection against the current cart (TWO-40).
+     *
+     * Takes any subset of the short field names in COMPANY_SESSION_KEYS. A field
+     * given as null is removed rather than written, which is how a caller drops
+     * part of a record (an organisation number that no longer belongs to the name
+     * beside it) without clearing the whole thing.
+     *
+     * With no loaded cart this writes NOTHING and clears nothing - see the guard
+     * below. Deliberately still `void`: a caller has no useful second move if the
+     * write is declined (there is nowhere else to keep the selection until a cart
+     * exists), every call site ignores the result today, and reporting one would
+     * invite a caller to branch on it. "Stored, or there was no cart to store it
+     * against" is the whole contract.
+     *
+     * @param array $fields
+     * @return void
+     */
+    public function storeTwoCartScopedCompany(array $fields)
+    {
+        if (!isset($this->context->cookie)) {
+            return;
+        }
+
+        $cartId = $this->getTwoCurrentCartId();
+        if ($cartId <= 0) {
+            // No cart, so there is nothing worth writing. A record stamped 0 is
+            // unreadable by construction - readTwoCartScopedCompany() only
+            // returns a record whose stamp equals the current cart id, and that
+            // is always > 0 - and the first read that DOES have a cart would see
+            // the mismatch and clear it, taking any earlier record with it. That
+            // would also contradict the reader's own no-cart policy of never
+            // destroying a record it cannot judge.
+            //
+            // Reachable: hookActionCustomerAddressSave() fires on the My-Account
+            // address page, where the buyer need not have a cart at all.
+            //
+            // Writing nothing and clearing nothing is the only outcome that
+            // leaves an existing selection exactly as it was.
+            return;
+        }
+
+        foreach ($fields as $field => $value) {
+            if (!isset(self::COMPANY_SESSION_KEYS[$field])) {
+                // Centralising the keys exists to stop a write site inventing its
+                // own field name, so an unrecognised one is reported rather than
+                // silently skipped - a mistyped 'addressId' for 'address_id' would
+                // otherwise drop the buyer's address marker with no trace.
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Ignored unknown company session field "' . (string) $field
+                    . '" - known fields are ' . implode(', ', array_keys(self::COMPANY_SESSION_KEYS)),
+                    2
+                );
+                continue;
+            }
+
+            $key = self::COMPANY_SESSION_KEYS[$field];
+            if ($value === null) {
+                unset($this->context->cookie->$key);
+                continue;
+            }
+
+            $this->context->cookie->$key = (string) $value;
+        }
+
+        // Stamped on every write that happens at all: the reader treats a stamp
+        // that does not match the current cart as absent, so an unstamped record
+        // would be unreadable and a record left over from another cart would be
+        // readable - both are drift this single line prevents.
+        $cartKey = self::COMPANY_SESSION_CART_KEY;
+        $this->context->cookie->$cartKey = (string) $cartId;
+
+        // The cookie's EXPIRY is deliberately left alone here, and the reason is
+        // the cookie's own shape rather than any other key needing the hour.
+        // Cookie::setExpire() assigns a SINGLE expiry scalar for the whole cookie,
+        // which is the one value handed to setcookie() when the cookie is written -
+        // there is no per-key expiry to set. So a setExpire() call from this helper
+        // would silently re-time every other key sharing the cookie, whatever those
+        // keys are, and that is sufficient reason not to add one.
+        //
+        // Dropping the callers' existing setExpire() would not be neutral either.
+        // The lifetime would fall back to whatever config.inc.php computed for the
+        // front office from PS_COOKIE_LIFETIME_FO, which is shop configuration: a
+        // positive value yields that many hours, and 0 yields a cookie that dies
+        // with the browser session. It can therefore be LONGER or SHORTER than an
+        // hour depending on the shop, so it is not a safe substitute for anything.
+        //
+        // Cart scoping, not the expiry, is what bounds how long this record stays
+        // usable, so callers keep whatever setExpire they already had and this
+        // helper adds none.
+    }
+
+    /**
+     * Read the company selection stored against the current cart (TWO-40).
+     *
+     * Returns null - absent - unless a stored record carries a cart stamp equal
+     * to the current cart id. A record belonging to another cart, or one carrying
+     * no stamp at all, is cleared on the way out.
+     *
+     * A selection made for one order cannot be read back on a later one, because
+     * an ordered cart is never carried again. Once an order references the cart,
+     * the NEXT request's FrontController::init() finds Cart::orderExists() true,
+     * unsets the cookie's id_cart and assigns a brand-new Cart - and a cart with
+     * an order against it is never reloaded. The id the buyer carries from that
+     * point on can therefore never equal the stored stamp, so the record can never
+     * match again.
+     *
+     * Note the rotation happens on that following request, NOT inside placement
+     * itself, so the record stays readable for the remainder of the request that
+     * places the order - which is what the placement path needs. Being unreadable
+     * afterwards is intended: the selection is only needed up to the point the
+     * order is placed.
+     *
+     * @return array|null ['name' => string, 'id' => string, 'country' => string, 'address_id' => string]
+     */
+    public function readTwoCartScopedCompany()
+    {
+        if (!isset($this->context->cookie)) {
+            return null;
+        }
+
+        $cartKey = self::COMPANY_SESSION_CART_KEY;
+        $storedCartId = isset($this->context->cookie->$cartKey)
+            ? (int) $this->context->cookie->$cartKey
+            : 0;
+        $cartId = $this->getTwoCurrentCartId();
+
+        if ($cartId <= 0) {
+            // Nothing to match against on this request. Report absent, but do not
+            // clear: an address hook can fire outside checkout, and wiping a
+            // record the buyer is still mid-way through using would be worse than
+            // declining to read it here.
+            return null;
+        }
+
+        if ($storedCartId > 0 && $storedCartId === $cartId) {
+            $record = array();
+            foreach (self::COMPANY_SESSION_KEYS as $field => $key) {
+                $record[$field] = isset($this->context->cookie->$key)
+                    ? (string) $this->context->cookie->$key
+                    : '';
+            }
+
+            return $record;
+        }
+
+        // Either the record belongs to a different cart, or it has no stamp at
+        // all - which is exactly what a record written by a version before TWO-40
+        // looks like. Both are absent and both are cleared. The unstamped case is
+        // deliberately NOT migrated: the selection is only needed up to order
+        // placement, so the entire cost of discarding one is that the buyer
+        // re-picks their company. Treat this as intended, not an oversight.
+        $hasStoredRecord = $storedCartId !== 0;
+        if (!$hasStoredRecord) {
+            foreach (self::COMPANY_SESSION_KEYS as $key) {
+                if (isset($this->context->cookie->$key)) {
+                    $hasStoredRecord = true;
+                    break;
+                }
+            }
+        }
+
+        if ($hasStoredRecord) {
+            $this->clearTwoCartScopedCompany();
+
+            PrestaShopLogger::addLog(
+                'TwoPayment: Discarded session company not scoped to the current cart. Stored cart=' .
+                $storedCartId . ', current cart=' . $cartId,
+                2
+            );
+        }
+
+        return null;
+    }
+
+    /**
+     * Forget the stored company selection, stamp included (TWO-40).
+     *
+     * @return void
+     */
+    public function clearTwoCartScopedCompany()
+    {
+        if (!isset($this->context->cookie)) {
+            return;
+        }
+
+        foreach (self::COMPANY_SESSION_KEYS as $key) {
+            unset($this->context->cookie->$key);
+        }
+
+        $cartKey = self::COMPANY_SESSION_CART_KEY;
+        unset($this->context->cookie->$cartKey);
+
+        if (method_exists($this->context->cookie, 'write')) {
+            $this->context->cookie->write();
+        }
+    }
+
+    /**
      * Retrieve validated company data from session cookie for a given country.
      *
      * @param string $country_iso
@@ -8670,9 +8901,17 @@ class Twopayment extends PaymentModule
     public function getTwoValidatedSessionCompanyData($country_iso)
     {
         $country_iso = strtoupper(trim((string)$country_iso));
-        $session_company = isset($this->context->cookie->two_company_name) ? trim((string)$this->context->cookie->two_company_name) : '';
-        $session_company_id = isset($this->context->cookie->two_company_id) ? trim((string)$this->context->cookie->two_company_id) : '';
-        $session_company_country = isset($this->context->cookie->two_company_country) ? strtoupper(trim((string)$this->context->cookie->two_company_country)) : '';
+        $stored = $this->readTwoCartScopedCompany();
+        if ($stored === null) {
+            return array(
+                'company_name' => '',
+                'organization_number' => '',
+            );
+        }
+
+        $session_company = trim($stored['name']);
+        $session_company_id = trim($stored['id']);
+        $session_company_country = strtoupper(trim($stored['country']));
 
         if (Tools::isEmpty($session_company) || Tools::isEmpty($session_company_id)) {
             return array(
@@ -8683,13 +8922,7 @@ class Twopayment extends PaymentModule
 
         if (Tools::isEmpty($session_company_country) && !Tools::isEmpty($country_iso)) {
             // Legacy session values without country marker cannot be safely reused across countries.
-            unset($this->context->cookie->two_company_name);
-            unset($this->context->cookie->two_company_id);
-            unset($this->context->cookie->two_company_country);
-            unset($this->context->cookie->two_company_address_id);
-            if (method_exists($this->context->cookie, 'write')) {
-                $this->context->cookie->write();
-            }
+            $this->clearTwoCartScopedCompany();
 
             PrestaShopLogger::addLog(
                 'TwoPayment: Cleared legacy session company without country marker for address country=' . $country_iso,
@@ -8704,13 +8937,7 @@ class Twopayment extends PaymentModule
 
         if (!Tools::isEmpty($session_company_country) && !Tools::isEmpty($country_iso) && $session_company_country !== $country_iso) {
             // Prevent cross-country stale company reuse when customer changes address country.
-            unset($this->context->cookie->two_company_name);
-            unset($this->context->cookie->two_company_id);
-            unset($this->context->cookie->two_company_country);
-            unset($this->context->cookie->two_company_address_id);
-            if (method_exists($this->context->cookie, 'write')) {
-                $this->context->cookie->write();
-            }
+            $this->clearTwoCartScopedCompany();
 
             PrestaShopLogger::addLog(
                 'TwoPayment: Cleared stale session company due to country mismatch. Session country=' .
@@ -8789,8 +9016,11 @@ class Twopayment extends PaymentModule
 
         $address_company = trim((string) $address->company);
         $current_address_id = (int) $address->id;
-        $session_address_id = isset($this->context->cookie->two_company_address_id)
-            ? (int) $this->context->cookie->two_company_address_id
+        // Read through the cart-scoped reader (TWO-40) so this path cannot see a
+        // record belonging to another cart.
+        $stored_company = $this->readTwoCartScopedCompany();
+        $session_address_id = ($stored_company !== null && $stored_company['address_id'] !== '')
+            ? (int) $stored_company['address_id']
             : 0;
         $allow_cookie_company_fallback = true;
 
@@ -8819,12 +9049,22 @@ class Twopayment extends PaymentModule
         // This uses the enhanced extraction method that works across all countries
         $org_number = $this->extractOrgNumberFromAddress($address, $country_iso);
         
-        // Company name: Address → Cookie
+        // Company name: Address → stored selection.
+        //
+        // This tier is NOT a duplicate of priority 1 and is deliberately kept. It
+        // fires when priority 1 declined for a reason other than an address switch
+        // - most often a stored name with no organisation number beside it - and it
+        // supplies that name when the address carries none. Dropping it would lose
+        // the name on that path, so cart scoping does not make it redundant; it
+        // only narrows what it can see.
+        //
+        // Re-read here rather than reusing the read above: the country guards
+        // inside the validated read may have cleared the record in between, and
+        // this tier must observe that rather than a snapshot taken before it.
+        $fallback_company = $allow_cookie_company_fallback ? $this->readTwoCartScopedCompany() : null;
         $company_name = !Tools::isEmpty($address_company)
             ? $address_company
-            : (($allow_cookie_company_fallback && isset($this->context->cookie->two_company_name))
-                ? trim($this->context->cookie->two_company_name) 
-                : '');
+            : (($fallback_company !== null) ? trim($fallback_company['name']) : '');
         
         // If we found org number from address but no company name, we can still use it
         // Two's order API will accept org number and resolve company name
@@ -11270,12 +11510,12 @@ class Twopayment extends PaymentModule
         }
         try {
             // Deliberately do NOT call $this->context->cookie->setExpire() here:
-            // PrestaShop's cookie has a single expiry for the whole cookie (not
-            // per-key), and other code paths rely on it being COOKIE_EXPIRY_ONE_HOUR
-            // (company verification cache, rate limiting, order-intent-approved
-            // flag). Shortening it to this cache's TTL would silently truncate
-            // those. Staleness here is bounded instead by the two_fee_quote_ts
-            // field checked in getTwoFeeQuoteFromSession().
+            // PrestaShop's cookie has a single expiry for the whole cookie, not one
+            // per key, so setting it to this cache's TTL would re-time every
+            // unrelated key sharing that cookie rather than just this quote. That
+            // is sufficient reason on its own - no other key is claimed to require
+            // any particular lifetime. Staleness here is bounded instead by the
+            // two_fee_quote_ts field checked in getTwoFeeQuoteFromSession().
             $this->context->cookie->two_fee_quote_key = $cacheKey;
             $this->context->cookie->two_fee_quote_data = json_encode($quote);
             $this->context->cookie->two_fee_quote_ts = (string) time();
@@ -15821,23 +16061,62 @@ class Twopayment extends PaymentModule
 
         // Store company data in session for persistence across checkout steps
         if (isset($this->context->cookie)) {
-            $previousCompanyName = isset($this->context->cookie->two_company_name)
-                ? (string) $this->context->cookie->two_company_name
-                : '';
+            $previousRecord = $this->readTwoCartScopedCompany();
+            $previousCompanyName = $previousRecord !== null ? $previousRecord['name'] : '';
 
-            $this->context->cookie->two_company_name = $address->company;
+            $fields = array('name' => $address->company);
             if (!empty($address->id)) {
-                $this->context->cookie->two_company_address_id = (string) (int) $address->id;
+                $fields['address_id'] = (string) (int) $address->id;
             }
 
             // Try to get organization number from form data if available
             $companyId = Tools::getValue('companyid', '');
             if (!empty($companyId)) {
-                $this->context->cookie->two_company_id = $companyId;
+                $fields['id'] = $companyId;
             } elseif (
-                isset($this->context->cookie->two_company_id)
+                $previousRecord !== null
+                && $previousRecord['id'] !== ''
                 && !$this->twoCompanyNamesMatch($previousCompanyName, (string) $address->company)
             ) {
+                // TWO-40 changed the guard above. It used to read
+                // `isset($cookie->two_company_id)`; it now asks the reader for a
+                // record and tests `$previousRecord['id'] !== ''`. These are NOT
+                // equivalent conditions, and this comment used to imply they were
+                // close enough to call the difference benign drift - they are not
+                // equivalent, full stop, and the ruling below is what makes that a
+                // checked fact rather than a claim.
+                //
+                // This guard's job is to disown a session organisation NUMBER that
+                // no longer matches the address. `isset()` is true on a property
+                // set to an empty string, so the old condition fired even when
+                // there was no number in the record - nothing to disown - and took
+                // the country marker down with it as collateral damage. The new
+                // condition only fires when a real number is present, which is the
+                // only state this guard has anything to do.
+                //
+                // The reachable case: organisation number present but EMPTY, with
+                // a country marker beside it. Stored whenever the order-intent
+                // handler resolves a company name with no number
+                // (storeCompanyDataInSession() writes the number as ''), which is
+                // the ordinary "typed a company, never selected one from the
+                // register" state. Two consequences of the guard no longer firing
+                // on it:
+                //  - a "Dropped session company number" log line that reported
+                //    dropping a number that was never there stops being written;
+                //  - ajaxProcessGetCompany() now answers that stale country
+                //    marker to the browser. With an empty number the browser
+                //    blanks the company name it would previously have kept, so a
+                //    buyer whose address country changed inside one cart sees the
+                //    "enter your company name" prompt where they used to see the
+                //    "search for your company" one. Both block placement, so no
+                //    unselected company can be credit-checked either way - the
+                //    difference is which prompt, not whether the buyer is stopped.
+                //
+                // Pinned by SessionCompanyClearSpec::testAddressSaveKeepsCountryMarkerWhenNumberWasAlreadyEmpty()
+                // on this side of the boundary, and by
+                // testAddressSaveDropsTheNumberOfADisownedCompany() on the other -
+                // a record that DOES carry a real number is still disowned.
+                //
                 // TWO-25288. The buyer saved a DIFFERENT company name with no
                 // organisation number beside it - which is what disowning a
                 // selected company looks like by the time it reaches the server.
@@ -15857,8 +16136,8 @@ class Twopayment extends PaymentModule
                 // number behind it is the half-record state the clearCompany
                 // action exists to avoid, and the two readers of this cookie
                 // disagree about how to interpret it.
-                unset($this->context->cookie->two_company_id);
-                unset($this->context->cookie->two_company_country);
+                $fields['id'] = null;
+                $fields['country'] = null;
 
                 PrestaShopLogger::addLog(
                     'TwoPayment: Dropped session company number - address company changed from "'
@@ -15866,6 +16145,8 @@ class Twopayment extends PaymentModule
                     1
                 );
             }
+
+            $this->storeTwoCartScopedCompany($fields);
 
             // Set cookie expiration (1 hour)
             $this->context->cookie->setExpire(time() + self::COOKIE_EXPIRY_ONE_HOUR);
