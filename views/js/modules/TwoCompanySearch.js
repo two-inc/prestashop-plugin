@@ -1841,6 +1841,27 @@ class TwoCompanySearch {
      * company's registered one, and writing it would be the plugin overruling
      * a statement the buyer made explicitly.
      *
+     * TWO SEPARATE OPERATIONS, and keeping them separate is the whole design:
+     *
+     *  - RE-MARK (reapplyMirrorMarkers) re-establishes the autofill marker on a
+     *    value still recognisable as one this page's mirror wrote. It never writes
+     *    a value and never touches an empty field. It exists because a successful
+     *    country write triggers core's own form rebuild: core's `.js-country`
+     *    handler POSTs `action=addressForm`, replaces every `.js-address-form`
+     *    with the response, and restores the previous values with an INPUT-only
+     *    loop that copies values and not attributes. The company name survives;
+     *    its marker does not. Without a re-mark the plugin reads its own write as
+     *    buyer-typed and can no longer disown it.
+     *  - POPULATE (populateInvoiceAddressFromConfirmedCompany) fills unanswered
+     *    fields, at most once per company per page. It must NOT re-run after that,
+     *    because the same rebuild is how a buyer's deliberate CLEAR comes back
+     *    round: cleared field, country change, form replaced, empty value
+     *    restored, search rebuilt, init() again - and a populate keyed only on
+     *    "the field is empty" would silently undo the clear.
+     *
+     * Re-mark first, so a populate for a genuinely NEW company can still
+     * recognise the previous mirror's values as ours rather than as the buyer's.
+     *
      * @returns {void}
      */
     mirrorConfirmedCompanyToInvoiceAddress() {
@@ -1860,16 +1881,116 @@ class TwoCompanySearch {
         if (!root) {
             return;
         }
+
+        this.reapplyMirrorMarkers(root);
+        this.populateInvoiceAddressFromConfirmedCompany(root);
+    }
+
+    /**
+     * Where the mirror records what it has already done, for this page.
+     *
+     * The manager injects its own object, because the manager outlives the search:
+     * it destroys and rebuilds this instance on every `updatedAddressForm`, so a
+     * record kept on the instance would be gone exactly when it is needed. Falls
+     * back to an instance-local object so a search mounted without a manager still
+     * behaves, rather than throwing.
+     *
+     * @returns {Object} `{companyid, company, organization, countryValue}`, partly
+     *          filled
+     */
+    mirrorMemory() {
+        const injected = this.config.mirrorMemory;
+        if (injected && typeof injected === 'object') {
+            return injected;
+        }
+        if (!this._ownMirrorMemory) {
+            this._ownMirrorMemory = {};
+        }
+        return this._ownMirrorMemory;
+    }
+
+    /**
+     * Re-establish the autofill marker on values still recognisable as this
+     * page's own mirrored writes. NEVER writes a value.
+     *
+     * The operation exists because core strips the marker. Its rule is
+     * deliberately narrow: the field's current value must equal, exactly, what
+     * the mirror recorded writing there. A field the buyer has since edited does
+     * not match and is not claimed; nor is one core re-rendered with a different
+     * value, which is what a country select looks like after the buyer changes
+     * country - so the buyer's new country is never re-marked as ours.
+     *
+     * @param {Element} root the visible address form's scope
+     * @returns {boolean} whether any marker was re-established
+     */
+    reapplyMirrorMarkers(root) {
+        const memory = this.mirrorMemory();
+        if (!memory.companyid) {
+            return false;
+        }
+
+        const remark = (field, recorded) => {
+            const value = String(recorded == null ? '' : recorded);
+            if (!value || !field || field.length === 0) {
+                return false;
+            }
+            const current = String(field.val() == null ? '' : field.val());
+            if (current !== value) {
+                return false;
+            }
+            if (field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR) === current) {
+                return false;
+            }
+            field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR, current);
+
+            return true;
+        };
+
+        let reapplied = remark($(root).find("input[name='company']").first(), memory.company);
+        const countrySelect = $(root).find("select[name='id_country'], select[name='country']").first();
+        reapplied = remark(countrySelect, memory.countryValue) || reapplied;
+
+        return reapplied;
+    }
+
+    /**
+     * Fill the invoice form's unanswered company fields from the confirmed
+     * selection, at most once per company per page.
+     *
+     * The once-per-company rule is recorded on the page-lifetime memory rather
+     * than inferred from the DOM, because the DOM cannot answer the question: a
+     * field the buyer deliberately cleared and an unanswered field are the same
+     * empty string. Keyed on the organisation number so that a buyer who picks a
+     * genuinely DIFFERENT company on this page is still mirrored.
+     *
+     * @param {Element} root the visible address form's scope
+     * @returns {boolean} whether anything was written
+     */
+    populateInvoiceAddressFromConfirmedCompany(root) {
         const selection = this.confirmedCompanyForMirror();
         if (!selection) {
-            return;
+            return false;
+        }
+        const memory = this.mirrorMemory();
+        if (memory.companyid && memory.companyid === selection.companyid) {
+            return false;
         }
 
         // Scoped to the form element, never document-wide: a write by global
         // selector with no awareness of which block it landed in is the defect
         // class this whole feature has to avoid.
-        this.writeMirroredValue($(root).find("input[name='company']").first(), selection.company);
-        this.mirrorCountryIntoForm(root, selection.countryIso);
+        const companyField = $(root).find("input[name='company']").first();
+        const wroteCompany = this.writeMirroredValue(companyField, selection.company);
+        const countryValue = this.mirrorCountryIntoForm(root, selection.countryIso);
+        if (!wroteCompany && !countryValue) {
+            return false;
+        }
+
+        memory.companyid = selection.companyid;
+        memory.company = wroteCompany ? selection.company : '';
+        memory.countryValue = countryValue;
+
+        return true;
     }
 
     /**
@@ -1880,7 +2001,14 @@ class TwoCompanySearch {
      * that holder's consumers already apply, rather than from this instance -
      * which is younger than the navigation the mirror exists to cross.
      *
-     * @returns {?{company: string, countryIso: string}}
+     * Requires the company/organisation-number PAIR, exactly as
+     * TwoCheckoutManager.setConfirmedCompanySelection() and
+     * TwoOrderIntent.getConfirmedCompanySelection() do. Every other guard on this
+     * selection insists on both halves, and a weaker one here is precisely the
+     * divergence that would let a company name travel into the address form with
+     * no number beside it.
+     *
+     * @returns {?{company: string, companyid: string, countryIso: string}}
      */
     confirmedCompanyForMirror() {
         const getter = this.config.getConfirmedCompany;
@@ -1897,11 +2025,13 @@ class TwoCompanySearch {
             return null;
         }
         const company = selection.company ? String(selection.company).trim() : '';
-        if (!company) {
+        const companyid = selection.companyid ? String(selection.companyid).trim() : '';
+        if (!company || !companyid) {
             return null;
         }
         return {
             company: company,
+            companyid: companyid,
             countryIso: selection.countryIso ? String(selection.countryIso).toUpperCase() : ''
         };
     }

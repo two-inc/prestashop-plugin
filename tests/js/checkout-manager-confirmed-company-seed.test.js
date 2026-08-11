@@ -19,7 +19,15 @@
 
 'use strict';
 
-const { loadCompanySearch, loadOrderIntent, loadScript, releaseWidgets, stubAjax } = require('./ps-harness');
+const {
+    loadCompanySearch,
+    loadOrderIntent,
+    loadScript,
+    releaseWidgets,
+    stubAjax,
+    buildAddressesStep,
+    rebuildAddressesStepAsCoreDoes
+} = require('./ps-harness');
 
 const CHECKOUT_HOST = 'https://api.example.test';
 const ORDER_INTENT_URL = 'https://shop.example.test/module/twopayment/orderintent';
@@ -27,6 +35,7 @@ const ORDER_INTENT_URL = 'https://shop.example.test/module/twopayment/orderinten
 let TwoCheckoutManager;
 let $;
 let ajax;
+let bus;
 
 const SERVER_RECORD = {
     company: 'Acme Trading Ltd',
@@ -38,6 +47,7 @@ const SERVER_RECORD = {
 beforeEach(() => {
     const loaded = loadCompanySearch();
     $ = loaded.$;
+    bus = loaded.bus;
     ajax = stubAjax($);
     loadOrderIntent();
     loadScript('views/js/modules/TwoCheckoutManager.js');
@@ -57,6 +67,7 @@ afterEach(() => {
         delete window.TwoCheckoutManager_Instance;
     }
     document.body.innerHTML = '';
+    document.body.className = '';
     delete window.twopayment;
 });
 
@@ -150,5 +161,59 @@ describe('the config mapping the server payload goes through', () => {
         expect(
             window.twoBuildCheckoutManagerConfig({ confirmed_company: null }).confirmedCompany
         ).toBeNull();
+    });
+});
+
+/**
+ * The mirror's page-lifetime memory belongs to the MANAGER, not to the search:
+ * the manager destroys and rebuilds the search on every `updatedAddressForm`, so
+ * a memory kept on the search would be gone at exactly the moment it is needed.
+ *
+ * These two specs drive that through the real wiring - a real manager, core's own
+ * markup, core's own rebuild - rather than asserting on the config object, so the
+ * injection cannot rot into passing a fresh object each time.
+ */
+describe('the invoice mirror survives the search being rebuilt', () => {
+    const MARKER = 'data-two-autofilled-value';
+
+    function mountOnInvoiceStep() {
+        buildAddressesStep({ editing: 'invoice' });
+        // core's own body class for the checkout controller, with an address form
+        // and no payment options on the page: the manager's step detection reads
+        // that as the ADDRESS step, which is where the mirror belongs.
+        document.body.className = 'controller-order';
+
+        return makeManager({
+            confirmedCompany: SERVER_RECORD,
+            companySearchInAddressArea: true,
+            addressLookupEnabled: true,
+            countries: { 17: 'gb', 8: 'fr', 1: 'de' }
+        });
+    }
+
+    test('a company the buyer cleared is not re-filled when the search is rebuilt', () => {
+        mountOnInvoiceStep();
+        const company = () => $("#invoice-address input[name='company']");
+
+        expect(company().val()).toBe('Acme Trading Ltd');
+
+        company().val('');
+        rebuildAddressesStepAsCoreDoes({ editing: 'invoice', countryId: '8' });
+        bus.emit('updatedAddressForm');
+
+        expect(company().val()).toBe('');
+    });
+
+    test('the marker core stripped is re-established when the search is rebuilt', () => {
+        mountOnInvoiceStep();
+        const company = () => $("#invoice-address input[name='company']");
+
+        rebuildAddressesStepAsCoreDoes({ editing: 'invoice', countryId: '8' });
+        expect(company().val()).toBe('Acme Trading Ltd');
+        expect(company().attr(MARKER)).toBeUndefined();
+
+        bus.emit('updatedAddressForm');
+
+        expect(company().attr(MARKER)).toBe('Acme Trading Ltd');
     });
 });
