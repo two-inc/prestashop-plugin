@@ -5585,6 +5585,7 @@ require __DIR__ . '/FulfilledStatusMappingSpec.php';
 require __DIR__ . '/AddressLookupConfigSpec.php';
 require __DIR__ . '/AddressLookupGatingSpec.php';
 require __DIR__ . '/CompanySearchLocationConfigSpec.php';
+require __DIR__ . '/CompanySearchLocationKeyMigrationSpec.php';
 require __DIR__ . '/OrgNumberPreVerificationSpec.php';
 require __DIR__ . '/IntentApprovedNoticeSpec.php';
 require __DIR__ . '/BrandTokenSpec.php';
@@ -5630,6 +5631,7 @@ $tests = [
     'AddressLookupConfigSpec::runAll' => [AddressLookupConfigSpec::class, 'runAll'],
     'AddressLookupGatingSpec::runAll' => [AddressLookupGatingSpec::class, 'runAll'],
     'CompanySearchLocationConfigSpec::runAll' => [CompanySearchLocationConfigSpec::class, 'runAll'],
+    'CompanySearchLocationKeyMigrationSpec::runAll' => [CompanySearchLocationKeyMigrationSpec::class, 'runAll'],
     'OrgNumberPreVerificationSpec::runAll' => [OrgNumberPreVerificationSpec::class, 'runAll'],
     'IntentApprovedNoticeSpec::runAll' => [IntentApprovedNoticeSpec::class, 'runAll'],
     'BrandTokenSpec::runAll' => [BrandTokenSpec::class, 'runAll'],
