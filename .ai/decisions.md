@@ -765,12 +765,14 @@ Shape as built, all on `TwoCompanySearch`:
   and it resolves to the block element rather than the form, because core nests the
   rendered address form's own `<form>` inside the step's outer one and HTML drops
   the inner tag.
-- `mirrorConfirmedCompanyToInvoiceAddress()` — the mirror. It is TWO operations and
-  they must stay two: `reapplyMirrorMarkers()` re-establishes the autofill marker on
+- `mirrorConfirmedCompanyToInvoiceAddress()` — the mirror. It is THREE operations and
+  they must stay three: `reapplyMirrorMarkers()` re-establishes the autofill marker on
   a value still exactly what the mirror recorded writing (never writes a value,
-  never touches an empty field), and
+  never touches an empty field),
   `populateInvoiceAddressFromConfirmedCompany()` fills unanswered fields at most
-  once per company per page. Supporting parts: `mirrorTargetIsWritable()`,
+  once per company per page, and `completeMirroredOrganizationNumber()` places the
+  organisation number when core's rebuild is what separated it from the name (see
+  below). Supporting parts: `mirrorTargetIsWritable()`,
   `writeMirroredValue()`, `serverRenderedSelectValue()`, `mirrorCountryIntoForm()`,
   `countryOptionValueForIso()`, `mirrorMemory()`. Company name, its organisation
   number and the country; gated on the merchant's address-population switch as the
@@ -788,14 +790,32 @@ Four things worth knowing before touching it:
   exactly the value the server rendered**, read from the `selected` attribute. An
   earlier revision of this section claimed the opposite; it was wrong, and a Jest
   fixture that marked only the placeholder is what hid it.
-- **The name and its organisation number travel together, or neither travels.**
-  Once the address is saved, the resolver can reach the tier that reads the company
-  off the ADDRESS, so a mirrored name with no number beside it is an order carrying
-  a company the buyer never typed and no organisation number at all. A form whose
-  identification field already holds the buyer's own number therefore gets neither
-  write. A form with no identification field at all still gets the name — its
-  presence is decided by the country's address format and there is nowhere to put a
-  number.
+- **The name and its organisation number travel together, or neither travels —
+  with one standing exception, and one the code now closes.** Once the address is
+  saved, the resolver can reach the tier that reads the company off the ADDRESS, so
+  a mirrored name with no number beside it is an order carrying a company the buyer
+  never typed and no organisation number at all. A form whose identification field
+  already holds the buyer's own number therefore gets neither write.
+  - **The standing exception:** a form with no identification field at all still
+    gets the name. Its presence is decided by the country's address format —
+    `AddressFormat::getFormat()` appends `dni` only for a country flagged
+    `need_identification_number`, which on stock data is ES and MX alone — so on
+    most countries there is nowhere to put a number, and the ordinary company lookup
+    has always behaved this way there.
+  - **The exception the rebuild used to open, now closed:** because the field's
+    presence follows the COUNTRY, the mirror's own country write can change which
+    fields exist. Mirroring into ES from a country without the field gave back a
+    form with an empty, REQUIRED identification field that the once-per-company
+    populate gate then forbade ever filling; the reverse direction lost a number
+    already written, since core's INPUT-only restore loop cannot restore a field the
+    new render does not emit. So the two halves are recorded SEPARATELY — a number
+    the mirror has PLACED in a field versus one it still OWES — and a third
+    operation, `completeMirroredOrganizationNumber()`, places the owed half when a
+    field for it appears. It is gated on the **marked name**, never on the number
+    field being empty: "empty" is the very test the populate gate exists to refuse,
+    and only a number the mirror never placed anywhere may be completed, into a
+    field carrying no marker of any kind. A number the mirror wrote and the buyer
+    then cleared is not owed and is never refilled.
 - **A successful country write triggers core's own form rebuild**, which is why the
   re-mark operation exists: core's `.js-country` handler is delegated on `body`,
   POSTs `action=addressForm`, replaces every `.js-address-form`, and restores the
