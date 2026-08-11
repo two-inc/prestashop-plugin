@@ -1893,7 +1893,7 @@ class TwoCompanySearch {
      * company's registered one, and writing it would be the plugin overruling
      * a statement the buyer made explicitly.
      *
-     * THREE SEPARATE OPERATIONS, and keeping them separate is the whole design:
+     * FOUR SEPARATE OPERATIONS, and keeping them separate is the whole design:
      *
      *  - RE-MARK (reapplyMirrorMarkers) re-establishes the autofill marker on a
      *    value still recognisable as one this page's mirror wrote. It never writes
@@ -1919,11 +1919,25 @@ class TwoCompanySearch {
      *    (or take one away, which core's INPUT-only restore loop cannot put back).
      *    Left to the once-per-company populate gate, that is a company name on the
      *    order with no organisation number beside it.
+     *  - RE-PUBLISH (republishMirroredSelection) puts the hidden `companyid` field
+     *    and its pairing tag back after the same rebuild destroys them. Separate
+     *    because it is about the plugin's own selection bookkeeping rather than
+     *    about any address field, and because it must run whatever the other three
+     *    decided.
      *
      * Re-mark first, so a populate for a genuinely NEW company can still
      * recognise the previous mirror's values as ours rather than as the buyer's.
-     * Complete LAST, so a populate that has just placed the pair for a new company
-     * settles the number half before the completion looks at it.
+     * Complete before the re-publish, so a populate that has just placed the pair
+     * for a new company settles the number half before the completion looks at it,
+     * and the re-publish sees the settled memory.
+     *
+     * The mirror deliberately does NOT publish the selection to
+     * TwoCheckoutManager. The selection it is acting on has just been RESTORED
+     * from the server's cart-scoped record, and setConfirmedCompanySelection()
+     * re-derives the captured address and country from the CURRENT page - which is
+     * precisely what seedConfirmedCompanySelectionFromServer() exists to avoid,
+     * because it would stamp the record with the page it is being restored onto
+     * and neuter both invalidation checks it must remain subject to.
      *
      * @returns {void}
      */
@@ -1948,6 +1962,47 @@ class TwoCompanySearch {
         this.reapplyMirrorMarkers(root);
         this.populateInvoiceAddressFromConfirmedCompany(root);
         this.completeMirroredOrganizationNumber(root);
+        this.republishMirroredSelection();
+    }
+
+    /**
+     * Put the hidden `companyid` field and its pairing tag back when core's
+     * rebuild has taken them away, but the mirror's own name is still in the form.
+     *
+     * The FOURTH operation, and not an optional tidy-up: the hidden field the
+     * mirror publishes through lives inside `.js-address-form` (it is inserted
+     * after the company input), so core's country-change rebuild destroys it, and
+     * its INPUT-only restore loop cannot put back a field the new render does not
+     * emit. init() then builds a fresh EMPTY one. Since the mirror's own country
+     * write is what triggers that rebuild, this is the ordinary path rather than a
+     * corner: without this, every mirrored selection is invisible to
+     * clearStaleOrganizationSelection() from the first country write onwards -
+     * which is the whole defect the mirror's publish path exists to close.
+     *
+     * Gated exactly as completeMirroredOrganizationNumber() is - on the name in
+     * the form still being, exactly, the marked one the mirror recorded writing -
+     * so a name the buyer has since made their own never gets an organisation
+     * number re-attached to it.
+     *
+     * @returns {boolean} whether the pair was re-published
+     */
+    republishMirroredSelection() {
+        const memory = this.mirrorMemory();
+        const recordedName = memory.company ? String(memory.company) : '';
+        const number = String(memory.organization || memory.organizationPending || '');
+        if (!recordedName || !number) {
+            return false;
+        }
+        if (!this.companyField || this.companyField.length === 0) {
+            return false;
+        }
+        const name = String(this.companyField.val() == null ? '' : this.companyField.val());
+        if (name !== recordedName
+            || this.companyField.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR) !== name) {
+            return false;
+        }
+
+        return this.markOrganizationFieldSelected(recordedName, number);
     }
 
     /**
@@ -2101,6 +2156,15 @@ class TwoCompanySearch {
         }
 
         const wroteCompany = this.writeMirroredValue(companyField, selection.company);
+        if (wroteCompany) {
+            // The hidden `companyid` field and its pairing tag, through the one
+            // path a real selection uses - NOT conditional on there being an
+            // identification field, because this half of the write is what makes
+            // the mirrored selection visible to clearStaleOrganizationSelection()
+            // and it is needed on every country. See
+            // markOrganizationFieldSelected().
+            this.markOrganizationFieldSelected(selection.company, selection.companyid);
+        }
         if (wroteCompany && identifierFields.length > 0) {
             // Through the single gate every other organisation-number write goes
             // through, given a root so it stays inside this block. onlyIfEmpty is
@@ -2207,6 +2271,11 @@ class TwoCompanySearch {
             return false;
         }
 
+        // Same publish path as the populate above, for the same reason: this is
+        // the branch that places the number when core's rebuild is what separated
+        // it from the name, and a number placed here with no `companyid` behind it
+        // is invisible to the stale-selection guard too.
+        this.markOrganizationFieldSelected(recordedName, pending);
         this.writeOrganizationToAddressIdentifiers(pending, false, root);
         memory.organization = pending;
         memory.organizationPending = '';
@@ -4148,9 +4217,7 @@ class TwoCompanySearch {
 
         // Set organization number immediately if available
         if (ui.item.organization_number) {
-            this.organizationField.val(ui.item.organization_number);
-            this.organizationField.attr('data-two-company-name', ui.item.value);
-            this.setCompanyIdHint(ui.item.organization_number);
+            this.markOrganizationFieldSelected(ui.item.value, ui.item.organization_number);
 
             // Publish BEFORE the cookie write and before the intent trigger:
             // this is the copy the intent check will actually read (bug 8).
@@ -4277,9 +4344,10 @@ class TwoCompanySearch {
             if (natIdVal && stillOnSameCompany) {
                 const currentOrgNumber = this.organizationField.val();
                 if (!currentOrgNumber || currentOrgNumber !== natIdVal) {
-                    this.organizationField.val(natIdVal);
-                    this.organizationField.attr('data-two-company-name', this.companyField ? this.companyField.val() : '');
-                    this.setCompanyIdHint(natIdVal);
+                    this.markOrganizationFieldSelected(
+                        this.companyField ? this.companyField.val() : '',
+                        natIdVal
+                    );
                     this.writeOrganizationToAddressIdentifiers(natIdVal);
                     // Deferred (GB) path: the number only exists now, so this
                     // is where the confirmed pair becomes publishable - and it
@@ -4647,6 +4715,50 @@ class TwoCompanySearch {
         } catch (e) {
             // no-op: this is a checkout convenience, never a gate.
         }
+    }
+
+    /**
+     * Record a confirmed company/organisation-number pair on the BROWSER side of
+     * the selection: the hidden `companyid` input the address form submits, the
+     * pairing tag that says which company name that number belongs to, and the
+     * visible number hint beside the field.
+     *
+     * The one path for that, deliberately, and the reason it exists as a method
+     * rather than three lines repeated: `data-two-company-name` is not decoration.
+     * It is the whole input to clearStaleOrganizationSelection(), which is what
+     * drops a selection once the buyer retypes the company name over it - and that
+     * guard reads `companyid` FIRST and returns immediately when it is empty. So a
+     * caller that places an organisation number anywhere else and skips these two
+     * writes does not merely miss a hint: it produces a selection the stale-
+     * selection guard cannot see at all, which is a credit check on one company
+     * under another company's name. That is exactly what the invoice-address
+     * mirror did before it was routed through here (TWO-40, round 5).
+     *
+     * Does NOT publish to the manager and does NOT persist to the session: those
+     * are separate concerns with separate ordering requirements, and one caller -
+     * the mirror - must not do either. See mirrorConfirmedCompanyToInvoiceAddress()
+     * for why re-publishing a RESTORED selection would corrupt it.
+     *
+     * @param {string} company the confirmed company NAME this number belongs to
+     * @param {string} companyid the organisation number
+     * @returns {boolean} whether the pair was recorded
+     */
+    markOrganizationFieldSelected(company, companyid) {
+        if (!this.organizationField || this.organizationField.length === 0) {
+            return false;
+        }
+        const number = String(companyid == null ? '' : companyid).trim();
+        if (!number) {
+            return false;
+        }
+        this.organizationField.val(number);
+        this.organizationField.attr(
+            'data-two-company-name',
+            String(company == null ? '' : company)
+        );
+        this.setCompanyIdHint(number);
+
+        return true;
     }
 
     persistCompanyToCookie(data) {

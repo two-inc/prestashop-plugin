@@ -105,6 +105,26 @@ function identifierField() {
     return $("#invoice-address input[name='dni']");
 }
 
+function organizationField() {
+    return $("input[name='companyid']");
+}
+
+/**
+ * Retype the company name over what the mirror wrote, the way a buyer does.
+ *
+ * Through a real `input` event, because that is what
+ * setupCompanyInputSync() binds clearStaleOrganizationSelection() to - setting
+ * `.val()` alone would prove nothing about the guard ever running.
+ *
+ * @param {string} value
+ * @returns {void}
+ */
+function retypeCompanyName(value) {
+    const field = companyField();
+    field.val(value);
+    field.get(0).dispatchEvent(new window.Event('input', { bubbles: true }));
+}
+
 describe('the signal: what the buyer has stated about their invoice address', () => {
     test('the shared-address control being present and reporting "shared" states they do NOT differ', () => {
         buildAddressesStep({ editing: 'delivery', sameAddress: true, invoiceBlock: true });
@@ -678,6 +698,144 @@ describe('the rebuild that separates the number from the name', () => {
 
         expect(identifierField().val()).toBe('');
         expect(identifierField().attr(MARKER)).toBeUndefined();
+    });
+});
+
+/**
+ * TWO-40, adversarial review round 5, B1.
+ *
+ * The mirror used to write the identification field directly and never touch the
+ * hidden `companyid` input or its `data-two-company-name` pairing tag. Those two
+ * are the ENTIRE input to clearStaleOrganizationSelection(), which reads
+ * `companyid` first and returns immediately when it is empty - so the "the buyer
+ * retyped the company name over a selection" cleanup could never fire for a
+ * mirrored value, and the mirrored company's organisation number shipped attached
+ * to whatever name the buyer typed instead. That is a credit check on one company
+ * under another company's name, which clearSelectedCompany()'s own docblock says
+ * must never happen.
+ *
+ * Fixed by routing the mirror through the same browser-side publish path a real
+ * selection uses (markOrganizationFieldSelected()), NOT by teaching the guard
+ * about a second kind of selection.
+ */
+describe('a mirrored selection is a real selection, and the stale-selection guard can see it', () => {
+    test('publishes the organisation number and its pairing tag, not just the address field', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+
+        mount(PICKED);
+
+        expect(organizationField().val()).toBe('12345678');
+        expect(organizationField().attr('data-two-company-name')).toBe('Acme Trading Ltd');
+    });
+
+    test('publishes it on a country whose form has no identification field at all', () => {
+        // The hidden field is not the address's identification field and does not
+        // depend on the country's address format. Germany renders without a `dni`,
+        // and the selection still has to be visible to the guard.
+        buildAddressesStep({ editing: 'invoice' });
+
+        mount(PICKED);
+
+        expect(identifierField().length).toBe(0);
+        expect(organizationField().val()).toBe('12345678');
+        expect(organizationField().attr('data-two-company-name')).toBe('Acme Trading Ltd');
+    });
+
+    test('retyping the mirrored company name drops the mirrored organisation number', () => {
+        // THE REPRO. Company A is picked on the shipping pass and mirrored onto the
+        // invoice form; the buyer then types a different company name over it and
+        // submits. Before the fix, A's organisation number went to the order
+        // attached to the newly typed name.
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+
+        mount(PICKED);
+        expect(identifierField().val()).toBe('12345678');
+
+        retypeCompanyName('Some Other Company Ltd');
+
+        expect(organizationField().val()).toBe('');
+        expect(organizationField().attr('data-two-company-name')).toBeUndefined();
+        // And the identification field the submit-time sync would otherwise
+        // re-adopt AS the organisation number goes with it.
+        expect(identifierField().val()).toBe('');
+    });
+
+    test('clearing the mirrored name also drops the cart-scoped record, so the next page load does not re-fill it', () => {
+        // The cross-page-load half of the same defect. The mirror's page-lifetime
+        // memory dies with the document, so the ONLY thing stopping the next
+        // address-step load from mirroring the same company back in is the server's
+        // cart-scoped record being dropped - and that drop happens inside
+        // clearSelectedCompany(), which the guard could not reach for a mirrored
+        // value at all.
+        window.twopayment.order_intent_url = 'https://shop.example.test/module/twopayment/orderintent';
+        window.twopayment.ajax_token = 'test-token';
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+
+        mount(PICKED);
+        const before = ajax.calls.length;
+
+        retypeCompanyName('');
+
+        const cleared = ajax.calls.slice(before).filter(
+            call => call.settings && call.settings.data && call.settings.data.action === 'clearCompany'
+        );
+        expect(cleared.length).toBe(1);
+    });
+
+    test('the mirrored pair survives being retyped back to the same name', () => {
+        // The guard compares NAMES, so an edit that lands back on the mirrored name
+        // is not a stale selection and must not clear one.
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+
+        mount(PICKED);
+        retypeCompanyName('Acme Trading Ltd');
+
+        expect(organizationField().val()).toBe('12345678');
+        expect(identifierField().val()).toBe('12345678');
+    });
+
+    test('re-publishes the pair core\'s rebuild destroyed, so the guard stays able to see it', () => {
+        // The hidden field is inserted into `.js-address-form`, which core's
+        // country-change rebuild replaces wholesale - and the mirror's OWN country
+        // write is what triggers that rebuild, so this is the ordinary path. Core's
+        // INPUT-only restore loop cannot restore a field the new render does not
+        // emit, and init() builds a fresh empty one.
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        const memory = {};
+
+        mount(PICKED, { mirrorMemory: memory });
+        rebuildAddressesStepAsCoreDoes({ editing: 'invoice', countryId: MX_OPTION });
+
+        // Not merely emptied - the hidden field is gone from the document
+        // altogether, because the render that replaced it never emitted one.
+        expect(organizationField().length).toBe(0);
+
+        mount(PICKED, { mirrorMemory: memory });
+
+        expect(organizationField().val()).toBe('12345678');
+        expect(organizationField().attr('data-two-company-name')).toBe('Acme Trading Ltd');
+
+        // ...and the guard works on the re-published pair exactly as on the first.
+        retypeCompanyName('Some Other Company Ltd');
+
+        expect(organizationField().val()).toBe('');
+        expect(identifierField().val()).toBe('');
+    });
+
+    test('never re-attaches a number to a name the buyer has made their own', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        const memory = {};
+
+        mount(PICKED, { mirrorMemory: memory });
+        retypeCompanyName('Renamed By The Buyer');
+        expect(organizationField().val()).toBe('');
+
+        rebuildAddressesStepAsCoreDoes({ editing: 'invoice', countryId: MX_OPTION });
+        mount(PICKED, { mirrorMemory: memory });
+
+        expect(companyField().val()).toBe('Renamed By The Buyer');
+        expect(organizationField().val()).toBe('');
+        expect(organizationField().attr('data-two-company-name')).toBeUndefined();
     });
 });
 
