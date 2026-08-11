@@ -18,6 +18,15 @@
  * default produced too, so a fresh install and a migrated shop end up in the
  * same place.
  *
+ * The delete is the LAST thing that happens and it is conditional on the copy:
+ * `Configuration::updateValue()` returns an accumulated Db result and can be
+ * falsy WITHOUT throwing, so when a copy was attempted and did not land, the
+ * old row is the only surviving copy of the merchant's position and is kept
+ * deliberately - logged at severity 3, telling the operator to re-run. Deleting
+ * it there would destroy the value the script exists to preserve. On every
+ * other path (nothing usable to carry, or the new key already holding a usable
+ * value) the old row carries nothing and is removed.
+ *
  * DELIBERATELY GLOBAL-TIER-ONLY - READ THIS BEFORE CALLING IT A BUG
  *
  * PrestaShop has THREE configuration tiers, not two: global
@@ -113,10 +122,27 @@ if (!defined('_PS_VERSION_')) {
 
 function upgrade_module_2_7_6($module)
 {
+    // Every fact the log message is built from lives out here, so the throw
+    // path reports exactly the same state the success path does - it cannot
+    // claim a copy that did not land, nor omit an old row that is still there.
+    $old = false;
+    $new = false;
+    $oldRead = false;
+    $newRead = false;
+    $oldUsable = false;
+    $newAlreadySet = false;
+    $copyAttempted = false;
+    $carried = false;
+    $keptOldRow = false;
+    $deleteAttempted = false;
+    $deleted = false;
+    $threw = null;
+
     try {
         // Resolving read in the ambient context - see the header: this is the
         // one value that gets carried, and the delete below is name-wide.
         $old = Configuration::get('PS_TWO_ENABLE_COMPANY_NAME');
+        $oldRead = true;
 
         // '' is treated as ABSENT for BOTH keys here because the resolver
         // (isCompanySearchInAddressArea()) treats it that way too: an empty
@@ -132,38 +158,52 @@ function upgrade_module_2_7_6($module)
         // the search back to the address area. See the header's IDEMPOTENCY
         // section.
         $new = Configuration::get('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS');
+        $newRead = true;
         $newAlreadySet = ($new !== false && $new !== null && $new !== '');
 
-        $carried = false;
         if ($oldUsable && !$newAlreadySet) {
-            Configuration::updateValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS', $old);
-            $carried = true;
+            $copyAttempted = true;
+            // updateValue() returns an accumulated Db result and CAN be falsy
+            // without throwing (a Validate failure, a failed Db::execute). Its
+            // answer decides whether the old row is still the only copy of the
+            // value, so it must not be discarded.
+            $carried = (bool) Configuration::updateValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS', $old);
         }
 
-        // Returns false without throwing on a Validate failure or a failed
-        // Db::execute, in which case the old row is still there and the log
-        // below must not claim the rename completed.
-        $deleted = Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_NAME');
+        // THE ONE PLACE that decides whether the old row is destroyed. It is
+        // kept only when a copy was attempted and failed, because then it holds
+        // the sole surviving copy of the merchant's chosen position; deleting it
+        // there would be the data loss this whole script exists to avoid. On
+        // every other path - nothing usable to carry, or the new key already
+        // holding a usable value - the old row is redundant and goes.
+        $keptOldRow = ($copyAttempted && !$carried);
+        if (!$keptOldRow) {
+            $deleteAttempted = true;
+            // Returns false without throwing on a Validate failure or a failed
+            // Db::execute, in which case the old row is still there and the log
+            // below must not claim the rename completed.
+            $deleted = (bool) Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_NAME');
+        }
     } catch (Throwable $e) {
         // Deliberately broad, same reasoning as the 2.7.1-2.7.5 scripts:
         // anything thrown here leaves the module version un-bumped and the
-        // shop in a state no later script can reason about.
-        PrestaShopLogger::addLog(
-            'Two Payment v2.7.6 upgrade: company-search location key rename raised "' . $e->getMessage()
-            . '" and was skipped, so PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS may be absent and the shop'
-            . ' resolving to the address-area default (TWO-40)',
-            2,
-            null,
-            'Module',
-            $module->id
-        );
-
-        return true;
+        // shop in a state no later script can reason about. The message is
+        // built from the recorded state below, not from an assumption about
+        // WHERE the throw came from.
+        $threw = $e->getMessage();
     }
 
-    if ($carried) {
+    $severity = 1;
+
+    if (!$oldRead) {
+        $outcome = 'nothing was migrated - the old key could not be read';
+    } elseif (!$newRead) {
+        $outcome = 'nothing was copied - the new key could not be read';
+    } elseif ($carried) {
         $outcome = 'carried the stored value "' . $old . '" across (global tier only; any shop-group or'
             . ' per-shop override of the old key was deleted uncarried, see this script\'s header)';
+    } elseif ($copyAttempted) {
+        $outcome = 'copying the stored value "' . $old . '" to the new key FAILED';
     } elseif ($newAlreadySet) {
         // Distinguished from the no-old-value case on purpose: an operator
         // reading the log must be able to tell "already migrated, or the
@@ -176,15 +216,39 @@ function upgrade_module_2_7_6($module)
         $outcome = 'no usable value on the old key, the new key keeps its own default';
     }
 
-    if (!$deleted) {
+    if ($deleted) {
+        $outcome .= '; the old key PS_TWO_ENABLE_COMPANY_NAME was removed';
+    } elseif ($keptOldRow) {
+        $outcome .= '; PS_TWO_ENABLE_COMPANY_NAME was deliberately KEPT because it now holds the only'
+            . ' copy of the value - re-run this upgrade once the write failure is resolved';
+        $severity = 3;
+    } elseif ($deleteAttempted) {
         $outcome .= '; deleting the old key FAILED, so PS_TWO_ENABLE_COMPANY_NAME may still be present in'
             . ' ps_configuration and a later run of this script will see it again';
+        $severity = max($severity, 2);
+    } else {
+        $outcome .= '; the delete never ran, so PS_TWO_ENABLE_COMPANY_NAME may still be present in'
+            . ' ps_configuration and a later run of this script will see it again';
+        $severity = max($severity, 2);
+    }
+
+    if ($threw !== null) {
+        PrestaShopLogger::addLog(
+            'Two Payment v2.7.6 upgrade: PS_TWO_ENABLE_COMPANY_NAME -> PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS'
+            . ' raised "' . $threw . '" - ' . $outcome . ' (TWO-40)',
+            max($severity, 2),
+            null,
+            'Module',
+            $module->id
+        );
+
+        return true;
     }
 
     PrestaShopLogger::addLog(
         'Two Payment v2.7.6 upgrade: PS_TWO_ENABLE_COMPANY_NAME -> PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS - '
         . $outcome . ' (TWO-40)',
-        $deleted ? 1 : 2,
+        $severity,
         null,
         'Module',
         $module->id
