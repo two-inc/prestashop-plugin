@@ -329,6 +329,14 @@ function buildAddressForm(options) {
  * @param {boolean} [options.countryIsoAttrs] give the country options
  *        `data-iso-code` (default false - core's classic theme does not)
  * @param {string} [options.company] initial value of the company input
+ * @param {string} [options.address1] initial value of the street input
+ * @param {string} [options.postcode] initial value of the postcode input
+ * @param {string} [options.city] initial value of the city input
+ *        These three, like `company`, are emitted as a real `value` ATTRIBUTE, which
+ *        is what the server does when the buyer is EDITING an address that already
+ *        exists - `CustomerAddressFormatter` sets each field's value from the address
+ *        row. A fixture that set them with `.val()` after render would be a different
+ *        state from any core produces.
  * @param {boolean} [options.blockContainers] whether the editable form is wrapped
  *        in its block id div and its own `.js-address-form` (default true, which is
  *        core). Pass false for a THEME that flattens both away: the only scope left
@@ -352,6 +360,9 @@ function buildAddressesStep(options) {
     const countryId = 'countryId' in opts ? opts.countryId : '1';
     const isoAttrs = opts.countryIsoAttrs === true;
     const company = opts.company || '';
+    const address1 = opts.address1 || '';
+    const postcode = opts.postcode || '';
+    const city = opts.city || '';
     const blockContainers = opts.blockContainers !== false;
     const blockIds = opts.blockIds !== false;
 
@@ -381,9 +392,9 @@ function buildAddressesStep(options) {
         }
         lines.push(
             '        <input type="text" name="vat_number" id="field-vat_number" value="">',
-            '        <input type="text" name="address1" id="field-address1" value="">',
-            '        <input type="text" name="postcode" id="field-postcode" value="">',
-            '        <input type="text" name="city" id="field-city" value="">',
+            '        <input type="text" name="address1" id="field-address1" value="' + address1 + '">',
+            '        <input type="text" name="postcode" id="field-postcode" value="' + postcode + '">',
+            '        <input type="text" name="city" id="field-city" value="' + city + '">',
             '        <select id="field-id_country" class="form-control form-control-select js-country" name="id_country" required>',
             // `selected` unconditionally, as core emits it - see this function's
             // docblock. The real country option below carries it too.
