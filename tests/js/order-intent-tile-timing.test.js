@@ -91,7 +91,6 @@ afterEach(() => {
     document.body.innerHTML = '';
     delete window.twopayment;
     delete window.TwoCheckoutManager_Instance;
-    document.cookie = 'two_company_id=; expires=Thu, 01 Jan 1970 00:00:00 GMT';
 });
 
 function makeTileManager() {

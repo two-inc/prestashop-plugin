@@ -1343,24 +1343,22 @@ class TwoCheckoutManager {
      * @returns {boolean} True if company org number is missing
      */
     isCompanyDataMissing() {
+        // The hidden `companyid` field is the only carrier of the selection the
+        // browser can read. There used to be a `document.cookie` fallback here
+        // looking for a bare `two_company_id`; nothing ever wrote one. PrestaShop
+        // serialises every server-side session key into a single encrypted cookie
+        // under its own name, so a server write of that key never produces a
+        // browser cookie called `two_company_id`, and no code in this module sets
+        // one directly. The fallback could only ever be satisfied by a test that
+        // fabricated the cookie itself, so it has been removed rather than left
+        // looking like a real second source.
         let orgNumber = '';
-        
-        // Check companyid form field
+
         const companyIdField = document.querySelector("input[name='companyid']");
         if (companyIdField && companyIdField.value) {
             orgNumber = companyIdField.value.trim();
         }
-        
-        // Also check cookie as fallback
-        if (!orgNumber) {
-            try {
-                const cookieMatch = document.cookie.match(/two_company_id=([^;]+)/);
-                if (cookieMatch) {
-                    orgNumber = decodeURIComponent(cookieMatch[1]).trim();
-                }
-            } catch (e) { /* ignore */ }
-        }
-        
+
         return !orgNumber;
     }
 
