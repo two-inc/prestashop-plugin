@@ -183,6 +183,29 @@ final class OrderBuilderSpec
     }
 
     /**
+     * The cart these specs' session-company fixtures are scoped to (TWO-40).
+     */
+    private const SESSION_COMPANY_CART_ID = 6140;
+
+    /**
+     * Seed a stored company selection the way the module writes one.
+     *
+     * A stored selection is scoped to the cart it was chosen in (TWO-40), so the
+     * fixture has to supply both the cart stamp and a loaded cart carrying that
+     * id - an unstamped record is treated as absent by design, and a fixture that
+     * omitted the stamp would be testing the discard path rather than whatever it
+     * meant to test.
+     *
+     * @param array<string,string> $fields short field names, per Twopayment::COMPANY_SESSION_KEYS
+     */
+    private static function seedSessionCompany(TwopaymentTestHarness $module, array $fields): void
+    {
+        StubStore::$carts[self::SESSION_COMPANY_CART_ID] = [];
+        $module->context->cart = new Cart(self::SESSION_COMPANY_CART_ID);
+        $module->storeTwoCartScopedCompany($fields);
+    }
+
+    /**
      * Declared-rate relay wiring (TWO-24880): a product's tax rate is
      * sourced from its tax-rules group resolved at the cart's tax address,
      * never from amounts or the row's 'rate' field. This declares the
@@ -4464,10 +4487,12 @@ final class OrderBuilderSpec
         $module = new TwopaymentTestHarness();
 
         // Stale session from previously selected UK address/company
-        $module->context->cookie->two_company_name = 'CHEESE AND BEES LTD';
-        $module->context->cookie->two_company_id = 'SC806781';
-        $module->context->cookie->two_company_country = 'GB';
-        $module->context->cookie->two_company_address_id = '28';
+        self::seedSessionCompany($module, [
+            'name' => 'CHEESE AND BEES LTD',
+            'id' => 'SC806781',
+            'country' => 'GB',
+            'address_id' => '28',
+        ]);
 
         // Current selected address is Spanish and carries its org number in the
         // `dni` field. This fixture used to hold 'ESB12345678' in `vat_number`
@@ -4496,9 +4521,11 @@ final class OrderBuilderSpec
         self::reset();
         $module = new TwopaymentTestHarness();
 
-        $module->context->cookie->two_company_name = 'Acme ES S.L.';
-        $module->context->cookie->two_company_id = 'B12345678';
-        $module->context->cookie->two_company_country = 'ES';
+        self::seedSessionCompany($module, [
+            'name' => 'Acme ES S.L.',
+            'id' => 'B12345678',
+            'country' => 'ES',
+        ]);
 
         StubStore::$addresses[802] = [
             'id_country' => 34,
@@ -4519,9 +4546,11 @@ final class OrderBuilderSpec
         self::reset();
         $module = new TwopaymentTestHarness();
 
-        $module->context->cookie->two_company_name = 'Acme Norge';
-        $module->context->cookie->two_company_id = 'NO123';
-        $module->context->cookie->two_company_country = 'NO';
+        self::seedSessionCompany($module, [
+            'name' => 'Acme Norge',
+            'id' => 'NO123',
+            'country' => 'NO',
+        ]);
 
         StubStore::$addresses[803] = [
             'id_country' => 34,
@@ -4545,10 +4574,12 @@ final class OrderBuilderSpec
         self::reset();
         $module = new TwopaymentTestHarness();
 
-        $module->context->cookie->two_company_name = 'Acme ES S.L.';
-        $module->context->cookie->two_company_id = 'B12345678';
-        $module->context->cookie->two_company_country = 'ES';
-        $module->context->cookie->two_company_address_id = '999';
+        self::seedSessionCompany($module, [
+            'name' => 'Acme ES S.L.',
+            'id' => 'B12345678',
+            'country' => 'ES',
+            'address_id' => '999',
+        ]);
 
         StubStore::$addresses[804] = [
             'id_country' => 34,
@@ -5335,9 +5366,13 @@ final class OrderBuilderSpec
     {
         self::reset();
         $module = new TwopaymentTestHarness();
-        $module->context->cookie->two_company_name = 'Acme Ltd';
-        $module->context->cookie->two_company_id = 'NO123';
-        $module->context->cookie->two_company_country = 'NO';
+        // Stamped with the current cart, so the country guard is what fires here
+        // and not the cart-scope gate (TWO-40).
+        self::seedSessionCompany($module, [
+            'name' => 'Acme Ltd',
+            'id' => 'NO123',
+            'country' => 'NO',
+        ]);
 
         $data = $module->getTwoValidatedSessionCompanyData('ES');
 
@@ -5352,8 +5387,12 @@ final class OrderBuilderSpec
     {
         self::reset();
         $module = new TwopaymentTestHarness();
-        $module->context->cookie->two_company_name = 'Acme Ltd';
-        $module->context->cookie->two_company_id = 'NO123';
+        // Stamped with the current cart, so the missing country marker is what
+        // fires here and not the cart-scope gate (TWO-40).
+        self::seedSessionCompany($module, [
+            'name' => 'Acme Ltd',
+            'id' => 'NO123',
+        ]);
 
         $data = $module->getTwoValidatedSessionCompanyData('ES');
 
