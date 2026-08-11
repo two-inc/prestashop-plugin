@@ -1389,9 +1389,19 @@ any sync could ever have happened.
 **Where it is evaluated.** In `mirrorConfirmedCompanyToInvoiceAddress()`, as the gate
 in front of POPULATE only. The four-way operation split is kept, not collapsed: RE-MARK
 runs first (it never writes a value), then the pin, then POPULATE, then COMPLETE and
-RE-PUBLISH. The last two are rebuild REPAIR rather than sync — each is separately gated
-on the mirror's own marked name still being in the form, so on a pinned address, where
-no populate has run, they are inert by construction rather than by the pin.
+RE-PUBLISH. The last two are rebuild REPAIR rather than sync.
+
+**RE-PUBLISH is inert on a pinned address; COMPLETE deliberately is NOT.** Both are
+gated on the mirror's own marked company name still being in the form, which makes them
+inert whenever the COMPANY field is what raised the pin — but a pin raised by any other
+field leaves that name intact, and the completion then still fires. That is the decided
+behaviour, not a gap. COMPLETE is not syncing new data into the address: it repairs the
+number half of a pair the plugin itself created, it writes only into an identification
+field that is empty and carries no marker of any kind, and only while the name half is
+still the mirror's own marked value. Gating it on the pin would reintroduce the defect
+it exists to close — a mirrored company name on the order with no organisation number
+beside it, on a form where core requires one — and it costs the buyer nothing, because
+an empty unmarked field holds no answer of theirs.
 
 ---
 
