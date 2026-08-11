@@ -205,10 +205,10 @@ Four cookie keys, all written server-side, all sharing one expiry:
 
 | key | written at |
 |---|---|
-| `two_company_name` | `controllers/front/orderintent.php:371` (`ajaxProcessSaveCompany`), `:976` (`storeCompanyDataInSession`), `twopayment.php:15825` (`hookActionCustomerAddressSave`) |
-| `two_company_id` | `orderintent.php:372`, `:977` |
-| `two_company_country` | `orderintent.php:374`, `:995` |
-| `two_company_address_id` | `orderintent.php:377`, `:997` |
+| `two_company_name` | `orderintent.php`'s `ajaxProcessSaveCompany()` and `storeCompanyDataInSession()`, `twopayment.php`'s `hookActionCustomerAddressSave()` |
+| `two_company_id` | `ajaxProcessSaveCompany()`, `storeCompanyDataInSession()` |
+| `two_company_country` | `ajaxProcessSaveCompany()`, `storeCompanyDataInSession()` |
+| `two_company_address_id` | `ajaxProcessSaveCompany()`, `storeCompanyDataInSession()` |
 
 Expiry is `Twopayment::COOKIE_EXPIRY_ONE_HOUR = 3600` (`twopayment.php:282`), re-stamped on
 every write: `orderintent.php:293`, `:379`, `:1002`, `twopayment.php:14569`, `:14593`, `:15868`.
@@ -256,9 +256,10 @@ happens to keep doing so for an hour afterwards as a side effect.
 
 1. **Bind every stored company record to a cart id.** Store one structure rather than four loose
    keys — `two_company = {cart_id, name, id, country, address_id}` — and have the reader discard
-   it outright when `cart_id !== $this->context->cart->id`. A cart id changes on order placement,
-   so a selection cannot survive into a future order even if the cookie physically outlives the
-   checkout. This is the single change that delivers Doug's requirement, and it is strictly
+   it outright when `cart_id !== $this->context->cart->id`. An ordered cart is never carried again
+   — core's front-controller init unsets the cookie's cart id once `Cart::orderExists()` is true and
+   assigns a fresh cart — so a selection cannot survive into a future order even if the cookie
+   physically outlives the checkout. This is the single change that delivers Doug's requirement, and it is strictly
    stronger than shortening the TTL.
 2. **Move it from the PrestaShop cookie to the PHP session** where the shop has one, since the
    semantics wanted are session-scoped, not time-scoped. PrestaShop's `Cookie` object *is* its
@@ -316,10 +317,18 @@ document without re-deciding them:
   read site consumes for no gain the requirement asks for. The keys are centralised in
   `Twopayment::COMPANY_SESSION_KEYS` so they cannot drift, which is what the blob was really for.
 - **Step 2 (drop the company writes' `setExpire`) — not done, and it was wrong.** PrestaShop's cookie
-  has one expiry for the whole cookie, not one per key, so removing those calls would not shorten the
-  company record's life at all; it would lengthen the *whole* cookie back to the front-office default
-  and silently extend unrelated caches that depend on the hour. Every `setExpire` call and
-  `COOKIE_EXPIRY_ONE_HOUR` are untouched. Cart-scoping is the entire fix.
+  has one expiry for the whole cookie, not one per key: `Cookie::setExpire()` assigns the single
+  expiry scalar that the cookie's own `setcookie()` call uses. So removing those calls would not
+  shorten the company record's life at all — it would hand the *whole* cookie's lifetime back to
+  whatever core's front-office config computes from `PS_COOKIE_LIFETIME_FO`, which is shop
+  configuration (a positive value means that many hours; `0` means a cookie that dies with the
+  browser session), i.e. possibly longer *or* shorter than an hour, and it would re-time every other
+  key sharing the cookie as a side effect. That side effect is the whole reason on its own — despite
+  what earlier revisions of this file and the code comments claimed, **no other key actually depends
+  on the hour**: the API-key verification verdict is cached in `Configuration` (the database), not the
+  cookie; the order-intent rate limiter is bounded by its own 60-second window over the timestamps it
+  stores; and the order-intent decision flag is bounded by `ORDER_INTENT_DECISION_CACHE_TTL`. Every
+  `setExpire` call and `COOKIE_EXPIRY_ONE_HOUR` are untouched. Cart-scoping is the entire fix.
 - **Step 3 (keep both invalidation guards) — done.** The country-mismatch wipe and the
   no-country-marker wipe are unchanged and have their own regression cover, because a buyer can change
   address country inside one cart.
@@ -349,8 +358,9 @@ Also removed as part of this: `TwoCheckoutManager.isCompanyDataMissing()`'s
 `document.cookie.match(/two_company_id=.../)` fallback. Nothing ever wrote a browser cookie of that
 name — PrestaShop serialises server-side session keys into one encrypted cookie under its own name,
 and no code sets one directly — so the fallback could only ever be satisfied by a test that
-fabricated it, which two Jest specs did. They now exercise the real carrier, the hidden
-`input[name='companyid']`.
+fabricated it, which one Jest spec did: `tests/js/company-search-tile-mode.test.js`, which now drives
+the real carrier, the hidden `input[name='companyid']`. A second spec carried only an `afterEach` wipe
+of a cookie it never wrote, and that line is simply deleted.
 
 ---
 
