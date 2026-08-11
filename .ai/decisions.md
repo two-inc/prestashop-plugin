@@ -765,24 +765,53 @@ Shape as built, all on `TwoCompanySearch`:
   and it resolves to the block element rather than the form, because core nests the
   rendered address form's own `<form>` inside the step's outer one and HTML drops
   the inner tag.
-- `mirrorConfirmedCompanyToInvoiceAddress()` — the mirror, plus
-  `writeMirroredValue()`, `mirrorCountryIntoForm()` and
-  `countryOptionValueForIso()`. Company name and country only; gated on the
-  merchant's address-population switch as the design required, which also makes it
-  inert on the tile mount for free.
+- `mirrorConfirmedCompanyToInvoiceAddress()` — the mirror. It is TWO operations and
+  they must stay two: `reapplyMirrorMarkers()` re-establishes the autofill marker on
+  a value still exactly what the mirror recorded writing (never writes a value,
+  never touches an empty field), and
+  `populateInvoiceAddressFromConfirmedCompany()` fills unanswered fields at most
+  once per company per page. Supporting parts: `mirrorTargetIsWritable()`,
+  `writeMirroredValue()`, `serverRenderedSelectValue()`, `mirrorCountryIntoForm()`,
+  `countryOptionValueForIso()`, `mirrorMemory()`. Company name, its organisation
+  number and the country; gated on the merchant's address-population switch as the
+  design required, which also makes it inert on the tile mount for free.
 
-Two things worth knowing before touching it:
+Four things worth knowing before touching it:
 
-- **"Empty" is a real state for the country select**, which is what makes the marker
-  rule usable on one: core's `countrySelect` field emits a disabled, empty-valued
-  "Please choose" option ahead of the real countries. Had it not, the marker rule as
-  written would have made the country half dead code, since a select always has a
-  value.
+- **"Empty" is NOT a reachable state for the country select, and a rule written
+  around emptiness makes the country half dead code.** Core's `form-fields.tpl`
+  emits the disabled, empty-valued "Please choose" option as `selected` ALWAYS, and
+  also marks the option matching the field's value — which
+  `CustomerAddressFormatter` sets unconditionally to the address's country id. Two
+  selected options, last one wins, so `select.value` on a fresh unanswered form is
+  the rendered country id and never `''`. "Unanswered" therefore means **still
+  exactly the value the server rendered**, read from the `selected` attribute. An
+  earlier revision of this section claimed the opposite; it was wrong, and a Jest
+  fixture that marked only the placeholder is what hid it.
+- **The name and its organisation number travel together, or neither travels.**
+  Once the address is saved, the resolver can reach the tier that reads the company
+  off the ADDRESS, so a mirrored name with no number beside it is an order carrying
+  a company the buyer never typed and no organisation number at all. A form whose
+  identification field already holds the buyer's own number therefore gets neither
+  write. A form with no identification field at all still gets the name — its
+  presence is decided by the country's address format and there is nowhere to put a
+  number.
+- **A successful country write triggers core's own form rebuild**, which is why the
+  re-mark operation exists: core's `.js-country` handler is delegated on `body`,
+  POSTs `action=addressForm`, replaces every `.js-address-form`, and restores the
+  previous values with an INPUT-only, VALUE-only loop. Values survive; the
+  `data-two-autofilled-value` marker does not. The mirror's record of what it wrote
+  lives on `TwoCheckoutManager`, not on the search, because the manager destroys and
+  rebuilds the search on every `updatedAddressForm`.
 - **The selection cannot come from `TwoCheckoutManager._confirmedCompanySelection`
   alone** — it is page-lifetime and the mirror exists to cross a navigation. The
   manager now seeds it from the cart-scoped record the module publishes into the JS
-  config, through the validated read plus the address-switch comparison, so a record
-  either guard would reject is never published. The getter is INJECTED into the
+  config. That publish asks the same three questions the validated read asks — the
+  company/number pair, the country agreement, the captured address — but is
+  **read-only**: it runs from the setMedia hook on every checkout render, so acting
+  on a rejection there would mean merely drawing a page destroys the buyer's
+  selection whenever the cart's committed invoice address country disagreed with it.
+  A rejected record is withheld and left for the consuming path to judge and clear. The getter is INJECTED into the
   search mount rather than reached for on `window`: the search is constructed from
   inside the manager's own constructor, before `TwoCheckoutManager_Instance` is
   assigned, so a global lookup would find nothing on the one call that matters.
@@ -814,9 +843,11 @@ reading, but do not act on it:
 2. **`#8`:** with the gate removed and the merchant switch on, tile-mode writes should silently
    no-op when the address form is not on the page. Confirm, rather than deferring the write.
    **Moot — `#8` is deferred; no admin path needs the separation yet.**
-3. **`#13`-enabled:** the mirror copies company **name + country** only. Confirm that street /
-   postcode / city are deliberately excluded when the buyer has said the addresses differ.
-   **Confirmed by Doug, and built that way.**
+3. **`#13`-enabled:** the mirror copies the company **name, its organisation number and the
+   country**. Confirm that street / postcode / city are deliberately excluded when the buyer has
+   said the addresses differ.
+   **Confirmed by Doug, and built that way.** The organisation number was added in review: without
+   it the order could carry a company name the plugin itself wrote with no number beside it.
 4. **`#13`-enabled:** when the buyer has NOT stated the addresses differ, there is one address and
    nothing to mirror. Confirm that is a no-op and not "populate a hidden billing block anyway".
    **Confirmed: a true no-op. It is also moot as a risk — per correction A there is no hidden

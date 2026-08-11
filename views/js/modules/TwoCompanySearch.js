@@ -1640,8 +1640,10 @@ class TwoCompanySearch {
      *
      * @param {string} orgNumber
      * @param {boolean} [onlyIfEmpty] Leave a value the customer typed alone.
+     * @param {Element} [root] confine the write to one address block. Omitted -
+     *        the document-wide default every existing caller relies on.
      */
-    writeOrganizationToAddressIdentifiers(orgNumber, onlyIfEmpty) {
+    writeOrganizationToAddressIdentifiers(orgNumber, onlyIfEmpty, root) {
         if (!this.isAddressLookupEnabled()) {
             return;
         }
@@ -1651,7 +1653,7 @@ class TwoCompanySearch {
             return;
         }
 
-        this.addressIdentifierFields().forEach(field => {
+        this.addressIdentifierFields(root).forEach(field => {
             if (field.length === 0) {
                 return;
             }
@@ -1688,9 +1690,23 @@ class TwoCompanySearch {
      * walk exactly the fields the write walks. A field present in one list and
      * absent from the other is a disowned organisation number left in the form.
      *
+     * Document-wide by DEFAULT, which is what every caller but the invoice mirror
+     * wants: there is only ever one editable address form on a PrestaShop
+     * checkout, so an unscoped read is unambiguous there. The mirror passes a root
+     * because it writes as a PAIR into one specific block and must not widen that
+     * to the document - and the default is left exactly as it was rather than
+     * narrowed for everyone, because narrowing it silently would change callers
+     * that run on pages where the org-number field is not inside an address block
+     * at all.
+     *
+     * @param {Element} [root] confine the lookup to one address block
      * @returns {Array<Object>} jQuery objects, any of which may be empty
      */
-    addressIdentifierFields() {
+    addressIdentifierFields(root) {
+        if (root) {
+            return [$(root).find("input[name='dni']").first()];
+        }
+
         return [$("input[name='dni']")];
     }
 
@@ -1947,6 +1963,13 @@ class TwoCompanySearch {
         };
 
         let reapplied = remark($(root).find("input[name='company']").first(), memory.company);
+        this.addressIdentifierFields(root).forEach(field => {
+            // The organisation number needs this as much as the name does: the
+            // marker is what clearLookupWrittenAddressIdentifiers() uses to tell
+            // a number the lookup wrote from one the buyer typed, and losing it
+            // leaves a disowned number in the form that nothing may delete.
+            reapplied = remark(field, memory.organization) || reapplied;
+        });
         const countrySelect = $(root).find("select[name='id_country'], select[name='country']").first();
         reapplied = remark(countrySelect, memory.countryValue) || reapplied;
 
@@ -1980,7 +2003,41 @@ class TwoCompanySearch {
         // selector with no awareness of which block it landed in is the defect
         // class this whole feature has to avoid.
         const companyField = $(root).find("input[name='company']").first();
+        const identifierFields = this.addressIdentifierFields(root).filter(
+            field => field && field.length > 0
+        );
+
+        // The NAME and the NUMBER travel together, or neither travels.
+        //
+        // The order payload is why. Once the buyer saves this address, the
+        // resolver can reach the tier that reads the company off the ADDRESS -
+        // `company` for the name, the identification field for the number - and a
+        // mirrored name with no number beside it means an order carrying a company
+        // the buyer never typed and no organisation number at all. That is worse
+        // than not mirroring, so a form whose identification field already holds
+        // the buyer's own number gets neither write.
+        //
+        // A form with NO identification field is a different case and does get the
+        // name: the field's presence is decided by the country's address format,
+        // there is nowhere to put a number on such a form, and the ordinary
+        // company lookup has always behaved this way on those countries.
+        if (!this.mirrorTargetIsWritable(companyField)) {
+            return false;
+        }
+        const blocked = identifierFields.some(field => !this.mirrorTargetIsWritable(field));
+        if (blocked) {
+            return false;
+        }
+
         const wroteCompany = this.writeMirroredValue(companyField, selection.company);
+        if (wroteCompany && identifierFields.length > 0) {
+            // Through the single gate every other organisation-number write goes
+            // through, given a root so it stays inside this block. onlyIfEmpty is
+            // false because writability was decided above, by the marker rule -
+            // which, unlike "only if empty", lets a NEW company replace the
+            // previous mirror's untouched number.
+            this.writeOrganizationToAddressIdentifiers(selection.companyid, false, root);
+        }
         const countryValue = this.mirrorCountryIntoForm(root, selection.countryIso);
         if (!wroteCompany && !countryValue) {
             return false;
@@ -1988,6 +2045,7 @@ class TwoCompanySearch {
 
         memory.companyid = selection.companyid;
         memory.company = wroteCompany ? selection.company : '';
+        memory.organization = (wroteCompany && identifierFields.length > 0) ? selection.companyid : '';
         memory.countryValue = countryValue;
 
         return true;

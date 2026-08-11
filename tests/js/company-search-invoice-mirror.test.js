@@ -93,6 +93,10 @@ function countrySelect() {
     return $("#invoice-address select[name='id_country']");
 }
 
+function identifierField() {
+    return $("#invoice-address input[name='dni']");
+}
+
 describe('the signal: what the buyer has stated about their invoice address', () => {
     test('the shared-address control being present and reporting "shared" states they do NOT differ', () => {
         buildAddressesStep({ editing: 'delivery', sameAddress: true, invoiceBlock: true });
@@ -160,20 +164,22 @@ describe('which address the editable form is for', () => {
 });
 
 describe('the mirror, on the invoice pass', () => {
-    test('writes the company name and the country, and nothing else', () => {
+    test('writes the company name, its organisation number and the country, and nothing else', () => {
         buildAddressesStep({ editing: 'invoice' });
 
         mount(PICKED);
 
         expect(companyField().val()).toBe('Acme Trading Ltd');
+        expect(identifierField().val()).toBe('12345678');
         expect(countrySelect().val()).toBe(GB_OPTION);
         // The address lines are emphatically not mirrored: the buyer has just
         // said this is a different address.
         expect($("#invoice-address input[name='address1']").val()).toBe('');
         expect($("#invoice-address input[name='postcode']").val()).toBe('');
         expect($("#invoice-address input[name='city']").val()).toBe('');
-        // Nor is the organisation number - the mirror carries name + country only.
-        expect($("#invoice-address input[name='dni']").val()).toBe('');
+        // And never the VAT field, which is not an organisation-number field and
+        // switches tax off on a foreign address.
+        expect($("#invoice-address input[name='vat_number']").val()).toBe('');
     });
 
     test('marks what it wrote, so a later pass can tell it from buyer input', () => {
@@ -181,6 +187,7 @@ describe('the mirror, on the invoice pass', () => {
 
         mount(PICKED);
 
+        expect(identifierField().attr(MARKER)).toBe('12345678');
         expect(companyField().attr(MARKER)).toBe('Acme Trading Ltd');
         expect(countrySelect().attr(MARKER)).toBe(GB_OPTION);
     });
@@ -310,7 +317,82 @@ describe('the marker guard: buyer input is never overwritten', () => {
     });
 });
 
+describe('the company name and its organisation number travel together', () => {
+    /**
+     * Why this is a requirement and not a nicety: once the buyer saves this
+     * address, the order-payload resolver can reach the tier that reads the
+     * company off the ADDRESS - the `company` field for the name, the
+     * identification field for the number. A mirrored name with no number beside
+     * it is then an order carrying a company the buyer never typed and no
+     * organisation number at all, which is worse than not mirroring.
+     */
+    test('a buyer\'s own identification number blocks the name write too', () => {
+        buildAddressesStep({ editing: 'invoice' });
+        identifierField().val('99999999');
+
+        mount(PICKED);
+
+        expect(identifierField().val()).toBe('99999999');
+        expect(companyField().val()).toBe('');
+        expect(companyField().attr(MARKER)).toBeUndefined();
+        expect(countrySelect().val()).toBe(SERVER_RENDERED_OPTION);
+    });
+
+    test('a new company replaces both halves of the previous mirror\'s pair', () => {
+        buildAddressesStep({ editing: 'invoice' });
+        const memory = {};
+
+        mount(PICKED, { mirrorMemory: memory });
+        mount({ company: 'Beta Holdings AS', companyid: '99887766', countryIso: 'FR' }, { mirrorMemory: memory });
+
+        expect(companyField().val()).toBe('Beta Holdings AS');
+        expect(identifierField().val()).toBe('99887766');
+    });
+
+    test('the name still travels on a form with no identification field at all', () => {
+        // Whether the field exists is decided by the country's address format, so
+        // on most countries there is nowhere to put a number. The ordinary company
+        // lookup has always behaved this way on those forms.
+        buildAddressesStep({ editing: 'invoice' });
+        document.querySelector("#invoice-address input[name='dni']").remove();
+
+        mount(PICKED);
+
+        expect(companyField().val()).toBe('Acme Trading Ltd');
+    });
+
+    test('the number is written only inside the visible form', () => {
+        buildAddressesStep({ editing: 'invoice' });
+        document.body.insertAdjacentHTML(
+            'beforeend',
+            '<div id="elsewhere"><input type="text" name="dni" value=""></div>'
+        );
+
+        mount(PICKED);
+
+        expect(identifierField().val()).toBe('12345678');
+        expect($("#elsewhere input[name='dni']").val()).toBe('');
+    });
+});
+
 describe('populating and re-marking are two different operations', () => {
+    test('re-marks the organisation number core restored, as it does the name', () => {
+        buildAddressesStep({ editing: 'invoice' });
+        const memory = {};
+        mount(PICKED, { mirrorMemory: memory });
+
+        rebuildAddressesStepAsCoreDoes({ editing: 'invoice', countryId: FR_OPTION });
+
+        expect(identifierField().val()).toBe('12345678');
+        expect(identifierField().attr(MARKER)).toBeUndefined();
+
+        mount(PICKED, { mirrorMemory: memory });
+
+        // Without this the plugin can no longer tell its own number from the
+        // buyer's, and clearLookupWrittenAddressIdentifiers() may never delete it.
+        expect(identifierField().attr(MARKER)).toBe('12345678');
+    });
+
     /**
      * Core's `.js-country` handler is delegated on `body`, so the mirror's own
      * country write triggers it: it POSTs `action=addressForm`, replaces every
