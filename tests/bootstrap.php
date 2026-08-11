@@ -1582,6 +1582,18 @@ namespace {
                 foreach (StubStore::$carts[$id] ?? [] as $property => $value) {
                     $this->$property = $value;
                 }
+
+                return;
+            }
+
+            if (func_num_args() > 0) {
+                // A cart constructed FROM an id that is not a saved cart id is a
+                // fresh unsaved cart - `new Cart(0)`, the shape the front office
+                // hands the module before the buyer has added anything - and core
+                // would not report that as a loaded object. `new Cart()` with no
+                // argument keeps $loaded true: specs build one that way and fill
+                // its fields in by hand.
+                $this->loaded = false;
             }
         }
 
