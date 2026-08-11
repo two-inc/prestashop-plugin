@@ -8766,15 +8766,24 @@ class Twopayment extends PaymentModule
         $cartKey = self::COMPANY_SESSION_CART_KEY;
         $this->context->cookie->$cartKey = (string) $cartId;
 
-        // The cookie's EXPIRY is deliberately left alone here. PrestaShop's
-        // Cookie carries one expiry for the whole cookie rather than one per key,
-        // and unrelated paths that share it (the company verification cache, rate
-        // limiting, the order-intent approved flag) depend on it remaining
-        // COOKIE_EXPIRY_ONE_HOUR - shortening it here would shorten theirs, and
-        // dropping the callers' setExpire would lengthen the whole cookie back to
-        // the shop's front-office default. Cart scoping, not the expiry, is what
-        // bounds how long this record stays usable, so callers keep whatever
-        // setExpire they already had and this helper adds none.
+        // The cookie's EXPIRY is deliberately left alone here, and the reason is
+        // the cookie's own shape rather than any other key needing the hour.
+        // Cookie::setExpire() assigns a SINGLE expiry scalar for the whole cookie,
+        // which is the one value handed to setcookie() when the cookie is written -
+        // there is no per-key expiry to set. So a setExpire() call from this helper
+        // would silently re-time every other key sharing the cookie, whatever those
+        // keys are, and that is sufficient reason not to add one.
+        //
+        // Dropping the callers' existing setExpire() would not be neutral either.
+        // The lifetime would fall back to whatever config.inc.php computed for the
+        // front office from PS_COOKIE_LIFETIME_FO, which is shop configuration: a
+        // positive value yields that many hours, and 0 yields a cookie that dies
+        // with the browser session. It can therefore be LONGER or SHORTER than an
+        // hour depending on the shop, so it is not a safe substitute for anything.
+        //
+        // Cart scoping, not the expiry, is what bounds how long this record stays
+        // usable, so callers keep whatever setExpire they already had and this
+        // helper adds none.
     }
 
     /**
@@ -8784,10 +8793,19 @@ class Twopayment extends PaymentModule
      * to the current cart id. A record belonging to another cart, or one carrying
      * no stamp at all, is cleared on the way out.
      *
-     * The cart id changes at order placement, so a selection made for one order
-     * cannot be read back on a later one. That also makes it unreadable after
-     * placement, which is intended: the selection is only needed up to the point
-     * the order is placed.
+     * A selection made for one order cannot be read back on a later one, because
+     * an ordered cart is never carried again. Once an order references the cart,
+     * the NEXT request's FrontController::init() finds Cart::orderExists() true,
+     * unsets the cookie's id_cart and assigns a brand-new Cart - and a cart with
+     * an order against it is never reloaded. The id the buyer carries from that
+     * point on can therefore never equal the stored stamp, so the record can never
+     * match again.
+     *
+     * Note the rotation happens on that following request, NOT inside placement
+     * itself, so the record stays readable for the remainder of the request that
+     * places the order - which is what the placement path needs. Being unreadable
+     * afterwards is intended: the selection is only needed up to the point the
+     * order is placed.
      *
      * @return array|null ['name' => string, 'id' => string, 'country' => string, 'address_id' => string]
      */
@@ -11492,12 +11510,12 @@ class Twopayment extends PaymentModule
         }
         try {
             // Deliberately do NOT call $this->context->cookie->setExpire() here:
-            // PrestaShop's cookie has a single expiry for the whole cookie (not
-            // per-key), and other code paths rely on it being COOKIE_EXPIRY_ONE_HOUR
-            // (company verification cache, rate limiting, order-intent-approved
-            // flag). Shortening it to this cache's TTL would silently truncate
-            // those. Staleness here is bounded instead by the two_fee_quote_ts
-            // field checked in getTwoFeeQuoteFromSession().
+            // PrestaShop's cookie has a single expiry for the whole cookie, not one
+            // per key, so setting it to this cache's TTL would re-time every
+            // unrelated key sharing that cookie rather than just this quote. That
+            // is sufficient reason on its own - no other key is claimed to require
+            // any particular lifetime. Staleness here is bounded instead by the
+            // two_fee_quote_ts field checked in getTwoFeeQuoteFromSession().
             $this->context->cookie->two_fee_quote_key = $cacheKey;
             $this->context->cookie->two_fee_quote_data = json_encode($quote);
             $this->context->cookie->two_fee_quote_ts = (string) time();
