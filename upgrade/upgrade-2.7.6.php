@@ -29,8 +29,8 @@
  *
  * THE KEPT ROW IS A RECORD, NOT AN AUTOMATIC RECOVERY
  *
- * There is no re-run. This function returns true on every path (see the last
- * paragraph before IDEMPOTENCY for why), so core records the module at 2.7.6,
+ * There is no re-run. This function returns true on every path (see WHY NOT
+ * RETURN false ON A FAILED COPY below for why), so core records the module at 2.7.6,
  * and upgrade scripts only run for versions strictly ABOVE the recorded one -
  * so nothing executes `upgrade_module_2_7_6()` a second time, and there is no
  * read shim for the old key. The kept row is therefore the surviving RECORD of
