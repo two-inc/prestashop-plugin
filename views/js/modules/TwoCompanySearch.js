@@ -4410,7 +4410,17 @@ class TwoCompanySearch {
             // different fields, and this response can carry both.
             const addresses = (details && (details.addresses || (details.company && details.company.addresses))) || [];
             if (Array.isArray(addresses) && addresses.length > 0 && stillOnSameCompany) {
-                this.autoFillAddress(addresses);
+                // When the form on screen IS the secondary address, the fill's
+                // writes are writes into the address the pin judges, and they have
+                // to be attributable to a block and reported as ours. Everywhere
+                // else - the shipping pass, the payment tile - the original
+                // document-wide branch is what runs, unchanged.
+                const secondaryRoot = this.secondaryAddressFormRoot();
+                if (!secondaryRoot) {
+                    this.autoFillAddress(addresses);
+                } else {
+                    this.recordMirrorWrites(this.autoFillAddress(addresses, secondaryRoot));
+                }
             }
         } catch (e) {
             // ignore
@@ -4419,13 +4429,30 @@ class TwoCompanySearch {
     
     
     /**
-     * Auto-fill address fields with company address data
+     * Auto-fill address fields with company address data.
+     *
+     * Optionally confined to ONE address block (TWO-40). Street, postcode and city
+     * were the only writes in this class still made by a document-wide selector,
+     * which meant a value in one of them could not be attributed to a block at all -
+     * and the secondary address's pin has to attribute every field it judges, or a
+     * street the lookup itself wrote reads as one the buyer authored.
+     *
+     * The document-wide branch is kept EXACTLY as it was and is what every caller
+     * that passes no root still takes, the same way the organisation-number writer
+     * was handled: narrowing the default silently would change callers that run on
+     * pages where these fields are not inside an address block at all.
+     *
+     * @param {Array<Object>} addresses
+     * @param {Element} [root] confine the writes to one address block
+     * @returns {Object} what this fill now owns, keyed by field name - the value it
+     *          wrote, or '' for a value of its own that it cleared. A field it left
+     *          alone is absent.
      */
-    autoFillAddress(addresses) {
+    autoFillAddress(addresses, root) {
         // Single gate for the address-field writes (TWO-25203). Both call
         // paths into the fill land here.
         if (!this.isAddressLookupEnabled()) {
-            return;
+            return {};
         }
 
         // Prefer business/registered/visiting; fallback to first
@@ -4434,7 +4461,7 @@ class TwoCompanySearch {
             String(addr.type).toUpperCase().includes('REGISTERED') ||
             String(addr.type).toUpperCase().includes('VISITING')
         ))) || addresses[0];
-        if (!address) return;
+        if (!address) return {};
         // Normalize key variants
         const street = address.street_address || address.streetAddress || address.street || address.address_line_1 || address.addressLine1 || '';
         const postal = address.postal_code || address.postalCode || address.zip || address.zip_code || '';
@@ -4444,8 +4471,13 @@ class TwoCompanySearch {
             'postcode': postal,
             'city': city
         };
+        const owned = {};
         Object.entries(fieldMappings).forEach(([fieldName, value]) => {
-            const field = $(`input[name='${fieldName}']`);
+            // The document-wide read is the ORIGINAL and stays byte-for-byte what it
+            // was; a root, when one is given, is the only thing that narrows it.
+            const field = root
+                ? $(root).find(`input[name='${fieldName}']`).first()
+                : $(`input[name='${fieldName}']`);
             if (field.length === 0) {
                 return;
             }
@@ -4471,6 +4503,7 @@ class TwoCompanySearch {
                     field.val('');
                     field.trigger('input');
                     field.trigger('change');
+                    owned[fieldName] = '';
                 }
                 return;
             }
@@ -4478,14 +4511,17 @@ class TwoCompanySearch {
             // Record the value as ours even when it already matches, so a later
             // fill can still recognise it as autofilled rather than typed.
             field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR, incoming);
+            owned[fieldName] = incoming;
             if (current !== incoming) {
                 field.val(incoming);
                 field.trigger('input');
                 field.trigger('change');
             }
         });
+
+        return owned;
     }
-    
+
     /**
      * Setup event listener for country changes to refresh autocomplete
      */
