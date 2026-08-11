@@ -8946,8 +8946,10 @@ class Twopayment extends PaymentModule
         'organization' => 'two_mirror_org',
         'country' => 'two_mirror_country',
         'address1' => 'two_mirror_address1',
+        'address2' => 'two_mirror_address2',
         'postcode' => 'two_mirror_postcode',
         'city' => 'two_mirror_city',
+        'state' => 'two_mirror_state',
     );
 
     /**

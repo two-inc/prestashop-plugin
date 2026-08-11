@@ -32,6 +32,14 @@ class TwoCompanySearch {
     static AUTOFILL_MARKER_ATTR = 'data-two-autofilled-value';
 
     /**
+     * Marks a field wrapper this class hid because it holds an internal
+     * (`TWO:`-prefixed) identifier, so the un-hide can only ever undo its own work
+     * and never reveal something the theme or merchant hid. See
+     * syncInternalIdentifierVisibility().
+     */
+    static INTERNAL_HIDDEN_ATTR = 'data-two-internal-hidden';
+
+    /**
      * Company-search result cache, held on the CLASS rather than inside
      * setupAutocomplete().
      *
@@ -243,6 +251,11 @@ class TwoCompanySearch {
         this.setupAutocomplete();
         this.setupCountryChangeListener();
         this.mirrorConfirmedCompanyToInvoiceAddress();
+        // At MOUNT as well as after every write: the value can arrive from the SERVER,
+        // on an address the buyer saved earlier whose identification number is an
+        // internal identifier. Nothing wrote it on this page, so a write-side call
+        // alone would leave it on screen after every reload and every re-render.
+        this.syncInternalIdentifierVisibility();
         this.isInitialized = true;
     }
     
@@ -1656,30 +1669,25 @@ class TwoCompanySearch {
         if (!value) {
             return false;
         }
-        // An INTERNAL identifier is never written into an address field, because
-        // `dni` is a field the buyer reads and answers for, and a `TWO:`-prefixed
-        // number must never be shown to them anywhere (TWO-25326 §12, see
-        // TwoCompanyNumber). The rule belongs HERE, at the single gate every
-        // organisation-number write already passes through, and not at each caller:
-        // there are four of them (the selection handler, the details refinement,
-        // the invoice mirror's populate and completion, and the submit-time sync),
-        // the sole-trader enrolment has published a `TWO:` companyid since
-        // TWO-25326 bug 8, and the submit-time sync in particular copies whatever
-        // `companyid` holds straight into `dni` - so a caller-side test would leave
-        // the value reaching the buyer by three other routes. Suppression is a
-        // display rule and costs the order nothing: an enrolled sole trader's
-        // number reaches the payload through the session record and the published
-        // selection, never through this field.
-        // Dereferenced UNGUARDED, deliberately, matching every other use of this
-        // module in this file (:498, :4449) and in its siblings. A
-        // `window.TwoCompanyNumber &&` feature-test here would fail OPEN - a missing
-        // module would write the internal identifier into the buyer-visible field,
-        // which is the single thing this gate exists to prevent. The module is a hard
-        // dependency loaded before this one; if it is absent, throwing is the correct
-        // and consistent outcome.
-        if (window.TwoCompanyNumber.isInternal(value)) {
-            return false;
-        }
+        // NO SPECIAL CASE FOR `TWO:`-PREFIXED IDENTIFIERS HERE, and that is Doug's
+        // ruling rather than an omission (TWO-40). An earlier round refused to write
+        // them, reasoning that an internal identifier must never be shown to the
+        // buyer. Refusing the WRITE was the wrong lever: it sent a sole trader's
+        // number down a different path through storage, pairing, mirroring and
+        // submission from a registered company's, and every one of the defects that
+        // followed came from that divergence - a mismatched name/number pair left in
+        // the invoice form, the "name and number travel together" invariant broken,
+        // and a REQUIRED identification field left empty and unfillable on countries
+        // whose address format demands one.
+        //
+        // A `TWO:` number IS an organisation number and is stored, paired, mirrored,
+        // validated and routed identically to any other - including for registered
+        // companies in countries that legitimately carry one, which is why this is not
+        // a sole-trader concept at all. The only difference is COSMETIC: the field
+        // holding it is hidden from the buyer by
+        // syncInternalIdentifierVisibility(), which changes presentation and nothing
+        // else. Keeping the real value in the field is precisely what leaves a
+        // required field satisfied and a pair complete.
 
         let wrote = false;
         this.addressIdentifierFields(root).forEach(field => {
@@ -1697,7 +1705,63 @@ class TwoCompanySearch {
             wrote = true;
         });
 
+        this.syncInternalIdentifierVisibility(root);
+
         return wrote;
+    }
+
+    /**
+     * Hide the identification field when it holds an INTERNAL (`TWO:`-prefixed)
+     * identifier, and show it again when it does not (TWO-40, Doug's ruling).
+     *
+     * This is the ONLY place `TWO:` is treated specially, and it is purely
+     * presentation. The value is stored, paired, mirrored, validated and submitted
+     * exactly as any other organisation number - which is what keeps the pair
+     * complete and a required field satisfied. Nothing here reads or changes a
+     * value.
+     *
+     * Not a sole-trader rule: registered companies in some countries (the US, for
+     * one) legitimately carry a `TWO:` identifier too, so this is keyed on the value
+     * and never on how it was captured.
+     *
+     * Reuses `TwoCompanyNumber.isInternal()`, the same predicate the other three
+     * display sites already go through (the hint under the company field, the search
+     * result rows, the order-intent sentence), rather than a second prefix test. A
+     * fourth copy of the rule is how one of them stops getting the next change to it.
+     *
+     * The WRAPPER is hidden, not the input. PrestaShop renders each address field as
+     * a `.form-group` holding a label and the control, so hiding the input alone
+     * leaves an orphaned "Identification number" label with nothing under it. Falls
+     * back to the input itself on a theme that does not use that class - worse
+     * looking than an orphan label is a visible internal identifier.
+     *
+     * `display: none`, not `display: hidden` - the latter is not a valid value for
+     * that property and does nothing at all.
+     *
+     * Only ever un-hides what it hid itself, tracked by its own attribute, so a
+     * field the THEME or the merchant has hidden for their own reasons is left alone.
+     *
+     * @param {Element} [root] confine to one address block
+     * @returns {void}
+     */
+    syncInternalIdentifierVisibility(root) {
+        this.addressIdentifierFields(root).forEach(field => {
+            if (!field || field.length === 0) {
+                return;
+            }
+            const value = String(field.val() == null ? '' : field.val());
+            const group = field.closest('.form-group');
+            const target = group.length > 0 ? group : field;
+            if (window.TwoCompanyNumber.isInternal(value)) {
+                target.attr(TwoCompanySearch.INTERNAL_HIDDEN_ATTR, '1');
+                target.css('display', 'none');
+                return;
+            }
+            if (typeof target.attr(TwoCompanySearch.INTERNAL_HIDDEN_ATTR) !== 'undefined') {
+                target.removeAttr(TwoCompanySearch.INTERNAL_HIDDEN_ATTR);
+                target.css('display', '');
+            }
+        });
     }
 
     /**
@@ -1778,6 +1842,11 @@ class TwoCompanySearch {
             field.trigger('input');
             field.trigger('change');
         });
+
+        // The field may have been hidden for holding an internal identifier; it is
+        // empty now, so it has to come back. Paired with the write side so the two
+        // cannot drift.
+        this.syncInternalIdentifierVisibility();
     }
 
     /**
@@ -1980,8 +2049,10 @@ class TwoCompanySearch {
         'organization',
         'country',
         'address1',
+        'address2',
         'postcode',
         'city',
+        'state',
     ];
 
     /**
@@ -2126,10 +2197,33 @@ class TwoCompanySearch {
             record('organization', field, liveValue(field), '');
         });
 
-        ['address1', 'postcode', 'city'].forEach(name => {
+        // `address2` is here because the sole-trader autofill routes building and
+        // apartment into it (TWO-40, Doug's ruling): a buyer typing a second address
+        // line is stating an independent answer exactly as much as one typing a city,
+        // so it pins the address like any other field. Omitting it would have made
+        // the address-wide rule miss a real case of buyer-entered data.
+        ['address1', 'address2', 'postcode', 'city'].forEach(name => {
             const field = $(root).find(`input[name='${name}']`).first();
             record(name, field, liveValue(field), '');
         });
+
+        // The state/county select, where the autofill routes `region` on countries
+        // that have one. Compared on the option's TEXT rather than its value, for the
+        // same reason the country is compared on ISO: the id is shop-local, so a
+        // record written on one shop would be unreadable on another. Treated like the
+        // country select in the other respect too - "unanswered" means still the
+        // value the server rendered, because a select is never empty.
+        const stateSelect = $(root).find("select[name='id_state'], select[name='state']").first();
+        if (stateSelect.length > 0) {
+            const toName = value => this.stateNameForOptionValue(stateSelect[0], value);
+            record(
+                'state',
+                stateSelect,
+                toName(liveValue(stateSelect)),
+                toName(this.serverRenderedSelectValue(stateSelect[0])),
+                toName
+            );
+        }
 
         const select = $(root).find("select[name='id_country'], select[name='country']").first();
         if (select.length > 0) {
@@ -2635,12 +2729,9 @@ class TwoCompanySearch {
         // harmlessly - but a mirrored COUNTRY write can rebuild this form into one
         // that does have the field, and then it is owed to a form that can take it.
         //
-        // An identifier the GATE refused is a different thing from one with nowhere
-        // to go, and must not be recorded as owing: no future form will ever be
-        // allowed to take it, so a debt is a retry on every mount that can never
-        // succeed. Only the genuinely-nowhere-to-put-it case owes.
-        memory.organizationPending = (wroteCompany && identifierFields.length === 0
-            && !window.TwoCompanyNumber.isInternal(selection.companyid))
+        // No `TWO:` carve-out here either: with the write gate gone, an internal
+        // identifier owes and settles exactly as any other number does.
+        memory.organizationPending = (wroteCompany && identifierFields.length === 0)
             ? selection.companyid
             : '';
         memory.countryValue = countryValue;
@@ -4946,8 +5037,15 @@ class TwoCompanySearch {
         const street = address.street_address || address.streetAddress || address.street || address.address_line_1 || address.addressLine1 || '';
         const postal = address.postal_code || address.postalCode || address.zip || address.zip_code || '';
         const city = address.city || address.locality || '';
+        // `address2` is written only when the address actually carries a second line.
+        // The key is absent on every company-lookup address, which coalesces to '' -
+        // and an empty incoming value takes the branch below that clears ONLY a value
+        // this class wrote itself, so an unrelated selection can never blank a second
+        // line the buyer typed. See autoFillSoleTraderAddress() for what fills it.
+        const secondLine = address.address_line_2 || address.addressLine2 || address.address2 || '';
         const fieldMappings = {
             'address1': street,
+            'address2': secondLine,
             'postcode': postal,
             'city': city
         };
@@ -5333,14 +5431,18 @@ class TwoCompanySearch {
      * input event in the company field. That single mechanism is what killed all
      * three previous attempts.
      *
-     * Two values in the response are deliberately NOT written, and both are
-     * rulings rather than omissions:
+     * A `TWO:`-prefixed organisation number is written like ANY OTHER, into both the
+     * hidden `companyid` and the visible identification field (Doug's ruling,
+     * TWO-40). It is not a sole-trader concept - registered companies in some
+     * countries carry one too - and treating it as ordinary data is what keeps the
+     * name/number pair complete and a required identification field satisfied. The
+     * only concession is cosmetic: syncInternalIdentifierVisibility() hides the field
+     * holding it. An earlier round refused the write instead, and every defect that
+     * followed came from that one divergence.
      *
-     *  - a `TWO:`-prefixed organisation number never reaches the VISIBLE
-     *    identification field. It is an internal identifier and must never be
-     *    shown to the buyer anywhere (TWO-25326 §12, see TwoCompanyNumber). It
-     *    still goes into the hidden `companyid`, which is data and not display,
-     *    and is still what the order payload carries;
+     * One value in the response IS deliberately not written, and it is a ruling
+     * rather than an omission:
+     *
      *  - the COUNTRY is not written at all, though the response carries one.
      *    `country_code` is the country the sole trader is REGISTERED in, while the
      *    enrolment's token - and the session company the completion has just
@@ -5489,18 +5591,27 @@ class TwoCompanySearch {
             }
 
             // Visible identification field, through the single gate every other
-            // organisation-number write uses - so the address-lookup switch governs
-            // this exactly as it governs the rest, AND the internal-identifier
-            // suppression lives in one place instead of at this call site. It has to
-            // be at the gate: the submit-time sync copies whatever `companyid` holds
-            // straight into `dni`, so a test here alone would let a `TWO:` number
-            // reach the buyer by another route.
+            // organisation-number write uses, so the address-lookup switch governs
+            // this exactly as it governs the rest. No value is exempt - an internal
+            // identifier goes in like any other and is hidden from view there, not
+            // withheld from the field.
             this.writeOrganizationToAddressIdentifiers(number, false, secondaryRoot || undefined);
         }
 
+        // Street/building/apartment/postcode/city, then the region - which is applied
+        // AFTER the fill, because on a form with no state field it appends to the CITY
+        // the fill has just written, and must see the final value rather than the one
+        // it replaced. Same scope gating for both.
+        const source = (buyer.billing_address || buyer.shipping_address || null);
         const filled = scopelessInvoiceForm
             ? {}
-            : this.autoFillSoleTraderAddress(buyer, secondaryRoot);
+            : Object.assign(
+                {},
+                this.autoFillSoleTraderAddress(buyer, secondaryRoot),
+                (source && typeof source === 'object')
+                    ? this.autoFillRegion(source, secondaryRoot)
+                    : {}
+            );
         if (Object.keys(filled).length > 0) {
             wrote = true;
         }
@@ -5561,9 +5672,167 @@ class TwoCompanySearch {
             return {};
         }
 
+        const street = String(source.street == null ? '' : source.street).trim();
+        const building = String(source.building == null ? '' : source.building).trim();
+        const apartment = String(source.apartment == null ? '' : source.apartment).trim();
+
+        // Doug's routing rule. Where a building or apartment is given it is the more
+        // specific locator and takes the FIRST line, with the street moving to the
+        // second; where neither is given the street takes the first line and the
+        // second is left alone.
+        //
+        // With both present they are joined most-specific-first, which is how an
+        // address is read aloud ("Apartment 4, Kelburnfoot").
+        //
+        // NO de-duplication against the street, on Doug's explicit ruling: it is
+        // valid for an address to carry the same text on both lines, so suppressing a
+        // second line that matches the first would be discarding real data. An
+        // earlier round proposed exactly that and it was wrong.
+        const locator = [apartment, building].filter(Boolean).join(', ');
+        const resolved = Object.assign({}, source);
+        if (locator) {
+            resolved.street = locator;
+            resolved.address_line_2 = street;
+        }
+
         return secondaryRoot
-            ? this.autoFillAddress([source], secondaryRoot)
-            : this.autoFillAddress([source]);
+            ? this.autoFillAddress([resolved], secondaryRoot)
+            : this.autoFillAddress([resolved]);
+    }
+
+    /**
+     * The state/county name an option VALUE in a state select stands for, or ''.
+     *
+     * Compared and recorded on the option's TEXT, never its value: PrestaShop state
+     * ids are shop-local, so a record written on one shop would be meaningless on
+     * another - the same reason the country is carried as an ISO code. See
+     * mirroredAddressFieldStates().
+     *
+     * @param {HTMLSelectElement} select
+     * @param {string} optionValue
+     * @returns {string}
+     */
+    stateNameForOptionValue(select, optionValue) {
+        const value = String(optionValue == null ? '' : optionValue).trim();
+        if (!value || !select || !select.options) {
+            return '';
+        }
+        for (let index = 0; index < select.options.length; index++) {
+            if (select.options[index].value === value) {
+                return String(select.options[index].text || '').trim();
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * The option VALUE in a state select whose name matches a free-text region, or
+     * null when there is no such option.
+     *
+     * Best-effort by design, and the limits are worth stating: the autofill response
+     * gives a region as a NAME with no code beside it, while PrestaShop needs a state
+     * id. So the only available join is on the visible label, trimmed and
+     * case-folded, with the two-letter abbreviation accepted as well because several
+     * registries return "CA" where the shop shows "California". A region that
+     * matches nothing writes nothing rather than guessing.
+     *
+     * @param {HTMLSelectElement} select
+     * @param {string} region
+     * @returns {?string}
+     */
+    stateOptionValueForRegion(select, region) {
+        const target = this.normalizeMirroredValue(region);
+        if (!target || !select || !select.options) {
+            return null;
+        }
+        for (let index = 0; index < select.options.length; index++) {
+            const option = select.options[index];
+            if (!option.value) {
+                continue;
+            }
+            const name = this.normalizeMirroredValue(option.text);
+            const iso = this.normalizeMirroredValue(
+                option.getAttribute('data-iso-code') || option.getAttribute('data-iso') || ''
+            );
+            if (name === target || (iso !== '' && iso === target)) {
+                return option.value;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Put the response's `region` somewhere, on Doug's ruling that it must land
+     * rather than be dropped (TWO-40).
+     *
+     * Two destinations, in order:
+     *
+     *  - the form's own state/county select, when the country has one. Matched on the
+     *    visible name, best-effort - see stateOptionValueForRegion() for why that is
+     *    the only join available;
+     *  - otherwise appended to the CITY with a comma. Most countries render no state
+     *    field at all (GB among them), and the alternative to appending is losing the
+     *    region entirely.
+     *
+     * The city append writes through the same marker-and-record machinery as every
+     * other field, so `"Ashford, Kent"` is attributable as ours and does not read as
+     * buyer-authored on the next render. It deliberately does NOT append twice: the
+     * value already carrying the region is left alone.
+     *
+     * @param {Object} source the response address
+     * @param {?Element} root
+     * @returns {Object} partial record of what this wrote
+     */
+    autoFillRegion(source, root) {
+        if (!this.isAddressLookupEnabled()) {
+            return {};
+        }
+        const region = String(source.region == null ? '' : source.region).trim();
+        if (!region) {
+            return {};
+        }
+
+        const scope = root ? $(root) : $(document);
+        const select = scope.find("select[name='id_state'], select[name='state']").first();
+        if (select.length > 0) {
+            const optionValue = this.stateOptionValueForRegion(select[0], region);
+            if (optionValue === null) {
+                return {};
+            }
+            const accepted = this.mirrorWriteAcceptedValues(
+                'state',
+                this.serverRenderedSelectValue(select[0]),
+                name => {
+                    const match = this.stateOptionValueForRegion(select[0], String(name));
+                    return match === null ? '' : match;
+                }
+            );
+            return this.writeMirroredValue(select, optionValue, accepted)
+                ? { state: this.stateNameForOptionValue(select[0], optionValue) }
+                : {};
+        }
+
+        const cityField = scope.find("input[name='city']").first();
+        if (cityField.length === 0) {
+            return {};
+        }
+        const current = String(cityField.val() == null ? '' : cityField.val()).trim();
+        if (!current) {
+            return {};
+        }
+        if (this.normalizeMirroredValue(current).endsWith(this.normalizeMirroredValue(region))) {
+            // Already carries it - appending again would grow the value on every pass.
+            return {};
+        }
+        const combined = current + ', ' + region;
+        cityField.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR, combined);
+        cityField.val(combined);
+        cityField.trigger('input');
+        cityField.trigger('change');
+
+        return { city: combined };
     }
 
     /**

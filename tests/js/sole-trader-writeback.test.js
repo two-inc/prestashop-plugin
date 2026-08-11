@@ -91,10 +91,10 @@ const BUYER_NAMELESS = Object.assign({}, BUYER_REAL_NUMBER, {
 
 /**
  * The captured response happens to carry a `building` byte-identical to its
- * `street`, which makes the street -> `address1` mapping unobservable: every
- * assertion about it passes just as well if the fill reads `building` instead.
- * This variant distinguishes the two so the mapping - and the documented DROP of
- * `building`/`apartment`/`region` - can actually be asserted.
+ * `street`, which makes the two-line ROUTING unobservable: every assertion about
+ * which line got which value passes just as well with the two swapped. This
+ * variant makes street, building, apartment and region four distinguishable
+ * values, so the routing can actually be asserted.
  */
 const BUYER_DISTINCT_BUILDING = Object.assign({}, BUYER_REAL_NUMBER, {
     billing_address: Object.assign({}, REAL_BUYER.billing_address, {
@@ -103,6 +103,16 @@ const BUYER_DISTINCT_BUILDING = Object.assign({}, BUYER_REAL_NUMBER, {
         region: 'Kent'
     })
 });
+
+/**
+ * @param {Object} overrides merged over REAL_BUYER's captured billing address
+ * @returns {Object} a buyer carrying that address and a real register number
+ */
+function buyerWithAddress(overrides) {
+    return Object.assign({}, BUYER_REAL_NUMBER, {
+        billing_address: Object.assign({}, REAL_BUYER.billing_address, overrides)
+    });
+}
 
 let TwoCompanySearch;
 let $;
@@ -239,24 +249,53 @@ describe('the survival test: the pair must outlive an ordinary input event, but 
     });
 });
 
-describe('the internal (`TWO:`) identifier is never shown to the buyer, a real one always is', () => {
-    test('a TWO:-prefixed number is not written into the visible identification field, but does reach the hidden pairing', () => {
+/**
+ * THE REVERSAL (Doug's ruling, TWO-40). An internal (`TWO:`) organisation number is
+ * handled EXACTLY like any other everywhere except display.
+ *
+ * An earlier round refused to WRITE one, on the reasoning that an internal
+ * identifier must never be shown to the buyer. Refusing the write was the wrong
+ * lever: it sent a sole trader's number down a different path through storage,
+ * pairing, mirroring and submission from a registered company's, and left a
+ * REQUIRED identification field empty and unfillable on the countries that demand
+ * one. The tests below pin the inverse, so a re-introduction of the gate fails
+ * here rather than shipping.
+ */
+describe('an internal (`TWO:`) identifier is written like any other number, and only HIDDEN', () => {
+    test('a TWO:-prefixed number IS written into the identification field, marked, alongside the hidden pairing', () => {
         buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION });
 
         mount().adoptSoleTraderBuyer(BUYER_INTERNAL_NUMBER);
 
-        expect(identifierField().val()).toBe('');
-        expect(identifierField().attr(MARKER)).toBeUndefined();
+        expect(identifierField().val()).toBe('TWO:ST123456789012');
+        expect(identifierField().attr(MARKER)).toBe('TWO:ST123456789012');
         expect(organizationField().val()).toBe('TWO:ST123456789012');
     });
 
-    test('a real register number IS written into the visible identification field, marked', () => {
-        buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION });
+    test('and the field holding it is hidden by its wrapper, so the buyer never reads it', () => {
+        buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION, formGroups: true });
+
+        mount().adoptSoleTraderBuyer(BUYER_INTERNAL_NUMBER);
+
+        const group = identifierField().closest('.form-group');
+        expect(group.length).toBe(1);
+        expect(group.css('display')).toBe('none');
+        expect(group.attr(TwoCompanySearch.INTERNAL_HIDDEN_ATTR)).toBe('1');
+        // The INPUT itself is untouched: hiding it alone would leave an orphaned
+        // "Identification number" label with nothing under it.
+        expect(identifierField().get(0).style.display).toBe('');
+    });
+
+    test('a real register number IS written into the visible identification field, marked, and left visible', () => {
+        buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION, formGroups: true });
 
         mount().adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
 
         expect(identifierField().val()).toBe(REGISTER_NUMBER);
         expect(identifierField().attr(MARKER)).toBe(REGISTER_NUMBER);
+        const group = identifierField().closest('.form-group');
+        expect(group.css('display')).not.toBe('none');
+        expect(group.attr(TwoCompanySearch.INTERNAL_HIDDEN_ATTR)).toBeUndefined();
     });
 });
 
@@ -466,7 +505,10 @@ describe('a sole trader with NO trading name: no identity, no residue, but the a
         const wrote = search.adoptSoleTraderBuyer(BUYER_NAMELESS);
 
         expect(wrote).toBe(true);
-        expect($("input[name='address1']").val()).toBe('Second Registered Street');
+        // The BUILDING takes the first line and the street moves to the second - the
+        // routing rule, which applies here as everywhere. This fixture renders no
+        // `address2`, so the street simply has nowhere to go.
+        expect($("input[name='address1']").val()).toBe('Second Registered Building');
         expect($("input[name='postcode']").val()).toBe('CT16 1AA');
         expect($("input[name='city']").val()).toBe('Dover');
     });
@@ -506,23 +548,55 @@ describe('soleTraderPairReport(): three outcomes for the identification field, n
         expect(record.organization).toBe(REGISTER_NUMBER);
     });
 
-    test('EMPTY: an internal (`TWO:`) number is suppressed, so `organization` is reported EMPTY', () => {
+    /**
+     * The internal-identifier case is NO LONGER one of the three (Doug's ruling,
+     * TWO-40): a `TWO:` number lands in the field like any other, so it takes the
+     * LANDED branch. The EMPTY branch is reached the way the production comment
+     * names it instead - the nameless-buyer clear.
+     */
+    test('LANDED: an internal (`TWO:`) number is reported as itself, exactly as a real one is', () => {
         buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
 
         mount().adoptSoleTraderBuyer(BUYER_INTERNAL_NUMBER);
 
-        // The gate declined the write, so the field is empty - and '' is the truthful
-        // report, and the only thing that retracts a number an earlier mirror pass
-        // recorded writing there.
+        expect($("#invoice-address input[name='dni']").val()).toBe('TWO:ST123456789012');
+        expect(window.twopayment.mirror_writes).toEqual({
+            company: 'Sole Trader Test Co',
+            organization: 'TWO:ST123456789012',
+            address1: 'Wharf Lane',
+            postcode: 'TN23 1AA',
+            city: 'Ashford'
+        });
+    });
+
+    test('EMPTY: the nameless-buyer clear empties the field, so `organization` is RETRACTED', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        enableEndpointCalls();
+        const search = mount();
+
+        // A real selection this class wrote and recorded a moment ago - the state the
+        // retraction has to undo.
+        search.adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
+        expect($("#invoice-address input[name='dni']").val()).toBe(REGISTER_NUMBER);
+        expect(window.twopayment.mirror_writes.organization).toBe(REGISTER_NUMBER);
+
+        search.adoptSoleTraderBuyer(BUYER_NAMELESS);
+
+        // '' is the truthful report, and the only thing that retracts the number the
+        // pass above recorded writing there. An ABSENT key would leave the record
+        // claiming a number the form no longer holds - the exact mismatch the pin
+        // reads as buyer tampering.
         expect($("#invoice-address input[name='dni']").val()).toBe('');
         const record = window.twopayment.mirror_writes;
         expect(Object.prototype.hasOwnProperty.call(record, 'organization')).toBe(true);
         expect(record).toEqual({
+            // Unchanged from the pass above: a nameless buyer writes no name, so the
+            // company half of the record is neither restated nor retracted.
             company: 'Sole Trader Test Co',
             organization: '',
-            address1: 'Wharf Lane',
-            postcode: 'TN23 1AA',
-            city: 'Ashford'
+            address1: 'Second Registered Building',
+            postcode: 'CT16 1AA',
+            city: 'Dover'
         });
     });
 
@@ -540,14 +614,29 @@ describe('soleTraderPairReport(): three outcomes for the identification field, n
     test('ANOTHER VALUE: a number the gate declined to replace is OMITTED, not claimed and not retracted', () => {
         buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
         // The buyer's own identification number, already in the invoice block. The
-        // buyer below carries an internal (`TWO:`) number, so the gate declines the
-        // write and this value survives - which is the third outcome: the field holds
-        // SOMETHING, but not ours.
+        // address-lookup switch is off below, so the write is declined and this value
+        // survives - the third outcome: the field holds SOMETHING, but not ours.
+        // (Reached this way and not via a `TWO:` value, which no longer refuses.)
         $("#invoice-address input[name='dni']").val('BUYER-OWN-ID');
 
-        mount().adoptSoleTraderBuyer(BUYER_INTERNAL_NUMBER);
+        mount({ addressLookupEnabled: false }).adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
 
         expect($("#invoice-address input[name='dni']").val()).toBe('BUYER-OWN-ID');
+        const record = window.twopayment.mirror_writes;
+        expect(Object.prototype.hasOwnProperty.call(record, 'organization')).toBe(false);
+        // The company name is written unconditionally - it is not an address-lookup
+        // write - and the address fill is gated, so nothing else is reported.
+        expect(record).toEqual({ company: 'Sole Trader Test Co' });
+    });
+
+    test('ANOTHER VALUE: a form with NO identification field omits the key too', () => {
+        // Germany, the default render: nothing to read back, so there is nothing to
+        // claim and nothing to retract.
+        buildAddressesStep({ editing: 'invoice' });
+
+        mount().adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
+
+        expect($("#invoice-address input[name='dni']").length).toBe(0);
         const record = window.twopayment.mirror_writes;
         expect(Object.prototype.hasOwnProperty.call(record, 'organization')).toBe(false);
         expect(record).toEqual({
@@ -586,32 +675,242 @@ describe('the invoice form is on screen but cannot be scoped to one address bloc
     });
 });
 
-describe('only the STREET reaches the form: building, apartment and region are dropped', () => {
-    test('address1 holds the street, and an address2 the country format renders stays empty', () => {
-        buildAddressesStep({ editing: 'delivery' });
-        // `address2` is a real PrestaShop address field - core renders it for the
-        // country formats that ask for it - and the harness fixture omits it, so a
-        // fill that widened into it would be invisible here without this.
+/**
+ * Doug's ADDRESS ROUTING rule (TWO-40): the building/apartment locator is the more
+ * specific of the two and takes the FIRST line, pushing the street to the second.
+ * Where neither is given the street takes the first line and the second is left
+ * alone.
+ *
+ * `address2` is a real PrestaShop address field - core renders it for the country
+ * formats that ask for it - and the harness fixture omits it, so every test here
+ * inserts one. Without it a fill that reached `address2` would be invisible.
+ */
+describe('address routing: a building or apartment takes the first line, the street moves to the second', () => {
+    /**
+     * @returns {void}
+     */
+    function addSecondLine() {
         $("input[name='address1']").after("<input type='text' name='address2' value='' />");
+    }
+
+    function line1() {
+        return $("input[name='address1']");
+    }
+
+    function line2() {
+        return $("input[name='address2']");
+    }
+
+    test('both a building and an apartment: joined most-specific-first on line one, street on line two', () => {
+        buildAddressesStep({ editing: 'delivery' });
+        addSecondLine();
 
         mount().adoptSoleTraderBuyer(BUYER_DISTINCT_BUILDING);
 
-        expect($("input[name='address1']").val()).toBe('Wharf Lane');
-        expect($("input[name='address1']").attr(MARKER)).toBe('Wharf Lane');
-        expect($("input[name='address2']").val()).toBe('');
-        expect($("input[name='address2']").attr(MARKER)).toBeUndefined();
+        // How an address is read aloud: "Flat 9, Unit 4 Wharf Court".
+        expect(line1().val()).toBe('Flat 9, Unit 4 Wharf Court');
+        expect(line1().attr(MARKER)).toBe('Flat 9, Unit 4 Wharf Court');
+        expect(line2().val()).toBe('Wharf Lane');
+        expect(line2().attr(MARKER)).toBe('Wharf Lane');
     });
 
-    test('no field anywhere on the page receives the building, apartment or region', () => {
+    test('a building alone takes line one', () => {
         buildAddressesStep({ editing: 'delivery' });
-        $("input[name='address1']").after("<input type='text' name='address2' value='' />");
+        addSecondLine();
+
+        mount().adoptSoleTraderBuyer(buyerWithAddress({
+            building: 'Unit 4 Wharf Court',
+            apartment: '',
+            street: 'Wharf Lane'
+        }));
+
+        expect(line1().val()).toBe('Unit 4 Wharf Court');
+        expect(line2().val()).toBe('Wharf Lane');
+    });
+
+    test('an apartment alone takes line one', () => {
+        buildAddressesStep({ editing: 'delivery' });
+        addSecondLine();
+
+        mount().adoptSoleTraderBuyer(buyerWithAddress({
+            building: '',
+            apartment: 'Flat 9',
+            street: 'Wharf Lane'
+        }));
+
+        expect(line1().val()).toBe('Flat 9');
+        expect(line2().val()).toBe('Wharf Lane');
+    });
+
+    test('neither: the street takes line one and line two is left alone', () => {
+        buildAddressesStep({ editing: 'delivery' });
+        addSecondLine();
+
+        mount().adoptSoleTraderBuyer(buyerWithAddress({
+            building: '',
+            apartment: '',
+            street: 'Wharf Lane'
+        }));
+
+        expect(line1().val()).toBe('Wharf Lane');
+        expect(line1().attr(MARKER)).toBe('Wharf Lane');
+        expect(line2().val()).toBe('');
+        expect(line2().attr(MARKER)).toBeUndefined();
+    });
+
+    /**
+     * NO DE-DUPLICATION, on Doug's explicit ruling. The captured response is exactly
+     * this shape - `building` byte-identical to `street` - and it is valid for an
+     * address to carry the same text on both lines. An earlier round added a dedup
+     * that suppressed the second line, and it was rejected: suppressing it discards
+     * real data.
+     */
+    test('a building EQUAL to the street writes that same text to BOTH lines - no dedup', () => {
+        buildAddressesStep({ editing: 'delivery' });
+        addSecondLine();
+
+        mount().adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
+
+        expect(REAL_BUYER.billing_address.building).toBe(REAL_BUYER.billing_address.street);
+        expect(line1().val()).toBe('Wharf Lane');
+        expect(line2().val()).toBe('Wharf Lane');
+        expect(line1().attr(MARKER)).toBe('Wharf Lane');
+        expect(line2().attr(MARKER)).toBe('Wharf Lane');
+    });
+
+    /**
+     * The ORDINARY company lookup, whose addresses carry no `building`, `apartment`
+     * or `address_line_2` key at all. Those coalesce to '', and an empty incoming
+     * value may only clear a value this class wrote itself - so a second line the
+     * BUYER typed survives a company selection.
+     */
+    test('a company-lookup address does not blank an address2 the buyer typed', () => {
+        buildAddressesStep({ editing: 'delivery' });
+        addSecondLine();
+        line2().val('Buyer Second Line');
+
+        mount().autoFillAddress([{ street: 'Register Street', postal_code: 'RG1 1RG', city: 'Reading' }]);
+
+        expect(line1().val()).toBe('Register Street');
+        expect(line2().val()).toBe('Buyer Second Line');
+        expect(line2().attr(MARKER)).toBeUndefined();
+    });
+});
+
+/**
+ * Doug's REGION routing rule (TWO-40): the response's `region` must LAND rather
+ * than be dropped. Into the form's own state/county select where the country has
+ * one, and appended to the city where it does not - most countries (GB among them)
+ * render no state field at all, and the alternative to appending is losing it.
+ */
+describe('region routing: the state select where there is one, the city where there is not', () => {
+    /**
+     * A state select in the editable form, in core's own shape.
+     *
+     * @param {Array<Array<string>>} options `[value, text, isoAttr]` triples
+     * @returns {void}
+     */
+    function addStateSelect(options) {
+        const html = ['<select name="id_state">', '<option value="" selected>-</option>']
+            .concat(options.map(([value, text, iso]) => '<option value="' + value + '"'
+                + (iso ? ' data-iso-code="' + iso + '"' : '') + '>' + text + '</option>'))
+            .concat(['</select>'])
+            .join('');
+        $("input[name='city']").after(html);
+    }
+
+    function stateSelect() {
+        return $("select[name='id_state']");
+    }
+
+    test('a matching option is selected, and the record carries the option TEXT rather than its shop-local value', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        addStateSelect([['31', 'Kent'], ['32', 'Surrey']]);
 
         mount().adoptSoleTraderBuyer(BUYER_DISTINCT_BUILDING);
 
-        const values = $('input').map(function () { return $(this).val(); }).get();
-        expect(values).not.toContain('Unit 4 Wharf Court');
-        expect(values).not.toContain('Flat 9');
-        expect(values).not.toContain('Kent');
+        expect(stateSelect().val()).toBe('31');
+        // `state: 'Kent'`, never `state: '31'`: PrestaShop state ids are shop-local, so
+        // a record written on one shop would be meaningless on another.
+        expect(window.twopayment.mirror_writes.state).toBe('Kent');
+    });
+
+    test('matched on the visible text, trimmed and case-folded', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        addStateSelect([['31', '  KENT  ']]);
+
+        mount().adoptSoleTraderBuyer(BUYER_DISTINCT_BUILDING);
+
+        expect(stateSelect().val()).toBe('31');
+        expect(window.twopayment.mirror_writes.state).toBe('KENT');
+    });
+
+    test('or on a data-iso-code, for a registry that returns the abbreviation', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        addStateSelect([['9', 'California', 'CA'], ['10', 'Nevada', 'NV']]);
+
+        mount().adoptSoleTraderBuyer(buyerWithAddress({ region: 'CA' }));
+
+        expect(stateSelect().val()).toBe('9');
+        expect(window.twopayment.mirror_writes.state).toBe('California');
+    });
+
+    test('a region matching NO option writes nothing rather than guessing', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        addStateSelect([['32', 'Surrey']]);
+
+        mount().adoptSoleTraderBuyer(BUYER_DISTINCT_BUILDING);
+
+        expect(stateSelect().val()).toBe('');
+        expect(stateSelect().attr(MARKER)).toBeUndefined();
+        expect(Object.prototype.hasOwnProperty.call(window.twopayment.mirror_writes, 'state')).toBe(false);
+        // And it does not fall back to the city append: the form HAS a state field.
+        expect($("#invoice-address input[name='city']").val()).toBe('Ashford');
+    });
+
+    test('a form with NO state select appends the region to the city, marked and recorded', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        expect($("select[name='id_state']").length).toBe(0);
+
+        mount().adoptSoleTraderBuyer(BUYER_DISTINCT_BUILDING);
+
+        const city = $("#invoice-address input[name='city']");
+        expect(city.val()).toBe('Ashford, Kent');
+        expect(city.attr(MARKER)).toBe('Ashford, Kent');
+        expect(window.twopayment.mirror_writes.city).toBe('Ashford, Kent');
+    });
+
+    test('and never appends twice - a city already ending in the region is left alone', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        const search = mount();
+
+        search.adoptSoleTraderBuyer(BUYER_DISTINCT_BUILDING);
+        expect($("#invoice-address input[name='city']").val()).toBe('Ashford, Kent');
+
+        // A second pass, exactly as a re-mount produces.
+        search.adoptSoleTraderBuyer(BUYER_DISTINCT_BUILDING);
+
+        expect($("#invoice-address input[name='city']").val()).toBe('Ashford, Kent');
+    });
+
+    test('an empty region writes nothing at all - the captured response carries one', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+
+        mount().adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
+
+        expect(REAL_BUYER.billing_address.region).toBe('');
+        expect($("#invoice-address input[name='city']").val()).toBe('Ashford');
+        expect(window.twopayment.mirror_writes.city).toBe('Ashford');
+    });
+
+    test('the address-lookup switch off suppresses the region too', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        addStateSelect([['31', 'Kent']]);
+
+        mount({ addressLookupEnabled: false }).adoptSoleTraderBuyer(BUYER_DISTINCT_BUILDING);
+
+        expect(stateSelect().val()).toBe('');
+        expect($("#invoice-address input[name='city']").val()).toBe('');
     });
 });
 
@@ -780,7 +1079,7 @@ describe('a pre-filled secondary address is still written into (the pin does not
         expect($("#invoice-address input[name='dni']").attr(MARKER)).toBeUndefined();
         expect(hintField().text()).toBe('');
         // And the nameless buyer's own registered address lands.
-        expect($("#invoice-address input[name='address1']").val()).toBe('Second Registered Street');
+        expect($("#invoice-address input[name='address1']").val()).toBe('Second Registered Building');
         expect($("#invoice-address input[name='postcode']").val()).toBe('CT16 1AA');
         expect($("#invoice-address input[name='city']").val()).toBe('Dover');
         // Still never the server session company `saveCompany` has just written.
@@ -793,17 +1092,29 @@ describe('the submit-time sync passes through the same single gate', () => {
         companyField().closest('form').triggerHandler('submit');
     }
 
-    test('an internal (`TWO:`) companyid is NOT copied into the visible identification field at submit', () => {
-        buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION });
+    /**
+     * THE INVERSE of what an earlier round pinned here. The old assertion was that a
+     * `TWO:` companyid is NOT copied into the identification field at submit; Doug's
+     * ruling (TWO-40) is that it is copied like any other number and only hidden. A
+     * re-introduction of the refusal fails this test.
+     */
+    test('an internal (`TWO:`) companyid IS copied into the identification field at submit, and hidden there', () => {
+        buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION, formGroups: true });
         const search = mount();
-        search.adoptSoleTraderBuyer(BUYER_INTERNAL_NUMBER);
-        expect(organizationField().val()).toBe('TWO:ST123456789012');
+        // The pair a selection establishes, through the class's own writer, leaving the
+        // identification field empty for the submit sync to fill.
+        search.markOrganizationFieldSelected('Sole Trader Test Co', 'TWO:ST123456789012');
         expect(identifierField().val()).toBe('');
 
         submitAddressForm();
 
-        expect(identifierField().val()).toBe('');
-        expect(identifierField().attr(MARKER)).toBeUndefined();
+        expect(identifierField().val()).toBe('TWO:ST123456789012');
+        expect(identifierField().attr(MARKER)).toBe('TWO:ST123456789012');
+        // Written, then hidden - the sync calls the same visibility pass the write
+        // side does.
+        const group = identifierField().closest('.form-group');
+        expect(group.css('display')).toBe('none');
+        expect(group.attr(TwoCompanySearch.INTERNAL_HIDDEN_ATTR)).toBe('1');
     });
 
     test('a REAL organisation number still reaches it at submit - the gate did not break the ordinary path', () => {
