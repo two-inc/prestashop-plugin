@@ -725,17 +725,31 @@ makes core substitute the ambient shop rather than NULL. That is why this has to
 ## The file-swap window, which is a separate problem and does not go away
 
 A deploy that only replaces module files does **not** run upgrade scripts; that needs the back-office
-Module Manager or `dev/ci/upgrade-module.sh`. The git-synced shops update by file swap. So between the
-swap and someone opening the back office, the new key is absent while the old row is still in the DB —
-and because `getAddressLookupEnabled()` keys off the same resolver, a tile-mode merchant would get the
-search back in the address area **and** address autofill re-enabled, on a live storefront, silently,
-for as long as nobody visits the back office.
+**Module Manager → Upgrade** action or `dev/ci/upgrade-module.sh`, and nothing else — in particular the
+module's own *configuration* page does not run them, no PrestaShop code path executes `upgrade/*.php`
+from there. The git-synced shops update by file swap. So between the swap and the upgrade actually being
+run, the new key is absent while the old row is still in the DB, and a tile-mode merchant gets the
+search back in the address area, on a live storefront, silently, for as long as nobody runs the upgrade.
+
+Address autofill comes back with it **only where `PS_TWO_ADDRESS_LOOKUP` is absent or `1`**.
+`getAddressLookupEnabled()` force-returns `'0'` while the search is not in the address area, so once the
+resolver flips back to the address-area default it reads that row again — but a shop that picked tile
+mode *through the admin form* had the row written to `0` by the same save (the write is gated on
+`isAddressLookupSettingAvailable()`), so autofill stays off there. The autofill half of the window
+therefore bites shops whose tile mode was seeded programmatically, as the e2e tile-location spec does,
+not ones that clicked it in the back office.
+
+The same window is also why the 2.7.6 copy is guarded on the **new** key, not only on the old one: a
+merchant can save a position through the config page before any upgrade runs, and an unguarded copy
+would later put the stale old row back over it. The guard uses the resolving read and treats `''` as
+absent, deliberately not `Configuration::hasKey()` — which counts an empty row as set and would suppress
+a copy the module itself needs.
 
 **Doug ruled: no shim.** His instruction was "not a permanent alias", and 2.7.6 shipped with no read
 shim of any kind — the window is real, unmitigated in code, and documented instead (in
-`upgrade/upgrade-2.7.6.php`'s header and the CHANGELOG entry): opening the module's configuration page
-once after a file-swap deploy is a mandatory release step. That is option two below. The three options
-are kept as the record of what was weighed.
+`upgrade/upgrade-2.7.6.php`'s header and the CHANGELOG entry): running the upgrade once after a
+file-swap deploy — Module Manager → Upgrade, or `dev/ci/upgrade-module.sh` — is a mandatory release
+step. That is option two below. The three options are kept as the record of what was weighed.
 
 - **A self-expiring read shim** — the resolver reads the old key when the new one is absent, with a
   spec that turns red once the declared version reaches 2.8.0 and names what to delete. Built and
