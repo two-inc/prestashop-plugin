@@ -8702,6 +8702,13 @@ class Twopayment extends PaymentModule
      * part of a record (an organisation number that no longer belongs to the name
      * beside it) without clearing the whole thing.
      *
+     * With no loaded cart this writes NOTHING and clears nothing - see the guard
+     * below. Deliberately still `void`: a caller has no useful second move if the
+     * write is declined (there is nowhere else to keep the selection until a cart
+     * exists), every call site ignores the result today, and reporting one would
+     * invite a caller to branch on it. "Stored, or there was no cart to store it
+     * against" is the whole contract.
+     *
      * @param array $fields
      * @return void
      */
@@ -8711,8 +8718,35 @@ class Twopayment extends PaymentModule
             return;
         }
 
+        $cartId = $this->getTwoCurrentCartId();
+        if ($cartId <= 0) {
+            // No cart, so there is nothing worth writing. A record stamped 0 is
+            // unreadable by construction - readTwoCartScopedCompany() only
+            // returns a record whose stamp equals the current cart id, and that
+            // is always > 0 - and the first read that DOES have a cart would see
+            // the mismatch and clear it, taking any earlier record with it. That
+            // would also contradict the reader's own no-cart policy of never
+            // destroying a record it cannot judge.
+            //
+            // Reachable: hookActionCustomerAddressSave() fires on the My-Account
+            // address page, where the buyer need not have a cart at all.
+            //
+            // Writing nothing and clearing nothing is the only outcome that
+            // leaves an existing selection exactly as it was.
+            return;
+        }
+
         foreach ($fields as $field => $value) {
             if (!isset(self::COMPANY_SESSION_KEYS[$field])) {
+                // Centralising the keys exists to stop a write site inventing its
+                // own field name, so an unrecognised one is reported rather than
+                // silently skipped - a mistyped 'addressId' for 'address_id' would
+                // otherwise drop the buyer's address marker with no trace.
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Ignored unknown company session field "' . (string) $field
+                    . '" - known fields are ' . implode(', ', array_keys(self::COMPANY_SESSION_KEYS)),
+                    2
+                );
                 continue;
             }
 
@@ -8725,11 +8759,12 @@ class Twopayment extends PaymentModule
             $this->context->cookie->$key = (string) $value;
         }
 
-        // Stamped on every write, including when the cart id is 0: a record that
-        // cannot be tied to a cart must not be readable, and the reader treats a
-        // stamp that does not match the current cart as absent.
+        // Stamped on every write that happens at all: the reader treats a stamp
+        // that does not match the current cart as absent, so an unstamped record
+        // would be unreadable and a record left over from another cart would be
+        // readable - both are drift this single line prevents.
         $cartKey = self::COMPANY_SESSION_CART_KEY;
-        $this->context->cookie->$cartKey = (string) $this->getTwoCurrentCartId();
+        $this->context->cookie->$cartKey = (string) $cartId;
 
         // The cookie's EXPIRY is deliberately left alone here. PrestaShop's
         // Cookie carries one expiry for the whole cookie rather than one per key,
@@ -16025,6 +16060,34 @@ class Twopayment extends PaymentModule
                 && $previousRecord['id'] !== ''
                 && !$this->twoCompanyNamesMatch($previousCompanyName, (string) $address->company)
             ) {
+                // TWO-40 changed the guard above. It used to read
+                // `isset($cookie->two_company_id)`; it now asks the reader for a
+                // record and tests `$previousRecord['id'] !== ''`. For every
+                // record carrying a real organisation number the two agree, and
+                // the reader is now the only thing allowed to decide whether a
+                // record exists at all, which is the point of routing through it.
+                //
+                // They part company on ONE reachable record: organisation number
+                // present but EMPTY, with a country marker beside it. Stored
+                // whenever the order-intent handler resolves a company name with
+                // no number (storeCompanyDataInSession() writes the number as ''),
+                // which is the ordinary "typed a company, never selected one from
+                // the register" state. The old condition fired on it and unset the
+                // number (already empty - no change) AND the country marker; this
+                // one does not fire, so the marker survives.
+                //
+                // Two consequences, both deliberate here rather than overlooked:
+                //  - a "Dropped session company number" log line that reported
+                //    dropping a number that was never there stops being written;
+                //  - ajaxProcessGetCompany() now answers that stale country
+                //    marker to the browser. With an empty number the browser
+                //    blanks the company name it would previously have kept, so a
+                //    buyer whose address country changed inside one cart sees the
+                //    "enter your company name" prompt where they used to see the
+                //    "search for your company" one. Both block placement, so no
+                //    unselected company can be credit-checked either way - the
+                //    difference is which prompt, not whether the buyer is stopped.
+                //
                 // TWO-25288. The buyer saved a DIFFERENT company name with no
                 // organisation number beside it - which is what disowning a
                 // selected company looks like by the time it reaches the server.

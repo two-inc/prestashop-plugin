@@ -331,8 +331,16 @@ document without re-deciding them:
 
 Shape as built, all on `Twopayment` and reached from the front controller via `$this->module`:
 `storeTwoCartScopedCompany()` (stamps the current cart alongside whatever fields it is given; a field
-passed as null is removed), `readTwoCartScopedCompany()` (returns the record only when the stamp
-equals the current cart id, otherwise clears and reports absent), `clearTwoCartScopedCompany()`.
+passed as null is removed; an unrecognised field name is logged rather than skipped in silence),
+`readTwoCartScopedCompany()` (returns the record only when the stamp equals the current cart id,
+otherwise clears and reports absent), `clearTwoCartScopedCompany()`.
+
+With **no loaded cart the writer writes nothing and clears nothing.** A record it could only stamp `0`
+would be unreadable by construction — the reader matches the stamp against the current cart id, which
+is always greater than zero — and the next read that *did* have a cart would clear it as belonging to
+another cart, destroying whatever was already there. Declining is also what the reader's own no-cart
+policy promises. The reachable caller is `hookActionCustomerAddressSave()` on the My-Account address
+page, where the buyer need not have a cart at all.
 
 A cookie written before this change carries no stamp, so it reads as absent and is cleared. That is
 intended — there is no migration, and the whole cost is that the buyer re-picks their company.
