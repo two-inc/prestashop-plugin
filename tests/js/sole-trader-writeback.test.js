@@ -13,14 +13,20 @@
 
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+
 const {
     loadCompanySearch,
     loadSoleTrader,
     buildAddressesStep,
     buildAddressForm,
+    buildPaymentTileWithSoleTraderAnswer,
+    flushPromises,
     stubAjax,
     releaseWidgets,
-    DNI_COUNTRY_ID
+    DNI_COUNTRY_ID,
+    REPO_ROOT
 } = require('./ps-harness');
 
 const CHECKOUT_HOST = 'https://api.example.test';
@@ -62,6 +68,42 @@ const REGISTER_NUMBER = '923456789';
 const BUYER_REAL_NUMBER = buyerWithNumber(REGISTER_NUMBER);
 const BUYER_INTERNAL_NUMBER = REAL_BUYER; // organization_number is TWO:-prefixed
 
+/**
+ * A sole trader with NO trading name - the ordinary case for someone trading
+ * under their own name, and the one applyBuyer() falls back to the organisation
+ * number to label. Carries a DIFFERENT registered address from REAL_BUYER's, so
+ * "the address is still filled" is observable rather than indistinguishable from
+ * "the previous fill was left alone".
+ */
+const BUYER_NAMELESS = Object.assign({}, BUYER_REAL_NUMBER, {
+    company_name: '',
+    billing_address: {
+        apartment: '',
+        building: 'Second Registered Building',
+        city: 'Dover',
+        country: null,
+        organization_name: null,
+        postal_code: 'CT16 1AA',
+        region: '',
+        street: 'Second Registered Street'
+    }
+});
+
+/**
+ * The captured response happens to carry a `building` byte-identical to its
+ * `street`, which makes the street -> `address1` mapping unobservable: every
+ * assertion about it passes just as well if the fill reads `building` instead.
+ * This variant distinguishes the two so the mapping - and the documented DROP of
+ * `building`/`apartment`/`region` - can actually be asserted.
+ */
+const BUYER_DISTINCT_BUILDING = Object.assign({}, BUYER_REAL_NUMBER, {
+    billing_address: Object.assign({}, REAL_BUYER.billing_address, {
+        building: 'Unit 4 Wharf Court',
+        apartment: 'Flat 9',
+        region: 'Kent'
+    })
+});
+
 let TwoCompanySearch;
 let $;
 let ajax;
@@ -102,6 +144,36 @@ function organizationField() {
 
 function identifierField() {
     return $("input[name='dni']");
+}
+
+function hintField() {
+    return $('.two-company-id-hint');
+}
+
+/**
+ * Give the module's fire-and-forget endpoint calls somewhere to go.
+ *
+ * clearPersistedCompany() and recordMirrorWrites() both return early without
+ * these two, so a test asserting that one of them did NOT happen has to install
+ * them or it passes with the call site deleted.
+ *
+ * @returns {void}
+ */
+function enableEndpointCalls() {
+    window.twopayment.order_intent_url = 'https://shop.example.test/module/twopayment/orderintent';
+    window.twopayment.ajax_token = 'test-token';
+}
+
+/**
+ * The `$.ajax` calls carrying a given orderintent action.
+ *
+ * @param {string} action
+ * @returns {Array}
+ */
+function ajaxCallsFor(action) {
+    return ajax.calls.filter(
+        call => call.settings && call.settings.data && call.settings.data.action === action
+    );
 }
 
 describe('adoptSoleTraderBuyer(): the happy path, shipping pass', () => {
@@ -284,6 +356,373 @@ describe('the secondary (invoice) address: scoped writes and the cart-scoped mir
     });
 });
 
+describe('adoptSoleTraderBuyer(): nothing to adopt', () => {
+    test('a response with no organisation number writes nothing and says so', () => {
+        buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION });
+
+        const wrote = mount().adoptSoleTraderBuyer(buyerWithNumber(''));
+
+        expect(wrote).toBe(false);
+        expect(companyField().val()).toBe('');
+        expect(organizationField().val()).toBe('');
+        expect(identifierField().val()).toBe('');
+        expect($("input[name='address1']").val()).toBe('');
+    });
+
+    test.each([
+        ['null', null],
+        ['undefined', undefined],
+        ['a string', 'Sole Trader Test Co'],
+        ['a number', 42]
+    ])('a non-object buyer (%s) writes nothing and says so', (_label, buyer) => {
+        buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION });
+
+        const wrote = mount().adoptSoleTraderBuyer(buyer);
+
+        expect(wrote).toBe(false);
+        expect(companyField().val()).toBe('');
+        expect(organizationField().val()).toBe('');
+    });
+
+    test('a DESTROYED instance writes nothing and says so', () => {
+        buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION });
+        const search = mount();
+        search.destroy();
+
+        const wrote = search.adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
+
+        expect(wrote).toBe(false);
+        expect(organizationField().val()).toBe('');
+        expect(identifierField().val()).toBe('');
+        expect($("input[name='address1']").val()).toBe('');
+    });
+});
+
+describe('a sole trader with NO trading name: no identity, no residue, but the address still lands', () => {
+    /**
+     * The pre-existing state every test here starts from: a REAL selection this
+     * class itself wrote a moment ago, which the buyer has now moved off by
+     * enrolling as a nameless sole trader. Built through adoptSoleTraderBuyer()
+     * rather than by setting fields by hand - a hand-set stand-in reaches one of
+     * the three places a selection lives and leaves the other two empty, and every
+     * assertion about what the clear does to them then passes vacuously.
+     *
+     * @returns {Object} the live TwoCompanySearch instance
+     */
+    function withStandingSelection() {
+        buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION });
+        enableEndpointCalls();
+        const search = mount();
+        search.adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
+        // The state under test only exists if all four of these landed.
+        expect(organizationField().val()).toBe(REGISTER_NUMBER);
+        expect(organizationField().attr('data-two-company-name')).toBe('Sole Trader Test Co');
+        expect(identifierField().val()).toBe(REGISTER_NUMBER);
+        expect(hintField().text()).toBe(REGISTER_NUMBER);
+
+        return search;
+    }
+
+    test('the hidden pair and its tag are dropped rather than left pointing at the abandoned company', () => {
+        const search = withStandingSelection();
+
+        search.adoptSoleTraderBuyer(BUYER_NAMELESS);
+
+        expect(organizationField().val()).toBe('');
+        expect(organizationField().attr('data-two-company-name')).toBeUndefined();
+    });
+
+    test('the visible company-number hint goes with the number behind it', () => {
+        const search = withStandingSelection();
+
+        search.adoptSoleTraderBuyer(BUYER_NAMELESS);
+
+        expect(hintField().text()).toBe('');
+        expect(hintField().hasClass('two-company-id-hint--visible')).toBe(false);
+    });
+
+    test('the identification number the lookup itself wrote is cleared', () => {
+        const search = withStandingSelection();
+
+        search.adoptSoleTraderBuyer(BUYER_NAMELESS);
+
+        expect(identifierField().val()).toBe('');
+        expect(identifierField().attr(MARKER)).toBeUndefined();
+    });
+
+    test('an identification number the BUYER typed is not touched by that clear', () => {
+        buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION });
+        enableEndpointCalls();
+        identifierField().val('BUYER-OWN-ID');
+
+        mount().adoptSoleTraderBuyer(BUYER_NAMELESS);
+
+        expect(identifierField().val()).toBe('BUYER-OWN-ID');
+    });
+
+    test('the registered ADDRESS is still filled - only the identity half is withheld', () => {
+        const search = withStandingSelection();
+
+        const wrote = search.adoptSoleTraderBuyer(BUYER_NAMELESS);
+
+        expect(wrote).toBe(true);
+        expect($("input[name='address1']").val()).toBe('Second Registered Street');
+        expect($("input[name='postcode']").val()).toBe('CT16 1AA');
+        expect($("input[name='city']").val()).toBe('Dover');
+    });
+
+    test('the SERVER session company that `saveCompany` has just written is NOT cleared', () => {
+        const search = withStandingSelection();
+
+        search.adoptSoleTraderBuyer(BUYER_NAMELESS);
+
+        // clearSelectedCompany()'s reach is the thing being refused here, and its
+        // session half is the part that would destroy the enrolment: the clear
+        // would land after the `saveCompany` this adoption is completing.
+        expect(ajaxCallsFor('clearCompany')).toEqual([]);
+    });
+});
+
+describe('soleTraderPairReport(): a number that did not land is OMITTED, never reported empty', () => {
+    test('an internal (`TWO:`) number leaves no `organization` key in the mirror record', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+
+        mount().adoptSoleTraderBuyer(BUYER_INTERNAL_NUMBER);
+
+        const record = window.twopayment.mirror_writes;
+        expect(Object.prototype.hasOwnProperty.call(record, 'organization')).toBe(false);
+        expect(record).toEqual({
+            company: 'Sole Trader Test Co',
+            address1: 'Wharf Lane',
+            postcode: 'TN23 1AA',
+            city: 'Ashford'
+        });
+    });
+
+    test('the address-lookup switch being off leaves no `organization` key either', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+
+        mount({ addressLookupEnabled: false }).adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
+
+        const record = window.twopayment.mirror_writes;
+        expect(Object.prototype.hasOwnProperty.call(record, 'organization')).toBe(false);
+        expect(record).toEqual({ company: 'Sole Trader Test Co' });
+    });
+});
+
+describe('the invoice form is on screen but cannot be scoped to one address block', () => {
+    /**
+     * A theme that flattens core's block containers away AND drops its ids: the
+     * only candidate scope left is the step wrapper, which still contains the
+     * delivery side, so the scope resolution FAILS CLOSED. The identity writes are
+     * document-wide by design, but the ADDRESS fill is skipped outright rather
+     * than written into a scope spanning two addresses.
+     */
+    test('the address fill is skipped, and nothing is reported into the mirror record', () => {
+        buildAddressesStep({ editing: 'invoice', blockContainers: false, blockIds: false });
+        const search = mount();
+        // The state this test is about, asserted rather than assumed.
+        expect(search.visibleAddressFormType()).toBe('invoice');
+        expect(search.visibleAddressFormRoot()).toBeNull();
+        expect(search.secondaryAddressFormRoot()).toBeNull();
+
+        const wrote = search.adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
+
+        expect(wrote).toBe(true);
+        expect(companyField().val()).toBe('Sole Trader Test Co');
+        expect($("input[name='address1']").val()).toBe('');
+        expect($("input[name='postcode']").val()).toBe('');
+        expect($("input[name='city']").val()).toBe('');
+        expect(window.twopayment.mirror_writes).toBeUndefined();
+    });
+});
+
+describe('only the STREET reaches the form: building, apartment and region are dropped', () => {
+    test('address1 holds the street, and an address2 the country format renders stays empty', () => {
+        buildAddressesStep({ editing: 'delivery' });
+        // `address2` is a real PrestaShop address field - core renders it for the
+        // country formats that ask for it - and the harness fixture omits it, so a
+        // fill that widened into it would be invisible here without this.
+        $("input[name='address1']").after("<input type='text' name='address2' value='' />");
+
+        mount().adoptSoleTraderBuyer(BUYER_DISTINCT_BUILDING);
+
+        expect($("input[name='address1']").val()).toBe('Wharf Lane');
+        expect($("input[name='address1']").attr(MARKER)).toBe('Wharf Lane');
+        expect($("input[name='address2']").val()).toBe('');
+        expect($("input[name='address2']").attr(MARKER)).toBeUndefined();
+    });
+
+    test('no field anywhere on the page receives the building, apartment or region', () => {
+        buildAddressesStep({ editing: 'delivery' });
+        $("input[name='address1']").after("<input type='text' name='address2' value='' />");
+
+        mount().adoptSoleTraderBuyer(BUYER_DISTINCT_BUILDING);
+
+        const values = $('input').map(function () { return $(this).val(); }).get();
+        expect(values).not.toContain('Unit 4 Wharf Court');
+        expect(values).not.toContain('Flat 9');
+        expect(values).not.toContain('Kent');
+    });
+});
+
+describe('the scoped writes reach ONE address block and no other', () => {
+    /**
+     * A second address block, holding the fields the scoped writes target.
+     *
+     * Core renders one editable address form and a radio SELECTOR (no address
+     * inputs) for the other side, so on core markup a document-wide write and a
+     * scoped one are indistinguishable - which is exactly why this suite could not
+     * tell them apart. This puts a second set of those inputs in the document so
+     * the scope is observable. That is the state the scope machinery
+     * (ADDRESS_BLOCK_SELECTOR, visibleAddressFormRoot) exists for: a theme, a
+     * module, or a future core that leaves the other address's fields on the page.
+     *
+     * Deliberately WITHOUT a `company` input: `this.companyField` is a
+     * document-wide selector on purpose (see adoptSoleTraderBuyer's own comment on
+     * why `.val()` writing every match is the accepted behaviour there), so a
+     * second company input would be asserting against a documented decision rather
+     * than against the scoping.
+     *
+     * @returns {void}
+     */
+    function appendOtherAddressBlock() {
+        document.querySelector('.js-address-form').insertAdjacentHTML('beforeend', [
+            '<div id="delivery-address">',
+            '  <div class="js-address-form">',
+            '    <form method="POST" data-id-address="9">',
+            "      <input type='text' name='dni' value='' />",
+            "      <input type='text' name='address1' value='' />",
+            "      <input type='text' name='postcode' value='' />",
+            "      <input type='text' name='city' value='' />",
+            '    </form>',
+            '  </div>',
+            '</div>'
+        ].join('\n'));
+    }
+
+    test('the other block keeps its empty, unmarked fields', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        appendOtherAddressBlock();
+
+        const wrote = mount().adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
+
+        expect(wrote).toBe(true);
+        // Landed, in the block the buyer is looking at.
+        expect($("#invoice-address input[name='dni']").val()).toBe(REGISTER_NUMBER);
+        expect($("#invoice-address input[name='address1']").val()).toBe('Wharf Lane');
+        expect($("#invoice-address input[name='postcode']").val()).toBe('TN23 1AA');
+        expect($("#invoice-address input[name='city']").val()).toBe('Ashford');
+        // Untouched, in the block they are not.
+        ['dni', 'address1', 'postcode', 'city'].forEach(name => {
+            const field = $(`#delivery-address input[name='${name}']`);
+            expect(field.length).toBe(1);
+            expect(field.val()).toBe('');
+            expect(field.attr(MARKER)).toBeUndefined();
+        });
+    });
+});
+
+describe('THE PIN: a secondary address the buyer has made their own is never written into', () => {
+    test('one buyer-authored field freezes the whole address, enrolment or not', () => {
+        // A city the SERVER rendered into the invoice form - i.e. the buyer's own
+        // saved billing address - with no marker and nothing on record as having
+        // been written there. That is the content match the pin is decided on.
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION, city: 'Buyer Own City' });
+        const search = mount();
+        expect(search.secondaryAddressIsPinned(search.secondaryAddressFormRoot())).toBe(true);
+
+        const wrote = search.adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
+
+        expect(wrote).toBe(false);
+        expect(companyField().val()).toBe('');
+        expect(companyField().attr(MARKER)).toBeUndefined();
+        expect(organizationField().val()).toBe('');
+        expect(identifierField().val()).toBe('');
+        expect($("#invoice-address input[name='address1']").val()).toBe('');
+        expect($("#invoice-address input[name='city']").val()).toBe('Buyer Own City');
+        expect(window.twopayment.mirror_writes).toBeUndefined();
+    });
+});
+
+describe('the submit-time sync passes through the same single gate', () => {
+    function submitAddressForm() {
+        companyField().closest('form').triggerHandler('submit');
+    }
+
+    test('an internal (`TWO:`) companyid is NOT copied into the visible identification field at submit', () => {
+        buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION });
+        const search = mount();
+        search.adoptSoleTraderBuyer(BUYER_INTERNAL_NUMBER);
+        expect(organizationField().val()).toBe('TWO:ST123456789012');
+        expect(identifierField().val()).toBe('');
+
+        submitAddressForm();
+
+        expect(identifierField().val()).toBe('');
+        expect(identifierField().attr(MARKER)).toBeUndefined();
+    });
+
+    test('a REAL organisation number still reaches it at submit - the gate did not break the ordinary path', () => {
+        buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION });
+        const search = mount();
+        // The pair a selection establishes, through the class's own writer.
+        search.markOrganizationFieldSelected('Acme Trading Ltd', REGISTER_NUMBER);
+        expect(identifierField().val()).toBe('');
+
+        submitAddressForm();
+
+        expect(identifierField().val()).toBe(REGISTER_NUMBER);
+        expect(identifierField().attr(MARKER)).toBe(REGISTER_NUMBER);
+    });
+});
+
+describe('the payment tile: the same adoption, on a page with no address form at all', () => {
+    /**
+     * The shipped tile, plus the company-search block the tile-location switch
+     * renders.
+     *
+     * The harness's tile renderer strips every `{if}` block, which drops the
+     * `{if $company_search_tile}` mount - so the block is re-rendered here from the
+     * SAME shipped template rather than hand-copied, and a rename of the field or
+     * its id fails this test instead of quietly passing it.
+     *
+     * @returns {void}
+     */
+    function buildTilePaymentStep() {
+        const container = buildPaymentTileWithSoleTraderAnswer('1', 'GB');
+        const tpl = fs.readFileSync(
+            path.join(REPO_ROOT, 'views/templates/hook/paymentinfo.tpl'),
+            'utf8'
+        );
+        const block = tpl.match(/\{if \$company_search_tile\}([\s\S]*?)\{\/if\}/);
+        if (!block) {
+            throw new Error('paymentinfo.tpl no longer carries the tile company-search block');
+        }
+        container.insertAdjacentHTML(
+            'beforeend',
+            block[1].replace(/\{l\s+s='([^']*)'[^}]*\}/g, '$1')
+        );
+    }
+
+    test('the enrolled identity lands on the tile field and its hidden pair', () => {
+        buildTilePaymentStep();
+        expect(document.querySelector('#two_tile_company')).not.toBeNull();
+        expect(document.querySelector("input[name='address1']")).toBeNull();
+
+        const wrote = new TwoCompanySearch({
+            checkoutHost: CHECKOUT_HOST,
+            companyFieldSelector: '#two_tile_company'
+        }).adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
+
+        expect(wrote).toBe(true);
+        expect($('#two_tile_company').val()).toBe('Sole Trader Test Co');
+        expect($('#two_tile_company').attr(MARKER)).toBe('Sole Trader Test Co');
+        expect(organizationField().val()).toBe(REGISTER_NUMBER);
+        expect(organizationField().attr('data-two-company-name')).toBe('Sole Trader Test Co');
+    });
+});
+
 describe('TwoSoleTrader.adoptEnrolledIdentity(): fails soft, never throws', () => {
     let TwoSoleTrader;
 
@@ -321,5 +760,149 @@ describe('TwoSoleTrader.adoptEnrolledIdentity(): fails soft, never throws', () =
         expect(result).toBe(true);
         expect(window.TwoCheckoutManager_Instance.companySearch.adoptSoleTraderBuyer)
             .toHaveBeenCalledWith(BUYER_REAL_NUMBER);
+    });
+
+    test('a companySearch whose adoptSoleTraderBuyer THROWS costs the fill, not the enrolment', () => {
+        const boom = jest.fn(() => { throw new Error('boom'); });
+        window.TwoCheckoutManager_Instance = { companySearch: { adoptSoleTraderBuyer: boom } };
+
+        let result;
+        expect(() => {
+            result = TwoSoleTrader.prototype.adoptEnrolledIdentity.call({}, BUYER_REAL_NUMBER);
+        }).not.toThrow();
+        expect(result).toBe(false);
+        // The throw has to come from the real call, or this passes on a guard that
+        // returned before reaching it.
+        expect(boom).toHaveBeenCalledTimes(1);
+    });
+});
+
+/**
+ * THE INTEGRATION POINT. Everything above tests the two halves in isolation; this
+ * is the only thing that pins them TOGETHER, and the defect this whole ticket
+ * exists for ("absolutely nothing is being populated") lives exactly here - in
+ * whether applyBuyer()'s success branch calls the adoption at all. Deleting that
+ * one line leaves every other test in this file green.
+ */
+describe('applyBuyer(): a completed enrolment populates the FORM, end to end', () => {
+    let TwoSoleTrader;
+    let fetchCalls;
+
+    beforeEach(() => {
+        TwoSoleTrader = loadSoleTrader();
+        fetchCalls = [];
+        window.fetch = (url, options) => {
+            fetchCalls.push({ url: String(url), options: options });
+            if (String(url).includes('soleTraderAvailability')) {
+                return Promise.resolve({
+                    ok: true,
+                    json: () => Promise.resolve({ success: true, available: true })
+                });
+            }
+            // `saveCompany` - the round trip applyBuyer() gates its whole success
+            // branch on - and anything else this test does not care about.
+            return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true }) });
+        };
+        global.fetch = window.fetch;
+    });
+
+    afterEach(() => {
+        delete global.fetch;
+        delete window.fetch;
+        window.localStorage.clear();
+    });
+
+    /**
+     * A real TwoSoleTrader instance with a real TwoCompanySearch reachable the way
+     * adoptEnrolledIdentity() resolves it - lazily, off the manager. Neither side is
+     * stubbed: a stubbed companySearch here would pin the wiring and prove nothing
+     * about the writes, and a stubbed applyBuyer would prove nothing about the
+     * wiring.
+     *
+     * @returns {Object} the TwoSoleTrader instance
+     */
+    function enrolledFlow() {
+        const search = mount();
+        const publishes = [];
+        window.TwoCheckoutManager_Instance = {
+            companySearch: search,
+            setConfirmedCompanySelection: selection => publishes.push(selection)
+        };
+        const soleTrader = new TwoSoleTrader({
+            checkoutHost: CHECKOUT_HOST,
+            orderIntentUrl: 'https://shop.example.test/module/twopayment/orderintent',
+            ajaxToken: 'test-token',
+            billingCountry: 'GB'
+        });
+        soleTrader.tokens = { country: 'GB' };
+        soleTrader._publishes = publishes;
+
+        return soleTrader;
+    }
+
+    test('company name, hidden pair, identification number and registered address all land', async () => {
+        buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION });
+        const soleTrader = enrolledFlow();
+
+        soleTrader.applyBuyer(BUYER_REAL_NUMBER, soleTrader._enrollGeneration);
+        await flushPromises();
+
+        expect(companyField().val()).toBe('Sole Trader Test Co');
+        expect(companyField().attr(MARKER)).toBe('Sole Trader Test Co');
+        expect(organizationField().val()).toBe(REGISTER_NUMBER);
+        expect(organizationField().attr('data-two-company-name')).toBe('Sole Trader Test Co');
+        expect(identifierField().val()).toBe(REGISTER_NUMBER);
+        expect($("input[name='address1']").val()).toBe('Wharf Lane');
+        expect($("input[name='postcode']").val()).toBe('TN23 1AA');
+        expect($("input[name='city']").val()).toBe('Ashford');
+    });
+
+    test('the write survives the very next input event in the company field', async () => {
+        buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION });
+        const soleTrader = enrolledFlow();
+
+        soleTrader.applyBuyer(BUYER_REAL_NUMBER, soleTrader._enrollGeneration);
+        await flushPromises();
+        // The mechanism that killed all three previous attempts at this write-back:
+        // an untagged `companyid` is read as stale and wiped on the next keystroke.
+        companyField().get(0).dispatchEvent(new window.Event('input', { bubbles: true }));
+
+        expect(companyField().val()).toBe('Sole Trader Test Co');
+        expect(organizationField().val()).toBe(REGISTER_NUMBER);
+    });
+
+    test('a saveCompany that fails writes nothing into the form', async () => {
+        buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION });
+        window.fetch = (url) => {
+            if (String(url).includes('soleTraderAvailability')) {
+                return Promise.resolve({
+                    ok: true,
+                    json: () => Promise.resolve({ success: true, available: true })
+                });
+            }
+            return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: false }) });
+        };
+        global.fetch = window.fetch;
+        const soleTrader = enrolledFlow();
+
+        soleTrader.applyBuyer(BUYER_REAL_NUMBER, soleTrader._enrollGeneration);
+        await flushPromises();
+
+        expect(companyField().val()).toBe('');
+        expect(organizationField().val()).toBe('');
+        expect($("input[name='address1']").val()).toBe('');
+    });
+
+    test('a SUPERSEDED save response - the buyer has moved on - populates nothing', async () => {
+        buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION });
+        const soleTrader = enrolledFlow();
+        const generation = soleTrader._enrollGeneration;
+
+        soleTrader.applyBuyer(BUYER_REAL_NUMBER, generation);
+        soleTrader.cancelEnrollment();
+        await flushPromises();
+
+        expect(companyField().val()).toBe('');
+        expect(organizationField().val()).toBe('');
     });
 });

@@ -69,9 +69,9 @@ What is written:
 
 | Response field | Destination | Notes |
 | --- | --- | --- |
-| `company_name` | visible `company` input | marked `data-two-autofilled-value` |
-| `organization_number` | hidden `companyid` + `data-two-company-name` tag | via `markOrganizationFieldSelected()` |
-| `organization_number` | visible `dni` input | via `writeOrganizationToAddressIdentifiers()`; **skipped for `TWO:` values** |
+| `company_name` | visible `company` input | marked `data-two-autofilled-value`; skipped when blank |
+| `organization_number` | hidden `companyid` + `data-two-company-name` tag | via `markOrganizationFieldSelected()`; **gated on a non-blank `company_name`** |
+| `organization_number` | visible `dni` input | via `writeOrganizationToAddressIdentifiers()`; same name gate, and **never for `TWO:` values** |
 | `billing_address.street` | `address1` | via `autoFillAddress()` |
 | `billing_address.postal_code` | `postcode` | via `autoFillAddress()` |
 | `billing_address.city` | `city` | via `autoFillAddress()` |
@@ -94,6 +94,23 @@ What is deliberately NOT written:
 - **A `TWO:` organisation number into any visible field.** It is an internal identifier and must
   never be shown to the buyer anywhere (TWO-25326 §12, `TwoCompanyNumber`). It still travels in the
   hidden `companyid` and in the order payload, which is data rather than display.
+
+  **The suppression lives in `writeOrganizationToAddressIdentifiers()`, the single gate, not at this
+  call site — and that closes a pre-existing hole rather than only guarding the new write.** Review
+  found three other routes by which the value already reached the buyer's `dni` field: the
+  submit-time `syncOrganizationToAddressIdentifiers()`, which copies whatever `companyid` holds
+  straight into `dni`, and the invoice mirror's populate and completion paths, both of which write
+  `selection.companyid` — and the sole-trader selection has carried a `TWO:` number since TWO-25326
+  bug 8. A caller-side test would have left all three open. Suppression costs the order nothing: the
+  number reaches the payload through the session record and the published selection, never through
+  `dni`.
+
+- **Anything at all, into a PINNED secondary address.** `adoptSoleTraderBuyer()` honours
+  `secondaryAddressIsPinned()` exactly as the invoice mirror does and returns without writing. The
+  buyer having just asked for the enrolment does not change this: the pin is not about the form they
+  are looking at, it is about an invoice address they have already answered for. The enrolment still
+  completes and still reaches the order. The delivery form and the payment tile are never pinned and
+  are never skipped.
 
 **Alternatives Considered**:
 - Leaving it as it was, per the 2026-08-10 decision. Rejected: it makes the flow pointless. The
@@ -140,13 +157,44 @@ What is deliberately NOT written:
   session record and the published selection.
 
 **Consequences**:
-- A blank `company_name` still leaves the visible company field empty, and the pairing tag empty
-  with it, so the hidden number remains wipeable by the buyer's next keystroke in that field. The
-  order is unaffected (session record plus published selection), which is today's behaviour, so
-  this is a carried-forward limitation rather than a regression. Fixing it means deciding what a
-  nameless sole trader's company field should say - and the two available answers are writing an
-  internal identifier the buyer must never see, or inventing a name from their personal name.
-  Needs a ruling.
+- **A blank `company_name` writes no identity at all** - no company name, no hidden `companyid`, no
+  `dni`. The name is what makes the pair writable: tagging the number with whatever the buyer last
+  typed is a mismatched pairing that makes `hasConfirmedSelection()` lie, and tagging it with the
+  empty string has the stale-pairing guard wipe it on the next input event. The address still fills,
+  because an address fill carries no pairing. The order is unaffected either way.
+
+  It does, however, **disown any selection that was standing before the buyer enrolled** - the
+  hidden pair, its tag, the company-id hint and the lookup-written `dni`. Without that, the session
+  and the manager would say sole trader while the form still said the abandoned company, and the
+  resolver's address tier reads the form. Cleared field by field and deliberately **not** through
+  `clearSelectedCompany()`, which also POSTs a clear of the server session company - the record
+  `saveCompany` had written for this enrolment moments earlier, asynchronously; that clear would land
+  after it and destroy the enrolment. (This is the exact trap the three withdrawn attempts kept
+  falling into: the obvious fix reaching further than intended.)
+
+  **Residual, needing a ruling:** the buyer-visible company field is left holding whatever it held.
+  Clearing it means deciding what a nameless sole trader's company field should say, and the two
+  available answers are showing an internal identifier the buyer must never see, or inventing a name
+  from their personal name.
+
+- **Known shared residual, deliberately not closed here: the scope-resolution asymmetry.** Where the
+  invoice form is on screen but `visibleAddressFormRoot()` fails to scope it - a theme that flattens
+  both addresses into one block - the address fill is SKIPPED (no scope, no write) but the company and
+  `dni` writes still go document-wide. That asymmetry is inherited rather than introduced: this
+  adoption is a faithful copy of `autoFillAddressIfNeeded()`, whose identity writes are ungated in
+  exactly the same way, and whose address fill fails closed in exactly the same way. Gating only the
+  new path would leave the two capture routes disagreeing about the same page. Closing it properly
+  means changing the ordinary company-selection path too, which is its own piece of work.
+
+- **Two behaviours review raised that are NOT closed here, both needing a ruling.** (1) A country
+  change during the signup popup round trip does not bump `_enrollGeneration`, so the adoption can
+  write an identity minted against the previous country into a form now on a new one; the server will
+  discard the session company on that divergence. (2) After a country change, PrestaShop rebuilds the
+  address form and destroys the hidden field, and nothing restores this adoption's pair -
+  `republishMirroredSelection()` is gated on the mirror's own `mirrorMemory()`, which this path never
+  stamps. The order still resolves through the session record in both cases; the form silently stops
+  showing a confirmed selection. Seeding `mirrorMemory()` from the adoption is the candidate fix and
+  is deliberately not bolted on here.
 - With the address-lookup switch off, the address fields and `dni` are not written; the company
   name and hidden pairing still are. That is the existing meaning of that switch, applied here
   unchanged.

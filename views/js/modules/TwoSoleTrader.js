@@ -1051,11 +1051,17 @@ class TwoSoleTrader {
                 if (json && json.success) {
                     // Put the enrolled identity INTO the form the buyer is
                     // looking at - company name, organisation number, registered
-                    // address. Before the publish below, deliberately:
-                    // setConfirmedCompanySelection() re-derives the captured
-                    // address from the CURRENT page, so it has to see the values
-                    // this write has already placed, not the empty form they
-                    // replaced.
+                    // address.
+                    //
+                    // Ordered before the publish below because the adoption may
+                    // DISOWN a previous selection (the blank-`company_name` branch
+                    // clears the stale hidden pair), and the publish is what
+                    // establishes the selection that must survive. Running the
+                    // publish first would have the clear tear down the pair that had
+                    // just been published. It is NOT ordered this way so that
+                    // setConfirmedCompanySelection() can see the written address:
+                    // that method captures only the selected address id and country
+                    // iso, never any address value.
                     //
                     // Delegated rather than reimplemented here. Every write into
                     // the address form has to be attributable by the same
