@@ -304,6 +304,14 @@ class Twopayment extends PaymentModule
     protected $verifiedMerchantShortName = null;
     /** @var string|null Memoised `client_v` value (version + optional +<sha7>) */
     protected $two_client_version_cache = null;
+    /**
+     * @var bool Whether the order-company columns on `ps_twopayment` have been
+     *           checked this request (TWO-40). Deliberately an INSTANCE property
+     *           rather than a function static: a static is process-wide, which
+     *           makes the guard unreachable from a test and lets one request's
+     *           answer leak into the next under a persistent PHP worker.
+     */
+    protected $twoOrderCompanyColumnsEnsured = false;
 
     // Module metadata fields ModuleCore does not declare on all supported
     // PrestaShop versions ($bootstrap was only added to ModuleCore in PS 8;
