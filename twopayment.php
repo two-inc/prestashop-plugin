@@ -873,6 +873,12 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName(self::CONFIG_API_KEY_STATUS_TS);
         Configuration::deleteByName('PS_TWO_DISABLE_SSL_VERIFY');
         Configuration::deleteByName('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS');
+        // Pre-2.7.6 name of the same setting (TWO-40). A one-release cleanup
+        // for the file-swap window: a shop whose files were swapped to 2.7.6
+        // without upgrade-2.7.6.php ever running still has this row, and
+        // uninstalling would otherwise orphan it forever - a reinstall lands
+        // at 2.7.6, so no upgrade script runs again. Safe to drop in 2.8.0.
+        Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_NAME');
         Configuration::deleteByName('PS_TWO_ADDRESS_LOOKUP');
         // Retired admin toggle (TWO-25190) - the org.id auto-complete switch
         // was rendered and stored but no JavaScript ever read the

@@ -12,10 +12,11 @@
  * WHAT IT DOES
  *
  * Reads the old key through the ordinary resolving API, writes that value to
- * the new key if there was one, and deletes the old key. Nothing else. A shop
- * that never had the old key keeps the new key's own default ('1', address
- * area), which is the behaviour the old default produced too, so a fresh
- * install and a migrated shop end up in the same place.
+ * the new key if there was one AND the new key does not already hold one, and
+ * deletes the old key. Nothing else. A shop that never had the old key keeps
+ * the new key's own default ('1', address area), which is the behaviour the old
+ * default produced too, so a fresh install and a migrated shop end up in the
+ * same place.
  *
  * DELIBERATELY GLOBAL-TIER-ONLY - READ THIS BEFORE CALLING IT A BUG
  *
@@ -49,15 +50,28 @@
  * Upgrade scripts only run via the back-office Module Manager or
  * `dev/ci/upgrade-module.sh`. A deploy that merely REPLACES the module's files
  * - which is how the git-synced shops update - does NOT run them. So between
- * the file swap and someone opening the back office, the new key is absent,
+ * the file swap and the upgrade actually being run, the new key is absent,
  * the resolver falls back to its default, and a shop configured for tile mode
- * silently gets the search back in the address area AND address autofill
- * re-enabled (`getAddressLookupEnabled()` keys off the same resolver) on a
- * live storefront.
+ * silently gets the search back in the address area on a live storefront.
+ *
+ * Address autofill comes back with it only where `PS_TWO_ADDRESS_LOOKUP` is
+ * absent or '1'. `getAddressLookupEnabled()` force-returns '0' while the
+ * search is not in the address area, so once the resolver flips back to the
+ * address-area default it reads that row again - but a shop that picked tile
+ * mode THROUGH THE ADMIN FORM had that row written to 0 by the very same save
+ * (`saveTwoCompanyLookupFormValues()` gates the write on
+ * `isAddressLookupSettingAvailable()`), so autofill stays off there. The
+ * autofill half of this window therefore bites shops whose tile mode was
+ * seeded programmatically - as the e2e suite's tile-location spec does - not
+ * ones that clicked it in the back office.
  *
  * There is deliberately NO read shim for the old key. Doug's ruling: "not a
- * permanent alias". Opening the module's configuration page once after a
- * file-swap deploy is therefore a real release step, not a formality.
+ * permanent alias". Running the upgrade once after a file-swap deploy is
+ * therefore a real release step, not a formality - and the ONLY things that
+ * run it are the back-office Module Manager -> Upgrade action and
+ * `dev/ci/upgrade-module.sh`. Opening the module's own CONFIGURATION page does
+ * NOT run any upgrade script; no PrestaShop code path executes
+ * `upgrade/*.php` from there.
  *
  * WHY A NEW VERSION RATHER THAN AN EDIT TO AN EXISTING SCRIPT
  *
@@ -70,10 +84,17 @@
  * IDEMPOTENCY
  *
  * A second run finds no old key at all: `Configuration::get()` returns false,
- * nothing is copied, and `deleteByName()` on an absent name is a no-op. The
- * new key keeps whatever it holds - the copy is guarded on the OLD key having
- * a usable value, so a re-run can never overwrite a position the merchant set
- * after the first run. A fresh 2.7.6 install never reaches this script.
+ * nothing is copied, and `deleteByName()` on an absent name is a no-op. A
+ * fresh 2.7.6 install never reaches this script.
+ *
+ * The copy is guarded on BOTH keys - the old one having a usable value AND the
+ * new one having none yet. The second half is not just re-run protection: the
+ * file-swap window above lets a merchant open the config page and SAVE a
+ * position (new key written, old row untouched) before any upgrade has run, so
+ * a later Module Manager upgrade would otherwise copy the stale old row over
+ * the choice the merchant just made and move the search back to the address
+ * area. So the rule is "the new key wins whenever it has a value", of which
+ * "a re-run changes nothing" is one case, not the other way round.
  *
  * It cannot fail the upgrade: everything is wrapped and this function returns
  * true unconditionally, same reasoning as the 2.7.1-2.7.5 scripts. A shop
@@ -97,17 +118,32 @@ function upgrade_module_2_7_6($module)
         // one value that gets carried, and the delete below is name-wide.
         $old = Configuration::get('PS_TWO_ENABLE_COMPANY_NAME');
 
+        // '' is treated as ABSENT for BOTH keys here because the resolver
+        // (isCompanySearchInAddressArea()) treats it that way too: an empty
+        // row means "no position chosen". Note this is deliberately NOT
+        // Configuration::hasKey(), which counts an empty row as SET - a
+        // hasKey() guard on the new key would suppress the copy on a row that
+        // the module itself reads as absent, and lose the value.
+        $oldUsable = ($old !== false && $old !== null && $old !== '');
+
+        // The new key wins whenever it already holds a usable value: the
+        // file-swap window lets a merchant save a position before this script
+        // ever runs, and copying the stale old row over it would silently move
+        // the search back to the address area. See the header's IDEMPOTENCY
+        // section.
+        $new = Configuration::get('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS');
+        $newAlreadySet = ($new !== false && $new !== null && $new !== '');
+
         $carried = false;
-        if ($old !== false && $old !== null && $old !== '') {
-            // '' is treated as ABSENT here because the resolver
-            // (isCompanySearchInAddressArea()) treats it that way too: an
-            // empty row means "no position chosen", and copying it across
-            // would carry nothing while looking like it carried something.
+        if ($oldUsable && !$newAlreadySet) {
             Configuration::updateValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS', $old);
             $carried = true;
         }
 
-        Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_NAME');
+        // Returns false without throwing on a Validate failure or a failed
+        // Db::execute, in which case the old row is still there and the log
+        // below must not claim the rename completed.
+        $deleted = Configuration::deleteByName('PS_TWO_ENABLE_COMPANY_NAME');
     } catch (Throwable $e) {
         // Deliberately broad, same reasoning as the 2.7.1-2.7.5 scripts:
         // anything thrown here leaves the module version un-bumped and the
@@ -125,14 +161,30 @@ function upgrade_module_2_7_6($module)
         return true;
     }
 
+    if ($carried) {
+        $outcome = 'carried the stored value "' . $old . '" across (global tier only; any shop-group or'
+            . ' per-shop override of the old key was deleted uncarried, see this script\'s header)';
+    } elseif ($newAlreadySet) {
+        // Distinguished from the no-old-value case on purpose: an operator
+        // reading the log must be able to tell "already migrated, or the
+        // merchant already chose a position" from "there was nothing to carry".
+        $outcome = 'the new key already held "' . $new . '", so the copy was skipped and that value kept'
+            . ($oldUsable
+                ? ' in preference to the old key\'s "' . $old . '"'
+                : ' (the old key held no usable value either)');
+    } else {
+        $outcome = 'no usable value on the old key, the new key keeps its own default';
+    }
+
+    if (!$deleted) {
+        $outcome .= '; deleting the old key FAILED, so PS_TWO_ENABLE_COMPANY_NAME may still be present in'
+            . ' ps_configuration and a later run of this script will see it again';
+    }
+
     PrestaShopLogger::addLog(
         'Two Payment v2.7.6 upgrade: PS_TWO_ENABLE_COMPANY_NAME -> PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS - '
-        . ($carried
-            ? 'carried the stored value "' . $old . '" across (global tier only; any shop-group or'
-                . ' per-shop override of the old key was deleted uncarried, see this script\'s header)'
-            : 'no usable value on the old key, the new key keeps its own default')
-        . ' (TWO-40)',
-        1,
+        . $outcome . ' (TWO-40)',
+        $deleted ? 1 : 2,
         null,
         'Module',
         $module->id
