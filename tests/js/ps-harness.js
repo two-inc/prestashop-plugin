@@ -35,6 +35,22 @@ const path = require('path');
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 /**
+ * The country id of a country whose address format asks for an identification
+ * number - Spain, `id_country` 6 on stock install data.
+ *
+ * `need_identification_number` is set on ES and MX alone in
+ * `install-dev/data/xml/country.xml`, and no stock address format mentions `dni`,
+ * so `AddressFormat::getFormat()`'s append is the only thing that puts the field
+ * on a form. Any other id in buildAddressesStep()'s select therefore renders a
+ * form WITHOUT one, which is the majority case.
+ */
+const DNI_COUNTRY_ID = '6';
+/** Mexico, `id_country` 144 - the only other one, and the only way to model a
+ *  rebuild that changes country while KEEPING the identification field. */
+const OTHER_DNI_COUNTRY_ID = '144';
+const DNI_COUNTRY_IDS = [DNI_COUNTRY_ID, OTHER_DNI_COUNTRY_ID];
+
+/**
  * Put the real jQuery + jQuery UI autocomplete on the jsdom window.
  *
  * @returns {Function} the jQuery instance bound to the current jsdom window
@@ -212,6 +228,14 @@ function loadOrderIntent() {
  * Pass `country: null` to build the select WITHOUT the attribute, which is how a
  * test reaches the later strategies and the unresolvable case.
  *
+ * Renders `dni` unconditionally, which is NOT what core does - the field's
+ * presence follows the rendered country's address format (see
+ * buildAddressesStep()). This is the pre-TWO-40 single-form fixture and no test
+ * built on it varies the country's format or rebuilds the form around a new one,
+ * so here the field simply stands for "a form whose country asks for an
+ * identification number". Anything testing the format's effect on which fields
+ * exist must use buildAddressesStep(), which models it.
+ *
  * @param {Object} [options]
  * @param {?string} [options.country] ISO code for the selected option; null omits
  *        the `data-iso-code` attribute entirely
@@ -256,8 +280,21 @@ function buildAddressForm(options) {
  *    invoice form flags in mutually exclusive branches, and the other side is a
  *    radio selector over saved addresses (`#delivery-addresses` /
  *    `#invoice-addresses`) or absent;
- *  - the editable form lives in `#delivery-address` / `#invoice-address` and
- *    emits `<input type="hidden" name="saveAddress" value="delivery|invoice">`;
+ *  - the editable form lives in `#delivery-address` / `#invoice-address`, which
+ *    holds the rendered address form's OWN `<div class="js-address-form">` wrapper
+ *    (`customer/_partials/address-form.tpl`'s `address_form` block) inside the
+ *    step's outer one - so the block ids and the wrapper class nest, and the
+ *    innermost-first root resolution lands on the inner wrapper exactly as it does
+ *    in production;
+ *  - it emits `<input type="hidden" name="saveAddress" value="delivery|invoice">`;
+ *  - the identification field `dni` is present only for a country whose address
+ *    format asks for it. That is core, not a convenience: `AddressFormat::getFormat()`
+ *    appends `dni` to the format only when `Country::isNeedDniByCountryId()` is
+ *    true, no stock address format mentions `dni` otherwise, and the flag is set on
+ *    ES and MX alone - so on stock data the field exists exactly where it is also
+ *    REQUIRED, and nowhere else. A fixture that emitted it for every country would
+ *    hide the case where the mirror's own country write changes which fields the
+ *    form has;
  *  - the shared-address checkbox is emitted ONLY while the delivery form is the
  *    editable one, and CHECKED means the two addresses are the same;
  *  - the country select carries a disabled, empty-valued "Please choose"
@@ -284,9 +321,11 @@ function buildAddressForm(options) {
  *        all. Default: true unless sameAddress.
  * @param {?string} [options.countryId] the country option the SERVER rendered as
  *        selected. Defaults to '1' (Germany) - a real pre-selected country, which
- *        is what core always emits. Pass null for the deliberate EXCEPTION case:
- *        a theme whose form leaves only the placeholder selected. Core does not
- *        produce that state, so any test using it must say why.
+ *        is what core always emits. Also decides whether the form carries a `dni`
+ *        field: pass DNI_COUNTRY_ID (Spain) for a country whose address format asks
+ *        for one. Pass null for the deliberate EXCEPTION case: a theme whose form
+ *        leaves only the placeholder selected. Core does not produce that state, so
+ *        any test using it must say why.
  * @param {boolean} [options.countryIsoAttrs] give the country options
  *        `data-iso-code` (default false - core's classic theme does not)
  * @param {string} [options.company] initial value of the company input
@@ -310,9 +349,17 @@ function buildAddressesStep(options) {
     const addressForm = function (type) {
         const lines = [
             '      <div id="' + type + '-address">',
+            // The rendered form's own wrapper, inside the block id - core's
+            // `address_form` block emits it, and it is what the innermost-first
+            // root resolution actually lands on.
+            '        <div class="js-address-form">',
             '        <form method="POST" data-id-address="0">',
-            '        <input type="text" name="company" id="field-company" value="' + company + '">',
-            '        <input type="text" name="dni" id="field-dni" value="">',
+            '        <input type="text" name="company" id="field-company" value="' + company + '">'
+        ];
+        if (DNI_COUNTRY_IDS.indexOf(String(countryId)) !== -1) {
+            lines.push('        <input type="text" name="dni" id="field-dni" value="" required>');
+        }
+        lines.push(
             '        <input type="text" name="vat_number" id="field-vat_number" value="">',
             '        <input type="text" name="address1" id="field-address1" value="">',
             '        <input type="text" name="postcode" id="field-postcode" value="">',
@@ -324,9 +371,11 @@ function buildAddressesStep(options) {
             countryOption('17', 'United Kingdom', 'GB'),
             countryOption('8', 'France', 'FR'),
             countryOption('1', 'Germany', 'DE'),
+            countryOption(DNI_COUNTRY_ID, 'Spain', 'ES'),
+            countryOption(OTHER_DNI_COUNTRY_ID, 'Mexico', 'MX'),
             '        </select>',
             '        <input type="hidden" name="saveAddress" value="' + type + '">'
-        ];
+        );
         if (type === 'delivery') {
             lines.push(
                 '        <div class="form-group row"><div class="col-md-9 col-md-offset-3">',
@@ -336,7 +385,7 @@ function buildAddressesStep(options) {
                 '        </div></div>'
             );
         }
-        lines.push('        </form>', '      </div>');
+        lines.push('        </form>', '        </div>', '      </div>');
         return lines.join('\n');
     };
 
@@ -876,6 +925,8 @@ function loadSoleTrader() {
 
 module.exports = {
     REPO_ROOT: REPO_ROOT,
+    DNI_COUNTRY_ID: DNI_COUNTRY_ID,
+    OTHER_DNI_COUNTRY_ID: OTHER_DNI_COUNTRY_ID,
     buildPaymentTile: buildPaymentTile,
     buildPaymentTileWithSoleTraderAnswer: buildPaymentTileWithSoleTraderAnswer,
     loadCompanyNumber: loadCompanyNumber,

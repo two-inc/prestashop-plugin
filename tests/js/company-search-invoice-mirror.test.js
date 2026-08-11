@@ -29,7 +29,9 @@ const {
     buildAddressesStep,
     rebuildAddressesStepAsCoreDoes,
     stubAjax,
-    releaseWidgets
+    releaseWidgets,
+    DNI_COUNTRY_ID,
+    OTHER_DNI_COUNTRY_ID
 } = require('./ps-harness');
 
 const CHECKOUT_HOST = 'https://api.example.test';
@@ -37,6 +39,12 @@ const MARKER = 'data-two-autofilled-value';
 
 const GB_OPTION = '17';
 const FR_OPTION = '8';
+// Spain and Mexico: the only two countries whose stock `need_identification_number`
+// flag makes core append `dni` to the address format, so the only two whose forms
+// carry an identification field at all. Every other option here renders without
+// one - see buildAddressesStep().
+const ES_OPTION = DNI_COUNTRY_ID;
+const MX_OPTION = OTHER_DNI_COUNTRY_ID;
 // What the fixture's server rendered as selected, as core always does: a real
 // country, never the placeholder alone. So an "unanswered" country select on a
 // PrestaShop form reads as THIS, not as ''.
@@ -56,7 +64,7 @@ beforeEach(() => {
     // attribute at all, only the country id.
     window.twopayment = {
         checkout_host: CHECKOUT_HOST,
-        countries: { 17: 'gb', 8: 'fr', 1: 'de' }
+        countries: { 17: 'gb', 8: 'fr', 1: 'de', 6: 'es', 144: 'mx' }
     };
 });
 
@@ -163,9 +171,32 @@ describe('which address the editable form is for', () => {
     });
 });
 
+describe('the scope every field lookup is confined to', () => {
+    test('resolves to the rendered form\'s own wrapper, the innermost of the nested scopes', () => {
+        // Core nests three candidate scopes: the step's outer `.js-address-form`,
+        // the block id, and the rendered form's own `.js-address-form` inside it
+        // (`customer/_partials/address-form.tpl`). Innermost-first, so the answer is
+        // the inner wrapper - and nothing asserted on which one it actually is
+        // until a fixture carried all three.
+        buildAddressesStep({ editing: 'invoice' });
+
+        const root = mount(PICKED).visibleAddressFormRoot();
+
+        expect(root.className).toBe('js-address-form');
+        expect(root.closest('#invoice-address')).not.toBeNull();
+        // And whichever it is, it has to scope: every field the mirror writes is
+        // inside it, and no field of the other address block is.
+        expect(root.querySelectorAll("input[name='company']").length).toBe(1);
+        expect(root.querySelectorAll("select[name='id_country']").length).toBe(1);
+        expect(root.querySelector("input[name='saveAddress']").value).toBe('invoice');
+    });
+});
+
 describe('the mirror, on the invoice pass', () => {
     test('writes the company name, its organisation number and the country, and nothing else', () => {
-        buildAddressesStep({ editing: 'invoice' });
+        // Rendered for Spain, because that is what puts an identification field on
+        // the form at all - see buildAddressesStep().
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
 
         mount(PICKED);
 
@@ -183,7 +214,7 @@ describe('the mirror, on the invoice pass', () => {
     });
 
     test('marks what it wrote, so a later pass can tell it from buyer input', () => {
-        buildAddressesStep({ editing: 'invoice' });
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
 
         mount(PICKED);
 
@@ -327,7 +358,7 @@ describe('the company name and its organisation number travel together', () => {
      * organisation number at all, which is worse than not mirroring.
      */
     test('a buyer\'s own identification number blocks the name write too', () => {
-        buildAddressesStep({ editing: 'invoice' });
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
         identifierField().val('99999999');
 
         mount(PICKED);
@@ -335,11 +366,11 @@ describe('the company name and its organisation number travel together', () => {
         expect(identifierField().val()).toBe('99999999');
         expect(companyField().val()).toBe('');
         expect(companyField().attr(MARKER)).toBeUndefined();
-        expect(countrySelect().val()).toBe(SERVER_RENDERED_OPTION);
+        expect(countrySelect().val()).toBe(ES_OPTION);
     });
 
     test('a new company replaces both halves of the previous mirror\'s pair', () => {
-        buildAddressesStep({ editing: 'invoice' });
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
         const memory = {};
 
         mount(PICKED, { mirrorMemory: memory });
@@ -352,9 +383,12 @@ describe('the company name and its organisation number travel together', () => {
     test('the name still travels on a form with no identification field at all', () => {
         // Whether the field exists is decided by the country's address format, so
         // on most countries there is nowhere to put a number. The ordinary company
-        // lookup has always behaved this way on those forms.
+        // lookup has always behaved this way on those forms. The default render is
+        // Germany, which is one of them - no removal needed, and none wanted: a
+        // fixture that had to be edited to reach the majority case was the reason
+        // this gap went unseen.
         buildAddressesStep({ editing: 'invoice' });
-        document.querySelector("#invoice-address input[name='dni']").remove();
+        expect(identifierField().length).toBe(0);
 
         mount(PICKED);
 
@@ -362,7 +396,7 @@ describe('the company name and its organisation number travel together', () => {
     });
 
     test('the number is written only inside the visible form', () => {
-        buildAddressesStep({ editing: 'invoice' });
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
         document.body.insertAdjacentHTML(
             'beforeend',
             '<div id="elsewhere"><input type="text" name="dni" value=""></div>'
@@ -377,11 +411,15 @@ describe('the company name and its organisation number travel together', () => {
 
 describe('populating and re-marking are two different operations', () => {
     test('re-marks the organisation number core restored, as it does the name', () => {
-        buildAddressesStep({ editing: 'invoice' });
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
         const memory = {};
         mount(PICKED, { mirrorMemory: memory });
 
-        rebuildAddressesStepAsCoreDoes({ editing: 'invoice', countryId: FR_OPTION });
+        // Mexico, not France: the buyer moving between the only two countries whose
+        // format carries an identification field is the one way the field SURVIVES
+        // a rebuild, which is what this test is about. A rebuild into a country
+        // without the field is a different case entirely - see the completion tests.
+        rebuildAddressesStepAsCoreDoes({ editing: 'invoice', countryId: MX_OPTION });
 
         expect(identifierField().val()).toBe('12345678');
         expect(identifierField().attr(MARKER)).toBeUndefined();
@@ -459,6 +497,121 @@ describe('populating and re-marking are two different operations', () => {
         expect(companyField().val()).toBe('');
         expect(companyField().attr(MARKER)).toBeUndefined();
         expect(countrySelect().val()).toBe(SERVER_RENDERED_OPTION);
+    });
+});
+
+describe('the rebuild that separates the number from the name', () => {
+    /**
+     * Whether the form HAS an identification field is decided by the COUNTRY:
+     * `AddressFormat::getFormat()` appends `dni` only when
+     * `Country::isNeedDniByCountryId()` is true, which on stock data is Spain and
+     * Mexico alone. So the mirror's own country write is a write that changes which
+     * fields exist - and core's rebuild is where the pair can come apart in both
+     * directions.
+     */
+    test('completes the number half when the rebuild is what produced somewhere to put it', () => {
+        // Germany rendered: no identification field, so the name travels alone and
+        // the number is owed. Then the mirror's country write to Spain rebuilds the
+        // form WITH an empty, required identification field.
+        buildAddressesStep({ editing: 'invoice' });
+        const memory = {};
+        const picked = { company: 'Acme Trading Ltd', companyid: '12345678', countryIso: 'ES' };
+
+        mount(picked, { mirrorMemory: memory });
+
+        expect(companyField().val()).toBe('Acme Trading Ltd');
+        expect(countrySelect().val()).toBe(ES_OPTION);
+        expect(identifierField().length).toBe(0);
+
+        rebuildAddressesStepAsCoreDoes({ editing: 'invoice', countryId: ES_OPTION });
+        expect(identifierField().length).toBe(1);
+        expect(identifierField().val()).toBe('');
+
+        mount(picked, { mirrorMemory: memory });
+
+        // Without this the once-per-company populate gate refuses, and the order
+        // carries a company name the buyer never typed with no organisation number
+        // beside it - on a form where core requires one.
+        expect(identifierField().val()).toBe('12345678');
+        expect(identifierField().attr(MARKER)).toBe('12345678');
+        expect(companyField().val()).toBe('Acme Trading Ltd');
+    });
+
+    test('restores the number the rebuild dropped when a field for it comes back', () => {
+        // The reverse pairing. Spain rendered, so the pair is written in full; the
+        // country write to Great Britain rebuilds into a form with no identification
+        // field, and core's INPUT-only restore loop cannot restore a field the new
+        // render does not emit. The number is not the buyer's to keep or clear - it
+        // simply has nowhere to be - so it must go back when somewhere reappears.
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        const memory = {};
+
+        mount(PICKED, { mirrorMemory: memory });
+        expect(identifierField().val()).toBe('12345678');
+
+        rebuildAddressesStepAsCoreDoes({ editing: 'invoice', countryId: GB_OPTION });
+        mount(PICKED, { mirrorMemory: memory });
+
+        expect(identifierField().length).toBe(0);
+        expect(companyField().val()).toBe('Acme Trading Ltd');
+
+        // The buyer goes back to a country that asks for one.
+        rebuildAddressesStepAsCoreDoes({ editing: 'invoice', countryId: ES_OPTION });
+        mount(PICKED, { mirrorMemory: memory });
+
+        expect(identifierField().val()).toBe('12345678');
+        expect(identifierField().attr(MARKER)).toBe('12345678');
+    });
+
+    test('will not complete the number against a name the buyer has made their own', () => {
+        // The completion is gated on the MARKED name, never on the number field
+        // being empty - "empty" is the very test the populate gate exists to
+        // refuse. A name the buyer has retyped is not the mirror's pair to finish.
+        buildAddressesStep({ editing: 'invoice' });
+        const memory = {};
+        const picked = { company: 'Acme Trading Ltd', companyid: '12345678', countryIso: 'ES' };
+
+        mount(picked, { mirrorMemory: memory });
+        companyField().val('Renamed By The Buyer');
+
+        rebuildAddressesStepAsCoreDoes({ editing: 'invoice', countryId: ES_OPTION });
+        mount(picked, { mirrorMemory: memory });
+
+        expect(companyField().val()).toBe('Renamed By The Buyer');
+        expect(identifierField().val()).toBe('');
+        expect(identifierField().attr(MARKER)).toBeUndefined();
+    });
+
+    test('never completes over a number already in the form', () => {
+        buildAddressesStep({ editing: 'invoice' });
+        const memory = {};
+        const picked = { company: 'Acme Trading Ltd', companyid: '12345678', countryIso: 'ES' };
+
+        mount(picked, { mirrorMemory: memory });
+
+        rebuildAddressesStepAsCoreDoes({ editing: 'invoice', countryId: ES_OPTION });
+        identifierField().val('99999999');
+        mount(picked, { mirrorMemory: memory });
+
+        expect(identifierField().val()).toBe('99999999');
+        expect(identifierField().attr(MARKER)).toBeUndefined();
+    });
+
+    test('does not re-fill a number the buyer cleared on a form that kept its field', () => {
+        // The buyer-cleared gate, on the path where it still applies in full: the
+        // field existed, the mirror wrote it, the buyer emptied it, and the rebuild
+        // kept the field. Nothing is owed and nothing is refilled.
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        const memory = {};
+
+        mount(PICKED, { mirrorMemory: memory });
+        identifierField().val('');
+
+        rebuildAddressesStepAsCoreDoes({ editing: 'invoice', countryId: MX_OPTION });
+        mount(PICKED, { mirrorMemory: memory });
+
+        expect(identifierField().val()).toBe('');
+        expect(identifierField().attr(MARKER)).toBeUndefined();
     });
 });
 
