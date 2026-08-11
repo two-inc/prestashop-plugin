@@ -1367,8 +1367,11 @@ class TwoCheckoutManager {
      * @returns {boolean} True if company org number is missing
      */
     isCompanyDataMissing() {
-        // The hidden `companyid` field is the only carrier of the selection the
-        // browser can read. There used to be a `document.cookie` fallback here
+        // The hidden `companyid` field is the FIRST of the two carriers named in
+        // this method's docblock, and it is consulted before the page-lifetime
+        // selection below: while the address form is on screen the DOM field is the
+        // live one, and the seeded selection stands in for it only once the field is
+        // empty or gone. There used to be a `document.cookie` fallback here
         // looking for a bare `two_company_id`; nothing ever wrote one. PrestaShop
         // serialises every server-side session key into a single encrypted cookie
         // under its own name, so a server write of that key never produces a

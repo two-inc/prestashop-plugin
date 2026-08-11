@@ -833,8 +833,22 @@ Four things worth knowing before touching it:
     field being empty: "empty" is the very test the populate gate exists to refuse,
     and only a number the mirror never placed anywhere may be completed, into a
     field carrying no marker of any kind. A number the mirror wrote and the buyer
-    then cleared is not owed and is never refilled **on a form that kept its
+    then cleared is not owed, and no COMPLETION refills it **on a form that kept its
     identification field** — which is the case the gate is about.
+  - **That qualification is not the whole story, and there is a SECOND route**
+    (round 6). It is not enough to scope the promise to the completion path: since
+    the mirror publishes the selection through the hidden `companyid` field the way a
+    real selection does, the submit handler's
+    `syncOrganizationToAddressIdentifiers()` reads that field and writes its value
+    into the identification field on the way out — same country, no rebuild, no round
+    trip, on the very next submit. So a cleared number comes back by either of two
+    routes: the re-mark/complete pair after a country change, and the pre-submit sync
+    with no country change at all. The second is deliberately left alone rather than
+    fixed: it is precisely what a real selection does on that same form, and the
+    alternative is offering the order a company name with no organisation number
+    beside it. Recorded because these two sentences exist to be accurate about what
+    the code guarantees, and a qualification that is merely narrower than the old
+    absolute is still false.
   - **The residual, stated rather than claimed away** (round 5): the re-mark path
     re-pends a placed number when the rebuild renders a country whose format has NO
     identification field, and it does so from the field being ABSENT, without
