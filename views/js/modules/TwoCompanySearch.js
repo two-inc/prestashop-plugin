@@ -1745,22 +1745,34 @@ class TwoCompanySearch {
      * @returns {void}
      */
     syncInternalIdentifierVisibility(root) {
-        this.addressIdentifierFields(root).forEach(field => {
-            if (!field || field.length === 0) {
+        this.addressIdentifierFields(root).forEach(fields => {
+            if (!fields || fields.length === 0) {
                 return;
             }
-            const value = String(field.val() == null ? '' : field.val());
-            const group = field.closest('.form-group');
-            const target = group.length > 0 ? group : field;
-            if (window.TwoCompanyNumber.isInternal(value)) {
-                target.attr(TwoCompanySearch.INTERNAL_HIDDEN_ATTR, '1');
-                target.css('display', 'none');
-                return;
-            }
-            if (typeof target.attr(TwoCompanySearch.INTERNAL_HIDDEN_ATTR) !== 'undefined') {
-                target.removeAttr(TwoCompanySearch.INTERNAL_HIDDEN_ATTR);
-                target.css('display', '');
-            }
+            // PER ELEMENT, via each(). The unscoped selector returns EVERY matching
+            // input as one set, and jQuery is asymmetric across it: `.val()` reads the
+            // FIRST match while `.css()`/`.attr()` write to ALL of them. Deciding once
+            // and applying to the set would let the first field's value govern the
+            // second's visibility - either revealing an internal identifier, or
+            // hiding a required field that is EMPTY, which browsers refuse to focus
+            // and which therefore kills form submission with no visible error. The
+            // same asymmetry is called out for the company field further down; it must
+            // not be reintroduced here.
+            fields.each((index, element) => {
+                const field = $(element);
+                const value = String(field.val() == null ? '' : field.val());
+                const group = field.closest('.form-group');
+                const target = group.length > 0 ? group : field;
+                if (window.TwoCompanyNumber.isInternal(value)) {
+                    target.attr(TwoCompanySearch.INTERNAL_HIDDEN_ATTR, '1');
+                    target.css('display', 'none');
+                    return;
+                }
+                if (typeof target.attr(TwoCompanySearch.INTERNAL_HIDDEN_ATTR) !== 'undefined') {
+                    target.removeAttr(TwoCompanySearch.INTERNAL_HIDDEN_ATTR);
+                    target.css('display', '');
+                }
+            });
         });
     }
 
@@ -2216,11 +2228,18 @@ class TwoCompanySearch {
         const stateSelect = $(root).find("select[name='id_state'], select[name='state']").first();
         if (stateSelect.length > 0) {
             const toName = value => this.stateNameForOptionValue(stateSelect[0], value);
+            // "Unanswered" is EMPTY for a state select, NOT "still what the server
+            // rendered" - the opposite of the country beside it, and deliberately so.
+            // The country select has no reachable empty state, which is the entire
+            // justification for treating its server-rendered value as unanswered. A
+            // state select DOES have a reachable empty placeholder, so a
+            // server-rendered state is the buyer's own saved answer and must pin the
+            // address like any other answer of theirs.
             record(
                 'state',
                 stateSelect,
                 toName(liveValue(stateSelect)),
-                toName(this.serverRenderedSelectValue(stateSelect[0])),
+                '',
                 toName
             );
         }
@@ -5804,9 +5823,14 @@ class TwoCompanySearch {
             if (optionValue === null) {
                 return {};
             }
+            // '' rather than the server-rendered value, for the reason given in
+            // mirroredAddressFieldStates(): a state select can legitimately be empty,
+            // so a server-rendered state is the buyer's saved answer and the
+            // registered region must not overwrite it. Only a value this class is on
+            // record as having written there may be replaced.
             const accepted = this.mirrorWriteAcceptedValues(
                 'state',
-                this.serverRenderedSelectValue(select[0]),
+                '',
                 name => {
                     const match = this.stateOptionValueForRegion(select[0], String(name));
                     return match === null ? '' : match;
