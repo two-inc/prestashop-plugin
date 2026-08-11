@@ -16062,21 +16062,27 @@ class Twopayment extends PaymentModule
             ) {
                 // TWO-40 changed the guard above. It used to read
                 // `isset($cookie->two_company_id)`; it now asks the reader for a
-                // record and tests `$previousRecord['id'] !== ''`. For every
-                // record carrying a real organisation number the two agree, and
-                // the reader is now the only thing allowed to decide whether a
-                // record exists at all, which is the point of routing through it.
+                // record and tests `$previousRecord['id'] !== ''`. These are NOT
+                // equivalent conditions, and this comment used to imply they were
+                // close enough to call the difference benign drift - they are not
+                // equivalent, full stop, and the ruling below is what makes that a
+                // checked fact rather than a claim.
                 //
-                // They part company on ONE reachable record: organisation number
-                // present but EMPTY, with a country marker beside it. Stored
-                // whenever the order-intent handler resolves a company name with
-                // no number (storeCompanyDataInSession() writes the number as ''),
-                // which is the ordinary "typed a company, never selected one from
-                // the register" state. The old condition fired on it and unset the
-                // number (already empty - no change) AND the country marker; this
-                // one does not fire, so the marker survives.
+                // This guard's job is to disown a session organisation NUMBER that
+                // no longer matches the address. `isset()` is true on a property
+                // set to an empty string, so the old condition fired even when
+                // there was no number in the record - nothing to disown - and took
+                // the country marker down with it as collateral damage. The new
+                // condition only fires when a real number is present, which is the
+                // only state this guard has anything to do.
                 //
-                // Two consequences, both deliberate here rather than overlooked:
+                // The reachable case: organisation number present but EMPTY, with
+                // a country marker beside it. Stored whenever the order-intent
+                // handler resolves a company name with no number
+                // (storeCompanyDataInSession() writes the number as ''), which is
+                // the ordinary "typed a company, never selected one from the
+                // register" state. Two consequences of the guard no longer firing
+                // on it:
                 //  - a "Dropped session company number" log line that reported
                 //    dropping a number that was never there stops being written;
                 //  - ajaxProcessGetCompany() now answers that stale country
@@ -16087,6 +16093,11 @@ class Twopayment extends PaymentModule
                 //    "search for your company" one. Both block placement, so no
                 //    unselected company can be credit-checked either way - the
                 //    difference is which prompt, not whether the buyer is stopped.
+                //
+                // Pinned by SessionCompanyClearSpec::testAddressSaveKeepsCountryMarkerWhenNumberWasAlreadyEmpty()
+                // on this side of the boundary, and by
+                // testAddressSaveDropsTheNumberOfADisownedCompany() on the other -
+                // a record that DOES carry a real number is still disowned.
                 //
                 // TWO-25288. The buyer saved a DIFFERENT company name with no
                 // organisation number beside it - which is what disowning a

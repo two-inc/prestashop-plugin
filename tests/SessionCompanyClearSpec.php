@@ -63,6 +63,7 @@ final class SessionCompanyClearSpec
         self::testAddressSaveKeepsTheNumberWhenTheFormSuppliesOne();
         self::testAddressSaveKeepsTheNumberWhenTheCompanyIsUnchanged();
         self::testAddressSaveKeepsTheNumberOnAMerelyRetypedName();
+        self::testAddressSaveKeepsCountryMarkerWhenNumberWasAlreadyEmpty();
         self::testCurrentCartRecordIsFullyReadable();
         self::testRecordFromAnotherCartIsInvisible();
         self::testRecordFromAnotherCartIsCleared();
@@ -564,6 +565,47 @@ final class SessionCompanyClearSpec
             (string) $cookie->two_company_id,
             'a capitalisation tidy-up is not a disowning and must not cost the organisation number'
         );
+    }
+
+    /**
+     * TWO-25288 boundary, pinned from the empty-number side. The guard's job is
+     * to disown a session organisation NUMBER; a record with no number carries
+     * nothing to disown, so it must not fire here even though the address's
+     * company name has just changed underneath it.
+     *
+     * storeCompanyDataInSession() writes exactly this shape - a resolved company
+     * NAME with no organisation number - whenever a buyer types a company
+     * without picking one from the register. This is that record reaching the
+     * address-save hook.
+     *
+     * Paired with testAddressSaveDropsTheNumberOfADisownedCompany(), which pins
+     * the other side of the same boundary: a record that DOES carry a real
+     * organisation number is still disowned on a mismatched name. Together they
+     * fix where the guard fires and where it does not - the two conditions are
+     * NOT equivalent, and this pair is what makes that a checked fact rather
+     * than a claim in a comment.
+     */
+    private static function testAddressSaveKeepsCountryMarkerWhenNumberWasAlreadyEmpty(): void
+    {
+        $cookie = self::seedSessionCompany();
+        $cookie->two_company_id = '';
+        PrestaShopLogger::reset();
+
+        self::runAddressSave('A Different Trading Name', '');
+
+        TinyAssert::true(
+            isset($cookie->two_company_country),
+            'a country marker with no organisation number behind it was not this guard\'s to clear'
+        );
+        TinyAssert::same('GB', (string) $cookie->two_company_country);
+        TinyAssert::same('A Different Trading Name', (string) $cookie->two_company_name);
+
+        foreach (PrestaShopLogger::$logs as $entry) {
+            TinyAssert::false(
+                strpos($entry['message'], 'Dropped session company number') !== false,
+                'nothing was dropped - an empty number was never disowned, so this log line must not fire'
+            );
+        }
     }
 
     /* ---- fixtures ---- */
