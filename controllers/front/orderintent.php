@@ -368,14 +368,14 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             return;
         }
 
-        $this->context->cookie->two_company_name = $company;
-        $this->context->cookie->two_company_id = $companyId;
+        $fields = ['name' => $company, 'id' => $companyId];
         if (!empty($country)) {
-            $this->context->cookie->two_company_country = $country;
+            $fields['country'] = $country;
         }
         if ($addressId > 0) {
-            $this->context->cookie->two_company_address_id = (string) $addressId;
+            $fields['address_id'] = (string) $addressId;
         }
+        $this->module->storeTwoCartScopedCompany($fields);
         $this->context->cookie->setExpire(time() + Twopayment::COOKIE_EXPIRY_ONE_HOUR);
         PrestaShopLogger::addLog('TwoPayment: Saved company in cookie for session', 1);
         $this->sendJsonResponse(json_encode(['success' => true]));
@@ -409,11 +409,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             return;
         }
 
-        unset($this->context->cookie->two_company_name);
-        unset($this->context->cookie->two_company_id);
-        unset($this->context->cookie->two_company_country);
-        unset($this->context->cookie->two_company_address_id);
-        $this->context->cookie->write();
+        $this->module->clearTwoCartScopedCompany();
 
         PrestaShopLogger::addLog('TwoPayment: Session company cleared for manual company entry', 1);
 
@@ -431,10 +427,11 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Invalid token')]));
             return;
         }
-        $company = isset($this->context->cookie->two_company_name) ? $this->context->cookie->two_company_name : '';
-        $companyId = isset($this->context->cookie->two_company_id) ? $this->context->cookie->two_company_id : '';
-        $companyCountry = isset($this->context->cookie->two_company_country) ? $this->context->cookie->two_company_country : '';
-        $companyAddressId = isset($this->context->cookie->two_company_address_id) ? (int) $this->context->cookie->two_company_address_id : 0;
+        $stored = $this->module->readTwoCartScopedCompany();
+        $company = $stored !== null ? $stored['name'] : '';
+        $companyId = $stored !== null ? $stored['id'] : '';
+        $companyCountry = $stored !== null ? $stored['country'] : '';
+        $companyAddressId = $stored !== null ? (int) $stored['address_id'] : 0;
         $this->sendJsonResponse(json_encode([
             'success' => true,
             'company' => $company,
@@ -859,8 +856,9 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $validatedSession = $this->module->getTwoValidatedSessionCompanyData($currentCountryIso);
         $sessionCompany = isset($validatedSession['company_name']) ? trim($validatedSession['company_name']) : '';
         $sessionCompanyId = isset($validatedSession['organization_number']) ? trim($validatedSession['organization_number']) : '';
-        $sessionAddressId = isset($this->context->cookie->two_company_address_id)
-            ? (int) $this->context->cookie->two_company_address_id
+        $storedCompany = $this->module->readTwoCartScopedCompany();
+        $sessionAddressId = ($storedCompany !== null && $storedCompany['address_id'] !== '')
+            ? (int) $storedCompany['address_id']
             : 0;
 
         if ($sessionAddressId > 0 && $selectedAddressId > 0 && $sessionAddressId !== $selectedAddressId) {
@@ -973,8 +971,10 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
     private function storeCompanyDataInSession($companyData)
     {
         if (!empty($companyData['company'])) {
-            $this->context->cookie->two_company_name = $companyData['company'];
-            $this->context->cookie->two_company_id = $companyData['companyid'] ?? '';
+            $fields = [
+                'name' => $companyData['company'],
+                'id' => $companyData['companyid'] ?? '',
+            ];
 
             $addressId = (int) Tools::getValue('id_address_invoice');
             if ($addressId <= 0) {
@@ -992,12 +992,14 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
                 if (Validate::isLoadedObject($selectedAddress)) {
                     $countryIso = Country::getIsoById($selectedAddress->id_country);
                     if ($countryIso && is_string($countryIso)) {
-                        $this->context->cookie->two_company_country = strtoupper($countryIso);
+                        $fields['country'] = strtoupper($countryIso);
                     }
-                    $this->context->cookie->two_company_address_id = (string) $addressId;
+                    $fields['address_id'] = (string) $addressId;
                 }
             }
-            
+
+            $this->module->storeTwoCartScopedCompany($fields);
+
             // Set cookie expiration (1 hour)
             $this->context->cookie->setExpire(time() + Twopayment::COOKIE_EXPIRY_ONE_HOUR);
             
