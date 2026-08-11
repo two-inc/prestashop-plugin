@@ -292,12 +292,25 @@ describe('the pin is triggered by ANY address field, address-wide', () => {
         expect(companyField().val()).toBe('');
     });
 
-    test('but a state still holding what the SERVER rendered does not pin it', () => {
+    /**
+     * The INVERSE of the rule the country select follows, and deliberately so.
+     *
+     * "Unanswered" means "still what the server rendered" for the country only
+     * because a country select has no reachable empty state - there is always a
+     * country selected, so accepting the rendered value as unanswered is the only way
+     * the field can ever be written at all. A STATE select does have a reachable empty
+     * placeholder, so a state holding a real value is the buyer's own saved answer,
+     * and it pins the address exactly as a saved city would.
+     *
+     * An earlier round gave `state` the country's baseline by symmetry. That let the
+     * registered region overwrite a state the buyer had saved.
+     */
+    test('a state holding a real value pins the address, even straight from the server', () => {
         buildAddressesStep({ editing: 'invoice' });
         publishMirrorWrites(null);
         $("#invoice-address input[name='city']").after([
             '<select name="id_state">',
-            '<option value="" selected>-</option>',
+            '<option value="">-</option>',
             '<option value="31" selected>Kent</option>',
             '</select>'
         ].join(''));
@@ -305,6 +318,28 @@ describe('the pin is triggered by ANY address field, address-wide', () => {
         const search = mount(PICKED);
 
         expect($("#invoice-address select[name='id_state']").val()).toBe('31');
+        expect(search.secondaryAddressIsPinned(search.secondaryAddressFormRoot())).toBe(true);
+        expect(companyField().val()).toBe('');
+    });
+
+    /**
+     * The other half of the same rule: an EMPTY state select is genuinely unanswered
+     * and must not pin, or every address form on a state-bearing country would arrive
+     * frozen before the buyer touched anything.
+     */
+    test('an empty state select does not pin the address', () => {
+        buildAddressesStep({ editing: 'invoice' });
+        publishMirrorWrites(null);
+        $("#invoice-address input[name='city']").after([
+            '<select name="id_state">',
+            '<option value="" selected>-</option>',
+            '<option value="31">Kent</option>',
+            '</select>'
+        ].join(''));
+
+        const search = mount(PICKED);
+
+        expect($("#invoice-address select[name='id_state']").val()).toBe('');
         expect(search.secondaryAddressIsPinned(search.secondaryAddressFormRoot())).toBe(false);
         expect(companyField().val()).toBe('Acme Trading Ltd');
     });
