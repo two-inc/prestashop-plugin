@@ -93,7 +93,7 @@ inconvenient to attribute:
 - **`building` / `apartment` → `address1`, with `street` moving to `address2`.** Where a building or
   apartment is given it is the more specific locator and takes the first line; where neither is
   given the street takes the first line and the second is left alone. Both present are joined
-  most-specific-first (`"Apartment 4, Kelburnfoot"`).
+  most-specific-first (`"Apartment 4, Mill House"`).
 - **No de-duplication against the street**, on Doug's explicit ruling: *"it is valid for some
   addresses to have a matching first and second line so deduping would be wrong."* An earlier round
   proposed exactly that dedup and it was rejected — an address whose `building` equals its `street`

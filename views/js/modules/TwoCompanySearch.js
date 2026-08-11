@@ -5682,7 +5682,7 @@ class TwoCompanySearch {
         // second is left alone.
         //
         // With both present they are joined most-specific-first, which is how an
-        // address is read aloud ("Apartment 4, Kelburnfoot").
+        // address is read aloud ("Apartment 4, Mill House").
         //
         // NO de-duplication against the street, on Doug's explicit ruling: it is
         // valid for an address to carry the same text on both lines, so suppressing a
