@@ -174,9 +174,16 @@
 
 ---
 
-# PROPOSED — NOT IMPLEMENTED — company-search / sole-trader restructuring (TWO-40)
+# company-search / sole-trader restructuring (TWO-40)
 
-**Status: DESIGN ONLY, awaiting Doug's review. No code has been written for anything below.**
+**Status, per item — the design below is NO LONGER uniformly unimplemented:**
+`#6`/`#9` **SHIPPED** (see its own "as built"), `#12` **SHIPPED**, `#13` **SHIPPED**
+(read side needed no code; write side shipped in a different shape — read the
+corrections section first), `#8` **DEFERRED by Doug, deliberately not built**, `#1`
+**WITHDRAWN**. Each item's own "as built" subsection is the authority on what
+actually exists; the proposals above them are kept for their reasoning, not as a
+description of the code.
+
 Written 2026-08-10 against `origin/staging` @ `0ddad20`. Items are numbered per Doug's own
 consolidated list (#6/#9, #8, #12, #13).
 
@@ -194,6 +201,60 @@ from `override/classes/form/CustomerAddressFormatter.php`, ~20 from
 shifts once it merges. Re-derive with `git grep -n <symbol> <ref>` against a
 freshly fetched ref before acting on any of them — never from a working tree. Several numbers in the
 first draft of this document were already wrong for exactly that reason.
+
+---
+
+## Corrections to this document's premises, verified against PrestaShop core
+
+Extracted from the official `1.7.8.11`, `8-apache` and `9-apache` images —
+`themes/classic/templates/checkout/_partials/steps/addresses.tpl`,
+`checkout/_partials/address-form.tpl`, `_partials/form-fields.tpl` and
+`classes/checkout/CheckoutAddressesStep.php`. The two checkout templates are
+byte-identical between 8 and 9; 1.7.8.11 differs only by one extra attribute and
+a hook, so all three supported majors behave the same here. **Where the designs
+below disagree with this section, this section wins** — they were written on a
+wrong premise.
+
+**A. PrestaShop NEVER renders two editable address forms at once.** The delivery
+and invoice form flags are set in mutually exclusive branches of
+`CheckoutAddressesStep::handleRequest()` and of the address-count block that
+follows it. The other side is always a radio selector over saved addresses, or
+absent. So `#13`-enabled's mirror as designed — copy company + country from the
+block the search ran in into the billing block — is **not implementable**: when
+the delivery form is on screen there are no invoice inputs to write into. The
+mirror has to be a **cross-page-load** operation, seeding the invoice form when it
+later becomes the editable one. As a corollary, Doug's "no silent population of a
+hidden block" is satisfied for free: there is no hidden block. The comment on
+`TwoCheckoutManager.neutralizeCompanySearchAffordance()` claiming a second
+`name='company'` input appears once the buyer states the addresses differ was
+wrong, and is the premise this document inherited; it has been corrected in place.
+
+**B. There is no "addresses differ" checkbox to listen to.** `use_same_address` is
+a server-side Smarty flag expressed by two different controls.
+`address-form.tpl` renders the checkbox **only** under `{if $type ===
+"delivery"}`, i.e. only while the delivery form is the editable one, and its
+polarity is **checked = the addresses are the SAME**. On every later pass core
+renders a LINK instead (`data-link-action="different-invoice-address"`), which is
+an `href` performing a full page navigation. So the reveal is a page load and
+there is no client-side event to hook, which is why the mirror has no reactivity
+half.
+
+**C. `TwoCountry.js` must NOT be extracted, and was not.** The design called it a
+prerequisite of `#13`. It is not one: because only one address form is ever
+rendered, there is only ever ONE `select[name='id_country'], select[name='country']`
+on the page, so the four resolvers' first-match-in-document read cannot pick the
+wrong select. All four were checked and all four already prefer the live select
+when one exists. Dropped rather than deferred — the reason it was wanted has been
+removed, not postponed. The duplicated country-name→ISO maps are untouched and
+remain Doug's separate item.
+
+**D. `window.twopayment.billing_country` was already the right source.**
+`Twopayment::getCheckoutBillingCountryIso()` derives it from the cart's
+`id_address_invoice`, so it is the INVOICE address's country, not the delivery
+one. Verified, left alone, and now pinned by a spec asserting exactly that — with
+both addresses set to different countries, so the assertion identifies which field
+was read. Nothing guarded it before, and it is the terminal fallback for every
+country resolver in the checkout JS.
 
 ---
 
@@ -364,7 +425,22 @@ of a cookie it never wrote, and that line is simply deleted.
 
 ---
 
-## #8 — tile-mode's address-side layer is gated on the wrong thing
+## #8 — DEFERRED, not pending — tile-mode's address-side layer is gated on the wrong thing
+
+**Status: considered and explicitly deferred by Doug (2026-08-11). Nothing below
+is being worked on, and the design was NOT implemented.** His ruling: there are no
+plans at present to let the admin enable address population while the company
+search is in the payment tile, so the current no-op is fine. The tile-mode
+inertness stays exactly as it is — address-field writes force-disabled from the
+mount location, `isAddressLookupSettingAvailable()` retained, the tile mount's
+hardcoded `addressLookupEnabled: false` retained.
+
+Recorded rather than deleted so that the analysis is not re-derived from scratch,
+and marked deferred so it is not re-investigated as though it were outstanding
+work. Revive it only if an admin path actually needs the two questions separated;
+note in that case that step 4 (root-scoping the address writes) is the load-bearing
+part and cannot be skipped — though `#13`-enabled's mirror already scopes its own
+writes to the visible form element, so there is a working precedent for it now.
 
 ### The conflation, precisely
 
@@ -441,6 +517,8 @@ reappears.
 
 ## #12 — sole-trader country must come from the live form, never a saved value
 
+**SHIPPED as proposed. See "#12 — as built" at the end of this item.**
+
 ### What PR #153 established, and what reverses
 
 `resolveSoleTraderCountryIso()` (`controllers/front/orderintent.php:235-256`) is a three-tier
@@ -499,9 +577,57 @@ So promoting the posted tier has **no security consequence**. It is purely a cor
 the billing select is decided by `#13`, not here. `resolveSoleTraderCountryIso()` only sees
 whatever the browser posts; the browser-side decision about *which* select to read is `#13`'s.
 
+### As built
+
+**Shipped, all five points, exactly as proposed.** The posted country is tier 1,
+the invoice-address tier is deleted rather than demoted, the cart's delivery
+address is the sole last resort, both docblocks were rewritten rather than left
+arguing for the old ordering, and the shape check is byte-for-byte unchanged.
+
+The three claims the docblock now makes about there being no privilege to escalate
+were each re-verified in the code before being written down, not carried over from
+the previous comment: `TwoSoleTrader::mintTokens()` takes only a module and both
+delegation payloads it posts are fixed scope lists with no country; the registry
+availability check runs on every call inside the token action; and
+`ajaxProcessSoleTraderAvailability()` answers a client-supplied country by design,
+with a docblock of its own saying so.
+
+Spec changes: the two invoice-address-first cases are replaced by their mirrors
+(a posted country beats a committed invoice address; a cart carrying only an
+eligible invoice address mints nothing, which is the proof the tier was deleted
+and not demoted), the two address-resolution-failure cases moved onto the delivery
+tier, and `testPostedCountryCannotConjureAvailability` is unchanged and is now the
+more load-bearing of the pair.
+
+**The coupling to `#13`, and the trade-off it leaves — accepted, not absent**
+(corrected in round 5; an earlier revision of this paragraph said "which select" was
+"never a question on PrestaShop", which is true but incomplete, and reads as a claim
+that nothing can go wrong here). Per correction C there is only ever ONE country
+select on the page, so the browser cannot post the wrong one. But *which* address
+that one select belongs to depends on which pass the buyer is on: on the
+delivery-address-editing pass it is the DELIVERY country. So a buyer whose billing
+address differs from their shipping address, clicking the sole-trader chip while
+editing delivery, is now gated against their **shipping** country rather than their
+real billing country. That is a genuine behaviour change from before this PR, where
+the committed invoice address was tier 1.
+
+It is accepted under Doug's explicit ruling that the live in-page value wins, and it
+has **no security consequence** — minting takes no country parameter at all
+(re-verified: `TwoSoleTrader::mintTokens($module)`), so the country only selects
+which registry answer the availability gate reads, and the browser can already ask
+for any country's answer through `soleTraderAvailability` by design. Recorded here as
+a trade-off precisely so it is not "fixed" back into an invoice-address tier later:
+reintroducing that tier is the stale-value bug this item removed.
+
 ---
 
 ## #13 — two distinct modes: ENABLED writes, DISABLED reads
+
+**SHIPPED, but not in this shape.** Corrections A, B and C at the top of this
+section invalidate three of the proposals below — the selection-time mirror, the
+reveal listener, and the `TwoCountry.js` prerequisite. Jump to "#13 — as built" for
+what exists; the contract table immediately below is still accurate and is the
+requirement the built version satisfies.
 
 ### Doug's clarification restated as a contract
 
@@ -616,16 +742,166 @@ countries, en/es/fr/nl/no/sv. They ride along in the same extraction.
 
 ---
 
+### #13 — as built, and where the design above was wrong
+
+Read corrections A–D at the top of this section first; three of them rewrite this
+item.
+
+**The READ side (disabled mode) needed no code at all.** All four country
+resolvers — `TwoCompanySearch.getCurrentCountry()`,
+`TwoSoleTrader.billingCountry()`, `TwoOrderIntent.getCurrentAddressCountryISO()`
+and `TwoCheckoutManager.getSelectedCountryIso()` — were checked and every one
+already prefers the live select over its own terminal fallback. Because only one
+address form is ever rendered there is only one select to find, so the
+"which select do I read" decision the design worried about does not exist here, and
+the `TwoCountry.js` extraction it wanted as a prerequisite is dropped (correction
+C). What was missing was a guard on the fallback's *source*, so a spec now pins
+that `window.twopayment.billing_country` comes from the cart's invoice address and
+never its delivery one (correction D). No resolver was modified.
+
+**The WRITE side (enabled mode) shipped as a cross-page-load mirror**, because
+correction A makes the designed selection-time mirror unimplementable. It runs when
+the company-search control mounts, not on selection, and not on a reveal event —
+there is none (correction B).
+
+Shape as built, all on `TwoCompanySearch`:
+
+- `buyerStatesInvoiceAddressDiffers()` — the signal. Resolution order: the
+  shared-address control's NEGATION when that control is in the DOM at all; else the
+  presence of an invoice block of either shape (form or selector); else **false**,
+  i.e. no-op, because an unclear signal is not evidence the addresses differ. It
+  carries a comment naming PrestaShop's polarity (checked = SAME) and the fact that
+  another platform in this family inverts it, as the reason the abstraction exists
+  at all. **Language convention, and it is a code requirement rather than a
+  reporting one: "when the buyer states" / "when the buyer's current selection
+  indicates" throughout — never "ticked" or "checked".** Doug's reason: the checkbox
+  appears on the first pass only and another platform inverts its polarity, so
+  checkbox language actively misleads whoever ports this.
+- `visibleAddressFormType()` — which address the one editable form is for, read from
+  the hidden field core's address form emits carrying exactly that word.
+- `visibleAddressFormRoot()` — the scope for every field lookup. Innermost-first,
+  and it resolves to the block element rather than the form, because core nests the
+  rendered address form's own `<form>` inside the step's outer one and HTML drops
+  the inner tag.
+- `mirrorConfirmedCompanyToInvoiceAddress()` — the mirror. It is THREE operations and
+  they must stay three: `reapplyMirrorMarkers()` re-establishes the autofill marker on
+  a value still exactly what the mirror recorded writing (never writes a value,
+  never touches an empty field),
+  `populateInvoiceAddressFromConfirmedCompany()` fills unanswered fields at most
+  once per company per page, and `completeMirroredOrganizationNumber()` places the
+  organisation number when core's rebuild is what separated it from the name (see
+  below). Supporting parts: `mirrorTargetIsWritable()`,
+  `writeMirroredValue()`, `serverRenderedSelectValue()`, `mirrorCountryIntoForm()`,
+  `countryOptionValueForIso()`, `mirrorMemory()`. Company name, its organisation
+  number and the country; gated on the merchant's address-population switch as the
+  design required, which also makes it inert on the tile mount for free.
+
+Four things worth knowing before touching it:
+
+- **"Empty" is NOT a reachable state for the country select, and a rule written
+  around emptiness makes the country half dead code.** Core's `form-fields.tpl`
+  emits the disabled, empty-valued "Please choose" option as `selected` ALWAYS, and
+  also marks the option matching the field's value — which
+  `CustomerAddressFormatter` sets unconditionally to the address's country id. Two
+  selected options, last one wins, so `select.value` on a fresh unanswered form is
+  the rendered country id and never `''`. "Unanswered" therefore means **still
+  exactly the value the server rendered**, read from the `selected` attribute. An
+  earlier revision of this section claimed the opposite; it was wrong, and a Jest
+  fixture that marked only the placeholder is what hid it.
+- **The name and its organisation number travel together, or neither travels —
+  with one standing exception, and one the code now closes.** Once the address is
+  saved, the resolver can reach the tier that reads the company off the ADDRESS, so
+  a mirrored name with no number beside it is an order carrying a company the buyer
+  never typed and no organisation number at all. A form whose identification field
+  already holds the buyer's own number therefore gets neither write.
+  - **The standing exception:** a form with no identification field at all still
+    gets the name. Its presence is decided by the country's address format —
+    `AddressFormat::getFormat()` appends `dni` only for a country flagged
+    `need_identification_number`, which on stock data is ES and MX alone — so on
+    most countries there is nowhere to put a number, and the ordinary company lookup
+    has always behaved this way there.
+  - **The exception the rebuild used to open, now closed:** because the field's
+    presence follows the COUNTRY, the mirror's own country write can change which
+    fields exist. Mirroring into ES from a country without the field gave back a
+    form with an empty, REQUIRED identification field that the once-per-company
+    populate gate then forbade ever filling; the reverse direction lost a number
+    already written, since core's INPUT-only restore loop cannot restore a field the
+    new render does not emit. So the two halves are recorded SEPARATELY — a number
+    the mirror has PLACED in a field versus one it still OWES — and a third
+    operation, `completeMirroredOrganizationNumber()`, places the owed half when a
+    field for it appears. It is gated on the **marked name**, never on the number
+    field being empty: "empty" is the very test the populate gate exists to refuse,
+    and only a number the mirror never placed anywhere may be completed, into a
+    field carrying no marker of any kind. A number the mirror wrote and the buyer
+    then cleared is not owed, and no COMPLETION refills it **on a form that kept its
+    identification field** — which is the case the gate is about.
+  - **That qualification is not the whole story, and there is a SECOND route**
+    (round 6). It is not enough to scope the promise to the completion path: since
+    the mirror publishes the selection through the hidden `companyid` field the way a
+    real selection does, the submit handler's
+    `syncOrganizationToAddressIdentifiers()` reads that field and writes its value
+    into the identification field on the way out — same country, no rebuild, no round
+    trip, on the very next submit. So a cleared number comes back by either of two
+    routes: the re-mark/complete pair after a country change, and the pre-submit sync
+    with no country change at all. The second is deliberately left alone rather than
+    fixed: it is precisely what a real selection does on that same form, and the
+    alternative is offering the order a company name with no organisation number
+    beside it. Recorded because these two sentences exist to be accurate about what
+    the code guarantees, and a qualification that is merely narrower than the old
+    absolute is still false.
+  - **The residual, stated rather than claimed away** (round 5): the re-mark path
+    re-pends a placed number when the rebuild renders a country whose format has NO
+    identification field, and it does so from the field being ABSENT, without
+    consulting the value it held. So a number the buyer cleared themselves, followed
+    by a trip to a country without the field and back, IS owed again and IS
+    refilled. Accepted, and narrow by construction: the field is only ever absent on
+    countries that do not require it and only ever pending-completed on countries
+    that do, and core rejects an empty required identification number at save
+    (`CustomerAddressFormatter` marks it required, `AbstractForm` errors on an empty
+    required field, and `Address` rejects it independently) — so the cleared state
+    the buyer is "losing" is one they could not have submitted. The absolute wording
+    that used to stand here, and its copy in `CHANGELOG.md`, described a guarantee
+    the code does not make; `completeMirroredOrganizationNumber()`'s own docblock
+    always described the residual correctly.
+- **A successful country write triggers core's own form rebuild**, which is why the
+  re-mark operation exists: core's `.js-country` handler is delegated on `body`,
+  POSTs `action=addressForm`, replaces every `.js-address-form`, and restores the
+  previous values with an INPUT-only, VALUE-only loop. Values survive; the
+  `data-two-autofilled-value` marker does not. The mirror's record of what it wrote
+  lives on `TwoCheckoutManager`, not on the search, because the manager destroys and
+  rebuilds the search on every `updatedAddressForm`.
+- **The selection cannot come from `TwoCheckoutManager._confirmedCompanySelection`
+  alone** — it is page-lifetime and the mirror exists to cross a navigation. The
+  manager now seeds it from the cart-scoped record the module publishes into the JS
+  config. That publish asks the same three questions the validated read asks — the
+  company/number pair, the country agreement, the captured address — but is
+  **read-only**: it runs from the setMedia hook on every checkout render, so acting
+  on a rejection there would mean merely drawing a page destroys the buyer's
+  selection whenever the cart's committed invoice address country disagreed with it.
+  A rejected record is withheld and left for the consuming path to judge and clear. The getter is INJECTED into the
+  search mount rather than reached for on `window`: the search is constructed from
+  inside the manager's own constructor, before `TwoCheckoutManager_Instance` is
+  assigned, so a global lookup would find nothing on the one call that matters.
+
+**Not built, deliberately:** the reactivity half (no event to bind — correction B),
+the `TwoCountry.js` extraction (correction C), and any change to
+`autoFillAddress()`'s existing street/postcode/city contract. The mirror is a
+separate write path alongside it, not a modification of it.
+
 ## Cross-cutting: what has to land together
 
-- `#8` step 4 (root-scoping the address writes) is a **hard prerequisite** for both `#8` step 3
-  and `#13`-enabled. Landing either without it reintroduces the tile-rewrites-a-hidden-address
-  defect.
-- `#12` (server trusts posted country) and `#13`-disabled (browser posts the *right* country) are
-  two halves of one feature.
-- `TwoCountry.js` extraction is a prerequisite of `#13`-disabled unless we are content to make the
-  same decision in four already-divergent chains.
-- `#6`/`#9` is independent of all of the above and can ship on its own.
+Superseded by what actually shipped — kept because the reasoning is still worth
+reading, but do not act on it:
+
+- `#8` step 4 (root-scoping the address writes) was a **hard prerequisite** for
+  `#8` step 3 and for `#13`-enabled. `#8` is deferred, and `#13`-enabled's mirror
+  scopes its own writes to the visible form element rather than relying on that
+  step, so it stands alone.
+- `#12` and `#13`-disabled being two halves of one feature held, but the browser
+  half turned out to need no change (correction C): the resolvers already read the
+  live select, and there is only ever one of them to read.
+- `TwoCountry.js` extraction: dropped, not deferred (correction C).
+- `#6`/`#9` is independent of all of the above and shipped on its own.
 
 ## Open questions for Doug
 
@@ -633,10 +909,16 @@ countries, en/es/fr/nl/no/sv. They ride along in the same extraction.
    (confirmation page, admin)? Cart-scoping makes it unreadable and I have not audited that path.
 2. **`#8`:** with the gate removed and the merchant switch on, tile-mode writes should silently
    no-op when the address form is not on the page. Confirm, rather than deferring the write.
-3. **`#13`-enabled:** the mirror copies company **name + country** only. Confirm that street /
-   postcode / city are deliberately excluded when the buyer has said the addresses differ.
-4. **`#13`-enabled:** when the buyer has NOT ticked "addresses differ", there is one address and
+   **Moot — `#8` is deferred; no admin path needs the separation yet.**
+3. **`#13`-enabled:** the mirror copies the company **name, its organisation number and the
+   country**. Confirm that street / postcode / city are deliberately excluded when the buyer has
+   said the addresses differ.
+   **Confirmed by Doug, and built that way.** The organisation number was added in review: without
+   it the order could carry a company name the plugin itself wrote with no number beside it.
+4. **`#13`-enabled:** when the buyer has NOT stated the addresses differ, there is one address and
    nothing to mirror. Confirm that is a no-op and not "populate a hidden billing block anyway".
+   **Confirmed: a true no-op. It is also moot as a risk — per correction A there is no hidden
+   block to populate.**
 5. **`#10` correction:** there are **two** hand-mirrored country-name maps, not three. Confirm
    nothing is expected in a third place (PHP, a `.tpl`) — I swept the whole tree and found none.
 
@@ -890,3 +1172,589 @@ priority 2 in `extractOrgNumberFromAddress()` and documents it as load-bearing, 
 ever starts emitting deprecations (or stops working under a future PHP), the read is the thing that
 silently returns empty. Worth ten minutes against a real PS 8.2+ shop; a typed column or an explicit
 carrier would be the durable fix.
+
+## Round 5 (independent adversarial review): what was fixed, and what was noted instead
+
+Five reproducible defects, not findings. All of the below are re-derived against this
+branch's HEAD, not carried over from the review's own line numbers.
+
+- **The mirrored organisation number was invisible to the stale-selection guard.**
+  The mirror wrote the address `dni` and its autofill marker but never the hidden
+  `companyid` input or its `data-two-company-name` pairing tag — and
+  `clearStaleOrganizationSelection()` reads `companyid` first and returns
+  immediately when it is empty. So "the buyer retyped the company name over a
+  selection" could never fire for a mirrored value: company A's organisation number
+  shipped attached to a name the buyer typed afterwards, and neither the marked
+  `dni` residue nor the cart-scoped server record was dropped, so the next address
+  step re-mirrored the name the buyer had just cleared. Fixed by routing the mirror
+  through the same browser-side publish path a real selection uses
+  (`markOrganizationFieldSelected()`), NOT by special-casing the guard. Both writes
+  go together and must: a non-empty `companyid` with no pairing tag reads to the
+  guard as "the buyer has edited past a stale selection", so tagging is what stops
+  the mirror destroying its own write on the `input` event it fires.
+  - A FOURTH mirror operation came with it, `republishMirroredSelection()`. The
+    hidden field lives inside `.js-address-form`, which core's country-change
+    rebuild replaces wholesale — and the mirror's own country write is what triggers
+    that rebuild — so without a re-publish every mirrored selection went blind again
+    on the first country write. Gated on the marked name exactly as the completion
+    is.
+  - The mirror deliberately does NOT publish to `TwoCheckoutManager`.
+    `setConfirmedCompanySelection()` re-derives the captured address and country
+    from the current page, which is the very thing
+    `seedConfirmedCompanySelectionFromServer()` exists to avoid.
+- **A real API failure was reported as "you didn't pick a company", and in tile mode
+  as nothing at all.** `isCompanyDataMissing()` read only the DOM `companyid` input,
+  while the seed gave the page-lifetime holder a second legitimate claim to a real
+  selection — decisive on the payment step, where PrestaShop has removed the address
+  form. Misclassified failures then hit `suppressCompanyRelocationPrompt()`, which
+  returns early, so the buyer saw an empty panel for a 500. It now consults
+  `getConfirmedCompanySelection()` too.
+- **The scope resolution's `closest('form')` fallback reintroduced the
+  document-wide write.** A theme without core's block ids resolved to the step's
+  OUTER form, which contains both address blocks. It now fails CLOSED: `form` is off
+  the candidate list, and any candidate that CONTAINS another address block is
+  rejected, so an unidentifiable scope means no mirror rather than a wide one. It
+  was untested because every fixture carried `#invoice-address`;
+  `buildAddressesStep({blockContainers: false})` now models the flattened theme.
+- **Two doc absolutes were understating accepted trade-offs** — the `#12` sole-trader
+  country coupling and the cleared-number residual. Both reworded above, in place,
+  rather than annotated here.
+
+### Noted, deliberately NOT fixed in this round
+
+- **Selection state lives in roughly six places with independently-copied validity
+  logic** — the hidden `companyid` input plus its pairing tag, the address
+  identification field plus its autofill marker, the mirror's page-lifetime memory,
+  `TwoCheckoutManager._confirmedCompanySelection`, the session cookie, and the
+  server's cart-scoped record. Each carries its own notion of "is this selection
+  usable", and that duplication is the root cause of the first defect above: the
+  mirror satisfied one copy's rules and was invisible to another's. Consolidating
+  them is a refactor with a wide blast radius and this PR is five rounds deep, so it
+  is a follow-up, recorded here so it is not lost. The fix above deliberately reuses
+  the existing publish path instead of adding a seventh place.
+- **A theme with no `input[name='saveAddress']` gets a silent no-op with no log.**
+  Left as-is rather than logged, because the cheap version is not cheap: the mirror
+  exits on the same condition for the ordinary delivery pass, so a one-line log at
+  that point would fire on every normal page. Telling "no marker at all" from "this
+  is the delivery form" needs a branch of its own, which is more than this round is
+  taking on.
+- **The per-mirror-write server round-trip form rebuild** is by design — core owns
+  the rebuild and the mirror's country write legitimately triggers it.
+- **The cookie last-writer-wins race under concurrent AJAX** is pre-existing and
+  unrelated; untouched.
+
+---
+
+# TWO-40 — the secondary address is editable, and syncs by content match
+
+**Status: RULED and IMPLEMENTED on the TWO-40 address-split branch (PR #157).** It
+supersedes the one-way write-once "invoice mirror" recorded in that branch's
+`#13 — as built` section. Where this note and that section disagree, this note is
+both the intent and the code.
+
+Doug's original correction, restated as four requirements:
+
+1. **Editable.** The buyer may edit company and country on the secondary address.
+2. **Conditionally synced.** The secondary defaults to the primary's company and
+   country, and keeps tracking it when either changes on the primary — UNLESS the
+   secondary already holds information the buyer put there.
+3. **Role-keyed read.** The payment tile reads country and company from whichever
+   address plays the BILLING/INVOICE role, never from a fixed primary/secondary
+   label.
+4. **Role-keyed enforcement.** Company is required only on the address playing the
+   billing/invoice role, and is optional on the shipping address.
+
+Rules 3 and 4 must share ONE notion of "which address plays the billing role". Two
+parallel notions is the defect this note exists to prevent, not a shortcut it may take.
+
+---
+
+## Doug's rulings, verbatim
+
+**R1 — the pin is triggered by ANY address field, not just company/country.**
+
+> "Unfortunately we need to pin it if any address field has been entered, not just
+> country/company."
+
+**R2 — country for the sole-trader flow splits by where the company search is
+mounted.**
+
+> "(a.1) and (a.2) resolve to the same rule: sole trader visibility (and country for
+> input to workflow) is driven by the local country selection - ie for company search
+> in shipping address, look at shipping country. (a.3) here, sole trader visibility
+> and workflow should be driven explicitly by the billing / invoice address."
+
+**R3 — no dedicated control; sync is driven by comparing field contents.**
+
+> "No dedicated control. Trim the address lines and ignore case when comparing, but
+> otherwise, sync is driven by a match on field contents."
+
+---
+
+## The platform constraint that rewrites rule 2
+
+Doug's rules are written for a checkout where both address panels can be open at
+once. PrestaShop is not that checkout, and the difference is not cosmetic.
+
+Verified against the official 1.7.8.11, 8 and 9 images (the two checkout address
+templates are byte-identical between 8 and 9; 1.7.8.11 differs by one attribute and
+a hook):
+
+- **Only ONE editable address form is ever on the page.** The delivery- and
+  invoice-form flags are set in mutually exclusive branches of the addresses step's
+  request handler and of the address-count block after it. The other side is a radio
+  selector over saved addresses, or absent.
+- **The reveal is a page load, not a JS event.** The shared-address control renders
+  only inside the delivery form, and CHECKED there means the two addresses are the
+  SAME; on every later pass core renders a link whose href navigates. There is no
+  client-side toggle to bind to.
+- **Core rebuilds the form on a country change.** Its country handler is delegated on
+  the document body, POSTs the address-form action, replaces every address-form
+  wrapper with the response, and restores previous values with an input-only,
+  value-only loop. Values survive; attributes — including our autofill marker and the
+  hidden organisation-number field — do not.
+
+So rule 2's stop-test — "the secondary address is open and contains information in
+any field at the time of selection" — **cannot be evaluated in the DOM at selection
+time on PrestaShop, ever.** At the moment the buyer picks a company on the shipping
+form, there are no invoice fields in the document. The test therefore moves off the
+moment of selection and onto the moment the secondary form ARRIVES, on its own page
+load.
+
+---
+
+## C1 — the comparison basis is the mirror's LAST-WRITTEN value
+
+**Decided.** Not the primary address's live value.
+
+Comparing against the primary is provably broken: the instant the primary changes,
+the secondary cannot equal it any more, so every legitimate re-sync would read as a
+buyer edit and syncing would stop forever after the first divergence. Only "does this
+field still hold what the mirror last put here" makes "still matches ⇒ still synced"
+true.
+
+That is what `data-two-autofilled-value` already stores per field, so this is the
+EXISTING marker mechanism, extended to every comparable field and made trim +
+case-insensitive per R3. Three consequences, all of them behaviour rather than
+corners:
+
+- **A field the buyer typed BEFORE any mirror write** has no last-written value and
+  is non-empty, so it mismatches and the address is pinned. Correct.
+- **An EXISTING saved address opened for editing** is non-empty with no last-written
+  value, so it is pinned and never synced over. **This is how the silent-overwrite
+  defect earlier called "B2" is closed — by Doug's rule, with no separate
+  new-versus-existing heuristic.** None was added, and none should be. Concretely: a
+  text input gets NO server-rendered baseline. Accepting its rendered `value`
+  attribute as "unanswered" is exactly what would sync straight over a saved billing
+  address.
+- **An empty field with no last-written value** matches "nothing written, nothing
+  there", and is still synced.
+
+The one field that cannot use emptiness as its unanswered test is the country select,
+because core always renders a real country as selected — see
+`serverRenderedSelectValue()`. Its unanswered value is therefore what the server
+rendered, and that counts **only while nothing is on record as written there**: core
+re-renders the form on every country change, so after the first change the
+server-rendered country IS the buyer's own choice, and accepting it unconditionally
+would make the country unpinnable.
+
+**Residual, stated rather than hidden:** a buyer who reaches the invoice form, has it
+mirrored, then navigates away WITHOUT saving and comes back finds an empty form with a
+last-written value on record — which reads as a deliberate clear and pins the address.
+Empty-after-a-write and never-filled-in-the-first-place are indistinguishable across a
+page load, and Doug's rule resolves the ambiguity toward never overwriting. The cost is
+one lost re-sync; the alternative default costs the buyer's own data.
+
+---
+
+## C2 — the pin is ADDRESS-WIDE, not per-field
+
+**Decided.** R1 says any field pins it; R3 says the test is a content match. Together:
+every comparable field of the secondary address is evaluated, and if even ONE
+mismatches its last-written value, the whole secondary address is pinned and NO field
+is synced.
+
+Stated plainly, because it is the behaviour: **the mirror only ever writes into a
+pristine secondary address, and once the buyer touches anything it stays frozen for the
+rest of the cart unless the contents come back to matching.**
+
+**Which fields.** Company, organisation number, country, street, postcode and city —
+the fields the plugin can ATTRIBUTE, because it writes them and therefore has a
+last-written value for them. The name fields and the phone are deliberately excluded:
+the plugin never writes them, so every value in them is buyer-authored by definition,
+and counting them would pin the secondary address the moment the buyer typed the name
+they are obliged to type before they can save it at all — on the first render, before
+any sync could ever have happened.
+
+**Where it is evaluated.** In `mirrorConfirmedCompanyToInvoiceAddress()`, as the gate
+in front of POPULATE only. The four-way operation split is kept, not collapsed: RE-MARK
+runs first (it never writes a value), then the pin, then POPULATE, then COMPLETE and
+RE-PUBLISH. The last two are rebuild REPAIR rather than sync.
+
+**RE-PUBLISH is inert on a pinned address; COMPLETE deliberately is NOT.** Both are
+gated on the mirror's own marked company name still being in the form, which makes them
+inert whenever the COMPANY field is what raised the pin — but a pin raised by any other
+field leaves that name intact, and the completion then still fires. That is the decided
+behaviour, not a gap. COMPLETE is not syncing new data into the address: it repairs the
+number half of a pair the plugin itself created, it writes only into an identification
+field that is empty and carries no marker of any kind, and only while the name half is
+still the mirror's own marked value. Gating it on the pin would reintroduce the defect
+it exists to close — a mirrored company name on the order with no organisation number
+beside it, on a form where core requires one — and it costs the buyer nothing, because
+an empty unmarked field holds no answer of theirs.
+
+---
+
+## C3 — (a.3) is phrased by ROLE, never by primary/secondary position
+
+**Decided.** Doug's parenthetical treats WooCommerce's billing address as the
+"secondary", but the verified platform fact is that WooCommerce is **billing-FIRST**,
+so billing there IS the primary. The general rule is therefore phrased as:
+
+> Read the address playing the billing/invoice role. Where that address is not the one
+> the platform has the buyer edit by default, it is synced from the default-edited one
+> by the same content-match mechanism.
+
+That is correct on both platforms. On PrestaShop the billing role is the invoice
+address, which IS the secondary, matching Doug. On WooCommerce the sync clause simply
+does not apply, because the billing address is the one the buyer edits first.
+
+**OPEN QUESTION FOR DOUG (C3):** his (a.3) example describes WooCommerce's billing
+address as the secondary one, which contradicts WooCommerce being billing-first. The
+rule above is written so that it is right either way and does not depend on resolving
+the contradiction — but if his mental model of WooCommerce is billing-second, then the
+WooCommerce port's primary/secondary mapping needs his correction before it is written,
+because the sync direction inverts. Not resolved here, and deliberately not "corrected"
+in his wording.
+
+---
+
+## Where the last-written values live
+
+The pin is evaluated when the invoice form APPEARS — a page load. At that moment every
+marker the previous page wrote has gone with the nodes that carried it, and page memory
+is empty. So the last-written values MUST survive page loads.
+
+**A SEPARATE cart-scoped record, following the discipline of the company record**:
+`Twopayment::MIRROR_WRITE_SESSION_KEYS` and `MIRROR_WRITE_SESSION_CART_KEY`, with
+`storeTwoCartScopedMirrorWrites()` / `readTwoCartScopedMirrorWrites()` /
+`clearTwoCartScopedMirrorWrites()`, `getTwoCurrentCartId()` for the stamp, and an
+absent-or-mismatched stamp treated as absent. Published to the browser as
+`mirror_writes` alongside `confirmed_company`, and reported back by the browser through
+a `saveMirrorWrites` action on the module's front controller, token- and POST-guarded
+like every other action there.
+
+**NOT folded into the company record**, and that is load-bearing rather than tidy. The
+company record is deliberately destructible: its country guards clear it outright, and
+the address-save hook drops half of it. This record has to outlive all of that — a
+buyer who typed their own street into their billing address still owns that street after
+changing company. Folding them together would mean either a clear site exempting one of
+its own keys, which contradicts the contract that a clear cannot miss a field, or this
+record dying on a path that has nothing to do with it. `MirrorWriteRecordSpec` pins both
+directions and the one event that does invalidate both (a cart-id change).
+
+**Failure mode of the report is the safe one.** It is fire-and-forget, like the
+company clear beside it. A request that never arrives leaves the next render seeing
+non-empty fields with nothing on record as having written them, which reads as
+buyer-authored and PINS the address. A lost report costs one missed re-sync; the
+opposite default would cost the buyer's own data. So there is no server-side backstop
+and none is owed — unlike the company-clear path, where a dropped request would yield a
+wrong order rather than a conservative one.
+
+**The country is stored as an ISO code**, never as a country id or an option label: the
+id is shop-local and the label is locale-dependent, so either would make the record
+unreadable on another shop or in another language. The browser resolves the live select
+to an ISO before comparing, through `countryIsoForOptionValue()` — the inverse of
+`countryOptionValueForIso()`, with the same three strategies in the same order.
+
+---
+
+## Rule 3 — already correct, and now pinned by a spec
+
+**Country: no resolver work is owed.** `getCheckoutBillingCountryIso()` derives
+`window.twopayment.billing_country` from the cart's `id_address_invoice`, and core sets
+`id_address_invoice` to the delivery address whenever the buyer states the addresses are
+the same (in the address-save branch and again in the address-confirmation branch of the
+addresses step). So the published billing country is the invoice ROLE's country on both
+paths.
+
+**(a.3) — the payment tile — verified, and needs no new resolver.**
+`TwoSoleTrader.billingCountry()` reads the address form's country select when there is
+one and falls back to `config.billingCountry`, i.e. that same published value. On the
+payment step PrestaShop renders no address form and therefore no select at all, so the
+fallback is what the tile actually uses — which is the billing/invoice address,
+explicitly, exactly as R2 (a.3) requires. Pinned by a spec; no resolver added.
+
+**(a.3) — the company half is role-keyed too, by the same key.**
+`getTwoBrowserCompanySelection()` withholds a record whose country disagrees with
+`getCheckoutBillingCountryIso()`, and withholds one whose captured address id disagrees
+with the cart's `id_address_invoice`. The tile's own "did the buyer pick a company"
+check, `TwoCheckoutManager.isCompanyDataMissing()`, reads the hidden organisation-number
+field and the confirmed selection, which on the payment step is exactly that published,
+role-validated record.
+
+One consequence the rework depends on: once the buyer saves a distinct invoice address,
+the captured-address guard **withholds** a company captured on the shipping address, and
+the tile then depends on the company/organisation-number pair actually being ON the
+invoice address row. That is why the mirror carries the organisation number and not just
+the name, and why the pairing machinery below is mandatory rather than tidy.
+
+**(a.1) and (a.2) — the local read is CORRECT and stays.** The search mounted in the
+delivery address reads that address's own live country; the search mounted in the
+invoice address does the same. That is already how it works and it was left alone.
+
+**`resolveSoleTraderCountryIso()` stays exactly as #12 shipped it** — posted country
+first, the cart's delivery address as the only last resort, the committed invoice
+address consulted at no tier. The earlier note in this document argued for restoring an
+invoice tier; Doug ruled against it, and the argument is withdrawn rather than left
+standing.
+
+**Its scope was always case (a) only, verified by finding every caller.** There is
+exactly ONE: `ajaxProcessSoleTraderTokens()`. What that country decides is the
+availability gate (`TwoSoleTrader::isAvailable()`), whether the tokens are minted at
+all, and the value echoed back for the JS to save the enrolled company against. It
+reaches no order data: the order payload and the order-intent handler resolve country
+from the address they are handed, never from this method. **Order-intent / order-data
+country resolution is out of scope for this work and was not touched.**
+
+---
+
+## Rule 4 — company enforced only on the billing role
+
+**One resolver, three evaluation points.** The role notion is "does this address play
+the billing role", and it is asked of three different things:
+
+- **the visible form** — it plays the billing role when it is the invoice form, or when
+  it is the delivery form and the buyer's current selection indicates the two addresses
+  are the same. Built from the two helpers the branch already has:
+  `visibleAddressFormType()` (read from the hidden field core's form emits carrying
+  exactly that word) and `buyerStatesInvoiceAddressDiffers()`. `secondaryAddressFormRoot()`
+  is the composition of those two plus the fail-closed scope guard.
+- **the submitted form** — the same predicate over the request params: the address save
+  is for the invoice side, or it is for the delivery side and carries the shared-address
+  control indicating the addresses are the same.
+- **the committed cart** — `id_address_invoice`, which is what rule 3 already reads.
+
+That is ONE notion evaluated at three moments, not three notions. Rules 2, 3 and 4 all
+consume it, and nothing may add a second.
+
+**Where company is enforced today, checked:**
+
+| site | fires regardless of address? | verdict |
+|---|---|---|
+| `override/classes/form/CustomerAddressFormatter::getFormat()` | it does not enforce company at all — it moves the country field, adds the search placeholder, and forces `phone` required | **company is required NOWHERE today, on either address.** So "optional on shipping" already holds. If Doug wants real enforcement on the billing side, this file is the precedent — but note it is handed no address ROLE, so it would have to derive one from the request params (the submitted-form evaluation point above), and it also runs on my-account address forms where there is no role at all |
+| `TwoCheckoutManager.isCompanyDataMissing()` | role-agnostic by construction — it reads the hidden organisation-number field and the confirmed selection, on the payment step, where no address form exists | **no change owed.** Its inputs are already the role-validated published record |
+| `controllers/front/orderintent.php` — the `no_company` / `incomplete_company` gate | gates on the resolved organisation NUMBER, resolved through the invoice-preferring chain | **already role-keyed.** The delivery-address last resort is only reached on a cart with no invoice address at all |
+| `twopayment.php` — `getTwoValidatedSessionCompanyData()`, `getCompanyDataWithFallbacks()` | take the address they are given; the order-payload path gives them the invoice address | already role-keyed by their callers |
+
+So rule 4 is **mostly satisfied by absence**, and the deliverable is: keep it that way
+deliberately, and if a hard requirement is added, add it at the formatter keyed on the
+submitted-form role — never unconditionally, or the shipping address starts demanding a
+company the buyer has no reason to give.
+
+---
+
+## Rule 1 — editability needs NO code, confirmed
+
+**Nothing in PR #157 ever made the secondary address read-only.** The mirror only
+declines to overwrite, and the pin only makes it decline more often. The company field's
+`readonly` in search mode is the search affordance, applies identically to both
+addresses, and the search control mounts on whichever form is visible — so the buyer can
+already search or type a company on the secondary address. **No editability feature was
+invented and none is owed.** Doug's correction was phrased as though read-only controls
+existed; they do not.
+
+---
+
+## The judgment calls, as ruled
+
+The earlier version of this note listed seven judgment calls. Their disposition:
+
+1. **Buyer types something, deletes it back to empty, then the primary changes.**
+   Answered by C1: an empty field WITH a last-written value mismatches, so the address
+   stays pinned. Not a separate rule — it falls out of the content match.
+2. **Buyer edits the secondary after the mirror wrote it (the NI company with an RoI
+   branch), then changes the primary.** Answered by C1: their edit no longer matches
+   what the mirror wrote, so the address is pinned and their correction survives. The
+   mirror's own write is NOT what pins it; the buyer's edit on top of it is.
+3. **Does "any field" include street, postcode and city?** Answered by R1: yes. The cost
+   Doug was asked to price — a buyer who fills only the street blocks company syncing for
+   the rest of the cart, in a field the mirror never writes itself — is accepted.
+4. **"Addresses differ" re-opened after a collapse.** Stale data is overwritten, never
+   cleared: clearing means deleting buyer data from an address row on a navigation, which
+   is a far worse failure than a stale street the buyer can see and correct. Where the
+   mirror has nothing to write, it is a no-op and "syncing is restored" visibly restores
+   nothing. Unchanged from the earlier recommendation, and now unconditional because there
+   is no flag to resume — the content match is the whole state.
+5. **The buyer picks a SAVED address for the invoice role.** There are no fields to sync
+   into; the invoice side is radio buttons. No write, and nothing to pin — the next render
+   of an editable form judges that address's own contents, which for a saved address are
+   non-empty and unattributable, so it is pinned by C1 without a special case.
+6. **`resolveSoleTraderCountryIso()`'s last resort.** Ruled by R2: unchanged. See rule 3
+   above.
+7. **Is there a general "the addresses are the same" control on later passes?** Moot. R3
+   removes the need for one: there is no flag to resume, so there is no resume trigger to
+   find. The routes back that core does offer (edit the delivery address and state "same",
+   cancel out of the invoice form, select the delivery address in the invoice selector) all
+   end in a page load whose form contents the pin judges afresh.
+
+---
+
+## What of PR #157 survives, what changed
+
+**Survives unchanged** — all on `TwoCompanySearch` unless noted:
+
+- `buyerStatesInvoiceAddressDiffers()` — still the gate, still polarity-neutral, still
+  named for what the buyer states.
+- `visibleAddressFormType()` — the other input to the role predicate.
+- `visibleAddressFormRoot()` and `ADDRESS_BLOCK_SELECTOR` — the write scope, and the
+  fail-closed guard that rejects a candidate containing another address block.
+- `serverRenderedSelectValue()`, `mirrorCountryIntoForm()`, `countryOptionValueForIso()`,
+  `writeMirroredValue()` — the per-field write layer.
+- `reapplyMirrorMarkers()`, `completeMirroredOrganizationNumber()`,
+  `republishMirroredSelection()` — rebuild-repair machinery, independent of the sync
+  rule. All three exist because core's rebuild strips attributes and destroys the hidden
+  organisation-number field, and that is still true.
+- `confirmedCompanyForMirror()` and the injected getter, plus
+  `TwoCheckoutManager.seedConfirmedCompanySelectionFromServer()` and the module's
+  read-only `getTwoBrowserCompanySelection()` publish. The mirror still has to cross a
+  navigation.
+
+**Changed:**
+
+- **The write-once gate is now inner.** `populateInvoiceAddressFromConfirmedCompany()`'s
+  once-per-company rule is no longer the outer decision: the pin is. The once-per-page
+  key stays keyed on the organisation number, which is correct now that a primary COUNTRY
+  change re-syncs through the pin rather than through that key.
+- **`mirrorTargetIsWritable()` compares normalised** (trimmed, case-folded) per R3, and
+  takes a LIST of accepted values rather than one. The list comes from
+  `mirrorWriteAcceptedValues()`, which applies the same rule the pin does — the recorded
+  last-written value, and only when there is none, the field's unanswered value. One
+  helper, so the pin and the write layer cannot drift.
+- **`autoFillAddress()` takes an optional root** and returns what it now owns. Street,
+  postcode and city were the only writes in the class still made by a document-wide
+  selector, so a value in one of them could not be attributed to a BLOCK at all — and R1
+  makes attributing them mandatory. The document-wide branch is unchanged and is what
+  runs on the shipping pass, on the payment tile and on any page with no address form
+  at all. It does NOT run when the invoice form is on screen and the scope resolution
+  fails closed: there is no block to attribute the writes to, and writing document-wide
+  there would land in the very markup the scope guard refused to scope to. That fill is
+  skipped instead — no scope means no write, the same answer the mirror gives.
+- **`mirrorMemory()`'s role** stays page-lifetime and stays on `TwoCheckoutManager`, but
+  it is no longer the record of "may I write" — only of "what did I write on this page",
+  for the re-mark and completion operations.
+
+**Added:** the cart-scoped mirror-write record and its ajax action (above);
+`secondaryAddressFormRoot()`; `MIRRORED_ADDRESS_FIELDS`;
+`persistedMirrorWrites()`; `normalizeMirroredValue()`; `countryIsoForOptionValue()`;
+`mirroredAddressFieldStates()`; `mirroredFieldStillHoldsWhatWeWrote()`;
+`mirrorWriteAcceptedValues()`; `secondaryAddressIsPinned()`; `recordMirrorWrites()`.
+
+**Deleted:** nothing. In particular no suppression FLAG was built — the earlier design's
+persisted boolean, its browser-side authorship listener, its address-save backstop and
+its resume detection are all superseded by R3's content match, which needs none of them.
+
+---
+
+## Interaction with B1's pairing fix — mandatory, not optional
+
+Every mirrored write of a company name must go through the same `organizationField` +
+`data-two-company-name` pairing machinery a manually-typed primary selection uses, via
+`markOrganizationFieldSelected()`. **The tag is mandatory.** An untagged non-empty
+`companyid` is read by `clearStaleOrganizationSelection()` as company-set / number-set /
+tag-absent — the signature of a buyer having edited past a stale selection — and it wipes
+the pairing. So an untagged mirrored write does not merely go unnoticed; it is actively
+destroyed by the plugin's own guard on the buyer's next keystroke in the company field.
+
+This is why `republishMirroredSelection()` exists as a separate operation and must not be
+folded into the populate: the hidden field lives inside the address-form wrapper core
+replaces, its input-only restore loop cannot put back a field the new render does not
+emit, and the mirror's own country write is what triggers that rebuild. Under the rework
+this is MORE load-bearing, not less, because sync can now fire repeatedly across a cart
+rather than once.
+
+---
+
+## Tests
+
+**JS** — `tests/js/company-search-secondary-address-pin.test.js`, one group per ruling:
+the pristine baseline first so nothing else can pass by never syncing; R1's any-field
+cases including the street, the postcode, the city and the identification number; C2's
+address-wide case, where every other field matches perfectly and one does not; C1's
+comparison basis, driven with a primary whose live value is neither the recorded value
+nor the field's; R3's trim and case-fold; the existing-saved-address case that closes B2;
+and the persistence pair — the same DOM twice, differing only in whether the record
+reached the page.
+
+`tests/js/company-search-invoice-mirror.test.js` and
+`tests/js/checkout-manager-confirmed-company-seed.test.js` are unchanged and still pass:
+their per-field refusals are now attributable to the pin as well as to a marker
+mismatch, and both remain true.
+
+`tests/js/ps-harness.js` gained `address1` / `postcode` / `city` options on
+`buildAddressesStep()`, emitted as real `value` ATTRIBUTES — which is what the server
+does when the buyer is editing an address that already exists. Without them the harness
+could not express the case C1 resolves at all.
+
+**PHP** — `tests/MirrorWriteRecordSpec.php`: the record's cart scoping, its partial and
+null write semantics, the ajax action driven through the controller's own action switch
+with its token and POST guards, and above all the two-record separation in both
+directions plus the cart-id change that invalidates both.
+
+**Cannot be tested offline; needs a live shop:**
+
+- Core's actual rebuild round trip on a country change — the Jest harness simulates the
+  replace-and-restore, and the thing that keeps biting is a discrepancy between the
+  simulation and what core really emits.
+- The identification field appearing and disappearing with the country, which depends on
+  real address-format data. Only ES and MX carry the identification-number flag on stock
+  data, and the stock address formats mention it nowhere, so the field is appended
+  dynamically and is present exactly when required.
+- The navigation sequence itself: the differ-link GET, the delivery save carrying the
+  shared-address control, the invoice-form render, and what core's session actually does
+  to `id_address_invoice` at each step.
+- The `saveMirrorWrites` round trip against a real cookie and a real cart.
+- The end-to-end rule 3 assertion: place an order with a company on the secondary
+  address and confirm the tile and the payload both carried the secondary's company and
+  country.
+
+---
+
+## Still open
+
+- **C3's WooCommerce contradiction** (above) — needs Doug, before the WooCommerce port.
+- **Rule 4's hard enforcement**, if he wants any. Nothing enforces company on either
+  address today; the note above says where it would go and why it must be role-keyed.
+- **#8** remains DEFERRED. No `TwoCountry.js` extraction was made and the duplicated
+  country-name maps are untouched.
+- **The ~6-way selection-state duplication** is recorded as a follow-up. Not refactored
+  here.
+
+---
+
+## Cross-platform portability
+
+Language convention, and it is a code requirement here rather than a reporting one:
+**"when the buyer states" / "the buyer's current selection indicates", never "ticked" or
+"unticked", "checked" or "unchecked"** — in method names, comments, test names and docs.
+
+The reason is concrete. PrestaShop's shared-address control means **checked = the two
+addresses are the SAME**, so the plugin's question is its negation; it renders on the
+first pass only; and WooCommerce's equivalent control has the **opposite polarity**. An
+engineer porting this and reading "checked" wires it up backwards. The note lives on
+`buyerStatesInvoiceAddressDiffers()`, which is the signal helper every consumer goes
+through.
+
+- **WooCommerce** is billing-FIRST. The primary/secondary labels invert, so a port that
+  hardcodes "invoice is the secondary" is wrong there while looking right here. Only the
+  billing-ROLE predicate ports; the primary/secondary naming does not. Its control also
+  has the opposite polarity, and both address panels can be open together — which means
+  rule 2's literal DOM test IS evaluable there, and the persisted last-written record is
+  a PrestaShop-specific necessity rather than the shared design. See the C3 open question.
+- **Magento / Hyvä** are shipping-first like PrestaShop, so the role mapping ports
+  directly. But their checkout is a single page with reactive components, so the reveal is
+  an event rather than a navigation, and the last-written values can be component state
+  where here they must be server-persisted.
+
+Write the content match and the role predicate as the portable core, and keep the
+persistence and the reveal detection explicitly platform-local.

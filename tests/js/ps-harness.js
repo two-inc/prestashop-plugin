@@ -35,6 +35,22 @@ const path = require('path');
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 /**
+ * The country id of a country whose address format asks for an identification
+ * number - Spain, `id_country` 6 on stock install data.
+ *
+ * `need_identification_number` is set on ES and MX alone in
+ * `install-dev/data/xml/country.xml`, and no stock address format mentions `dni`,
+ * so `AddressFormat::getFormat()`'s append is the only thing that puts the field
+ * on a form. Any other id in buildAddressesStep()'s select therefore renders a
+ * form WITHOUT one, which is the majority case.
+ */
+const DNI_COUNTRY_ID = '6';
+/** Mexico, `id_country` 144 - the only other one, and the only way to model a
+ *  rebuild that changes country while KEEPING the identification field. */
+const OTHER_DNI_COUNTRY_ID = '144';
+const DNI_COUNTRY_IDS = [DNI_COUNTRY_ID, OTHER_DNI_COUNTRY_ID];
+
+/**
  * Put the real jQuery + jQuery UI autocomplete on the jsdom window.
  *
  * @returns {Function} the jQuery instance bound to the current jsdom window
@@ -212,6 +228,14 @@ function loadOrderIntent() {
  * Pass `country: null` to build the select WITHOUT the attribute, which is how a
  * test reaches the later strategies and the unresolvable case.
  *
+ * Renders `dni` unconditionally, which is NOT what core does - the field's
+ * presence follows the rendered country's address format (see
+ * buildAddressesStep()). This is the pre-TWO-40 single-form fixture and no test
+ * built on it varies the country's format or rebuilds the form around a new one,
+ * so here the field simply stands for "a form whose country asks for an
+ * identification number". Anything testing the format's effect on which fields
+ * exist must use buildAddressesStep(), which models it.
+ *
  * @param {Object} [options]
  * @param {?string} [options.country] ISO code for the selected option; null omits
  *        the `data-iso-code` attribute entirely
@@ -240,6 +264,236 @@ function buildAddressForm(options) {
         '  </form>',
         '</div>'
     ].join('\n');
+}
+
+/**
+ * The checkout addresses step, in PrestaShop's OWN markup (TWO-40).
+ *
+ * Reproduced from core's `checkout/_partials/steps/addresses.tpl`,
+ * `checkout/_partials/address-form.tpl` and `_partials/form-fields.tpl` as
+ * shipped in the official 8 and 9 images (byte-identical between them; 1.7.8.11
+ * differs only by an extra attribute and a hook). A fixture invented here would
+ * prove nothing about a plugin whose whole job is to read and write that markup,
+ * so the structural facts the module depends on are all present and all real:
+ *
+ *  - exactly ONE editable address form, never two: core sets the delivery and
+ *    invoice form flags in mutually exclusive branches, and the other side is a
+ *    radio selector over saved addresses (`#delivery-addresses` /
+ *    `#invoice-addresses`) or absent;
+ *  - the editable form lives in `#delivery-address` / `#invoice-address`, which
+ *    holds the rendered address form's OWN `<div class="js-address-form">` wrapper
+ *    (`customer/_partials/address-form.tpl`'s `address_form` block) inside the
+ *    step's outer one - so the block ids and the wrapper class nest, and the
+ *    innermost-first root resolution lands on the inner wrapper exactly as it does
+ *    in production;
+ *  - it emits `<input type="hidden" name="saveAddress" value="delivery|invoice">`;
+ *  - the identification field `dni` is present only for a country whose address
+ *    format asks for it. That is core, not a convenience: `AddressFormat::getFormat()`
+ *    appends `dni` to the format only when `Country::isNeedDniByCountryId()` is
+ *    true, no stock address format mentions `dni` otherwise, and the flag is set on
+ *    ES and MX alone - so on stock data the field exists exactly where it is also
+ *    REQUIRED, and nowhere else. A fixture that emitted it for every country would
+ *    hide the case where the mirror's own country write changes which fields the
+ *    form has;
+ *  - the shared-address checkbox is emitted ONLY while the delivery form is the
+ *    editable one, and CHECKED means the two addresses are the same;
+ *  - the country select carries a disabled, empty-valued "Please choose"
+ *    placeholder option, ALWAYS `selected`, ahead of the real countries - and a
+ *    real country option that also carries `selected`, because
+ *    `CustomerAddressFormatter` sets that field's value unconditionally
+ *    (`setValue($this->country->id)`) and `form-fields.tpl` marks the option
+ *    matching it. Two selected options, last one wins, so a fresh unanswered
+ *    country select reads as the shop's default country id and NEVER as `''`.
+ *    Getting this wrong is not cosmetic: a fixture where the placeholder is the
+ *    only selected option makes any "the field is still empty" rule look like it
+ *    works, on a state core cannot produce;
+ *  - the step's outer `<form>` and the rendered address form's own `<form>` are
+ *    nested, which is why the block div - not the form - is the usable scope.
+ *
+ * @param {Object} [options]
+ * @param {string} [options.editing] 'delivery' (default) or 'invoice' - which
+ *        side gets the editable form; the other gets a selector
+ * @param {boolean} [options.sameAddress] the state the shared-address control
+ *        reports, i.e. TRUE means the buyer says both addresses are one. Only
+ *        rendered when the delivery form is the editable one, exactly as core
+ *        does. Default false.
+ * @param {boolean} [options.invoiceBlock] whether an invoice block exists at
+ *        all. Default: true unless sameAddress.
+ * @param {?string} [options.countryId] the country option the SERVER rendered as
+ *        selected. Defaults to '1' (Germany) - a real pre-selected country, which
+ *        is what core always emits. Also decides whether the form carries a `dni`
+ *        field: pass DNI_COUNTRY_ID (Spain) for a country whose address format asks
+ *        for one. Pass null for the deliberate EXCEPTION case: a theme whose form
+ *        leaves only the placeholder selected. Core does not produce that state, so
+ *        any test using it must say why.
+ * @param {boolean} [options.countryIsoAttrs] give the country options
+ *        `data-iso-code` (default false - core's classic theme does not)
+ * @param {string} [options.company] initial value of the company input
+ * @param {string} [options.address1] initial value of the street input
+ * @param {string} [options.postcode] initial value of the postcode input
+ * @param {string} [options.city] initial value of the city input
+ *        These three, like `company`, are emitted as a real `value` ATTRIBUTE, which
+ *        is what the server does when the buyer is EDITING an address that already
+ *        exists - `CustomerAddressFormatter` sets each field's value from the address
+ *        row. A fixture that set them with `.val()` after render would be a different
+ *        state from any core produces.
+ * @param {boolean} [options.blockContainers] whether the editable form is wrapped
+ *        in its block id div and its own `.js-address-form` (default true, which is
+ *        core). Pass false for a THEME that flattens both away: the only scope left
+ *        for the field lookups to resolve to is then the step's own wrapper, which
+ *        spans BOTH address blocks. Core does not produce this, but a theme
+ *        overriding the address-form template can, and a mirror that widened its
+ *        scope to it would write into an address the buyer is not looking at.
+ * @param {boolean} [options.blockIds] whether the address blocks carry the ids
+ *        core gives them (default true, which is core). Pass false for a theme that
+ *        keeps core's structure and classes but not its ids - nothing stops a theme
+ *        from doing that, and combined with blockContainers:false it is the shape
+ *        that defeats a scope guard recognising address blocks by id alone: the only
+ *        candidate left is the step wrapper, and the other address is still in it.
+ * @returns {void}
+ */
+function buildAddressesStep(options) {
+    const opts = options || {};
+    const editing = opts.editing || 'delivery';
+    const sameAddress = opts.sameAddress === true;
+    const invoiceBlock = 'invoiceBlock' in opts ? opts.invoiceBlock : !sameAddress;
+    const countryId = 'countryId' in opts ? opts.countryId : '1';
+    const isoAttrs = opts.countryIsoAttrs === true;
+    const company = opts.company || '';
+    const address1 = opts.address1 || '';
+    const postcode = opts.postcode || '';
+    const city = opts.city || '';
+    const blockContainers = opts.blockContainers !== false;
+    const blockIds = opts.blockIds !== false;
+
+    const countryOption = function (value, label, iso) {
+        const attr = isoAttrs ? ' data-iso-code="' + iso + '"' : '';
+        const selected = (countryId !== null && String(countryId) === value) ? ' selected' : '';
+        return '        <option value="' + value + '"' + attr + selected + '>' + label + '</option>';
+    };
+
+    const addressForm = function (type) {
+        const lines = [];
+        if (blockContainers) {
+            lines.push(
+                '      <div' + (blockIds ? ' id="' + type + '-address"' : '') + '>',
+                // The rendered form's own wrapper, inside the block id - core's
+                // `address_form` block emits it, and it is what the innermost-first
+                // root resolution actually lands on.
+                '        <div class="js-address-form">'
+            );
+        }
+        lines.push(
+            '        <form method="POST" data-id-address="0">',
+            '        <input type="text" name="company" id="field-company" value="' + company + '">'
+        );
+        if (DNI_COUNTRY_IDS.indexOf(String(countryId)) !== -1) {
+            lines.push('        <input type="text" name="dni" id="field-dni" value="" required>');
+        }
+        lines.push(
+            '        <input type="text" name="vat_number" id="field-vat_number" value="">',
+            '        <input type="text" name="address1" id="field-address1" value="' + address1 + '">',
+            '        <input type="text" name="postcode" id="field-postcode" value="' + postcode + '">',
+            '        <input type="text" name="city" id="field-city" value="' + city + '">',
+            '        <select id="field-id_country" class="form-control form-control-select js-country" name="id_country" required>',
+            // `selected` unconditionally, as core emits it - see this function's
+            // docblock. The real country option below carries it too.
+            '        <option value disabled selected>Please choose</option>',
+            countryOption('17', 'United Kingdom', 'GB'),
+            countryOption('8', 'France', 'FR'),
+            countryOption('1', 'Germany', 'DE'),
+            countryOption(DNI_COUNTRY_ID, 'Spain', 'ES'),
+            countryOption(OTHER_DNI_COUNTRY_ID, 'Mexico', 'MX'),
+            '        </select>',
+            '        <input type="hidden" name="saveAddress" value="' + type + '">'
+        );
+        if (type === 'delivery') {
+            lines.push(
+                '        <div class="form-group row"><div class="col-md-9 col-md-offset-3">',
+                '        <input name="use_same_address" id="use_same_address" type="checkbox" value="1"'
+                    + (sameAddress ? ' checked' : '') + '>',
+                '        <label for="use_same_address">Use this address for invoice too</label>',
+                '        </div></div>'
+            );
+        }
+        lines.push('        </form>');
+        if (blockContainers) {
+            lines.push('        </div>', '      </div>');
+        }
+        return lines.join('\n');
+    };
+
+    const addressSelector = function (type) {
+        const name = type === 'invoice' ? 'id_address_invoice' : 'id_address_delivery';
+        return [
+            '      <div' + (blockIds ? ' id="' + type + '-addresses"' : '')
+                + ' class="address-selector js-address-selector">',
+            // Both classes, in core's order - `address-selector-block.tpl` emits
+            // the `js-` hook and the presentational one together.
+            '        <article class="js-address-item address-item">',
+            '          <label><span class="custom-radio">',
+            '            <input type="radio" name="' + name + '" value="7" checked>',
+            '          </span><div class="address">Saved address</div></label>',
+            '        </article>',
+            '      </div>'
+        ].join('\n');
+    };
+
+    const html = ['<div class="js-address-form">', '  <form method="POST" data-id-address="0">'];
+    html.push(editing === 'delivery' ? addressForm('delivery') : addressSelector('delivery'));
+    if (invoiceBlock) {
+        html.push(editing === 'invoice' ? addressForm('invoice') : addressSelector('invoice'));
+    } else {
+        // core's `$use_same_address` branch: a link, not a toggle. Its href
+        // navigates - which is why the mirror has to be a cross-page-load
+        // operation and cannot listen for a reveal.
+        html.push(
+            '      <p><a data-link-action="different-invoice-address" href="/order?use_same_address=0">',
+            '        Billing address differs from shipping address</a></p>'
+        );
+    }
+    html.push('  </form>', '</div>');
+    document.body.innerHTML = html.join('\n');
+}
+
+/**
+ * Rebuild the addresses step the way core's OWN country-change handler does, so
+ * a test can observe what that handler leaves behind (TWO-40).
+ *
+ * Reproduced from `themes/_core/js/address.js`, which is what runs when anything
+ * fires `change` on a `.js-country` select - our own mirrored country write
+ * included, since core binds it delegated on `body`:
+ *
+ *   1. read every `.js-address-form input`'s value into a map keyed by `name`;
+ *   2. `$('.js-address-form').replaceWith(resp.address_form)` - a fresh
+ *      server-rendered form, so the newly chosen country is the one rendered as
+ *      selected, and nothing the browser had added to the old nodes exists;
+ *   3. write the saved values back over the new `.js-address-form input` set.
+ *
+ * The load-bearing detail is that step 3 is INPUT-only and VALUE-only: `<select>`
+ * elements are not restored at all, and no ATTRIBUTE is. So a value the plugin
+ * wrote survives while the `data-two-autofilled-value` marker recording that the
+ * plugin wrote it does not - which is the whole reason the mirror has a re-mark
+ * operation. Modelling this with a simplified stand-in would prove nothing.
+ *
+ * @param {Object} [options] forwarded to buildAddressesStep - the SERVER's new
+ *        render, so pass the country the buyer just chose as `countryId`
+ * @returns {void}
+ */
+function rebuildAddressesStepAsCoreDoes(options) {
+    const saved = {};
+    document.querySelectorAll('.js-address-form input').forEach(function (input) {
+        saved[input.getAttribute('name')] = input.value;
+    });
+
+    buildAddressesStep(options);
+
+    document.querySelectorAll('.js-address-form input').forEach(function (input) {
+        const name = input.getAttribute('name');
+        if (Object.prototype.hasOwnProperty.call(saved, name)) {
+            input.value = saved[name];
+        }
+    });
 }
 
 /**
@@ -708,6 +962,8 @@ function loadSoleTrader() {
 
 module.exports = {
     REPO_ROOT: REPO_ROOT,
+    DNI_COUNTRY_ID: DNI_COUNTRY_ID,
+    OTHER_DNI_COUNTRY_ID: OTHER_DNI_COUNTRY_ID,
     buildPaymentTile: buildPaymentTile,
     buildPaymentTileWithSoleTraderAnswer: buildPaymentTileWithSoleTraderAnswer,
     loadCompanyNumber: loadCompanyNumber,
@@ -720,6 +976,8 @@ module.exports = {
     loadScript: loadScript,
     installStylesheet: installStylesheet,
     buildAddressForm: buildAddressForm,
+    buildAddressesStep: buildAddressesStep,
+    rebuildAddressesStepAsCoreDoes: rebuildAddressesStepAsCoreDoes,
     replaceAddressForm: replaceAddressForm,
     stubAjax: stubAjax,
     callbackRecorder: callbackRecorder,

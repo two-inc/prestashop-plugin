@@ -5631,6 +5631,7 @@ require __DIR__ . '/BrandTokenSpec.php';
 require __DIR__ . '/UpgradeScriptVersionSpec.php';
 require __DIR__ . '/CompanySearchCountrySourcingSpec.php';
 require __DIR__ . '/SessionCompanyClearSpec.php';
+require __DIR__ . '/MirrorWriteRecordSpec.php';
 require __DIR__ . '/SoleTraderTokenPreconditionSpec.php';
 require __DIR__ . '/OverrideMigrationSpec.php';
 require __DIR__ . '/TranslationCatalogueSpec.php';
@@ -5677,6 +5678,7 @@ $tests = [
     'UpgradeScriptVersionSpec::runAll' => [UpgradeScriptVersionSpec::class, 'runAll'],
     'CompanySearchCountrySourcingSpec::runAll' => [CompanySearchCountrySourcingSpec::class, 'runAll'],
     'SessionCompanyClearSpec::runAll' => [SessionCompanyClearSpec::class, 'runAll'],
+    'MirrorWriteRecordSpec::runAll' => [MirrorWriteRecordSpec::class, 'runAll'],
     'SoleTraderTokenPreconditionSpec::runAll' => [SoleTraderTokenPreconditionSpec::class, 'runAll'],
     'OverrideMigrationSpec::runAll' => [OverrideMigrationSpec::class, 'runAll'],
     'TranslationCatalogueSpec::runAll' => [TranslationCatalogueSpec::class, 'runAll'],

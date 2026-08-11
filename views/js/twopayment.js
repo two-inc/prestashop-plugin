@@ -47,6 +47,12 @@
             orderIntentEnabled: config.enable_order_intent !== 0
                 && config.enable_order_intent !== '0'
                 && config.enable_order_intent !== false,
+            // TWO-40: the company the buyer already confirmed for this cart,
+            // resolved and guard-checked server-side, or null. Seeds the
+            // manager's in-memory selection so it survives the page loads the
+            // address step is made of - see
+            // TwoCheckoutManager.seedConfirmedCompanySelectionFromServer().
+            confirmedCompany: config.confirmed_company || null,
             checkoutHost: config.checkout_host,
             orderIntentUrl: config.order_intent_url,
             ajaxToken: config.ajax_token,

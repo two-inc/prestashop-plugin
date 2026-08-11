@@ -54,6 +54,7 @@ final class CompanySearchCountrySourcingSpec
         self::testCountryIsoMapIsInjectedByTheMediaHook();
         self::testBillingCountryIsInjectedByTheMediaHook();
         self::testBillingCountryResolvesFromTheCartsInvoiceAddress();
+        self::testBillingCountryIsNeverTheDeliveryAddress();
         self::testJsReadsTheInjectedBillingCountry();
         self::testDropdownCopyKeysMatchTheKeysTheJsReads();
         self::testClearCompanyActionSeam();
@@ -299,6 +300,54 @@ final class CompanySearchCountrySourcingSpec
         StubStore::$addresses[8802] = ['id_country' => 4242];
         $cart->id_address_invoice = 8802;
         TinyAssert::same('', $method->invoke($module));
+    }
+
+    /**
+     * The INVOICE address, and never the delivery one (TWO-40 #13).
+     *
+     * This is the load-bearing fact behind the whole disabled-mode read side,
+     * and nothing guarded it before: `window.twopayment.billing_country` is the
+     * terminal fallback for every country resolver in the checkout JS, reached
+     * on exactly the page where no country select exists, and what those
+     * resolvers need there is the country of the address the order will be
+     * BILLED to. A shop where the buyer ships and bills to different countries
+     * is the only one that can tell the two sourcings apart, and it would tell
+     * them apart by searching the wrong company register with nothing on screen
+     * saying so.
+     *
+     * Asserted with both addresses set to DIFFERENT countries, so the answer
+     * identifies which field was read, and then with only a delivery address, so
+     * a fallback to it cannot hide behind an unset invoice address.
+     */
+    private static function testBillingCountryIsNeverTheDeliveryAddress(): void
+    {
+        StubStore::reset();
+        Tools::resetTestValues();
+        $module = new TwopaymentTestHarness();
+        $method = new ReflectionMethod(Twopayment::class, 'getCheckoutBillingCountryIso');
+
+        StubStore::$countries[44] = 'gb';
+        StubStore::$countries[45] = 'fr';
+        StubStore::$addresses[8811] = ['id_country' => 44];
+        StubStore::$addresses[8812] = ['id_country' => 45];
+
+        $cart = Context::getContext()->cart;
+        $cart->id_address_invoice = 8811;
+        $cart->id_address_delivery = 8812;
+
+        TinyAssert::same(
+            'GB',
+            $method->invoke($module),
+            'the billing country handed to the JS came from the DELIVERY address'
+        );
+
+        // Only a delivery address on the cart: empty, not the delivery country.
+        $cart->id_address_invoice = 0;
+        TinyAssert::same(
+            '',
+            $method->invoke($module),
+            'the delivery address answered as a fallback for the billing country'
+        );
     }
 
     /**
