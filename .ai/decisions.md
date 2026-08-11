@@ -71,7 +71,9 @@ What is written:
 | --- | --- | --- |
 | `company_name` | visible `company` input | marked `data-two-autofilled-value`; skipped when blank |
 | `organization_number` | hidden `companyid` + `data-two-company-name` tag | via `markOrganizationFieldSelected()`; **gated on a non-blank `company_name`** |
-| `organization_number` | visible `dni` input | via `writeOrganizationToAddressIdentifiers()`; same name gate, and **never for `TWO:` values** |
+| `organization_number` | visible `dni` input | via `writeOrganizationToAddressIdentifiers()`; same name gate. **No value is exempt** — see the internal-identifier ruling below |
+| `billing_address.building` / `.apartment` | `address1` (street moves to `address2`) | most-specific locator takes the first line |
+| `billing_address.region` | state select, else appended to `city` | see the region ruling below |
 | `billing_address.street` | `address1` | via `autoFillAddress()` |
 | `billing_address.postal_code` | `postcode` | via `autoFillAddress()` |
 | `billing_address.city` | `city` | via `autoFillAddress()` |
@@ -85,25 +87,58 @@ What is deliberately NOT written:
   country disagrees with the cart's invoice-address country. Writing the registered country over
   the form's would destroy the enrolment it is completing. The two agreeing needs no write; the
   two disagreeing is exactly where writing is wrong.
-- **`building`, `apartment`, `region`.** PrestaShop has an `address2` and a state field that could
-  hold them, but the fields the plugin may write are the ones it can ATTRIBUTE -
-  `MIRRORED_ADDRESS_FIELDS` and `Twopayment::MIRROR_WRITE_SESSION_KEYS` behind it. A value written
-  outside that record is unrecognisable as ours on the next render, reads as buyer-authored, and
-  PINS the whole secondary address. Widening the record changes the mirror's own pin surface and is
-  its own piece of work. Known gap, not an oversight.
-- **A `TWO:` organisation number into any visible field.** It is an internal identifier and must
-  never be shown to the buyer anywhere (TWO-25326 §12, `TwoCompanyNumber`). It still travels in the
-  hidden `companyid` and in the order payload, which is data rather than display.
+**Every field in the response now lands somewhere (Doug's ruling).** Nothing is dropped for being
+inconvenient to attribute:
 
-  **The suppression lives in `writeOrganizationToAddressIdentifiers()`, the single gate, not at this
-  call site — and that closes a pre-existing hole rather than only guarding the new write.** Review
-  found three other routes by which the value already reached the buyer's `dni` field: the
-  submit-time `syncOrganizationToAddressIdentifiers()`, which copies whatever `companyid` holds
-  straight into `dni`, and the invoice mirror's populate and completion paths, both of which write
-  `selection.companyid` — and the sole-trader selection has carried a `TWO:` number since TWO-25326
-  bug 8. A caller-side test would have left all three open. Suppression costs the order nothing: the
-  number reaches the payload through the session record and the published selection, never through
-  `dni`.
+- **`building` / `apartment` → `address1`, with `street` moving to `address2`.** Where a building or
+  apartment is given it is the more specific locator and takes the first line; where neither is
+  given the street takes the first line and the second is left alone. Both present are joined
+  most-specific-first (`"Apartment 4, Kelburnfoot"`).
+- **No de-duplication against the street**, on Doug's explicit ruling: *"it is valid for some
+  addresses to have a matching first and second line so deduping would be wrong."* An earlier round
+  proposed exactly that dedup and it was rejected — an address whose `building` equals its `street`
+  writes that text to both lines.
+- **`region` → the form's state/county select where one exists, otherwise appended to `city` with a
+  comma** (`"Ashford, Kent"`). The state match is best-effort by necessity: the response carries a
+  region NAME with no code, PrestaShop needs a shop-local state id, so the only join available is on
+  the visible label (trimmed, case-folded, `data-iso-code` also accepted). No match writes nothing
+  rather than guessing. Most countries render no state field at all, and the alternative to
+  appending is losing the region.
+- **`address2` and `state` are therefore added to `MIRRORED_ADDRESS_FIELDS` and to
+  `Twopayment::MIRROR_WRITE_SESSION_KEYS`, and the pin now judges them.** This is the point Doug
+  made when an earlier draft proposed leaving them out: *"it's just another element of the address;
+  if a buyer specifies that, then yeah it should be pinned same as if the buyer entered a city."*
+  The address-wide rule is "any field the buyer has entered pins the address", so a tracked set
+  missing two writable fields would have made the pin miss real buyer-entered data. Widening it does
+  mean a buyer-typed second address line now freezes the secondary address where it previously did
+  not — that is the intended consequence, not a side effect.
+
+**A `TWO:`-prefixed identifier is ordinary data, not a special case (Doug's ruling).** In Doug's
+words: *"why are you treating a sole trader number as any different from a registered company's org
+number? You should handle, store and route them exactly the same as each other."* It is not even a
+sole-trader concept — registered companies in some countries (the US among them) carry one too.
+
+So it is written, stored, paired, mirrored, validated and submitted through exactly the same code
+path as any other organisation number, with **no branch anywhere** in the write, pairing or
+validation logic. The only difference is cosmetic: `syncInternalIdentifierVisibility()` hides the
+field holding it, keyed on the value and never on how it was captured. It reuses
+`TwoCompanyNumber.isInternal()`, the same predicate the three existing display sites already use
+(the hint under the company field, the search result rows, the order-intent sentence), rather than a
+fourth copy of the prefix test. The wrapper is hidden rather than the input, because PrestaShop
+renders each address field as a `.form-group` holding a label and a control and hiding the input
+alone leaves an orphaned "Identification number" label. `display: none`, not `display: hidden` —
+the latter is not a valid value for that property.
+
+**This replaces an earlier round that refused the WRITE**, and that reversal is the important part
+of this record. Refusing the write sent a sole trader's number down a different path from a
+registered company's, and every defect that followed came from that one divergence: a mismatched
+name/number pair left in the invoice form; the "name and number travel together" invariant broken;
+and, worst, a REQUIRED and empty identification field on countries whose address format demands one
+(`Country::isNeedDniByCountryId()`), which the buyer could not fill because the value was
+deliberately hidden from them — a hard dead-end at checkout. Keeping the real value in the field is
+precisely what leaves the required field satisfied and the pair complete. Two of the three "blocker"
+items an earlier review round raised were consequences of the special-casing and disappeared with
+it, rather than needing fixes of their own.
 
 **The address-wide pin is deliberately NOT consulted, and that is a REVERSAL of a review fix.**
 Round 1 of the adversarial review added `secondaryAddressIsPinned()` as an early return, reasoning by
@@ -199,17 +234,30 @@ because the fix looks obviously correct in isolation and was applied once alread
 - **Two behaviours review raised that are NOT closed here, both needing a ruling.** (1) A country
   change during the signup popup round trip does not bump `_enrollGeneration`, so the adoption can
   write an identity minted against the previous country into a form now on a new one; the server will
-  discard the session company on that divergence. (2) After a country change, PrestaShop rebuilds the
-  address form and destroys the hidden field, and nothing restores this adoption's pair -
-  `republishMirroredSelection()` is gated on the mirror's own `mirrorMemory()`, which this path never
-  stamps. The order still resolves through the session record in both cases; the form silently stops
-  showing a confirmed selection. Seeding `mirrorMemory()` from the adoption is the candidate fix and
-  is deliberately not bolted on here.
+  discard the session company on that divergence.
 - With the address-lookup switch off, the address fields and `dni` are not written; the company
   name and hidden pairing still are. That is the existing meaning of that switch, applied here
   unchanged.
-- `building`, `apartment` and `region` are dropped (above). In the captured completion `building`
-  equals `street` and the other two are empty, so nothing was lost in the reported case.
+
+**A country change wiping a SEARCH or SOLE-TRADER capture is correct and must keep working** (Doug:
+*"the ONLY time that a country change should not wipe company details is if the control is in manual
+entry mode"*). It currently does — `setupCountryChangeListener()`'s handler blanks the company field
+and runs `clearSelectedCompany()`, which drops the hidden pair, the tag, the marked `dni` and the
+session company. So the earlier proposal to restore a sole-trader pair after a country rebuild via
+`republishMirroredSelection()` was **wrong and is not implemented**; it would have defeated the
+intended wipe.
+
+**MANUAL-ENTRY mode is the real bug there, and it is NOT fixed in this piece of work.** Investigation
+confirmed that a country change wipes a hand-typed company name too: the country handler blanks the
+field and clears the selection with no mode check, and `_manualEntry` lives on the search instance,
+which the manager destroys and rebuilds on every `updatedAddressForm` — so the mode itself does not
+survive either, and the fresh instance comes back in read-only search mode. The end state is
+half-wiped and inconsistent: the typed name gone, the session cleared, but an unmarked hand-typed
+`dni` left behind, which the submit-time sync then adopts as the organisation number for whatever
+name is in the field by then. Fixing it needs both a mode guard on the wipe and `_manualEntry`
+persisted off-instance the way `mirrorMemory()` already is. That is a change to the manager's
+instance lifecycle, unrelated to the sole-trader autofill, and belongs in its own PR rather than
+widening this one. No test anywhere currently fires a country-select `change` while in manual entry.
 
 ---
 
