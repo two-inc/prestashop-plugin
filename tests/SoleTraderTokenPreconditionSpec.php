@@ -13,13 +13,17 @@ require_once __DIR__ . '/../controllers/front/orderintent.php';
  * the browser had nowhere on that page to render the refusal: the entry point
  * dead-ended in silence.
  *
- * The precondition is now a trust-ordered country resolver, and the property
- * these specs pin is that the ONE authorisation gate survived it: minting still
- * requires TwoSoleTrader::isAvailable() to answer yes, server-side, for a
- * country that actually resolved. A posted country can only move the answer from
- * "unresolved" to "the registry's own answer for a real country" - it cannot
- * outrank the cart's invoice address, and it cannot conjure availability where
- * the registry says no.
+ * The precondition is now a country resolver that prefers what the request
+ * POSTS - the buyer's live in-page selection - and falls back to the cart's
+ * delivery address only when no usable country was posted at all. The cart's
+ * INVOICE address is not consulted at any tier, and one spec here exists purely
+ * to prove that (testACommittedInvoiceAddressIsNeverConsulted).
+ *
+ * The property these specs pin is that the ONE authorisation gate survived that
+ * inversion: minting still requires TwoSoleTrader::isAvailable() to answer yes,
+ * server-side, for a country that actually resolved. A posted country can only
+ * move the answer from "unresolved" to "the registry's own answer for a real
+ * country" - it cannot conjure availability where the registry says no.
  *
  * Behavioural, and driven through the controller's own action switch rather than
  * by reading the source - for the reason recorded on SessionCompanyClearSpec:
@@ -43,13 +47,15 @@ final class SoleTraderTokenPreconditionSpec
     public static function runAll(): void
     {
         $tests = [
-            'testInvoiceAddressWinsOverAPostedCountry',
-            'testUnresolvableInvoiceAddressFallsThroughToThePostedCountry',
-            'testInvoiceAddressThatNoLongerLoadsFallsThroughToThePostedCountry',
+            'testPostedCountryWinsOverTheCartsInvoiceAddress',
+            'testACommittedInvoiceAddressIsNeverConsulted',
             'testNoInvoiceAddressMintsFromAValidPostedCountry',
             'testLowercasePostedCountryIsAccepted',
             'testGarbagePostedCountryFallsBackToTheDeliveryAddress',
             'testAbsentPostedCountryFallsBackToTheDeliveryAddress',
+            'testAbsentPostedCountryUsesTheDeliveryAddressNotTheInvoiceOne',
+            'testUnresolvableDeliveryAddressIsRefused',
+            'testDeliveryAddressThatNoLongerLoadsIsRefused',
             'testNothingResolvableIsRefused',
             'testResolvedButIneligibleCountryIsRefused',
             'testPostedCountryCannotConjureAvailability',
@@ -78,84 +84,50 @@ final class SoleTraderTokenPreconditionSpec
         ];
     }
 
-    /* ---- tier 1: the cart's invoice address ---- */
+    /* ---- tier 1: the posted country, i.e. the buyer's live selection ---- */
 
     /**
-     * The committed value on the cart outranks anything the request carries.
-     * Asserted with a posted country that is ALSO eligible, so the pass cannot
-     * come from the posted one being rejected - only from the resolved country
-     * being the invoice address's.
+     * The inversion, stated as the property that matters: a cart carrying a
+     * committed invoice address in country A, a country B posted, and the gate
+     * evaluated against B. Both countries are eligible, so the pass cannot come
+     * from either one being rejected - only from B being the country resolved.
+     *
+     * This is the mirror of testPostedCountryCannotConjureAvailability(), and
+     * the two together are what say the ordering changed without the gate being
+     * weakened.
      */
-    private static function testInvoiceAddressWinsOverAPostedCountry(): void
+    private static function testPostedCountryWinsOverTheCartsInvoiceAddress(): void
     {
         self::seedCart(self::ISO_NO, null);
 
         $emitted = self::mint(['country' => self::ISO_GB]);
 
-        TinyAssert::true($emitted['success'], 'an eligible invoice-address country must mint');
+        TinyAssert::true($emitted['success'], 'an eligible posted country must mint');
         TinyAssert::same(
-            self::ISO_NO,
+            self::ISO_GB,
             $emitted['country'],
-            'the posted country overrode the cart\'s own invoice address'
+            'the cart\'s committed invoice address overrode the posted country'
         );
     }
 
     /**
-     * The documented fall-through: a cart that HAS an invoice address, from
-     * which no country resolves (here an id_country with no ISO code - a
-     * deleted or never-configured country row). An unresolvable address is not
-     * an answer, so the search continues down the tiers rather than refusing.
-     *
-     * Untested until adversarial review, and cheaply so: with tier 1 returning
-     * whatever it resolved unconditionally, every other case here stays green
-     * because they all resolve tier 1 fine or have no invoice address at all.
+     * The invoice address is not a tier at all, not even a last resort. A cart
+     * with an eligible invoice address, nothing posted and no delivery address
+     * must be REFUSED - if the invoice tier were merely demoted rather than
+     * deleted, this is the case where it would silently win.
      */
-    private static function testUnresolvableInvoiceAddressFallsThroughToThePostedCountry(): void
+    private static function testACommittedInvoiceAddressIsNeverConsulted(): void
     {
-        self::seedCart(null, null);
-        $cart = Context::getContext()->cart;
-        // Loads as an object, but its country is not in the country table.
-        StubStore::$addresses[self::INVOICE_ADDRESS_ID] = ['id_country' => 4199];
-        $cart->id_address_invoice = self::INVOICE_ADDRESS_ID;
+        self::seedCart(self::ISO_GB, null);
 
-        $emitted = self::mint(['country' => self::ISO_GB]);
+        $emitted = self::mint([]);
 
-        TinyAssert::true(
+        TinyAssert::false(
             $emitted['success'],
-            'an invoice address that resolves to no country must fall through, not refuse'
+            'the cart\'s invoice address is still being consulted as a fallback tier'
         );
-        TinyAssert::same(self::ISO_GB, $emitted['country']);
+        TinyAssert::false(isset($emitted['delegation_token']));
     }
-
-    /**
-     * The other half of the same fall-through: a cart that still carries an
-     * `id_address_invoice` pointing at a row that no longer loads at all - a
-     * since-deleted address, or one belonging to a different shop. The address
-     * object is not loaded, so no country resolves from it, and the search must
-     * continue down the tiers rather than refuse.
-     *
-     * Distinct from the case above, which loads fine and fails on the country
-     * lookup: this one is the `Validate::isLoadedObject()` guard, and deleting
-     * that guard leaves every other case here green.
-     */
-    private static function testInvoiceAddressThatNoLongerLoadsFallsThroughToThePostedCountry(): void
-    {
-        self::seedCart(null, null);
-        $cart = Context::getContext()->cart;
-        // Deliberately never seeded into StubStore::$addresses, so the address
-        // object comes back unloaded.
-        $cart->id_address_invoice = 4198;
-
-        $emitted = self::mint(['country' => self::ISO_GB]);
-
-        TinyAssert::true(
-            $emitted['success'],
-            'an invoice address that does not load must fall through, not refuse'
-        );
-        TinyAssert::same(self::ISO_GB, $emitted['country']);
-    }
-
-    /* ---- tier 2: the posted country ---- */
 
     /**
      * The bug this ticket exists for: the address-editor page, no invoice
@@ -193,7 +165,7 @@ final class SoleTraderTokenPreconditionSpec
         TinyAssert::same(self::ISO_GB, $emitted['country'], 'the resolved country must be normalised');
     }
 
-    /* ---- tier 3: the cart's delivery address ---- */
+    /* ---- tier 2: the cart's delivery address, last resort ---- */
 
     /**
      * A POST carrying junk where the country should be resolves from the cart's
@@ -230,6 +202,67 @@ final class SoleTraderTokenPreconditionSpec
         TinyAssert::same(self::ISO_GB, $emitted['country']);
     }
 
+    /**
+     * The last-resort tier, with BOTH addresses on the cart and nothing posted.
+     * The delivery one answers; the invoice one - here an eligible country too,
+     * so a wrong resolution would still mint and only the reported country would
+     * give it away - does not.
+     */
+    private static function testAbsentPostedCountryUsesTheDeliveryAddressNotTheInvoiceOne(): void
+    {
+        self::seedCart(self::ISO_NO, self::ISO_GB);
+
+        $emitted = self::mint([]);
+
+        TinyAssert::true($emitted['success'], 'the delivery address must answer when nothing was posted');
+        TinyAssert::same(
+            self::ISO_GB,
+            $emitted['country'],
+            'the cart\'s invoice address answered ahead of its delivery address'
+        );
+    }
+
+    /**
+     * The delivery tier's own resolution failure: an address that loads but
+     * whose id_country is not in the country table (a deleted or
+     * never-configured country row). No country resolves, and with no tier below
+     * it that is a refusal rather than a guess.
+     */
+    private static function testUnresolvableDeliveryAddressIsRefused(): void
+    {
+        self::seedCart(null, null);
+        $cart = Context::getContext()->cart;
+        // Loads as an object, but its country is not in the country table.
+        StubStore::$addresses[self::DELIVERY_ADDRESS_ID] = ['id_country' => 4199];
+        $cart->id_address_delivery = self::DELIVERY_ADDRESS_ID;
+
+        $emitted = self::mint([]);
+
+        TinyAssert::false($emitted['success'], 'an address resolving to no country must not mint');
+        TinyAssert::false(isset($emitted['delegation_token']));
+    }
+
+    /**
+     * The other half: an `id_address_delivery` pointing at a row that no longer
+     * loads at all - a since-deleted address, or one belonging to a different
+     * shop. This is the `Validate::isLoadedObject()` guard in
+     * addressCountryIso(), and deleting that guard leaves every other case here
+     * green.
+     */
+    private static function testDeliveryAddressThatNoLongerLoadsIsRefused(): void
+    {
+        self::seedCart(null, null);
+        $cart = Context::getContext()->cart;
+        // Deliberately never seeded into StubStore::$addresses, so the address
+        // object comes back unloaded.
+        $cart->id_address_delivery = 4198;
+
+        $emitted = self::mint([]);
+
+        TinyAssert::false($emitted['success'], 'an address that does not load must not mint');
+        TinyAssert::false(isset($emitted['delegation_token']));
+    }
+
     /* ---- fail-closed ---- */
 
     /**
@@ -256,12 +289,12 @@ final class SoleTraderTokenPreconditionSpec
     }
 
     /**
-     * The gate itself, on the tier-1 path: a country that resolves fine but
+     * The gate itself, on the address path: a country that resolves fine but
      * that the registry does not support sole traders in.
      */
     private static function testResolvedButIneligibleCountryIsRefused(): void
     {
-        self::seedCart(self::ISO_DE, null);
+        self::seedCart(null, self::ISO_DE);
 
         $emitted = self::mint([]);
 
@@ -270,9 +303,10 @@ final class SoleTraderTokenPreconditionSpec
     }
 
     /**
-     * The load-bearing security case for the new tier: a posted country is
-     * still gated. If the registry says no for it, no tokens - so the widened
-     * precondition cannot be used to mint where the flow is unavailable.
+     * The load-bearing security case for the preferred tier: a posted country is
+     * still gated. If the registry says no for it, no tokens - so promoting the
+     * posted tier to first place cannot be used to mint where the flow is
+     * unavailable.
      */
     private static function testPostedCountryCannotConjureAvailability(): void
     {
