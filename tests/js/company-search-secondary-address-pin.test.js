@@ -517,6 +517,71 @@ describe('the country is compared as an ISO code', () => {
     });
 });
 
+/**
+ * TWO-40, round 1 of the content-match rework.
+ *
+ * The pin gates the POPULATE and nothing else. Of the three repair operations,
+ * RE-MARK writes no value at all and RE-PUBLISH is gated on the mirror's own marked
+ * company name - so a pin raised by the COMPANY field makes both inert. COMPLETE
+ * shares that name gate, which means a pin raised by any OTHER field leaves it
+ * firing, and it is meant to: gating it would put back the defect it was written to
+ * close, a mirrored company name on the order with no organisation number beside it.
+ *
+ * Pinned here so the deliberate behaviour is a spec rather than a comment.
+ */
+describe('the completion is deliberately not gated on the pin', () => {
+    test('completes the number half on an address pinned by an unrelated field', () => {
+        // Spain, so the form has an identification field at all - see
+        // buildAddressesStep().
+        buildAddressesStep({ editing: 'invoice', countryId: DNI_COUNTRY_ID });
+        publishMirrorWrites(null);
+        const memory = {};
+        const picked = { company: 'Acme SA', companyid: '12345678', countryIso: 'ES' };
+        const identifier = () => $("#invoice-address input[name='dni']");
+
+        mount(picked, { mirrorMemory: memory });
+        expect(identifier().val()).toBe('12345678');
+
+        // The buyer types a city of their own. Nothing is on record as having
+        // written it, so from here on the address is pinned - by the CITY, with the
+        // mirror's marked company name untouched.
+        $("#invoice-address input[name='city']").val('Bristol');
+
+        // Country to Great Britain: core rebuilds the form, which drops the
+        // identification field, and the re-mark moves the number back to pending
+        // because it is now placed nowhere.
+        rebuildAddressesStepAsCoreDoes({ editing: 'invoice', countryId: GB_OPTION });
+        mount(picked, { mirrorMemory: memory });
+        expect(identifier().length).toBe(0);
+        expect(memory.organizationPending).toBe('12345678');
+
+        // And back to Spain: the field returns, empty and unmarked.
+        rebuildAddressesStepAsCoreDoes({ editing: 'invoice', countryId: DNI_COUNTRY_ID });
+        expect(identifier().val()).toBe('');
+        expect(identifier().attr(MARKER)).toBeUndefined();
+
+        const search = mount(picked, { mirrorMemory: memory });
+        const root = search.secondaryAddressFormRoot();
+        const states = search.mirroredAddressFieldStates(root);
+        const stateOf = name => states.find(state => state.name === name);
+
+        // The premise, stated rather than assumed: the address IS pinned, the field
+        // that pinned it is the city, and the company name is still ours.
+        expect(search.secondaryAddressIsPinned(root)).toBe(true);
+        expect(search.mirroredFieldStillHoldsWhatWeWrote(stateOf('city'))).toBe(false);
+        expect(search.mirroredFieldStillHoldsWhatWeWrote(stateOf('company'))).toBe(true);
+        expect(companyField().val()).toBe('Acme SA');
+
+        // The completion fires anyway, into the empty unmarked field, and reports
+        // the write so the next render does not read it as the buyer's.
+        expect(identifier().val()).toBe('12345678');
+        expect(identifier().attr(MARKER)).toBe('12345678');
+        expect(reportedWrites().pop().organization).toBe('12345678');
+        // The city the buyer typed is untouched throughout.
+        expect($("#invoice-address input[name='city']").val()).toBe('Bristol');
+    });
+});
+
 describe('scope: the pin only applies where there is a secondary address', () => {
     test('the shipping pass has no secondary address form to judge', () => {
         buildAddressesStep({ editing: 'delivery' });

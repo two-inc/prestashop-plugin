@@ -2340,11 +2340,28 @@ class TwoCompanySearch {
 
         this.reapplyMirrorMarkers(root);
         // THE PIN, address-wide, and the gate in front of the populate only. The
-        // other three operations are rebuild REPAIR rather than sync: they never
-        // introduce a value the mirror has not already placed on this page, and each
-        // is separately gated on the mirror's own marked name still being in the
-        // form - so on a pinned address, where no populate has run, they are inert
-        // by construction rather than by this condition.
+        // other three operations are rebuild REPAIR rather than sync: none of them
+        // introduces a value the mirror has not already placed on this page.
+        //
+        // Two of them are genuinely inert on a pinned address, for their own
+        // reasons: RE-MARK never writes a value at all, and RE-PUBLISH restores the
+        // hidden pair only behind a company name that is still, exactly, the marked
+        // one the mirror recorded writing - which a pin caused by the company field
+        // rules out.
+        //
+        // COMPLETE is NOT inert on a pinned address, and that is deliberate rather
+        // than an oversight (TWO-40, round 1 of the content-match rework). A pin
+        // raised by a DIFFERENT field - a city the buyer typed - leaves the marked
+        // company name untouched, so the completion still fires there. It is
+        // bounded instead of gated: it writes only the NUMBER half of a pair the
+        // plugin itself created, only while the name half is still the mirror's own
+        // marked value, and only into an identification field that is empty and
+        // carries no marker of any kind. Gating it on the pin would put back the
+        // defect it was written to close - a mirrored company name reaching the
+        // order payload with no organisation number beside it, on a form where core
+        // requires one - and protecting that pair is worth more than the pin's
+        // reach here, because an empty unmarked field holds no answer of the
+        // buyer's to protect.
         if (!this.secondaryAddressIsPinned(root)) {
             this.populateInvoiceAddressFromConfirmedCompany(root);
         }
