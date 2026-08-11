@@ -1670,7 +1670,14 @@ class TwoCompanySearch {
         // display rule and costs the order nothing: an enrolled sole trader's
         // number reaches the payload through the session record and the published
         // selection, never through this field.
-        if (window.TwoCompanyNumber && window.TwoCompanyNumber.isInternal(value)) {
+        // Dereferenced UNGUARDED, deliberately, matching every other use of this
+        // module in this file (:498, :4449) and in its siblings. A
+        // `window.TwoCompanyNumber &&` feature-test here would fail OPEN - a missing
+        // module would write the internal identifier into the buyer-visible field,
+        // which is the single thing this gate exists to prevent. The module is a hard
+        // dependency loaded before this one; if it is absent, throwing is the correct
+        // and consistent outcome.
+        if (window.TwoCompanyNumber.isInternal(value)) {
             return false;
         }
 
@@ -2633,7 +2640,7 @@ class TwoCompanySearch {
         // allowed to take it, so a debt is a retry on every mount that can never
         // succeed. Only the genuinely-nowhere-to-put-it case owes.
         memory.organizationPending = (wroteCompany && identifierFields.length === 0
-            && !(window.TwoCompanyNumber && window.TwoCompanyNumber.isInternal(selection.companyid)))
+            && !window.TwoCompanyNumber.isInternal(selection.companyid))
             ? selection.companyid
             : '';
         memory.countryValue = countryValue;
@@ -5379,21 +5386,25 @@ class TwoCompanySearch {
             && this.visibleAddressFormType() === 'invoice'
             && !this.visibleAddressFormRoot();
 
-        // THE PIN, honoured here as the invoice mirror honours it. Address-wide and
-        // content-matched: any field of the secondary address the buyer has made
-        // their own freezes the whole address, and nothing may be written into any
-        // of it (TWO-40, Doug's ruling).
+        // THE PIN IS DELIBERATELY NOT CONSULTED HERE. This reverses an earlier
+        // review fix, and the reasoning is recorded so it is not "fixed" again.
         //
-        // Applied even though the buyer has just asked for this enrolment, because
-        // the pin is not about what they asked for on THIS form - it is about an
-        // address they have already answered for and are not currently looking at.
-        // The enrolment still completes and still reaches the order through the
-        // session record and the published selection; only the write into a
-        // buyer-owned invoice address is declined. Nothing is skipped on the
-        // delivery form or the payment tile, which the pin never judges.
-        if (secondaryRoot && this.secondaryAddressIsPinned(secondaryRoot)) {
-            return false;
-        }
+        // Round 1 added `secondaryAddressIsPinned()` as an early return, by analogy
+        // with the invoice mirror. Round 2 showed the analogy is false, in two ways.
+        // secondaryAddressFormRoot() resolves non-null ONLY when the invoice form is
+        // the VISIBLE, editable form - so the pin here gates the form the buyer is
+        // looking at and has just acted on, which is the opposite of what the pin is
+        // for. And an invoice form core pre-filled from a saved address carries
+        // street, postcode and city with nothing on record as having written them,
+        // which reads as buyer-authored and pins by DEFAULT - so the adoption would
+        // write nothing at all for every buyer editing an existing billing address.
+        // That is the reported bug reinstated: "absolutely nothing is being
+        // populated".
+        //
+        // The mirror's pin is right for the mirror because the mirror is a
+        // cross-page-load carry-over into a form the buyer never asked it to touch.
+        // This runs from an enrolment the buyer has just completed on the form in
+        // front of them - the one case the pin was never meant to cover.
 
         let wrote = false;
 
@@ -5581,19 +5592,29 @@ class TwoCompanySearch {
                 && String(field.val() == null ? '' : field.val()).trim() === number
                 && field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR) === number
         );
-        // OMITTED rather than reported empty when the number did not land, and the
-        // difference is load-bearing: recordMirrorWrites() treats '' as a positive
-        // statement - "nothing of ours is in that field any more" - and merges it
-        // over whatever the record already held. An internal identifier (the DEFAULT
-        // sole-trader case, since the number is skipped for `dni`) or the
-        // address-lookup switch being off would therefore un-record an organisation
-        // number a previous mirror pass really did write and really did leave in the
-        // form. On the next load the marker is gone, the record says nothing was
-        // written, the field still holds the number - which reads as buyer-authored
-        // and pins the WHOLE secondary address. An absent key means "unchanged",
-        // which is the truth here.
+        // THREE outcomes here, not two, and conflating any pair of them pins the
+        // address. recordMirrorWrites() reads a reported '' as a positive statement -
+        // "nothing of ours is in that field any more" - and merges it over the
+        // record, while an ABSENT key means "unchanged".
+        //
+        //  - the number LANDED: report it, so the next render knows it is ours;
+        //  - the field is EMPTY: report '', because that is true, and it is the only
+        //    way to retract a number a previous mirror pass recorded writing there.
+        //    This is the nameless-buyer branch above, which clears the field through
+        //    clearLookupWrittenAddressIdentifiers(). Omitting the key here would
+        //    leave the record claiming a number the form no longer holds - empty
+        //    field against a non-empty record, which is exactly the mismatch the pin
+        //    reads as buyer tampering;
+        //  - the field holds SOMETHING ELSE - the buyer's own number, or one an
+        //    earlier pass wrote and the gate has just declined to replace: say
+        //    nothing. It is not ours to claim and not ours to retract.
         if (placed) {
             report.organization = number;
+        } else if (this.addressIdentifierFields(root).some(
+            field => field && field.length > 0
+                && String(field.val() == null ? '' : field.val()).trim() === ''
+        )) {
+            report.organization = '';
         }
 
         return report;

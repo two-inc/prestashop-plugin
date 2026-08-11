@@ -105,12 +105,22 @@ What is deliberately NOT written:
   number reaches the payload through the session record and the published selection, never through
   `dni`.
 
-- **Anything at all, into a PINNED secondary address.** `adoptSoleTraderBuyer()` honours
-  `secondaryAddressIsPinned()` exactly as the invoice mirror does and returns without writing. The
-  buyer having just asked for the enrolment does not change this: the pin is not about the form they
-  are looking at, it is about an invoice address they have already answered for. The enrolment still
-  completes and still reaches the order. The delivery form and the payment tile are never pinned and
-  are never skipped.
+**The address-wide pin is deliberately NOT consulted, and that is a REVERSAL of a review fix.**
+Round 1 of the adversarial review added `secondaryAddressIsPinned()` as an early return, reasoning by
+analogy with the invoice mirror. Round 2 showed the analogy is false, in two ways:
+
+- `secondaryAddressFormRoot()` resolves non-null **only** when the invoice form is the VISIBLE,
+  editable form. So the pin was gating the form the buyer is looking at and has just acted on - the
+  exact opposite of what the pin exists for.
+- An invoice form that core pre-filled from a saved address carries street, postcode and city with
+  nothing on record as having written them. That reads as buyer-authored, so the address is pinned
+  **by default**, and the adoption wrote nothing at all for every buyer editing an existing billing
+  address. That is the reported bug reinstated.
+
+The mirror's pin is right for the mirror because the mirror is a cross-page-load carry-over into a
+form the buyer never asked it to touch. This runs from an enrolment the buyer has just completed on
+the form in front of them, which is the one case the pin was never meant to cover. Recorded here
+because the fix looks obviously correct in isolation and was applied once already.
 
 **Alternatives Considered**:
 - Leaving it as it was, per the 2026-08-10 decision. Rejected: it makes the flow pointless. The
