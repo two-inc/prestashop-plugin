@@ -167,6 +167,26 @@ namespace {
          * @var array<int,float|array<int,float|float[]>>
          */
         public static array $taxRuleRates = [];
+        /**
+         * Config key names whose NEXT Configuration::updateValue() must answer
+         * `false` WITHOUT throwing, and without writing. That is how core
+         * behaves on a Validate failure or a failed Db::execute - it returns an
+         * accumulated Db result, not an exception - so a caller that discards
+         * the return believes a write landed that did not (TWO-40).
+         *
+         * One-shot: the entry is consumed by the call it fails, so a spec can
+         * pin the retry as well as the failure.
+         *
+         * @var array<string,bool>
+         */
+        public static array $configurationUpdateFailsOnce = [];
+        /**
+         * Same, for Configuration::deleteByName(): the name whose next delete
+         * answers `false` and leaves the row in place.
+         *
+         * @var array<string,bool>
+         */
+        public static array $configurationDeleteFailsOnce = [];
         public static array $dbExecuteSResponses = [];
         public static array $dbLastExecuteS = [];
         /** @var string[] Every SQL string passed to Db::getValue() */
@@ -304,6 +324,8 @@ namespace {
             self::$productCategories = [];
             self::$images = [];
             self::$taxRuleRates = [];
+            self::$configurationUpdateFailsOnce = [];
+            self::$configurationDeleteFailsOnce = [];
             self::$dbExecuteSResponses = [];
             self::$dbLastExecuteS = [];
             self::$dbLastGetValue = [];
@@ -649,6 +671,13 @@ namespace {
 
         public static function updateValue($key, $value): bool
         {
+            // Core can answer falsy here without throwing; see
+            // StubStore::$configurationUpdateFailsOnce.
+            if (!empty(StubStore::$configurationUpdateFailsOnce[$key])) {
+                unset(StubStore::$configurationUpdateFailsOnce[$key]);
+                return false;
+            }
+
             StubStore::$configuration[$key] = $value;
             return true;
         }
@@ -660,6 +689,12 @@ namespace {
 
         public static function deleteByName($key): bool
         {
+            // Same failure shape as updateValue(): false, no throw, row intact.
+            if (!empty(StubStore::$configurationDeleteFailsOnce[$key])) {
+                unset(StubStore::$configurationDeleteFailsOnce[$key]);
+                return false;
+            }
+
             unset(StubStore::$configuration[$key]);
             return true;
         }

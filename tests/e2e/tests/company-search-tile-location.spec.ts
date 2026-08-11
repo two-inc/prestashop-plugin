@@ -8,8 +8,9 @@ import { completeGuestStep, twoPaymentOption } from "../pages/checkout.js";
 /**
  * TWO-25326 §7.1 (2026-08-03 design ruling, with two follow-up corrections
  * from Doug). No new admin setting was added - the EXISTING
- * PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS switch ("Enable Company Search In Address
- * Entry") now decides WHERE the one shared company-search control renders:
+ * PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS switch ("Enable company search in address
+ * entry" - the shipped label, pinned by tests/AddressLookupGatingSpec.php) now
+ * decides WHERE the one shared company-search control renders:
  *
  *   - Yes (default): the control (dropdown/query field/manual entry) is in
  *     the address area, unchanged from before this ticket.

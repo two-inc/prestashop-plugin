@@ -29,7 +29,13 @@ declare(strict_types=1);
  *    the upgrade running, so a merchant can save a position (new key written,
  *    old row untouched) BEFORE the upgrade, and a later Module Manager upgrade
  *    must not put the stale old row back over that choice;
- *  - the old row is gone afterwards in every case;
+ *  - the old row is gone afterwards on every path where nothing would be lost
+ *    by removing it;
+ *  - a copy that FAILS without throwing keeps the old row instead - it is then
+ *    the only surviving copy of the value - and says so in the log at the
+ *    raised severity;
+ *  - a delete that FAILS after a successful copy is reported rather than being
+ *    folded into a success message;
  *  - a second run changes nothing.
  *
  * The offline `Configuration` double is a flat name->value array with no shop
@@ -49,6 +55,8 @@ final class CompanySearchLocationKeyMigrationSpec
         self::testAbsentOldKeyCopiesNothingAndDefaultApplies();
         self::testEmptyOldRowCountsAsAbsent();
         self::testExistingNewValueWinsOverTheOldRow();
+        self::testFailedCopyKeepsTheOldRow();
+        self::testFailedDeleteAfterASuccessfulCopyIsReported();
         self::testSecondRunChangesNothing();
     }
 
@@ -88,6 +96,16 @@ final class CompanySearchLocationKeyMigrationSpec
         );
 
         return PrestaShopLogger::$logs[count(PrestaShopLogger::$logs) - 1]['message'];
+    }
+
+    private static function lastLogSeverity(): int
+    {
+        TinyAssert::true(
+            PrestaShopLogger::$logs !== [],
+            'the migration must leave a trail in the shop log'
+        );
+
+        return PrestaShopLogger::$logs[count(PrestaShopLogger::$logs) - 1]['severity'];
     }
 
     private static function testCarriesFalsyButMeaningfulTileValueAcross(): void
@@ -187,6 +205,74 @@ final class CompanySearchLocationKeyMigrationSpec
         TinyAssert::true(
             strpos(self::lastLogMessage(), 'the new key already held') !== false,
             'the skipped copy must be logged distinguishably from the no-old-value case'
+        );
+    }
+
+    /**
+     * A write that fails WITHOUT throwing - core's updateValue() returns an
+     * accumulated Db result, so this is a real shape, not a hypothetical. The
+     * old row is then the ONLY copy of the merchant's position and must
+     * survive: deleting it there loses the value outright.
+     */
+    private static function testFailedCopyKeepsTheOldRow(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        Configuration::updateValue(self::OLD_KEY, '0');
+        StubStore::$configurationUpdateFailsOnce[self::NEW_KEY] = true;
+
+        self::upgrade($module);
+
+        TinyAssert::false(
+            Configuration::hasKey(self::NEW_KEY),
+            'a failed write must not leave a row on the new key'
+        );
+        TinyAssert::true(
+            Configuration::hasKey(self::OLD_KEY),
+            'the old row is the only surviving copy of the value and must be kept'
+        );
+        TinyAssert::same('0', (string) Configuration::get(self::OLD_KEY));
+        TinyAssert::true(
+            strpos(self::lastLogMessage(), 'deliberately KEPT') !== false,
+            'the kept old row must be logged as deliberate, with a re-run instruction'
+        );
+        TinyAssert::same(
+            3,
+            self::lastLogSeverity(),
+            'a value that could not be carried is an error, not an informational note'
+        );
+    }
+
+    /**
+     * The copy landed, the delete did not. The value is safe, but the old row
+     * is still in ps_configuration - the log must say so rather than claim the
+     * rename completed.
+     */
+    private static function testFailedDeleteAfterASuccessfulCopyIsReported(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        Configuration::updateValue(self::OLD_KEY, '0');
+        StubStore::$configurationDeleteFailsOnce[self::OLD_KEY] = true;
+
+        self::upgrade($module);
+
+        TinyAssert::same('0', (string) Configuration::get(self::NEW_KEY));
+        TinyAssert::same('0', self::resolve($module));
+        TinyAssert::true(
+            Configuration::hasKey(self::OLD_KEY),
+            'a failed delete leaves the old row in place - the fixture is what makes this branch reachable'
+        );
+        TinyAssert::true(
+            strpos(self::lastLogMessage(), 'deleting the old key FAILED') !== false,
+            'a failed delete must be reported, not folded into a success message'
+        );
+        TinyAssert::same(
+            2,
+            self::lastLogSeverity(),
+            'a surviving old row is a warning: the value is safe but the shop is not clean'
         );
     }
 
