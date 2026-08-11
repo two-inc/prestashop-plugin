@@ -5255,6 +5255,237 @@ class TwoCompanySearch {
         return true;
     }
 
+    /**
+     * Adopt a COMPLETED sole-trader enrolment into the form the buyer is looking
+     * at - company name, organisation number, and the registered address
+     * (TWO-40).
+     *
+     * The whole point of the enrolment flow is that the buyer's registered data
+     * lands in the checkout, and until this existed none of it did. The completion
+     * posted to `saveCompany`, published an in-memory selection, and wrote nothing
+     * to any input at all - reported as: "Sole trader workflow is not actually
+     * populating company name or address from the autofill call. Absolutely
+     * nothing is being populated."
+     *
+     * Deliberately composed from the writers a real search selection already uses,
+     * rather than a second set of its own. Three previous attempts at this
+     * write-back were withdrawn (`.ai/decisions.md`, 2026-08-10) and every one
+     * failed the same way: a hand-rolled write the rest of this class did not
+     * recognise as its own. So the number goes in through
+     * markOrganizationFieldSelected(), which sets the hidden `companyid` AND its
+     * `data-two-company-name` pairing tag together. **The tag is what makes this
+     * survive.** An untagged non-empty `companyid` is read by
+     * clearStaleOrganizationSelection() as company-set / number-set / tag-absent -
+     * "the buyer has edited past a stale selection" - and wiped on their very next
+     * input event in the company field. That single mechanism is what killed all
+     * three previous attempts.
+     *
+     * Two values in the response are deliberately NOT written, and both are
+     * rulings rather than omissions:
+     *
+     *  - a `TWO:`-prefixed organisation number never reaches the VISIBLE
+     *    identification field. It is an internal identifier and must never be
+     *    shown to the buyer anywhere (TWO-25326 §12, see TwoCompanyNumber). It
+     *    still goes into the hidden `companyid`, which is data and not display,
+     *    and is still what the order payload carries;
+     *  - the COUNTRY is not written at all, though the response carries one.
+     *    `country_code` is the country the sole trader is REGISTERED in, while the
+     *    enrolment's token - and the session company the completion has just
+     *    stored through `saveCompany` - were minted against the country resolved
+     *    from the LIVE FORM (decision #12). The server discards the whole session
+     *    company the moment the saved country disagrees with the cart's
+     *    invoice-address country, so writing the registered country over the
+     *    form's would destroy the very enrolment this is completing. The two
+     *    agreeing is the ordinary case and needs nothing; the two disagreeing is
+     *    the case where writing it is actively wrong.
+     *
+     * Runs on the address-editor page and on the payment tile alike, and must keep
+     * doing so: the address-editor page renders no `.two-sole-trader` container, so
+     * anything gated on one silently no-ops there (the TWO-40 follow-up in
+     * getCurrentBuyer() is the same trap). Only the status/prompt UI is
+     * container-scoped, which is correct - there is nothing to show where there is
+     * no container.
+     *
+     * @param {Object} buyer the `/autofill/v1/buyer/current` response
+     * @returns {boolean} whether anything was written
+     */
+    adoptSoleTraderBuyer(buyer) {
+        if (this._destroyed || !buyer || typeof buyer !== 'object') {
+            return false;
+        }
+        const number = String(buyer.organization_number == null ? '' : buyer.organization_number).trim();
+        if (!number) {
+            return false;
+        }
+        // The name the buyer may SEE. Never applyBuyer()'s organisation-number
+        // fallback label: that fallback exists precisely for a sole trader with no
+        // trading name of their own, and it is exactly where the synthetic `TWO:`
+        // identifier surfaces.
+        const name = String(buyer.company_name == null ? '' : buyer.company_name).trim();
+
+        // Scope, resolved ONCE and shared by every write below. Exactly
+        // autoFillAddressIfNeeded()'s three states, for the reasons given there:
+        // scoped-and-reported into the secondary address, SKIPPED where the invoice
+        // form is on screen but could not be scoped to a single block, and the
+        // original document-wide behaviour everywhere else.
+        const secondaryRoot = this.secondaryAddressFormRoot();
+        const scopelessInvoiceForm = !secondaryRoot
+            && this.visibleAddressFormType() === 'invoice'
+            && !this.visibleAddressFormRoot();
+
+        let wrote = false;
+
+        // The NAME is what makes the pair writable, and a blank one takes the whole
+        // identity half of this adoption with it. Not a shortcut - the alternatives
+        // are both defects this class has already been burned by:
+        //
+        //  - tag the number with whatever the buyer last typed in the search box.
+        //    That is a mismatched name/number pairing, which makes
+        //    hasConfirmedSelection() report a company the buyer never confirmed -
+        //    named in `.ai/decisions.md` as one of the defect classes that got the
+        //    three previous attempts withdrawn;
+        //  - tag it with the empty string. clearStaleOrganizationSelection() reads
+        //    an empty tag beside a set number as stale and wipes it on the next
+        //    input event, so the write does not survive to be worth making.
+        //
+        // A nameless sole trader therefore reaches the order the way they already
+        // did - through the session record `saveCompany` has just written and the
+        // selection published beside this call - and the ADDRESS below is still
+        // filled, because an address fill carries no pairing and no such hazard.
+        if (name && this.companyField && this.companyField.length > 0) {
+            // UNCONDITIONAL, unlike the invoice mirror's own writes, and that is
+            // the difference between the two features rather than an
+            // inconsistency. The mirror writes into an address the buyer is not
+            // looking at, so it must never overwrite an answer of theirs. This
+            // runs off a signup the buyer has just completed in front of them,
+            // having asked for exactly this - and the company field on the tile is
+            // the SEARCH BOX, so a writability rule would refuse the one case the
+            // whole flow exists for: a buyer who typed a name, found nothing, and
+            // enrolled instead. Marked all the same, so every later pass in this
+            // class can still tell the value is ours.
+            //
+            // NO `input`/`change` trigger, deliberately: that is what
+            // clearStaleOrganizationSelection() is bound to, and firing it here -
+            // between the new name landing and the tag below being written - would
+            // have the guard judge the new name against the PREVIOUS selection's
+            // tag and wipe the pair this method is in the middle of establishing.
+            // A real search selection does not trigger on this field either.
+            const current = String(this.companyField.val() == null ? '' : this.companyField.val());
+            this.companyField.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR, name);
+            if (current !== name) {
+                this.companyField.val(name);
+            }
+            wrote = true;
+
+            // The pairing. Tagged with the name now IN the field, which is the only
+            // value clearStaleOrganizationSelection() accepts as a match.
+            if (this.markOrganizationFieldSelected(name, number)) {
+                wrote = true;
+            }
+
+            // Visible identification field: real register numbers only (above), and
+            // through the single gate every other organisation-number write uses, so
+            // the address-lookup switch governs this exactly as it governs the rest.
+            if (!window.TwoCompanyNumber.isInternal(number)) {
+                this.writeOrganizationToAddressIdentifiers(number, false, secondaryRoot || undefined);
+            }
+        }
+
+        const filled = scopelessInvoiceForm
+            ? {}
+            : this.autoFillSoleTraderAddress(buyer, secondaryRoot);
+        if (Object.keys(filled).length > 0) {
+            wrote = true;
+        }
+
+        // Report what went into the SECONDARY address, and only there - the pin
+        // judges no other form, and autoFillAddressIfNeeded() draws the line in the
+        // same place. Without this the next render sees non-empty fields with
+        // nothing on record as having written them, reads them as buyer-authored,
+        // and pins the whole address against future syncing.
+        if (secondaryRoot) {
+            this.recordMirrorWrites(Object.assign(
+                {}, filled, this.soleTraderPairReport(name, number, secondaryRoot)
+            ));
+        }
+
+        // hasConfirmedSelection() has just changed answer - the same three
+        // re-evaluations autoFillAddressIfNeeded() runs after its own write.
+        this.syncNotListedVisibility();
+        this.syncSoleTraderEntryVisibility();
+        this.syncRegisteredEntryVisibility();
+
+        return wrote;
+    }
+
+    /**
+     * The registered-address half of adoptSoleTraderBuyer().
+     *
+     * `billing_address` is the registered address and is what fills the form.
+     * `shipping_address` is a FALLBACK only, used when the response carries one and
+     * no billing address - it is null in the completions captured so far, and a
+     * null must never be allowed to blank anything.
+     *
+     * Only `address1`/`postcode`/`city` are written, which is not a shortcut. The
+     * fields the plugin may write are exactly the ones it can ATTRIBUTE - the
+     * MIRRORED_ADDRESS_FIELDS record and the server-side keys behind it. The
+     * response also carries `building`, `apartment` and `region`, and PrestaShop
+     * has an `address2` and a state field that could hold them, but a value written
+     * into a field outside that record cannot be recognised as ours on the next
+     * render: it reads as buyer-authored and PINS the whole secondary address.
+     * Widening the record changes the mirror's own pin surface and belongs to its
+     * own piece of work rather than to this fix.
+     *
+     * The address shape is handed to autoFillAddress() untranslated, because that
+     * method already coalesces every key spelling this response uses (`street`,
+     * `postal_code`, `city`) - one mapping, in one place, for both callers.
+     *
+     * @param {Object} buyer
+     * @param {?Element} secondaryRoot
+     * @returns {Object} what the fill now owns, from autoFillAddress()
+     */
+    autoFillSoleTraderAddress(buyer, secondaryRoot) {
+        const source = buyer.billing_address || buyer.shipping_address || null;
+        if (!source || typeof source !== 'object') {
+            return {};
+        }
+
+        return secondaryRoot
+            ? this.autoFillAddress([source], secondaryRoot)
+            : this.autoFillAddress([source]);
+    }
+
+    /**
+     * What of the name/number pair actually reached the secondary address, read
+     * back off the form rather than assumed.
+     *
+     * Read back deliberately: both writes above can decline (an absent field, the
+     * address-lookup switch off, an internal identifier that may not be shown), and
+     * reporting a value that never landed is worse than reporting none - it tells
+     * the next render to treat a field the buyer may yet fill as already ours.
+     *
+     * @param {string} name
+     * @param {string} number
+     * @param {Element} root
+     * @returns {Object} partial mirror-write record
+     */
+    soleTraderPairReport(name, number, root) {
+        const report = {};
+        const companyField = $(root).find("input[name='company']").first();
+        if (name && companyField.length > 0
+            && String(companyField.val() == null ? '' : companyField.val()) === name) {
+            report.company = name;
+        }
+        const placed = this.addressIdentifierFields(root).some(
+            field => field && field.length > 0
+                && String(field.val() == null ? '' : field.val()).trim() === number
+                && field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR) === number
+        );
+        report.organization = placed ? number : '';
+
+        return report;
+    }
+
     persistCompanyToCookie(data) {
         try {
             if (!window.twopayment || !window.twopayment.order_intent_url || !window.twopayment.ajax_token) return;

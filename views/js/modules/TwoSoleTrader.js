@@ -1049,6 +1049,23 @@ class TwoSoleTrader {
                     return;
                 }
                 if (json && json.success) {
+                    // Put the enrolled identity INTO the form the buyer is
+                    // looking at - company name, organisation number, registered
+                    // address. Before the publish below, deliberately:
+                    // setConfirmedCompanySelection() re-derives the captured
+                    // address from the CURRENT page, so it has to see the values
+                    // this write has already placed, not the empty form they
+                    // replaced.
+                    //
+                    // Delegated rather than reimplemented here. Every write into
+                    // the address form has to be attributable by the same
+                    // machinery that judges it later - the `data-two-company-name`
+                    // pairing tag, the `data-two-autofilled-value` marker, and the
+                    // cart-scoped mirror-write record - and all three live in
+                    // TwoCompanySearch. Three earlier attempts at this write-back
+                    // were withdrawn for hand-rolling it here instead
+                    // (`.ai/decisions.md`, 2026-08-10); see adoptSoleTraderBuyer().
+                    self.adoptEnrolledIdentity(buyer);
                     // TWO-25326 bug 8, review round 1: publish the enrolled
                     // sole trader as the confirmed selection, exactly as a
                     // search selection does.
@@ -1087,6 +1104,39 @@ class TwoSoleTrader {
             .catch(function () {
                 self.showError();
             });
+    }
+
+    /**
+     * Write the enrolled sole trader's data into the checkout form, through
+     * TwoCompanySearch (TWO-40).
+     *
+     * Resolved LAZILY, at call time, and that is required rather than tidy: the
+     * manager destroys and rebuilds its search instance on every
+     * `updatedAddressForm`, so a reference captured when this module was
+     * constructed would be to an instance that no longer owns any field on the
+     * page. The enrolment spans a popup round trip, which is easily long enough
+     * for one of those rebuilds.
+     *
+     * Fails SOFT, on purpose. The write is what the buyer sees; the order itself
+     * does not depend on it, because the identity also reaches the payload through
+     * the session record `saveCompany` has just written and the selection published
+     * beside this call. A missing search instance must therefore cost the fill, not
+     * the enrolment.
+     *
+     * @param {Object} buyer the `/autofill/v1/buyer/current` response
+     * @returns {boolean} whether anything was written
+     */
+    adoptEnrolledIdentity(buyer) {
+        try {
+            const manager = window.TwoCheckoutManager_Instance;
+            const search = manager && manager.companySearch;
+            if (!search || typeof search.adoptSoleTraderBuyer !== 'function') {
+                return false;
+            }
+            return search.adoptSoleTraderBuyer(buyer);
+        } catch (e) {
+            return false;
+        }
     }
 
     /**
