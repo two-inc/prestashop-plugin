@@ -38,6 +38,12 @@ final class SessionCompanyClearSpec
 
     private const OTHER_CART_ID = 4472;
 
+    private const CUSTOMER_ID = 9812;
+
+    private const CURRENCY_ID = 826;
+
+    private const COUNTRY_ID = 17;
+
     /** @var array<int,string> */
     private const COMPANY_COOKIE_KEYS = [
         'two_company_name',
@@ -63,6 +69,8 @@ final class SessionCompanyClearSpec
         self::testUnstampedLegacyRecordIsInvisibleAndCleared();
         self::testEveryWriteStampsTheCurrentCart();
         self::testNoLoadedCartReadsAbsentWithoutClearing();
+        self::testNoCartWritesNothingAndClearsNothing();
+        self::testUnknownWriteFieldIsReported();
         self::testCountryMismatchStillWipesTheRecord();
         self::testLegacyRecordWithoutCountryMarkerStillWipesTheRecord();
         self::testMatchingCountryStillReturnsTheRecord();
@@ -156,8 +164,14 @@ final class SessionCompanyClearSpec
 
     /**
      * Drift is the failure mode centralising the keys exists to prevent, so assert
-     * the stamp lands on the write paths rather than only on the helper: the
-     * address-save hook, and the save action the browser calls.
+     * the stamp lands on EVERY write path rather than only on the helper. All
+     * three of them: the address-save hook, the save action the browser calls,
+     * and the order-intent handler's own store-back
+     * (TwopaymentOrderintentModuleFrontController::storeCompanyDataInSession()).
+     *
+     * The third is driven through ajaxProcessCheckOrderIntent() - the public
+     * entry point that calls it - rather than by reflection, so a write site
+     * deleted from that handler fails here too.
      */
     private static function testEveryWriteStampsTheCurrentCart(): void
     {
@@ -188,6 +202,28 @@ final class SessionCompanyClearSpec
             'the save action must stamp the cart it wrote under'
         );
         TinyAssert::same('55555555', (string) $cookie->two_company_id);
+
+        // Third write site: the order-intent handler stores the company identity
+        // it resolved back into the session on its way to building the payload.
+        $controller = self::makeOrderIntentController();
+        $cookie = Context::getContext()->cookie;
+        try {
+            $controller->ajaxProcessCheckOrderIntent();
+        } catch (StubOrderIntentResponded $responded) {
+            // Stands in for the production exit.
+        }
+
+        TinyAssert::same(
+            'Intent Trading Ltd',
+            (string) $cookie->two_company_name,
+            'the order-intent handler must store the company it resolved - if it did not, ' .
+            'this spec is not reaching the write site it exists to cover'
+        );
+        TinyAssert::same(
+            (string) self::CART_ID,
+            (string) $cookie->two_company_cart_id,
+            'the order-intent store-back must stamp the cart it wrote under'
+        );
     }
 
     /**
@@ -209,6 +245,97 @@ final class SessionCompanyClearSpec
         TinyAssert::true(
             isset($cookie->two_company_id),
             'a request with no cart must not destroy a record it cannot judge'
+        );
+
+        // The commoner production shape, and the one the fixture above does NOT
+        // exercise: the context carries a Cart object, it just has no id yet
+        // because nothing has been saved to it. `$context->cart` is set and is an
+        // object, so only the id can be what makes this a no-cart request.
+        $cookie = self::seedSessionCompany();
+        $module = self::makeModuleWithUnsavedCart();
+
+        TinyAssert::same(
+            null,
+            $module->readTwoCartScopedCompany(),
+            'a fresh unsaved cart has no id to match against, so the record must read absent'
+        );
+        TinyAssert::true(
+            isset($cookie->two_company_id),
+            'a request whose cart is unsaved must not destroy a record it cannot judge'
+        );
+    }
+
+    /**
+     * The other half of the no-cart contract: the WRITER declines too.
+     *
+     * A record stamped 0 is unreadable by construction - the reader only returns
+     * one whose stamp equals the current cart id, which is always > 0 - and the
+     * first read that DOES have a cart would clear it as belonging to another
+     * cart, taking whatever was already there with it. So no cart means write
+     * nothing and clear nothing, on both no-cart shapes.
+     *
+     * Reachable through hookActionCustomerAddressSave() on the My-Account address
+     * page, where the buyer need not have a cart at all.
+     */
+    private static function testNoCartWritesNothingAndClearsNothing(): void
+    {
+        foreach (['no cart object at all' => false, 'a fresh unsaved cart' => true] as $shape => $unsaved) {
+            $cookie = self::seedSessionCompany();
+            $module = $unsaved ? self::makeModuleWithUnsavedCart() : self::makeModule(0);
+
+            $module->storeTwoCartScopedCompany(['name' => 'Late Arrival Ltd', 'id' => '99999999']);
+
+            TinyAssert::false(
+                isset($cookie->{'two_company_name'}) && (string) $cookie->two_company_name === 'Late Arrival Ltd',
+                'with ' . $shape . ' the writer must store nothing - a record it cannot stamp is unreadable'
+            );
+            TinyAssert::same(
+                'Example Trading Ltd',
+                (string) $cookie->two_company_name,
+                'with ' . $shape . ' the existing record must survive untouched'
+            );
+            TinyAssert::same(
+                '12345678',
+                (string) $cookie->two_company_id,
+                'with ' . $shape . ' the existing organisation number must survive untouched'
+            );
+            TinyAssert::same(
+                (string) self::CART_ID,
+                (string) $cookie->two_company_cart_id,
+                'with ' . $shape . ' the existing stamp must not be overwritten with 0'
+            );
+        }
+    }
+
+    /**
+     * Centralising the keys exists to stop a write site inventing its own field
+     * name. A mistyped one used to be skipped in silence, which is the exact drift
+     * the constant was introduced to catch - so it is reported.
+     */
+    private static function testUnknownWriteFieldIsReported(): void
+    {
+        $cookie = self::seedSessionCompany();
+        $module = self::makeModule(self::CART_ID);
+        PrestaShopLogger::reset();
+
+        $module->storeTwoCartScopedCompany(['addressId' => '4242']);
+
+        TinyAssert::same(
+            (string) self::ADDRESS_ID,
+            (string) $cookie->two_company_address_id,
+            'a bogus field name must not be mistaken for the address marker'
+        );
+
+        $reported = false;
+        foreach (PrestaShopLogger::$logs as $entry) {
+            if (strpos($entry['message'], 'addressId') !== false && $entry['severity'] >= 2) {
+                $reported = true;
+                break;
+            }
+        }
+        TinyAssert::true(
+            $reported,
+            'an unrecognised company session field must be reported by name, not silently dropped'
         );
     }
 
@@ -491,6 +618,126 @@ final class SessionCompanyClearSpec
         // The harness binds itself to the shared context, so it sees the cookie
         // and cart seeded above.
         return new TwopaymentTestHarness();
+    }
+
+    /**
+     * A module whose context carries a Cart OBJECT with no id - a cart the buyer
+     * has not put anything in yet. Distinct from makeModule(0), which removes the
+     * cart from the context entirely: this is the shape that reaches the module
+     * far more often, and only the id can be what makes it a no-cart request.
+     */
+    private static function makeModuleWithUnsavedCart(): TwopaymentTestHarness
+    {
+        $cart = new Cart(0);
+        Context::getContext()->cart = $cart;
+
+        // Pin the fixture's own shape. A double that reported this as a loaded
+        // object could not express an unsaved cart at all, and these cases would
+        // quietly become a second copy of the no-cart-object ones.
+        TinyAssert::true(is_object($cart), 'the unsaved-cart fixture must still put a Cart on the context');
+        TinyAssert::false(
+            Validate::isLoadedObject($cart),
+            'a cart with no id is not a loaded object - the fixture cannot express the shape under test'
+        );
+
+        return new TwopaymentTestHarness();
+    }
+
+    /**
+     * A controller ready to serve ajaxProcessCheckOrderIntent(), on a session
+     * carrying an UNSTAMPED company record - so the stamp asserted afterwards can
+     * only have come from the handler's own store-back.
+     *
+     * The posted company and organisation number are the handler's highest-priority
+     * company source, which keeps this fixture to the gates the handler insists on
+     * (a loaded customer, currency and invoice address) rather than reproducing the
+     * whole address-derivation fallback chain.
+     */
+    private static function makeOrderIntentController()
+    {
+        StubStore::reset();
+        PrestaShopLogger::reset();
+        Tools::resetTestValues();
+        self::seedSessionCompany(null);
+
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        Tools::setTestValue('ajax', 1);
+        Tools::setTestValue('action', 'checkOrderIntent');
+        Tools::setTestValue('token', Tools::getToken(false));
+        Tools::setTestValue('id_address_invoice', self::ADDRESS_ID);
+        Tools::setTestValue('company', 'Intent Trading Ltd');
+        Tools::setTestValue('companyid', '11223344');
+
+        StubStore::$currencies[self::CURRENCY_ID] = ['iso_code' => 'GBP', 'loaded' => true];
+        StubStore::$countries[self::COUNTRY_ID] = 'GB';
+        StubStore::$addresses[self::ADDRESS_ID] = [
+            'id_country' => self::COUNTRY_ID,
+            'company' => 'Intent Trading Ltd',
+            'dni' => '',
+            'address1' => '1 High Street',
+            'city' => 'London',
+            'postcode' => 'EC1A 1BB',
+            'phone' => '+447000000000',
+            'loaded' => true,
+        ];
+        StubStore::$customers[self::CUSTOMER_ID] = [
+            'email' => 'buyer@example.com',
+            'firstname' => 'Sam',
+            'lastname' => 'Reed',
+            'secure_key' => 'secure-key-9812',
+            'loaded' => true,
+        ];
+        // Set AFTER seedSessionCompany(), whose attachCart() replaces this entry
+        // with a minimal one.
+        StubStore::$carts[self::CART_ID] = [
+            'id_customer' => self::CUSTOMER_ID,
+            'id_currency' => self::CURRENCY_ID,
+            'id_address_invoice' => self::ADDRESS_ID,
+            'id_address_delivery' => self::ADDRESS_ID,
+            'id_carrier' => 0,
+            'id_lang' => 1,
+        ];
+        Context::getContext()->cart = new Cart(self::CART_ID);
+
+        $controller = new class extends TwopaymentOrderintentModuleFrontController {
+            /** @var array<int,array> */
+            public array $emitted = [];
+
+            public function sendJsonResponse($content)
+            {
+                $decoded = json_decode((string) $content, true);
+                $this->emitted[] = is_array($decoded) ? $decoded : ['raw' => $content];
+
+                throw new StubOrderIntentResponded('order intent response sent');
+            }
+        };
+        $controller->module = new class extends TwopaymentTestHarness {
+            /** Keeps the payload build off the network - the stamp is what is under test. */
+            public function getTwoIntentOrderData($cart, $customer, $currency, $address)
+            {
+                return [
+                    'gross_amount' => '120.00',
+                    'net_amount' => '100.00',
+                    'tax_amount' => '20.00',
+                    'discount_amount' => '0.00',
+                    'currency' => 'GBP',
+                    'invoice_type' => 'FUNDED_INVOICE',
+                    'buyer' => [
+                        'company' => [
+                            'company_name' => (string) $address->company,
+                            'country_prefix' => 'GB',
+                            'organization_number' => (string) $address->companyid,
+                            'website' => '',
+                        ],
+                    ],
+                    'billing_address' => ['country' => 'GB', 'city' => 'London'],
+                    'shipping_address' => ['country' => 'GB', 'city' => 'London'],
+                    'line_items' => [],
+                ];
+            }
+        };
+
+        return $controller;
     }
 
     /**
