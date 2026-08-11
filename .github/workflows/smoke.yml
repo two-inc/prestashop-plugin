@@ -13,6 +13,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The version comparison that decides whether the upgrade leg exercises a
+  # version-gated migration or skips it. Unit-tested in its own job (no docker,
+  # a second) and gating the leg that uses it, the way version-bump.yml gates its
+  # bump on test-decide-bump-level.sh: a mis-comparison here does not fail the
+  # smoke job, it makes it pass having asserted nothing.
+  self-test:
+    name: Test the version gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: .github/scripts/test-version-lt.sh
+
   # Install-smoke (TWO-25109): provision a real PrestaShop, install this
   # branch's module fresh, assert it activates with no fatal and the Two
   # payment method registers (paymentOptions hook). Shares its harness
@@ -63,6 +76,7 @@ jobs:
   # versions), and assert no broken state and that config survives.
   upgrade-smoke:
     name: Upgrade smoke (latest release → HEAD)
+    needs: self-test
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -142,11 +156,20 @@ jobs:
           # install() seeds the NEW key itself, upgrade_module_2_7_6() never runs
           # again, and seeding the old key here would leave a row nothing removes
           # — a permanent red build. Skipped loudly, not silently.
-          ver_lt() {
-            [ "$1" != "$2" ] \
-              && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" = "$1" ]
-          }
-          if ver_lt "$prior_ver" 2.7.6; then
+          #
+          # The comparison is a script with a self-test (see the self-test job
+          # above) rather than an inline function: inverting it does not go red,
+          # it goes GREEN having asserted nothing about the migration.
+          #
+          # THIS GATE DECAYS, ON PURPOSE, AND THAT IS NOT THIS PR'S PROBLEM.
+          # Once 2.7.6 is the newest release tag the skip branch is taken
+          # forever, and this migration permanently loses its real-core coverage
+          # (the offline spec keeps covering it). That is a generic property of
+          # EVERY version-gated migration in a "latest release → HEAD" job, not
+          # something this migration introduced. The durable answer, if it ever
+          # matters, is a second upgrade leg pinned to a fixed pre-migration tag
+          # — a change to this job's shape, deliberately not made here.
+          if .github/scripts/version-lt.sh "$prior_ver" 2.7.6; then
             echo "MIGRATION_2_7_6_IN_RANGE=1" >> "$GITHUB_ENV"
             docker exec -u www-data "ps-$SFX" php -r '
               require "/var/www/html/config/config.inc.php";
@@ -217,7 +240,7 @@ jobs:
           # deliberately falsy "0" seeded on the OLD name must land on the new
           # name, and no row of the old name may survive. Only asserted when the
           # seed step decided the migration was in range for this prior release
-          # (see its ver_lt gate); an unset flag means the steps disagree, which
+          # (see its version-lt.sh gate); an unset flag means the steps disagree, which
           # is a workflow bug and must not pass quietly.
           if [ -z "${MIGRATION_2_7_6_IN_RANGE:-}" ]; then
             echo "::error::MIGRATION_2_7_6_IN_RANGE was never exported by the seed step"
