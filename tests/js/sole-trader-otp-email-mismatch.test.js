@@ -118,35 +118,241 @@ test('a real OTP round trip applies the buyer even when their email differs from
     global.fetch = global.window.fetch;
 
     const instance = build();
-    instance.startEnrollment();
-    // Mint resolves; the first, PASSIVE getCurrentBuyer() call correctly
-    // finds no cookie/email match (EMAIL_A has no Two session yet) and hands
-    // off to the on-page prompt - no popup opened by this step alone.
-    await flushPromises();
-    await flushPromises();
-    expect(popupOpenCalls).toBe(0);
-    expect(publishes).toEqual([]);
+    // destroy() in a finally (not just at the happy-path end): an assertion
+    // throwing above it would otherwise leave this instance's window
+    // 'message' listener attached, live to react to a LATER test's own
+    // dispatched events against the same mocked signup origin - exactly the
+    // cross-test contamination this file's own bindPopupMessageListener()
+    // comments warn a leaked listener causes on a real page.
+    try {
+        instance.startEnrollment();
+        // Mint resolves; the first, PASSIVE getCurrentBuyer() call correctly
+        // finds no cookie/email match (EMAIL_A has no Two session yet) and
+        // hands off to the on-page prompt - no popup opened by this step
+        // alone.
+        await flushPromises();
+        await flushPromises();
+        expect(popupOpenCalls).toBe(0);
+        expect(publishes).toEqual([]);
 
-    // The buyer clicks the on-page prompt, opening the hosted signup popup.
-    const prompt = document.querySelector('.two-sole-trader__prompt');
-    expect(prompt).not.toBeNull();
-    prompt.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-    expect(popupOpenCalls).toBe(1);
+        // The buyer clicks the on-page prompt, opening the hosted signup popup.
+        const prompt = document.querySelector('.two-sole-trader__prompt');
+        expect(prompt).not.toBeNull();
+        prompt.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+        expect(popupOpenCalls).toBe(1);
 
-    // The buyer authenticates in the popup as EMAIL_B and gets a valid OTP;
-    // the popup posts back and (in production) closes itself.
-    window.dispatchEvent(new window.MessageEvent('message', {
-        data: 'ACCEPTED',
-        origin: 'https://signup.example.test'
-    }));
-    await flushPromises();
-    await flushPromises();
-    await flushPromises();
+        // The buyer authenticates in the popup as EMAIL_B and gets a valid
+        // OTP; the popup posts back and (in production) closes itself.
+        window.dispatchEvent(new window.MessageEvent('message', {
+            data: 'ACCEPTED',
+            origin: 'https://signup.example.test'
+        }));
+        await flushPromises();
+        await flushPromises();
+        await flushPromises();
 
-    // The buyer must be applied - NOT rejected and NOT sent back through
-    // another popup round trip.
-    expect(publishes).toEqual([{ company: 'Sole Trader AS', companyid: '923456789' }]);
-    expect(popupOpenCalls).toBe(1);
+        // The buyer must be applied - NOT rejected and NOT sent back through
+        // another popup round trip.
+        expect(publishes).toEqual([{ company: 'Sole Trader AS', companyid: '923456789' }]);
+        expect(popupOpenCalls).toBe(1);
+    } finally {
+        instance.destroy();
+    }
+});
 
-    instance.destroy();
+/**
+ * TWO-40 round 8 adversarial review (Han + Vader, convergent): a 404 on
+ * `/autofill/v1/buyer/current` right after the popup's real 'ACCEPTED' is
+ * ordinary read-after-write lag, not "no registration" - the OTP round trip
+ * just completed server-side and this GET can briefly not see it yet.
+ * Falling straight into showPrompt()/openPopup() on that 404 reopens the
+ * exact popup the buyer had just finished with - the reported bug's symptom,
+ * reached via a timing race instead of a guaranteed email mismatch. One
+ * retry, after a short delay, must be given before giving up.
+ */
+test('a 404 immediately after a real ACCEPTED is retried once, not treated as no registration', async () => {
+    const publishes = stubManager();
+    global.window.TwoCompanyNumber = { forDisplay: (v) => v };
+    document.body.insertAdjacentHTML('beforeend', "<input name='email' value='order-contact@example.test' />");
+
+    let popupOpenCalls = 0;
+    global.window.open = function () {
+        popupOpenCalls += 1;
+        return {};
+    };
+
+    let buyerLookupCalls = 0;
+    global.window.fetch = (url) => {
+        if (String(url).includes('soleTraderAvailability')) {
+            return Promise.resolve({ json: () => Promise.resolve({ success: true, available: true }) });
+        }
+        if (String(url).includes('soleTraderTokens')) {
+            return Promise.resolve({
+                json: () => Promise.resolve({
+                    success: true,
+                    autofill_token: 'af-token',
+                    delegation_token: 'del-token',
+                    signup_url: 'https://signup.example.test/',
+                    country: 'GB'
+                })
+            });
+        }
+        if (String(url).includes('/autofill/v1/buyer/current')) {
+            buyerLookupCalls += 1;
+            if (buyerLookupCalls === 1) {
+                // The FIRST lookup after the mint (the passive, untrusted
+                // probe) - genuinely no registration yet, real 404.
+                return Promise.resolve({ ok: false, status: 404 });
+            }
+            if (buyerLookupCalls === 2) {
+                // The trusted lookup triggered by 'ACCEPTED' - the server
+                // has not caught up yet. Still 404.
+                return Promise.resolve({ ok: false, status: 404 });
+            }
+            // The retry: now visible.
+            return Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({
+                    email: 'sole-trader-real-account@example.test',
+                    company_name: 'Sole Trader AS',
+                    organization_number: '923456789'
+                })
+            });
+        }
+        return Promise.resolve({ json: () => Promise.resolve({ success: true }) });
+    };
+    global.fetch = global.window.fetch;
+
+    // Nested try/finally (repo convention - see company-search-resize.test.js
+    // for the fake-timers half): a thrown assertion must not leave fake
+    // timers bleeding into whichever test jest runs next, NOR leave this
+    // instance's window 'message' listener attached to react to a later
+    // test's own dispatched events (see the identical reasoning in the
+    // previous test).
+    jest.useFakeTimers();
+    try {
+        const instance = build();
+        try {
+            instance.startEnrollment();
+            await flushPromises();
+            await flushPromises();
+            expect(buyerLookupCalls).toBe(1);
+            expect(popupOpenCalls).toBe(0); // no container prompt path taken yet in this harness state check
+
+            const prompt = document.querySelector('.two-sole-trader__prompt');
+            prompt.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+            expect(popupOpenCalls).toBe(1);
+
+            window.dispatchEvent(new window.MessageEvent('message', {
+                data: 'ACCEPTED',
+                origin: 'https://signup.example.test'
+            }));
+            await flushPromises();
+            await flushPromises();
+            expect(buyerLookupCalls).toBe(2);
+            // Must NOT have reopened the popup yet - the retry is still pending.
+            expect(popupOpenCalls).toBe(1);
+            expect(publishes).toEqual([]);
+
+            jest.advanceTimersByTime(800);
+            await flushPromises();
+            await flushPromises();
+            await flushPromises();
+
+            expect(buyerLookupCalls).toBe(3);
+            expect(publishes).toEqual([{ company: 'Sole Trader AS', companyid: '923456789' }]);
+            // The retry succeeding must not have opened a second popup.
+            expect(popupOpenCalls).toBe(1);
+        } finally {
+            instance.destroy();
+        }
+    } finally {
+        jest.useRealTimers();
+    }
+});
+
+/**
+ * TWO-40 round 8 adversarial review (Han): if a genuine 'ACCEPTED' arrives
+ * while a DIFFERENT getCurrentBuyer() call is already out (isFetchingBuyer),
+ * getCurrentBuyer(true) would previously just no-op on its own re-entrancy
+ * guard - silently dropping the authentication event, leaving the busy
+ * (untrusted) call to resolve on its own and potentially fail the
+ * email-match heuristic, reproducing the loop via a race. The busy call's
+ * own `.finally()` must re-issue a trusted lookup once it clears.
+ */
+test('an ACCEPTED that arrives while a lookup is already in flight is not dropped', async () => {
+    const publishes = stubManager();
+    global.window.TwoCompanyNumber = { forDisplay: (v) => v };
+    document.body.insertAdjacentHTML('beforeend', "<input name='email' value='order-contact@example.test' />");
+
+    let resolveBusyLookup;
+    let buyerLookupCalls = 0;
+    global.window.fetch = (url) => {
+        if (String(url).includes('soleTraderAvailability')) {
+            return Promise.resolve({ json: () => Promise.resolve({ success: true, available: true }) });
+        }
+        if (String(url).includes('soleTraderTokens')) {
+            return Promise.resolve({
+                json: () => Promise.resolve({
+                    success: true,
+                    autofill_token: 'af-token',
+                    delegation_token: 'del-token',
+                    signup_url: 'https://signup.example.test/',
+                    country: 'GB'
+                })
+            });
+        }
+        if (String(url).includes('/autofill/v1/buyer/current')) {
+            buyerLookupCalls += 1;
+            if (buyerLookupCalls === 1) {
+                // The mint's own immediate lookup - held open, simulating
+                // a slow round trip still out when 'ACCEPTED' arrives.
+                return new Promise((resolve) => { resolveBusyLookup = resolve; });
+            }
+            // The re-issued, trusted lookup from .finally().
+            return Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({
+                    email: 'sole-trader-real-account@example.test',
+                    company_name: 'Sole Trader AS',
+                    organization_number: '923456789'
+                })
+            });
+        }
+        return Promise.resolve({ json: () => Promise.resolve({ success: true }) });
+    };
+    global.fetch = global.window.fetch;
+
+    const instance = build();
+    // See the previous two tests' identical reasoning for destroy() living
+    // in a finally.
+    try {
+        instance.startEnrollment();
+        await flushPromises();
+        expect(buyerLookupCalls).toBe(1); // held open
+
+        // The buyer authenticates in the (still-open, from an earlier click)
+        // popup while that first lookup is still out.
+        window.dispatchEvent(new window.MessageEvent('message', {
+            data: 'ACCEPTED',
+            origin: 'https://signup.example.test'
+        }));
+        await flushPromises();
+        // getCurrentBuyer(true) must not have fired a second request yet -
+        // it was flagged, not issued, because the guard was held.
+        expect(buyerLookupCalls).toBe(1);
+
+        // The busy lookup now resolves (404 - it was the untrusted probe, no
+        // registration visible to IT).
+        resolveBusyLookup({ ok: false, status: 404 });
+        await flushPromises();
+        await flushPromises();
+        await flushPromises();
+
+        // The flagged trusted resume must have fired once the guard cleared.
+        expect(buyerLookupCalls).toBe(2);
+        expect(publishes).toEqual([{ company: 'Sole Trader AS', companyid: '923456789' }]);
+    } finally {
+        instance.destroy();
+    }
 });

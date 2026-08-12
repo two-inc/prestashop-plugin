@@ -166,6 +166,11 @@ class TwoSoleTrader {
         // Same shape as isFetchingTokens above, for getCurrentBuyer()
         // (TWO-40 round 5, adversarial review finding) - see its own guard.
         this.isFetchingBuyer = false;
+        // Set by bindPopupMessageListener()'s 'ACCEPTED' handler when a
+        // genuine authentication event arrives while isFetchingBuyer is
+        // already true for a different call (TWO-40 round 8, adversarial
+        // review finding, Han) - see getCurrentBuyer()'s own .finally().
+        this._pendingTrustedResume = false;
 
         // TWO-25326 bug 9, round 3: take the availability answer the SERVER
         // already resolved as this instance's settled state, before init()
@@ -1032,8 +1037,11 @@ class TwoSoleTrader {
      * clear TwoCompanySearch.js's own timers - round 3 adversarial review
      * observation (Vader), not fixed here because the precondition it
      * guards against does not exist in this codebase today.
+     *
+     * @param {boolean} [trustedIdentity] Carried forward from the call being
+     *   resumed - see getCurrentBuyer()'s own JSDoc for what this means.
      */
-    resumeIfStillEnrolling(trustedIdentity) {
+    resumeIfStillEnrolling(trustedIdentity = false) {
         if (!this.enrolling) {
             return;
         }
@@ -1088,8 +1096,12 @@ class TwoSoleTrader {
      *   auto-applying a stranger's data. A 404, a missing checkout email, or
      *   an email mismatch on THIS path means no usable registration yet -
      *   show the signup prompt instead.
+     *
+     * @param {boolean} [retriedTrustedLookup] Internal - true only on the
+     *   ONE retry `trustedIdentity`'s own 404 branch schedules below. Never
+     *   pass this from a new call site.
      */
-    getCurrentBuyer(trustedIdentity) {
+    getCurrentBuyer(trustedIdentity = false, retriedTrustedLookup = false) {
         // Re-entrancy guard (TWO-40 round 5, adversarial review finding -
         // Han + Vader independently caught this): unlike fetchTokens()
         // (isFetchingTokens), this had no guard of its own before. A second
@@ -1168,6 +1180,30 @@ class TwoSoleTrader {
                     self.resumeIfStillEnrolling(trustedIdentity);
                     return;
                 }
+                if (trustedIdentity && !buyer && !retriedTrustedLookup) {
+                    // Round 8 adversarial review finding (Han + Vader
+                    // independently): a 404 here right after a genuine
+                    // 'ACCEPTED' is read-after-write lag, not "not
+                    // registered" - the popup's own OTP round trip just
+                    // completed server-side, and this GET can briefly not
+                    // see it yet. Without this, that ordinary race fell
+                    // straight into showPrompt()/openPopup() below,
+                    // reopening the exact popup the buyer had just finished
+                    // with - the same reported symptom (real auth, rejected,
+                    // looped), just moved from a guaranteed email mismatch to
+                    // an occasional timing race. One retry, after a short
+                    // delay, before treating "not visible yet" the same as
+                    // "no registration exists". `retriedTrustedLookup` caps
+                    // it at exactly one - this is not a backoff loop.
+                    setTimeout(function () {
+                        if (superseded()) {
+                            self.resumeIfStillEnrolling(trustedIdentity);
+                            return;
+                        }
+                        self.getCurrentBuyer(trustedIdentity, true);
+                    }, 800);
+                    return;
+                }
                 // `trustedIdentity` skips the email-match heuristic entirely:
                 // the buyer just authenticated in the hosted signup popup, so
                 // `buyer` (if present) IS them, whatever email PrestaShop's
@@ -1223,6 +1259,21 @@ class TwoSoleTrader {
             })
             .finally(function () {
                 self.isFetchingBuyer = false;
+                // Round 8 adversarial review finding (Han): a genuine
+                // 'ACCEPTED' that arrived while THIS request was still out
+                // set this flag instead of issuing its own call, below - see
+                // bindPopupMessageListener(). Re-issue it now, fresh, for
+                // whichever generation is CURRENT: unlike resumeIfStillEnrolling()'s
+                // setTimeout(0), which only works because it defers past a
+                // .finally() already scheduled to run first, this one has no
+                // request of its own in flight yet to wait on, so it is
+                // re-checked and re-issued right here instead.
+                if (self._pendingTrustedResume) {
+                    self._pendingTrustedResume = false;
+                    if (self._enrollGeneration === self._tokensGeneration) {
+                        self.getCurrentBuyer(true);
+                    }
+                }
             });
     }
 
@@ -1534,6 +1585,21 @@ class TwoSoleTrader {
                 return;
             }
             self.enrolling = true;
+            if (self.isFetchingBuyer) {
+                // Round 8 adversarial review finding (Han): a lookup for a
+                // DIFFERENT call - an untrusted passive probe, or an earlier
+                // resumed click - is already out. getCurrentBuyer(true)
+                // would just no-op on its own re-entrancy guard below,
+                // silently dropping this genuine authentication event; the
+                // busy call would go on to resolve under whatever trust
+                // level IT started with (untrusted), which can fail the
+                // email-match heuristic and reproduce this exact bug via a
+                // race instead of a guaranteed mismatch. Flag it instead -
+                // the busy call's own .finally() re-issues a trusted lookup
+                // once it clears, however it resolved.
+                self._pendingTrustedResume = true;
+                return;
+            }
             // `trustedIdentity = true`: this message IS the buyer completing
             // a real OTP verification in the hosted popup. The resulting
             // buyer lookup must not be re-gated on checkoutEmail() matching -
