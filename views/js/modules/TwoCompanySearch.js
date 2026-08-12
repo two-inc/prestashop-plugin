@@ -31,6 +31,15 @@ class TwoCompanySearch {
     // blanking an answer the buyer gave us.
     static AUTOFILL_MARKER_ATTR = 'data-two-autofilled-value';
 
+    // THERE IS NO "hide the identification field" MARKER HERE, AND MUST NOT BE
+    // ONE (TWO-40, Doug's ruling, Option A). An internal (`TWO:`-prefixed)
+    // identifier is never written into the visible `dni` field in the first
+    // place, so there is nothing to hide. A hiding rule was tried and removed:
+    // it could never have been complete, because core renders `dni` into address
+    // blocks, invoice PDFs and order emails through
+    // AddressFormat::generateAddress(), which no CSS rule of ours reaches. See
+    // writeOrganizationToAddressIdentifiers().
+
     /**
      * Company-search result cache, held on the CLASS rather than inside
      * setupAutocomplete().
@@ -243,6 +252,10 @@ class TwoCompanySearch {
         this.setupAutocomplete();
         this.setupCountryChangeListener();
         this.mirrorConfirmedCompanyToInvoiceAddress();
+        // No visibility pass over the identification field here. Nothing this class
+        // writes can put an internal (`TWO:`) identifier into it (see
+        // writeOrganizationToAddressIdentifiers), and a value the SERVER rendered
+        // there is the buyer's own fiscal number, which is theirs to see and edit.
         this.isInitialized = true;
     }
     
@@ -1642,17 +1655,81 @@ class TwoCompanySearch {
      * @param {boolean} [onlyIfEmpty] Leave a value the customer typed alone.
      * @param {Element} [root] confine the write to one address block. Omitted -
      *        the document-wide default every existing caller relies on.
+     * @param {boolean} [bypassAddressLookupGate] Skip isAddressLookupEnabled()
+     *        (TWO-40 follow-up, live bug reported by Doug 2026-08-12). That
+     *        switch (PS_TWO_ADDRESS_LOOKUP) governs whether an ORDINARY
+     *        company-SEARCH selection is allowed to write into the address
+     *        step, and `Twopayment::getAddressLookupEnabled()` forces it to
+     *        '0' outright whenever company search has moved out of the
+     *        address area and into the payment tile - which TWO-40 made the
+     *        ONLY place the sole-trader entry point lives. Every shop running
+     *        the current design therefore has this switch permanently off,
+     *        which silently killed the sole-trader completion's identifier
+     *        write with no error and nothing to show for it. adoptSoleTraderBuyer()
+     *        passes `true` here for exactly that reason: the write is the
+     *        direct, explicit output of an enrolment the buyer just completed,
+     *        not a company-search match, so the address-area lookup switch has
+     *        nothing to say about it.
+     * @returns {boolean} whether the value actually reached a field. Callers that
+     *        RECORD the write must take their answer from this and not assume it,
+     *        or the record claims a value the form does not hold - which the next
+     *        render reads as buyer tampering and pins the whole address on. An
+     *        internal (`TWO:`) identifier is skipped here and therefore answers
+     *        `false`, which is load-bearing for exactly that reason.
      */
-    writeOrganizationToAddressIdentifiers(orgNumber, onlyIfEmpty, root) {
-        if (!this.isAddressLookupEnabled()) {
-            return;
+    writeOrganizationToAddressIdentifiers(orgNumber, onlyIfEmpty, root, bypassAddressLookupGate) {
+        if (!bypassAddressLookupGate && !this.isAddressLookupEnabled()) {
+            return false;
         }
 
         const value = String(orgNumber || '').trim();
         if (!value) {
-            return;
+            return false;
+        }
+        // AN INTERNAL (`TWO:`-PREFIXED) IDENTIFIER IS NEVER WRITTEN INTO THE VISIBLE
+        // `dni` FIELD (TWO-40, Doug's ruling, Option A). This is the ONE place `TWO:`
+        // is treated specially in the write path, and everything else about such a
+        // number stays byte-identical to any other: the hidden `companyid`, its
+        // `data-two-company-name` pairing tag, the session record, the mirror and the
+        // routing are all completely uniform. Only the buyer's own fiscal field is
+        // left alone. Three reasons, in order of severity:
+        //
+        //  1. CORE REFUSES TO SAVE IT. `Address` declares `dni` with
+        //     `validate => isDniLite, size => 16`, and `Validate::isDniLite()` is
+        //     `/^[0-9A-Za-z-.]{1,16}$/U`. `TWO:ST123456789012` fails that twice - a
+        //     colon is not in the character class, and it is 18 characters. Writing
+        //     it there makes core reject the address, and the error lands on a field
+        //     the plugin was hiding: an invisible, unfixable dead-end at checkout.
+        //  2. IT COULD NEVER BE READ BACK. This plugin's own reader,
+        //     extractOrgNumberFromAddress(), validates `dni` against
+        //     `/^[A-Z0-9\-]{5,20}$/i`, which rejects the colon too. So the value was
+        //     write-only even when the write appeared to succeed.
+        //  3. IT IS THE WRONG FIELD. `Country::isNeedDniByCountryId()` is purely
+        //     country-level, so `dni` is required of EVERY buyer in such a country.
+        //     It is the buyer's own fiscal number (NIF/CIF), not a slot for our
+        //     identifier. The buyer fills it themselves, which is why leaving it
+        //     alone blocks nobody - the required field still gets satisfied, by its
+        //     rightful owner.
+        //
+        // This is NOT the earlier reverted approach. That one also withheld the
+        // pairing and the name, sending a sole trader's selection down a different
+        // path through storage, pairing, mirroring and submission - and every defect
+        // that followed came from that divergence. Here only this one field is
+        // skipped.
+        //
+        // `window.TwoCompanyNumber` is dereferenced UNGUARDED, matching every other
+        // use of it in this file. A feature-test would fail OPEN - i.e. would write
+        // the `TWO:` value into `dni` on the very load where the helper failed to
+        // arrive - which is the outcome this gate exists to prevent.
+        if (window.TwoCompanyNumber.isInternal(value)) {
+            // `false`, not a bare `return`. The invoice mirror takes `wroteNumber`
+            // from this answer; recording a write that did not happen makes the next
+            // render read the empty field as buyer tampering and pin the whole
+            // secondary address.
+            return false;
         }
 
+        let wrote = false;
         this.addressIdentifierFields(root).forEach(field => {
             if (field.length === 0) {
                 return;
@@ -1665,8 +1742,25 @@ class TwoCompanySearch {
             }
             field.val(value);
             field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR, value);
+            wrote = true;
         });
+
+        return wrote;
     }
+
+    // THERE IS NO VISIBILITY RULE FOR THE IDENTIFICATION FIELD HERE, AND ADDING
+    // ONE BACK WOULD BE A MISTAKE (TWO-40, Option A). A previous round hid the
+    // field's `.form-group` whenever it held an internal (`TWO:`) identifier.
+    // Two reasons it is gone:
+    //
+    //  1. Nothing puts such a value there any more - see
+    //     writeOrganizationToAddressIdentifiers() - so there is nothing to hide.
+    //     Whatever `dni` holds is the buyer's own fiscal number, which is theirs
+    //     to see and to correct.
+    //  2. The hiding could never have been COMPLETE. Core renders `dni` into
+    //     address blocks, invoice PDFs and order confirmation emails via
+    //     AddressFormat::generateAddress(), none of which any CSS rule of ours
+    //     reaches. A checkout-only hide would have been a false sense of one.
 
     /**
      * The address inputs a company selection mirrors its organisation number
@@ -1746,6 +1840,9 @@ class TwoCompanySearch {
             field.trigger('input');
             field.trigger('change');
         });
+        // No visibility pass to undo here: this class never hides the
+        // identification field, because it never writes an internal (`TWO:`)
+        // identifier into it.
     }
 
     /**
@@ -1948,8 +2045,10 @@ class TwoCompanySearch {
         'organization',
         'country',
         'address1',
+        'address2',
         'postcode',
         'city',
+        'state',
     ];
 
     /**
@@ -2094,10 +2193,40 @@ class TwoCompanySearch {
             record('organization', field, liveValue(field), '');
         });
 
-        ['address1', 'postcode', 'city'].forEach(name => {
+        // `address2` is here because the sole-trader autofill routes building and
+        // apartment into it (TWO-40, Doug's ruling): a buyer typing a second address
+        // line is stating an independent answer exactly as much as one typing a city,
+        // so it pins the address like any other field. Omitting it would have made
+        // the address-wide rule miss a real case of buyer-entered data.
+        ['address1', 'address2', 'postcode', 'city'].forEach(name => {
             const field = $(root).find(`input[name='${name}']`).first();
             record(name, field, liveValue(field), '');
         });
+
+        // The state/county select, where the autofill routes `region` on countries
+        // that have one. Compared on the option's TEXT rather than its value, for the
+        // same reason the country is compared on ISO: the id is shop-local, so a
+        // record written on one shop would be unreadable on another. Treated like the
+        // country select in the other respect too - "unanswered" means still the
+        // value the server rendered, because a select is never empty.
+        const stateSelect = $(root).find("select[name='id_state'], select[name='state']").first();
+        if (stateSelect.length > 0) {
+            const toName = value => this.stateNameForOptionValue(stateSelect[0], value);
+            // "Unanswered" is EMPTY for a state select, NOT "still what the server
+            // rendered" - the opposite of the country beside it, and deliberately so.
+            // The country select has no reachable empty state, which is the entire
+            // justification for treating its server-rendered value as unanswered. A
+            // state select DOES have a reachable empty placeholder, so a
+            // server-rendered state is the buyer's own saved answer and must pin the
+            // address like any other answer of theirs.
+            record(
+                'state',
+                stateSelect,
+                toName(liveValue(stateSelect)),
+                '',
+                toName
+            );
+        }
 
         const select = $(root).find("select[name='id_country'], select[name='country']").first();
         if (select.length > 0) {
@@ -2574,13 +2703,21 @@ class TwoCompanySearch {
             // markOrganizationFieldSelected().
             this.markOrganizationFieldSelected(selection.company, selection.companyid);
         }
+        // Whether the number actually LANDED, taken from the writer rather than
+        // assumed from having called it. The write declines for several reasons: the
+        // value being an internal (`TWO:`) identifier, which never enters the visible
+        // `dni` field at all; the address-lookup switch being off; or every candidate
+        // field skipped by `onlyIfEmpty`. Recording a number the form does not hold
+        // would have the next render read the empty field as buyer tampering and pin
+        // the whole address on the strength of a write that never happened.
+        let wroteNumber = false;
         if (wroteCompany && identifierFields.length > 0) {
             // Through the single gate every other organisation-number write goes
             // through, given a root so it stays inside this block. onlyIfEmpty is
             // false because writability was decided above, by the marker rule -
             // which, unlike "only if empty", lets a NEW company replace the
             // previous mirror's untouched number.
-            this.writeOrganizationToAddressIdentifiers(selection.companyid, false, root);
+            wroteNumber = this.writeOrganizationToAddressIdentifiers(selection.companyid, false, root);
         }
         const countryValue = this.mirrorCountryIntoForm(root, selection.countryIso);
         if (!wroteCompany && !countryValue) {
@@ -2589,12 +2726,31 @@ class TwoCompanySearch {
 
         memory.companyid = selection.companyid;
         memory.company = wroteCompany ? selection.company : '';
-        memory.organization = (wroteCompany && identifierFields.length > 0) ? selection.companyid : '';
+        memory.organization = wroteNumber ? selection.companyid : '';
         // A name written onto a form with no identification field leaves the number
         // half owing. Usually there is nowhere for it to go and it stays owing
         // harmlessly - but a mirrored COUNTRY write can rebuild this form into one
         // that does have the field, and then it is owed to a form that can take it.
-        memory.organizationPending = (wroteCompany && identifierFields.length === 0)
+        //
+        // No `TWO:` carve-out here either: with the write gate gone, an internal
+        // identifier owes and settles exactly as any other number does.
+        // Owed whenever the name landed and the number did NOT, which is now two
+        // shapes rather than one:
+        //
+        //  - the form has NO identification field at all (the original case): there
+        //    is nowhere for the number to go, and usually it stays owing harmlessly -
+        //    but a mirrored COUNTRY write can rebuild this form into one that does
+        //    have the field, and then it is owed to a form that can take it.
+        //  - the field EXISTS but the write skipped it, because the value is an
+        //    internal (`TWO:`) identifier that never enters `dni` (TWO-40, Option A).
+        //
+        // The second shape is why this is keyed on `!wroteNumber` and not on
+        // `identifierFields.length === 0`. `organizationPending` is the other half of
+        // the mirror's memory, and republishMirroredSelection() reads
+        // `organization || organizationPending` to restore the hidden `companyid`
+        // pair after core's country-change rebuild. Leaving both halves empty for a
+        // sole trader would take that restore away entirely.
+        memory.organizationPending = (wroteCompany && !wroteNumber)
             ? selection.companyid
             : '';
         memory.countryValue = countryValue;
@@ -2698,9 +2854,24 @@ class TwoCompanySearch {
         // it from the name, and a number placed here with no `companyid` behind it
         // is invisible to the stale-selection guard too.
         this.markOrganizationFieldSelected(recordedName, pending);
-        this.writeOrganizationToAddressIdentifiers(pending, false, root);
-        memory.organization = pending;
-        memory.organizationPending = '';
+        // Answer taken from the writer, never assumed - see the same treatment in
+        // populateInvoiceAddressFromConfirmedCompany() above.
+        const placed = this.writeOrganizationToAddressIdentifiers(pending, false, root);
+        memory.organization = placed ? pending : '';
+        // A refusal LEAVES THE DEBT OWING rather than settling it, and that is
+        // deliberate. The dominant refusal is an internal (`TWO:`) identifier, which
+        // never enters `dni` (TWO-40, Option A) - so `organizationPending` is the
+        // only surviving record of the number, and republishMirroredSelection() reads
+        // it to restore the hidden `companyid` pair after the NEXT rebuild too.
+        // Clearing it here would work exactly once and then lose the pair. Retrying
+        // is cheap and idempotent: markOrganizationFieldSelected() above is the part
+        // that has to run on every mount anyway.
+        if (placed) {
+            memory.organizationPending = '';
+        }
+        if (!placed) {
+            return false;
+        }
         // The number half has only now reached a field, so the record has to say so
         // - otherwise the next page load reads it as a number the buyer typed and
         // pins the whole address on the strength of the mirror's own write.
@@ -4875,10 +5046,25 @@ class TwoCompanySearch {
      *          wrote, or '' for a value of its own that it cleared. A field it left
      *          alone is absent.
      */
-    autoFillAddress(addresses, root) {
+    autoFillAddress(addresses, root, bypassAddressLookupGate) {
         // Single gate for the address-field writes (TWO-25203). Both call
         // paths into the fill land here.
-        if (!this.isAddressLookupEnabled()) {
+        //
+        // `bypassAddressLookupGate` (TWO-40 follow-up, live bug reported by
+        // Doug 2026-08-12): autoFillSoleTraderAddress() passes `true`. This
+        // gate's OWN semantics are "did a company-SEARCH selection write into
+        // the address step" (PS_TWO_ADDRESS_LOOKUP) - and
+        // `Twopayment::getAddressLookupEnabled()` forces it to '0' outright
+        // once company search has relocated out of the address area and into
+        // the payment tile, which is exactly where TWO-40 put the sole-trader
+        // entry point and the ONLY place it now lives. Every shop running the
+        // current design therefore has this switch permanently off, so the
+        // sole trader's registered address silently never reached the form -
+        // no error, nothing to show for it, while the name/number writes
+        // beside it in adoptSoleTraderBuyer() are unconditional and worked
+        // fine. A signup completion is not a company-search match; the switch
+        // has nothing to say about it.
+        if (!bypassAddressLookupGate && !this.isAddressLookupEnabled()) {
             return {};
         }
 
@@ -4893,8 +5079,15 @@ class TwoCompanySearch {
         const street = address.street_address || address.streetAddress || address.street || address.address_line_1 || address.addressLine1 || '';
         const postal = address.postal_code || address.postalCode || address.zip || address.zip_code || '';
         const city = address.city || address.locality || '';
+        // `address2` is written only when the address actually carries a second line.
+        // The key is absent on every company-lookup address, which coalesces to '' -
+        // and an empty incoming value takes the branch below that clears ONLY a value
+        // this class wrote itself, so an unrelated selection can never blank a second
+        // line the buyer typed. See autoFillSoleTraderAddress() for what fills it.
+        const secondLine = address.address_line_2 || address.addressLine2 || address.address2 || '';
         const fieldMappings = {
             'address1': street,
+            'address2': secondLine,
             'postcode': postal,
             'city': city
         };
@@ -5253,6 +5446,516 @@ class TwoCompanySearch {
         this.setCompanyIdHint(number);
 
         return true;
+    }
+
+    /**
+     * Adopt a COMPLETED sole-trader enrolment into the form the buyer is looking
+     * at - company name, organisation number, and the registered address
+     * (TWO-40).
+     *
+     * The whole point of the enrolment flow is that the buyer's registered data
+     * lands in the checkout, and until this existed none of it did. The completion
+     * posted to `saveCompany`, published an in-memory selection, and wrote nothing
+     * to any input at all - reported as: "Sole trader workflow is not actually
+     * populating company name or address from the autofill call. Absolutely
+     * nothing is being populated."
+     *
+     * Deliberately composed from the writers a real search selection already uses,
+     * rather than a second set of its own. Three previous attempts at this
+     * write-back were withdrawn (`.ai/decisions.md`, 2026-08-10) and every one
+     * failed the same way: a hand-rolled write the rest of this class did not
+     * recognise as its own. So the number goes in through
+     * markOrganizationFieldSelected(), which sets the hidden `companyid` AND its
+     * `data-two-company-name` pairing tag together. **The tag is what makes this
+     * survive.** An untagged non-empty `companyid` is read by
+     * clearStaleOrganizationSelection() as company-set / number-set / tag-absent -
+     * "the buyer has edited past a stale selection" - and wiped on their very next
+     * input event in the company field. That single mechanism is what killed all
+     * three previous attempts.
+     *
+     * A `TWO:`-prefixed organisation number goes into the hidden `companyid` and its
+     * `data-two-company-name` pairing tag like ANY OTHER, and is NOT written into the
+     * visible identification (`dni`) field (Doug's ruling, TWO-40, Option A). That
+     * one field is the only asymmetry - storage, pairing, the mirror, the session
+     * record and the routing are all uniform. It is not a sole-trader concept either:
+     * registered companies in some countries carry a `TWO:` identifier too, so the
+     * rule is keyed on the value and never on how it was captured. The reasoning for
+     * skipping `dni` (core's isDniLite validator rejects the value, our own reader
+     * rejects it too, and the field belongs to the buyer) lives on
+     * writeOrganizationToAddressIdentifiers(). An earlier round withheld the PAIRING
+     * and the NAME as well, and every defect that followed came from that divergence;
+     * this is deliberately not that.
+     *
+     * One value in the response IS deliberately not written, and it is a ruling
+     * rather than an omission:
+     *
+     *  - the COUNTRY is not written at all, though the response carries one.
+     *    `country_code` is the country the sole trader is REGISTERED in, while the
+     *    enrolment's token - and the session company the completion has just
+     *    stored through `saveCompany` - were minted against the country resolved
+     *    from the LIVE FORM (decision #12). The server discards the whole session
+     *    company the moment the saved country disagrees with the cart's
+     *    invoice-address country, so writing the registered country over the
+     *    form's would destroy the very enrolment this is completing. The two
+     *    agreeing is the ordinary case and needs nothing; the two disagreeing is
+     *    the case where writing it is actively wrong.
+     *
+     * Runs on the address-editor page and on the payment tile alike, and must keep
+     * doing so: the address-editor page renders no `.two-sole-trader` container, so
+     * anything gated on one silently no-ops there (the TWO-40 follow-up in
+     * getCurrentBuyer() is the same trap). Only the status/prompt UI is
+     * container-scoped, which is correct - there is nothing to show where there is
+     * no container.
+     *
+     * @param {Object} buyer the `/autofill/v1/buyer/current` response
+     * @returns {boolean} whether anything was written
+     */
+    adoptSoleTraderBuyer(buyer) {
+        if (this._destroyed || !buyer || typeof buyer !== 'object') {
+            return false;
+        }
+        const number = String(buyer.organization_number == null ? '' : buyer.organization_number).trim();
+        if (!number) {
+            return false;
+        }
+        // The name the buyer may SEE. Never applyBuyer()'s organisation-number
+        // fallback label: that fallback exists precisely for a sole trader with no
+        // trading name of their own, and it is exactly where the synthetic `TWO:`
+        // identifier surfaces.
+        const name = String(buyer.company_name == null ? '' : buyer.company_name).trim();
+
+        // Scope, resolved ONCE and shared by every write below. Exactly
+        // autoFillAddressIfNeeded()'s three states, for the reasons given there:
+        // scoped-and-reported into the secondary address, SKIPPED where the invoice
+        // form is on screen but could not be scoped to a single block, and the
+        // original document-wide behaviour everywhere else.
+        const secondaryRoot = this.secondaryAddressFormRoot();
+        const scopelessInvoiceForm = !secondaryRoot
+            && this.visibleAddressFormType() === 'invoice'
+            && !this.visibleAddressFormRoot();
+
+        // THE PIN IS DELIBERATELY NOT CONSULTED HERE. This reverses an earlier
+        // review fix, and the reasoning is recorded so it is not "fixed" again.
+        //
+        // Round 1 added `secondaryAddressIsPinned()` as an early return, by analogy
+        // with the invoice mirror. Round 2 showed the analogy is false, in two ways.
+        // secondaryAddressFormRoot() resolves non-null ONLY when the invoice form is
+        // the VISIBLE, editable form - so the pin here gates the form the buyer is
+        // looking at and has just acted on, which is the opposite of what the pin is
+        // for. And an invoice form core pre-filled from a saved address carries
+        // street, postcode and city with nothing on record as having written them,
+        // which reads as buyer-authored and pins by DEFAULT - so the adoption would
+        // write nothing at all for every buyer editing an existing billing address.
+        // That is the reported bug reinstated: "absolutely nothing is being
+        // populated".
+        //
+        // The mirror's pin is right for the mirror because the mirror is a
+        // cross-page-load carry-over into a form the buyer never asked it to touch.
+        // This runs from an enrolment the buyer has just completed on the form in
+        // front of them - the one case the pin was never meant to cover.
+
+        let wrote = false;
+
+        // The NAME is what makes the pair writable, and a blank one takes the whole
+        // identity half of this adoption with it. Not a shortcut - the alternatives
+        // are both defects this class has already been burned by:
+        //
+        //  - tag the number with whatever the buyer last typed in the search box.
+        //    That is a mismatched name/number pairing, which makes
+        //    hasConfirmedSelection() report a company the buyer never confirmed -
+        //    named in `.ai/decisions.md` as one of the defect classes that got the
+        //    three previous attempts withdrawn;
+        //  - tag it with the empty string. clearStaleOrganizationSelection() reads
+        //    an empty tag beside a set number as stale and wipes it on the next
+        //    input event, so the write does not survive to be worth making.
+        //
+        // A nameless sole trader therefore reaches the order the way they already
+        // did - through the session record `saveCompany` has just written and the
+        // selection published beside this call - and the ADDRESS below is still
+        // filled, because an address fill carries no pairing and no such hazard.
+        //
+        // Writing nothing is NOT the same as leaving the form alone, though, and
+        // that distinction is a review finding rather than a subtlety: whatever
+        // selection was standing before the buyer enrolled is still in the form -
+        // hidden pair, tag, and the lookup's own identification number - all of it
+        // belonging to a company the buyer has just moved off. The session and the
+        // manager now say sole trader while the form still says the abandoned
+        // company, and the resolver's address tier reads the form.
+        //
+        // Cleared field by field, and deliberately NOT through
+        // clearSelectedCompany(). That method is the right shape but the wrong
+        // reach here: it also calls clearPersistedCompany(), which POSTs a clear of
+        // the SERVER session company - the very record `saveCompany` has just
+        // written for this enrolment, moments earlier and asynchronously. The clear
+        // would land after it and destroy the enrolment this method is completing.
+        // (Its publishConfirmedSelection('', '') would be harmless, since
+        // applyBuyer() republishes immediately after this returns, but the session
+        // clear is not.) Form residue only, therefore, which is what is actually
+        // stale.
+        if (!name) {
+            if (this.organizationField && this.organizationField.length) {
+                this.organizationField.val('');
+                this.organizationField.removeAttr('data-two-company-name');
+            }
+            this.setCompanyIdHint('');
+            this.clearLookupWrittenAddressIdentifiers();
+        }
+
+        if (name && this.companyField && this.companyField.length > 0) {
+            // UNCONDITIONAL, unlike the invoice mirror's own writes, and that is
+            // the difference between the two features rather than an
+            // inconsistency. The mirror writes into an address the buyer is not
+            // looking at, so it must never overwrite an answer of theirs. This
+            // runs off a signup the buyer has just completed in front of them,
+            // having asked for exactly this - and the company field on the tile is
+            // the SEARCH BOX, so a writability rule would refuse the one case the
+            // whole flow exists for: a buyer who typed a name, found nothing, and
+            // enrolled instead. Marked all the same, so every later pass in this
+            // class can still tell the value is ours.
+            //
+            // NO `input`/`change` trigger, deliberately: that is what
+            // clearStaleOrganizationSelection() is bound to, and firing it here -
+            // between the new name landing and the tag below being written - would
+            // have the guard judge the new name against the PREVIOUS selection's
+            // tag and wipe the pair this method is in the middle of establishing.
+            // A real search selection does not trigger on this field either.
+            // Value written UNCONDITIONALLY rather than only when it differs, and
+            // the marker set from the same statement, so the two can never disagree.
+            // `this.companyField` is a document-wide selector: a getter reads the
+            // FIRST match while `.attr()` marks EVERY one, so a "skip the write when
+            // it already matches" test could mark a field it had not written - a
+            // marker beside a value we did not put there is precisely what the pin
+            // reads as tampering, and it would fire on this very page.
+            this.companyField.val(name);
+            this.companyField.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR, name);
+            wrote = true;
+
+            // The pairing. Tagged with the name now IN the field, which is the only
+            // value clearStaleOrganizationSelection() accepts as a match.
+            if (this.markOrganizationFieldSelected(name, number)) {
+                wrote = true;
+            }
+
+            // Visible identification field. Bypasses the address-lookup switch
+            // (TWO-40 follow-up, live bug reported by Doug 2026-08-12) for the
+            // same reason autoFillSoleTraderAddress() below does: that switch is
+            // forced off outright once company search lives in the payment tile
+            // - the ONLY place TWO-40 puts the sole-trader entry point - so
+            // leaving this gated left it permanently dead on every shop running
+            // the current design. Still declines an internal (`TWO:`) identifier
+            // - the common case for a sole trader - and answers `false` either
+            // way; nothing here records the write, so there is nothing to keep
+            // in step. The pairing above is what carries the selection.
+            this.writeOrganizationToAddressIdentifiers(number, false, secondaryRoot || undefined, true);
+        }
+
+        // Street/building/apartment/postcode/city, then the region - which is applied
+        // AFTER the fill, because on a form with no state field it appends to the CITY
+        // the fill has just written, and must see the final value rather than the one
+        // it replaced. Same scope gating for both.
+        const source = (buyer.billing_address || buyer.shipping_address || null);
+        const filled = scopelessInvoiceForm
+            ? {}
+            : Object.assign(
+                {},
+                this.autoFillSoleTraderAddress(buyer, secondaryRoot),
+                (source && typeof source === 'object')
+                    ? this.autoFillRegion(source, secondaryRoot, true)
+                    : {}
+            );
+        if (Object.keys(filled).length > 0) {
+            wrote = true;
+        }
+
+        // Report what went into the SECONDARY address, and only there - the pin
+        // judges no other form, and autoFillAddressIfNeeded() draws the line in the
+        // same place. Without this the next render sees non-empty fields with
+        // nothing on record as having written them, reads them as buyer-authored,
+        // and pins the whole address against future syncing.
+        if (secondaryRoot) {
+            this.recordMirrorWrites(Object.assign(
+                {}, filled, this.soleTraderPairReport(name, number, secondaryRoot)
+            ));
+        }
+
+        // Re-evaluate the dropdown's own rows after a state change, the same three
+        // calls autoFillAddressIfNeeded() makes after its own write. Deliberately
+        // NOT justified on hasConfirmedSelection() having changed answer: none of
+        // the three reads it any more (they gate on the dropdown being open and on
+        // country availability), and a comment claiming otherwise would send the
+        // next reader looking for a dependency that is not there.
+        this.syncNotListedVisibility();
+        this.syncSoleTraderEntryVisibility();
+        this.syncRegisteredEntryVisibility();
+
+        return wrote;
+    }
+
+    /**
+     * The registered-address half of adoptSoleTraderBuyer().
+     *
+     * `billing_address` is the registered address and is what fills the form.
+     * `shipping_address` is a FALLBACK only, used when the response carries one and
+     * no billing address - it is null in the completions captured so far, and a
+     * null must never be allowed to blank anything.
+     *
+     * EVERY field of the response lands somewhere (Doug's ruling). `street`,
+     * `building`, `apartment`, `postal_code` and `city` are handled here;
+     * `region` is applied by autoFillRegion() after this returns, because on a form
+     * with no state field it appends to the CITY this fill has just written.
+     *
+     * `address2` and `state` were added to MIRRORED_ADDRESS_FIELDS and to
+     * `Twopayment::MIRROR_WRITE_SESSION_KEYS` so these writes stay ATTRIBUTABLE
+     * across a page load, and so the pin judges them: a buyer typing a second
+     * address line is stating an independent answer exactly as much as one typing a
+     * city. A writable field missing from that record would have made the
+     * address-wide rule miss real buyer-entered data.
+     *
+     * Beyond the line routing the address is handed to autoFillAddress()
+     * untranslated, because that method already coalesces every key spelling this
+     * response uses (`street`, `postal_code`, `city`) - one mapping, in one place,
+     * for both callers.
+     *
+     * @param {Object} buyer
+     * @param {?Element} secondaryRoot
+     * @returns {Object} what the fill now owns, from autoFillAddress()
+     */
+    autoFillSoleTraderAddress(buyer, secondaryRoot) {
+        const source = buyer.billing_address || buyer.shipping_address || null;
+        if (!source || typeof source !== 'object') {
+            return {};
+        }
+
+        const street = String(source.street == null ? '' : source.street).trim();
+        const building = String(source.building == null ? '' : source.building).trim();
+        const apartment = String(source.apartment == null ? '' : source.apartment).trim();
+
+        // Doug's routing rule. Where a building or apartment is given it is the more
+        // specific locator and takes the FIRST line, with the street moving to the
+        // second; where neither is given the street takes the first line and the
+        // second is left alone.
+        //
+        // With both present they are joined most-specific-first, which is how an
+        // address is read aloud ("Apartment 4, Mill House").
+        //
+        // NO de-duplication against the street, on Doug's explicit ruling: it is
+        // valid for an address to carry the same text on both lines, so suppressing a
+        // second line that matches the first would be discarding real data. An
+        // earlier round proposed exactly that and it was wrong.
+        const locator = [apartment, building].filter(Boolean).join(', ');
+        const resolved = Object.assign({}, source);
+        if (locator) {
+            resolved.street = locator;
+            resolved.address_line_2 = street;
+        }
+
+        // `true`: bypass the address-lookup switch (TWO-40 follow-up, live bug
+        // reported by Doug 2026-08-12). See autoFillAddress()'s own doc on the
+        // parameter for why this call site, specifically, must never be gated
+        // on it.
+        return secondaryRoot
+            ? this.autoFillAddress([resolved], secondaryRoot, true)
+            : this.autoFillAddress([resolved], undefined, true);
+    }
+
+    /**
+     * The state/county name an option VALUE in a state select stands for, or ''.
+     *
+     * Compared and recorded on the option's TEXT, never its value: PrestaShop state
+     * ids are shop-local, so a record written on one shop would be meaningless on
+     * another - the same reason the country is carried as an ISO code. See
+     * mirroredAddressFieldStates().
+     *
+     * @param {HTMLSelectElement} select
+     * @param {string} optionValue
+     * @returns {string}
+     */
+    stateNameForOptionValue(select, optionValue) {
+        const value = String(optionValue == null ? '' : optionValue).trim();
+        if (!value || !select || !select.options) {
+            return '';
+        }
+        for (let index = 0; index < select.options.length; index++) {
+            if (select.options[index].value === value) {
+                return String(select.options[index].text || '').trim();
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * The option VALUE in a state select whose name matches a free-text region, or
+     * null when there is no such option.
+     *
+     * Best-effort by design, and the limits are worth stating: the autofill response
+     * gives a region as a NAME with no code beside it, while PrestaShop needs a state
+     * id. So the only available join is on the visible label, trimmed and
+     * case-folded, with the two-letter abbreviation accepted as well because several
+     * registries return "CA" where the shop shows "California". A region that
+     * matches nothing writes nothing rather than guessing.
+     *
+     * @param {HTMLSelectElement} select
+     * @param {string} region
+     * @returns {?string}
+     */
+    stateOptionValueForRegion(select, region) {
+        const target = this.normalizeMirroredValue(region);
+        if (!target || !select || !select.options) {
+            return null;
+        }
+        for (let index = 0; index < select.options.length; index++) {
+            const option = select.options[index];
+            if (!option.value) {
+                continue;
+            }
+            const name = this.normalizeMirroredValue(option.text);
+            const iso = this.normalizeMirroredValue(
+                option.getAttribute('data-iso-code') || option.getAttribute('data-iso') || ''
+            );
+            if (name === target || (iso !== '' && iso === target)) {
+                return option.value;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Put the response's `region` somewhere, on Doug's ruling that it must land
+     * rather than be dropped (TWO-40).
+     *
+     * Two destinations, in order:
+     *
+     *  - the form's own state/county select, when the country has one. Matched on the
+     *    visible name, best-effort - see stateOptionValueForRegion() for why that is
+     *    the only join available;
+     *  - otherwise appended to the CITY with a comma. Most countries render no state
+     *    field at all (GB among them), and the alternative to appending is losing the
+     *    region entirely.
+     *
+     * The city append writes through the same marker-and-record machinery as every
+     * other field, so `"Ashford, Kent"` is attributable as ours and does not read as
+     * buyer-authored on the next render. It deliberately does NOT append twice: the
+     * value already carrying the region is left alone.
+     *
+     * @param {Object} source the response address
+     * @param {?Element} root
+     * @param {boolean} [bypassAddressLookupGate] see autoFillAddress()'s own
+     *        doc on the identical parameter (TWO-40 follow-up, live bug
+     *        reported by Doug 2026-08-12) - adoptSoleTraderBuyer() passes
+     *        `true` here for the same reason it does there.
+     * @returns {Object} partial record of what this wrote
+     */
+    autoFillRegion(source, root, bypassAddressLookupGate) {
+        if (!bypassAddressLookupGate && !this.isAddressLookupEnabled()) {
+            return {};
+        }
+        const region = String(source.region == null ? '' : source.region).trim();
+        if (!region) {
+            return {};
+        }
+
+        const scope = root ? $(root) : $(document);
+        const select = scope.find("select[name='id_state'], select[name='state']").first();
+        if (select.length > 0) {
+            const optionValue = this.stateOptionValueForRegion(select[0], region);
+            if (optionValue === null) {
+                return {};
+            }
+            // '' rather than the server-rendered value, for the reason given in
+            // mirroredAddressFieldStates(): a state select can legitimately be empty,
+            // so a server-rendered state is the buyer's saved answer and the
+            // registered region must not overwrite it. Only a value this class is on
+            // record as having written there may be replaced.
+            const accepted = this.mirrorWriteAcceptedValues(
+                'state',
+                '',
+                name => {
+                    const match = this.stateOptionValueForRegion(select[0], String(name));
+                    return match === null ? '' : match;
+                }
+            );
+            return this.writeMirroredValue(select, optionValue, accepted)
+                ? { state: this.stateNameForOptionValue(select[0], optionValue) }
+                : {};
+        }
+
+        const cityField = scope.find("input[name='city']").first();
+        if (cityField.length === 0) {
+            return {};
+        }
+        const current = String(cityField.val() == null ? '' : cityField.val()).trim();
+        if (!current) {
+            return {};
+        }
+        if (this.normalizeMirroredValue(current).endsWith(this.normalizeMirroredValue(region))) {
+            // Already carries it - appending again would grow the value on every pass.
+            return {};
+        }
+        const combined = current + ', ' + region;
+        cityField.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR, combined);
+        cityField.val(combined);
+        cityField.trigger('input');
+        cityField.trigger('change');
+
+        return { city: combined };
+    }
+
+    /**
+     * What of the name/number pair actually reached the secondary address, read
+     * back off the form rather than assumed.
+     *
+     * Read back deliberately: both writes above can decline - an absent field, the
+     * address-lookup switch being off, or the number being an internal (`TWO:`)
+     * identifier, which never enters the visible `dni` field at all (TWO-40, Option
+     * A) and is the common case for a sole trader. Reporting a value that never
+     * landed is worse than reporting none: it tells the next render to treat a field
+     * the buyer may yet fill as already ours.
+     *
+     * @param {string} name
+     * @param {string} number
+     * @param {Element} root
+     * @returns {Object} partial mirror-write record
+     */
+    soleTraderPairReport(name, number, root) {
+        const report = {};
+        const companyField = $(root).find("input[name='company']").first();
+        if (name && companyField.length > 0
+            && String(companyField.val() == null ? '' : companyField.val()) === name) {
+            report.company = name;
+        }
+        const placed = this.addressIdentifierFields(root).some(
+            field => field && field.length > 0
+                && String(field.val() == null ? '' : field.val()).trim() === number
+                && field.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR) === number
+        );
+        // THREE outcomes here, not two, and conflating any pair of them pins the
+        // address. recordMirrorWrites() reads a reported '' as a positive statement -
+        // "nothing of ours is in that field any more" - and merges it over the
+        // record, while an ABSENT key means "unchanged".
+        //
+        //  - the number LANDED: report it, so the next render knows it is ours;
+        //  - the field is EMPTY: report '', because that is true, and it is the only
+        //    way to retract a number a previous mirror pass recorded writing there.
+        //    This is the nameless-buyer branch above, which clears the field through
+        //    clearLookupWrittenAddressIdentifiers(). Omitting the key here would
+        //    leave the record claiming a number the form no longer holds - empty
+        //    field against a non-empty record, which is exactly the mismatch the pin
+        //    reads as buyer tampering;
+        //  - the field holds SOMETHING ELSE - the buyer's own number, or one an
+        //    earlier pass wrote and the gate has just declined to replace: say
+        //    nothing. It is not ours to claim and not ours to retract.
+        if (placed) {
+            report.organization = number;
+        } else if (this.addressIdentifierFields(root).some(
+            field => field && field.length > 0
+                && String(field.val() == null ? '' : field.val()).trim() === ''
+        )) {
+            report.organization = '';
+        }
+
+        return report;
     }
 
     persistCompanyToCookie(data) {

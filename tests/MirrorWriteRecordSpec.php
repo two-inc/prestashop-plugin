@@ -111,13 +111,19 @@ final class MirrorWriteRecordSpec
         $fields = array_keys(Twopayment::MIRROR_WRITE_SESSION_KEYS);
         sort($fields);
 
+        // `address2` and `state` joined the set when the sole-trader autofill began
+        // routing building/apartment and region into them (TWO-40, Doug's ruling): a
+        // buyer typing into a second address line or a county is stating an
+        // independent answer exactly as much as one typing a city, so those fields
+        // pin the address like any other. Leaving them untracked would have made the
+        // pin miss a real case of buyer-entered data, against the address-wide rule.
         TinyAssert::same(
-            ['address1', 'city', 'company', 'country', 'organization', 'postcode'],
+            ['address1', 'address2', 'city', 'company', 'country', 'organization', 'postcode', 'state'],
             $fields,
             'the record must carry a last-written value for every field the pin compares'
         );
         TinyAssert::same(
-            6,
+            8,
             count(array_unique(array_values(Twopayment::MIRROR_WRITE_SESSION_KEYS))),
             'two fields sharing a cookie key would make one of them unreadable'
         );

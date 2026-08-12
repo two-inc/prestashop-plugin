@@ -304,6 +304,20 @@ class Twopayment extends PaymentModule
     protected $verifiedMerchantShortName = null;
     /** @var string|null Memoised `client_v` value (version + optional +<sha7>) */
     protected $two_client_version_cache = null;
+    /**
+     * @var string[]|null The order-company columns on `ps_twopayment` this request has
+     *           CONFIRMED are writable, memoised (TWO-40). Null until checked.
+     *
+     *           It records the answer rather than merely "we looked", because a
+     *           failed `ALTER` must remove the column from the write instead of
+     *           being logged and written anyway - see
+     *           ensureTwoOrderCompanyColumns().
+     *
+     *           An INSTANCE property rather than a function static: a static is
+     *           process-wide, which makes the guard unreachable from a test and lets
+     *           one request's answer leak into the next under a persistent worker.
+     */
+    protected $twoOrderCompanyColumnsEnsured = null;
 
     // Module metadata fields ModuleCore does not declare on all supported
     // PrestaShop versions ($bootstrap was only added to ModuleCore in PS 8;
@@ -334,7 +348,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.7.6';
+        $this->version = '2.7.7';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -733,7 +747,13 @@ class Twopayment extends PaymentModule
     {
         // Only create our own module tables - no modifications to core PrestaShop tables
         $sql = array();
-        
+
+        // `two_organization_number` / `two_company_name` (TWO-40): the buyer
+        // company the order was CREATED with, kept on the module's own
+        // order-scoped table because nothing later in the order's life can
+        // re-derive it. See getTwoOrderCompanySnapshot() for why, and
+        // upgrade-2.7.7.php / ensureTwoOrderCompanyColumns() for the shops that
+        // predate the columns.
         $sql[] = 'CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'twopayment` (
             `id_two` int(11) NOT NULL AUTO_INCREMENT,
             `id_order` INT( 11 ) UNSIGNED,
@@ -749,6 +769,8 @@ class Twopayment extends PaymentModule
             `two_invoice_upload_reference` VARCHAR(255) NULL,
             `two_invoice_upload_error` TEXT NULL,
             `two_invoice_uploaded_at` DATETIME NULL,
+            `two_organization_number` VARCHAR(64) NULL,
+            `two_company_name` VARCHAR(255) NULL,
             PRIMARY KEY  (`id_two`)
         ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8;';
 
@@ -6176,7 +6198,23 @@ class Twopayment extends PaymentModule
         // Get company data with fallback chain (reused helper method)
         $buyerData = $this->getCompanyDataWithFallbacks($invoice_address);
         $shippingData = $this->getCompanyDataWithFallbacks($delivery_address);
-        $buyerCompanyName = $buyerData['company_name'];
+
+        // Same reasoning as $storedTerm above, applied to the buyer company: this
+        // path has no buyer request to resolve from, so prefer what the created
+        // order persisted (TWO-40). $buyerData stays as the fallback for orders
+        // placed before these columns existed - and ONLY for those, because in
+        // admin/webhook context it resolves to an empty organisation number
+        // whenever the identifier is `TWO:`-prefixed or the buyer's country
+        // carries no identification number at all, which is precisely the empty
+        // value that was being PUT over a good one.
+        $storedOrgNumber = isset($orderpaymentdata['two_organization_number'])
+            ? trim((string) $orderpaymentdata['two_organization_number'])
+            : '';
+        $storedCompanyName = isset($orderpaymentdata['two_company_name'])
+            ? trim((string) $orderpaymentdata['two_company_name'])
+            : '';
+        $buyerOrgNumber = ($storedOrgNumber !== '') ? $storedOrgNumber : $buyerData['organization_number'];
+        $buyerCompanyName = ($storedCompanyName !== '') ? $storedCompanyName : $buyerData['company_name'];
         $shippingOrgName = !empty($shippingData['company_name']) ? $shippingData['company_name'] : $buyerCompanyName;
 
         $request_data = [
@@ -6191,7 +6229,7 @@ class Twopayment extends PaymentModule
                 'company' => [
                     'company_name' => $buyerCompanyName,
                     'country_prefix' => $buyerData['country_iso'],
-                    'organization_number' => $buyerData['organization_number'],
+                    'organization_number' => $buyerOrgNumber,
                     'website' => '',
                 ],
                 'representative' => [
@@ -8946,8 +8984,10 @@ class Twopayment extends PaymentModule
         'organization' => 'two_mirror_org',
         'country' => 'two_mirror_country',
         'address1' => 'two_mirror_address1',
+        'address2' => 'two_mirror_address2',
         'postcode' => 'two_mirror_postcode',
         'city' => 'two_mirror_city',
+        'state' => 'two_mirror_state',
     );
 
     /**
@@ -9267,6 +9307,59 @@ class Twopayment extends PaymentModule
             'company_name' => isset($data['company_name']) ? trim((string) $data['company_name']) : '',
             'organization_number' => isset($data['organization_number']) ? trim((string) $data['organization_number']) : '',
             'country_iso' => isset($data['country_iso']) ? strtoupper(trim((string) $data['country_iso'])) : '',
+        );
+    }
+
+    /**
+     * Snapshot the buyer company the order is being created with, in the shape
+     * setTwoOrderPaymentData() persists (TWO-40).
+     *
+     * This has to happen in the buyer's own request, and that is the whole
+     * reason it exists. getTwoUpdateOrderData() runs later - admin order edits,
+     * tracking-number saves, provider webhooks - by which point the cart has
+     * rotated, so readTwoCartScopedCompany() reports absent and
+     * getCompanyDataWithFallbacks() falls through to
+     * extractOrgNumberFromAddress(). That reads the address's own identifier
+     * fields, which hold nothing for a `TWO:`-prefixed identifier (core's
+     * isDniLite rejects the colon, so the value never lands in `dni` in the
+     * first place) and nothing at all in a country without
+     * need_identification_number. The update payload was therefore PUTting an
+     * empty organization_number over a good one.
+     *
+     * Exactly the precedent $storedTerm already sets in getTwoUpdateOrderData():
+     * the update path cannot re-derive what only the buyer's request knew, so
+     * the created order persists it and the update path reads it back.
+     *
+     * The INVOICE address deliberately, not the delivery address - it is the one
+     * getTwoNewOrderData() resolves `buyer.company` from, and the two differ
+     * whenever the buyer ships elsewhere. Resolution goes through the SAME
+     * resolver as the payload rather than a second lookup, so the persisted
+     * value cannot drift from the value that was actually sent.
+     *
+     * @param Cart $cart Cart the order is being created from
+     * @return array ['two_company_name' => string, 'two_organization_number' => string]
+     */
+    public function getTwoOrderCompanySnapshot($cart)
+    {
+        if (!Validate::isLoadedObject($cart)) {
+            return array(
+                'two_company_name' => '',
+                'two_organization_number' => '',
+            );
+        }
+
+        // Through the exception-safe wrapper, not the private resolver directly:
+        // this runs on the confirmation callback for an order Two has ALREADY
+        // approved, and a throw here would cost the buyer that order. An empty
+        // snapshot degrades to the pre-TWO-40 behaviour; a fatal does not.
+        $data = $this->getTwoCheckoutCompanyData(new Address((int) $cart->id_address_invoice));
+
+        return array(
+            'two_company_name' => $data['company_name'],
+            // Stored verbatim. A `TWO:`-prefixed identifier IS the organisation
+            // number as far as this module is concerned; stripping or reshaping
+            // the prefix here would later send Two an identifier it never issued.
+            'two_organization_number' => $data['organization_number'],
         );
     }
 
@@ -12499,6 +12592,91 @@ class Twopayment extends PaymentModule
             ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8'
         );
         $ensured = true;
+    }
+
+    /**
+     * Lazily add the order-scoped company columns (TWO-40).
+     *
+     * A column-level equivalent of ensureTwoSurchargeSyncTable(), chosen for the
+     * same reason and warranted by a worse failure mode. createTwoTables() only
+     * runs at install and upgrade-2.7.7.php only runs when core actually
+     * performs an upgrade, so a shop whose module files were swapped in place -
+     * the file-swap window this repo has already been bitten by - has the new
+     * code and the old table. Without this guard the very first INSERT names a
+     * column that does not exist, and that INSERT is inside the confirmation
+     * callback for an order Two has already approved: the buyer loses the order.
+     *
+     * Called only from the write that actually carries a company value, so the
+     * ten status-only writers pay nothing, and memoised so the
+     * information_schema lookup happens at most once per request.
+     *
+     * The memo is an INSTANCE property rather than the function static
+     * ensureTwoSurchargeSyncTable() uses. Same lifetime in a real shop - one
+     * module instance per request - but a function static is process-wide, which
+     * in the offline suite means whichever spec touches this first decides the
+     * answer for every spec after it. That is untestable by construction, and
+     * this repo already memoises on the instance elsewhere
+     * ($twoApiKeyStatusMemo).
+     *
+     * @return string[] the company columns this request has CONFIRMED are writable.
+     *                  A column whose `ALTER` failed is absent, and the caller must
+     *                  drop it from the write rather than name it - see the failure
+     *                  branch below for what naming it costs.
+     */
+    protected function ensureTwoOrderCompanyColumns()
+    {
+        if (is_array($this->twoOrderCompanyColumnsEnsured)) {
+            return $this->twoOrderCompanyColumnsEnsured;
+        }
+
+        $available = array();
+        $table = _DB_PREFIX_ . 'twopayment';
+        $columns = array(
+            'two_organization_number' => 'ALTER TABLE `' . $table . '` ADD `two_organization_number` VARCHAR(64) NULL',
+            'two_company_name' => 'ALTER TABLE `' . $table . '` ADD `two_company_name` VARCHAR(255) NULL',
+        );
+
+        foreach ($columns as $column => $ddl) {
+            $exists = (int) Db::getInstance()->getValue(
+                'SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS'
+                . " WHERE TABLE_SCHEMA = '" . _DB_NAME_ . "'"
+                . " AND TABLE_NAME = '" . pSQL($table) . "'"
+                . " AND COLUMN_NAME = '" . pSQL($column) . "'"
+            );
+
+            if ($exists) {
+                $available[] = $column;
+                continue;
+            }
+
+            if (Db::getInstance()->execute($ddl)) {
+                $available[] = $column;
+                continue;
+            }
+
+            // NOT added to $available, and that is the whole point of returning a
+            // list rather than nothing. A shop can reach here legitimately - the
+            // files swapped without the upgrade script running, or a database user
+            // with no ALTER privilege - and naming a column that does not exist in
+            // the INSERT fails the ENTIRE row. That row carries `two_order_id`, the
+            // invoice URL and everything the later status syncs key on, and the
+            // write happens inside the confirmation callback for an order Two has
+            // already approved. Losing the company snapshot costs an empty
+            // organisation number on two admin PUTs; losing the row costs the
+            // buyer their order. So the caller drops the column and degrades to
+            // exactly the pre-TWO-40 behaviour.
+            PrestaShopLogger::addLog(
+                'TwoPayment: Failed to add column ' . $column . ' to ' . $table
+                . ' - the order company snapshot cannot be persisted on this shop,'
+                . ' and this column will be omitted from writes rather than'
+                . ' failing them',
+                3
+            );
+        }
+
+        $this->twoOrderCompanyColumnsEnsured = $available;
+
+        return $available;
     }
 
     /**
@@ -15857,7 +16035,37 @@ class Twopayment extends PaymentModule
             'two_payment_term_type' => isset($payment_data['two_payment_term_type']) ? pSQL($payment_data['two_payment_term_type']) : 'STANDARD',
         );
         // Note: invoice_details (payment info) is NOT stored in DB - fetched from Two API when needed
-        
+
+        // PRESENCE-CONDITIONAL, and that is load-bearing (TWO-40). Eleven callers
+        // reach this method and only the order-creation one knows the buyer's
+        // company; the other ten are status transitions, provider webhooks and
+        // cancel callbacks. An absent key here means "leave the stored value
+        // alone". Give these two columns a `? : ''` default like the ones above
+        // and the first status update after order placement silently erases the
+        // value this table exists to keep - the very failure the columns were
+        // added to fix, reintroduced one row lower.
+        $company_columns = array(
+            'two_organization_number',
+            'two_company_name',
+        );
+        $offered = array();
+        foreach ($company_columns as $company_column) {
+            if (isset($payment_data[$company_column])) {
+                $offered[$company_column] = pSQL($payment_data[$company_column]);
+            }
+        }
+        if (!empty($offered)) {
+            // Ask FIRST, then write only what came back guaranteed. The reverse
+            // order - stage the columns, then try to create them - is how a failed
+            // ALTER turns a missing company snapshot into a lost payment row.
+            $writable = $this->ensureTwoOrderCompanyColumns();
+            foreach ($offered as $company_column => $company_value) {
+                if (in_array($company_column, $writable, true)) {
+                    $data[$company_column] = $company_value;
+                }
+            }
+        }
+
         if ($result) {
             Db::getInstance()->update('twopayment', $data, 'id_order = ' . (int) $id_order);
         } else {

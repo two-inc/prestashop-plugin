@@ -112,6 +112,17 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
         $this->context->cookie->id_customer = (int)$customer->id;
         $this->context->cookie->write();
 
+        // Snapshot the buyer company HERE, not down beside the write that
+        // persists it (TWO-40). This is the last point at which the read is
+        // provably correct: context->cart has just been set to the attempt's
+        // cart, so the cart-scoped company record matches, and nothing has yet
+        // created an order. Taken any later and a rotated context->cart would
+        // make readTwoCartScopedCompany() report absent - and, worse, discard
+        // the record on its way out - leaving the resolver to fall back to the
+        // address's identifier fields and produce exactly the empty
+        // organisation number the snapshot exists to prevent.
+        $company_snapshot = $this->module->getTwoOrderCompanySnapshot($cart);
+
         if (empty($attempt['two_order_id'])) {
             $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
             $message = $this->module->l('Missing provider order reference for this attempt.');
@@ -416,6 +427,12 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             'two_payment_term_type' => $resolved_terms['two_payment_term_type'],
             'two_invoice_url' => $invoice_url,
             'two_invoice_id' => $invoice_id,
+            // The only setTwoOrderPaymentData() caller that carries these two
+            // keys, and that is the design: they are presence-conditional there,
+            // so every later status/webhook write leaves the stored value alone
+            // instead of blanking it.
+            'two_company_name' => $company_snapshot['two_company_name'],
+            'two_organization_number' => $company_snapshot['two_organization_number'],
         );
         $this->module->setTwoOrderPaymentData($order->id, $payment_data);
 
@@ -632,6 +649,13 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
                     'two_payment_term_type' => $resolved_terms['two_payment_term_type'],
                     'two_invoice_url' => $response['invoice_url'],
                 );
+                // No company snapshot on this path, deliberately (TWO-40). The
+                // legacy callback confirms an order that ALREADY EXISTS, so the
+                // cart it came from has rotated and the cart-scoped record is
+                // gone; resolving here would yield an empty organisation number,
+                // and because the keys are presence-conditional, sending them
+                // empty would be strictly worse than omitting them - it would
+                // pin a blank over whatever is stored.
                 $this->module->setTwoOrderPaymentData($order->id, $payment_data);
             }
         }
