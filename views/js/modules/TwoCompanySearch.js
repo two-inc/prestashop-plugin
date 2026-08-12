@@ -1655,6 +1655,21 @@ class TwoCompanySearch {
      * @param {boolean} [onlyIfEmpty] Leave a value the customer typed alone.
      * @param {Element} [root] confine the write to one address block. Omitted -
      *        the document-wide default every existing caller relies on.
+     * @param {boolean} [bypassAddressLookupGate] Skip isAddressLookupEnabled()
+     *        (TWO-40 follow-up, live bug reported by Doug 2026-08-12). That
+     *        switch (PS_TWO_ADDRESS_LOOKUP) governs whether an ORDINARY
+     *        company-SEARCH selection is allowed to write into the address
+     *        step, and `Twopayment::getAddressLookupEnabled()` forces it to
+     *        '0' outright whenever company search has moved out of the
+     *        address area and into the payment tile - which TWO-40 made the
+     *        ONLY place the sole-trader entry point lives. Every shop running
+     *        the current design therefore has this switch permanently off,
+     *        which silently killed the sole-trader completion's identifier
+     *        write with no error and nothing to show for it. adoptSoleTraderBuyer()
+     *        passes `true` here for exactly that reason: the write is the
+     *        direct, explicit output of an enrolment the buyer just completed,
+     *        not a company-search match, so the address-area lookup switch has
+     *        nothing to say about it.
      * @returns {boolean} whether the value actually reached a field. Callers that
      *        RECORD the write must take their answer from this and not assume it,
      *        or the record claims a value the form does not hold - which the next
@@ -1662,8 +1677,8 @@ class TwoCompanySearch {
      *        internal (`TWO:`) identifier is skipped here and therefore answers
      *        `false`, which is load-bearing for exactly that reason.
      */
-    writeOrganizationToAddressIdentifiers(orgNumber, onlyIfEmpty, root) {
-        if (!this.isAddressLookupEnabled()) {
+    writeOrganizationToAddressIdentifiers(orgNumber, onlyIfEmpty, root, bypassAddressLookupGate) {
+        if (!bypassAddressLookupGate && !this.isAddressLookupEnabled()) {
             return false;
         }
 
@@ -5031,10 +5046,25 @@ class TwoCompanySearch {
      *          wrote, or '' for a value of its own that it cleared. A field it left
      *          alone is absent.
      */
-    autoFillAddress(addresses, root) {
+    autoFillAddress(addresses, root, bypassAddressLookupGate) {
         // Single gate for the address-field writes (TWO-25203). Both call
         // paths into the fill land here.
-        if (!this.isAddressLookupEnabled()) {
+        //
+        // `bypassAddressLookupGate` (TWO-40 follow-up, live bug reported by
+        // Doug 2026-08-12): autoFillSoleTraderAddress() passes `true`. This
+        // gate's OWN semantics are "did a company-SEARCH selection write into
+        // the address step" (PS_TWO_ADDRESS_LOOKUP) - and
+        // `Twopayment::getAddressLookupEnabled()` forces it to '0' outright
+        // once company search has relocated out of the address area and into
+        // the payment tile, which is exactly where TWO-40 put the sole-trader
+        // entry point and the ONLY place it now lives. Every shop running the
+        // current design therefore has this switch permanently off, so the
+        // sole trader's registered address silently never reached the form -
+        // no error, nothing to show for it, while the name/number writes
+        // beside it in adoptSoleTraderBuyer() are unconditional and worked
+        // fine. A signup completion is not a company-search match; the switch
+        // has nothing to say about it.
+        if (!bypassAddressLookupGate && !this.isAddressLookupEnabled()) {
             return {};
         }
 
@@ -5606,13 +5636,17 @@ class TwoCompanySearch {
                 wrote = true;
             }
 
-            // Visible identification field, through the single gate every other
-            // organisation-number write uses, so the address-lookup switch governs
-            // this exactly as it governs the rest. That gate declines an internal
-            // (`TWO:`) identifier - the common case for a sole trader - and answers
-            // `false`; nothing here records the write, so there is nothing to keep
+            // Visible identification field. Bypasses the address-lookup switch
+            // (TWO-40 follow-up, live bug reported by Doug 2026-08-12) for the
+            // same reason autoFillSoleTraderAddress() below does: that switch is
+            // forced off outright once company search lives in the payment tile
+            // - the ONLY place TWO-40 puts the sole-trader entry point - so
+            // leaving this gated left it permanently dead on every shop running
+            // the current design. Still declines an internal (`TWO:`) identifier
+            // - the common case for a sole trader - and answers `false` either
+            // way; nothing here records the write, so there is nothing to keep
             // in step. The pairing above is what carries the selection.
-            this.writeOrganizationToAddressIdentifiers(number, false, secondaryRoot || undefined);
+            this.writeOrganizationToAddressIdentifiers(number, false, secondaryRoot || undefined, true);
         }
 
         // Street/building/apartment/postcode/city, then the region - which is applied
@@ -5626,7 +5660,7 @@ class TwoCompanySearch {
                 {},
                 this.autoFillSoleTraderAddress(buyer, secondaryRoot),
                 (source && typeof source === 'object')
-                    ? this.autoFillRegion(source, secondaryRoot)
+                    ? this.autoFillRegion(source, secondaryRoot, true)
                     : {}
             );
         if (Object.keys(filled).length > 0) {
@@ -5715,9 +5749,13 @@ class TwoCompanySearch {
             resolved.address_line_2 = street;
         }
 
+        // `true`: bypass the address-lookup switch (TWO-40 follow-up, live bug
+        // reported by Doug 2026-08-12). See autoFillAddress()'s own doc on the
+        // parameter for why this call site, specifically, must never be gated
+        // on it.
         return secondaryRoot
-            ? this.autoFillAddress([resolved], secondaryRoot)
-            : this.autoFillAddress([resolved]);
+            ? this.autoFillAddress([resolved], secondaryRoot, true)
+            : this.autoFillAddress([resolved], undefined, true);
     }
 
     /**
@@ -5803,10 +5841,14 @@ class TwoCompanySearch {
      *
      * @param {Object} source the response address
      * @param {?Element} root
+     * @param {boolean} [bypassAddressLookupGate] see autoFillAddress()'s own
+     *        doc on the identical parameter (TWO-40 follow-up, live bug
+     *        reported by Doug 2026-08-12) - adoptSoleTraderBuyer() passes
+     *        `true` here for the same reason it does there.
      * @returns {Object} partial record of what this wrote
      */
-    autoFillRegion(source, root) {
-        if (!this.isAddressLookupEnabled()) {
+    autoFillRegion(source, root, bypassAddressLookupGate) {
+        if (!bypassAddressLookupGate && !this.isAddressLookupEnabled()) {
             return {};
         }
         const region = String(source.region == null ? '' : source.region).trim();

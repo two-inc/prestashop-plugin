@@ -344,7 +344,22 @@ describe('an internal (`TWO:`) identifier: uniform everywhere except the visible
 });
 
 describe('the address-lookup toggle', () => {
-    test('OFF: address and the visible identification field are untouched, but the company name and hidden pairing still write', () => {
+    /**
+     * TWO-40 follow-up (live bug reported by Doug 2026-08-12): the
+     * address-lookup switch (PS_TWO_ADDRESS_LOOKUP) governs whether an
+     * ORDINARY company-SEARCH selection writes into the address step, and
+     * `Twopayment::getAddressLookupEnabled()` forces it to '0' outright once
+     * company search has relocated out of the address area and into the
+     * payment tile - which TWO-40 made the ONLY place the sole-trader entry
+     * point lives. Gating the sole-trader completion's address write on this
+     * same switch meant every shop running the current design had it
+     * permanently off, and the buyer's registered address silently never
+     * reached the form. This test used to assert exactly that no-write
+     * outcome as correct; it now asserts the fix - the switch has nothing to
+     * say about a signup completion, so address, the visible identification
+     * field and everything else all write regardless of its value.
+     */
+    test('OFF: address and the visible identification field still write - this switch has nothing to say about a signup completion', () => {
         buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION });
 
         mount({ addressLookupEnabled: false }).adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
@@ -353,10 +368,10 @@ describe('the address-lookup toggle', () => {
         expect(organizationField().val()).toBe(REGISTER_NUMBER);
         expect(organizationField().attr('data-two-company-name')).toBe('Sole Trader Test Co');
 
-        expect($("input[name='address1']").val()).toBe('');
-        expect($("input[name='postcode']").val()).toBe('');
-        expect($("input[name='city']").val()).toBe('');
-        expect(identifierField().val()).toBe('');
+        expect($("input[name='address1']").val()).toBe('Wharf Lane');
+        expect($("input[name='postcode']").val()).toBe('TN23 1AA');
+        expect($("input[name='city']").val()).toBe('Ashford');
+        expect(identifierField().val()).toBe(REGISTER_NUMBER);
     });
 });
 
@@ -664,33 +679,46 @@ describe('soleTraderPairReport(): three outcomes for the identification field, n
         });
     });
 
-    test('EMPTY: the address-lookup switch being off reports `organization` empty too', () => {
+    /**
+     * TWO-40 follow-up (live bug reported by Doug 2026-08-12): the
+     * address-lookup switch does not gate the sole-trader completion (see
+     * the identical note on the "the address-lookup toggle" describe block
+     * above) - so a real register number reaches `dni` and is reported
+     * exactly as it would with the switch on.
+     */
+    test('LANDED even with the switch OFF: this switch has nothing to say about a signup completion', () => {
         buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
 
         mount({ addressLookupEnabled: false }).adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
 
-        expect($("#invoice-address input[name='dni']").val()).toBe('');
+        expect($("#invoice-address input[name='dni']").val()).toBe(REGISTER_NUMBER);
         const record = window.twopayment.mirror_writes;
-        expect(Object.prototype.hasOwnProperty.call(record, 'organization')).toBe(true);
-        expect(record).toEqual({ company: 'Sole Trader Test Co', organization: '' });
+        expect(record).toEqual({
+            company: 'Sole Trader Test Co',
+            organization: REGISTER_NUMBER,
+            address1: 'Wharf Lane',
+            postcode: 'TN23 1AA',
+            city: 'Ashford'
+        });
     });
 
-    test('ANOTHER VALUE: a number the gate declined to replace is OMITTED, not claimed and not retracted', () => {
+    /**
+     * TWO-40 follow-up (live bug reported by Doug 2026-08-12): with the gate
+     * bypassed, `writeOrganizationToAddressIdentifiers(number, false, ...)` is
+     * reached with `onlyIfEmpty` false - an existing value in the buyer's own
+     * identification field is a signup completion overwriting it
+     * unconditionally, same as every other field this method touches, not a
+     * value the gate declines to replace.
+     */
+    test('OVERWRITES a value already in the identification field - a signup completion is not a search selection the buyer\'s own input should survive', () => {
         buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
-        // The buyer's own identification number, already in the invoice block. The
-        // address-lookup switch is off below, so the write is declined and this value
-        // survives - the third outcome: the field holds SOMETHING, but not ours.
-        // (Reached this way and not via a `TWO:` value, which no longer refuses.)
         $("#invoice-address input[name='dni']").val('BUYER-OWN-ID');
 
         mount({ addressLookupEnabled: false }).adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
 
-        expect($("#invoice-address input[name='dni']").val()).toBe('BUYER-OWN-ID');
+        expect($("#invoice-address input[name='dni']").val()).toBe(REGISTER_NUMBER);
         const record = window.twopayment.mirror_writes;
-        expect(Object.prototype.hasOwnProperty.call(record, 'organization')).toBe(false);
-        // The company name is written unconditionally - it is not an address-lookup
-        // write - and the address fill is gated, so nothing else is reported.
-        expect(record).toEqual({ company: 'Sole Trader Test Co' });
+        expect(record.organization).toBe(REGISTER_NUMBER);
     });
 
     test('ANOTHER VALUE: a form with NO identification field omits the key too', () => {
@@ -967,14 +995,18 @@ describe('region routing: the state select where there is one, the city where th
         expect(window.twopayment.mirror_writes.city).toBe('Ashford');
     });
 
-    test('the address-lookup switch off suppresses the region too', () => {
+    /**
+     * TWO-40 follow-up (live bug reported by Doug 2026-08-12): see the
+     * identical note on the "the address-lookup toggle" describe block above
+     * - the switch does not gate a signup completion, region included.
+     */
+    test('the address-lookup switch being off does not suppress the region - this switch has nothing to say about a signup completion', () => {
         buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
         addStateSelect([['31', 'Kent']]);
 
         mount({ addressLookupEnabled: false }).adoptSoleTraderBuyer(BUYER_DISTINCT_BUILDING);
 
-        expect(stateSelect().val()).toBe('');
-        expect($("#invoice-address input[name='city']").val()).toBe('');
+        expect(stateSelect().val()).toBe('31');
     });
 });
 
