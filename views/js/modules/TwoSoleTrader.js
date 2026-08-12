@@ -1033,7 +1033,7 @@ class TwoSoleTrader {
      * observation (Vader), not fixed here because the precondition it
      * guards against does not exist in this codebase today.
      */
-    resumeIfStillEnrolling() {
+    resumeIfStillEnrolling(trustedIdentity) {
         if (!this.enrolling) {
             return;
         }
@@ -1052,17 +1052,44 @@ class TwoSoleTrader {
             if (!self.enrolling) {
                 return;
             }
-            self.getCurrentBuyer();
+            // Carries the original call's trust level forward (TWO-40 live
+            // fix): a resume riding a call that itself followed a real OTP
+            // round trip is still standing in for that same authenticated
+            // buyer, not a fresh, unauthenticated heuristic probe.
+            self.getCurrentBuyer(trustedIdentity);
         }, 0);
     }
 
     /**
-     * Autofill from the buyer's current Two sole-trader business. A 404,
-     * a missing checkout email, or an email mismatch means no usable
-     * registration yet - show the signup prompt instead. The email match
-     * is case-insensitive and required.
+     * Autofill from the buyer's current Two sole-trader business.
+     *
+     * @param {boolean} [trustedIdentity] True only when this call follows a
+     *   real OTP round trip in the hosted signup popup (bindPopupMessageListener()'s
+     *   'ACCEPTED' handler, and any resume that rides that same call - see
+     *   resumeIfStillEnrolling()). In that case `buyer` IS the buyer: the
+     *   popup just authenticated them, by whatever email they entered
+     *   THERE, which this browser never sees and has no business
+     *   re-validating. Requiring it to also equal checkoutEmail() - the
+     *   separate email PrestaShop's own personal-information step collected
+     *   for the order - was live-bug TWO-40 (Doug, 2026-08-12): a buyer
+     *   enrolled under a real sole-trader email different from the one on
+     *   the order got a real, successful OTP verification for that email,
+     *   then had this check silently disagree with the server and reopen
+     *   the signup popup, forever. The two emails identify two different
+     *   things (who authenticated vs. who the order is addressed to) and
+     *   there is no requirement they match.
+     *
+     *   Without `trustedIdentity` (the passive paths - startEnrollment()'s
+     *   initial call, fetchTokens()'s resume branches, and an UNTRUSTED
+     *   resumeIfStillEnrolling()), nobody has authenticated anything yet -
+     *   this is only a heuristic "does an existing Two session cookie
+     *   happen to belong to the same person filling out this checkout"
+     *   probe, so still requires the email match (case-insensitive) before
+     *   auto-applying a stranger's data. A 404, a missing checkout email, or
+     *   an email mismatch on THIS path means no usable registration yet -
+     *   show the signup prompt instead.
      */
-    getCurrentBuyer() {
+    getCurrentBuyer(trustedIdentity) {
         // Re-entrancy guard (TWO-40 round 5, adversarial review finding -
         // Han + Vader independently caught this): unlike fetchTokens()
         // (isFetchingTokens), this had no guard of its own before. A second
@@ -1138,12 +1165,18 @@ class TwoSoleTrader {
                     // with the stale `buyer`/`generation` closures) - a
                     // buyer lookup, unlike a token mint, must be re-run for
                     // the current identity/generation, not replayed.
-                    self.resumeIfStillEnrolling();
+                    self.resumeIfStillEnrolling(trustedIdentity);
                     return;
                 }
+                // `trustedIdentity` skips the email-match heuristic entirely:
+                // the buyer just authenticated in the hosted signup popup, so
+                // `buyer` (if present) IS them, whatever email PrestaShop's
+                // own checkout form happens to hold. See the JSDoc above.
                 const entered = self.checkoutEmail().trim().toLowerCase();
-                const matches = !!(buyer && buyer.email && entered
-                    && String(buyer.email).toLowerCase() === entered);
+                const matches = trustedIdentity
+                    ? !!buyer
+                    : !!(buyer && buyer.email && entered
+                        && String(buyer.email).toLowerCase() === entered);
                 if (matches) {
                     self.applyBuyer(buyer, generation);
                 } else if (self.container() && self.container().querySelector('.two-sole-trader__prompt')) {
@@ -1183,7 +1216,7 @@ class TwoSoleTrader {
                     // it silently. (The retry itself can fail again, but
                     // that failure will correctly reach showError()/notify
                     // for the then-current generation on its own terms.)
-                    self.resumeIfStillEnrolling();
+                    self.resumeIfStillEnrolling(trustedIdentity);
                     return;
                 }
                 self.showError();
@@ -1501,7 +1534,15 @@ class TwoSoleTrader {
                 return;
             }
             self.enrolling = true;
-            self.getCurrentBuyer();
+            // `trustedIdentity = true`: this message IS the buyer completing
+            // a real OTP verification in the hosted popup. The resulting
+            // buyer lookup must not be re-gated on checkoutEmail() matching -
+            // see getCurrentBuyer()'s JSDoc (live bug TWO-40, Doug
+            // 2026-08-12: a buyer whose Two account email genuinely differs
+            // from the order's checkout email got a successful OTP, then had
+            // this exact call disagree with the server and reopen the popup
+            // forever).
+            self.getCurrentBuyer(true);
         };
         window.addEventListener('message', this._messageHandler);
     }
