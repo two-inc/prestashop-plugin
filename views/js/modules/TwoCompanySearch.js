@@ -229,6 +229,11 @@ class TwoCompanySearch {
         // the panel is being kept open with the query-field spinner showing
         // for a Sole Trader click's autofill round trip (TWO-40 round 4).
         this._soleTraderLoading = false;
+        // Re-entrancy guard for the "Select a different sole trader" link's
+        // click handler (TWO-40 follow-up) - same shape as
+        // `_soleTraderLoading` above, released on the same settle event, but
+        // its own flag/namespace since the two buttons/flows are independent.
+        this._selectDifferentSoleTraderLoading = false;
         // Per-instance event namespace suffix. The `mouseup` guard has to be
         // bound on `document` (a drag can end anywhere, including outside the
         // panel), and `document` is a page-wide singleton - so unbinding by
@@ -4128,9 +4133,49 @@ class TwoCompanySearch {
             // sibling inside the address step's markup, not something the
             // theme's delegated collapse handler is meant to hear from.
             event.stopPropagation();
-            if (window.TwoSoleTrader_Instance
-                && typeof window.TwoSoleTrader_Instance.startReplacement === 'function') {
-                window.TwoSoleTrader_Instance.startReplacement();
+            // Re-entrancy guard (adversarial review finding, TWO-40 follow-
+            // up - Han/Vader independently caught this): THIS button only
+            // ever renders once tokens already exist from an earlier
+            // enrolment, which is exactly the branch of
+            // TwoSoleTrader.startReplacement() that opens the popup
+            // SYNCHRONOUSLY with no guard of its own (unlike
+            // getCurrentBuyer()'s `isFetchingBuyer`) - without this, a
+            // double-click reliably opened two signup popups from one
+            // gesture, the exact defect class `isFetchingBuyer`/
+            // `_soleTraderLoading` already exist elsewhere in this flow to
+            // close.
+            if (this._selectDifferentSoleTraderLoading) {
+                return;
+            }
+            this._selectDifferentSoleTraderLoading = true;
+            // Released on TwoSoleTrader.js's own settle event - fired from
+            // EVERY terminal branch of startReplacement()'s call graph
+            // (popup opened, popup blocked, mint failed, or abandoned via a
+            // cancelEnrollment() elsewhere) - same event
+            // beginSoleTraderLoading() already relies on for the "Sole
+            // Trader" chip, own namespace so the two guards never interfere.
+            $(document).off('two:sole-trader-flight-settled.twoSoleTraderReplace' + this._instanceNs)
+                .on('two:sole-trader-flight-settled.twoSoleTraderReplace' + this._instanceNs, () => {
+                    this._selectDifferentSoleTraderLoading = false;
+                });
+            try {
+                if (window.TwoSoleTrader_Instance
+                    && typeof window.TwoSoleTrader_Instance.startReplacement === 'function') {
+                    window.TwoSoleTrader_Instance.startReplacement();
+                } else {
+                    // Same shape as the "Sole Trader" chip's own missing-
+                    // instance branch: nothing is going to fire the settle
+                    // event for this click, so release the guard here rather
+                    // than leaving it stuck and log visibly rather than a
+                    // completely silent no-op (adversarial review finding).
+                    // eslint-disable-next-line no-console
+                    console.error('Two: TwoSoleTrader_Instance is missing or malformed; cannot reopen the signup popup.');
+                    this._selectDifferentSoleTraderLoading = false;
+                    $(document).off('two:sole-trader-flight-settled.twoSoleTraderReplace' + this._instanceNs);
+                }
+            } catch (e) {
+                this._selectDifferentSoleTraderLoading = false;
+                $(document).off('two:sole-trader-flight-settled.twoSoleTraderReplace' + this._instanceNs);
             }
         });
 
@@ -4157,6 +4202,15 @@ class TwoCompanySearch {
             this._selectDifferentSoleTraderLink = null;
         }
         $('.two-company-select-different-sole-trader').off('.twoSoleTraderReplace').remove();
+        // Belt-and-braces: release the re-entrancy guard and its settle
+        // listener too, in case this runs while a flight it started is still
+        // outstanding (e.g. clearSelectedCompany() firing mid-flight) - a
+        // stuck-true guard would otherwise silently no-op every future click
+        // on a FUTURE re-rendered link, exactly the failure shape
+        // fetchTokens()'s own try/catch elsewhere in this flow exists to
+        // avoid.
+        this._selectDifferentSoleTraderLoading = false;
+        $(document).off('two:sole-trader-flight-settled.twoSoleTraderReplace' + this._instanceNs);
     }
 
     /**
@@ -5029,6 +5083,19 @@ class TwoCompanySearch {
         if (!ui.item) {
             return false;
         }
+
+        // A REAL registered-company selection (TWO-40 follow-up, review
+        // finding): unconditionally, before either branch below, whether or
+        // not this result carries an organisation number yet. The no-org-
+        // number branch already tears this down via clearSelectedCompany(),
+        // but the org-number branch writes the company field directly and
+        // never calls it - without this, a buyer who completed sole-trader
+        // enrolment and THEN picked a real company here kept a stale
+        // "Select a different sole trader" link pointing at the OLD tokens.
+        // Clicking it would reopen the abandoned signup popup, and its
+        // eventual completion silently overwrites the just-picked registered
+        // company with the sole-trader identity.
+        this.removeSelectDifferentSoleTraderLink();
 
         // TWO-25326: the buyer has now actually picked a company from the
         // search results - the moment TwoCheckoutManager's tile-mode gate
