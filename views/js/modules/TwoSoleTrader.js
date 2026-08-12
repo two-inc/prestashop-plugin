@@ -869,24 +869,45 @@ class TwoSoleTrader {
         // again the instant they land, defeating bindPopupMessageListener()'s
         // whole check.
         const generation = this._enrollGeneration;
-        // Post the country the buyer currently has selected (TWO-40). The
-        // server prefers THIS over anything it holds: the invoice-address tier
-        // that used to outrank it was deleted, not demoted, so the posted
-        // country wins outright and the cart's DELIVERY address is consulted
-        // only when no usable country was posted at all. It re-checks the
-        // registry either way.
-        //
-        // Deliberately billingCountry(): that is the SAME resolver
-        // isAvailableForCurrentCountry() answers the chip's visibility from,
-        // so the country the mint is authorised against and the country the
-        // chip was shown for cannot disagree by construction. Sent
-        // urlencoded, the way applyBuyer() posts to saveCompany.
-        const body = new URLSearchParams({ country: this.billingCountry() });
-        fetch(this.moduleUrl('soleTraderTokens'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: body.toString()
-        })
+        // Everything from here down to the fetch() call starting is
+        // synchronous and, before this try (TWO-40 round 5 follow-up, Vader
+        // finding round 2), unprotected: a throw anywhere in it - e.g.
+        // billingCountry() or moduleUrl() reading a malformed config - left
+        // `isFetchingTokens` stuck `true` forever. Every later click would
+        // then silently no-op on that guard for the rest of the page's
+        // life, with nothing ever in flight and no settle event to ever
+        // close a THEN-open panel/spinner - the try/catch TwoCompanySearch.js
+        // has around calling startEnrollment() only protects the FIRST such
+        // click, not the ones after it. Treated exactly like a network
+        // failure once caught.
+        let request;
+        try {
+            // Post the country the buyer currently has selected (TWO-40).
+            // The server prefers THIS over anything it holds: the invoice-
+            // address tier that used to outrank it was deleted, not
+            // demoted, so the posted country wins outright and the cart's
+            // DELIVERY address is consulted only when no usable country was
+            // posted at all. It re-checks the registry either way.
+            //
+            // Deliberately billingCountry(): that is the SAME resolver
+            // isAvailableForCurrentCountry() answers the chip's visibility
+            // from, so the country the mint is authorised against and the
+            // country the chip was shown for cannot disagree by
+            // construction. Sent urlencoded, the way applyBuyer() posts to
+            // saveCompany.
+            const body = new URLSearchParams({ country: this.billingCountry() });
+            request = fetch(this.moduleUrl('soleTraderTokens'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: body.toString()
+            });
+        } catch (e) {
+            this.isFetchingTokens = false;
+            this.nextRetryAt = Date.now() + this.retryCooldownMs;
+            this.showError();
+            return;
+        }
+        request
             .then(function (response) { return response.json(); })
             .then(function (json) {
                 if (json && json.success && json.autofill_token) {
@@ -965,6 +986,38 @@ class TwoSoleTrader {
     }
 
     /**
+     * Re-run getCurrentBuyer() for whichever generation is CURRENT, called
+     * from getCurrentBuyer()'s own superseded branches when `enrolling` is
+     * still true - i.e. a later click abandoned-then-resumed while THIS
+     * lookup was outstanding, riding it via the isFetchingBuyer single-
+     * flight guard rather than issuing its own (TWO-40 round 5 follow-up,
+     * Han finding round 2).
+     *
+     * Deferred to a macrotask (`setTimeout(..., 0)`), not called directly.
+     * This runs from INSIDE the `.then()`/`.catch()` handler of the request
+     * that just finished - `isFetchingBuyer` is still true at that point,
+     * because the `.finally()` chained after it has not run yet, and won't
+     * until this handler returns. Calling getCurrentBuyer() synchronously
+     * here would race that pending `.finally()`: whichever of "the resumed
+     * call sets isFetchingBuyer back to true" or "the original chain's
+     * finally resets it to false" runs SECOND would win, and the finally
+     * runs second by construction (it is queued as this handler returns),
+     * so a synchronous call was getting its own re-entrancy flag reset out
+     * from under it moments after starting. Deferring to a macrotask runs
+     * this after that finally has already settled the flag, so the resumed
+     * call's own true/false bracketing is undisturbed.
+     */
+    resumeIfStillEnrolling() {
+        if (!this.enrolling) {
+            return;
+        }
+        const self = this;
+        setTimeout(function () {
+            self.getCurrentBuyer();
+        }, 0);
+    }
+
+    /**
      * Autofill from the buyer's current Two sole-trader business. A 404,
      * a missing checkout email, or an email mismatch means no usable
      * registration yet - show the signup prompt instead. The email match
@@ -1000,10 +1053,26 @@ class TwoSoleTrader {
         const superseded = function () {
             return self._enrollGeneration !== generation;
         };
-        fetch(this.config.checkoutHost + '/autofill/v1/buyer/current', {
-            credentials: 'include',
-            headers: { 'two-delegated-authority-token': this.tokens.autofill_token }
-        })
+        // Same reasoning as fetchTokens()'s own try/catch around its
+        // pre-fetch setup (TWO-40 round 5 follow-up, Vader finding round 2):
+        // `this.tokens.autofill_token` below throws synchronously if
+        // `this.tokens` is ever null when this runs, and nothing before
+        // this fix protected `isFetchingBuyer` against that - a stuck-true
+        // guard here silently no-ops every future click for the rest of
+        // the page's life, the exact failure mode this whole PR chain
+        // exists to close.
+        let request;
+        try {
+            request = fetch(this.config.checkoutHost + '/autofill/v1/buyer/current', {
+                credentials: 'include',
+                headers: { 'two-delegated-authority-token': this.tokens.autofill_token }
+            });
+        } catch (e) {
+            this.isFetchingBuyer = false;
+            this.showError();
+            return;
+        }
+        request
             .then(function (response) {
                 if (response.ok) {
                     return response.json();
@@ -1015,6 +1084,22 @@ class TwoSoleTrader {
             })
             .then(function (buyer) {
                 if (superseded()) {
+                    // TWO-40 round 5 follow-up (Han finding, round 2): the
+                    // SAME abandon-then-retry shape fetchTokens()'s success
+                    // branch was fixed for above, one stage deeper. This
+                    // lookup's own single-flight guard (isFetchingBuyer)
+                    // means a click that arrived while this request was
+                    // already out never issued its own lookup - it is riding
+                    // this one. If this generation is now stale but
+                    // something is still enrolling, re-run the lookup for
+                    // whichever generation IS current rather than dropping
+                    // this result on the floor with nothing left to ever
+                    // settle the resumed click's spinner. Deliberately a
+                    // fresh getCurrentBuyer() call (not just falling through
+                    // with the stale `buyer`/`generation` closures) - a
+                    // buyer lookup, unlike a token mint, must be re-run for
+                    // the current identity/generation, not replayed.
+                    self.resumeIfStillEnrolling();
                     return;
                 }
                 const entered = self.checkoutEmail().trim().toLowerCase();
@@ -1050,6 +1135,16 @@ class TwoSoleTrader {
             })
             .catch(function () {
                 if (superseded()) {
+                    // Same reasoning as the success branch above (round 5
+                    // follow-up, Han finding round 2): a resumed click may
+                    // be riding this exact request. A network failure on it
+                    // is a real failure for that resumed click too, not just
+                    // for the stale one that originally issued it - retry
+                    // once for the current generation rather than dropping
+                    // it silently. (The retry itself can fail again, but
+                    // that failure will correctly reach showError()/notify
+                    // for the then-current generation on its own terms.)
+                    self.resumeIfStillEnrolling();
                     return;
                 }
                 self.showError();
