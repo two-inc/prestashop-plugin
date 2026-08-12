@@ -163,6 +163,9 @@ class TwoSoleTrader {
         this.isFetchingTokens = false;
         this.nextRetryAt = 0;
         this.retryCooldownMs = 5000;
+        // Same shape as isFetchingTokens above, for getCurrentBuyer()
+        // (TWO-40 round 5, adversarial review finding) - see its own guard.
+        this.isFetchingBuyer = false;
 
         // TWO-25326 bug 9, round 3: take the availability answer the SERVER
         // already resolved as this instance's settled state, before init()
@@ -829,6 +832,18 @@ class TwoSoleTrader {
         }
         this.enrolling = false;
         this.hidePrompt();
+        // TWO-40 round 5 (adversarial review finding): a genuine cancellation
+        // - `enrolling` really was true - is itself a terminal state for
+        // whichever click started the flight being cancelled, exactly like a
+        // success or a failure. Without this, TwoCompanySearch.js's spinner/
+        // listener only got cleared because every ONE of its own callers
+        // happens to also call endSoleTraderLoading() directly in the same
+        // tick - a coincidence of two files' invariants staying in lockstep,
+        // not an enforced contract. See TwoCompanySearch.js's own callers of
+        // cancelEnrollment(), all of which now unbind their listener BEFORE
+        // calling this, so this dispatch reaching an already-unbound
+        // listener there is the expected, harmless case.
+        this.notifyEnrollmentSettled();
     }
 
     /**
@@ -840,7 +855,23 @@ class TwoSoleTrader {
      * click.
      */
     fetchTokens() {
-        if (this.isFetchingTokens || Date.now() < this.nextRetryAt) {
+        if (this.isFetchingTokens) {
+            // A request IS already out - this click is riding it, and its
+            // own resolution (the `else if (self.enrolling)` resume branch
+            // below) is what settles this click, not this return.
+            return;
+        }
+        if (Date.now() < this.nextRetryAt) {
+            // Round 7 adversarial review finding (Vader): unlike the
+            // isFetchingTokens branch above, NOTHING is in flight to ever
+            // resume this click - the cooldown predates the round-4 "keep
+            // panel open until settle" redesign and was never wired into
+            // it. A click landing inside the cooldown window used to
+            // dead-end with the panel/spinner stuck open indefinitely -
+            // TwoCompanySearch.js's listener had nothing left to ever hear.
+            // showError() also notifies (see its own comment), settling
+            // THIS click exactly as a real failed mint would.
+            this.showError();
             return;
         }
         this.isFetchingTokens = true;
@@ -854,24 +885,45 @@ class TwoSoleTrader {
         // again the instant they land, defeating bindPopupMessageListener()'s
         // whole check.
         const generation = this._enrollGeneration;
-        // Post the country the buyer currently has selected (TWO-40). The
-        // server prefers THIS over anything it holds: the invoice-address tier
-        // that used to outrank it was deleted, not demoted, so the posted
-        // country wins outright and the cart's DELIVERY address is consulted
-        // only when no usable country was posted at all. It re-checks the
-        // registry either way.
-        //
-        // Deliberately billingCountry(): that is the SAME resolver
-        // isAvailableForCurrentCountry() answers the chip's visibility from,
-        // so the country the mint is authorised against and the country the
-        // chip was shown for cannot disagree by construction. Sent
-        // urlencoded, the way applyBuyer() posts to saveCompany.
-        const body = new URLSearchParams({ country: this.billingCountry() });
-        fetch(this.moduleUrl('soleTraderTokens'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: body.toString()
-        })
+        // Everything from here down to the fetch() call starting is
+        // synchronous and, before this try (TWO-40 round 5 follow-up, Vader
+        // finding round 2), unprotected: a throw anywhere in it - e.g.
+        // billingCountry() or moduleUrl() reading a malformed config - left
+        // `isFetchingTokens` stuck `true` forever. Every later click would
+        // then silently no-op on that guard for the rest of the page's
+        // life, with nothing ever in flight and no settle event to ever
+        // close a THEN-open panel/spinner - the try/catch TwoCompanySearch.js
+        // has around calling startEnrollment() only protects the FIRST such
+        // click, not the ones after it. Treated exactly like a network
+        // failure once caught.
+        let request;
+        try {
+            // Post the country the buyer currently has selected (TWO-40).
+            // The server prefers THIS over anything it holds: the invoice-
+            // address tier that used to outrank it was deleted, not
+            // demoted, so the posted country wins outright and the cart's
+            // DELIVERY address is consulted only when no usable country was
+            // posted at all. It re-checks the registry either way.
+            //
+            // Deliberately billingCountry(): that is the SAME resolver
+            // isAvailableForCurrentCountry() answers the chip's visibility
+            // from, so the country the mint is authorised against and the
+            // country the chip was shown for cannot disagree by
+            // construction. Sent urlencoded, the way applyBuyer() posts to
+            // saveCompany.
+            const body = new URLSearchParams({ country: this.billingCountry() });
+            request = fetch(this.moduleUrl('soleTraderTokens'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: body.toString()
+            });
+        } catch (e) {
+            this.isFetchingTokens = false;
+            this.nextRetryAt = Date.now() + this.retryCooldownMs;
+            this.showError();
+            return;
+        }
+        request
             .then(function (response) { return response.json(); })
             .then(function (json) {
                 if (json && json.success && json.autofill_token) {
@@ -883,16 +935,41 @@ class TwoSoleTrader {
                     // correctly reads as stale; bindPopupMessageListener()'s
                     // check (and a resumed startEnrollment()'s own re-stamp)
                     // are what bring it current again, never this callback.
-                    self._tokensGeneration = generation;
                     self.bindPopupMessageListener();
-                    // Only auto-continue into the buyer lookup if nothing
-                    // has cancelled since this mint was requested. A
-                    // superseded mint still keeps its tokens (an explicit
-                    // resume works off them without re-minting), it just
-                    // does not act on them unasked.
                     if (self._enrollGeneration === generation) {
+                        // Ordinary case: nothing has cancelled since this
+                        // mint was requested. Stamp with the CAPTURED
+                        // generation, not the current one - if cancelEnrollment()
+                        // runs AFTER this point but before the tokens are
+                        // acted on, the stamp must already read as stale.
+                        self._tokensGeneration = generation;
+                        self.getCurrentBuyer();
+                    } else if (self.enrolling) {
+                        // TWO-40 round 5 (adversarial review finding, Han +
+                        // Yoda independently): THIS mint's own generation is
+                        // stale (cancelEnrollment() ran while it was out -
+                        // e.g. the buyer abandoned via "Registered Company"
+                        // then clicked "Sole Trader" again before this
+                        // resolved). But `fetchTokens()`'s own re-entry
+                        // guard (isFetchingTokens, above) means the SECOND
+                        // click's startEnrollment() call rode along on this
+                        // exact request rather than firing a new one - there
+                        // is only ever one mint in flight at a time. If
+                        // `enrolling` is true, a later click IS still
+                        // waiting on exactly these tokens; silently dropping
+                        // them here (the previous behaviour) left that
+                        // click's spinner and open panel with nothing left
+                        // to ever settle it. Stamp and resume for whichever
+                        // generation is CURRENT, not the stale one that
+                        // requested the mint - mirrors startEnrollment()'s
+                        // own "resume" branch below for the same tokens.
+                        self._tokensGeneration = self._enrollGeneration;
                         self.getCurrentBuyer();
                     }
+                    // Else: genuinely abandoned, nobody enrolling right now.
+                    // cancelEnrollment() already notified whichever click
+                    // started this mint that its wait is over; these tokens
+                    // are simply kept for a future explicit resume.
                 } else {
                     self.tokens = null;
                     self.nextRetryAt = Date.now() + self.retryCooldownMs;
@@ -925,12 +1002,83 @@ class TwoSoleTrader {
     }
 
     /**
+     * Re-run getCurrentBuyer() for whichever generation is CURRENT, called
+     * from getCurrentBuyer()'s own superseded branches when `enrolling` is
+     * still true - i.e. a later click abandoned-then-resumed while THIS
+     * lookup was outstanding, riding it via the isFetchingBuyer single-
+     * flight guard rather than issuing its own (TWO-40 round 5 follow-up,
+     * Han finding round 2).
+     *
+     * Deferred to a macrotask (`setTimeout(..., 0)`), not called directly.
+     * This runs from INSIDE the `.then()`/`.catch()` handler of the request
+     * that just finished - `isFetchingBuyer` is still true at that point,
+     * because the `.finally()` chained after it has not run yet, and won't
+     * until this handler returns. Calling getCurrentBuyer() synchronously
+     * here would race that pending `.finally()`: whichever of "the resumed
+     * call sets isFetchingBuyer back to true" or "the original chain's
+     * finally resets it to false" runs SECOND would win, and the finally
+     * runs second by construction (it is queued as this handler returns),
+     * so a synchronous call was getting its own re-entrancy flag reset out
+     * from under it moments after starting. Deferring to a macrotask runs
+     * this after that finally has already settled the flag, so the resumed
+     * call's own true/false bracketing is undisturbed.
+     *
+     * Assumes `this` outlives the deferred macrotask - true today only
+     * because `window.TwoSoleTrader_Instance` is created exactly once
+     * (views/js/twopayment.js) and never destroyed/recreated in production.
+     * A future refactor that DOES tear down and rebuild the instance
+     * mid-page needs to clear any pending timer from this method in its
+     * own destroy(), the same way removeDropdown()/closeDropdown() already
+     * clear TwoCompanySearch.js's own timers - round 3 adversarial review
+     * observation (Vader), not fixed here because the precondition it
+     * guards against does not exist in this codebase today.
+     */
+    resumeIfStillEnrolling() {
+        if (!this.enrolling) {
+            return;
+        }
+        const self = this;
+        setTimeout(function () {
+            // Re-check at FIRE time, not just at schedule time (round 7
+            // adversarial review finding, Han): the gap between scheduling
+            // this macrotask and it actually running is real time in a real
+            // browser, and a second abandon can land in it - a second
+            // "Registered Company"/"Enter Manually" click, or another
+            // country change, calling cancelEnrollment() again before this
+            // fires. Without re-checking, this ran a full, unwanted lookup
+            // for a buyer who had already walked away from the flow a
+            // second time - on the no-match path, popping an unwanted
+            // signup window.
+            if (!self.enrolling) {
+                return;
+            }
+            self.getCurrentBuyer();
+        }, 0);
+    }
+
+    /**
      * Autofill from the buyer's current Two sole-trader business. A 404,
      * a missing checkout email, or an email mismatch means no usable
      * registration yet - show the signup prompt instead. The email match
      * is case-insensitive and required.
      */
     getCurrentBuyer() {
+        // Re-entrancy guard (TWO-40 round 5, adversarial review finding -
+        // Han + Vader independently caught this): unlike fetchTokens()
+        // (isFetchingTokens), this had no guard of its own before. A second
+        // click while a lookup was already outstanding fired a second,
+        // concurrent lookup - on the no-match path each one independently
+        // reaches openPopup(), so a buyer clicking twice got TWO signup
+        // popup windows from one gesture. TwoCompanySearch.js's own click
+        // handler now guards on `_soleTraderLoading`, but this is kept as a
+        // second, symmetric layer: bindPopupMessageListener()'s resumed
+        // lookup (a genuinely separate caller, off a real user action in
+        // another window) goes through here too, and should not be able to
+        // race a lookup already running for the same reason.
+        if (this.isFetchingBuyer) {
+            return;
+        }
+        this.isFetchingBuyer = true;
         const self = this;
         // Captured BEFORE the request starts (round 2 adversarial review
         // finding). cancelEnrollment() bumps this on every call, including
@@ -944,10 +1092,26 @@ class TwoSoleTrader {
         const superseded = function () {
             return self._enrollGeneration !== generation;
         };
-        fetch(this.config.checkoutHost + '/autofill/v1/buyer/current', {
-            credentials: 'include',
-            headers: { 'two-delegated-authority-token': this.tokens.autofill_token }
-        })
+        // Same reasoning as fetchTokens()'s own try/catch around its
+        // pre-fetch setup (TWO-40 round 5 follow-up, Vader finding round 2):
+        // `this.tokens.autofill_token` below throws synchronously if
+        // `this.tokens` is ever null when this runs, and nothing before
+        // this fix protected `isFetchingBuyer` against that - a stuck-true
+        // guard here silently no-ops every future click for the rest of
+        // the page's life, the exact failure mode this whole PR chain
+        // exists to close.
+        let request;
+        try {
+            request = fetch(this.config.checkoutHost + '/autofill/v1/buyer/current', {
+                credentials: 'include',
+                headers: { 'two-delegated-authority-token': this.tokens.autofill_token }
+            });
+        } catch (e) {
+            this.isFetchingBuyer = false;
+            this.showError();
+            return;
+        }
+        request
             .then(function (response) {
                 if (response.ok) {
                     return response.json();
@@ -959,6 +1123,22 @@ class TwoSoleTrader {
             })
             .then(function (buyer) {
                 if (superseded()) {
+                    // TWO-40 round 5 follow-up (Han finding, round 2): the
+                    // SAME abandon-then-retry shape fetchTokens()'s success
+                    // branch was fixed for above, one stage deeper. This
+                    // lookup's own single-flight guard (isFetchingBuyer)
+                    // means a click that arrived while this request was
+                    // already out never issued its own lookup - it is riding
+                    // this one. If this generation is now stale but
+                    // something is still enrolling, re-run the lookup for
+                    // whichever generation IS current rather than dropping
+                    // this result on the floor with nothing left to ever
+                    // settle the resumed click's spinner. Deliberately a
+                    // fresh getCurrentBuyer() call (not just falling through
+                    // with the stale `buyer`/`generation` closures) - a
+                    // buyer lookup, unlike a token mint, must be re-run for
+                    // the current identity/generation, not replayed.
+                    self.resumeIfStillEnrolling();
                     return;
                 }
                 const entered = self.checkoutEmail().trim().toLowerCase();
@@ -968,6 +1148,10 @@ class TwoSoleTrader {
                     self.applyBuyer(buyer, generation);
                 } else if (self.container() && self.container().querySelector('.two-sole-trader__prompt')) {
                     self.showPrompt();
+                    // No error, but nothing left for this click's own round
+                    // trip to wait on - the flow now waits on the buyer
+                    // clicking the on-page prompt, a separate user action.
+                    self.notifyEnrollmentSettled();
                 } else {
                     // TWO-40 follow-up: on the address-editor page there is no
                     // `.two-sole-trader` container at all (it is only rendered
@@ -982,15 +1166,30 @@ class TwoSoleTrader {
                     // here, still async off the original click, is not
                     // blocked in practice. Payment-step keeps the two-click
                     // showPrompt()->openPopup() flow unchanged since its
-                    // container/prompt element exists there.
+                    // container/prompt element exists there. openPopup()
+                    // itself notifies from both of its own branches (opened
+                    // fine, or blocked) - see there.
                     self.openPopup();
                 }
             })
             .catch(function () {
                 if (superseded()) {
+                    // Same reasoning as the success branch above (round 5
+                    // follow-up, Han finding round 2): a resumed click may
+                    // be riding this exact request. A network failure on it
+                    // is a real failure for that resumed click too, not just
+                    // for the stale one that originally issued it - retry
+                    // once for the current generation rather than dropping
+                    // it silently. (The retry itself can fail again, but
+                    // that failure will correctly reach showError()/notify
+                    // for the then-current generation on its own terms.)
+                    self.resumeIfStillEnrolling();
                     return;
                 }
                 self.showError();
+            })
+            .finally(function () {
+                self.isFetchingBuyer = false;
             });
     }
 
@@ -1103,6 +1302,7 @@ class TwoSoleTrader {
                     self.enrolling = false;
                     self.stopObserving();
                     document.dispatchEvent(new CustomEvent('two:sole-trader-ready'));
+                    self.notifyEnrollmentSettled();
                 } else {
                     self.showError();
                 }
@@ -1226,12 +1426,20 @@ class TwoSoleTrader {
             // without a `.two-sole-trader__error` element (containerless
             // address-page path, TWO-40 follow-up) - console.error is the
             // only signal left there, so it is not a completely silent
-            // dead end even in that edge case.
+            // dead end even in that edge case. showError() also notifies
+            // (TWO-40 round 4) - do not ALSO notify below, or a blocked
+            // popup would fire the settle event twice for one click.
             this.showError();
             if (!this.container()) {
                 // eslint-disable-next-line no-console
                 console.error('Two: sole-trader signup popup was blocked and no on-page error UI is available here.');
             }
+        } else {
+            // Opened fine - this click's own round trip has handed off to
+            // the popup window, whether called directly from
+            // getCurrentBuyer() (no on-page prompt to show first) or from
+            // showPrompt()'s own click listener (TWO-40 round 4).
+            this.notifyEnrollmentSettled();
         }
         return popup;
     }
@@ -1338,6 +1546,35 @@ class TwoSoleTrader {
         if (error) {
             error.style.display = 'inline';
         }
+        // Every showError() call site is the LAST thing its branch does - a
+        // terminal state for whichever round trip led here (token mint,
+        // buyer lookup, or a blocked popup) - so this single spot covers
+        // every failure exit without a notify at each call site. See
+        // notifyEnrollmentSettled() for what this is for.
+        this.notifyEnrollmentSettled();
+    }
+
+    /**
+     * Tell TwoCompanySearch.js's in-flight spinner (TWO-40 round 4) that
+     * THIS click's own round trip has reached a terminal state, whatever
+     * that state is - a completed autofill, a signup prompt/popup handed
+     * off to, or a failure. Fired from every terminal branch of
+     * startEnrollment()'s call graph:
+     *  - showError() (covers both fetchTokens() failure paths, the
+     *    getCurrentBuyer() catch, and openPopup()'s popup-blocked branch)
+     *  - getCurrentBuyer()'s showPrompt()/openPopup() branches (no error,
+     *    but nothing left for the spinner to wait on - the flow has handed
+     *    off to on-page prompt UI or a popup window)
+     *  - applyBuyer()'s success branch
+     *
+     * Deliberately NOT gated on `_enrollGeneration`: TwoCompanySearch.js's
+     * listener is bound fresh per click and unbound on its own next close,
+     * so a stale event from an abandoned attempt finding no listener left
+     * to hear it is already a no-op, the same way a stale popup message
+     * finding this object gone would be.
+     */
+    notifyEnrollmentSettled() {
+        document.dispatchEvent(new CustomEvent('two:sole-trader-flight-settled'));
     }
 }
 

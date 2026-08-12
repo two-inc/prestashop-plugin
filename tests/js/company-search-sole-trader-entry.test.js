@@ -100,7 +100,41 @@ describe('visibility', () => {
 });
 
 describe('activation', () => {
-    test('clicking it closes the panel and starts sole-trader enrolment', () => {
+    /**
+     * Regression test (TWO-40 round 3, live-verified against a real browser -
+     * see .ai/decisions.md): PR #159 added renderChipSelection() but called it
+     * in the SAME synchronous tick as closeDropdown(), so a real browser never
+     * painted a single frame with the `--selected` class applied before the
+     * panel's `display:none` hid it again - zero rendered frames ever showed
+     * the selection to a buyer, even though jsdom (which has no render/paint
+     * step) reported the class as set immediately and PR #159's own test
+     * passed on exactly that basis. Superseded functionally by the round-4
+     * keep-open behaviour below (the panel now stays open far longer than one
+     * frame), but pinned in its own right: the selection must be visible
+     * WHILE the panel is still open, not merely "eventually true in a
+     * document nobody was watching".
+     */
+    test('the selected chip is visibly applied while the panel is still open, not only after it closes', () => {
+        stubSoleTrader(true);
+        makeInstance();
+        openPanel();
+
+        const { soleTrader } = panelParts();
+        soleTrader.trigger('click');
+
+        expect(shown(panelParts().panel)).toBe(true);
+        expect(soleTrader.hasClass('two-company-mode-chip--selected')).toBe(true);
+    });
+
+    /**
+     * TWO-40 round 4, Doug's explicit request: "keep the company search
+     * control open, show spinner in query field" for the duration of the
+     * Sole Trader autofill round trip. Driven by the REAL settle event
+     * TwoSoleTrader.js's notifyEnrollmentSettled() fires (see
+     * TwoSoleTrader.js), not a fixed timeout - the panel must stay open for
+     * however long the actual call takes, and no longer.
+     */
+    test('clicking it starts sole-trader enrolment, keeps the panel open with the query-field spinner, and only closes when the flight settles', () => {
         const soleTrader = stubSoleTrader(true);
         makeInstance();
         openPanel();
@@ -108,11 +142,23 @@ describe('activation', () => {
 
         panelParts().soleTrader.trigger('click');
 
-        expect(shown(panelParts().panel)).toBe(false);
         expect(soleTrader.startEnrollment).toHaveBeenCalledTimes(1);
+        expect(shown(panelParts().panel)).toBe(true);
+        expect(panelParts().query.hasClass('two-company-search-loading')).toBe(true);
+
+        // No fixed timeout closes it - it would still be open five seconds
+        // later if the real call were still out.
+        jest.advanceTimersByTime(5000);
+        expect(shown(panelParts().panel)).toBe(true);
+        expect(panelParts().query.hasClass('two-company-search-loading')).toBe(true);
+
+        document.dispatchEvent(new CustomEvent('two:sole-trader-flight-settled'));
+
+        expect(shown(panelParts().panel)).toBe(false);
+        expect(panelParts().query.hasClass('two-company-search-loading')).toBe(false);
     });
 
-    test('does nothing destructive if TwoSoleTrader_Instance is missing', () => {
+    test('does nothing destructive if TwoSoleTrader_Instance is missing, and still closes (after a paint) rather than dead-ending open', () => {
         stubSoleTrader(true);
         makeInstance();
         openPanel();
@@ -121,6 +167,77 @@ describe('activation', () => {
         delete global.window.TwoSoleTrader_Instance;
 
         expect(() => panelParts().soleTrader.trigger('click')).not.toThrow();
+
+        // TWO-40 round 5 (adversarial review, round 2 follow-up): this
+        // fallback branch does not go through beginSoleTraderLoading()'s
+        // keep-open window at all, so it needs its OWN paint-timing fix
+        // (deferred by one requestAnimationFrame) - round 1's review caught
+        // that the round-4 rewrite had silently dropped it here, reopening
+        // the exact same-tick "renderChipSelection() then closeDropdown()"
+        // bug this whole PR chain exists to fix. This assertion is what
+        // that fix's own regression test was missing: not just "doesn't
+        // throw", but "actually closes, deferred, rather than staying open
+        // forever with nothing left to close it".
+        jest.advanceTimersByTime(20);
+        expect(shown(panelParts().panel)).toBe(false);
+    });
+
+    /**
+     * Regression test (TWO-40 round 5, adversarial review finding - Han and
+     * Vader independently caught this): round 4 keeps the chip clickable for
+     * the WHOLE round trip instead of closing on the first click, which
+     * newly makes a second click reachable while the first is still
+     * waiting. Without a guard, the second click re-entered
+     * startEnrollment() and could fire a second, concurrent buyer lookup -
+     * on the no-match path, that meant TWO signup popup windows from one
+     * buyer gesture.
+     */
+    test('a second click while already loading does not start a second enrolment attempt', () => {
+        const soleTrader = stubSoleTrader(true);
+        makeInstance();
+        openPanel();
+
+        panelParts().soleTrader.trigger('click');
+        panelParts().soleTrader.trigger('click');
+        panelParts().soleTrader.trigger('click');
+
+        expect(soleTrader.startEnrollment).toHaveBeenCalledTimes(1);
+    });
+
+    test('a fresh click after the flight has settled is allowed to start a new attempt', () => {
+        const soleTrader = stubSoleTrader(true);
+        makeInstance();
+        openPanel();
+
+        panelParts().soleTrader.trigger('click');
+        document.dispatchEvent(new CustomEvent('two:sole-trader-flight-settled'));
+        // Re-open - the panel closed when the flight settled, same as any
+        // other close.
+        openPanel();
+        panelParts().soleTrader.trigger('click');
+
+        expect(soleTrader.startEnrollment).toHaveBeenCalledTimes(2);
+    });
+
+    /**
+     * Regression test (TWO-40 round 5, Vader finding): startEnrollment() is
+     * foreign-module code called with no try/catch before this fix - a
+     * synchronous throw left the panel open with the spinner running and
+     * nothing left to ever settle it, since beginSoleTraderLoading() had
+     * already run.
+     */
+    test('a synchronous throw from startEnrollment() does not leave the panel stuck open with the spinner running', () => {
+        const soleTrader = stubSoleTrader(true);
+        soleTrader.startEnrollment.mockImplementation(() => {
+            throw new Error('boom');
+        });
+        makeInstance();
+        openPanel();
+
+        panelParts().soleTrader.trigger('click');
+
+        expect(shown(panelParts().panel)).toBe(false);
+        expect(panelParts().query.hasClass('two-company-search-loading')).toBe(false);
     });
 
     /**
