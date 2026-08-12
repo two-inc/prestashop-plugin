@@ -447,6 +447,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_8fba17b1e1abfeb9ccc08c9248824add'] 
 $_MODULE['<{twopayment}prestashop>twopayment_156b5d6812dcb5dcf1867a145cf5f1bf'] = 'Ange manuellt';
 $_MODULE['<{twopayment}prestashop>twopayment_040583ad2de8733ea4280fdf16dfef61'] = 'Registrerat företag';
 $_MODULE['<{twopayment}prestashop>twopayment_bd2b7238dd5be2875d527d62a880d043'] = 'Enskild firma';
+$_MODULE['<{twopayment}prestashop>twopayment_f2b8ff605311079f7ab03db9fd5da02c'] = 'Välj en annan enskild firma';
 $_MODULE['<{twopayment}prestashop>twopayment_0f193cdd9a8a87ce1d829b1c1fecb7f9'] = 'Anpassat betalningsvillkor (dagar)';
 $_MODULE['<{twopayment}prestashop>twopayment_00106f12870853d59e2c9b3ade06c709'] = 'Valfritt. Erbjud ytterligare ett betalningsvillkor (i dagar) som inte täcks av förinställningarna ovan. Lämna tomt för att endast erbjuda de villkor som valts ovan. %s måste fortfarande tillåta denna villkorslängd för ditt konto - ett ej understött värde ignoreras tyst.';
 $_MODULE['<{twopayment}prestashop>twopayment_3ac5c697efd1c21abb77ab72a59fd256'] = 'Standardförvalt betalningsvillkor';

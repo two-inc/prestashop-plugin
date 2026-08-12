@@ -447,6 +447,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_8fba17b1e1abfeb9ccc08c9248824add'] 
 $_MODULE['<{twopayment}prestashop>twopayment_156b5d6812dcb5dcf1867a145cf5f1bf'] = 'Angi manuelt';
 $_MODULE['<{twopayment}prestashop>twopayment_040583ad2de8733ea4280fdf16dfef61'] = 'Registrert virksomhet';
 $_MODULE['<{twopayment}prestashop>twopayment_bd2b7238dd5be2875d527d62a880d043'] = 'Enkeltpersonforetak';
+$_MODULE['<{twopayment}prestashop>twopayment_f2b8ff605311079f7ab03db9fd5da02c'] = 'Velg et annet enkeltpersonforetak';
 $_MODULE['<{twopayment}prestashop>twopayment_0f193cdd9a8a87ce1d829b1c1fecb7f9'] = 'Egendefinert betalingsfrist (dager)';
 $_MODULE['<{twopayment}prestashop>twopayment_00106f12870853d59e2c9b3ade06c709'] = 'Valgfritt. Tilby en ekstra betalingsfrist (i dager) som ikke er dekket av forhåndsinnstillingene ovenfor. La stå tomt for å kun tilby betingelsene valgt ovenfor. %s må fortsatt tillate denne fristlengden for kontoen din - en ustøttet verdi ignoreres stille.';
 $_MODULE['<{twopayment}prestashop>twopayment_3ac5c697efd1c21abb77ab72a59fd256'] = 'Standard forhåndsvalgt betalingsfrist';

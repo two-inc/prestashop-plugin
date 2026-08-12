@@ -416,3 +416,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_8fba17b1e1abfeb9ccc08c9248824add'] 
 $_MODULE['<{twopayment}prestashop>twopayment_156b5d6812dcb5dcf1867a145cf5f1bf'] = 'Introducir manualmente';
 $_MODULE['<{twopayment}prestashop>twopayment_040583ad2de8733ea4280fdf16dfef61'] = 'Empresa registrada';
 $_MODULE['<{twopayment}prestashop>twopayment_bd2b7238dd5be2875d527d62a880d043'] = 'Autónomo';
+$_MODULE['<{twopayment}prestashop>twopayment_f2b8ff605311079f7ab03db9fd5da02c'] = 'Seleccionar otro autónomo';
