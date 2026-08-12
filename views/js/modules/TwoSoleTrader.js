@@ -163,6 +163,9 @@ class TwoSoleTrader {
         this.isFetchingTokens = false;
         this.nextRetryAt = 0;
         this.retryCooldownMs = 5000;
+        // Same shape as isFetchingTokens above, for getCurrentBuyer()
+        // (TWO-40 round 5, adversarial review finding) - see its own guard.
+        this.isFetchingBuyer = false;
 
         // TWO-25326 bug 9, round 3: take the availability answer the SERVER
         // already resolved as this instance's settled state, before init()
@@ -829,6 +832,18 @@ class TwoSoleTrader {
         }
         this.enrolling = false;
         this.hidePrompt();
+        // TWO-40 round 5 (adversarial review finding): a genuine cancellation
+        // - `enrolling` really was true - is itself a terminal state for
+        // whichever click started the flight being cancelled, exactly like a
+        // success or a failure. Without this, TwoCompanySearch.js's spinner/
+        // listener only got cleared because every ONE of its own callers
+        // happens to also call endSoleTraderLoading() directly in the same
+        // tick - a coincidence of two files' invariants staying in lockstep,
+        // not an enforced contract. See TwoCompanySearch.js's own callers of
+        // cancelEnrollment(), all of which now unbind their listener BEFORE
+        // calling this, so this dispatch reaching an already-unbound
+        // listener there is the expected, harmless case.
+        this.notifyEnrollmentSettled();
     }
 
     /**
@@ -883,16 +898,41 @@ class TwoSoleTrader {
                     // correctly reads as stale; bindPopupMessageListener()'s
                     // check (and a resumed startEnrollment()'s own re-stamp)
                     // are what bring it current again, never this callback.
-                    self._tokensGeneration = generation;
                     self.bindPopupMessageListener();
-                    // Only auto-continue into the buyer lookup if nothing
-                    // has cancelled since this mint was requested. A
-                    // superseded mint still keeps its tokens (an explicit
-                    // resume works off them without re-minting), it just
-                    // does not act on them unasked.
                     if (self._enrollGeneration === generation) {
+                        // Ordinary case: nothing has cancelled since this
+                        // mint was requested. Stamp with the CAPTURED
+                        // generation, not the current one - if cancelEnrollment()
+                        // runs AFTER this point but before the tokens are
+                        // acted on, the stamp must already read as stale.
+                        self._tokensGeneration = generation;
+                        self.getCurrentBuyer();
+                    } else if (self.enrolling) {
+                        // TWO-40 round 5 (adversarial review finding, Han +
+                        // Yoda independently): THIS mint's own generation is
+                        // stale (cancelEnrollment() ran while it was out -
+                        // e.g. the buyer abandoned via "Registered Company"
+                        // then clicked "Sole Trader" again before this
+                        // resolved). But `fetchTokens()`'s own re-entry
+                        // guard (isFetchingTokens, above) means the SECOND
+                        // click's startEnrollment() call rode along on this
+                        // exact request rather than firing a new one - there
+                        // is only ever one mint in flight at a time. If
+                        // `enrolling` is true, a later click IS still
+                        // waiting on exactly these tokens; silently dropping
+                        // them here (the previous behaviour) left that
+                        // click's spinner and open panel with nothing left
+                        // to ever settle it. Stamp and resume for whichever
+                        // generation is CURRENT, not the stale one that
+                        // requested the mint - mirrors startEnrollment()'s
+                        // own "resume" branch below for the same tokens.
+                        self._tokensGeneration = self._enrollGeneration;
                         self.getCurrentBuyer();
                     }
+                    // Else: genuinely abandoned, nobody enrolling right now.
+                    // cancelEnrollment() already notified whichever click
+                    // started this mint that its wait is over; these tokens
+                    // are simply kept for a future explicit resume.
                 } else {
                     self.tokens = null;
                     self.nextRetryAt = Date.now() + self.retryCooldownMs;
@@ -931,6 +971,22 @@ class TwoSoleTrader {
      * is case-insensitive and required.
      */
     getCurrentBuyer() {
+        // Re-entrancy guard (TWO-40 round 5, adversarial review finding -
+        // Han + Vader independently caught this): unlike fetchTokens()
+        // (isFetchingTokens), this had no guard of its own before. A second
+        // click while a lookup was already outstanding fired a second,
+        // concurrent lookup - on the no-match path each one independently
+        // reaches openPopup(), so a buyer clicking twice got TWO signup
+        // popup windows from one gesture. TwoCompanySearch.js's own click
+        // handler now guards on `_soleTraderLoading`, but this is kept as a
+        // second, symmetric layer: bindPopupMessageListener()'s resumed
+        // lookup (a genuinely separate caller, off a real user action in
+        // another window) goes through here too, and should not be able to
+        // race a lookup already running for the same reason.
+        if (this.isFetchingBuyer) {
+            return;
+        }
+        this.isFetchingBuyer = true;
         const self = this;
         // Captured BEFORE the request starts (round 2 adversarial review
         // finding). cancelEnrollment() bumps this on every call, including
@@ -997,6 +1053,9 @@ class TwoSoleTrader {
                     return;
                 }
                 self.showError();
+            })
+            .finally(function () {
+                self.isFetchingBuyer = false;
             });
     }
 

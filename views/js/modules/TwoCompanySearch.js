@@ -874,6 +874,22 @@ class TwoCompanySearch {
             this._soleTraderButton.on('click.twoDropdown', (event) => {
                 event.preventDefault();
                 event.stopPropagation();
+                // Re-entrancy guard (TWO-40 round 5, adversarial review
+                // finding - Han/Vader both independently caught this): round
+                // 4 keeps this button clickable for the WHOLE round trip
+                // rather than closing on the first click, which newly makes
+                // a second click reachable while the first is still waiting.
+                // TwoSoleTrader.js's own guards only cover the token-mint
+                // stage (`isFetchingTokens`); a second click landing during
+                // the buyer-lookup stage re-entered startEnrollment()'s
+                // "resume" branch and fired a second concurrent
+                // getCurrentBuyer() - on the no-match path that opened TWO
+                // signup popups from one buyer gesture. `_soleTraderLoading`
+                // is exactly "a flight for this click is already in
+                // progress", so bail out rather than starting a second one.
+                if (this._soleTraderLoading) {
+                    return;
+                }
                 this._chipMode = 'sole_trader';
                 // Unlike "Registered Company" (below), this chip's own click
                 // handler is the only place `sole_trader` mode is entered, so
@@ -899,11 +915,29 @@ class TwoCompanySearch {
                     // work; see their own comments for the event contract
                     // with TwoSoleTrader.js.
                     this.beginSoleTraderLoading();
-                    window.TwoSoleTrader_Instance.startEnrollment();
+                    try {
+                        // TWO-40 round 5 (Vader finding): startEnrollment() is
+                        // foreign-module code called with no try/catch
+                        // before this - a synchronous throw would leave the
+                        // spinner open with nothing left to ever settle it.
+                        window.TwoSoleTrader_Instance.startEnrollment();
+                    } catch (e) {
+                        this.endSoleTraderLoading();
+                        this.closeDropdown(true);
+                    }
                 } else {
                     // Nothing to wait on - close the same way "Registered
-                    // Company"/"Enter Manually" do.
-                    this.closeDropdown(true);
+                    // Company"/"Enter Manually" do. Deferred by one
+                    // requestAnimationFrame (the round-3 paint-timing fix,
+                    // reinstated here TWO-40 round 5 - adversarial review
+                    // finding): this branch does not go through
+                    // beginSoleTraderLoading()'s keep-open window at all, so
+                    // without this it is the exact same "renderChipSelection()
+                    // and closeDropdown() in the same synchronous tick, zero
+                    // painted frames" bug the rest of this handler exists to
+                    // fix. Only reachable when the global instance is
+                    // missing/malformed.
+                    window.requestAnimationFrame(() => this.closeDropdown(true));
                 }
             });
         }
@@ -923,15 +957,21 @@ class TwoCompanySearch {
                 if (this._manualEntry) {
                     this.exitManualEntryMode();
                 }
+                // BEFORE cancelEnrollment() (TWO-40 round 5, adversarial
+                // review finding), not after - see the reasoning at
+                // notifyEnrollmentSettled() in TwoSoleTrader.js:
+                // cancelEnrollment() now fires the SAME settle event that
+                // beginSoleTraderLoading()'s own listener reacts to by
+                // calling closeDropdown(true). This handler wants to STAY
+                // OPEN, not close - so its own listener must already be
+                // unbound before cancelEnrollment() can dispatch, or this
+                // click would immediately close the very panel it is trying
+                // to keep open.
+                this.endSoleTraderLoading();
                 if (window.TwoSoleTrader_Instance
                     && typeof window.TwoSoleTrader_Instance.cancelEnrollment === 'function') {
                     window.TwoSoleTrader_Instance.cancelEnrollment();
                 }
-                // Same reasoning as "Enter Manually" above: this handler does
-                // not go through closeDropdown() either, and cancelEnrollment()
-                // only marks the flight stale server-generation-wise - it does
-                // not know about, or clear, this control's own spinner.
-                this.endSoleTraderLoading();
                 this.renderChipSelection();
                 if (this._queryField && this._queryField.length) {
                     this._queryField.trigger('focus');
@@ -1212,6 +1252,13 @@ class TwoCompanySearch {
             || !this._queryField || !this._queryField.length) {
             return;
         }
+        // BEFORE cancelEnrollment() (TWO-40 round 5, adversarial review
+        // finding - same reasoning as the "Registered Company" handler):
+        // cancelEnrollment() now fires the settle event too, and this
+        // method's own listener reacting to it would call closeDropdown(true)
+        // from INSIDE openDropdown() itself, re-closing the very panel this
+        // call is in the middle of opening. Unbind first.
+        this.endSoleTraderLoading();
         // Reopening the search control is the buyer choosing ordinary company
         // search over an "I'm a sole trader" row they may have clicked
         // moments earlier (TWO-40). Cancel any not-yet-completed enrolment -
@@ -1221,11 +1268,6 @@ class TwoCompanySearch {
             && typeof window.TwoSoleTrader_Instance.cancelEnrollment === 'function') {
             window.TwoSoleTrader_Instance.cancelEnrollment();
         }
-        // Same reasoning as cancelEnrollment() just above, for this
-        // control's own spinner/listener rather than TwoSoleTrader's
-        // bookkeeping (TWO-40 round 4) - a re-open reachable while a Sole
-        // Trader wait is still showing must not leave it spinning forever.
-        this.endSoleTraderLoading();
         clearTimeout(this._closeTimerId);
         this._closeTimerId = null;
         // Cleared on every open: the flag is otherwise only reset by a
@@ -1450,7 +1492,10 @@ class TwoCompanySearch {
         }
         $(document).off('two:sole-trader-flight-settled.twoSoleTraderFlight' + this._instanceNs)
             .on('two:sole-trader-flight-settled.twoSoleTraderFlight' + this._instanceNs, () => {
-                this.endSoleTraderLoading();
+                // closeDropdown() itself calls endSoleTraderLoading() as its
+                // own first line (TWO-40 round 5 cleanup, Yoda finding) - no
+                // need to call it again here too, and this keeps every close
+                // path funnelled through the one centralized call.
                 this.closeDropdown(true);
             });
     }
@@ -1458,9 +1503,11 @@ class TwoCompanySearch {
     /**
      * Reverse beginSoleTraderLoading(): drop the spinner and the listener.
      * Called from closeDropdown() itself (so EVERY way the panel closes -
-     * the settle event, Escape, or anything else - leaves no listener or
-     * spinner behind) as well as from the settle handler above, which is
-     * why this is idempotent rather than assuming it is only ever called
+     * the settle event routes through there too now - Escape, reopening,
+     * "Registered Company"/"Enter Manually", or anything else leaves no
+     * listener or spinner behind), and also called directly (not via a
+     * close) from those same chip handlers and openDropdown(), which is why
+     * this stays idempotent rather than assuming it is only ever called
      * once.
      */
     endSoleTraderLoading() {
@@ -1569,6 +1616,13 @@ class TwoCompanySearch {
         this.companyField.off('.twoCompanyOpen');
 
         this.companyField.on('mousedown.twoCompanyOpen', (event) => {
+            // NOT guarded on `this._dropdownOpen` (considered and reverted,
+            // TWO-40 round 5): clicking the company field again - even while
+            // the panel is already open, e.g. with a Sole Trader wait in
+            // progress - is the buyer's own deliberate way back to ordinary
+            // search (see openDropdown()'s own comment and the "reopening
+            // search cancels a pending enrolment" tests). Adding the guard
+            // broke that intentional, already-tested behaviour.
             if (this._destroyed || this._manualEntry) {
                 return;
             }
