@@ -28,7 +28,7 @@ declare(strict_types=1);
  *  - the columns exist after a fresh install AND after the upgrade script, which
  *    is guarded and re-runnable;
  *  - a STATUS-ONLY write does not blank a stored company. This is the one that
- *    matters. Eight of the nine setTwoOrderPaymentData() callers know nothing
+ *    matters. Ten of the eleven setTwoOrderPaymentData() callers know nothing
  *    about the buyer's company, so the two keys have to be presence-conditional;
  *    default them to `''` like the columns beside them and the first status
  *    transition after checkout erases the value silently, reintroducing the
@@ -444,6 +444,12 @@ final class OrderCompanyPersistenceSpec
             (string) $write['data']['two_order_id'],
             'the order identifier must survive a failed company-column ALTER'
         );
+
+        // Cleared explicitly. $dbFailOn is global to the stub and run.php does not
+        // reset between spec FILES, so leaving it armed would inject a hidden failure
+        // into every spec that follows - harmless today only by luck of the regex
+        // matching nothing else.
+        StubStore::$dbFailOn = [];
     }
 
     private static function creationPaymentData(): array
