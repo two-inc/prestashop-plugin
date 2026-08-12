@@ -1613,7 +1613,8 @@
  * The way back out of manual entry. A real <button>, so every one of the
  * browser's button defaults has to be undone to make it read as a link.
  */
-.two-company-search-back {
+.two-company-search-back,
+.two-company-select-different-sole-trader {
     /*
      * §3: right-aligned under the company-name field. A block with
      * `width: fit-content` and an auto inline-start margin, rather than a
@@ -1646,7 +1647,8 @@
     cursor: pointer;
 }
 
-.two-company-search-back:focus {
+.two-company-search-back:focus,
+.two-company-select-different-sole-trader:focus {
     outline: 2px solid #1976d2;
     outline-offset: 2px;
 }

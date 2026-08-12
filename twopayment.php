@@ -4452,6 +4452,13 @@ class Twopayment extends PaymentModule
             // above: that one is a first-person prompt to START enrolling,
             // this is a noun phrase describing what the buyer already IS.
             'sole_trader_status_label' => $this->l('Sole trader'),
+            // Reverse link out of a COMPLETED sole-trader enrolment (TWO-40
+            // follow-up), same slot/pattern as `company_search_back_to_search`
+            // above but for the sole-trader identity rather than manual entry.
+            // Reopens the hosted signup popup directly - it offers both
+            // "pick a different registration" and "register as new" inside
+            // its own UI, so this plugin does not need to distinguish them.
+            'company_search_select_different_sole_trader' => $this->l('Select a different sole trader'),
         );
 
         // Checkout media render is a sanctioned refresh point for the backend

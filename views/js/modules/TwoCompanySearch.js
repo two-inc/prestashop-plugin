@@ -180,6 +180,10 @@ class TwoCompanySearch {
         // the field turns it back off.
         this._manualEntry = false;
         this._backToSearchLink = null;
+        // "Select a different sole trader" reverse link (TWO-40 follow-up) -
+        // same shape as `_backToSearchLink` above, for a completed
+        // sole-trader enrolment instead of manual entry.
+        this._selectDifferentSoleTraderLink = null;
 
         // The anchored dropdown panel (TWO-25326 §1). Supersedes the
         // click-to-reveal chip TWO-25288 element 2 shipped.
@@ -225,6 +229,11 @@ class TwoCompanySearch {
         // the panel is being kept open with the query-field spinner showing
         // for a Sole Trader click's autofill round trip (TWO-40 round 4).
         this._soleTraderLoading = false;
+        // Re-entrancy guard for the "Select a different sole trader" link's
+        // click handler (TWO-40 follow-up) - same shape as
+        // `_soleTraderLoading` above, released on the same settle event, but
+        // its own flag/namespace since the two buttons/flows are independent.
+        this._selectDifferentSoleTraderLoading = false;
         // Per-instance event namespace suffix. The `mouseup` guard has to be
         // bound on `document` (a drag can end anywhere, including outside the
         // panel), and `document` is a page-wide singleton - so unbinding by
@@ -3892,6 +3901,11 @@ class TwoCompanySearch {
         // intent would keep credit-checking a company the buyer has explicitly
         // moved off, and would do it in preference to the cleared cookie.
         this.publishConfirmedSelection('', '');
+        // FIFTH half (TWO-40 follow-up): whatever sole-trader identity this
+        // clear is walking away from, the "Select a different sole trader"
+        // link is the inverse of a POPULATED identity and must go with it -
+        // same reasoning as renderBackToSearchLink()'s companion removal.
+        this.removeSelectDifferentSoleTraderLink();
     }
 
     /**
@@ -4080,6 +4094,123 @@ class TwoCompanySearch {
             this._backToSearchLink = null;
         }
         $('.two-company-search-back').off('.twoManualEntry').remove();
+    }
+
+    /**
+     * @returns {string} caption for renderSelectDifferentSoleTraderLink()
+     */
+    getSelectDifferentSoleTraderText() {
+        return (window.twopayment && window.twopayment.i18n
+                && window.twopayment.i18n.company_search_select_different_sole_trader)
+            || 'Select a different sole trader';
+    }
+
+    /**
+     * Render the "Select a different sole trader" link below the company
+     * field (TWO-40 follow-up) - same slot, same styling/gating shape as
+     * renderBackToSearchLink() above, but for a COMPLETED sole-trader
+     * enrolment rather than manual entry. Called by adoptSoleTraderBuyer()
+     * once a named identity has actually landed in the company field.
+     *
+     * A real `<button type="button">` for the same reason
+     * renderBackToSearchLink() is one: focusable, Enter/Space-activated,
+     * announced as a button, and `type="button"` so it cannot submit the
+     * address form it sits inside.
+     */
+    renderSelectDifferentSoleTraderLink() {
+        if (!this.companyField || this.companyField.length === 0) {
+            return;
+        }
+        this.removeSelectDifferentSoleTraderLink();
+
+        const link = $('<button type="button"></button>')
+            .addClass('two-company-select-different-sole-trader')
+            .text(this.getSelectDifferentSoleTraderText());
+        link.on('click.twoSoleTraderReplace', (event) => {
+            event.preventDefault();
+            // Same accordion-toggle reason as renderBackToSearchLink()'s own
+            // stopPropagation (#30.x.14 bug 2.5): this button is a plain
+            // sibling inside the address step's markup, not something the
+            // theme's delegated collapse handler is meant to hear from.
+            event.stopPropagation();
+            // Re-entrancy guard (adversarial review finding, TWO-40 follow-
+            // up - Han/Vader independently caught this): THIS button only
+            // ever renders once tokens already exist from an earlier
+            // enrolment, which is exactly the branch of
+            // TwoSoleTrader.startReplacement() that opens the popup
+            // SYNCHRONOUSLY with no guard of its own (unlike
+            // getCurrentBuyer()'s `isFetchingBuyer`) - without this, a
+            // double-click reliably opened two signup popups from one
+            // gesture, the exact defect class `isFetchingBuyer`/
+            // `_soleTraderLoading` already exist elsewhere in this flow to
+            // close.
+            if (this._selectDifferentSoleTraderLoading) {
+                return;
+            }
+            this._selectDifferentSoleTraderLoading = true;
+            // Released on TwoSoleTrader.js's own settle event - fired from
+            // EVERY terminal branch of startReplacement()'s call graph
+            // (popup opened, popup blocked, mint failed, or abandoned via a
+            // cancelEnrollment() elsewhere) - same event
+            // beginSoleTraderLoading() already relies on for the "Sole
+            // Trader" chip, own namespace so the two guards never interfere.
+            $(document).off('two:sole-trader-flight-settled.twoSoleTraderReplace' + this._instanceNs)
+                .on('two:sole-trader-flight-settled.twoSoleTraderReplace' + this._instanceNs, () => {
+                    this._selectDifferentSoleTraderLoading = false;
+                });
+            try {
+                if (window.TwoSoleTrader_Instance
+                    && typeof window.TwoSoleTrader_Instance.startReplacement === 'function') {
+                    window.TwoSoleTrader_Instance.startReplacement();
+                } else {
+                    // Same shape as the "Sole Trader" chip's own missing-
+                    // instance branch: nothing is going to fire the settle
+                    // event for this click, so release the guard here rather
+                    // than leaving it stuck and log visibly rather than a
+                    // completely silent no-op (adversarial review finding).
+                    // eslint-disable-next-line no-console
+                    console.error('Two: TwoSoleTrader_Instance is missing or malformed; cannot reopen the signup popup.');
+                    this._selectDifferentSoleTraderLoading = false;
+                    $(document).off('two:sole-trader-flight-settled.twoSoleTraderReplace' + this._instanceNs);
+                }
+            } catch (e) {
+                this._selectDifferentSoleTraderLoading = false;
+                $(document).off('two:sole-trader-flight-settled.twoSoleTraderReplace' + this._instanceNs);
+            }
+        });
+
+        // Same placement as renderBackToSearchLink(): appended to the field
+        // wrapper so it lands below the org-number hint and the (hidden
+        // here) dropdown panel that share that wrapper.
+        const wrapper = this.companyField.parent();
+        if (wrapper.length && wrapper.hasClass('two-company-field-wrap')) {
+            wrapper.append(link);
+        } else {
+            this.companyField.after(link);
+        }
+        this._selectDifferentSoleTraderLink = link;
+    }
+
+    /**
+     * Remove the "Select a different sole trader" link and unbind it. Same
+     * class-wide-sweep reasoning as removeBackToSearchLink().
+     */
+    removeSelectDifferentSoleTraderLink() {
+        if (this._selectDifferentSoleTraderLink) {
+            this._selectDifferentSoleTraderLink.off('.twoSoleTraderReplace');
+            this._selectDifferentSoleTraderLink.remove();
+            this._selectDifferentSoleTraderLink = null;
+        }
+        $('.two-company-select-different-sole-trader').off('.twoSoleTraderReplace').remove();
+        // Belt-and-braces: release the re-entrancy guard and its settle
+        // listener too, in case this runs while a flight it started is still
+        // outstanding (e.g. clearSelectedCompany() firing mid-flight) - a
+        // stuck-true guard would otherwise silently no-op every future click
+        // on a FUTURE re-rendered link, exactly the failure shape
+        // fetchTokens()'s own try/catch elsewhere in this flow exists to
+        // avoid.
+        this._selectDifferentSoleTraderLoading = false;
+        $(document).off('two:sole-trader-flight-settled.twoSoleTraderReplace' + this._instanceNs);
     }
 
     /**
@@ -4953,6 +5084,19 @@ class TwoCompanySearch {
             return false;
         }
 
+        // A REAL registered-company selection (TWO-40 follow-up, review
+        // finding): unconditionally, before either branch below, whether or
+        // not this result carries an organisation number yet. The no-org-
+        // number branch already tears this down via clearSelectedCompany(),
+        // but the org-number branch writes the company field directly and
+        // never calls it - without this, a buyer who completed sole-trader
+        // enrolment and THEN picked a real company here kept a stale
+        // "Select a different sole trader" link pointing at the OLD tokens.
+        // Clicking it would reopen the abandoned signup popup, and its
+        // eventual completion silently overwrites the just-picked registered
+        // company with the sole-trader identity.
+        this.removeSelectDifferentSoleTraderLink();
+
         // TWO-25326: the buyer has now actually picked a company from the
         // search results - the moment TwoCheckoutManager's tile-mode gate
         // (canAutoTriggerOrderIntent()) is waiting for, as opposed to the
@@ -5348,6 +5492,24 @@ class TwoCompanySearch {
                 // leaving it be.
                 this.closeDropdown(false);
 
+                // Abandon any sole-trader enrolment in flight for the
+                // PREVIOUS country (adversarial review round 2, TWO-40
+                // follow-up - Han finding). Same call `openDropdown()`/the
+                // "Registered Company" chip handler already make before
+                // doing anything else - this listener was the one path that
+                // could reach `startReplacement()` (via the "Select a
+                // different sole trader" link, which is NOT gated behind an
+                // open dropdown the way the "Sole Trader" chip is) without
+                // it. Without this, a mint/lookup started for the old
+                // country resolves with `_enrollGeneration` never bumped,
+                // reads as still-current, and can pop a signup popup - or
+                // worse, silently publish a completed enrolment - for a
+                // country the buyer has already moved off.
+                if (window.TwoSoleTrader_Instance
+                    && typeof window.TwoSoleTrader_Instance.cancelEnrollment === 'function') {
+                    window.TwoSoleTrader_Instance.cancelEnrollment();
+                }
+
                 if (this.companyField && this.companyField.length > 0) {
                     this.companyField.val('');
                 }
@@ -5492,6 +5654,37 @@ class TwoCompanySearch {
         // a node that outlives this instance otherwise.
         try {
             this.removeBackToSearchLink();
+        } catch (e) {
+            // no-op
+        }
+        // Its own try for the same reason as the reverse link above (TWO-40
+        // follow-up): a live listener on a node that outlives this instance
+        // otherwise.
+        try {
+            this.removeSelectDifferentSoleTraderLink();
+        } catch (e) {
+            // no-op
+        }
+        // Its own try, same reason (adversarial review round 3, TWO-40
+        // follow-up - Vader finding): `TwoCheckoutManager.handleAddressFormUpdate()`
+        // destroys and rebuilds this instance on EVERY `updatedAddressForm`
+        // firing, not only on a country change - PrestaShop emits that event
+        // for far more than country changes (see the comment at its own call
+        // site). The country-select listener's own `cancelEnrollment()` call
+        // (round 2) only covers the country-change trigger; this covers every
+        // OTHER address-form replacement too. Without it, a sole-trader
+        // enrolment started against THIS instance, still in flight when the
+        // form gets replaced, resolves later against whatever instance is
+        // mounted then - `TwoSoleTrader.applyBuyer()` resolves
+        // `TwoCheckoutManager_Instance.companySearch` fresh, not a captured
+        // reference - silently adopting the identity into an address context
+        // the buyer has since moved on from, ungated because no generation
+        // bump ever ran for this trigger.
+        try {
+            if (window.TwoSoleTrader_Instance
+                && typeof window.TwoSoleTrader_Instance.cancelEnrollment === 'function') {
+                window.TwoSoleTrader_Instance.cancelEnrollment();
+            }
         } catch (e) {
             // no-op
         }
@@ -5849,6 +6042,14 @@ class TwoCompanySearch {
         this.syncNotListedVisibility();
         this.syncSoleTraderEntryVisibility();
         this.syncRegisteredEntryVisibility();
+
+        // "Select a different sole trader" (TWO-40 follow-up): only once a
+        // NAMED identity actually landed in the company field above - the
+        // nameless branch earlier in this method clears that field instead,
+        // and there is nothing to offer to "replace" in that case.
+        if (name) {
+            this.renderSelectDifferentSoleTraderLink();
+        }
 
         return wrote;
     }

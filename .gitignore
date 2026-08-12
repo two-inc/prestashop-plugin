@@ -76,3 +76,4 @@ tests/e2e/playwright-report/
 
 # Deploy-time commit stamp (written by package-release.sh / git-sync, never committed)
 .two-deployed-commit
+.review/

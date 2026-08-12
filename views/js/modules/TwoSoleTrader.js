@@ -115,6 +115,11 @@ class TwoSoleTrader {
         this._tokensGeneration = 0;
         this.tokens = null;
         this.flowStarted = false;
+        // Set by startReplacement() ("Select a different sole trader"),
+        // consumed by afterTokensReady() once tokens are ready. Tells that
+        // point to skip getCurrentBuyer()'s silent-autofill check and go
+        // straight to the popup - see startReplacement()'s own comment.
+        this._skipAutofillCheck = false;
         this.messageListenerBound = false;
         // Held so destroy() can detach it. See bindPopupMessageListener().
         this._messageHandler = null;
@@ -797,6 +802,56 @@ class TwoSoleTrader {
     }
 
     /**
+     * "Select a different sole trader" entry point (TWO-40 follow-up).
+     * Reuses startEnrollment()'s token-minting, but deliberately SKIPS
+     * getCurrentBuyer()'s silent-autofill check and goes straight to the
+     * hosted signup popup - the buyer already HAS a sole-trader identity on
+     * screen and is explicitly asking to replace it, so re-running the
+     * same-email autofill match would just hand back the identity they are
+     * trying to get away from. Covers both "pick a different registration"
+     * and "register as new" - that choice happens inside the popup's own
+     * UI, this plugin does not distinguish them.
+     *
+     * `autoselect=false` on the popup URL is not interpreted server-side
+     * yet (handled elsewhere); it is appended unconditionally regardless.
+     */
+    startReplacement() {
+        this.enrolling = true;
+        this._skipAutofillCheck = true;
+        if (!this.flowStarted || !this.tokens) {
+            this.flowStarted = true;
+            this.fetchTokens();
+        } else {
+            // Same "explicit resume" re-stamp as startEnrollment()'s own
+            // resume branch, then straight through afterTokensReady() rather
+            // than inlining its own openPopup() call (review finding,
+            // TWO-40 follow-up) - one place consumes `_skipAutofillCheck`,
+            // not two, so a future change to what "tokens ready" means only
+            // has one call site to update.
+            this._tokensGeneration = this._enrollGeneration;
+            this.afterTokensReady();
+        }
+    }
+
+    /**
+     * Continuation once tokens are ready (a fresh mint or an existing set),
+     * shared by fetchTokens()'s success branches. Ordinary flow proceeds to
+     * the silent-autofill check; startReplacement() sets `_skipAutofillCheck`
+     * to bypass it and open the popup directly instead. Consumed (reset)
+     * here rather than left set, so a LATER ordinary startEnrollment() call
+     * on the same instance is not silently affected by an earlier
+     * replacement click.
+     */
+    afterTokensReady() {
+        if (this._skipAutofillCheck) {
+            this._skipAutofillCheck = false;
+            this.openPopup({ autoselect: 'false' });
+            return;
+        }
+        this.getCurrentBuyer();
+    }
+
+    /**
      * Abandon an in-progress enrolment without discarding minted tokens -
      * re-entering via startEnrollment() resumes rather than re-mints. Called
      * when the buyer goes back to ordinary company search (opening the
@@ -827,6 +882,10 @@ class TwoSoleTrader {
      */
     cancelEnrollment() {
         this._enrollGeneration += 1;
+        // Belt-and-braces alongside afterTokensReady()'s own reset: an
+        // abandoned startReplacement() must not leave this set for whatever
+        // ORDINARY flow resumes next.
+        this._skipAutofillCheck = false;
         if (!this.enrolling) {
             return;
         }
@@ -943,7 +1002,7 @@ class TwoSoleTrader {
                         // runs AFTER this point but before the tokens are
                         // acted on, the stamp must already read as stale.
                         self._tokensGeneration = generation;
-                        self.getCurrentBuyer();
+                        self.afterTokensReady();
                     } else if (self.enrolling) {
                         // TWO-40 round 5 (adversarial review finding, Han +
                         // Yoda independently): THIS mint's own generation is
@@ -964,7 +1023,7 @@ class TwoSoleTrader {
                         // requested the mint - mirrors startEnrollment()'s
                         // own "resume" branch below for the same tokens.
                         self._tokensGeneration = self._enrollGeneration;
-                        self.getCurrentBuyer();
+                        self.afterTokensReady();
                     }
                     // Else: genuinely abandoned, nobody enrolling right now.
                     // cancelEnrollment() already notified whichever click
@@ -1395,7 +1454,11 @@ class TwoSoleTrader {
         return btoa(unescape(encodeURIComponent(JSON.stringify(data))));
     }
 
-    openPopup() {
+    /**
+     * @param {Object} [extraParams] additional query params appended to the
+     *   popup URL verbatim (encoded key/value pairs), e.g. `autoselect`.
+     */
+    openPopup(extraParams) {
         if (!this.tokens) {
             return null;
         }
@@ -1410,11 +1473,31 @@ class TwoSoleTrader {
             last_name: (lastName && lastName.value) || customer.lastname || '',
             phone_number: phone ? phone.value : ''
         };
+        // PORTING NOTE (future Magento/WooCommerce port of this sole-trader
+        // flow): brand resolution here is PrestaShop-only and has NO brand
+        // dimension. `this.tokens.signup_url` comes from
+        // TwoSoleTrader::getSignupPageUrl() (classes/TwoSoleTrader.php - see
+        // its `$signup_hosts` property and the method itself; deliberately
+        // not citing line numbers here, they drift), which maps ONLY
+        // environment -> host - it does not know ABN or any other brand
+        // exists. Magento/WooCommerce resolve brand
+        // via a per-brand `checkout_url_template` (a distinct hostname per
+        // brand, e.g. `achterafbetalen.abnamro.nl` for ABN) with a
+        // `?brand=<tag>&brandVersion=<ver>` query-string fallback used ONLY
+        // on shared non-prod domains. Porting this popup-launch URL
+        // construction to those platforms must go through THAT existing
+        // mechanism, not this environment-keyed host map - PrestaShop has no
+        // brand-overlay support today and this file must not invent one.
         const url =
             this.tokens.signup_url +
             '?businessToken=' + encodeURIComponent(this.tokens.delegation_token) +
             '&autofillToken=' + encodeURIComponent(this.tokens.autofill_token) +
-            '&autofillData=' + encodeURIComponent(this.encodeAutofillData(prefill));
+            '&autofillData=' + encodeURIComponent(this.encodeAutofillData(prefill)) +
+            (extraParams && typeof extraParams === 'object'
+                ? Object.keys(extraParams).map(function (key) {
+                    return '&' + encodeURIComponent(key) + '=' + encodeURIComponent(extraParams[key]);
+                }).join('')
+                : '');
         const popup = window.open(
             url,
             '_blank',
