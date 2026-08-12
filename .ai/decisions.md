@@ -184,7 +184,7 @@ Design constraints, all load-bearing:
   buyer an already-approved order.
 - **Captured in the same request as order creation**, while the cart-scoped record is still readable.
   Later is too late: a rotated cart reports absent *and clears the record on the way out*.
-- **Writes are presence-conditional.** Eight of the nine `setTwoOrderPaymentData()` call sites are
+- **Writes are presence-conditional.** Ten of the eleven `setTwoOrderPaymentData()` call sites are
   status/webhook updates that know nothing about the company. An absent key means "unchanged", never
   "overwrite with empty" — otherwise the next status change silently erases the value. Same
   absent-means-unchanged discipline as the mirror-write record.
@@ -203,6 +203,37 @@ CI gate) never installs a NEW override on an existing shop — `Module::runUpgra
 inspects modified and deleted overrides. It would also silently no-op on any shop where another module
 co-owns `override/classes/Address.php`, which the migrator deliberately refuses to touch. A module table
 keyed by `id_address` avoids the override but hits the clone-and-re-key path above.
+
+**A failed `ALTER` must never fail the payment row.** `ensureTwoOrderCompanyColumns()` returns the
+columns it could actually guarantee, and the caller writes only those. The ordering matters: ask
+first, then stage. A shop can legitimately reach the failure path — files swapped without the upgrade
+script, or a database user with no `ALTER` privilege — and naming a nonexistent column fails the
+ENTIRE insert. That row carries `two_order_id`, the invoice URL and everything later status syncs key
+on, and the write happens inside the confirmation callback for an order Two has already approved.
+Losing the snapshot costs an empty organisation number on two admin PUTs; losing the row costs the
+buyer their order. The degradation is therefore exactly the pre-TWO-40 behaviour. Found by review
+round 4 — the first implementation logged the failure and wrote the column anyway.
+
+**Two known residuals on the `dni` path, recorded rather than patched.** Both exist only because a
+`TWO:` number no longer reaches `dni`, and both are mitigated server-side because the cart-scoped
+session record is resolver priority 1:
+
+- On a `need_identification_number` country, the moment the buyer types their own NIF into `dni`,
+  `completeMirroredOrganizationNumber()`'s "the field is theirs, the debt is settled" branch clears
+  the last surviving record of the pending pair — so `republishMirroredSelection()` stops restoring
+  the hidden `companyid` after a country-change rebuild, and the submit-time sync can then adopt the
+  buyer's PERSONAL fiscal number as the organisation number. The underlying "`dni` is adopted as the
+  org number" behaviour pre-dates this work and applies to every buyer on such a country; what is new
+  is only that an internal identifier can never discharge the debt. Closing it means exempting an
+  internal identifier from that settle. Left alone deliberately: four review rounds on this state
+  machine have each produced defects of their own, and the order is protected by the session record
+  and now by the order-scoped snapshot.
+- `getTwoUpdateOrderData()` prefers the STORED company name as well as the stored number, so an admin
+  editing the invoice address's company after placement no longer propagates it on
+  `hookActionOrderEdited`. That is the intended trade and not an oversight: the stored pair is the
+  identity the credit decision was made against, and sending a freshly-typed name beside the original
+  number would silently re-label a funded invoice. Preferring one and re-resolving the other would
+  pair a new name with an old number, which is worse than either.
 
 **The address-wide pin is deliberately NOT consulted, and that is a REVERSAL of a review fix.**
 Round 1 of the adversarial review added `secondaryAddressIsPinned()` as an early return, reasoning by

@@ -305,13 +305,19 @@ class Twopayment extends PaymentModule
     /** @var string|null Memoised `client_v` value (version + optional +<sha7>) */
     protected $two_client_version_cache = null;
     /**
-     * @var bool Whether the order-company columns on `ps_twopayment` have been
-     *           checked this request (TWO-40). Deliberately an INSTANCE property
-     *           rather than a function static: a static is process-wide, which
-     *           makes the guard unreachable from a test and lets one request's
-     *           answer leak into the next under a persistent PHP worker.
+     * @var array|null The order-company columns on `ps_twopayment` this request has
+     *           CONFIRMED are writable, memoised (TWO-40). Null until checked.
+     *
+     *           It records the answer rather than merely "we looked", because a
+     *           failed `ALTER` must remove the column from the write instead of
+     *           being logged and written anyway - see
+     *           ensureTwoOrderCompanyColumns().
+     *
+     *           An INSTANCE property rather than a function static: a static is
+     *           process-wide, which makes the guard unreachable from a test and lets
+     *           one request's answer leak into the next under a persistent worker.
      */
-    protected $twoOrderCompanyColumnsEnsured = false;
+    protected $twoOrderCompanyColumnsEnsured = null;
 
     // Module metadata fields ModuleCore does not declare on all supported
     // PrestaShop versions ($bootstrap was only added to ModuleCore in PS 8;
@@ -12614,11 +12620,11 @@ class Twopayment extends PaymentModule
      */
     protected function ensureTwoOrderCompanyColumns()
     {
-        if (!empty($this->twoOrderCompanyColumnsEnsured)) {
-            return;
+        if (is_array($this->twoOrderCompanyColumnsEnsured)) {
+            return $this->twoOrderCompanyColumnsEnsured;
         }
-        $this->twoOrderCompanyColumnsEnsured = true;
 
+        $available = array();
         $table = _DB_PREFIX_ . 'twopayment';
         $columns = array(
             'two_organization_number' => 'ALTER TABLE `' . $table . '` ADD `two_organization_number` VARCHAR(64) NULL',
@@ -12634,17 +12640,38 @@ class Twopayment extends PaymentModule
             );
 
             if ($exists) {
+                $available[] = $column;
                 continue;
             }
 
-            if (!Db::getInstance()->execute($ddl)) {
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Failed to add column ' . $column . ' to ' . $table
-                    . ' - the order company snapshot cannot be persisted on this shop',
-                    3
-                );
+            if (Db::getInstance()->execute($ddl)) {
+                $available[] = $column;
+                continue;
             }
+
+            // NOT added to $available, and that is the whole point of returning a
+            // list rather than nothing. A shop can reach here legitimately - the
+            // files swapped without the upgrade script running, or a database user
+            // with no ALTER privilege - and naming a column that does not exist in
+            // the INSERT fails the ENTIRE row. That row carries `two_order_id`, the
+            // invoice URL and everything the later status syncs key on, and the
+            // write happens inside the confirmation callback for an order Two has
+            // already approved. Losing the company snapshot costs an empty
+            // organisation number on two admin PUTs; losing the row costs the
+            // buyer their order. So the caller drops the column and degrades to
+            // exactly the pre-TWO-40 behaviour.
+            PrestaShopLogger::addLog(
+                'TwoPayment: Failed to add column ' . $column . ' to ' . $table
+                . ' - the order company snapshot cannot be persisted on this shop,'
+                . ' and this column will be omitted from writes rather than'
+                . ' failing them',
+                3
+            );
         }
+
+        $this->twoOrderCompanyColumnsEnsured = $available;
+
+        return $available;
     }
 
     /**
@@ -16004,9 +16031,9 @@ class Twopayment extends PaymentModule
         );
         // Note: invoice_details (payment info) is NOT stored in DB - fetched from Two API when needed
 
-        // PRESENCE-CONDITIONAL, and that is load-bearing (TWO-40). Nine callers
+        // PRESENCE-CONDITIONAL, and that is load-bearing (TWO-40). Eleven callers
         // reach this method and only the order-creation one knows the buyer's
-        // company; the other eight are status transitions, provider webhooks and
+        // company; the other ten are status transitions, provider webhooks and
         // cancel callbacks. An absent key here means "leave the stored value
         // alone". Give these two columns a `? : ''` default like the ones above
         // and the first status update after order placement silently erases the
@@ -16016,15 +16043,22 @@ class Twopayment extends PaymentModule
             'two_organization_number',
             'two_company_name',
         );
-        $writes_company = false;
+        $offered = array();
         foreach ($company_columns as $company_column) {
             if (isset($payment_data[$company_column])) {
-                $data[$company_column] = pSQL($payment_data[$company_column]);
-                $writes_company = true;
+                $offered[$company_column] = pSQL($payment_data[$company_column]);
             }
         }
-        if ($writes_company) {
-            $this->ensureTwoOrderCompanyColumns();
+        if (!empty($offered)) {
+            // Ask FIRST, then write only what came back guaranteed. The reverse
+            // order - stage the columns, then try to create them - is how a failed
+            // ALTER turns a missing company snapshot into a lost payment row.
+            $writable = $this->ensureTwoOrderCompanyColumns();
+            foreach ($offered as $company_column => $company_value) {
+                if (in_array($company_column, $writable, true)) {
+                    $data[$company_column] = $company_value;
+                }
+            }
         }
 
         if ($result) {
