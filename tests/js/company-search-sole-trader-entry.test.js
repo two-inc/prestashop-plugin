@@ -122,6 +122,35 @@ describe('activation', () => {
 
         expect(() => panelParts().soleTrader.trigger('click')).not.toThrow();
     });
+
+    /**
+     * Regression test: the handler correctly set `this._chipMode =
+     * 'sole_trader'` and started enrolment, but never called
+     * renderChipSelection() to reflect that onto the DOM - so
+     * "Registered Company" (the default) kept the `--selected` class
+     * forever and "Sole Trader" never got it, even though its own
+     * handler had just fired successfully. Asserting `startEnrollment`
+     * was called (as the test above does) does NOT catch this - the
+     * handler ran fine, only its cosmetic class write was missing.
+     * Checked directly against the DOM classes rather than `_chipMode`
+     * (an internal field a future refactor could rename) because the
+     * live bug this pins was observed exactly this way: DevTools reading
+     * `.className` on the real chip buttons.
+     */
+    test('marks itself selected and un-marks "Registered Company", even though the panel closes', () => {
+        stubSoleTrader(true);
+        makeInstance();
+        openPanel();
+
+        const { registered, soleTrader, notListed } = panelParts();
+        expect(registered.hasClass('two-company-mode-chip--selected')).toBe(true);
+
+        soleTrader.trigger('click');
+
+        expect(soleTrader.hasClass('two-company-mode-chip--selected')).toBe(true);
+        expect(registered.hasClass('two-company-mode-chip--selected')).toBe(false);
+        expect(notListed.hasClass('two-company-mode-chip--selected')).toBe(false);
+    });
 });
 
 describe('reopening search cancels a pending enrolment (TWO-40)', () => {
