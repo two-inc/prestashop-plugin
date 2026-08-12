@@ -328,3 +328,31 @@ describe('popup URL (c)', () => {
         instance.destroy();
     });
 });
+
+describe('country change abandons an in-flight replacement flow (e, round-2 review finding)', () => {
+    test('changing the billing country calls TwoSoleTrader_Instance.cancelEnrollment()', () => {
+        const instance = makeSearchInstance();
+        instance.adoptSoleTraderBuyer(NAMED_BUYER);
+
+        const cancelEnrollment = jest.fn();
+        global.window.TwoSoleTrader_Instance = {
+            startReplacement: jest.fn(),
+            cancelEnrollment: cancelEnrollment
+        };
+
+        // Simulate the buyer having clicked "Select a different sole
+        // trader" (a mint/lookup is now conceptually in flight for the OLD
+        // country) - this test targets the country-change listener itself,
+        // not startReplacement(), so the click is not required to exercise
+        // the fix; the point is that cancelEnrollment() fires REGARDLESS of
+        // whether a flow is actually in flight, exactly like the
+        // "Registered Company" chip handler and openDropdown() already do.
+        const countryField = document.querySelector("select[name='id_country']");
+        expect(countryField).not.toBeNull();
+        countryField.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        expect(cancelEnrollment).toHaveBeenCalledTimes(1);
+
+        instance.destroy();
+    });
+});

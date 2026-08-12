@@ -5492,6 +5492,24 @@ class TwoCompanySearch {
                 // leaving it be.
                 this.closeDropdown(false);
 
+                // Abandon any sole-trader enrolment in flight for the
+                // PREVIOUS country (adversarial review round 2, TWO-40
+                // follow-up - Han finding). Same call `openDropdown()`/the
+                // "Registered Company" chip handler already make before
+                // doing anything else - this listener was the one path that
+                // could reach `startReplacement()` (via the "Select a
+                // different sole trader" link, which is NOT gated behind an
+                // open dropdown the way the "Sole Trader" chip is) without
+                // it. Without this, a mint/lookup started for the old
+                // country resolves with `_enrollGeneration` never bumped,
+                // reads as still-current, and can pop a signup popup - or
+                // worse, silently publish a completed enrolment - for a
+                // country the buyer has already moved off.
+                if (window.TwoSoleTrader_Instance
+                    && typeof window.TwoSoleTrader_Instance.cancelEnrollment === 'function') {
+                    window.TwoSoleTrader_Instance.cancelEnrollment();
+                }
+
                 if (this.companyField && this.companyField.length > 0) {
                     this.companyField.val('');
                 }
