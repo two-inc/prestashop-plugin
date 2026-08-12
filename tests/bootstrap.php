@@ -290,6 +290,14 @@ namespace {
         public static array $orderDetails = [];
         /** @var string[] Every SQL string passed to Db::execute() */
         public static array $dbExecuted = [];
+        /**
+         * Regexes for DDL/DML the stub should REJECT (return false from
+         * Db::execute()) instead of applying. The real Db does fail - a database
+         * user with no ALTER privilege, a locked table - and code that assumes
+         * success is exactly what review round 4 found, so the suite needs a way
+         * to make it fail on purpose.
+         */
+        public static array $dbFailOn = [];
         /** @var array<int,array> Orders by id (controller specs) */
         public static array $orders = [];
         /** @var array<string,string> Existing DB triggers by name => CREATE sql */
@@ -391,6 +399,7 @@ namespace {
             self::$orderDetails = [];
             self::$orderStates = [];
             self::$dbExecuted = [];
+            self::$dbFailOn = [];
             self::$dbTriggers = [];
             self::$dbColumns = [];
             self::$twoPaymentRows = [];
@@ -1878,6 +1887,14 @@ namespace {
         {
             $sql = (string) $sql;
             StubStore::$dbExecuted[] = $sql;
+            // Injected failure, checked BEFORE any bookkeeping: a statement the
+            // real database refused changed nothing, so the simulated schema must
+            // not record it either.
+            foreach (StubStore::$dbFailOn as $failPattern) {
+                if (preg_match($failPattern, $sql)) {
+                    return false;
+                }
+            }
             if (preg_match('/REPLACE INTO `ps_twopayment_surcharge_sync` \(`id_cart`, `seq`, `updated_at`\) VALUES \((\d+), (\d+)/', $sql, $m)) {
                 StubStore::$surchargeSyncSeqs[(int) $m[1]] = (int) $m[2];
             }

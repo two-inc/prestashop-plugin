@@ -70,6 +70,7 @@ final class OrderCompanyPersistenceSpec
         self::testUpdatePayloadFallsBackWhenNothingIsStored();
         self::testSnapshotComesFromTheInvoiceAddressNotTheDeliveryAddress();
         self::testTwoPrefixedIdentifierRoundTripsByteIdentical();
+        self::testAFailedAlterOmitsTheColumnRatherThanLosingTheRow();
     }
 
     // -----------------------------------------------------------------
@@ -403,6 +404,48 @@ final class OrderCompanyPersistenceSpec
     }
 
     /** @return array<string,string> */
+    /**
+     * A column the database refused to add must be DROPPED FROM THE WRITE, never
+     * written anyway (review round 4).
+     *
+     * The failure is reachable without anyone doing anything wrong: files swapped
+     * in place without core running an upgrade, or a database user with no ALTER
+     * privilege. Naming a column that does not exist fails the ENTIRE insert - and
+     * that row carries `two_order_id`, the invoice URL and everything the later
+     * status syncs key on, written inside the confirmation callback for an order Two
+     * has already approved. Losing the snapshot costs an empty organisation number
+     * on two admin PUTs. Losing the row costs the buyer their order.
+     *
+     * Degradation is PER COLUMN, so the half that succeeded is still stored.
+     */
+    private static function testAFailedAlterOmitsTheColumnRatherThanLosingTheRow(): void
+    {
+        self::reset();
+        // Refuse exactly one of the two ALTERs, the way a real database would.
+        StubStore::$dbFailOn = ['/ALTER TABLE .* ADD `two_organization_number`/'];
+        $module = new TwopaymentTestHarness();
+
+        $module->setTwoOrderPaymentData(self::ORDER_ID, self::creationPaymentData());
+
+        $write = end(StubStore::$twoPaymentWrites);
+        TinyAssert::same('insert', (string) $write['op'], 'the row must still be written');
+        TinyAssert::false(
+            array_key_exists('two_organization_number', $write['data']),
+            'a column the ALTER could not add must be omitted from the write, not written anyway'
+        );
+        TinyAssert::true(
+            array_key_exists('two_company_name', $write['data']),
+            'the column that WAS added must still be written - degradation is per column'
+        );
+        // The payload the row exists for is untouched: this is the pre-TWO-40
+        // behaviour, which is the correct thing to degrade to.
+        TinyAssert::same(
+            'two-order-uuid',
+            (string) $write['data']['two_order_id'],
+            'the order identifier must survive a failed company-column ALTER'
+        );
+    }
+
     private static function creationPaymentData(): array
     {
         return array_merge(self::statusOnlyPaymentData('VERIFIED'), array(
