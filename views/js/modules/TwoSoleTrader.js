@@ -1040,8 +1040,15 @@ class TwoSoleTrader {
      *
      * @param {boolean} [trustedIdentity] Carried forward from the call being
      *   resumed - see getCurrentBuyer()'s own JSDoc for what this means.
+     * @param {boolean} [retriedTrustedLookup] Carried forward too (TWO-40
+     *   round 9, adversarial review finding, Vader): without this, a resume
+     *   landing mid-retry silently reset the retry cap to zero by calling
+     *   getCurrentBuyer() with its default `false` - each abandon/resume
+     *   cycle during the 800ms wait bought the flow ANOTHER retry, contrary
+     *   to the "one retry, not a backoff loop" contract documented on
+     *   getCurrentBuyer()'s own 404 branch.
      */
-    resumeIfStillEnrolling(trustedIdentity = false) {
+    resumeIfStillEnrolling(trustedIdentity = false, retriedTrustedLookup = false) {
         if (!this.enrolling) {
             return;
         }
@@ -1064,7 +1071,7 @@ class TwoSoleTrader {
             // fix): a resume riding a call that itself followed a real OTP
             // round trip is still standing in for that same authenticated
             // buyer, not a fresh, unauthenticated heuristic probe.
-            self.getCurrentBuyer(trustedIdentity);
+            self.getCurrentBuyer(trustedIdentity, retriedTrustedLookup);
         }, 0);
     }
 
@@ -1131,6 +1138,48 @@ class TwoSoleTrader {
         const superseded = function () {
             return self._enrollGeneration !== generation;
         };
+        // Set true by the 404-retry branch below, and read by `.finally()`
+        // (TWO-40 round 9, adversarial review finding, Han + Vader): a
+        // `setTimeout` scheduled from inside a `.then()` handler is a bare
+        // side effect, not something the promise chain awaits - returning
+        // from that handler settles the promise immediately, so the chained
+        // `.finally()` fires right away too, ~800ms BEFORE the retry
+        // actually runs. Releasing `isFetchingBuyer` there reopens the exact
+        // concurrent-lookup window the round-5 guard exists to close, for
+        // the whole retry wait. `.finally()` below checks this flag and, if
+        // set, leaves the guard alone - `settle()` releases it instead,
+        // called from the retry's own callback right before it decides what
+        // to do, the same moment it would have been released for an
+        // ordinary (non-retry) request.
+        let retryScheduled = false;
+        // @returns {boolean} true if a pending resume was consumed and
+        //   re-issued - the caller must not ALSO act on its own terms in
+        //   that case (round 9 follow-up: the retry's own callback below
+        //   used to check `isFetchingBuyer` AFTER calling this to decide
+        //   whether to defer, but that flag is exactly what THIS call just
+        //   set when it fired the resume, so the check always read "busy"
+        //   because of its own action, not someone else's, and queued a
+        //   second, redundant resume that fired again once the first one's
+        //   own request finished - a self-inflicted double buyer lookup for
+        //   one authentication event. JS is single-threaded and everything
+        //   here runs synchronously, so if a resume WASN'T fired, nothing
+        //   else could have raced `isFetchingBuyer` true in the meantime
+        //   either - the caller does not need to check it itself).
+        const settle = function () {
+            self.isFetchingBuyer = false;
+            // A genuine 'ACCEPTED' that arrived while THIS request (or its
+            // retry) was still out set this flag instead of issuing its own
+            // call - see bindPopupMessageListener(). Re-issue it now, fresh,
+            // for whichever generation is CURRENT.
+            if (self._pendingTrustedResume) {
+                self._pendingTrustedResume = false;
+                if (self._enrollGeneration === self._tokensGeneration) {
+                    self.getCurrentBuyer(true);
+                    return true;
+                }
+            }
+            return false;
+        };
         // Same reasoning as fetchTokens()'s own try/catch around its
         // pre-fetch setup (TWO-40 round 5 follow-up, Vader finding round 2):
         // `this.tokens.autofill_token` below throws synchronously if
@@ -1177,7 +1226,7 @@ class TwoSoleTrader {
                     // with the stale `buyer`/`generation` closures) - a
                     // buyer lookup, unlike a token mint, must be re-run for
                     // the current identity/generation, not replayed.
-                    self.resumeIfStillEnrolling(trustedIdentity);
+                    self.resumeIfStillEnrolling(trustedIdentity, retriedTrustedLookup);
                     return;
                 }
                 if (trustedIdentity && !buyer && !retriedTrustedLookup) {
@@ -1194,10 +1243,43 @@ class TwoSoleTrader {
                     // an occasional timing race. One retry, after a short
                     // delay, before treating "not visible yet" the same as
                     // "no registration exists". `retriedTrustedLookup` caps
-                    // it at exactly one - this is not a backoff loop.
+                    // it at exactly one - this is not a backoff loop, and
+                    // `resumeIfStillEnrolling()` now forwards it too (round 9
+                    // finding, Vader) - without that, a resume landing
+                    // mid-wait bought the flow another retry, resetting the
+                    // cap to zero every abandon/resume cycle.
+                    retryScheduled = true;
                     setTimeout(function () {
+                        // The guard was deliberately left held for this
+                        // entire wait, not released back in `.finally()` -
+                        // see `settle()`'s own comment above. Release it now,
+                        // right before deciding what to do - the same moment
+                        // it would have been released for an ordinary
+                        // (non-retry) request.
+                        if (settle()) {
+                            // A pending trusted resume was waiting (a SECOND
+                            // 'ACCEPTED' that arrived during this wait, found
+                            // the guard held, and flagged itself instead of
+                            // firing its own lookup - see
+                            // bindPopupMessageListener()). settle() just
+                            // re-issued it fresh; that already stands in for
+                            // THIS retry, so do not also fire a second,
+                            // concurrent lookup on top of it (round 9
+                            // follow-up finding, self-caught: the earlier
+                            // shape of this check queued a redundant resume
+                            // for its own action, not someone else's).
+                            return;
+                        }
+                        if (!self.enrolling) {
+                            // Already settled by another lookup while this
+                            // retry was waiting (success, error, or a genuine
+                            // cancel) - mirrors resumeIfStillEnrolling()'s own
+                            // re-check (round 9 finding, Han + Vader);
+                            // nothing left to retry for.
+                            return;
+                        }
                         if (superseded()) {
-                            self.resumeIfStillEnrolling(trustedIdentity);
+                            self.resumeIfStillEnrolling(trustedIdentity, true);
                             return;
                         }
                         self.getCurrentBuyer(trustedIdentity, true);
@@ -1252,28 +1334,20 @@ class TwoSoleTrader {
                     // it silently. (The retry itself can fail again, but
                     // that failure will correctly reach showError()/notify
                     // for the then-current generation on its own terms.)
-                    self.resumeIfStillEnrolling(trustedIdentity);
+                    self.resumeIfStillEnrolling(trustedIdentity, retriedTrustedLookup);
                     return;
                 }
                 self.showError();
             })
             .finally(function () {
-                self.isFetchingBuyer = false;
-                // Round 8 adversarial review finding (Han): a genuine
-                // 'ACCEPTED' that arrived while THIS request was still out
-                // set this flag instead of issuing its own call, below - see
-                // bindPopupMessageListener(). Re-issue it now, fresh, for
-                // whichever generation is CURRENT: unlike resumeIfStillEnrolling()'s
-                // setTimeout(0), which only works because it defers past a
-                // .finally() already scheduled to run first, this one has no
-                // request of its own in flight yet to wait on, so it is
-                // re-checked and re-issued right here instead.
-                if (self._pendingTrustedResume) {
-                    self._pendingTrustedResume = false;
-                    if (self._enrollGeneration === self._tokensGeneration) {
-                        self.getCurrentBuyer(true);
-                    }
+                if (retryScheduled) {
+                    // Guard intentionally left held - see `settle()` and the
+                    // retry's own setTimeout callback above, which releases
+                    // it right before firing, not now (round 9 adversarial
+                    // review finding, Han + Vader).
+                    return;
                 }
+                settle();
             });
     }
 
