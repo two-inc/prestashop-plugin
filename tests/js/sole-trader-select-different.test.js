@@ -356,3 +356,24 @@ describe('country change abandons an in-flight replacement flow (e, round-2 revi
         instance.destroy();
     });
 });
+
+describe('destroy() abandons an in-flight replacement flow too (f, round-3 review finding)', () => {
+    test('destroy() calls TwoSoleTrader_Instance.cancelEnrollment() - covers updatedAddressForm rebuilds, not just a country change', () => {
+        const instance = makeSearchInstance();
+        instance.adoptSoleTraderBuyer(NAMED_BUYER);
+
+        const cancelEnrollment = jest.fn();
+        global.window.TwoSoleTrader_Instance = {
+            startReplacement: jest.fn(),
+            cancelEnrollment: cancelEnrollment
+        };
+
+        // TwoCheckoutManager.handleAddressFormUpdate() destroys and rebuilds
+        // this instance on EVERY `updatedAddressForm` firing (not only a
+        // country change - that's the round-2 fix's gap) - destroy() itself
+        // is the one choke point common to all of those triggers.
+        instance.destroy();
+
+        expect(cancelEnrollment).toHaveBeenCalledTimes(1);
+    });
+});

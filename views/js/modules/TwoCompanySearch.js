@@ -5665,6 +5665,29 @@ class TwoCompanySearch {
         } catch (e) {
             // no-op
         }
+        // Its own try, same reason (adversarial review round 3, TWO-40
+        // follow-up - Vader finding): `TwoCheckoutManager.handleAddressFormUpdate()`
+        // destroys and rebuilds this instance on EVERY `updatedAddressForm`
+        // firing, not only on a country change - PrestaShop emits that event
+        // for far more than country changes (see the comment at its own call
+        // site). The country-select listener's own `cancelEnrollment()` call
+        // (round 2) only covers the country-change trigger; this covers every
+        // OTHER address-form replacement too. Without it, a sole-trader
+        // enrolment started against THIS instance, still in flight when the
+        // form gets replaced, resolves later against whatever instance is
+        // mounted then - `TwoSoleTrader.applyBuyer()` resolves
+        // `TwoCheckoutManager_Instance.companySearch` fresh, not a captured
+        // reference - silently adopting the identity into an address context
+        // the buyer has since moved on from, ungated because no generation
+        // bump ever ran for this trigger.
+        try {
+            if (window.TwoSoleTrader_Instance
+                && typeof window.TwoSoleTrader_Instance.cancelEnrollment === 'function') {
+                window.TwoSoleTrader_Instance.cancelEnrollment();
+            }
+        } catch (e) {
+            // no-op
+        }
         // Its own try for the same reason as the reverse link: the panel
         // carries live click/keydown/focus handlers on nodes that would
         // otherwise outlive this instance.
