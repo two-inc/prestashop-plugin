@@ -100,24 +100,6 @@ describe('visibility', () => {
 });
 
 describe('activation', () => {
-    test('clicking it starts sole-trader enrolment and closes the panel after a paint', () => {
-        const soleTrader = stubSoleTrader(true);
-        makeInstance();
-        openPanel();
-        typeQuery('exa');
-
-        panelParts().soleTrader.trigger('click');
-
-        expect(soleTrader.startEnrollment).toHaveBeenCalledTimes(1);
-        // Not synchronous any more (TWO-40 round 3 paint-timing fix) - see the
-        // regression test below for why.
-        expect(shown(panelParts().panel)).toBe(true);
-
-        jest.advanceTimersByTime(20);
-
-        expect(shown(panelParts().panel)).toBe(false);
-    });
-
     /**
      * Regression test (TWO-40 round 3, live-verified against a real browser -
      * see .ai/decisions.md): PR #159 added renderChipSelection() but called it
@@ -126,12 +108,13 @@ describe('activation', () => {
      * panel's `display:none` hid it again - zero rendered frames ever showed
      * the selection to a buyer, even though jsdom (which has no render/paint
      * step) reported the class as set immediately and PR #159's own test
-     * passed on exactly that basis. This pins the actual requirement: the
-     * panel must still be visibly OPEN, with the class already applied, for
-     * at least one tick after the click - not merely "the DOM node eventually
-     * carries the class, in a document nobody was watching".
+     * passed on exactly that basis. Superseded functionally by the round-4
+     * keep-open behaviour below (the panel now stays open far longer than one
+     * frame), but pinned in its own right: the selection must be visible
+     * WHILE the panel is still open, not merely "eventually true in a
+     * document nobody was watching".
      */
-    test('the selected chip stays visibly open for at least one frame before the panel closes', () => {
+    test('the selected chip is visibly applied while the panel is still open, not only after it closes', () => {
         stubSoleTrader(true);
         makeInstance();
         openPanel();
@@ -139,14 +122,40 @@ describe('activation', () => {
         const { soleTrader } = panelParts();
         soleTrader.trigger('click');
 
-        // Still open AND already showing the selection - this is the frame a
-        // real buyer would actually see.
         expect(shown(panelParts().panel)).toBe(true);
         expect(soleTrader.hasClass('two-company-mode-chip--selected')).toBe(true);
+    });
 
-        jest.advanceTimersByTime(20);
+    /**
+     * TWO-40 round 4, Doug's explicit request: "keep the company search
+     * control open, show spinner in query field" for the duration of the
+     * Sole Trader autofill round trip. Driven by the REAL settle event
+     * TwoSoleTrader.js's notifyEnrollmentSettled() fires (see
+     * TwoSoleTrader.js), not a fixed timeout - the panel must stay open for
+     * however long the actual call takes, and no longer.
+     */
+    test('clicking it starts sole-trader enrolment, keeps the panel open with the query-field spinner, and only closes when the flight settles', () => {
+        const soleTrader = stubSoleTrader(true);
+        makeInstance();
+        openPanel();
+        typeQuery('exa');
+
+        panelParts().soleTrader.trigger('click');
+
+        expect(soleTrader.startEnrollment).toHaveBeenCalledTimes(1);
+        expect(shown(panelParts().panel)).toBe(true);
+        expect(panelParts().query.hasClass('two-company-search-loading')).toBe(true);
+
+        // No fixed timeout closes it - it would still be open five seconds
+        // later if the real call were still out.
+        jest.advanceTimersByTime(5000);
+        expect(shown(panelParts().panel)).toBe(true);
+        expect(panelParts().query.hasClass('two-company-search-loading')).toBe(true);
+
+        document.dispatchEvent(new CustomEvent('two:sole-trader-flight-settled'));
 
         expect(shown(panelParts().panel)).toBe(false);
+        expect(panelParts().query.hasClass('two-company-search-loading')).toBe(false);
     });
 
     test('does nothing destructive if TwoSoleTrader_Instance is missing', () => {

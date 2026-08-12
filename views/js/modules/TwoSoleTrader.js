@@ -968,6 +968,10 @@ class TwoSoleTrader {
                     self.applyBuyer(buyer, generation);
                 } else if (self.container() && self.container().querySelector('.two-sole-trader__prompt')) {
                     self.showPrompt();
+                    // No error, but nothing left for this click's own round
+                    // trip to wait on - the flow now waits on the buyer
+                    // clicking the on-page prompt, a separate user action.
+                    self.notifyEnrollmentSettled();
                 } else {
                     // TWO-40 follow-up: on the address-editor page there is no
                     // `.two-sole-trader` container at all (it is only rendered
@@ -982,7 +986,9 @@ class TwoSoleTrader {
                     // here, still async off the original click, is not
                     // blocked in practice. Payment-step keeps the two-click
                     // showPrompt()->openPopup() flow unchanged since its
-                    // container/prompt element exists there.
+                    // container/prompt element exists there. openPopup()
+                    // itself notifies from both of its own branches (opened
+                    // fine, or blocked) - see there.
                     self.openPopup();
                 }
             })
@@ -1103,6 +1109,7 @@ class TwoSoleTrader {
                     self.enrolling = false;
                     self.stopObserving();
                     document.dispatchEvent(new CustomEvent('two:sole-trader-ready'));
+                    self.notifyEnrollmentSettled();
                 } else {
                     self.showError();
                 }
@@ -1226,12 +1233,20 @@ class TwoSoleTrader {
             // without a `.two-sole-trader__error` element (containerless
             // address-page path, TWO-40 follow-up) - console.error is the
             // only signal left there, so it is not a completely silent
-            // dead end even in that edge case.
+            // dead end even in that edge case. showError() also notifies
+            // (TWO-40 round 4) - do not ALSO notify below, or a blocked
+            // popup would fire the settle event twice for one click.
             this.showError();
             if (!this.container()) {
                 // eslint-disable-next-line no-console
                 console.error('Two: sole-trader signup popup was blocked and no on-page error UI is available here.');
             }
+        } else {
+            // Opened fine - this click's own round trip has handed off to
+            // the popup window, whether called directly from
+            // getCurrentBuyer() (no on-page prompt to show first) or from
+            // showPrompt()'s own click listener (TWO-40 round 4).
+            this.notifyEnrollmentSettled();
         }
         return popup;
     }
@@ -1338,6 +1353,35 @@ class TwoSoleTrader {
         if (error) {
             error.style.display = 'inline';
         }
+        // Every showError() call site is the LAST thing its branch does - a
+        // terminal state for whichever round trip led here (token mint,
+        // buyer lookup, or a blocked popup) - so this single spot covers
+        // every failure exit without a notify at each call site. See
+        // notifyEnrollmentSettled() for what this is for.
+        this.notifyEnrollmentSettled();
+    }
+
+    /**
+     * Tell TwoCompanySearch.js's in-flight spinner (TWO-40 round 4) that
+     * THIS click's own round trip has reached a terminal state, whatever
+     * that state is - a completed autofill, a signup prompt/popup handed
+     * off to, or a failure. Fired from every terminal branch of
+     * startEnrollment()'s call graph:
+     *  - showError() (covers both fetchTokens() failure paths, the
+     *    getCurrentBuyer() catch, and openPopup()'s popup-blocked branch)
+     *  - getCurrentBuyer()'s showPrompt()/openPopup() branches (no error,
+     *    but nothing left for the spinner to wait on - the flow has handed
+     *    off to on-page prompt UI or a popup window)
+     *  - applyBuyer()'s success branch
+     *
+     * Deliberately NOT gated on `_enrollGeneration`: TwoCompanySearch.js's
+     * listener is bound fresh per click and unbound on its own next close,
+     * so a stale event from an abandoned attempt finding no listener left
+     * to hear it is already a no-op, the same way a stale popup message
+     * finding this object gone would be.
+     */
+    notifyEnrollmentSettled() {
+        document.dispatchEvent(new CustomEvent('two:sole-trader-flight-settled'));
     }
 }
 
