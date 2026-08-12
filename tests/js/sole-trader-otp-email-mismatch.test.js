@@ -356,3 +356,118 @@ test('an ACCEPTED that arrives while a lookup is already in flight is not droppe
         instance.destroy();
     }
 });
+
+/**
+ * TWO-40 round 9 adversarial review (Han + Vader, convergent): the 404-retry
+ * fix's own `setTimeout(..., 800)` is a bare side effect of the `.then()`
+ * handler that scheduled it - returning from that handler settles the
+ * promise immediately, so the chained `.finally()` released `isFetchingBuyer`
+ * right away, roughly 800ms BEFORE the retry itself ran. For the whole wait,
+ * the re-entrancy guard read `false` even though a retry was logically still
+ * pending - reopening the exact concurrent-lookup window the round-5 guard
+ * exists to close, for a second 'ACCEPTED' landing mid-wait. Must now stay
+ * held for the entire wait, released only right before the retry decides
+ * what to do.
+ */
+test('the guard stays held for the whole 404-retry wait, not just until the retry is scheduled', async () => {
+    const publishes = stubManager();
+    global.window.TwoCompanyNumber = { forDisplay: (v) => v };
+    document.body.insertAdjacentHTML('beforeend', "<input name='email' value='order-contact@example.test' />");
+
+    let buyerLookupCalls = 0;
+    global.window.fetch = (url) => {
+        if (String(url).includes('soleTraderAvailability')) {
+            return Promise.resolve({ json: () => Promise.resolve({ success: true, available: true }) });
+        }
+        if (String(url).includes('soleTraderTokens')) {
+            return Promise.resolve({
+                json: () => Promise.resolve({
+                    success: true,
+                    autofill_token: 'af-token',
+                    delegation_token: 'del-token',
+                    signup_url: 'https://signup.example.test/',
+                    country: 'GB'
+                })
+            });
+        }
+        if (String(url).includes('/autofill/v1/buyer/current')) {
+            buyerLookupCalls += 1;
+            if (buyerLookupCalls === 1) {
+                // The passive probe right after the mint - genuinely no
+                // registration yet.
+                return Promise.resolve({ ok: false, status: 404 });
+            }
+            if (buyerLookupCalls === 2) {
+                // The trusted lookup triggered by the FIRST 'ACCEPTED' - the
+                // server has not caught up yet, so this schedules the
+                // 800ms retry.
+                return Promise.resolve({ ok: false, status: 404 });
+            }
+            // Whichever call the guard being held correctly routed here
+            // (the retry itself, or a re-issued pending resume) - now
+            // visible.
+            return Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({
+                    email: 'sole-trader-real-account@example.test',
+                    company_name: 'Sole Trader AS',
+                    organization_number: '923456789'
+                })
+            });
+        }
+        return Promise.resolve({ json: () => Promise.resolve({ success: true }) });
+    };
+    global.fetch = global.window.fetch;
+
+    jest.useFakeTimers();
+    try {
+        const instance = build();
+        try {
+            instance.startEnrollment();
+            await flushPromises();
+            expect(buyerLookupCalls).toBe(1);
+
+            // First 'ACCEPTED' - triggers the trusted lookup that 404s and
+            // schedules the 800ms retry.
+            window.dispatchEvent(new window.MessageEvent('message', {
+                data: 'ACCEPTED',
+                origin: 'https://signup.example.test'
+            }));
+            await flushPromises();
+            await flushPromises();
+            expect(buyerLookupCalls).toBe(2);
+
+            // A SECOND 'ACCEPTED' lands mid-wait (popups can legitimately
+            // fire more than once, e.g. on refocus). If the guard had
+            // already been released (the bug), this would fire its own,
+            // third, concurrent lookup right now. It must not: the guard is
+            // still held, so this is flagged via `_pendingTrustedResume`
+            // instead, exactly like the "already in flight" test above.
+            window.dispatchEvent(new window.MessageEvent('message', {
+                data: 'ACCEPTED',
+                origin: 'https://signup.example.test'
+            }));
+            await flushPromises();
+            expect(buyerLookupCalls).toBe(2);
+
+            // The 800ms retry fires. It must find the guard held by nothing
+            // of its own doing - and settle() releasing it must yield to the
+            // flagged pending resume rather than firing a duplicate lookup
+            // on top of it.
+            jest.advanceTimersByTime(800);
+            await flushPromises();
+            await flushPromises();
+            await flushPromises();
+
+            expect(buyerLookupCalls).toBe(3);
+            expect(publishes).toEqual([{ company: 'Sole Trader AS', companyid: '923456789' }]);
+            // Exactly one apply - not two, even though two 'ACCEPTED'
+            // messages arrived.
+            expect(publishes.length).toBe(1);
+        } finally {
+            instance.destroy();
+        }
+    } finally {
+        jest.useRealTimers();
+    }
+});
