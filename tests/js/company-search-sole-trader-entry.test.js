@@ -158,7 +158,7 @@ describe('activation', () => {
         expect(panelParts().query.hasClass('two-company-search-loading')).toBe(false);
     });
 
-    test('does nothing destructive if TwoSoleTrader_Instance is missing', () => {
+    test('does nothing destructive if TwoSoleTrader_Instance is missing, and still closes (after a paint) rather than dead-ending open', () => {
         stubSoleTrader(true);
         makeInstance();
         openPanel();
@@ -167,6 +167,19 @@ describe('activation', () => {
         delete global.window.TwoSoleTrader_Instance;
 
         expect(() => panelParts().soleTrader.trigger('click')).not.toThrow();
+
+        // TWO-40 round 5 (adversarial review, round 2 follow-up): this
+        // fallback branch does not go through beginSoleTraderLoading()'s
+        // keep-open window at all, so it needs its OWN paint-timing fix
+        // (deferred by one requestAnimationFrame) - round 1's review caught
+        // that the round-4 rewrite had silently dropped it here, reopening
+        // the exact same-tick "renderChipSelection() then closeDropdown()"
+        // bug this whole PR chain exists to fix. This assertion is what
+        // that fix's own regression test was missing: not just "doesn't
+        // throw", but "actually closes, deferred, rather than staying open
+        // forever with nothing left to close it".
+        jest.advanceTimersByTime(20);
+        expect(shown(panelParts().panel)).toBe(false);
     });
 
     /**
