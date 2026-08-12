@@ -855,7 +855,23 @@ class TwoSoleTrader {
      * click.
      */
     fetchTokens() {
-        if (this.isFetchingTokens || Date.now() < this.nextRetryAt) {
+        if (this.isFetchingTokens) {
+            // A request IS already out - this click is riding it, and its
+            // own resolution (the `else if (self.enrolling)` resume branch
+            // below) is what settles this click, not this return.
+            return;
+        }
+        if (Date.now() < this.nextRetryAt) {
+            // Round 7 adversarial review finding (Vader): unlike the
+            // isFetchingTokens branch above, NOTHING is in flight to ever
+            // resume this click - the cooldown predates the round-4 "keep
+            // panel open until settle" redesign and was never wired into
+            // it. A click landing inside the cooldown window used to
+            // dead-end with the panel/spinner stuck open indefinitely -
+            // TwoCompanySearch.js's listener had nothing left to ever hear.
+            // showError() also notifies (see its own comment), settling
+            // THIS click exactly as a real failed mint would.
+            this.showError();
             return;
         }
         this.isFetchingTokens = true;
@@ -1006,6 +1022,16 @@ class TwoSoleTrader {
      * from under it moments after starting. Deferring to a macrotask runs
      * this after that finally has already settled the flag, so the resumed
      * call's own true/false bracketing is undisturbed.
+     *
+     * Assumes `this` outlives the deferred macrotask - true today only
+     * because `window.TwoSoleTrader_Instance` is created exactly once
+     * (views/js/twopayment.js) and never destroyed/recreated in production.
+     * A future refactor that DOES tear down and rebuild the instance
+     * mid-page needs to clear any pending timer from this method in its
+     * own destroy(), the same way removeDropdown()/closeDropdown() already
+     * clear TwoCompanySearch.js's own timers - round 3 adversarial review
+     * observation (Vader), not fixed here because the precondition it
+     * guards against does not exist in this codebase today.
      */
     resumeIfStillEnrolling() {
         if (!this.enrolling) {
@@ -1013,6 +1039,19 @@ class TwoSoleTrader {
         }
         const self = this;
         setTimeout(function () {
+            // Re-check at FIRE time, not just at schedule time (round 7
+            // adversarial review finding, Han): the gap between scheduling
+            // this macrotask and it actually running is real time in a real
+            // browser, and a second abandon can land in it - a second
+            // "Registered Company"/"Enter Manually" click, or another
+            // country change, calling cancelEnrollment() again before this
+            // fires. Without re-checking, this ran a full, unwanted lookup
+            // for a buyer who had already walked away from the flow a
+            // second time - on the no-match path, popping an unwanted
+            // signup window.
+            if (!self.enrolling) {
+                return;
+            }
             self.getCurrentBuyer();
         }, 0);
     }

@@ -379,6 +379,61 @@ test('a buyer lookup that resolves after abandon-then-retry during the lookup st
 });
 
 /**
+ * TWO-40 round 7, adversarial review round 3 finding (Han): resumeIfStillEnrolling()
+ * checked `enrolling` once, at SCHEDULE time, then deferred via setTimeout(0)
+ * - the real time gap between scheduling and firing is exactly wide enough
+ * for a SECOND abandonment to land in it. Without a re-check at fire time,
+ * the deferred callback ran a full, unwanted buyer lookup for someone who
+ * had already walked away from the flow a second time - on the no-match
+ * path, popping a signup window nobody asked for any more.
+ */
+test('a second abandonment landing during the deferred resume window does not fire an unwanted lookup', async () => {
+    buildAddressForm();
+    const openSpy = jest.fn(() => ({ closed: false }));
+    global.window.open = openSpy;
+    let resolveBuyer;
+    stubFetch({
+        buyer: () => new Promise((resolve) => { resolveBuyer = resolve; })
+    });
+    const { calls, handler } = recordSettled();
+
+    const instance = build();
+    instance.tokens = {
+        autofill_token: 'af-token',
+        delegation_token: 'del-token',
+        signup_url: 'https://signup.example.test/',
+        country: 'GB'
+    };
+    instance.enrolling = true;
+    instance.getCurrentBuyer(); // click 1: lookup 1 starts
+
+    instance.cancelEnrollment(); // abandon #1
+    instance.enrolling = true; // resumed, as startEnrollment() would set it
+    instance.getCurrentBuyer(); // click 2: no-ops, lookup 1 still in flight
+
+    resolveBuyer({ ok: false, status: 404 }); // lookup 1 settles, superseded
+    await flushPromises();
+    await flushPromises();
+    await flushPromises();
+
+    // A SECOND abandonment, landing in the gap before the deferred resume's
+    // setTimeout(0) has fired - `enrolling` is false again by the time it does.
+    instance.cancelEnrollment();
+    expect(instance.enrolling).toBe(false);
+
+    // Now let the deferred macrotask actually fire.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flushPromises();
+    await flushPromises();
+
+    // No lookup should have run for the abandoned second attempt - no fetch
+    // issued, no popup opened.
+    expect(openSpy).not.toHaveBeenCalled();
+    document.removeEventListener('two:sole-trader-flight-settled', handler);
+    instance.destroy();
+});
+
+/**
  * TWO-40 round 5 follow-up, adversarial review round 2 finding (Vader): the
  * synchronous stretch between setting isFetchingTokens/isFetchingBuyer true
  * and the fetch() call actually starting was unprotected. A throw there
@@ -415,6 +470,37 @@ test('a synchronous throw building the token-mint request does not permanently w
     errorSpy.mockRestore();
     document.removeEventListener('two:sole-trader-flight-settled', handler);
     instance.destroy();
+});
+
+/**
+ * TWO-40 round 7, adversarial review round 3 finding (Vader): the retry
+ * cooldown (`nextRetryAt`) predates the round-4 "keep panel open until
+ * settle" redesign and was never wired into it. Unlike the isFetchingTokens
+ * branch (where a request really is out and will eventually resume this
+ * click), a click landing inside the cooldown window has NOTHING in flight
+ * to ever settle it - the panel/spinner used to be stuck open indefinitely,
+ * recoverable only by an unrelated action (Escape, reopening, switching
+ * chips). A buyer clicking "I'm a sole trader" again within 5 seconds of a
+ * failed attempt - "did that work? let me retry" - is an entirely ordinary
+ * gesture, not an edge case.
+ */
+test('a click landing inside the retry cooldown still settles its own flight, rather than dead-ending open', () => {
+    buildPaymentTile();
+    stubFetch({ tokens: () => Promise.resolve({ json: () => Promise.resolve({ success: false }) }) });
+    const instance = build();
+    const { calls, handler } = recordSettled();
+
+    instance.startEnrollment(); // click 1: mint fails, arms the cooldown
+    return flushPromises().then(() => flushPromises()).then(() => {
+        expect(instance.nextRetryAt).toBeGreaterThan(Date.now());
+        expect(calls.length).toBe(1);
+
+        instance.startEnrollment(); // click 2: lands inside the cooldown
+
+        expect(calls.length).toBe(2);
+        document.removeEventListener('two:sole-trader-flight-settled', handler);
+        instance.destroy();
+    });
 });
 
 test('a synchronous throw building the buyer-lookup request does not permanently wedge getCurrentBuyer()', () => {
