@@ -180,6 +180,10 @@ class TwoCompanySearch {
         // the field turns it back off.
         this._manualEntry = false;
         this._backToSearchLink = null;
+        // "Select a different sole trader" reverse link (TWO-40 follow-up) -
+        // same shape as `_backToSearchLink` above, for a completed
+        // sole-trader enrolment instead of manual entry.
+        this._selectDifferentSoleTraderLink = null;
 
         // The anchored dropdown panel (TWO-25326 §1). Supersedes the
         // click-to-reveal chip TWO-25288 element 2 shipped.
@@ -3892,6 +3896,11 @@ class TwoCompanySearch {
         // intent would keep credit-checking a company the buyer has explicitly
         // moved off, and would do it in preference to the cleared cookie.
         this.publishConfirmedSelection('', '');
+        // FIFTH half (TWO-40 follow-up): whatever sole-trader identity this
+        // clear is walking away from, the "Select a different sole trader"
+        // link is the inverse of a POPULATED identity and must go with it -
+        // same reasoning as renderBackToSearchLink()'s companion removal.
+        this.removeSelectDifferentSoleTraderLink();
     }
 
     /**
@@ -4080,6 +4089,74 @@ class TwoCompanySearch {
             this._backToSearchLink = null;
         }
         $('.two-company-search-back').off('.twoManualEntry').remove();
+    }
+
+    /**
+     * @returns {string} caption for renderSelectDifferentSoleTraderLink()
+     */
+    getSelectDifferentSoleTraderText() {
+        return (window.twopayment && window.twopayment.i18n
+                && window.twopayment.i18n.company_search_select_different_sole_trader)
+            || 'Select a different sole trader';
+    }
+
+    /**
+     * Render the "Select a different sole trader" link below the company
+     * field (TWO-40 follow-up) - same slot, same styling/gating shape as
+     * renderBackToSearchLink() above, but for a COMPLETED sole-trader
+     * enrolment rather than manual entry. Called by adoptSoleTraderBuyer()
+     * once a named identity has actually landed in the company field.
+     *
+     * A real `<button type="button">` for the same reason
+     * renderBackToSearchLink() is one: focusable, Enter/Space-activated,
+     * announced as a button, and `type="button"` so it cannot submit the
+     * address form it sits inside.
+     */
+    renderSelectDifferentSoleTraderLink() {
+        if (!this.companyField || this.companyField.length === 0) {
+            return;
+        }
+        this.removeSelectDifferentSoleTraderLink();
+
+        const link = $('<button type="button"></button>')
+            .addClass('two-company-select-different-sole-trader')
+            .text(this.getSelectDifferentSoleTraderText());
+        link.on('click.twoSoleTraderReplace', (event) => {
+            event.preventDefault();
+            // Same accordion-toggle reason as renderBackToSearchLink()'s own
+            // stopPropagation (#30.x.14 bug 2.5): this button is a plain
+            // sibling inside the address step's markup, not something the
+            // theme's delegated collapse handler is meant to hear from.
+            event.stopPropagation();
+            if (window.TwoSoleTrader_Instance
+                && typeof window.TwoSoleTrader_Instance.startReplacement === 'function') {
+                window.TwoSoleTrader_Instance.startReplacement();
+            }
+        });
+
+        // Same placement as renderBackToSearchLink(): appended to the field
+        // wrapper so it lands below the org-number hint and the (hidden
+        // here) dropdown panel that share that wrapper.
+        const wrapper = this.companyField.parent();
+        if (wrapper.length && wrapper.hasClass('two-company-field-wrap')) {
+            wrapper.append(link);
+        } else {
+            this.companyField.after(link);
+        }
+        this._selectDifferentSoleTraderLink = link;
+    }
+
+    /**
+     * Remove the "Select a different sole trader" link and unbind it. Same
+     * class-wide-sweep reasoning as removeBackToSearchLink().
+     */
+    removeSelectDifferentSoleTraderLink() {
+        if (this._selectDifferentSoleTraderLink) {
+            this._selectDifferentSoleTraderLink.off('.twoSoleTraderReplace');
+            this._selectDifferentSoleTraderLink.remove();
+            this._selectDifferentSoleTraderLink = null;
+        }
+        $('.two-company-select-different-sole-trader').off('.twoSoleTraderReplace').remove();
     }
 
     /**
@@ -5495,6 +5572,14 @@ class TwoCompanySearch {
         } catch (e) {
             // no-op
         }
+        // Its own try for the same reason as the reverse link above (TWO-40
+        // follow-up): a live listener on a node that outlives this instance
+        // otherwise.
+        try {
+            this.removeSelectDifferentSoleTraderLink();
+        } catch (e) {
+            // no-op
+        }
         // Its own try for the same reason as the reverse link: the panel
         // carries live click/keydown/focus handlers on nodes that would
         // otherwise outlive this instance.
@@ -5849,6 +5934,14 @@ class TwoCompanySearch {
         this.syncNotListedVisibility();
         this.syncSoleTraderEntryVisibility();
         this.syncRegisteredEntryVisibility();
+
+        // "Select a different sole trader" (TWO-40 follow-up): only once a
+        // NAMED identity actually landed in the company field above - the
+        // nameless branch earlier in this method clears that field instead,
+        // and there is nothing to offer to "replace" in that case.
+        if (name) {
+            this.renderSelectDifferentSoleTraderLink();
+        }
 
         return wrote;
     }
