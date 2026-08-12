@@ -1049,6 +1049,29 @@ class TwoSoleTrader {
                     return;
                 }
                 if (json && json.success) {
+                    // Put the enrolled identity INTO the form the buyer is
+                    // looking at - company name, organisation number, registered
+                    // address.
+                    //
+                    // Ordered before the publish below because the adoption may
+                    // DISOWN a previous selection (the blank-`company_name` branch
+                    // clears the stale hidden pair), and the publish is what
+                    // establishes the selection that must survive. Running the
+                    // publish first would have the clear tear down the pair that had
+                    // just been published. It is NOT ordered this way so that
+                    // setConfirmedCompanySelection() can see the written address:
+                    // that method captures only the selected address id and country
+                    // iso, never any address value.
+                    //
+                    // Delegated rather than reimplemented here. Every write into
+                    // the address form has to be attributable by the same
+                    // machinery that judges it later - the `data-two-company-name`
+                    // pairing tag, the `data-two-autofilled-value` marker, and the
+                    // cart-scoped mirror-write record - and all three live in
+                    // TwoCompanySearch. Three earlier attempts at this write-back
+                    // were withdrawn for hand-rolling it here instead
+                    // (`.ai/decisions.md`, 2026-08-10); see adoptSoleTraderBuyer().
+                    self.adoptEnrolledIdentity(buyer);
                     // TWO-25326 bug 8, review round 1: publish the enrolled
                     // sole trader as the confirmed selection, exactly as a
                     // search selection does.
@@ -1090,12 +1113,58 @@ class TwoSoleTrader {
     }
 
     /**
+     * Write the enrolled sole trader's data into the checkout form, through
+     * TwoCompanySearch (TWO-40).
+     *
+     * Resolved LAZILY, at call time, and that is required rather than tidy: the
+     * manager destroys and rebuilds its search instance on every
+     * `updatedAddressForm`, so a reference captured when this module was
+     * constructed would be to an instance that no longer owns any field on the
+     * page. The enrolment spans a popup round trip, which is easily long enough
+     * for one of those rebuilds.
+     *
+     * Fails SOFT, on purpose. The write is what the buyer sees; the order itself
+     * does not depend on it, because the identity also reaches the payload through
+     * the session record `saveCompany` has just written and the selection published
+     * beside this call. A missing search instance must therefore cost the fill, not
+     * the enrolment.
+     *
+     * @param {Object} buyer the `/autofill/v1/buyer/current` response
+     * @returns {boolean} whether anything was written
+     */
+    adoptEnrolledIdentity(buyer) {
+        try {
+            const manager = window.TwoCheckoutManager_Instance;
+            const search = manager && manager.companySearch;
+            if (!search || typeof search.adoptSoleTraderBuyer !== 'function') {
+                return false;
+            }
+            return search.adoptSoleTraderBuyer(buyer);
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /**
      * Publish a confirmed company/organisation-number pair to
      * TwoCheckoutManager, which is what the order-intent payload is built from
      * (TWO-25326 bug 8). Mirror of TwoCompanySearch.publishConfirmedSelection()
      * - the two modules are the only two places a company is captured, and they
      * must feed the same store or the intent check can be built for the entity
      * the buyer is NOT.
+     *
+     * Also stamps `_tileCompanySelected` (TWO-40 follow-up, live bug reported
+     * by Doug 2026-08-12: an order-intent check fired off this completion
+     * before the buyer had reached the payment step). TwoCompanySearch's
+     * onCompanySelected() stamps this same flag the instant a search RESULT is
+     * picked, and TwoCheckoutManager.canAutoTriggerOrderIntent() reads it as
+     * "the buyer has made their choice" before letting a generic
+     * mounted/re-rendered/periodic signal auto-fire a check in TILE mode -
+     * without it, a completed sole-trader enrolment was the one confirmed
+     * identity that never told that gate a real choice had actually been
+     * made. Harmless where the flag is not consulted (address mode; see
+     * canAutoTriggerOrderIntent()'s own doc on why address mode does not
+     * gate on it) and required where it is (tile mode).
      *
      * @param {string} company
      * @param {string} companyid
@@ -1108,6 +1177,7 @@ class TwoSoleTrader {
                 return;
             }
             manager.setConfirmedCompanySelection({ company: company, companyid: companyid });
+            manager._tileCompanySelected = true;
         } catch (e) {
             // no-op: presentation only, never a gate.
         }

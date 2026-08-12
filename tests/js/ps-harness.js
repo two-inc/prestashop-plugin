@@ -350,6 +350,16 @@ function buildAddressForm(options) {
  *        from doing that, and combined with blockContainers:false it is the shape
  *        that defeats a scope guard recognising address blocks by id alone: the only
  *        candidate left is the step wrapper, and the other address is still in it.
+ * @param {string} [options.dni] initial value of the identification input, emitted
+ *        as a real `value` ATTRIBUTE - i.e. what the SERVER rendered, on a saved
+ *        address that already carries an identification number. Only meaningful
+ *        alongside a countryId whose address format emits the field at all.
+ * @param {boolean} [options.formGroups] wrap each field in the
+ *        `<div class="form-group">` + `<label>` pair core's `form-fields.tpl`
+ *        emits around every address field (default false - the flat shape every
+ *        pre-existing spec here is written against). Pass true for anything about
+ *        a field's WRAPPER rather than the field: hiding the input alone leaves an
+ *        orphaned label, so the group is what the visibility rule targets.
  * @returns {void}
  */
 function buildAddressesStep(options) {
@@ -365,6 +375,31 @@ function buildAddressesStep(options) {
     const city = opts.city || '';
     const blockContainers = opts.blockContainers !== false;
     const blockIds = opts.blockIds !== false;
+    const dni = opts.dni || '';
+    const formGroups = opts.formGroups === true;
+
+    /**
+     * One rendered address field, optionally in core's own `.form-group` + label
+     * wrapper.
+     *
+     * @param {string} label the visible label text
+     * @param {string} control the input/select markup
+     * @returns {string}
+     */
+    const fieldGroup = function (label, control) {
+        if (!formGroups) {
+            return '        ' + control;
+        }
+
+        return [
+            '        <div class="form-group row">',
+            '          <label class="col-md-3 form-control-label">' + label + '</label>',
+            '          <div class="col-md-6">',
+            '            ' + control,
+            '          </div>',
+            '        </div>'
+        ].join('\n');
+    };
 
     const countryOption = function (value, label, iso) {
         const attr = isoAttrs ? ' data-iso-code="' + iso + '"' : '';
@@ -385,16 +420,19 @@ function buildAddressesStep(options) {
         }
         lines.push(
             '        <form method="POST" data-id-address="0">',
-            '        <input type="text" name="company" id="field-company" value="' + company + '">'
+            fieldGroup('Company', '<input type="text" name="company" id="field-company" value="' + company + '">')
         );
         if (DNI_COUNTRY_IDS.indexOf(String(countryId)) !== -1) {
-            lines.push('        <input type="text" name="dni" id="field-dni" value="" required>');
+            lines.push(fieldGroup(
+                'Identification number',
+                '<input type="text" name="dni" id="field-dni" value="' + dni + '" required>'
+            ));
         }
         lines.push(
-            '        <input type="text" name="vat_number" id="field-vat_number" value="">',
-            '        <input type="text" name="address1" id="field-address1" value="' + address1 + '">',
-            '        <input type="text" name="postcode" id="field-postcode" value="' + postcode + '">',
-            '        <input type="text" name="city" id="field-city" value="' + city + '">',
+            fieldGroup('VAT number', '<input type="text" name="vat_number" id="field-vat_number" value="">'),
+            fieldGroup('Address', '<input type="text" name="address1" id="field-address1" value="' + address1 + '">'),
+            fieldGroup('Zip/Postal code', '<input type="text" name="postcode" id="field-postcode" value="' + postcode + '">'),
+            fieldGroup('City', '<input type="text" name="city" id="field-city" value="' + city + '">'),
             '        <select id="field-id_country" class="form-control form-control-select js-country" name="id_country" required>',
             // `selected` unconditionally, as core emits it - see this function's
             // docblock. The real country option below carries it too.

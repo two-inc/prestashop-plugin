@@ -894,6 +894,413 @@ describe('a mirrored selection is a real selection, and the stale-selection guar
     });
 });
 
+/**
+ * TWO-40: the single organisation-number gate ANSWERS, and the mirror takes its
+ * record from that answer.
+ *
+ * writeOrganizationToAddressIdentifiers() returns whether the value actually
+ * reached a field. That return is not a convenience - it is the only thing that
+ * stops the mirror recording a write that never happened, and a recorded write the
+ * form does not hold is read as buyer tampering by the very next render, which
+ * pins the WHOLE secondary address.
+ *
+ * Every refusal path is pinned separately, because they are four independent
+ * conditions and a `return true` in any one of them produces the same defect.
+ */
+describe('the gate reports whether the number actually reached a field', () => {
+    /**
+     * A live instance with no selection to mirror, so the gate can be exercised
+     * on its own rather than through a write the mirror had already performed.
+     *
+     * @param {Object} [extraConfig]
+     * @returns {Object} `{search, root}`
+     */
+    function gateOn(extraConfig) {
+        const search = mount(null, extraConfig);
+        return { search: search, root: search.visibleAddressFormRoot() };
+    }
+
+    test('true when the value lands, which is the baseline everything else is a refusal of', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        const { search, root } = gateOn();
+
+        expect(search.writeOrganizationToAddressIdentifiers('12345678', false, root)).toBe(true);
+        expect(identifierField().val()).toBe('12345678');
+        expect(identifierField().attr(MARKER)).toBe('12345678');
+    });
+
+    test('false when the merchant has address population switched off', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        const { search, root } = gateOn({ addressLookupEnabled: false });
+
+        expect(search.writeOrganizationToAddressIdentifiers('12345678', false, root)).toBe(false);
+        expect(identifierField().val()).toBe('');
+        expect(identifierField().attr(MARKER)).toBeUndefined();
+    });
+
+    test('false for an empty value', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        const { search, root } = gateOn();
+
+        // And for one that is only whitespace, which trims to the same thing.
+        expect(search.writeOrganizationToAddressIdentifiers('', false, root)).toBe(false);
+        expect(search.writeOrganizationToAddressIdentifiers('   ', false, root)).toBe(false);
+        expect(identifierField().val()).toBe('');
+    });
+
+    /**
+     * TWO-40, Doug's ruling, Option A. An internal (`TWO:`) identifier is NEVER
+     * written into the visible `dni` field, and the gate answers FALSE for it.
+     *
+     * `false` is load-bearing rather than incidental: the mirror below takes
+     * `wroteNumber` from this answer, and recording a write that did not happen has
+     * the next render read the empty field as buyer tampering and pin the whole
+     * secondary address.
+     *
+     * A round that wrote the value there was tried and reversed. Core declares `dni`
+     * with `isDniLite` (`/^[0-9A-Za-z-.]{1,16}$/U`) at size 16, which
+     * `TWO:ST123456789012` fails twice - the colon is not in the class and it is 18
+     * characters - so core REFUSED TO SAVE THE ADDRESS, with the error landing on a
+     * field that round was hiding. It was also unreadable: this plugin's own
+     * extractOrgNumberFromAddress() validates `dni` against `/^[A-Z0-9\-]{5,20}$/i`,
+     * which rejects the colon too.
+     *
+     * The inverse of the test that used to stand here: re-introducing the write fails
+     * this.
+     */
+    test('FALSE for an internal `TWO:` identifier - it never reaches the visible field', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION, formGroups: true });
+        const { search, root } = gateOn();
+
+        expect(search.writeOrganizationToAddressIdentifiers('TWO:ST123456789012', false, root)).toBe(false);
+        expect(identifierField().val()).toBe('');
+        // Not claimed either: a marker on an empty field would let the clear path
+        // believe it had work to undo.
+        expect(identifierField().attr(MARKER)).toBeUndefined();
+        // And the field stays VISIBLE. There is no hiding rule any more - nothing
+        // internal reaches the field, whatever is in it belongs to the buyer, and a
+        // checkout-only hide could never have covered the address blocks, invoice
+        // PDFs and order emails core renders `dni` into.
+        const group = identifierField().closest('.form-group');
+        expect(group.length).toBe(1);
+        expect(group.get(0).style.display).toBe('');
+    });
+
+    test('false when every candidate field was skipped by onlyIfEmpty', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        identifierField().val('BUYER-OWN-ID');
+        const { search, root } = gateOn();
+
+        expect(search.writeOrganizationToAddressIdentifiers('12345678', true, root)).toBe(false);
+        // The buyer's own answer stands, and is not claimed as ours.
+        expect(identifierField().val()).toBe('BUYER-OWN-ID');
+        expect(identifierField().attr(MARKER)).toBeUndefined();
+    });
+
+    test('false when the country\'s address format carries no identification field at all', () => {
+        // Germany, the default render: nowhere to put a number, so nothing landed.
+        buildAddressesStep({ editing: 'invoice' });
+        const { search, root } = gateOn();
+
+        expect(identifierField().length).toBe(0);
+        expect(search.writeOrganizationToAddressIdentifiers('12345678', false, root)).toBe(false);
+    });
+});
+
+/**
+ * TWO-40: the record follows the WRITE, not the attempt.
+ *
+ * The mirror used to set `memory.organization` and report the `organization` half
+ * of the record from having CALLED the writer. A recorded write the form does not
+ * hold is read as buyer tampering by the very next render, which pins the WHOLE
+ * secondary address - so the record has to be taken from the writer's answer.
+ *
+ * An internal (`TWO:`) identifier is ONE of the ways that answer can be no (TWO-40,
+ * Option A): it never enters the visible `dni` field. So it is the sharpest case for
+ * this rule - the write is declined, and nothing may be recorded as written. The
+ * other refusals - lookup off, empty value, no field, every field skipped - are
+ * pinned in the describe above.
+ */
+describe('the record follows the write, not the attempt', () => {
+    const INTERNAL = { company: 'Sole Trader Test Co', companyid: 'TWO:ST123456789012', countryIso: 'ES' };
+    const REAL = { company: 'Acme SA', companyid: '12345678', countryIso: 'ES' };
+
+    test('an internal `TWO:` number is NOT claimed by the record, because it was not written', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        const memory = {};
+
+        mount(INTERNAL, { mirrorMemory: memory });
+
+        // The name still travels - only `dni` is skipped.
+        expect(companyField().val()).toBe('Sole Trader Test Co');
+        expect(identifierField().length).toBe(1);
+        expect(identifierField().val()).toBe('');
+
+        // Nothing recorded as written. A record claiming a number this empty field does
+        // not hold is precisely what the next render reads as buyer tampering, pinning
+        // the whole secondary address.
+        expect(memory.organization).toBe('');
+        expect(window.twopayment.mirror_writes.company).toBe('Sole Trader Test Co');
+        expect(window.twopayment.mirror_writes.organization).toBe('');
+        // The number is not LOST, though - it is owed, which is what keeps the hidden
+        // pair restorable across core's rebuilds.
+        expect(memory.organizationPending).toBe('TWO:ST123456789012');
+        // And the pair itself is published, uniformly with any other selection.
+        expect(organizationField().val()).toBe('TWO:ST123456789012');
+        expect(organizationField().attr('data-two-company-name')).toBe('Sole Trader Test Co');
+    });
+
+    test('a REAL number is recorded the same way, so the two are provably not on different paths', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        const memory = {};
+
+        mount(REAL, { mirrorMemory: memory });
+
+        expect(identifierField().val()).toBe('12345678');
+        expect(memory.organization).toBe('12345678');
+        expect(window.twopayment.mirror_writes.organization).toBe('12345678');
+    });
+
+    test('a write the gate genuinely refuses is still not claimed', () => {
+        // Address population off: the one refusal that leaves the name behind, because
+        // the name write is not an address-lookup write.
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        const memory = {};
+        const search = mount(REAL, { mirrorMemory: memory, addressLookupEnabled: false });
+        const root = search.visibleAddressFormRoot();
+
+        expect(search.writeOrganizationToAddressIdentifiers(REAL.companyid, false, root)).toBe(false);
+        expect(identifierField().val()).toBe('');
+        expect(identifierField().attr(MARKER)).toBeUndefined();
+    });
+});
+
+/**
+ * TWO-40: `organizationPending` is a DEBT - "there is nowhere to put this number
+ * yet" - and the mirror's own country write can rebuild the form into one that DOES
+ * have an identification field, which is what makes the debt worth recording.
+ *
+ * Since TWO-40 Option A the debt has a SECOND job, and it is why the condition is
+ * keyed on `!wroteNumber` rather than on "the form has no identification field". An
+ * internal (`TWO:`) identifier is never written into the visible `dni` field, so on a
+ * form that HAS that field the number still lands nowhere - and `organizationPending`
+ * is then the only surviving record of it. republishMirroredSelection() reads
+ * `organization || organizationPending` to restore the hidden `companyid` pair after
+ * core's country-change rebuild, so leaving both halves empty for a sole trader would
+ * take that restore away entirely.
+ */
+describe('a number with nowhere to go is owed, whatever shape it is', () => {
+    test('a real number with nowhere to go is owed', () => {
+        // Germany: the address format carries no identification field.
+        buildAddressesStep({ editing: 'invoice' });
+        const memory = {};
+
+        mount({ company: 'Acme Trading Ltd', companyid: '12345678', countryIso: 'GB' },
+            { mirrorMemory: memory });
+
+        expect(identifierField().length).toBe(0);
+        expect(companyField().val()).toBe('Acme Trading Ltd');
+        expect(memory.organizationPending).toBe('12345678');
+    });
+
+    test('an internal `TWO:` number on the same form is owed exactly as a real one is', () => {
+        buildAddressesStep({ editing: 'invoice' });
+        const memory = {};
+
+        mount({ company: 'Sole Trader Test Co', companyid: 'TWO:ST123456789012', countryIso: 'GB' },
+            { mirrorMemory: memory });
+
+        // Same form, same "nowhere to put it" shape, same name write - and now the same
+        // debt, because the gate has no verdict to give on the number's shape.
+        expect(identifierField().length).toBe(0);
+        expect(companyField().val()).toBe('Sole Trader Test Co');
+        expect(memory.organizationPending).toBe('TWO:ST123456789012');
+    });
+
+    /**
+     * THE SKIP PATH, and the case the old `identifierFields.length === 0` condition
+     * got wrong. The form HAS an identification field; the number is internal, so the
+     * write skips it and answers false. Both halves of the memory would be empty
+     * without this, and republishMirroredSelection() would have nothing to restore
+     * the pair from.
+     */
+    test('an internal number is owed on a form that DOES have the field, because it was skipped', () => {
+        // Spain: the address format carries the identification field.
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        const memory = {};
+
+        mount({ company: 'Sole Trader Test Co', companyid: 'TWO:ST123456789012', countryIso: 'ES' },
+            { mirrorMemory: memory });
+
+        // The premise: the field exists and stayed empty.
+        expect(identifierField().length).toBe(1);
+        expect(identifierField().val()).toBe('');
+        expect(companyField().val()).toBe('Sole Trader Test Co');
+        // Nothing recorded as WRITTEN - the record follows the write.
+        expect(memory.organization).toBe('');
+        // But the number is not lost.
+        expect(memory.organizationPending).toBe('TWO:ST123456789012');
+    });
+
+    /**
+     * What that debt buys: the pair is still restorable after core's rebuild has taken
+     * the hidden `companyid` with it. This is the assertion that fails if
+     * `organizationPending` goes back to being keyed on the field's absence.
+     */
+    test('and republishMirroredSelection() restores the pair from that debt alone', () => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        const memory = {};
+        const selection = { company: 'Sole Trader Test Co', companyid: 'TWO:ST123456789012', countryIso: 'ES' };
+
+        mount(selection, { mirrorMemory: memory });
+        expect(memory.organization).toBe('');
+        expect(memory.organizationPending).toBe('TWO:ST123456789012');
+
+        // Core rebuilds the address form; the hidden pairing field goes with it, and a
+        // fresh instance mounts over the new markup.
+        rebuildAddressesStepAsCoreDoes({ editing: 'invoice', countryId: ES_OPTION });
+        const search = mount(selection, { mirrorMemory: memory });
+        // The name is back, marked, from the mirror's own record.
+        expect(companyField().val()).toBe('Sole Trader Test Co');
+
+        expect(search.republishMirroredSelection()).toBe(true);
+
+        expect(organizationField().val()).toBe('TWO:ST123456789012');
+        expect(organizationField().attr('data-two-company-name')).toBe('Sole Trader Test Co');
+    });
+
+    /**
+     * The debt discharged on the very form the mirror's country write produces: a
+     * country whose address format DOES carry an identification field. A REAL number,
+     * because that is the only shape `dni` ever takes now.
+     */
+    test('and a rebuild into a country that has the field discharges a real number\'s debt', () => {
+        buildAddressesStep({ editing: 'invoice' });
+        const memory = {};
+        const selection = { company: 'Acme Trading Ltd', companyid: '12345678', countryIso: 'GB' };
+
+        mount(selection, { mirrorMemory: memory });
+        expect(memory.organizationPending).toBe('12345678');
+
+        rebuildAddressesStepAsCoreDoes({ editing: 'invoice', countryId: ES_OPTION });
+        mount(selection, { mirrorMemory: memory });
+
+        expect(identifierField().length).toBe(1);
+        expect(identifierField().val()).toBe('12345678');
+        expect(memory.organization).toBe('12345678');
+        expect(memory.organizationPending).toBe('');
+    });
+});
+
+/**
+ * TWO-40: the completion takes its answer from the writer too - it records what was
+ * actually placed - and a gate refusal settles the debt rather than leaving it
+ * owing.
+ */
+describe('the completion records what the writer actually placed', () => {
+    /**
+     * The state the completion acts on: a name the mirror wrote and marked, and a
+     * number it has not been able to place anywhere. Reached through the injected
+     * page-lifetime memory, which is where this state genuinely lives - the manager
+     * owns it precisely because it outlives the search instance.
+     *
+     * The memory is filled AFTER the mount deliberately: the completion also runs
+     * from init(), so a memory handed to the constructor would already have been
+     * consumed by the time the explicit call below is made, and the assertions would
+     * be reading a settled debt rather than the refusal under test.
+     *
+     * @param {string} pending
+     * @param {Object} [options] `formGroups` builds the fixture with core's own
+     *        `.form-group` wrappers (needed for anything about visibility); every
+     *        other key is passed to the instance's config.
+     * @returns {Object} `{search, memory}`
+     */
+    function withPendingNumber(pending, options) {
+        const opts = options || {};
+        const config = Object.assign({}, opts);
+        delete config.formGroups;
+        buildAddressesStep({
+            editing: 'invoice',
+            countryId: ES_OPTION,
+            formGroups: opts.formGroups === true
+        });
+        const memory = {};
+        const search = mount(null, Object.assign({ mirrorMemory: memory }, config));
+        memory.companyid = pending;
+        memory.company = 'Sole Trader Test Co';
+        memory.organization = '';
+        memory.organizationPending = pending;
+        companyField().val('Sole Trader Test Co');
+        companyField().attr(MARKER, 'Sole Trader Test Co');
+
+        return { search: search, memory: memory };
+    }
+
+    /**
+     * TWO-40, Doug's ruling, Option A. An internal (`TWO:`) pending number publishes
+     * THE PAIR - the hidden `companyid` and its `data-two-company-name` tag - exactly
+     * as a real one does, and leaves the visible `dni` field alone.
+     *
+     * The pair is the whole point. An untagged or absent `companyid` is what
+     * clearStaleOrganizationSelection() wipes on the buyer's next keystroke, and that
+     * single mechanism killed three previous attempts at this write-back. Only the
+     * visible field differs.
+     */
+    test('an internal `TWO:` pending number publishes the pair and leaves `dni` alone', () => {
+        const { search, memory } = withPendingNumber('TWO:ST123456789012', { formGroups: true });
+        const root = search.visibleAddressFormRoot();
+        // The premise: an empty, unmarked identification field is present.
+        expect(identifierField().length).toBe(1);
+        expect(identifierField().val()).toBe('');
+
+        // False: nothing landed in the visible field, and the answer follows the
+        // write rather than the attempt.
+        expect(search.completeMirroredOrganizationNumber(root)).toBe(false);
+
+        // The visible field is untouched, unclaimed and still visible.
+        expect(identifierField().val()).toBe('');
+        expect(identifierField().attr(MARKER)).toBeUndefined();
+        expect(identifierField().closest('.form-group').get(0).style.display).toBe('');
+        // The pair IS published - uniform with any other organisation number.
+        const organizationField = $("input[name='companyid']");
+        expect(organizationField.val()).toBe('TWO:ST123456789012');
+        expect(organizationField.attr('data-two-company-name')).toBe('Sole Trader Test Co');
+        // Nothing recorded as written to the secondary address, because nothing was.
+        expect(memory.organization).toBe('');
+        // Still OWING, deliberately: `organizationPending` is now the only surviving
+        // record of the number, and republishMirroredSelection() reads it to restore
+        // the pair after the NEXT rebuild too. Clearing it would work exactly once.
+        expect(memory.organizationPending).toBe('TWO:ST123456789012');
+    });
+
+    /**
+     * The other refusal branch, reached by the merchant switch rather than by the
+     * number's shape. Same treatment: the debt stays owing so the pair survives.
+     */
+    test('a gate refusal writes nothing and leaves the debt owing', () => {
+        const { search, memory } = withPendingNumber('12345678', { addressLookupEnabled: false });
+        const root = search.visibleAddressFormRoot();
+
+        expect(search.completeMirroredOrganizationNumber(root)).toBe(false);
+
+        expect(identifierField().val()).toBe('');
+        expect(identifierField().attr(MARKER)).toBeUndefined();
+        expect(memory.organization).toBe('');
+        expect(memory.organizationPending).toBe('12345678');
+    });
+
+    test('a real pending number completes too, so neither result above is an accident', () => {
+        const { search, memory } = withPendingNumber('12345678');
+        const root = search.visibleAddressFormRoot();
+
+        expect(search.completeMirroredOrganizationNumber(root)).toBe(true);
+
+        expect(identifierField().val()).toBe('12345678');
+        expect(memory.organization).toBe('12345678');
+        expect(memory.organizationPending).toBe('');
+    });
+});
+
 describe('when the mirror must be a true no-op', () => {
     test('when the selection carries a company name with no organisation number', () => {
         // Every other guard on this selection requires the PAIR - the manager's

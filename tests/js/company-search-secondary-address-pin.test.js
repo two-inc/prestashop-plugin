@@ -220,6 +220,131 @@ describe('the pin is triggered by ANY address field, address-wide', () => {
     });
 
     /**
+     * TWO-40: `address2` and `state` joined the tracked set when the sole-trader
+     * autofill started routing `building`/`apartment` into the second line and
+     * `region` into the state select (Doug's ruling). A buyer typing a second address
+     * line, or choosing a county, is stating an independent answer exactly as much as
+     * one typing a city - so it has to pin the address like any other field. While
+     * they were absent from the record the address-wide rule missed both cases.
+     */
+    test('the tracked field set includes the second address line and the state', () => {
+        // The whole list, not a containment check: a field silently dropped from it is
+        // a field the pin stops judging.
+        expect(TwoCompanySearch.MIRRORED_ADDRESS_FIELDS).toEqual([
+            'company',
+            'organization',
+            'country',
+            'address1',
+            'address2',
+            'postcode',
+            'city',
+            'state'
+        ]);
+    });
+
+    test('a SECOND ADDRESS LINE the buyer entered pins the whole address, exactly as a city does', () => {
+        buildAddressesStep({ editing: 'invoice' });
+        publishMirrorWrites(null);
+        // `address2` is a real PrestaShop address field, rendered for the country
+        // formats that ask for it; the fixture omits it, so it is added here.
+        street().after("<input type='text' name='address2' value='' />");
+        $("#invoice-address input[name='address2']").val('Second Buyer Line');
+
+        const search = mount(PICKED);
+
+        expect(search.secondaryAddressIsPinned(search.secondaryAddressFormRoot())).toBe(true);
+        expect(companyField().val()).toBe('');
+        expect(countrySelect().val()).toBe(SERVER_RENDERED_OPTION);
+    });
+
+    test('and an empty second address line does NOT pin it', () => {
+        buildAddressesStep({ editing: 'invoice' });
+        publishMirrorWrites(null);
+        street().after("<input type='text' name='address2' value='' />");
+
+        const search = mount(PICKED);
+
+        expect($("#invoice-address input[name='address2']").length).toBe(1);
+        expect(search.secondaryAddressIsPinned(search.secondaryAddressFormRoot())).toBe(false);
+        expect(companyField().val()).toBe('Acme Trading Ltd');
+    });
+
+    /**
+     * The state select is judged on the option's TEXT, never its value - PrestaShop
+     * state ids are shop-local, so a record written on one shop would be unreadable on
+     * another. And "unanswered" for a select is "still exactly what the server
+     * rendered", because a select is never empty.
+     */
+    test('a STATE the buyer chose pins the whole address', () => {
+        buildAddressesStep({ editing: 'invoice' });
+        publishMirrorWrites(null);
+        $("#invoice-address input[name='city']").after([
+            '<select name="id_state">',
+            '<option value="" selected>-</option>',
+            '<option value="31">Kent</option>',
+            '</select>'
+        ].join(''));
+        $("#invoice-address select[name='id_state']").val('31');
+
+        const search = mount(PICKED);
+
+        expect(search.secondaryAddressIsPinned(search.secondaryAddressFormRoot())).toBe(true);
+        expect(companyField().val()).toBe('');
+    });
+
+    /**
+     * The INVERSE of the rule the country select follows, and deliberately so.
+     *
+     * "Unanswered" means "still what the server rendered" for the country only
+     * because a country select has no reachable empty state - there is always a
+     * country selected, so accepting the rendered value as unanswered is the only way
+     * the field can ever be written at all. A STATE select does have a reachable empty
+     * placeholder, so a state holding a real value is the buyer's own saved answer,
+     * and it pins the address exactly as a saved city would.
+     *
+     * An earlier round gave `state` the country's baseline by symmetry. That let the
+     * registered region overwrite a state the buyer had saved.
+     */
+    test('a state holding a real value pins the address, even straight from the server', () => {
+        buildAddressesStep({ editing: 'invoice' });
+        publishMirrorWrites(null);
+        $("#invoice-address input[name='city']").after([
+            '<select name="id_state">',
+            '<option value="">-</option>',
+            '<option value="31" selected>Kent</option>',
+            '</select>'
+        ].join(''));
+
+        const search = mount(PICKED);
+
+        expect($("#invoice-address select[name='id_state']").val()).toBe('31');
+        expect(search.secondaryAddressIsPinned(search.secondaryAddressFormRoot())).toBe(true);
+        expect(companyField().val()).toBe('');
+    });
+
+    /**
+     * The other half of the same rule: an EMPTY state select is genuinely unanswered
+     * and must not pin, or every address form on a state-bearing country would arrive
+     * frozen before the buyer touched anything.
+     */
+    test('an empty state select does not pin the address', () => {
+        buildAddressesStep({ editing: 'invoice' });
+        publishMirrorWrites(null);
+        $("#invoice-address input[name='city']").after([
+            '<select name="id_state">',
+            '<option value="" selected>-</option>',
+            '<option value="31">Kent</option>',
+            '</select>'
+        ].join(''));
+
+        const search = mount(PICKED);
+
+        expect($("#invoice-address select[name='id_state']").val()).toBe('');
+        expect(search.secondaryAddressIsPinned(search.secondaryAddressFormRoot())).toBe(false);
+        expect(companyField().val()).toBe('Acme Trading Ltd');
+    });
+
+    /**
      * Deleting a value the mirror wrote is an edit. The buyer said no to that
      * company name, and repopulating it on the next render would be the plugin
      * arguing with them.
