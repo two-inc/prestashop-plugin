@@ -861,6 +861,15 @@ class TwoCompanySearch {
                 event.preventDefault();
                 event.stopPropagation();
                 this._chipMode = 'sole_trader';
+                // Unlike "Registered Company" (below), this chip's own click
+                // handler is the only place `sole_trader` mode is entered, so
+                // it must render its own selection state rather than relying
+                // on a caller to. Must run BEFORE closeDropdown(true): the
+                // panel only hides via CSS (`display:none`/`hidden`), it
+                // never detaches the chip buttons, so the class write is not
+                // lost by closing - but doing it before keeps this handler's
+                // ordering symmetric with the other two.
+                this.renderChipSelection();
                 this.closeDropdown(true);
                 if (window.TwoSoleTrader_Instance
                     && typeof window.TwoSoleTrader_Instance.startEnrollment === 'function') {
