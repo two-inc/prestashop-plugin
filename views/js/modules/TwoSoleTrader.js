@@ -797,6 +797,16 @@ class TwoSoleTrader {
             // matters; see the comment on `_tokensGeneration` and
             // bindPopupMessageListener() for why the stamp exists at all.
             this._tokensGeneration = this._enrollGeneration;
+            // Pre-existing gap, out of scope here, widened but not caused by
+            // TWO-40's OTP-trust fix (round 9/10 adversarial review
+            // observation, Han + Vader): if a lookup is already in flight,
+            // this silently no-ops on getCurrentBuyer()'s own guard with no
+            // notifyEnrollmentSettled() of its own - this click's spinner is
+            // only resolved later, incidentally, by whichever lookup IS out
+            // finishing. bindPopupMessageListener() got an explicit fix for
+            // the equivalent gap on its own call (`_pendingTrustedResume`);
+            // this one did not, since it is not the reported bug and touches
+            // a different, untrusted call path.
             this.getCurrentBuyer();
         }
     }
@@ -1249,6 +1259,13 @@ class TwoSoleTrader {
                     // mid-wait bought the flow another retry, resetting the
                     // cap to zero every abandon/resume cycle.
                     retryScheduled = true;
+                    // Not cleared by destroy() - same accepted risk as
+                    // resumeIfStillEnrolling()'s own deferred macrotask (see
+                    // its JSDoc): `window.TwoSoleTrader_Instance` is created
+                    // once and never torn down in production today, so this
+                    // firing against a destroyed instance is not a real
+                    // precondition yet (round 10 adversarial review
+                    // observation, Han).
                     setTimeout(function () {
                         // The guard was deliberately left held for this
                         // entire wait, not released back in `.finally()` -
