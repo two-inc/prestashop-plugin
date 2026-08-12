@@ -1411,6 +1411,31 @@ describe('applyBuyer(): a completed enrolment populates the FORM, end to end', (
         expect($("input[name='city']").val()).toBe('Ashford');
     });
 
+    /**
+     * TWO-40 follow-up (live bug reported by Doug 2026-08-12): an order-intent
+     * check fired off a completed sole-trader enrolment before the buyer had
+     * reached the payment step. TwoCompanySearch.onCompanySelected() stamps
+     * `_tileCompanySelected` on the manager the instant a search RESULT is
+     * picked - TwoCheckoutManager.canAutoTriggerOrderIntent() reads that flag,
+     * in tile mode, as "the buyer has made their choice" before a generic
+     * mounted/re-rendered/periodic signal is allowed to auto-fire a check. A
+     * completed sole-trader enrolment is exactly as much a confirmed choice as
+     * a search result, so publishConfirmedSelection() must stamp the same flag
+     * - see the doc on that method for why address mode does not need it
+     * (canAutoTriggerOrderIntent() does not consult the flag there) while tile
+     * mode does.
+     */
+    test('publishes _tileCompanySelected on the manager, the same signal a search selection sends', async () => {
+        buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION });
+        const soleTrader = enrolledFlow();
+        expect(window.TwoCheckoutManager_Instance._tileCompanySelected).toBeUndefined();
+
+        soleTrader.applyBuyer(BUYER_REAL_NUMBER, soleTrader._enrollGeneration);
+        await flushPromises();
+
+        expect(window.TwoCheckoutManager_Instance._tileCompanySelected).toBe(true);
+    });
+
     test('the write survives the very next input event in the company field', async () => {
         buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION });
         const soleTrader = enrolledFlow();
