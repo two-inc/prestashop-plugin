@@ -822,9 +822,14 @@ class TwoSoleTrader {
             this.flowStarted = true;
             this.fetchTokens();
         } else {
+            // Same "explicit resume" re-stamp as startEnrollment()'s own
+            // resume branch, then straight through afterTokensReady() rather
+            // than inlining its own openPopup() call (review finding,
+            // TWO-40 follow-up) - one place consumes `_skipAutofillCheck`,
+            // not two, so a future change to what "tokens ready" means only
+            // has one call site to update.
             this._tokensGeneration = this._enrollGeneration;
-            this._skipAutofillCheck = false;
-            this.openPopup({ autoselect: 'false' });
+            this.afterTokensReady();
         }
     }
 
@@ -1471,9 +1476,11 @@ class TwoSoleTrader {
         // PORTING NOTE (future Magento/WooCommerce port of this sole-trader
         // flow): brand resolution here is PrestaShop-only and has NO brand
         // dimension. `this.tokens.signup_url` comes from
-        // TwoSoleTrader::getSignupPageUrl() (classes/TwoSoleTrader.php:93-96,
-        // :419-432), which maps ONLY environment -> host - it does not know
-        // ABN or any other brand exists. Magento/WooCommerce resolve brand
+        // TwoSoleTrader::getSignupPageUrl() (classes/TwoSoleTrader.php - see
+        // its `$signup_hosts` property and the method itself; deliberately
+        // not citing line numbers here, they drift), which maps ONLY
+        // environment -> host - it does not know ABN or any other brand
+        // exists. Magento/WooCommerce resolve brand
         // via a per-brand `checkout_url_template` (a distinct hostname per
         // brand, e.g. `achterafbetalen.abnamro.nl` for ABN) with a
         // `?brand=<tag>&brandVersion=<ver>` query-string fallback used ONLY

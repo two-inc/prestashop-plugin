@@ -133,6 +133,88 @@ describe('click behaviour (b)', () => {
         document.body.removeEventListener('click', ancestorHandler);
         instance.destroy();
     });
+
+    test('a rapid double-click only calls startReplacement() once (re-entrancy guard, TWO-40 review finding)', () => {
+        const instance = makeSearchInstance();
+        instance.adoptSoleTraderBuyer(NAMED_BUYER);
+
+        const startReplacement = jest.fn();
+        global.window.TwoSoleTrader_Instance = { startReplacement: startReplacement };
+
+        const link = document.querySelector('.two-company-select-different-sole-trader');
+        link.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        link.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+
+        expect(startReplacement).toHaveBeenCalledTimes(1);
+
+        instance.destroy();
+    });
+
+    test('the guard releases on the settle event, so a LATER click (after the flight settled) works again', () => {
+        const instance = makeSearchInstance();
+        instance.adoptSoleTraderBuyer(NAMED_BUYER);
+
+        const startReplacement = jest.fn();
+        global.window.TwoSoleTrader_Instance = { startReplacement: startReplacement };
+
+        const link = document.querySelector('.two-company-select-different-sole-trader');
+        link.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        expect(startReplacement).toHaveBeenCalledTimes(1);
+
+        // Simulate the popup-opened (or blocked/failed) settle signal
+        // TwoSoleTrader.js's notifyEnrollmentSettled() fires from every
+        // terminal branch of startReplacement()'s call graph.
+        document.dispatchEvent(new window.CustomEvent('two:sole-trader-flight-settled'));
+
+        link.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        expect(startReplacement).toHaveBeenCalledTimes(2);
+
+        instance.destroy();
+    });
+
+    test('a missing/malformed TwoSoleTrader_Instance logs visibly instead of a silent no-op', () => {
+        const instance = makeSearchInstance();
+        instance.adoptSoleTraderBuyer(NAMED_BUYER);
+        delete global.window.TwoSoleTrader_Instance;
+
+        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const link = document.querySelector('.two-company-select-different-sole-trader');
+        link.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+
+        expect(errorSpy).toHaveBeenCalled();
+        errorSpy.mockRestore();
+        instance.destroy();
+    });
+});
+
+describe('stale link removal on a real registered-company selection (d)', () => {
+    test('onCompanySelected() with an organisation number removes a stale "Select a different sole trader" link', () => {
+        const instance = makeSearchInstance();
+        instance.adoptSoleTraderBuyer(NAMED_BUYER);
+        expect(document.querySelector('.two-company-select-different-sole-trader')).not.toBeNull();
+
+        instance.onCompanySelected(
+            { preventDefault: () => {} },
+            { item: { value: 'Real Registered Co', organization_number: '923456789' } }
+        );
+
+        expect(document.querySelector('.two-company-select-different-sole-trader')).toBeNull();
+        instance.destroy();
+    });
+
+    test('onCompanySelected() with NO organisation number (clearSelectedCompany() path) also removes it', () => {
+        const instance = makeSearchInstance();
+        instance.adoptSoleTraderBuyer(NAMED_BUYER);
+        expect(document.querySelector('.two-company-select-different-sole-trader')).not.toBeNull();
+
+        instance.onCompanySelected(
+            { preventDefault: () => {} },
+            { item: { value: 'Some Result With No Number' } }
+        );
+
+        expect(document.querySelector('.two-company-select-different-sole-trader')).toBeNull();
+        instance.destroy();
+    });
 });
 
 describe('popup URL (c)', () => {
