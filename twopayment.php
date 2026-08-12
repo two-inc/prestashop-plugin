@@ -305,7 +305,7 @@ class Twopayment extends PaymentModule
     /** @var string|null Memoised `client_v` value (version + optional +<sha7>) */
     protected $two_client_version_cache = null;
     /**
-     * @var array|null The order-company columns on `ps_twopayment` this request has
+     * @var string[]|null The order-company columns on `ps_twopayment` this request has
      *           CONFIRMED are writable, memoised (TWO-40). Null until checked.
      *
      *           It records the answer rather than merely "we looked", because a
@@ -12607,7 +12607,7 @@ class Twopayment extends PaymentModule
      * callback for an order Two has already approved: the buyer loses the order.
      *
      * Called only from the write that actually carries a company value, so the
-     * eight status-only writers pay nothing, and memoised so the
+     * ten status-only writers pay nothing, and memoised so the
      * information_schema lookup happens at most once per request.
      *
      * The memo is an INSTANCE property rather than the function static
@@ -12617,6 +12617,11 @@ class Twopayment extends PaymentModule
      * answer for every spec after it. That is untestable by construction, and
      * this repo already memoises on the instance elsewhere
      * ($twoApiKeyStatusMemo).
+     *
+     * @return string[] the company columns this request has CONFIRMED are writable.
+     *                  A column whose `ALTER` failed is absent, and the caller must
+     *                  drop it from the write rather than name it - see the failure
+     *                  branch below for what naming it costs.
      */
     protected function ensureTwoOrderCompanyColumns()
     {

@@ -1887,9 +1887,11 @@ namespace {
         {
             $sql = (string) $sql;
             StubStore::$dbExecuted[] = $sql;
-            // Injected failure, checked BEFORE any bookkeeping: a statement the
-            // real database refused changed nothing, so the simulated schema must
-            // not record it either.
+            // Injected failure, checked before any SCHEMA bookkeeping: a statement
+            // the real database refused changed nothing, so the simulated schema must
+            // not record it. It IS still appended to $dbExecuted above, deliberately -
+            // that list is an attempt log, and a spec asserting "the ALTER was tried"
+            // should still see it.
             foreach (StubStore::$dbFailOn as $failPattern) {
                 if (preg_match($failPattern, $sql)) {
                     return false;
