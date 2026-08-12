@@ -170,6 +170,64 @@ describe('activation', () => {
     });
 
     /**
+     * Regression test (TWO-40 round 5, adversarial review finding - Han and
+     * Vader independently caught this): round 4 keeps the chip clickable for
+     * the WHOLE round trip instead of closing on the first click, which
+     * newly makes a second click reachable while the first is still
+     * waiting. Without a guard, the second click re-entered
+     * startEnrollment() and could fire a second, concurrent buyer lookup -
+     * on the no-match path, that meant TWO signup popup windows from one
+     * buyer gesture.
+     */
+    test('a second click while already loading does not start a second enrolment attempt', () => {
+        const soleTrader = stubSoleTrader(true);
+        makeInstance();
+        openPanel();
+
+        panelParts().soleTrader.trigger('click');
+        panelParts().soleTrader.trigger('click');
+        panelParts().soleTrader.trigger('click');
+
+        expect(soleTrader.startEnrollment).toHaveBeenCalledTimes(1);
+    });
+
+    test('a fresh click after the flight has settled is allowed to start a new attempt', () => {
+        const soleTrader = stubSoleTrader(true);
+        makeInstance();
+        openPanel();
+
+        panelParts().soleTrader.trigger('click');
+        document.dispatchEvent(new CustomEvent('two:sole-trader-flight-settled'));
+        // Re-open - the panel closed when the flight settled, same as any
+        // other close.
+        openPanel();
+        panelParts().soleTrader.trigger('click');
+
+        expect(soleTrader.startEnrollment).toHaveBeenCalledTimes(2);
+    });
+
+    /**
+     * Regression test (TWO-40 round 5, Vader finding): startEnrollment() is
+     * foreign-module code called with no try/catch before this fix - a
+     * synchronous throw left the panel open with the spinner running and
+     * nothing left to ever settle it, since beginSoleTraderLoading() had
+     * already run.
+     */
+    test('a synchronous throw from startEnrollment() does not leave the panel stuck open with the spinner running', () => {
+        const soleTrader = stubSoleTrader(true);
+        soleTrader.startEnrollment.mockImplementation(() => {
+            throw new Error('boom');
+        });
+        makeInstance();
+        openPanel();
+
+        panelParts().soleTrader.trigger('click');
+
+        expect(shown(panelParts().panel)).toBe(false);
+        expect(panelParts().query.hasClass('two-company-search-loading')).toBe(false);
+    });
+
+    /**
      * Regression test: the handler correctly set `this._chipMode =
      * 'sole_trader'` and started enrolment, but never called
      * renderChipSelection() to reflect that onto the DOM - so
