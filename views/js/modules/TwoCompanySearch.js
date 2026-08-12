@@ -870,7 +870,22 @@ class TwoCompanySearch {
                 // lost by closing - but doing it before keeps this handler's
                 // ordering symmetric with the other two.
                 this.renderChipSelection();
-                this.closeDropdown(true);
+                // Deferred by one animation frame - NOT tidying (live-verified
+                // root cause of "the chip never looks selected", TWO-40 round
+                // 2). renderChipSelection() and closeDropdown() used to run in
+                // the very same synchronous tick of this one click handler, so
+                // the browser never got a chance to PAINT a frame with
+                // `--selected` applied before the panel's `display:none` wiped
+                // it back out - zero rendered frames showed the selection, even
+                // though the DOM write itself was correct and durable (it
+                // survives the hide, see closeDropdown()'s own comment). PR
+                // #159's regression test could not catch this because jsdom has
+                // no rendering/paint step at all: reading `.className`
+                // synchronously after the click always "sees" the class there,
+                // whether or not a real browser would ever have shown a frame
+                // with it. requestAnimationFrame() guarantees at least one paint
+                // of the selected state before the panel disappears.
+                window.requestAnimationFrame(() => this.closeDropdown(true));
                 if (window.TwoSoleTrader_Instance
                     && typeof window.TwoSoleTrader_Instance.startEnrollment === 'function') {
                     window.TwoSoleTrader_Instance.startEnrollment();
