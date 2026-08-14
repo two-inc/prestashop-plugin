@@ -122,7 +122,7 @@ final class FxRatesSpec
     /** POST values a minimal valid general-form save needs. */
     private static function generalFormPost(string $apiKey = 'test-api-key'): void
     {
-        Tools::setTestValue('PS_TWO_ENVIRONMENT', 'development');
+        Tools::setTestValue('PS_TWO_ENVIRONMENT', 'staging');
         Tools::setTestValue('PS_TWO_TITLE_1', 'Two title');
         Tools::setTestValue('PS_TWO_SUB_TITLE_1', 'Two subtitle');
         Tools::setTestValue('PS_TWO_MERCHANT_SHORT_NAME', 'merchant');

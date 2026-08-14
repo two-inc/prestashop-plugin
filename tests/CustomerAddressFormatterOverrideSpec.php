@@ -385,7 +385,7 @@ final class CustomerAddressFormatterOverrideSpec
         StubStore::reset();
         Tools::resetTestValues();
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'stored-key');
-        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'development');
+        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'staging');
 
         // A COLD cache: nothing stored, no memo. Anything that consults the
         // network would do it here.

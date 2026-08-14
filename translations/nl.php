@@ -165,7 +165,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_2f6653d72084d1585721cb272597728f'] 
 $_MODULE['<{twopayment}prestashop>twopayment_31a1931b5703e90cf392686134f4aae1'] = 'PrestaShop:';
 $_MODULE['<{twopayment}prestashop>twopayment_3279954443b449a5be560a0be578e6c2'] = 'Belastingregelgroep die UITSLUITEND VOOR VERZENDING wordt aangenomen wanneer het btw-tarief van de vervoerder niet voor de bestelling kan worden bepaald - bijvoorbeeld wanneer de verzendkosten buiten de vervoerderstabel van PrestaShop worden bepaald, zodat geen enkele vervoerder een belastingregelgroep opgeeft. Deze wordt nooit gebruikt als een vervoerder er wél een opgeeft: de eigen groep van de vervoerder gaat altijd voor. Laat leeg om dergelijke bestellingen te blijven weigeren in plaats van een tarief aan te nemen.';
 $_MODULE['<{twopayment}prestashop>twopayment_329aa8486f4fde54cc4c9965faea9aa9'] = '(op prijs)';
-$_MODULE['<{twopayment}prestashop>twopayment_330f49df8243756a8a4dc7f7f7ee6dfe'] = 'Ontwikkeling';
 $_MODULE['<{twopayment}prestashop>twopayment_52563a872dfbca393bed4ff3b7868687'] = 'Deze webshop kon de %s API helemaal niet bereiken (netwerk, DNS of firewall). De API-sleutel zelf is niet beoordeeld.';
 $_MODULE['<{twopayment}prestashop>twopayment_3438dbc5b197844ab4cb01ab14af8a7b'] = 'Standaardtermijnen (bijv. 30 dagen na uitlevering)';
 $_MODULE['<{twopayment}prestashop>twopayment_34d4c5b4f293f3953b9f1cea4ada6a1d'] = 'Selecteer welke betaaltermijnen je wilt aanbieden. Standaardtermijnen worden berekend vanaf de uitleverdatum.';
@@ -184,7 +183,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_66c12ee256d5b468a43062e3ab9d643f'] 
 $_MODULE['<{twopayment}prestashop>twopayment_3d010ab63c1ada7af0907e77ca4d5d8e'] = 'De btw-behandeling van de toeslag is ongeldig: deze winkel is ingesteld om de toeslag in elk land ONBELAST te laten. Die behandeling is niet langer beschikbaar en deze instellingen kunnen niet meer worden opgeslagen zolang ze is opgeslagen. Selecteer onder Betaalinstellingen een belastingregelgroep - wil je de vergoeding onbelast laten, maak dan een groep aan met een tarief van 0 procent en selecteer die.';
 $_MODULE['<{twopayment}prestashop>twopayment_3d773cd2133003c21b5348d17b400f3f'] = 'Momenteel actief:';
 $_MODULE['<{twopayment}prestashop>twopayment_3d94e3cb25fc73d812643a4cf4d8354a'] = 'Gedeeltelijke uitlevering - bestellingen moeten volledig worden uitgeleverd';
-$_MODULE['<{twopayment}prestashop>twopayment_3d9e53b91d8ee1425fc4ef4d94dd460b'] = 'Selecteer een geldige omgeving (Productie, Ontwikkeling of Staging).';
+$_MODULE['<{twopayment}prestashop>twopayment_c0df38350f764595ec9eb062507f895e'] = 'Selecteer een geldige omgeving (Productie of Staging).';
 $_MODULE['<{twopayment}prestashop>twopayment_3ef2ad2a1483fd9861c50152ef58e38b'] = 'Bestelling uitgeleverd → Verzonden';
 $_MODULE['<{twopayment}prestashop>twopayment_cddb055b1f1dd15d5b6df428e01c6893'] = '%s: Geverifieerd - Klaar voor uitlevering';
 $_MODULE['<{twopayment}prestashop>twopayment_3f68e67dc6c397aaa9d1c24c356f754f'] = 'Geverifieerd';
@@ -379,7 +378,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_cc4d7e72dda2f971cf3de3046c77afe2'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d378b918f97f59232f70bbcde9a4a2fa'] = '%s-betaling is niet beschikbaar voor deze bestelling. Kies een andere betaalmethode.';
 $_MODULE['<{twopayment}prestashop>twopayment_cd7cc8b6d9b6160db0e405bc2207b5fb'] = 'Vul een API-sleutel in.';
 $_MODULE['<{twopayment}prestashop>twopayment_cdca48ec5dde79b84b395c0c557bb290'] = '%d dagen';
-$_MODULE['<{twopayment}prestashop>twopayment_522464baf22c48968810b77c50432a2e'] = 'Selecteer de %s API-omgeving die je wilt gebruiken. Productie voor echte transacties, Staging/Ontwikkeling om te testen.';
+$_MODULE['<{twopayment}prestashop>twopayment_8b6ddb993ec11f974a0fa6a46244401e'] = 'Selecteer de %s API-omgeving die je wilt gebruiken. Productie voor echte transacties, Staging om te testen.';
 $_MODULE['<{twopayment}prestashop>twopayment_cf5f3091e30dee6597885d8c0e0c357f'] = 'Termijn';
 $_MODULE['<{twopayment}prestashop>twopayment_d132286ce060a9349df55de2808b4d5f'] = 'Geen overeenkomsten gevonden';
 $_MODULE['<{twopayment}prestashop>twopayment_d2a7c39c5ec025981855847fed006923'] = 'Als je JA kiest, worden tax_subtotals meegestuurd in de payloads van /v1/order en /v1/order_intent. Als je NEE kiest, worden tax_subtotals uit die payloads weggelaten.';

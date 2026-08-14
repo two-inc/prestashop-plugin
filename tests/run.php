@@ -4198,7 +4198,9 @@ final class OrderBuilderSpec
         Configuration::updateValue('PS_TWO_ENVIRONMENT', 'production');
         TinyAssert::same('https://buyer.two.inc/login', $module->getTwoBuyerPortalUrl());
 
-        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'development');
+        // Any unmapped value (the removed 'development', or anything else not
+        // in BUYER_PORTAL_HOSTS) falls back to sandbox - TWO-25455.
+        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'not-a-real-environment');
         TinyAssert::same('https://buyer.sandbox.two.inc/login', $module->getTwoBuyerPortalUrl());
 
         Configuration::updateValue('PS_TWO_ENVIRONMENT', 'staging');
@@ -5089,7 +5091,7 @@ final class OrderBuilderSpec
         };
 
         // The form rendered only the 30 checkbox, so only 30 is POSTed.
-        Tools::setTestValue('PS_TWO_ENVIRONMENT', 'development');
+        Tools::setTestValue('PS_TWO_ENVIRONMENT', 'staging');
         Tools::setTestValue('PS_TWO_TITLE_1', 'Two title');
         Tools::setTestValue('PS_TWO_SUB_TITLE_1', 'Two subtitle');
         Tools::setTestValue('PS_TWO_MERCHANT_SHORT_NAME', 'merchant');
@@ -5635,6 +5637,7 @@ require __DIR__ . '/MirrorWriteRecordSpec.php';
 require __DIR__ . '/OrderCompanyPersistenceSpec.php';
 require __DIR__ . '/SoleTraderTokenPreconditionSpec.php';
 require __DIR__ . '/OverrideMigrationSpec.php';
+require __DIR__ . '/EnvironmentUpgradeMigrationSpec.php';
 require __DIR__ . '/TranslationCatalogueSpec.php';
 require __DIR__ . '/AssetCacheBustingSpec.php';
 require __DIR__ . '/ApiKeyVerificationSpec.php';
@@ -5683,6 +5686,7 @@ $tests = [
     'OrderCompanyPersistenceSpec::runAll' => [OrderCompanyPersistenceSpec::class, 'runAll'],
     'SoleTraderTokenPreconditionSpec::runAll' => [SoleTraderTokenPreconditionSpec::class, 'runAll'],
     'OverrideMigrationSpec::runAll' => [OverrideMigrationSpec::class, 'runAll'],
+    'EnvironmentUpgradeMigrationSpec::runAll' => [EnvironmentUpgradeMigrationSpec::class, 'runAll'],
     'TranslationCatalogueSpec::runAll' => [TranslationCatalogueSpec::class, 'runAll'],
     'AssetCacheBustingSpec::runAll' => [AssetCacheBustingSpec::class, 'runAll'],
     'ApiKeyVerificationSpec::runAll' => [ApiKeyVerificationSpec::class, 'runAll'],
