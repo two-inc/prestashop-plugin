@@ -596,12 +596,12 @@ checkout-page project's own tunnel tooling, which reports the hostname it came u
 on — and point `TWO_CHECKOUT_BASE_URL` at that hostname:
 
 ```bash
-make install TWO_CHECKOUT_BASE_URL=https://checkout-<you>.frp.beta.two.inc
+make install TWO_CHECKOUT_BASE_URL=https://checkout-<you>.frp.staging.two.inc
 ```
 
 (Use whatever hostname your tunnel actually reports — the form above is
-illustrative, and this repo's own storefront tunnel uses a different FRP
-environment.)
+illustrative. `frp.beta.two.inc` is this repo's own storefront tunnel's server
+address, a different FRP environment from checkout-page's.)
 
 For a shop you did not boot with `make`, set the same variable in that
 instance's own environment (however that deployment injects env vars) — the gate
