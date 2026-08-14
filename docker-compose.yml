@@ -34,11 +34,17 @@ services:
       PS_FOLDER_ADMIN: admin-dev
       ADMIN_MAIL: exampleuser@two.inc
       ADMIN_PASSWD: examplepassword123
-      # Dev-loop overrides for the Two API/portal hosts; only honoured when
-      # PS_DEV_MODE=1. Empty in defaults so external devs still get
-      # api.sandbox / portal.sandbox via the plugin's normal env switch.
+      # Dev-loop overrides for the Two API / portal / hosted checkout-page
+      # hosts; only honoured when PS_DEV_MODE=1, and each resolved
+      # independently of the others. Empty when compose is invoked directly
+      # with none of them exported, so `docker compose up` on its own still
+      # leaves the plugin's normal environment switch in charge; the Makefile
+      # exports concrete <env> hosts for all three, so a container created
+      # through `make install` does carry them. Read at container CREATION
+      # only - `make run` starts existing containers and cannot change these.
       TWO_API_BASE_URL: ${TWO_API_BASE_URL:-}
       TWO_PORTAL_BASE_URL: ${TWO_PORTAL_BASE_URL:-}
+      TWO_CHECKOUT_BASE_URL: ${TWO_CHECKOUT_BASE_URL:-}
     volumes:
       - .:/var/www/html/modules/twopayment
     networks:

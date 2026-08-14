@@ -535,6 +535,80 @@ make format     # php-cs-fixer (PSR-12)
 make test-integration  # real-engine probes (see tests/integration/README.md)
 ```
 
+#### Service URL overrides
+
+Three of the hosts the module resolves can each be repointed with their own
+environment variable. Each falls back to its own environment-keyed default when
+unset — `production` and `staging` have explicit hosts, everything else
+(including an empty setting) resolves to sandbox:
+
+| Variable | Service | `production` | `staging` | otherwise |
+| --- | --- | --- | --- | --- |
+| `TWO_API_BASE_URL` | checkout API | `api.two.inc` | `api.staging.two.inc` | `api.sandbox.two.inc` |
+| `TWO_PORTAL_BASE_URL` | merchant portal | `portal.two.inc` | `portal.staging.two.inc` | `portal.sandbox.two.inc` |
+| `TWO_CHECKOUT_BASE_URL` | hosted checkout-page app (sole-trader signup) | `checkout.two.inc` | `checkout.staging.two.inc` | `checkout.sandbox.two.inc` |
+
+(The buyer portal login host has no override; it always follows the configured
+environment.)
+
+**Mind the two "checkouts".** `TWO_API_BASE_URL` is the one behind
+`getTwoCheckoutHostUrl()` and the `checkout_host` value handed to the browser —
+that is the **API**. `TWO_CHECKOUT_BASE_URL` is the hosted checkout-page **app**
+that serves the sole-trader signup page. Setting one does not move the other.
+
+All three are **only honoured when the shop is in dev mode** (`_PS_MODE_DEV_`,
+which the local `docker-compose.yml` sets via `PS_DEV_MODE=1`). A shop that is
+not in dev mode ignores them even when they are set in its process environment,
+so they never become a way to repoint a live checkout. There is no admin UI for
+any of them.
+
+They resolve **independently** — setting one leaves the other two on their
+defaults. That is the point: the common case is a staging API plus a
+checkout-page you are editing yourself.
+
+Note that the container reads these at **creation** time. `make run` only starts
+the containers you already have, so it keeps whatever values they were created
+with, and changing a value means creating the container again. `make install` is
+the supported way to do that — be aware that it runs `clean` first, so it drops
+the database volume and rebuilds the shop (and it is also what re-runs the
+module install, the country/carrier seeding and the storefront proxy patch).
+
+**Everything on your machine.** The API and portal hosts are fetched
+*server-side*, from inside the container, which reaches your machine through
+`host.docker.internal` (mapped in `docker-compose.yml`). The signup page is
+different: the module only hands its URL to the browser, which opens it in a
+popup and then origin-checks the `postMessage` that comes back — so
+`TWO_CHECKOUT_BASE_URL` has to be a host the **browser** can resolve, i.e.
+`localhost`, not `host.docker.internal`:
+
+```bash
+make install \
+  TWO_API_BASE_URL=http://host.docker.internal:8080 \
+  TWO_PORTAL_BASE_URL=http://host.docker.internal:8081 \
+  TWO_CHECKOUT_BASE_URL=http://localhost:3000
+```
+
+**Remote shop, checkout-page on your laptop (FRP tunnel).** A remote instance
+(e.g. GKE-hosted) is not on your machine, and neither `host.docker.internal` nor
+`localhost` means anything useful to a browser pointed at it. Expose your local
+checkout-page dev server through an FRP tunnel instead — start it with the
+checkout-page project's own tunnel tooling, which reports the hostname it came up
+on — and point `TWO_CHECKOUT_BASE_URL` at that hostname:
+
+```bash
+make install TWO_CHECKOUT_BASE_URL=https://checkout-<you>.frp.beta.two.inc
+```
+
+(Use whatever hostname your tunnel actually reports — the form above is
+illustrative, and this repo's own storefront tunnel uses a different FRP
+environment.)
+
+For a shop you did not boot with `make`, set the same variable in that
+instance's own environment (however that deployment injects env vars) — the gate
+and the resolution are identical; `make` only exports it for the local
+containers. It still has to be present in the container's environment when the
+container is created.
+
 ## API Integration
 
 ### Endpoints Used

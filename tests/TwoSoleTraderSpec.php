@@ -57,6 +57,9 @@ final class TwoSoleTraderSpec
             'testTokenMintReadsHeaderAndFailsClosed',
             'testConfigureSslVerificationIsCallableFromOutsideTwopayment',
             'testSignupUrlFollowsEnvironment',
+            'testSignupUrlHonoursCheckoutOverrideInDevMode',
+            'testSignupUrlIgnoresCheckoutOverrideOutsideDevMode',
+            'testServiceUrlOverridesResolveIndependently',
             'testFormatterHasNoAccountTypeField',
             'testPaymentTileCarriesTheServerResolvedToggleAnswer',
             'testPaymentTileWithAnUnknownAnswerAsksNothingAndClaimsNothing',
@@ -371,6 +374,149 @@ final class TwoSoleTraderSpec
         TinyAssert::same('https://checkout.sandbox.two.inc/soletrader/signup', TwoSoleTrader::getSignupPageUrl());
         Configuration::updateValue('PS_TWO_ENVIRONMENT', '');
         TinyAssert::same('https://checkout.sandbox.two.inc/soletrader/signup', TwoSoleTrader::getSignupPageUrl());
+    }
+
+    /**
+     * Resolve the three dev-overridable service URLs in a CHILD process, with
+     * _PS_MODE_DEV_ pinned and a chosen environment block.
+     *
+     * A child process is not ceremony: _PS_MODE_DEV_ is a constant, so the gate
+     * on these overrides cannot be exercised on both sides inside one PHP
+     * process, and the offline suite runs with the constant undefined.
+     *
+     * @param string $psModeDev '1', '0' or 'unset'
+     * @param array<string, string> $env override vars to export
+     *
+     * @return array{signup: string, api: string, portal: string}
+     */
+    private static function resolveUrls(string $psModeDev, array $env, string $environment = 'staging'): array
+    {
+        $probe = __DIR__ . '/fixtures/dev-mode-url-probe.php';
+        $childEnv = array_merge(['PROBE_PS_MODE_DEV' => $psModeDev], $env);
+        // stderr goes to a temp FILE, not a second pipe: draining pipes one
+        // after the other deadlocks if the child fills the one not being read.
+        $errorLog = tmpfile();
+        if ($errorLog === false) {
+            throw new RuntimeException('Could not open a temp file for the probe stderr');
+        }
+        $descriptors = [1 => ['pipe', 'w'], 2 => $errorLog];
+        $process = proc_open(
+            [PHP_BINARY, $probe, $environment],
+            $descriptors,
+            $pipes,
+            dirname(__DIR__),
+            $childEnv
+        );
+        if (!is_resource($process)) {
+            throw new RuntimeException('Could not start the dev-mode URL probe');
+        }
+        $stdout = (string) stream_get_contents($pipes[1]);
+        fclose($pipes[1]);
+        rewind($errorLog);
+        $stderr = (string) stream_get_contents($errorLog);
+        fclose($errorLog);
+        $status = proc_close($process);
+        if ($status !== 0) {
+            // stdout as well as stderr: PHP CLI prints fatals to STDOUT, so a
+            // stderr-only message for a crashed probe is an empty message.
+            throw new RuntimeException('Dev-mode URL probe failed (' . $status . '): ' . $stdout . $stderr);
+        }
+        $decoded = json_decode($stdout, true);
+        if (!is_array($decoded)) {
+            throw new RuntimeException('Dev-mode URL probe printed no JSON: ' . $stdout . $stderr);
+        }
+        return $decoded;
+    }
+
+    /**
+     * TWO_CHECKOUT_BASE_URL repoints the hosted signup page in dev mode, so a
+     * dev can serve the checkout-page app themselves (locally, or through a
+     * tunnel a remote shop can reach) while leaving the API and portal alone.
+     */
+    private static function testSignupUrlHonoursCheckoutOverrideInDevMode(): void
+    {
+        $urls = self::resolveUrls('1', ['TWO_CHECKOUT_BASE_URL' => 'http://localhost:3000']);
+        TinyAssert::same('http://localhost:3000/soletrader/signup', $urls['signup']);
+
+        // A hand-typed value may carry a trailing slash; the path must not double up.
+        $urls = self::resolveUrls('1', ['TWO_CHECKOUT_BASE_URL' => 'http://localhost:3000/']);
+        TinyAssert::same('http://localhost:3000/soletrader/signup', $urls['signup']);
+
+        // Empty is not an override - it falls back to the environment map.
+        // Delivered via PROBE_EMPTY_VARS, not as an empty entry in the env
+        // array: proc_open() drops those, which would make the child see the
+        // variable as ABSENT and quietly test the wrong branch of the gate.
+        // Empty-but-present is the shape docker-compose.yml actually ships.
+        $urls = self::resolveUrls('1', ['PROBE_EMPTY_VARS' => 'TWO_CHECKOUT_BASE_URL']);
+        TinyAssert::same('https://checkout.staging.two.inc/soletrader/signup', $urls['signup']);
+
+        // Same for the other two, whose compose defaults are empty too.
+        $urls = self::resolveUrls('1', ['PROBE_EMPTY_VARS' => 'TWO_API_BASE_URL,TWO_PORTAL_BASE_URL']);
+        TinyAssert::same('https://api.staging.two.inc', $urls['api']);
+        TinyAssert::same('https://portal.staging.two.inc', $urls['portal']);
+    }
+
+    /**
+     * The security-relevant half of the gate: a shop that is NOT in dev mode
+     * must ignore TWO_CHECKOUT_BASE_URL even when it is set in the process
+     * environment, and resolve the static environment map instead. Covers both
+     * shapes - the constant defined false (what a production PrestaShop does)
+     * and the constant absent altogether.
+     */
+    private static function testSignupUrlIgnoresCheckoutOverrideOutsideDevMode(): void
+    {
+        $env = ['TWO_CHECKOUT_BASE_URL' => 'http://attacker.example/evil'];
+
+        $urls = self::resolveUrls('0', $env, 'production');
+        TinyAssert::same('https://checkout.two.inc/soletrader/signup', $urls['signup']);
+
+        $urls = self::resolveUrls('unset', $env, 'production');
+        TinyAssert::same('https://checkout.two.inc/soletrader/signup', $urls['signup']);
+
+        // Same gate, same result for the other two service URLs.
+        $urls = self::resolveUrls(
+            '0',
+            [
+                'TWO_API_BASE_URL' => 'http://attacker.example/api',
+                'TWO_PORTAL_BASE_URL' => 'http://attacker.example/portal',
+            ],
+            'production'
+        );
+        TinyAssert::same('https://api.two.inc', $urls['api']);
+        TinyAssert::same('https://portal.two.inc', $urls['portal']);
+    }
+
+    /**
+     * The three overrides are independent: setting one must not move the other
+     * two off their environment defaults, and all three set must each resolve
+     * to their own value (staging API + locally-served checkout page is the
+     * whole point of splitting them).
+     */
+    private static function testServiceUrlOverridesResolveIndependently(): void
+    {
+        $urls = self::resolveUrls('1', ['TWO_CHECKOUT_BASE_URL' => 'https://checkout.local.test']);
+        TinyAssert::same('https://checkout.local.test/soletrader/signup', $urls['signup']);
+        TinyAssert::same('https://api.staging.two.inc', $urls['api']);
+        TinyAssert::same('https://portal.staging.two.inc', $urls['portal']);
+
+        $urls = self::resolveUrls('1', ['TWO_API_BASE_URL' => 'http://host.docker.internal:8080']);
+        TinyAssert::same('http://host.docker.internal:8080', $urls['api']);
+        TinyAssert::same('https://checkout.staging.two.inc/soletrader/signup', $urls['signup']);
+        TinyAssert::same('https://portal.staging.two.inc', $urls['portal']);
+
+        $urls = self::resolveUrls('1', ['TWO_PORTAL_BASE_URL' => 'http://host.docker.internal:8081']);
+        TinyAssert::same('http://host.docker.internal:8081', $urls['portal']);
+        TinyAssert::same('https://api.staging.two.inc', $urls['api']);
+        TinyAssert::same('https://checkout.staging.two.inc/soletrader/signup', $urls['signup']);
+
+        $urls = self::resolveUrls('1', [
+            'TWO_API_BASE_URL' => 'http://host.docker.internal:8080',
+            'TWO_PORTAL_BASE_URL' => 'http://host.docker.internal:8081',
+            'TWO_CHECKOUT_BASE_URL' => 'http://localhost:3000',
+        ]);
+        TinyAssert::same('http://host.docker.internal:8080', $urls['api']);
+        TinyAssert::same('http://host.docker.internal:8081', $urls['portal']);
+        TinyAssert::same('http://localhost:3000/soletrader/signup', $urls['signup']);
     }
 
     /**
