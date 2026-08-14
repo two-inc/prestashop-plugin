@@ -86,7 +86,9 @@ class TwoSoleTrader
      * Explicit environment -> checkout-page host map for Two's hosted
      * sole-trader signup page (the checkout-page app, not the API).
      * Mirrors Twopayment::ENVIRONMENT_HOSTS: anything not in the map
-     * (legacy 'development', empty/unset) falls back to sandbox.
+     * (legacy 'development', empty/unset) falls back to sandbox. In dev mode
+     * only, TWO_CHECKOUT_BASE_URL takes precedence over this map — see
+     * getSignupPageUrl().
      *
      * @var array<string, string>
      */
@@ -420,10 +422,22 @@ class TwoSoleTrader
      * Full URL of Two's hosted sole-trader signup page for the configured
      * environment.
      *
+     * TWO_CHECKOUT_BASE_URL overrides the host when the shop is in dev mode
+     * (_PS_MODE_DEV_), independently of the API and portal overrides, so a dev
+     * can mix a staging API with a locally-served checkout-page. The gate lives
+     * in Twopayment::getDevModeEnvOverride() — one implementation shared with
+     * TWO_API_BASE_URL and TWO_PORTAL_BASE_URL, never honoured off dev mode.
+     *
      * @return string
      */
     public static function getSignupPageUrl()
     {
+        $override = Twopayment::getDevModeEnvOverride('TWO_CHECKOUT_BASE_URL');
+        if ($override !== null) {
+            // The map values carry no trailing slash; an env var supplied by
+            // hand may, and '<host>//soletrader/signup' is not the same path.
+            return rtrim($override, '/') . '/soletrader/signup';
+        }
         $env = strtolower((string) Configuration::get('PS_TWO_ENVIRONMENT'));
         $host = isset(self::$signup_hosts[$env])
             ? self::$signup_hosts[$env]

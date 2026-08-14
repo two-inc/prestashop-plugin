@@ -1,0 +1,38 @@
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Subprocess probe for the dev-mode env-var URL overrides.
+ *
+ * _PS_MODE_DEV_ is a CONSTANT, so a single PHP process cannot exercise both
+ * sides of the gate that guards TWO_API_BASE_URL / TWO_PORTAL_BASE_URL /
+ * TWO_CHECKOUT_BASE_URL. Tests therefore run this file in a child process with
+ * the constant pinned, and read the three resolved URLs back as JSON.
+ *
+ * Usage:
+ *   PROBE_PS_MODE_DEV=1|0|unset php tests/fixtures/dev-mode-url-probe.php <environment>
+ *
+ * PROBE_PS_MODE_DEV=unset leaves the constant undefined entirely (the shape the
+ * offline suite itself runs in); 1 / 0 define it true / false, which is what a
+ * real PrestaShop always does.
+ *
+ * Prints {"signup":"...","api":"...","portal":"..."} on stdout.
+ */
+
+$mode = getenv('PROBE_PS_MODE_DEV');
+if ($mode !== 'unset') {
+    define('_PS_MODE_DEV_', $mode === '1');
+}
+
+require dirname(__DIR__) . '/bootstrap.php';
+
+Configuration::updateValue('PS_TWO_ENVIRONMENT', $argv[1] ?? 'sandbox');
+
+$module = new TwopaymentTestHarness();
+
+echo json_encode(array(
+    'signup' => TwoSoleTrader::getSignupPageUrl(),
+    'api' => $module->getTwoCheckoutHostUrl(),
+    'portal' => $module->getTwoPortalUrl(),
+));

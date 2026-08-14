@@ -535,6 +535,57 @@ make format     # php-cs-fixer (PSR-12)
 make test-integration  # real-engine probes (see tests/integration/README.md)
 ```
 
+#### Service URL overrides
+
+The module talks to three separate Two services, and each one's host can be
+repointed with its own environment variable:
+
+| Variable | Service | Default |
+| --- | --- | --- |
+| `TWO_API_BASE_URL` | checkout API | `https://api.<env>.two.inc` |
+| `TWO_PORTAL_BASE_URL` | merchant portal | `https://portal.<env>.two.inc` |
+| `TWO_CHECKOUT_BASE_URL` | hosted checkout-page app (sole-trader signup) | `https://checkout.<env>.two.inc` |
+
+All three are **only honoured when the shop is in dev mode** (`_PS_MODE_DEV_`,
+which the local `docker-compose.yml` sets via `PS_DEV_MODE=1`). A production
+shop ignores them even if they are set in its process environment, so they never
+become a way to repoint a live checkout. There is no admin UI for any of them.
+
+They resolve **independently** — setting one leaves the other two on their
+environment defaults. That is the point: the common case is a staging API plus a
+checkout-page you are editing yourself.
+
+**Locally-served checkout-page (everything on your machine).** Point each
+variable at the port the service is listening on. The PrestaShop container
+reaches the host through `host.docker.internal` (already mapped in
+`docker-compose.yml`):
+
+```bash
+make install \
+  TWO_API_BASE_URL=http://host.docker.internal:8080 \
+  TWO_PORTAL_BASE_URL=http://host.docker.internal:8081 \
+  TWO_CHECKOUT_BASE_URL=http://host.docker.internal:3000
+```
+
+**Remote PrestaShop instance, checkout-page on your laptop (FRP tunnel).** A
+GKE-hosted PrestaShop cannot reach `host.docker.internal` — it is not on your
+machine. Expose your local checkout-page dev server through an FRP tunnel
+instead and point `TWO_CHECKOUT_BASE_URL` at the tunnel hostname
+(`https://checkout-<you>.frp.beta.two.inc`); the `checkout-page` repo's
+`start-proxy.sh` is what starts that tunnel and reports its URL.
+
+```bash
+make install TWO_CHECKOUT_BASE_URL=https://checkout-<you>.frp.beta.two.inc
+```
+
+For a shop you did not boot with `make` (a remote/GKE-hosted instance), set the
+same variable in that instance's own environment — the gate and the resolution
+are identical, `make` only exports it for the local containers.
+
+The buyer's browser is what loads the signup page, so the host you point at has
+to be reachable from the browser as well as from the shop. That is why a tunnel
+hostname works for a remote instance where a `localhost` URL would not.
+
 ## API Integration
 
 ### Endpoints Used

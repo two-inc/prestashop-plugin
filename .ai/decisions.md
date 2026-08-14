@@ -19,6 +19,38 @@
 
 ---
 
+## [2026-08-14] All Three Service URLs Are Independently Dev-Overridable Through One Shared Gate
+
+**Context**: The plugin talks to three Two services - the checkout API, the merchant portal and
+the hosted checkout-page app that serves the sole-trader signup. Two of them already honoured a
+dev-mode-only env var (`TWO_API_BASE_URL`, `TWO_PORTAL_BASE_URL`), the third did not, so a dev
+editing the checkout-page app had no way to point a shop at their own copy of it while leaving the
+API on staging. `TwoSoleTrader::getSignupPageUrl()` is `static` and the existing gate
+(`Twopayment::getDevEnvOverride()`) was a private *instance* method, so it could not be called from
+there at all.
+
+**Decision**: Added `TWO_CHECKOUT_BASE_URL`, and lifted the gate into one shared
+`Twopayment::getDevModeEnvOverride($name)` - `public static`, so the static signup-URL resolver can
+use it. The private instance `getDevEnvOverride()` stays as a thin delegate, unchanged for its two
+existing callers. All three variables resolve independently; each falls back to its own
+environment-keyed host map when unset.
+
+**Alternatives Considered**: (a) duplicate the `_PS_MODE_DEV_` check inside `TwoSoleTrader` - a
+duplicated security gate is a gate that gets half-removed; (b) plumb a `Twopayment` instance into
+`getSignupPageUrl()` - its one caller (`controllers/front/orderintent.php`) has a module instance,
+but that widens the signature of a resolver that needs no module state; (c) a new config-provider
+abstraction - far more structure than one `getenv()` behind one constant check needs.
+
+**Consequences**: The dev-mode gate now has exactly one implementation, and it is the security
+barrier for all three: with `_PS_MODE_DEV_` undefined or false every override returns null, so a
+production shop ignores these variables even when they are present in its environment.
+`TwoSoleTraderSpec` covers both sides of that gate by running a child PHP process
+(`tests/fixtures/dev-mode-url-probe.php`) - `_PS_MODE_DEV_` is a constant, so one process cannot
+exercise both. Also `rtrim($override, '/')` before appending `/soletrader/signup`, since a
+hand-typed env var may carry a trailing slash the host map never does.
+
+---
+
 ## [2026-08-11] Sole-Trader Enrolment Writes Its Identity And Address Into The Form
 
 > **Supersedes the 2026-08-10 entry below**, which recorded the opposite decision and one
