@@ -13,15 +13,15 @@ declare(strict_types=1);
  * Usage:
  *   PROBE_PS_MODE_DEV=1|0|unset php tests/fixtures/dev-mode-url-probe.php <environment>
  *
- * PROBE_PS_MODE_DEV=unset leaves the constant undefined entirely (the shape the
- * offline suite itself runs in); 1 / 0 define it true / false, which is what a
- * real PrestaShop always does.
+ * PROBE_PS_MODE_DEV=unset - or the variable being absent altogether - leaves the
+ * constant undefined (the shape the offline suite itself runs in); 1 / 0 define
+ * it true / false, which is what a real PrestaShop always does.
  *
  * Prints {"signup":"...","api":"...","portal":"..."} on stdout.
  */
 
 $mode = getenv('PROBE_PS_MODE_DEV');
-if ($mode !== 'unset') {
+if ($mode === '1' || $mode === '0') {
     define('_PS_MODE_DEV_', $mode === '1');
 }
 

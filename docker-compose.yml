@@ -36,9 +36,11 @@ services:
       ADMIN_PASSWD: examplepassword123
       # Dev-loop overrides for the Two API / portal / hosted checkout-page
       # hosts; only honoured when PS_DEV_MODE=1, and each resolved
-      # independently of the others. Empty in defaults so external devs still
-      # get api.sandbox / portal.sandbox / checkout.sandbox via the plugin's
-      # normal env switch.
+      # independently of the others. Empty when compose is invoked directly
+      # with none of them exported, so `docker compose up` on its own still
+      # leaves the plugin's normal environment switch in charge; the Makefile
+      # exports concrete <env> hosts for all three, so anything started
+      # through `make` does carry them.
       TWO_API_BASE_URL: ${TWO_API_BASE_URL:-}
       TWO_PORTAL_BASE_URL: ${TWO_PORTAL_BASE_URL:-}
       TWO_CHECKOUT_BASE_URL: ${TWO_CHECKOUT_BASE_URL:-}

@@ -393,7 +393,13 @@ final class TwoSoleTraderSpec
     {
         $probe = __DIR__ . '/fixtures/dev-mode-url-probe.php';
         $childEnv = array_merge(['PROBE_PS_MODE_DEV' => $psModeDev], $env);
-        $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+        // stderr goes to a temp FILE, not a second pipe: draining pipes one
+        // after the other deadlocks if the child fills the one not being read.
+        $errorLog = tmpfile();
+        if ($errorLog === false) {
+            throw new RuntimeException('Could not open a temp file for the probe stderr');
+        }
+        $descriptors = [1 => ['pipe', 'w'], 2 => $errorLog];
         $process = proc_open(
             [PHP_BINARY, $probe, $environment],
             $descriptors,
@@ -405,9 +411,10 @@ final class TwoSoleTraderSpec
             throw new RuntimeException('Could not start the dev-mode URL probe');
         }
         $stdout = (string) stream_get_contents($pipes[1]);
-        $stderr = (string) stream_get_contents($pipes[2]);
         fclose($pipes[1]);
-        fclose($pipes[2]);
+        rewind($errorLog);
+        $stderr = (string) stream_get_contents($errorLog);
+        fclose($errorLog);
         $status = proc_close($process);
         if ($status !== 0) {
             throw new RuntimeException('Dev-mode URL probe failed (' . $status . '): ' . $stderr);
