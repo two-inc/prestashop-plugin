@@ -443,8 +443,17 @@ final class TwoSoleTraderSpec
         TinyAssert::same('http://localhost:3000/soletrader/signup', $urls['signup']);
 
         // Empty is not an override - it falls back to the environment map.
-        $urls = self::resolveUrls('1', ['TWO_CHECKOUT_BASE_URL' => '']);
+        // Delivered via PROBE_EMPTY_VARS, not as an empty entry in the env
+        // array: proc_open() drops those, which would make the child see the
+        // variable as ABSENT and quietly test the wrong branch of the gate.
+        // Empty-but-present is the shape docker-compose.yml actually ships.
+        $urls = self::resolveUrls('1', ['PROBE_EMPTY_VARS' => 'TWO_CHECKOUT_BASE_URL']);
         TinyAssert::same('https://checkout.staging.two.inc/soletrader/signup', $urls['signup']);
+
+        // Same for the other two, whose compose defaults are empty too.
+        $urls = self::resolveUrls('1', ['PROBE_EMPTY_VARS' => 'TWO_API_BASE_URL,TWO_PORTAL_BASE_URL']);
+        TinyAssert::same('https://api.staging.two.inc', $urls['api']);
+        TinyAssert::same('https://portal.staging.two.inc', $urls['portal']);
     }
 
     /**

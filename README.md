@@ -568,10 +568,10 @@ checkout-page you are editing yourself.
 
 Note that the container reads these at **creation** time. `make run` only starts
 the containers you already have, so it keeps whatever values they were created
-with. To apply a new value to a shop you already installed, re-create the
-container with the variable set — `TWO_CHECKOUT_BASE_URL=… docker compose up -d`
-keeps the database. `make install` also applies it, but it runs `clean` first and
-therefore rebuilds the shop from scratch.
+with, and changing a value means creating the container again. `make install` is
+the supported way to do that — be aware that it runs `clean` first, so it drops
+the database volume and rebuilds the shop (and it is also what re-runs the
+module install, the country/carrier seeding and the storefront proxy patch).
 
 **Everything on your machine.** The API and portal hosts are fetched
 *server-side*, from inside the container, which reaches your machine through
