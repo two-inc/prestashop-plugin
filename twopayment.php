@@ -348,7 +348,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.7.7';
+        $this->version = '2.7.8';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -607,7 +607,9 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_TAB_VALUE', 1);
         Configuration::updateValue('PS_TWO_TITLE', $installData['PS_TWO_TITLE']);
         Configuration::updateValue('PS_TWO_SUB_TITLE', $installData['PS_TWO_SUB_TITLE']);
-        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'development'); // Default to development for safety
+        // Default to staging (TWO-25455) - 'development' was removed as a
+        // decorative option that always silently fell back to sandbox hosts.
+        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'staging');
         Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', '');
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', '');
         Configuration::updateValue('PS_TWO_MERCHANT_ID', '');
@@ -1194,11 +1196,10 @@ class Twopayment extends PaymentModule
                         'type' => 'select',
                         'label' => $this->l('Environment'),
                         'name' => 'PS_TWO_ENVIRONMENT',
-                        'desc' => sprintf($this->l('Select the %s API environment to use. Production for live transactions, Staging/Development for testing.'), $this->getTwoBrandConfig('product_name')),
+                        'desc' => sprintf($this->l('Select the %s API environment to use. Production for live transactions, Staging for testing.'), $this->getTwoBrandConfig('product_name')),
                         'required' => true,
                         'options' => array(
                             'query' => array(
-                                array('id_option' => 'development', 'name' => $this->l('Development')),
                                 array('id_option' => 'staging', 'name' => $this->l('Staging')),
                                 array('id_option' => 'production', 'name' => $this->l('Production')),
                             ),
@@ -1277,14 +1278,14 @@ class Twopayment extends PaymentModule
         
         // Validate environment
         $environment = Tools::getValue('PS_TWO_ENVIRONMENT');
-        if (Tools::isEmpty($environment) || !in_array($environment, array('production', 'development', 'staging'))) {
-            $this->errors[] = $this->l('Please select a valid environment (Production, Development or Staging).');
+        if (Tools::isEmpty($environment) || !in_array($environment, array('production', 'staging'))) {
+            $this->errors[] = $this->l('Please select a valid environment (Production or Staging).');
         }
         
         // Verify API key with Two against selected environment and capture merchant id and short name
         $apiKey = trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY'));
         $env = Tools::getValue('PS_TWO_ENVIRONMENT');
-        if (!empty($apiKey) && in_array($env, array('production','development','staging'))) {
+        if (!empty($apiKey) && in_array($env, array('production', 'staging'))) {
             $verify = $this->verifyTwoApiKey($apiKey, $env);
             // Held for the SAVE to publish, not published here (TWO-25326).
             // Validation can still fail on an unrelated field - an empty title,
@@ -3115,7 +3116,7 @@ class Twopayment extends PaymentModule
      */
     protected function renderTwoPluginHealthChecklist()
     {
-        $environment = (string) Configuration::get('PS_TWO_ENVIRONMENT', 'development');
+        $environment = (string) Configuration::get('PS_TWO_ENVIRONMENT', 'staging');
         // Same live verdict the checkout gate uses (TWO-25326) - a health row
         // reporting "Verified" while Two is being withheld is worse than no row.
         $api_verified = $this->isTwoApiKeyVerified();
@@ -14709,7 +14710,7 @@ class Twopayment extends PaymentModule
     {
         // Check if SSL verification is disabled via configuration (for corporate networks)
         $disable_ssl_verify = (bool)Configuration::get('PS_TWO_DISABLE_SSL_VERIFY', false);
-        $environment = (string)Configuration::get('PS_TWO_ENVIRONMENT', 'development');
+        $environment = (string)Configuration::get('PS_TWO_ENVIRONMENT', 'staging');
         
         if ($disable_ssl_verify) {
             if ($environment === 'production') {

@@ -150,7 +150,7 @@ final class ApiKeyVerificationSpec
             }
 
             /** @return array{status:string,code:int|null,body:array|null} */
-            public function verifyForTest(string $apiKey, string $environment = 'development'): array
+            public function verifyForTest(string $apiKey, string $environment = 'staging'): array
             {
                 return $this->verifyTwoApiKey($apiKey, $environment);
             }
@@ -192,7 +192,7 @@ final class ApiKeyVerificationSpec
         Tools::resetTestValues();
         PrestaShopLogger::reset();
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'stored-key');
-        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'development');
+        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'staging');
     }
 
     /** A response the endpoint would consider a success. */
@@ -218,7 +218,7 @@ final class ApiKeyVerificationSpec
     /** POST values a minimal valid general-form save needs. */
     private static function generalFormPost(string $apiKey): void
     {
-        Tools::setTestValue('PS_TWO_ENVIRONMENT', 'development');
+        Tools::setTestValue('PS_TWO_ENVIRONMENT', 'staging');
         Tools::setTestValue('PS_TWO_TITLE_1', 'Two');
         Tools::setTestValue('PS_TWO_SUB_TITLE_1', 'Pay later');
         Tools::setTestValue('PS_TWO_MERCHANT_SHORT_NAME', 'merchant');
@@ -1354,7 +1354,9 @@ final class ApiKeyVerificationSpec
     {
         $module = self::module(self::httpOutcome(401));
         self::generalFormPost('stored-key');
-        Tools::setTestValue('PS_TWO_ENVIRONMENT', 'staging');
+        // Deliberately different from reset()'s stored 'staging' - the whole
+        // point of this test is a submitted/stored MISMATCH.
+        Tools::setTestValue('PS_TWO_ENVIRONMENT', 'production');
 
         $errors = $module->validateGeneralFormForTest();
 

@@ -19,8 +19,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_9ddf0af1d4404e3008c47a8fb8d17d6d'] 
 $_MODULE['<{twopayment}prestashop>twopayment_62c7594948c1231bbae9f948b1535b7e'] = 'Clave API';
 $_MODULE['<{twopayment}prestashop>twopayment_a754083c1f275488dfa754b0df434a4d'] = 'Introduce tu clave API proporcionada por %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_0ba29c6a1afacf586b03a26162c72274'] = 'Entorno';
-$_MODULE['<{twopayment}prestashop>twopayment_636cf8408eb393133d3495581642ecca'] = 'Selecciona el entorno de API de Two que deseas usar. Producción para transacciones reales, Desarrollo para pruebas.';
-$_MODULE['<{twopayment}prestashop>twopayment_330f49df8243756a8a4dc7f7f7ee6dfe'] = 'Desarrollo';
+$_MODULE['<{twopayment}prestashop>twopayment_8b6ddb993ec11f974a0fa6a46244401e'] = 'Selecciona el entorno de API de Two que deseas usar. Producción para transacciones reales, Staging para pruebas.';
 $_MODULE['<{twopayment}prestashop>twopayment_756d97bb256b8580d4d71ee0c547804e'] = 'Producción';
 $_MODULE['<{twopayment}prestashop>twopayment_90732912a0dcac1e45f02ba8122d80bf'] = 'Tipo de plazo de pago';
 $_MODULE['<{twopayment}prestashop>twopayment_7af191b62135c0adab07f2c26940a68a'] = '%s permanece oculto en el proceso de pago hasta que la clave se verifique.';
@@ -45,7 +44,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_c9cc8cce247e49bae79f15173ce97354'] 
 $_MODULE['<{twopayment}prestashop>twopayment_12a62151fbf8218ddf2165d1f23821cd'] = 'Introduce un título.';
 $_MODULE['<{twopayment}prestashop>twopayment_016e561b39ff316fdf1b182819189cdb'] = 'Introduce un subtítulo.';
 $_MODULE['<{twopayment}prestashop>twopayment_cd7cc8b6d9b6160db0e405bc2207b5fb'] = 'Introduce una clave API.';
-$_MODULE['<{twopayment}prestashop>twopayment_0a4246253393557e485bed94d7db13a3'] = 'Selecciona un entorno válido (Producción o Desarrollo).';
+$_MODULE['<{twopayment}prestashop>twopayment_c0df38350f764595ec9eb062507f895e'] = 'Selecciona un entorno válido (Producción o Staging).';
 $_MODULE['<{twopayment}prestashop>twopayment_1924a6cb5a7ce6a33e93620792fea964'] = 'Debes seleccionar al menos un plazo de pago.';
 $_MODULE['<{twopayment}prestashop>twopayment_15d430d1904e4424f0b8a0e37750060e'] = 'Respuesta de verificación no válida desde %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_85925e31c13734f285ce48920c8120b9'] = 'La configuración general se ha actualizado.';
