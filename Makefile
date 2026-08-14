@@ -29,9 +29,14 @@ export PORT
 TWO_ENV              := $(shell gcloud config get-value account 2>/dev/null | grep -q '@two\.inc$$' && echo staging || echo sandbox)
 TWO_API_BASE_URL     ?= https://api.$(TWO_ENV).two.inc
 TWO_PORTAL_BASE_URL  ?= https://portal.$(TWO_ENV).two.inc
-# Hosted checkout-page app (sole-trader signup). Independent of the two above:
-# set it to a locally-served checkout-page, or to an FRP tunnel pointing at one,
-# while the API stays on staging/sandbox. See "Service URL overrides" in README.
+# Hosted checkout-page app (sole-trader signup). Overridable on its own - point
+# it at a locally-served checkout-page, or at an FRP tunnel pointing at one,
+# while the API stays on staging/sandbox. Defaulted to the SAME TWO_ENV as the
+# API on purpose: the delegated-authority tokens the API mints are redeemed by
+# the checkout-page app, so a dev loop that silently mixed environments here
+# would fail the signup flow rather than fall back to anything. Values a browser
+# must resolve (this one) cannot use host.docker.internal - see "Service URL
+# overrides" in README.
 TWO_CHECKOUT_BASE_URL ?= https://checkout.$(TWO_ENV).two.inc
 export TWO_API_BASE_URL TWO_PORTAL_BASE_URL TWO_CHECKOUT_BASE_URL
 # Plugin admin config only exposes 'sandbox' vs 'production' â€” TWO_ENV

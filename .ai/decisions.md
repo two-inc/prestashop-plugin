@@ -49,6 +49,14 @@ production shop ignores these variables even when they are present in its enviro
 exercise both. Also `rtrim($override, '/')` before appending `/soletrader/signup`, since a
 hand-typed env var may carry a trailing slash the host map never does.
 
+One asymmetry worth remembering (review round 1): unlike the API and portal hosts, this URL is
+never fetched server-side. The module only hands it to the browser, which opens it as a popup and
+then origin-checks the `postMessage` that comes back - so the value must resolve **in the
+browser**. `host.docker.internal` is a container-to-host alias and is the wrong answer here;
+`localhost` or a tunnel hostname is the right one. The Makefile still defaults it to the same
+`TWO_ENV` as the API rather than leaving it empty, because the tokens the API mints are redeemed
+by the checkout-page app and a silently mixed pair fails the signup flow.
+
 ---
 
 ## [2026-08-11] Sole-Trader Enrolment Writes Its Identity And Address Into The Form
