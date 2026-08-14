@@ -165,7 +165,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_2f6653d72084d1585721cb272597728f'] 
 $_MODULE['<{twopayment}prestashop>twopayment_31a1931b5703e90cf392686134f4aae1'] = 'PrestaShop:';
 $_MODULE['<{twopayment}prestashop>twopayment_3279954443b449a5be560a0be578e6c2'] = 'Avgiftsregelgruppe som BARE ANTAS FOR FRAKT når fraktørens avgiftssats ikke kan fastslås for ordren – for eksempel når frakten prises utenfor fraktørtabellen i PrestaShop, slik at ingen fraktør oppgir en avgiftsregelgruppe. Den brukes aldri når en fraktør faktisk oppgir en: fraktørens egen gruppe vinner alltid. La den stå tom for å fortsette å avvise slike ordrer framfor å anta en sats.';
 $_MODULE['<{twopayment}prestashop>twopayment_329aa8486f4fde54cc4c9965faea9aa9'] = '(etter pris)';
-$_MODULE['<{twopayment}prestashop>twopayment_330f49df8243756a8a4dc7f7f7ee6dfe'] = 'Utvikling';
 $_MODULE['<{twopayment}prestashop>twopayment_52563a872dfbca393bed4ff3b7868687'] = 'Denne butikken fikk ikke kontakt med %s API i det hele tatt (nettverk, DNS eller brannmur). Selve API-nøkkelen er ikke vurdert.';
 $_MODULE['<{twopayment}prestashop>twopayment_3438dbc5b197844ab4cb01ab14af8a7b'] = 'Standardvilkår (f.eks. 30 dager fra oppfyllelse)';
 $_MODULE['<{twopayment}prestashop>twopayment_34d4c5b4f293f3953b9f1cea4ada6a1d'] = 'Velg hvilke betalingsvilkår du vil tilby. Standardvilkår beregnes fra datoen ordren blir oppfylt.';
@@ -184,7 +183,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_66c12ee256d5b468a43062e3ab9d643f'] 
 $_MODULE['<{twopayment}prestashop>twopayment_3d010ab63c1ada7af0907e77ca4d5d8e'] = 'Avgiftsbehandlingen for tillegg er ugyldig: denne butikken er satt opp til å la tillegget være UTEN AVGIFT i alle land. Denne behandlingen er ikke lenger tilgjengelig, og disse innstillingene kan ikke lagres så lenge den er lagret. Velg en avgiftsregelgruppe under Betalingsinnstillinger – hvis gebyret skal være uten avgift, oppretter du en gruppe med en sats på 0 prosent og velger den.';
 $_MODULE['<{twopayment}prestashop>twopayment_3d773cd2133003c21b5348d17b400f3f'] = 'Aktive nå:';
 $_MODULE['<{twopayment}prestashop>twopayment_3d94e3cb25fc73d812643a4cf4d8354a'] = 'Delvis oppfyllelse – ordrer må oppfylles i sin helhet';
-$_MODULE['<{twopayment}prestashop>twopayment_3d9e53b91d8ee1425fc4ef4d94dd460b'] = 'Velg et gyldig miljø (Produksjon, Utvikling eller Staging).';
+$_MODULE['<{twopayment}prestashop>twopayment_c0df38350f764595ec9eb062507f895e'] = 'Velg et gyldig miljø (Produksjon eller Staging).';
 $_MODULE['<{twopayment}prestashop>twopayment_3ef2ad2a1483fd9861c50152ef58e38b'] = 'Ordre oppfylt → Sendt';
 $_MODULE['<{twopayment}prestashop>twopayment_cddb055b1f1dd15d5b6df428e01c6893'] = '%s: Verifisert – klar for oppfyllelse';
 $_MODULE['<{twopayment}prestashop>twopayment_3f68e67dc6c397aaa9d1c24c356f754f'] = 'Verifisert';
@@ -379,7 +378,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_cc4d7e72dda2f971cf3de3046c77afe2'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d378b918f97f59232f70bbcde9a4a2fa'] = '%s-betaling er ikke tilgjengelig for denne ordren. Velg en annen betalingsmåte.';
 $_MODULE['<{twopayment}prestashop>twopayment_cd7cc8b6d9b6160db0e405bc2207b5fb'] = 'Skriv inn en API-nøkkel.';
 $_MODULE['<{twopayment}prestashop>twopayment_cdca48ec5dde79b84b395c0c557bb290'] = '%d dager';
-$_MODULE['<{twopayment}prestashop>twopayment_522464baf22c48968810b77c50432a2e'] = 'Velg hvilket %s-API-miljø som skal brukes. Produksjon for reelle transaksjoner, Staging/Utvikling for testing.';
+$_MODULE['<{twopayment}prestashop>twopayment_8b6ddb993ec11f974a0fa6a46244401e'] = 'Velg hvilket %s-API-miljø som skal brukes. Produksjon for reelle transaksjoner, Staging for testing.';
 $_MODULE['<{twopayment}prestashop>twopayment_cf5f3091e30dee6597885d8c0e0c357f'] = 'Vilkår';
 $_MODULE['<{twopayment}prestashop>twopayment_d132286ce060a9349df55de2808b4d5f'] = 'Ingen treff funnet';
 $_MODULE['<{twopayment}prestashop>twopayment_d2a7c39c5ec025981855847fed006923'] = 'Hvis du velger JA, blir tax_subtotals sendt i datainnholdet til /v1/order og /v1/order_intent. Hvis du velger NEI, utelates tax_subtotals fra dette datainnholdet.';
