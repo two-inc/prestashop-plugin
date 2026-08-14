@@ -9721,6 +9721,30 @@ class Twopayment extends PaymentModule
      */
     private function getDevEnvOverride($name)
     {
+        return self::getDevModeEnvOverride($name);
+    }
+
+    /**
+     * The dev-mode gate itself, callable without a module instance.
+     *
+     * Exists because the three service URLs this plugin talks to are not all
+     * resolved from the module class: the hosted sole-trader signup page is
+     * resolved by TwoSoleTrader::getSignupPageUrl(), which is static and has no
+     * $this. Rather than duplicate the `_PS_MODE_DEV_` check there (a
+     * duplicated security gate is a gate that gets half-removed), both callers
+     * go through this one method, so each of TWO_API_BASE_URL,
+     * TWO_PORTAL_BASE_URL and TWO_CHECKOUT_BASE_URL is independently
+     * overridable and all three are gated identically.
+     *
+     * Returns null whenever _PS_MODE_DEV_ is undefined or false, so a
+     * production shop ignores these variables even if they are set in its
+     * process environment.
+     *
+     * @param string $name Env var name (e.g. TWO_CHECKOUT_BASE_URL)
+     * @return string|null
+     */
+    public static function getDevModeEnvOverride($name)
+    {
         if (!defined('_PS_MODE_DEV_') || !_PS_MODE_DEV_) {
             return null;
         }

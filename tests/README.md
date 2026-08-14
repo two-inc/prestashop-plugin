@@ -23,6 +23,15 @@ This folder contains deterministic tests for order-building and payload safety l
 - Partial refunds via credit slips: amount+currency payload, slip-ID idempotency key, remaining-balance guard, and duplicate-refund suppression
 - Default shipping tax code: hidden-unless-activated admin field, no-default-value refusal parity, save-while-hidden never wiping the stored selection, carrier-wins resolution order, and the README/code drift guard on the activation constant
 
+- Dev-mode service URL overrides (`TWO_API_BASE_URL`, `TWO_PORTAL_BASE_URL`,
+  `TWO_CHECKOUT_BASE_URL`): each resolves independently of the other two, and every
+  one of them is ignored unless `_PS_MODE_DEV_` is true
+
+`TwoSoleTraderSpec` resolves those URLs in a **child PHP process**
+(`tests/fixtures/dev-mode-url-probe.php`, invoked with `PROBE_PS_MODE_DEV=1|0|unset`):
+`_PS_MODE_DEV_` is a constant, so one process cannot exercise both sides of the gate,
+and the offline suite itself runs with the constant undefined.
+
 `DefaultShippingTaxCodeSpec` **must stay last** in `run.php`: it `define()`s
 `_TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_` partway through its own run and a PHP
 constant cannot be undefined again.
