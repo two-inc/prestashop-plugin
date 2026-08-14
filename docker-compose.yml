@@ -39,8 +39,9 @@ services:
       # independently of the others. Empty when compose is invoked directly
       # with none of them exported, so `docker compose up` on its own still
       # leaves the plugin's normal environment switch in charge; the Makefile
-      # exports concrete <env> hosts for all three, so anything started
-      # through `make` does carry them.
+      # exports concrete <env> hosts for all three, so any container CREATED
+      # through `make install` (or `docker compose up`) does carry them.
+      # `make run` only starts existing containers - it cannot change these.
       TWO_API_BASE_URL: ${TWO_API_BASE_URL:-}
       TWO_PORTAL_BASE_URL: ${TWO_PORTAL_BASE_URL:-}
       TWO_CHECKOUT_BASE_URL: ${TWO_CHECKOUT_BASE_URL:-}

@@ -417,7 +417,9 @@ final class TwoSoleTraderSpec
         fclose($errorLog);
         $status = proc_close($process);
         if ($status !== 0) {
-            throw new RuntimeException('Dev-mode URL probe failed (' . $status . '): ' . $stderr);
+            // stdout as well as stderr: PHP CLI prints fatals to STDOUT, so a
+            // stderr-only message for a crashed probe is an empty message.
+            throw new RuntimeException('Dev-mode URL probe failed (' . $status . '): ' . $stdout . $stderr);
         }
         $decoded = json_decode($stdout, true);
         if (!is_array($decoded)) {
@@ -433,12 +435,12 @@ final class TwoSoleTraderSpec
      */
     private static function testSignupUrlHonoursCheckoutOverrideInDevMode(): void
     {
-        $urls = self::resolveUrls('1', ['TWO_CHECKOUT_BASE_URL' => 'http://host.docker.internal:3000']);
-        TinyAssert::same('http://host.docker.internal:3000/soletrader/signup', $urls['signup']);
+        $urls = self::resolveUrls('1', ['TWO_CHECKOUT_BASE_URL' => 'http://localhost:3000']);
+        TinyAssert::same('http://localhost:3000/soletrader/signup', $urls['signup']);
 
         // A hand-typed value may carry a trailing slash; the path must not double up.
-        $urls = self::resolveUrls('1', ['TWO_CHECKOUT_BASE_URL' => 'http://host.docker.internal:3000/']);
-        TinyAssert::same('http://host.docker.internal:3000/soletrader/signup', $urls['signup']);
+        $urls = self::resolveUrls('1', ['TWO_CHECKOUT_BASE_URL' => 'http://localhost:3000/']);
+        TinyAssert::same('http://localhost:3000/soletrader/signup', $urls['signup']);
 
         // Empty is not an override - it falls back to the environment map.
         $urls = self::resolveUrls('1', ['TWO_CHECKOUT_BASE_URL' => '']);
@@ -501,11 +503,11 @@ final class TwoSoleTraderSpec
         $urls = self::resolveUrls('1', [
             'TWO_API_BASE_URL' => 'http://host.docker.internal:8080',
             'TWO_PORTAL_BASE_URL' => 'http://host.docker.internal:8081',
-            'TWO_CHECKOUT_BASE_URL' => 'http://host.docker.internal:3000',
+            'TWO_CHECKOUT_BASE_URL' => 'http://localhost:3000',
         ]);
         TinyAssert::same('http://host.docker.internal:8080', $urls['api']);
         TinyAssert::same('http://host.docker.internal:8081', $urls['portal']);
-        TinyAssert::same('http://host.docker.internal:3000/soletrader/signup', $urls['signup']);
+        TinyAssert::same('http://localhost:3000/soletrader/signup', $urls['signup']);
     }
 
     /**

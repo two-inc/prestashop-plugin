@@ -566,9 +566,12 @@ They resolve **independently** — setting one leaves the other two on their
 defaults. That is the point: the common case is a staging API plus a
 checkout-page you are editing yourself.
 
-Note that the container reads these at creation time: `make install` (which
-recreates the containers) applies a new value, `make run` only starts the
-containers you already have.
+Note that the container reads these at **creation** time. `make run` only starts
+the containers you already have, so it keeps whatever values they were created
+with. To apply a new value to a shop you already installed, re-create the
+container with the variable set — `TWO_CHECKOUT_BASE_URL=… docker compose up -d`
+keeps the database. `make install` also applies it, but it runs `clean` first and
+therefore rebuilds the shop from scratch.
 
 **Everything on your machine.** The API and portal hosts are fetched
 *server-side*, from inside the container, which reaches your machine through
@@ -588,14 +591,17 @@ make install \
 **Remote shop, checkout-page on your laptop (FRP tunnel).** A remote instance
 (e.g. GKE-hosted) is not on your machine, and neither `host.docker.internal` nor
 `localhost` means anything useful to a browser pointed at it. Expose your local
-checkout-page dev server through an FRP tunnel instead — the same
-`<subdomain>.frp.<env>.two.inc` scheme this repo's own `make proxy` uses for the
-storefront, with the checkout-page project's own tunnel tooling on the other
-side — and point `TWO_CHECKOUT_BASE_URL` at the tunnel hostname:
+checkout-page dev server through an FRP tunnel instead — start it with the
+checkout-page project's own tunnel tooling, which reports the hostname it came up
+on — and point `TWO_CHECKOUT_BASE_URL` at that hostname:
 
 ```bash
 make install TWO_CHECKOUT_BASE_URL=https://checkout-<you>.frp.beta.two.inc
 ```
+
+(Use whatever hostname your tunnel actually reports — the form above is
+illustrative, and this repo's own storefront tunnel uses a different FRP
+environment.)
 
 For a shop you did not boot with `make`, set the same variable in that
 instance's own environment (however that deployment injects env vars) — the gate
