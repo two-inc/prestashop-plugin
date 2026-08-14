@@ -165,7 +165,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_2f6653d72084d1585721cb272597728f'] 
 $_MODULE['<{twopayment}prestashop>twopayment_31a1931b5703e90cf392686134f4aae1'] = 'PrestaShop:';
 $_MODULE['<{twopayment}prestashop>twopayment_3279954443b449a5be560a0be578e6c2'] = 'Momsregelgrupp som ANTAS ENBART FÖR FRAKT när fraktbolagets momssats inte kan fastställas för ordern - till exempel när frakten prissätts utanför PrestaShops frakttabell, så att inget fraktbolag anger en momsregelgrupp. Den används aldrig när ett fraktbolag anger en egen grupp: fraktbolagets egen grupp gäller alltid. Lämna fältet tomt om du hellre vill att sådana order nekas än att en sats antas.';
 $_MODULE['<{twopayment}prestashop>twopayment_329aa8486f4fde54cc4c9965faea9aa9'] = '(efter pris)';
-$_MODULE['<{twopayment}prestashop>twopayment_330f49df8243756a8a4dc7f7f7ee6dfe'] = 'Utveckling';
 $_MODULE['<{twopayment}prestashop>twopayment_52563a872dfbca393bed4ff3b7868687'] = 'Den här butiken kunde inte nå %s API alls (nätverk, DNS eller brandvägg). Själva API-nyckeln har inte bedömts.';
 $_MODULE['<{twopayment}prestashop>twopayment_3438dbc5b197844ab4cb01ab14af8a7b'] = 'Standardvillkor (t.ex. 30 dagar från leverans)';
 $_MODULE['<{twopayment}prestashop>twopayment_34d4c5b4f293f3953b9f1cea4ada6a1d'] = 'Välj vilka betalningsvillkor du vill erbjuda. Standardvillkor beräknas från leveransdatumet.';
@@ -184,7 +183,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_66c12ee256d5b468a43062e3ab9d643f'] 
 $_MODULE['<{twopayment}prestashop>twopayment_3d010ab63c1ada7af0907e77ca4d5d8e'] = 'Momshanteringen för tilläggsavgift är ogiltig: denna butik är inställd på att lämna tilläggsavgiften OBESKATTAD i alla länder. Den hanteringen är inte längre tillgänglig och inställningarna kan inte längre sparas så länge den är lagrad. Välj en momsregelgrupp under Betalningsinställningar - om du vill lämna avgiften obeskattad, skapa och välj en grupp med satsen 0 %.';
 $_MODULE['<{twopayment}prestashop>twopayment_3d773cd2133003c21b5348d17b400f3f'] = 'Aktiva just nu:';
 $_MODULE['<{twopayment}prestashop>twopayment_3d94e3cb25fc73d812643a4cf4d8354a'] = 'Delleverans - order måste levereras i sin helhet';
-$_MODULE['<{twopayment}prestashop>twopayment_3d9e53b91d8ee1425fc4ef4d94dd460b'] = 'Välj en giltig miljö (Produktion, Utveckling eller Staging).';
+$_MODULE['<{twopayment}prestashop>twopayment_c0df38350f764595ec9eb062507f895e'] = 'Välj en giltig miljö (Produktion eller Staging).';
 $_MODULE['<{twopayment}prestashop>twopayment_3ef2ad2a1483fd9861c50152ef58e38b'] = 'Order levererad → Skickad';
 $_MODULE['<{twopayment}prestashop>twopayment_cddb055b1f1dd15d5b6df428e01c6893'] = '%s: Verifierad - klar för leverans';
 $_MODULE['<{twopayment}prestashop>twopayment_3f68e67dc6c397aaa9d1c24c356f754f'] = 'Verifierad';
@@ -379,7 +378,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_cc4d7e72dda2f971cf3de3046c77afe2'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d378b918f97f59232f70bbcde9a4a2fa'] = '%s-betalning är inte tillgänglig för denna order. Välj en annan betalningsmetod.';
 $_MODULE['<{twopayment}prestashop>twopayment_cd7cc8b6d9b6160db0e405bc2207b5fb'] = 'Ange en API-nyckel.';
 $_MODULE['<{twopayment}prestashop>twopayment_cdca48ec5dde79b84b395c0c557bb290'] = '%d dagar';
-$_MODULE['<{twopayment}prestashop>twopayment_522464baf22c48968810b77c50432a2e'] = 'Välj vilken %s-API-miljö som ska användas. Produktion för skarpa transaktioner, Staging/Utveckling för test.';
+$_MODULE['<{twopayment}prestashop>twopayment_8b6ddb993ec11f974a0fa6a46244401e'] = 'Välj vilken %s-API-miljö som ska användas. Produktion för skarpa transaktioner, Staging för test.';
 $_MODULE['<{twopayment}prestashop>twopayment_cf5f3091e30dee6597885d8c0e0c357f'] = 'Villkor';
 $_MODULE['<{twopayment}prestashop>twopayment_d132286ce060a9349df55de2808b4d5f'] = 'Inga träffar hittades';
 $_MODULE['<{twopayment}prestashop>twopayment_d2a7c39c5ec025981855847fed006923'] = 'Om du väljer JA skickas tax_subtotals i nyttolasten för /v1/order och /v1/order_intent. Om du väljer NEJ utesluts tax_subtotals från dessa nyttolaster.';

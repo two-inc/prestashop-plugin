@@ -20,7 +20,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_62c7594948c1231bbae9f948b1535b7e'] 
 $_MODULE['<{twopayment}prestashop>twopayment_a754083c1f275488dfa754b0df434a4d'] = 'Introduce tu clave API proporcionada por %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_0ba29c6a1afacf586b03a26162c72274'] = 'Entorno';
 $_MODULE['<{twopayment}prestashop>twopayment_636cf8408eb393133d3495581642ecca'] = 'Selecciona el entorno de API de Two que deseas usar. Producción para transacciones reales, Desarrollo para pruebas.';
-$_MODULE['<{twopayment}prestashop>twopayment_330f49df8243756a8a4dc7f7f7ee6dfe'] = 'Desarrollo';
 $_MODULE['<{twopayment}prestashop>twopayment_756d97bb256b8580d4d71ee0c547804e'] = 'Producción';
 $_MODULE['<{twopayment}prestashop>twopayment_90732912a0dcac1e45f02ba8122d80bf'] = 'Tipo de plazo de pago';
 $_MODULE['<{twopayment}prestashop>twopayment_7af191b62135c0adab07f2c26940a68a'] = '%s permanece oculto en el proceso de pago hasta que la clave se verifique.';

@@ -338,7 +338,7 @@ namespace {
             self::$configuration = [
                 'PS_TWO_DEBUG_MODE' => false,
                 'PS_TWO_PAYMENT_TERM_TYPE' => 'STANDARD',
-                'PS_TWO_ENVIRONMENT' => 'development',
+                'PS_TWO_ENVIRONMENT' => 'staging',
                 'PS_OS_SHIPPING' => 4,
                 'PS_OS_CANCELED' => 6,
                 'PS_TAX' => 1, // core default: taxes enabled shop-wide
