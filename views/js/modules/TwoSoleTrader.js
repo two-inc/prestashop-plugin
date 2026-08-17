@@ -382,6 +382,44 @@ class TwoSoleTrader {
         return url.toString();
     }
 
+    /**
+     * Append the `client`/`client_v` identification params that every call to
+     * Two carries, read from the server-published config. The client id and the
+     * version are never restated here, so a version bump stays a PHP-only
+     * change.
+     *
+     * Query params rather than a body field, on the POSTs too: that is the
+     * convention the module's own server-side calls already use for this pair
+     * (getTwoClientParams() / setTwoPaymentRequest() in twopayment.php attach
+     * them to the URL on POST and PUT as well as GET).
+     *
+     * Only for calls to Two's own host. The shop-internal URLs moduleUrl()
+     * builds are a different server and do not take these params.
+     *
+     * Either param is dropped when the config does not carry it, so a page that
+     * somehow runs without the config sends a correct URL rather than a literal
+     * `client=undefined`.
+     *
+     * @param {string} url
+     * @returns {string} url with the params appended
+     */
+    static withTwoClientParams(url) {
+        const config = (typeof window !== 'undefined' && window.twopayment) || {};
+        const params = new URLSearchParams();
+        if (config.client) {
+            params.set('client', config.client);
+        }
+        if (config.client_version) {
+            params.set('client_v', config.client_version);
+        }
+        const query = params.toString();
+        if (!query) {
+            return url;
+        }
+
+        return url + (url.indexOf('?') === -1 ? '?' : '&') + query;
+    }
+
     billingCountry() {
         const field = document.querySelector("select[name='id_country'], select[name='country']");
         if (field && field.selectedOptions && field.selectedOptions.length) {
@@ -1259,7 +1297,7 @@ class TwoSoleTrader {
         // exists to close.
         let request;
         try {
-            request = fetch(this.config.checkoutHost + '/autofill/v1/buyer/current', {
+            request = fetch(TwoSoleTrader.withTwoClientParams(this.config.checkoutHost + '/autofill/v1/buyer/current'), {
                 credentials: 'include',
                 headers: { 'two-delegated-authority-token': this.tokens.autofill_token }
             });
