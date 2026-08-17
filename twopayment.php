@@ -4471,6 +4471,14 @@ class Twopayment extends PaymentModule
         // path hit the cache instead of fetching inline.
         $this->refreshTwoFxRates();
 
+        // The same `client`/`client_v` pair every server-side call attaches, so
+        // the browser-side calls to Two can attach a byte-identical one. Read
+        // from getTwoClientParams() rather than restated here: the version it
+        // reports carries a `+<sha7>` suffix on a deployed build, which a bare
+        // $this->version would silently drop and split the two clients' idea of
+        // what version is running.
+        $client_params = $this->getTwoClientParams();
+
         Media::addJsDef(array('twopayment' => array(
                 'search_empty_text' => $this->l('No result found'),
                 'checkout_host' => $this->getTwoCheckoutHostUrl(),
@@ -4576,8 +4584,8 @@ class Twopayment extends PaymentModule
                 'order_intent_url' => $this->context->link->getModuleLink($this->name, 'orderintent'),
                 'ajax_token' => Tools::getToken(false),
                 'module_dir' => $this->_path,
-                'client' => 'PS',
-                'client_version' => $this->version,
+                'client' => $client_params['client'],
+                'client_version' => $client_params['client_v'],
                 'countries' => $param_countries,
                 'available_payment_terms' => $this->getAvailablePaymentTerms(),
                 'default_payment_term' => $this->getDefaultPaymentTerm(),

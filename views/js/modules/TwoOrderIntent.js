@@ -170,6 +170,43 @@ class TwoOrderIntent {
         return result;
     }
 
+    /**
+     * Append the `client`/`client_v` identification params that every call to
+     * Two carries, read from the server-published config. The client id and the
+     * version are never restated here, so a version bump stays a PHP-only
+     * change.
+     *
+     * Query params rather than a body field, even though the order-intent call
+     * is a POST with a JSON body: that is the convention the module's own
+     * server-side calls already use for this pair (getTwoClientParams() /
+     * setTwoPaymentRequest() in twopayment.php attach them to the URL on POST
+     * and PUT as well as GET). Putting them in the body here would also change
+     * a payload the server builds and Two validates.
+     *
+     * Either param is dropped when the config does not carry it, so a page that
+     * somehow runs without the config sends a correct URL rather than a literal
+     * `client=undefined`.
+     *
+     * @param {string} url
+     * @returns {string} url with the params appended
+     */
+    static withTwoClientParams(url) {
+        const config = (typeof window !== 'undefined' && window.twopayment) || {};
+        const params = new URLSearchParams();
+        if (config.client) {
+            params.set('client', config.client);
+        }
+        if (config.client_version) {
+            params.set('client_v', config.client_version);
+        }
+        const query = params.toString();
+        if (!query) {
+            return url;
+        }
+
+        return url + (url.indexOf('?') === -1 ? '?' : '&') + query;
+    }
+
     buildPublicApiBeforeSend() {
         return function (xhr) {
             const blockedHeaders = {
@@ -680,7 +717,9 @@ class TwoOrderIntent {
     callTwoOrderIntent(payload) {
         return new Promise((resolve, reject) => {
             $.ajax({
-                url: (window.twopayment && window.twopayment.checkout_host ? window.twopayment.checkout_host : '') + '/v1/order_intent',
+                url: TwoOrderIntent.withTwoClientParams(
+                    (window.twopayment && window.twopayment.checkout_host ? window.twopayment.checkout_host : '') + '/v1/order_intent'
+                ),
                 type: 'POST',
                 crossDomain: true,
                 dataType: 'json',
