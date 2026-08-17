@@ -32,6 +32,90 @@ final class DeployVersionInfoSpec
         self::testClientVersionHasNoTrailingPlusWithoutSha();
         self::testClientVersionAppendsShaWhenResolved();
         self::testClientParamsAreUrlEncodedWithPercent2B();
+        self::testBrowserConfigPublishesTheShaSuffixedVersion();
+    }
+
+    /**
+     * The browser makes four calls straight to Two (company search, company
+     * detail, order intent, sole-trader autofill) and identifies itself with the
+     * same `client`/`client_v` pair the PHP calls send. It reads them out of the
+     * config this hook publishes - so if that config carries a DIFFERENT version
+     * than getTwoClientVersion() reports, one shop reports itself as two
+     * versions depending on which side of the module made the call.
+     *
+     * That was the live state: the payload published a bare `$this->version`
+     * while every PHP call sent version + `+<sha7>`. Pinned by driving the real
+     * hook rather than by reading the source, because the failure is a value
+     * mismatch and only the value proves it.
+     */
+    private static function testBrowserConfigPublishesTheShaSuffixedVersion(): void
+    {
+        $module = new TwopaymentClientVersionWithShaHarness();
+        $module->_path = '/modules/twopayment/';
+        $controller = new class extends ModuleFrontController {
+            public $php_self = 'order';
+            public $controller_name = 'order';
+
+            public function registerStylesheet($id, $path, $options = [])
+            {
+            }
+
+            public function registerJavascript($id, $path, $options = [])
+            {
+            }
+
+            public function addJquery()
+            {
+            }
+
+            public function addJqueryUI($component)
+            {
+            }
+        };
+        $controller->module = $module;
+        $module->context->controller = $controller;
+        $module->context->country = new class {
+            public $iso_code = 'NO';
+        };
+        // run.php runs every spec in ONE process, so both of these are shared
+        // mutable state: restore whatever was there rather than leaving this
+        // spec's country row and JS payload behind for whichever spec runs next.
+        $countryWasSet = array_key_exists(578, StubStore::$countries);
+        $previousCountry = $countryWasSet ? StubStore::$countries[578] : null;
+        StubStore::$countries[578] = 'NO';
+
+        Media::reset();
+        try {
+            $module->hookActionFrontControllerSetMedia();
+
+            $published = Media::$jsDef['twopayment'];
+        } finally {
+            Media::reset();
+            if ($countryWasSet) {
+                StubStore::$countries[578] = $previousCountry;
+            } else {
+                unset(StubStore::$countries[578]);
+            }
+        }
+
+        // The two sides must agree exactly - not merely both be non-empty.
+        TinyAssert::same(
+            $module->getTwoClientVersion(),
+            $published['client_version'],
+            'the config handed to the browser must carry the SAME version the PHP calls send'
+        );
+        TinyAssert::same('2.4.0+fbdc80b', $published['client_version']);
+        // The specific regression: a bare $this->version silently drops the sha.
+        TinyAssert::false(
+            $published['client_version'] === '2.4.0',
+            'the published version dropped its +<sha7> suffix - it is sourced from $this->version again'
+        );
+        TinyAssert::same(
+            $module->getTwoClientParams()['client'],
+            $published['client'],
+            'the client id handed to the browser must be the one getTwoClientParams() sends'
+        );
+        TinyAssert::same('PS', $published['client']);
     }
 
     private static function callCommitHash(?string $gitDir, ?string $sidecarFile = null): ?string
