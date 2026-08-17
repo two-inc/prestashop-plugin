@@ -20,7 +20,13 @@ set -euo pipefail
 CONTAINER="$1"
 MODULE_NAME="$2"
 
-DUMP=$(docker exec "$CONTAINER" php "/var/www/html/modules/$MODULE_NAME/dev/probe-hosts.php" 2>/dev/null) || exit 0
+# -u www-data: probe-hosts.php bootstraps config/config.inc.php, which
+# compiles/warms the Symfony `dev` container cache on a cold cache. Run as
+# the default docker-exec user (root) that leaves var/cache/dev owned by
+# root, 0755 - unwritable by the www-data Apache workers that serve every
+# real request, which then fail with Symfony's rename() IOException the
+# next time the container needs recompiling.
+DUMP=$(docker exec -u www-data "$CONTAINER" php "/var/www/html/modules/$MODULE_NAME/dev/probe-hosts.php" 2>/dev/null) || exit 0
 
 API=$(sed -n 's/^getTwoCheckoutHostUrl(): //p' <<< "$DUMP")
 PORTAL=$(sed -n 's/^getTwoPortalUrl(): //p' <<< "$DUMP")
