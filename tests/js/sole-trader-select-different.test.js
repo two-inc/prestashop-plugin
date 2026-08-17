@@ -277,6 +277,7 @@ describe('popup URL (c)', () => {
         const url = String(openSpy.mock.calls[0][0]);
         expect(url).toContain('businessToken=');
         expect(url).toContain('autoselect=false');
+        expect(String(openSpy.mock.calls[0][2])).toContain('width=700');
 
         instance.destroy();
     });
@@ -324,6 +325,7 @@ describe('popup URL (c)', () => {
         expect(buyerCurrentSpy).toHaveBeenCalledTimes(1);
         expect(openSpy).toHaveBeenCalledTimes(1);
         expect(String(openSpy.mock.calls[0][0])).not.toContain('autoselect=');
+        expect(String(openSpy.mock.calls[0][2])).toContain('width=700');
 
         instance.destroy();
     });
