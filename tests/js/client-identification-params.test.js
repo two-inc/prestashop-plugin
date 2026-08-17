@@ -58,17 +58,13 @@ const CLIENT_VERSION_ENCODED = '2.7.8%2Babc1234';
  * `+` that happens to decode to something.
  *
  * @param {string} url the fully constructed request URL
- * @param {string} label which call site, for the assertion message
  */
-function expectClientParams(url, label) {
+function expectClientParams(url) {
     const parsed = new URL(url);
     expect(parsed.searchParams.get('client')).toBe(CLIENT);
     expect(parsed.searchParams.get('client_v')).toBe(CLIENT_VERSION);
     expect(String(url)).toContain('client=' + CLIENT);
     expect(String(url)).toContain('client_v=' + CLIENT_VERSION_ENCODED);
-    // Guards the assertion itself: a helper that silently matched nothing would
-    // pass every check above on a URL that happened to contain the substrings.
-    expect(label).toBeTruthy();
 }
 
 /** The config the server publishes, as the real page has it before any module runs. */
@@ -154,18 +150,26 @@ describe('withTwoClientParams', () => {
         });
 
         // A page without the config is not a page that should send
-        // `client=undefined` - an unparseable version is worse than a missing
-        // one for anything aggregating these.
-        const absentConfigCases = [
-            [undefined, 'no config at all'],
-            [{}, 'config present but carrying neither key'],
-            [{ client: 'PS' }, 'client only, no version'],
-            [{ client_version: CLIENT_VERSION }, 'version only, no client']
+        // `client=undefined` - an unparseable version is worse to anything
+        // aggregating these than an absent one. Each case states the exact URL
+        // it expects, so a helper that emitted a stray `?`, dropped the param it
+        // DOES have, or passed `undefined` through fails on the value rather
+        // than on a "contains no undefined" check that a broken helper could
+        // also satisfy.
+        const partialConfigCases = [
+            ['no config at all', undefined, 'https://api.example.test/v1/thing'],
+            ['config carrying neither key', {}, 'https://api.example.test/v1/thing'],
+            ['client only, no version', { client: CLIENT }, 'https://api.example.test/v1/thing?client=PS'],
+            [
+                'version only, no client',
+                { client_version: CLIENT_VERSION },
+                'https://api.example.test/v1/thing?client_v=' + CLIENT_VERSION_ENCODED
+            ]
         ];
 
-        test.each(absentConfigCases)(
-            `omits what config does not carry, never a literal undefined (%#: %s)`,
-            (config, caseLabel) => {
+        test.each(partialConfigCases)(
+            'sends only what config carries, never a literal undefined (%s)',
+            (caseLabel, config, expectedUrl) => {
                 if (config === undefined) {
                     delete global.window.twopayment;
                 } else {
@@ -174,14 +178,8 @@ describe('withTwoClientParams', () => {
 
                 const url = classes[className].withTwoClientParams('https://api.example.test/v1/thing');
 
+                expect(url).toBe(expectedUrl);
                 expect(url).not.toContain('undefined');
-                if (config && config.client && config.client_version) {
-                    throw new Error('case ' + caseLabel + ' is not an absent-config case');
-                }
-                // A URL with nothing to add comes back untouched - no stray `?`.
-                if (!config || (!config.client && !config.client_version)) {
-                    expect(url).toBe('https://api.example.test/v1/thing');
-                }
             }
         );
     });
@@ -221,7 +219,7 @@ describe('company search calls carry the client identification', () => {
         search.searchCompanies('exa', callbackRecorder().fn);
 
         const url = ajax.last().url;
-        expectClientParams(url, 'company search');
+        expectClientParams(url);
         // The search's own params are untouched by the addition.
         const parsed = new URL(url);
         expect(parsed.pathname).toBe('/companies/v2/company');
@@ -238,7 +236,7 @@ describe('company search calls carry the client identification', () => {
         search.fetchCompanyDetails('lookup-abc-123');
 
         const url = ajax.last().url;
-        expectClientParams(url, 'company detail');
+        expectClientParams(url);
         // The detail endpoint had NO query string before this change, so the
         // pair has to arrive behind a `?` rather than an `&`.
         const parsed = new URL(url);
@@ -281,7 +279,7 @@ describe('order intent POST carries the client identification', () => {
         intent.callTwoOrderIntent({ gross_amount: '100.00' });
 
         const call = ajax.last();
-        expectClientParams(call.url, 'order intent');
+        expectClientParams(call.url);
         expect(new URL(call.url).pathname).toBe('/v1/order_intent');
         expect(call.settings.type).toBe('POST');
     });
@@ -359,7 +357,7 @@ describe('sole-trader autofill carries the client identification', () => {
 
         const autofillUrl = urls.find((url) => url.includes('/autofill/v1/buyer/current'));
         expect(autofillUrl).toBeDefined();
-        expectClientParams(autofillUrl, 'sole-trader autofill');
+        expectClientParams(autofillUrl);
         expect(new URL(autofillUrl).pathname).toBe('/autofill/v1/buyer/current');
     });
 
