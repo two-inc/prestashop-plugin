@@ -1674,7 +1674,7 @@ class TwoSoleTrader {
         const popup = window.open(
             url,
             '_blank',
-            'location=yes,resizable=yes,scrollbars=yes,status=yes,height=805,width=610'
+            'location=yes,resizable=yes,scrollbars=yes,status=yes,height=805,width=700'
         );
         if (!popup) {
             // Popup blocked despite opening from a click - surface it
