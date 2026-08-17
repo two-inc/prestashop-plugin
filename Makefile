@@ -92,6 +92,7 @@ install: clean
 		echo " Proxy admin:     $$PROXY_URL/admin-dev"; \
 	fi; \
 	echo " Credentials:      $(ADMIN_MAIL) / $(ADMIN_PASSWD)"; \
+	dev/print-resolved-hosts.sh $(CONTAINER) $(MODULE_NAME); \
 	echo "========================================="
 
 ## Update Two payment config (writes key + calls verify_api_key so the
@@ -122,6 +123,7 @@ run:
 		echo " Proxy admin:     $$PROXY_URL/admin-dev"; \
 	fi; \
 	echo " Credentials:      $(ADMIN_MAIL) / $(ADMIN_PASSWD)"; \
+	dev/print-resolved-hosts.sh $(CONTAINER) $(MODULE_NAME); \
 	echo "========================================="
 
 ## Start with PS_DEV_MODE on and caches cleared (hot reload)
