@@ -77,12 +77,26 @@ final class DeployVersionInfoSpec
         $module->context->country = new class {
             public $iso_code = 'NO';
         };
+        // run.php runs every spec in ONE process, so both of these are shared
+        // mutable state: restore whatever was there rather than leaving this
+        // spec's country row and JS payload behind for whichever spec runs next.
+        $countryWasSet = array_key_exists(578, StubStore::$countries);
+        $previousCountry = $countryWasSet ? StubStore::$countries[578] : null;
         StubStore::$countries[578] = 'NO';
 
         Media::reset();
-        $module->hookActionFrontControllerSetMedia();
+        try {
+            $module->hookActionFrontControllerSetMedia();
 
-        $published = Media::$jsDef['twopayment'];
+            $published = Media::$jsDef['twopayment'];
+        } finally {
+            Media::reset();
+            if ($countryWasSet) {
+                StubStore::$countries[578] = $previousCountry;
+            } else {
+                unset(StubStore::$countries[578]);
+            }
+        }
 
         // The two sides must agree exactly - not merely both be non-empty.
         TinyAssert::same(
