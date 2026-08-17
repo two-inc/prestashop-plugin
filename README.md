@@ -551,6 +551,11 @@ unset — `production` and `staging` have explicit hosts, everything else
 (The buyer portal login host has no override; it always follows the configured
 environment.)
 
+`make install` and `make run` print the resolved API / portal / checkout-page
+hosts (honouring the overrides above and the `_PS_MODE_DEV_` gate) in their
+status block, so you can see at a glance which real hosts your local instance
+will actually talk to without having to run `dev/probe-hosts.php` yourself.
+
 **Mind the two "checkouts".** `TWO_API_BASE_URL` is the one behind
 `getTwoCheckoutHostUrl()` and the `checkout_host` value handed to the browser —
 that is the **API**. `TWO_CHECKOUT_BASE_URL` is the hosted checkout-page **app**
