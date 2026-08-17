@@ -1654,15 +1654,13 @@ class TwoSoleTrader {
         // TwoSoleTrader::getSignupPageUrl() (classes/TwoSoleTrader.php - see
         // its `$signup_hosts` property and the method itself; deliberately
         // not citing line numbers here, they drift), which maps ONLY
-        // environment -> host - it does not know ABN or any other brand
-        // exists. Magento/WooCommerce resolve brand
-        // via a per-brand `checkout_url_template` (a distinct hostname per
-        // brand, e.g. `achterafbetalen.abnamro.nl` for ABN) with a
-        // `?brand=<tag>&brandVersion=<ver>` query-string fallback used ONLY
-        // on shared non-prod domains. Porting this popup-launch URL
-        // construction to those platforms must go through THAT existing
-        // mechanism, not this environment-keyed host map - PrestaShop has no
-        // brand-overlay support today and this file must not invent one.
+        // environment -> host - it does not know about brand overlays at all.
+        // Magento/WooCommerce resolve brand via a per-brand hostname template
+        // with a query-string fallback used ONLY on shared non-prod domains.
+        // Porting this popup-launch URL construction to those platforms must
+        // go through THAT existing mechanism, not this environment-keyed host
+        // map - PrestaShop has no brand-overlay support today and this file
+        // must not invent one.
         const url =
             this.tokens.signup_url +
             '?businessToken=' + encodeURIComponent(this.tokens.delegation_token) +
