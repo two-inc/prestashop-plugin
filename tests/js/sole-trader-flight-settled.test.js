@@ -104,6 +104,96 @@ test('a successful autofill (buyer match) fires the settle event', async () => {
     instance.destroy();
 });
 
+/**
+ * Adversarial review finding (Yoda): every OTHER test drives
+ * notifyEnrollmentSettled()'s popup-open guard through a path where
+ * `this._popup` is either never set or already nulled by the poll itself -
+ * none of them actually exercises the guard suppressing a call from a
+ * DIFFERENT terminal branch while a popup is still open. This does: a real
+ * OTP round trip (postMessage 'ACCEPTED') resolves through applyBuyer()'s
+ * success branch while the popup the buyer authenticated in is still open on
+ * screen - the spinner must not clear until they actually close it.
+ */
+test('a genuine OTP completion settles the buyer lookup but withholds the spinner until the still-open popup actually closes', async () => {
+    buildPaymentTile();
+    global.window.TwoCompanyNumber = { forDisplay: (v) => v };
+    global.window.TwoCheckoutManager_Instance = { setConfirmedCompanySelection: () => {} };
+    document.body.insertAdjacentHTML('beforeend', "<input name='email' value='order-contact@example.test' />");
+
+    const popup = { closed: false };
+    global.window.open = jest.fn(() => popup);
+
+    let buyerLookupCalls = 0;
+    stubFetch({
+        buyer: () => {
+            buyerLookupCalls += 1;
+            if (buyerLookupCalls === 1) {
+                // Passive cookie-match check on the order's own checkout
+                // email - no match, so this falls through to the on-page
+                // prompt.
+                return Promise.resolve({ ok: false, status: 404 });
+            }
+            // The trusted lookup issued after a genuine OTP completion.
+            return Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({
+                    email: 'sole-trader-real-account@example.test',
+                    company_name: 'Sole Trader AS',
+                    organization_number: '923456789'
+                })
+            });
+        }
+    });
+    const { calls, handler } = recordSettled();
+
+    jest.useFakeTimers();
+    try {
+        const instance = build();
+        try {
+            instance.startEnrollment();
+            await flushPromises();
+            await flushPromises();
+            await flushPromises();
+
+            // No-match on the passive check - handed off to the on-page
+            // prompt (nothing left to wait on until the buyer clicks it).
+            expect(calls.length).toBe(1);
+
+            const prompt = document.querySelector('.two-sole-trader__prompt');
+            prompt.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+            expect(global.window.open).toHaveBeenCalledTimes(1);
+            expect(instance._popup).toBe(popup);
+            // Popup handed off to - must not have settled again yet.
+            expect(calls.length).toBe(1);
+
+            window.dispatchEvent(new window.MessageEvent('message', {
+                data: 'ACCEPTED',
+                origin: 'https://signup.example.test'
+            }));
+            await flushPromises();
+            await flushPromises();
+            await flushPromises();
+
+            // applyBuyer() succeeded - the buyer is enrolled - but the popup
+            // they just authenticated in is STILL open, so the guard must
+            // withhold the settle event.
+            expect(instance.enrolling).toBe(false);
+            expect(calls.length).toBe(1);
+
+            // Buyer now closes the popup.
+            popup.closed = true;
+            jest.advanceTimersByTime(500);
+
+            expect(calls.length).toBe(2);
+        } finally {
+            instance.destroy();
+        }
+    } finally {
+        jest.useRealTimers();
+    }
+    document.removeEventListener('two:sole-trader-flight-settled', handler);
+});
+
 test('a failed token mint fires the settle event', async () => {
     buildPaymentTile();
     stubFetch({ tokens: () => Promise.resolve({ json: () => Promise.resolve({ success: false }) }) });
@@ -135,21 +225,223 @@ test('a network failure on the buyer lookup fires the settle event', async () =>
     instance.destroy();
 });
 
-test('a no-match buyer lookup handed off directly to the popup (address-editor page) fires the settle event', async () => {
+/**
+ * TWO-40 follow-up, Doug: the spinner was clearing as soon as window.open()
+ * returned, not when the popup itself closed. Pins the fixed behavior: the
+ * settle event stays held while the popup is open, and only fires once
+ * watchPopupUntilClosed()'s poll observes `popup.closed`.
+ */
+test('a no-match buyer lookup handed off directly to the popup (address-editor page) keeps the spinner up until the popup actually closes', async () => {
     buildAddressForm();
-    global.window.open = jest.fn(() => ({ closed: false }));
+    const popup = { closed: false };
+    global.window.open = jest.fn(() => popup);
     stubFetch({ buyer: () => Promise.resolve({ ok: false, status: 404 }) });
     const { calls, handler } = recordSettled();
 
-    const instance = build();
-    instance.startEnrollment();
-    await flushPromises();
-    await flushPromises();
-    await flushPromises();
+    jest.useFakeTimers();
+    try {
+        const instance = build();
+        try {
+            instance.startEnrollment();
+            await flushPromises();
+            await flushPromises();
+            await flushPromises();
 
-    expect(calls.length).toBe(1);
+            // Popup handed off to - the spinner must NOT settle yet, even
+            // though window.open() has already returned.
+            expect(calls.length).toBe(0);
+
+            // Buyer closes the popup (completes, cancels inside it, or just
+            // closes the window - all three read identically as `.closed`).
+            popup.closed = true;
+            jest.advanceTimersByTime(500);
+
+            expect(calls.length).toBe(1);
+        } finally {
+            instance.destroy();
+        }
+    } finally {
+        jest.useRealTimers();
+    }
     document.removeEventListener('two:sole-trader-flight-settled', handler);
-    instance.destroy();
+});
+
+test('the spinner stays held if the popup takes a few poll ticks to actually close', async () => {
+    buildAddressForm();
+    const popup = { closed: false };
+    global.window.open = jest.fn(() => popup);
+    stubFetch({ buyer: () => Promise.resolve({ ok: false, status: 404 }) });
+    const { calls, handler } = recordSettled();
+
+    jest.useFakeTimers();
+    try {
+        const instance = build();
+        try {
+            instance.startEnrollment();
+            await flushPromises();
+            await flushPromises();
+            await flushPromises();
+
+            jest.advanceTimersByTime(500);
+            expect(calls.length).toBe(0);
+            jest.advanceTimersByTime(500);
+            expect(calls.length).toBe(0);
+
+            popup.closed = true;
+            jest.advanceTimersByTime(500);
+            expect(calls.length).toBe(1);
+        } finally {
+            instance.destroy();
+        }
+    } finally {
+        jest.useRealTimers();
+    }
+    document.removeEventListener('two:sole-trader-flight-settled', handler);
+});
+
+test('no popup poll interval survives a normal popup-close settle', async () => {
+    buildAddressForm();
+    const popup = { closed: false };
+    global.window.open = jest.fn(() => popup);
+    stubFetch({ buyer: () => Promise.resolve({ ok: false, status: 404 }) });
+
+    jest.useFakeTimers();
+    try {
+        const instance = build();
+        try {
+            instance.startEnrollment();
+            await flushPromises();
+            await flushPromises();
+            await flushPromises();
+
+            expect(jest.getTimerCount()).toBeGreaterThan(0);
+            popup.closed = true;
+            jest.advanceTimersByTime(500);
+            expect(jest.getTimerCount()).toBe(0);
+        } finally {
+            instance.destroy();
+        }
+    } finally {
+        jest.useRealTimers();
+    }
+});
+
+test('a popup blocked outright (window.open() returns null) never starts a poll and settles immediately', async () => {
+    buildAddressForm();
+    global.window.open = jest.fn(() => null);
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    stubFetch({ buyer: () => Promise.resolve({ ok: false, status: 404 }) });
+    const { calls, handler } = recordSettled();
+
+    jest.useFakeTimers();
+    try {
+        const instance = build();
+        try {
+            instance.startEnrollment();
+            await flushPromises();
+            await flushPromises();
+            await flushPromises();
+
+            expect(calls.length).toBe(1);
+            expect(jest.getTimerCount()).toBe(0);
+        } finally {
+            instance.destroy();
+        }
+    } finally {
+        jest.useRealTimers();
+    }
+    errorSpy.mockRestore();
+    document.removeEventListener('two:sole-trader-flight-settled', handler);
+});
+
+/**
+ * Adversarial review finding (Han): calling openPopup() a second time while
+ * the first popup from the SAME attempt is still open (e.g. the buyer
+ * double-clicks the on-page "sign up" prompt) used to open a SECOND browser
+ * window and silently retarget `this._popup` to it - orphaning the first
+ * window untracked, so a buyer closing the ORIGINAL window instead of the
+ * new one left the spinner stuck forever. openPopup() must refuse to open a
+ * second window while one is still tracked open and just refocus it.
+ */
+test('calling openPopup() again while a popup is already open refocuses it instead of opening a second window', () => {
+    buildAddressForm();
+    const popup = { closed: false, focus: jest.fn() };
+    const openSpy = jest.fn(() => popup);
+    global.window.open = openSpy;
+    stubFetch({});
+
+    const instance = build();
+    try {
+        instance.tokens = {
+            autofill_token: 'af-token',
+            delegation_token: 'del-token',
+            signup_url: 'https://signup.example.test/',
+            country: 'GB'
+        };
+        const first = instance.openPopup();
+        const second = instance.openPopup();
+
+        expect(openSpy).toHaveBeenCalledTimes(1);
+        expect(popup.focus).toHaveBeenCalledTimes(1);
+        expect(second).toBe(first);
+        expect(instance._popup).toBe(popup);
+    } finally {
+        instance.destroy();
+    }
+});
+
+/**
+ * cancelEnrollment() means the buyer moved on to a different search
+ * interaction, not the popup closing - it must stop the poll (no leaked
+ * interval) rather than leave it running against a popup nobody is tracking
+ * for this attempt any more.
+ */
+test('cancelEnrollment() while a popup is open stops the poll instead of leaking it', async () => {
+    buildAddressForm();
+    const popup = { closed: false };
+    global.window.open = jest.fn(() => popup);
+    stubFetch({ buyer: () => Promise.resolve({ ok: false, status: 404 }) });
+
+    jest.useFakeTimers();
+    try {
+        const instance = build();
+        try {
+            instance.startEnrollment();
+            await flushPromises();
+            await flushPromises();
+            await flushPromises();
+
+            expect(jest.getTimerCount()).toBeGreaterThan(0);
+            instance.cancelEnrollment();
+            expect(jest.getTimerCount()).toBe(0);
+        } finally {
+            instance.destroy();
+        }
+    } finally {
+        jest.useRealTimers();
+    }
+});
+
+test('destroy() while a popup is open stops the poll instead of leaking it', async () => {
+    buildAddressForm();
+    const popup = { closed: false };
+    global.window.open = jest.fn(() => popup);
+    stubFetch({ buyer: () => Promise.resolve({ ok: false, status: 404 }) });
+
+    jest.useFakeTimers();
+    try {
+        const instance = build();
+        instance.startEnrollment();
+        await flushPromises();
+        await flushPromises();
+        await flushPromises();
+
+        expect(jest.getTimerCount()).toBeGreaterThan(0);
+        instance.destroy();
+        expect(jest.getTimerCount()).toBe(0);
+    } finally {
+        jest.useRealTimers();
+    }
 });
 
 test('a no-match buyer lookup handed off to the on-page prompt (payment step) fires the settle event', async () => {
@@ -238,7 +530,8 @@ test('cancelEnrollment() does NOT fire the settle event when there was nothing t
  */
 test('a mint that resolves after abandon-then-retry still resumes the buyer lookup for the current attempt', async () => {
     buildAddressForm();
-    global.window.open = jest.fn(() => ({ closed: false }));
+    const popup = { closed: false };
+    global.window.open = jest.fn(() => popup);
     let resolveTokens;
     stubFetch({
         tokens: () => new Promise((resolve) => { resolveTokens = resolve; }),
@@ -246,37 +539,54 @@ test('a mint that resolves after abandon-then-retry still resumes the buyer look
     });
     const { calls, handler } = recordSettled();
 
-    const instance = build();
-    instance.startEnrollment(); // click 1: mint 1 starts, isFetchingTokens = true
-    const generationAtFirstClick = instance._enrollGeneration;
+    jest.useFakeTimers();
+    try {
+        const instance = build();
+        try {
+            instance.startEnrollment(); // click 1: mint 1 starts, isFetchingTokens = true
+            const generationAtFirstClick = instance._enrollGeneration;
 
-    instance.cancelEnrollment(); // buyer abandons - settles click 1
-    expect(calls.length).toBe(1);
+            instance.cancelEnrollment(); // buyer abandons - settles click 1
+            expect(calls.length).toBe(1);
 
-    instance.startEnrollment(); // click 2: fetchTokens() no-ops (still in flight)
-    expect(instance._enrollGeneration).not.toBe(generationAtFirstClick);
-    expect(instance.tokens).toBeNull();
+            instance.startEnrollment(); // click 2: fetchTokens() no-ops (still in flight)
+            expect(instance._enrollGeneration).not.toBe(generationAtFirstClick);
+            expect(instance.tokens).toBeNull();
 
-    // Mint 1 (the only request that ever went out) now resolves.
-    resolveTokens({
-        json: () => Promise.resolve({
-            success: true,
-            autofill_token: 'af-token',
-            delegation_token: 'del-token',
-            signup_url: 'https://signup.example.test/',
-            country: 'GB'
-        })
-    });
-    await flushPromises();
-    await flushPromises();
-    await flushPromises();
+            // Mint 1 (the only request that ever went out) now resolves.
+            resolveTokens({
+                json: () => Promise.resolve({
+                    success: true,
+                    autofill_token: 'af-token',
+                    delegation_token: 'del-token',
+                    signup_url: 'https://signup.example.test/',
+                    country: 'GB'
+                })
+            });
+            await flushPromises();
+            await flushPromises();
+            await flushPromises();
 
-    // Click 2 must have been resumed and settled on its own - not left
-    // hanging because the tokens landed under click 1's stale generation.
-    expect(instance.tokens).not.toBeNull();
-    expect(calls.length).toBe(2);
+            // Click 2 resumed and handed off to the popup - tokens landed,
+            // but the popup is still open, so click 2's own settle must not
+            // have fired yet (TWO-40 follow-up).
+            expect(instance.tokens).not.toBeNull();
+            expect(calls.length).toBe(1);
+
+            popup.closed = true;
+            jest.advanceTimersByTime(500);
+
+            // Click 2 must have been resumed and settled on its own once the
+            // popup closed - not left hanging because the tokens landed
+            // under click 1's stale generation.
+            expect(calls.length).toBe(2);
+        } finally {
+            instance.destroy();
+        }
+    } finally {
+        jest.useRealTimers();
+    }
     document.removeEventListener('two:sole-trader-flight-settled', handler);
-    instance.destroy();
 });
 
 /**
@@ -324,58 +634,76 @@ test('two concurrent getCurrentBuyer() calls only open one popup', async () => {
  */
 test('a buyer lookup that resolves after abandon-then-retry during the lookup stage still resumes for the current attempt', async () => {
     buildAddressForm();
-    global.window.open = jest.fn(() => ({ closed: false }));
+    const popup = { closed: false };
+    global.window.open = jest.fn(() => popup);
     let resolveBuyer;
     stubFetch({
         buyer: () => new Promise((resolve) => { resolveBuyer = resolve; })
     });
     const { calls, handler } = recordSettled();
 
-    const instance = build();
-    instance.tokens = {
-        autofill_token: 'af-token',
-        delegation_token: 'del-token',
-        signup_url: 'https://signup.example.test/',
-        country: 'GB'
-    };
-    instance.enrolling = true;
-    instance.getCurrentBuyer(); // click 1: lookup 1 starts, isFetchingBuyer = true
+    jest.useFakeTimers();
+    try {
+        const instance = build();
+        try {
+            instance.tokens = {
+                autofill_token: 'af-token',
+                delegation_token: 'del-token',
+                signup_url: 'https://signup.example.test/',
+                country: 'GB'
+            };
+            instance.enrolling = true;
+            instance.getCurrentBuyer(); // click 1: lookup 1 starts, isFetchingBuyer = true
 
-    instance.cancelEnrollment(); // buyer abandons - settles click 1
-    expect(calls.length).toBe(1);
+            instance.cancelEnrollment(); // buyer abandons - settles click 1
+            expect(calls.length).toBe(1);
 
-    instance.enrolling = true; // as startEnrollment()'s "resume" branch would set it
-    instance.getCurrentBuyer(); // click 2: no-ops, lookup 1 still in flight
+            instance.enrolling = true; // as startEnrollment()'s "resume" branch would set it
+            instance.getCurrentBuyer(); // click 2: no-ops, lookup 1 still in flight
 
-    // Lookup 1 (the only request that ever went out) now resolves with a
-    // 404 - no match. superseded() is true (generation moved on from the
-    // abandon), so this settles into resumeIfStillEnrolling() rather than
-    // acting on it directly.
-    resolveBuyer({ ok: false, status: 404 });
-    await flushPromises();
-    await flushPromises();
-    await flushPromises();
-    // resumeIfStillEnrolling() defers via setTimeout(0) - flush the macrotask
-    // queue too, not just the microtask queue flushPromises() covers, so the
-    // resumed getCurrentBuyer() call actually runs and issues ITS OWN fetch
-    // (`buyer` factory is called again, rebinding `resolveBuyer` to that
-    // new promise's resolver below).
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await flushPromises();
+            // Lookup 1 (the only request that ever went out) now resolves with a
+            // 404 - no match. superseded() is true (generation moved on from the
+            // abandon), so this settles into resumeIfStillEnrolling() rather than
+            // acting on it directly.
+            resolveBuyer({ ok: false, status: 404 });
+            await flushPromises();
+            await flushPromises();
+            await flushPromises();
+            // resumeIfStillEnrolling() defers via setTimeout(0) - advance the fake
+            // macrotask queue too, not just the microtask queue flushPromises()
+            // covers, so the resumed getCurrentBuyer() call actually runs and
+            // issues ITS OWN fetch (`buyer` factory is called again, rebinding
+            // `resolveBuyer` to that new promise's resolver below).
+            jest.advanceTimersByTime(0);
+            await flushPromises();
 
-    // The resumed lookup's own, SEPARATE request now resolves the same way
-    // - still no match, hands off to the popup on this containerless page.
-    resolveBuyer({ ok: false, status: 404 });
-    await flushPromises();
-    await flushPromises();
-    await flushPromises();
+            // The resumed lookup's own, SEPARATE request now resolves the same way
+            // - still no match, hands off to the popup on this containerless page.
+            resolveBuyer({ ok: false, status: 404 });
+            await flushPromises();
+            await flushPromises();
+            await flushPromises();
 
-    // Click 2 must have been resumed and settled on its own - not left
-    // hanging because the response landed under click 1's stale generation.
-    expect(global.window.open).toHaveBeenCalledTimes(1);
-    expect(calls.length).toBe(2);
+            // Click 2 was resumed and handed off to the popup - but the popup
+            // is still open, so its own settle must not have fired yet
+            // (TWO-40 follow-up).
+            expect(global.window.open).toHaveBeenCalledTimes(1);
+            expect(calls.length).toBe(1);
+
+            popup.closed = true;
+            jest.advanceTimersByTime(500);
+
+            // Click 2 must have been settled on its own once the popup
+            // closed - not left hanging because the response landed under
+            // click 1's stale generation.
+            expect(calls.length).toBe(2);
+        } finally {
+            instance.destroy();
+        }
+    } finally {
+        jest.useRealTimers();
+    }
     document.removeEventListener('two:sole-trader-flight-settled', handler);
-    instance.destroy();
 });
 
 /**
