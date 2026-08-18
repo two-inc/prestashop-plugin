@@ -74,6 +74,12 @@ class TwoSoleTrader {
     // finding) - this is read by nobody outside readPersistedAvailability().
     static _AVAILABILITY_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
+    // TWO-40 follow-up, Doug: a buyer who sits on checkout long enough for
+    // the delegated auth tokens to expire server-side loses autofill and the
+    // sole-trader flow entirely. See startTokenRefreshInterval()/
+    // refreshTokens().
+    static _TOKEN_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
+
     constructor(config) {
         this.config = {
             checkoutHost: '',
@@ -184,6 +190,11 @@ class TwoSoleTrader {
         // already true for a different call (TWO-40 round 8, adversarial
         // review finding, Han) - see getCurrentBuyer()'s own .finally().
         this._pendingTrustedResume = false;
+        // The setInterval handle for the 30-minute background token refresh
+        // (TWO-40 follow-up) - held so destroy() can clear it. Started once,
+        // by fetchTokens()'s own success branch, on the first real mint; see
+        // startTokenRefreshInterval().
+        this._tokenRefreshIntervalId = null;
 
         // TWO-25326 bug 9, round 3: take the availability answer the SERVER
         // already resolved as this instance's settled state, before init()
@@ -368,6 +379,7 @@ class TwoSoleTrader {
     destroy() {
         this.stopObserving();
         this.stopPopupWatch();
+        this.stopTokenRefreshInterval();
         this._popup = null;
         if (this._countryChangeHandler) {
             document.removeEventListener('change', this._countryChangeHandler);
@@ -1056,6 +1068,11 @@ class TwoSoleTrader {
             .then(function (json) {
                 if (json && json.success && json.autofill_token) {
                     self.tokens = json;
+                    // Idempotent (see its own guard) - started on the FIRST
+                    // real mint, not eagerly in the constructor, since a
+                    // buyer who has never touched the sole-trader flow has
+                    // no tokens to keep alive (TWO-40 follow-up).
+                    self.startTokenRefreshInterval();
                     // Stamp with the CAPTURED generation, not the current
                     // one - see the comment above. If cancelEnrollment() ran
                     // while this request was out, `generation` is already
@@ -1108,6 +1125,103 @@ class TwoSoleTrader {
                 self.tokens = null;
                 self.nextRetryAt = Date.now() + self.retryCooldownMs;
                 self.showError();
+            })
+            .finally(function () {
+                self.isFetchingTokens = false;
+            });
+    }
+
+    /**
+     * Start the 30-minute background re-mint (TWO-40 follow-up, Doug: a
+     * buyer who sits on checkout too long can outlast the delegated auth
+     * tokens' server-side lifetime, breaking autofill and the sole-trader
+     * flow entirely). Idempotent - a resumed enrolment (startEnrollment()'s/
+     * startReplacement()'s "else" branches) re-enters fetchTokens()'s success
+     * branch without ever needing a second interval.
+     *
+     * A single setInterval, not a recursive setTimeout chain: refreshTokens()
+     * has no per-tick backoff to carry between calls, so there is nothing a
+     * chain would buy here over a fixed 30-minute cadence.
+     *
+     * @returns {void}
+     */
+    startTokenRefreshInterval() {
+        if (this._tokenRefreshIntervalId) {
+            return;
+        }
+        const self = this;
+        this._tokenRefreshIntervalId = setInterval(function () {
+            self.refreshTokens();
+        }, TwoSoleTrader._TOKEN_REFRESH_INTERVAL_MS);
+    }
+
+    /**
+     * @returns {void}
+     */
+    stopTokenRefreshInterval() {
+        if (this._tokenRefreshIntervalId) {
+            clearInterval(this._tokenRefreshIntervalId);
+            this._tokenRefreshIntervalId = null;
+        }
+    }
+
+    /**
+     * One periodic re-mint tick (TWO-40 follow-up). Reuses fetchTokens()'s own
+     * `isFetchingTokens` guard rather than a second, uncoordinated one: if a
+     * user-driven mint is already out when this fires, that mint will land
+     * and refresh `this.tokens` itself - issuing a second concurrent request
+     * here would break the "exactly one mint in flight" invariant fetchTokens()'s
+     * own comments document at length. This tick is simply skipped; the next
+     * scheduled one will try again.
+     *
+     * Deliberately NOT gated on `_enrollGeneration`/`_tokensGeneration`: unlike
+     * fetchTokens()'s success branch, this call does not ACT on the tokens -
+     * no afterTokensReady(), no popup, no getCurrentBuyer() - it only replaces
+     * the token VALUES a later, generation-checked call will read. Which
+     * enrolment attempt (if any) those values belong to is unaffected by
+     * refreshing them, so there is nothing here for a generation check to
+     * protect.
+     *
+     * Unlike fetchTokens()'s OWN failure handling, a failed refresh leaves
+     * `this.tokens` exactly as it was rather than nulling it out: the existing
+     * (not-yet-expired) tokens are still the buyer's best option until a
+     * later tick actually replaces them, and nulling them on a transient
+     * failure would break autofill immediately instead of waiting for the
+     * next scheduled retry.
+     *
+     * @returns {void}
+     */
+    refreshTokens() {
+        if (this.isFetchingTokens || !this.tokens) {
+            return;
+        }
+        this.isFetchingTokens = true;
+        const self = this;
+        let request;
+        try {
+            // Same synchronous-throw protection as fetchTokens()'s own try -
+            // billingCountry()/moduleUrl() reading a malformed config must
+            // not leave `isFetchingTokens` stuck true forever.
+            const body = new URLSearchParams({ country: this.billingCountry() });
+            request = fetch(this.moduleUrl('soleTraderTokens'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: body.toString()
+            });
+        } catch (e) {
+            this.isFetchingTokens = false;
+            return;
+        }
+        request
+            .then(function (response) { return response.json(); })
+            .then(function (json) {
+                if (json && json.success && json.autofill_token) {
+                    self.tokens = json;
+                }
+                // Else: leave the existing tokens in place, see doc above.
+            })
+            .catch(function () {
+                // Transport failure - leave the existing tokens in place.
             })
             .finally(function () {
                 self.isFetchingTokens = false;
