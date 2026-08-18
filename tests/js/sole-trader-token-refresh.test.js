@@ -370,3 +370,75 @@ test('a tick is skipped if the billing country has diverged from the country the
         jest.useRealTimers();
     }
 });
+
+/**
+ * Round 2 adversarial review (Han finding): the entry guard on `this._popup`
+ * only proves no popup was open when the tick STARTED - it says nothing
+ * about a popup opened WHILE that tick's mint POST is still out.
+ * openPopup() (via the on-page prompt's click handler) has no
+ * `isFetchingTokens` guard of its own, so this is a real, if narrow, window.
+ */
+test('a popup opened while a background mint is still in flight is not orphaned by that mint landing', async () => {
+    let mintCalls = 0;
+    let resolveSecondMint;
+    stubFetch(() => {
+        mintCalls += 1;
+        if (mintCalls === 1) {
+            return Promise.resolve({ json: () => Promise.resolve(tokenPayload('1')) });
+        }
+        return new Promise((resolve) => { resolveSecondMint = resolve; });
+    });
+    const popup = { closed: false };
+    global.window.open = jest.fn(() => popup);
+
+    const instance = build();
+    instance.startEnrollment();
+    // Mint succeeds; the buyer lookup (404, no match) hands off to the
+    // on-page prompt.
+    await flushPromises();
+    expect(mintCalls).toBe(1);
+
+    // A background tick starts - no popup open yet, so the entry guard lets
+    // it through - and its mint is still in flight.
+    instance.refreshTokens();
+    expect(mintCalls).toBe(2);
+
+    // The buyer clicks the prompt WHILE that mint is out, baking the
+    // (still-old) tokens into a brand new popup.
+    const prompt = document.querySelector('.two-sole-trader__prompt');
+    prompt.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    expect(global.window.open).toHaveBeenCalledTimes(1);
+    expect(instance._popup).toBe(popup);
+
+    // NOW the background tick's mint resolves.
+    resolveSecondMint({ json: () => Promise.resolve(tokenPayload('2')) });
+    await flushPromises();
+
+    // Must not have overwritten the tokens the just-opened popup was baked
+    // against - the re-check inside refreshTokens()'s own .then() catches
+    // what the entry guard alone could not.
+    expect(instance.tokens.autofill_token).toBe('af-token-1');
+
+    instance.destroy();
+});
+
+/**
+ * Round 2 adversarial review (Leia finding): a mint still outstanding when
+ * destroy() runs (e.g. PrestaShop swaps in a fresh instance for a replaced
+ * payment fragment) must not arm a NEW setInterval on the now-dead instance
+ * when it eventually resolves - nothing will ever call destroy() on it
+ * again to clear it.
+ */
+test('a mint that resolves after destroy() does not arm a background-refresh interval', async () => {
+    let resolveMint;
+    stubFetch(() => new Promise((resolve) => { resolveMint = resolve; }));
+
+    const instance = build();
+    instance.startEnrollment();
+    instance.destroy();
+
+    resolveMint({ json: () => Promise.resolve(tokenPayload('late')) });
+    await flushPromises();
+
+    expect(instance._tokenRefreshIntervalId).toBeNull();
+});
