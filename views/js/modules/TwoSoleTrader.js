@@ -195,6 +195,14 @@ class TwoSoleTrader {
         // by fetchTokens()'s own success branch, on the first real mint; see
         // startTokenRefreshInterval().
         this._tokenRefreshIntervalId = null;
+        // Set by destroy() (TWO-40 follow-up, round 2 adversarial review,
+        // Leia finding): a fetchTokens() mint still outstanding when
+        // destroy() runs (e.g. PrestaShop swaps in a fresh instance for a
+        // replaced payment fragment) must not arm a NEW setInterval on the
+        // now-dead instance when it resolves - nothing will ever call
+        // destroy() on it again to clear it. Checked at the top of
+        // fetchTokens()'s success branch.
+        this._destroyed = false;
 
         // TWO-25326 bug 9, round 3: take the availability answer the SERVER
         // already resolved as this instance's settled state, before init()
@@ -377,6 +385,7 @@ class TwoSoleTrader {
      * @returns {void}
      */
     destroy() {
+        this._destroyed = true;
         this.stopObserving();
         this.stopPopupWatch();
         this.stopTokenRefreshInterval();
@@ -1077,6 +1086,14 @@ class TwoSoleTrader {
         request
             .then(function (response) { return response.json(); })
             .then(function (json) {
+                if (self._destroyed) {
+                    // Round 2 adversarial review (Leia): this instance is
+                    // gone - nothing below is safe to act on, and arming a
+                    // NEW setInterval here would leak it (destroy() already
+                    // ran, so nothing will ever call stopTokenRefreshInterval()
+                    // on this instance again).
+                    return;
+                }
                 if (json && json.success && json.autofill_token) {
                     self.tokens = json;
                     // Idempotent (see its own guard) - started on the FIRST
@@ -1199,6 +1216,17 @@ class TwoSoleTrader {
      * invariant that has nothing to do with `_enrollGeneration` but that this
      * call can still break silently.
      *
+     * Known residual gap (round 2 adversarial review, Vader finding,
+     * accepted): while a popup stays open, EVERY tick is skipped, so tokens
+     * baked into that popup's URL at open time are never refreshed for as
+     * long as it stays open. A popup left open past the server's own token
+     * TTL still hits the expiry this file exists to fix - just narrowed from
+     * "always broken past 30 minutes" to "broken only if the buyer leaves
+     * the popup open that long", which is judged an acceptable trade against
+     * the alternative (silently authenticating against a token pair the
+     * popup's own OTP flow never ran through - the round-1 bug). Not fixed
+     * here; a popup-resume re-mint would be a separate change.
+     *
      * Unlike fetchTokens()'s OWN failure handling, a failed refresh leaves
      * `this.tokens` exactly as it was rather than nulling it out: the existing
      * (not-yet-expired) tokens are still the buyer's best option until a
@@ -1261,6 +1289,19 @@ class TwoSoleTrader {
         request
             .then(function (response) { return response.json(); })
             .then(function (json) {
+                // Re-checked, not just checked at entry (round 2 adversarial
+                // review, Han finding): the guard above only proves no popup
+                // was open when this tick STARTED. The buyer can still click
+                // the on-page prompt - openPopup() has no isFetchingTokens
+                // guard of its own and bakes whatever `this.tokens` holds
+                // RIGHT NOW into its URL - while this mint's POST is still
+                // out. Applying `json` after that would silently orphan the
+                // just-opened popup's tokens exactly as the entry guard was
+                // built to prevent, just through the async gap instead of a
+                // stale read at tick-start.
+                if (self._popup && !self._popup.closed) {
+                    return;
+                }
                 if (json && json.success && json.autofill_token) {
                     self.tokens = json;
                 }
