@@ -78,6 +78,13 @@ class TwoSoleTrader {
     // the delegated auth tokens to expire server-side loses autofill and the
     // sole-trader flow entirely. See startTokenRefreshInterval()/
     // refreshTokens().
+    //
+    // Unlike `_AVAILABILITY_CACHE_TTL_MS` above, there is no local server-side
+    // constant to cite here: the delegated tokens' own TTL is set upstream, by
+    // whatever mints delegation_token/autofill_token (classes/TwoSoleTrader.php's
+    // mint call), not by this module or its immediate PHP counterpart. 30
+    // minutes is Doug's own considered figure (this ticket's ask verbatim),
+    // not derived from a constant this file can point at.
     static _TOKEN_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
 
     constructor(config) {
@@ -1216,16 +1223,22 @@ class TwoSoleTrader {
      * invariant that has nothing to do with `_enrollGeneration` but that this
      * call can still break silently.
      *
-     * Known residual gap (round 2 adversarial review, Vader finding,
+     * Known residual gap (round 2/3 adversarial review, Vader finding,
      * accepted): while a popup stays open, EVERY tick is skipped, so tokens
      * baked into that popup's URL at open time are never refreshed for as
      * long as it stays open. A popup left open past the server's own token
      * TTL still hits the expiry this file exists to fix - just narrowed from
      * "always broken past 30 minutes" to "broken only if the buyer leaves
-     * the popup open that long", which is judged an acceptable trade against
-     * the alternative (silently authenticating against a token pair the
-     * popup's own OTP flow never ran through - the round-1 bug). Not fixed
-     * here; a popup-resume re-mint would be a separate change.
+     * the popup open that long". A "re-mint the moment the popup closes"
+     * fix would NOT meaningfully narrow this further: the dominant
+     * completion path is the OTP 'ACCEPTED' postMessage
+     * (bindPopupMessageListener() -> getCurrentBuyer()), which fires and
+     * reads `this.tokens.autofill_token` BEFORE the popup close is ever
+     * observed - watchPopupUntilClosed()'s poll runs after, not before,
+     * that read. So the accepted trade is specifically against the
+     * round-1 bug (silently authenticating against a token pair the
+     * popup's own OTP flow never ran through), not a placeholder for an
+     * easy popup-close-triggered fix. Not fixed here.
      *
      * Unlike fetchTokens()'s OWN failure handling, a failed refresh leaves
      * `this.tokens` exactly as it was rather than nulling it out: the existing
@@ -1289,6 +1302,14 @@ class TwoSoleTrader {
         request
             .then(function (response) { return response.json(); })
             .then(function (json) {
+                if (self._destroyed) {
+                    // Same reasoning as fetchTokens()'s own success branch -
+                    // this instance is gone, nothing below is safe to act on.
+                    // Arms nothing here (unlike that branch), but writing
+                    // `self.tokens` on a torn-down instance is still not a
+                    // legitimate effect to have.
+                    return;
+                }
                 // Re-checked, not just checked at entry (round 2 adversarial
                 // review, Han finding): the guard above only proves no popup
                 // was open when this tick STARTED. The buyer can still click

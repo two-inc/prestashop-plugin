@@ -430,15 +430,58 @@ test('a popup opened while a background mint is still in flight is not orphaned 
  * again to clear it.
  */
 test('a mint that resolves after destroy() does not arm a background-refresh interval', async () => {
-    let resolveMint;
-    stubFetch(() => new Promise((resolve) => { resolveMint = resolve; }));
+    // Round 3 adversarial review (Vader finding): `_tokenRefreshIntervalId`
+    // is a proxy the code under test writes itself - a mutant that armed a
+    // REAL setInterval() without recording its handle there would still
+    // read null here. jest.getTimerCount() proves no timer, of any kind,
+    // was actually scheduled.
+    jest.useFakeTimers();
+    try {
+        let resolveMint;
+        stubFetch(() => new Promise((resolve) => { resolveMint = resolve; }));
+
+        const instance = build();
+        instance.startEnrollment();
+        instance.destroy();
+
+        resolveMint({ json: () => Promise.resolve(tokenPayload('late')) });
+        await flushPromises();
+
+        expect(instance._tokenRefreshIntervalId).toBeNull();
+        expect(jest.getTimerCount()).toBe(0);
+    } finally {
+        jest.useRealTimers();
+    }
+});
+
+/**
+ * Round 3 adversarial review (Leia/Yoda, convergent): fetchTokens()'s own
+ * success branch checks `_destroyed` before touching `this.tokens` -
+ * refreshTokens()'s should too, for the same reason (this instance is gone,
+ * nothing is safe to act on), even though it arms nothing that could leak.
+ */
+test('a background mint that resolves after destroy() does not write to a torn-down instance', async () => {
+    let mintCalls = 0;
+    let resolveSecondMint;
+    stubFetch(() => {
+        mintCalls += 1;
+        if (mintCalls === 1) {
+            return Promise.resolve({ json: () => Promise.resolve(tokenPayload('1')) });
+        }
+        return new Promise((resolve) => { resolveSecondMint = resolve; });
+    });
 
     const instance = build();
     instance.startEnrollment();
-    instance.destroy();
+    await flushPromises();
+    expect(mintCalls).toBe(1);
 
-    resolveMint({ json: () => Promise.resolve(tokenPayload('late')) });
+    instance.refreshTokens();
+    expect(mintCalls).toBe(2);
+
+    instance.destroy();
+    resolveSecondMint({ json: () => Promise.resolve(tokenPayload('2')) });
     await flushPromises();
 
-    expect(instance._tokenRefreshIntervalId).toBeNull();
+    expect(instance.tokens.autofill_token).toBe('af-token-1');
 });
