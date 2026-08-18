@@ -243,3 +243,130 @@ test('destroy() clears the timer - no further mint after teardown', async () => 
         jest.useRealTimers();
     }
 });
+
+test('the interval fires repeatedly, not just once - two consecutive successful ticks re-mint twice', async () => {
+    jest.useFakeTimers();
+    try {
+        let mintCalls = 0;
+        stubFetch(() => {
+            mintCalls += 1;
+            return Promise.resolve({ json: () => Promise.resolve(tokenPayload(String(mintCalls))) });
+        });
+
+        const instance = build();
+        instance.startEnrollment();
+        await flushPromises();
+        expect(mintCalls).toBe(1);
+
+        jest.advanceTimersByTime(30 * 60 * 1000);
+        await flushPromises();
+        expect(mintCalls).toBe(2);
+        expect(instance.tokens.autofill_token).toBe('af-token-2');
+
+        jest.advanceTimersByTime(30 * 60 * 1000);
+        await flushPromises();
+        expect(mintCalls).toBe(3);
+        expect(instance.tokens.autofill_token).toBe('af-token-3');
+
+        instance.destroy();
+    } finally {
+        jest.useRealTimers();
+    }
+});
+
+/**
+ * Adversarial review round 1 BLOCKER (Han/Vader/Yoda, independently):
+ * openPopup() bakes `this.tokens` into the popup's own URL at open time: a
+ * background tick that swaps `this.tokens` while that popup is still open
+ * would authenticate the popup's eventual 'ACCEPTED' completion against a
+ * token pair the buyer's OTP flow never actually ran through.
+ */
+test('a tick is skipped while a signup popup opened against the current tokens is still open', async () => {
+    jest.useFakeTimers();
+    try {
+        let mintCalls = 0;
+        stubFetch(() => {
+            mintCalls += 1;
+            return Promise.resolve({ json: () => Promise.resolve(tokenPayload(String(mintCalls))) });
+        });
+        const popup = { closed: false };
+        global.window.open = jest.fn(() => popup);
+
+        const instance = build();
+        instance.startEnrollment();
+        // Mint succeeds; the immediate buyer lookup (404, no match) hands
+        // off to the on-page prompt rather than opening the popup itself.
+        await flushPromises();
+        expect(mintCalls).toBe(1);
+
+        const prompt = document.querySelector('.two-sole-trader__prompt');
+        prompt.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+        expect(global.window.open).toHaveBeenCalledTimes(1);
+        expect(instance._popup).toBe(popup);
+
+        const mintedTokens = instance.tokens;
+        jest.advanceTimersByTime(30 * 60 * 1000);
+        await flushPromises();
+
+        // Popup still open - the tick must have been skipped outright.
+        expect(mintCalls).toBe(1);
+        expect(instance.tokens).toBe(mintedTokens);
+
+        // Buyer closes the popup; watchPopupUntilClosed()'s own poll clears
+        // `this._popup` on its next 500ms tick.
+        popup.closed = true;
+        jest.advanceTimersByTime(500);
+        await flushPromises();
+        expect(instance._popup).toBeNull();
+
+        // A later tick is no longer held back.
+        jest.advanceTimersByTime(30 * 60 * 1000);
+        await flushPromises();
+        expect(mintCalls).toBe(2);
+        expect(instance.tokens.autofill_token).toBe('af-token-2');
+
+        instance.destroy();
+    } finally {
+        jest.useRealTimers();
+    }
+});
+
+/**
+ * Adversarial review round 1 BUG (Vader): fetchTokens()'s own mint keeps the
+ * posted country and the eligibility-check country in agreement "by
+ * construction" (see its own comment) - a background refresh minting for a
+ * DIFFERENT country than the one `this.tokens` currently belongs to would
+ * silently break that agreement.
+ */
+test('a tick is skipped if the billing country has diverged from the country the current tokens were minted for', async () => {
+    jest.useFakeTimers();
+    try {
+        let mintCalls = 0;
+        stubFetch(() => {
+            mintCalls += 1;
+            return Promise.resolve({ json: () => Promise.resolve(tokenPayload(String(mintCalls))) });
+        });
+
+        const instance = build({ billingCountry: 'GB' });
+        instance.startEnrollment();
+        await flushPromises();
+        expect(mintCalls).toBe(1);
+        expect(instance.tokens.country).toBe('GB');
+
+        // The buyer changes billing country mid-enrolment WITHOUT it
+        // becoming ineligible (config-time billingCountry() fallback can't
+        // move on its own, so this pins the guard directly rather than
+        // simulating a country-select change).
+        instance.config.billingCountry = 'SE';
+
+        jest.advanceTimersByTime(30 * 60 * 1000);
+        await flushPromises();
+
+        expect(mintCalls).toBe(1);
+        expect(instance.tokens.autofill_token).toBe('af-token-1');
+
+        instance.destroy();
+    } finally {
+        jest.useRealTimers();
+    }
+});

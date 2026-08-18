@@ -987,6 +987,35 @@ class TwoSoleTrader {
     }
 
     /**
+     * The actual mint POST, shared by fetchTokens() and refreshTokens()
+     * (TWO-40 follow-up) so a future change to this request has one call
+     * site, not two.
+     *
+     * Deliberately billingCountry(): that is the SAME resolver
+     * isAvailableForCurrentCountry() answers the chip's visibility from, so
+     * the country the mint is authorised against and the country the chip
+     * was shown for cannot disagree by construction. Sent urlencoded, the
+     * way applyBuyer() posts to saveCompany.
+     *
+     * The server prefers this posted country over anything it holds: the
+     * invoice-address tier that used to outrank it was deleted, not
+     * demoted, so the posted country wins outright and the cart's DELIVERY
+     * address is consulted only when no usable country was posted at all.
+     * It re-checks the registry either way.
+     *
+     * @param {string} country
+     * @returns {Promise} the fetch() promise
+     */
+    mintTokensRequest(country) {
+        const body = new URLSearchParams({ country: country });
+        return fetch(this.moduleUrl('soleTraderTokens'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString()
+        });
+    }
+
+    /**
      * Mint tokens, guarded against a request storm: refuses re-entry
      * while a request is already outstanding (isFetchingTokens) and
      * enforces a minimum gap between attempts after a failure
@@ -1038,25 +1067,7 @@ class TwoSoleTrader {
         // failure once caught.
         let request;
         try {
-            // Post the country the buyer currently has selected (TWO-40).
-            // The server prefers THIS over anything it holds: the invoice-
-            // address tier that used to outrank it was deleted, not
-            // demoted, so the posted country wins outright and the cart's
-            // DELIVERY address is consulted only when no usable country was
-            // posted at all. It re-checks the registry either way.
-            //
-            // Deliberately billingCountry(): that is the SAME resolver
-            // isAvailableForCurrentCountry() answers the chip's visibility
-            // from, so the country the mint is authorised against and the
-            // country the chip was shown for cannot disagree by
-            // construction. Sent urlencoded, the way applyBuyer() posts to
-            // saveCompany.
-            const body = new URLSearchParams({ country: this.billingCountry() });
-            request = fetch(this.moduleUrl('soleTraderTokens'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: body.toString()
-            });
+            request = this.mintTokensRequest(this.billingCountry());
         } catch (e) {
             this.isFetchingTokens = false;
             this.nextRetryAt = Date.now() + this.retryCooldownMs;
@@ -1135,9 +1146,10 @@ class TwoSoleTrader {
      * Start the 30-minute background re-mint (TWO-40 follow-up, Doug: a
      * buyer who sits on checkout too long can outlast the delegated auth
      * tokens' server-side lifetime, breaking autofill and the sole-trader
-     * flow entirely). Idempotent - a resumed enrolment (startEnrollment()'s/
-     * startReplacement()'s "else" branches) re-enters fetchTokens()'s success
-     * branch without ever needing a second interval.
+     * flow entirely). Idempotent - a mint that FAILS after the interval is
+     * already running (a later click retries fetchTokens(), which reaches
+     * this same success branch a second time) must not arm a second,
+     * duplicate interval.
      *
      * A single setInterval, not a recursive setTimeout chain: refreshTokens()
      * has no per-tick backoff to carry between calls, so there is nothing a
@@ -1182,6 +1194,11 @@ class TwoSoleTrader {
      * refreshing them, so there is nothing here for a generation check to
      * protect.
      *
+     * IS gated on the open-popup and country checks below (adversarial
+     * review, round 1 - Han/Vader/Yoda independently) - both protect an
+     * invariant that has nothing to do with `_enrollGeneration` but that this
+     * call can still break silently.
+     *
      * Unlike fetchTokens()'s OWN failure handling, a failed refresh leaves
      * `this.tokens` exactly as it was rather than nulling it out: the existing
      * (not-yet-expired) tokens are still the buyer's best option until a
@@ -1195,21 +1212,50 @@ class TwoSoleTrader {
         if (this.isFetchingTokens || !this.tokens) {
             return;
         }
+        // A popup opened against the CURRENT `this.tokens` (openPopup() bakes
+        // `delegation_token`/`autofill_token`/`signup_url` into its URL at
+        // open time, not read live) is still tracked open and awaiting its
+        // own 'ACCEPTED' completion. Swapping `this.tokens` under it would
+        // authenticate that completion's buyer lookup
+        // (bindPopupMessageListener() -> getCurrentBuyer() ->
+        // `this.tokens.autofill_token`) against a pair the buyer's OTP flow
+        // never actually ran through - exactly the "real auth, rejected"
+        // failure class this file has hardened against elsewhere. Skip the
+        // tick; watchPopupUntilClosed() clears `this._popup` once it closes,
+        // letting a later tick through.
+        if (this._popup && !this._popup.closed) {
+            return;
+        }
+        // The buyer may have changed billing country since these tokens were
+        // minted without the country becoming ineligible (which would have
+        // routed through cancelEnrollment() instead). fetchTokens()'s own
+        // mint deliberately keeps the posted country and the eligibility
+        // country in agreement "by construction" (see its own comment) -
+        // re-minting here for a country that no longer matches
+        // `this.tokens.country` would mint fresh tokens for a country the
+        // buyer's on-screen enrolment no longer belongs to. Skip the tick
+        // rather than silently disagree with it.
+        if (this.tokens.country && this.billingCountry() !== this.tokens.country) {
+            return;
+        }
         this.isFetchingTokens = true;
         const self = this;
         let request;
         try {
             // Same synchronous-throw protection as fetchTokens()'s own try -
             // billingCountry()/moduleUrl() reading a malformed config must
-            // not leave `isFetchingTokens` stuck true forever.
-            const body = new URLSearchParams({ country: this.billingCountry() });
-            request = fetch(this.moduleUrl('soleTraderTokens'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: body.toString()
-            });
+            // not leave `isFetchingTokens` stuck true forever. Unlike that
+            // failure branch, there is no showError() here (nothing user-
+            // facing to interrupt on a background tick) - but a persistent
+            // throw would otherwise go completely unsignalled forever, so
+            // this gets the same console.error breadcrumb as the other
+            // background failure this file has no on-page UI for (see
+            // openPopup()'s blocked-popup branch).
+            request = this.mintTokensRequest(this.billingCountry());
         } catch (e) {
             this.isFetchingTokens = false;
+            // eslint-disable-next-line no-console
+            console.error('Two: background sole-trader token refresh failed to build its request.', e);
             return;
         }
         request
