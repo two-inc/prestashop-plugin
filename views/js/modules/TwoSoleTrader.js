@@ -74,6 +74,19 @@ class TwoSoleTrader {
     // finding) - this is read by nobody outside readPersistedAvailability().
     static _AVAILABILITY_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
+    // TWO-40 follow-up, Doug: a buyer who sits on checkout long enough for
+    // the delegated auth tokens to expire server-side loses autofill and the
+    // sole-trader flow entirely. See startTokenRefreshInterval()/
+    // refreshTokens().
+    //
+    // Unlike `_AVAILABILITY_CACHE_TTL_MS` above, there is no local server-side
+    // constant to cite here: the delegated tokens' own TTL is set upstream, by
+    // whatever mints delegation_token/autofill_token (classes/TwoSoleTrader.php's
+    // mint call), not by this module or its immediate PHP counterpart. 30
+    // minutes is Doug's own considered figure (this ticket's ask verbatim),
+    // not derived from a constant this file can point at.
+    static _TOKEN_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
+
     constructor(config) {
         this.config = {
             checkoutHost: '',
@@ -184,6 +197,19 @@ class TwoSoleTrader {
         // already true for a different call (TWO-40 round 8, adversarial
         // review finding, Han) - see getCurrentBuyer()'s own .finally().
         this._pendingTrustedResume = false;
+        // The setInterval handle for the 30-minute background token refresh
+        // (TWO-40 follow-up) - held so destroy() can clear it. Started once,
+        // by fetchTokens()'s own success branch, on the first real mint; see
+        // startTokenRefreshInterval().
+        this._tokenRefreshIntervalId = null;
+        // Set by destroy() (TWO-40 follow-up, round 2 adversarial review,
+        // Leia finding): a fetchTokens() mint still outstanding when
+        // destroy() runs (e.g. PrestaShop swaps in a fresh instance for a
+        // replaced payment fragment) must not arm a NEW setInterval on the
+        // now-dead instance when it resolves - nothing will ever call
+        // destroy() on it again to clear it. Checked at the top of
+        // fetchTokens()'s success branch.
+        this._destroyed = false;
 
         // TWO-25326 bug 9, round 3: take the availability answer the SERVER
         // already resolved as this instance's settled state, before init()
@@ -366,8 +392,10 @@ class TwoSoleTrader {
      * @returns {void}
      */
     destroy() {
+        this._destroyed = true;
         this.stopObserving();
         this.stopPopupWatch();
+        this.stopTokenRefreshInterval();
         this._popup = null;
         if (this._countryChangeHandler) {
             document.removeEventListener('change', this._countryChangeHandler);
@@ -975,6 +1003,35 @@ class TwoSoleTrader {
     }
 
     /**
+     * The actual mint POST, shared by fetchTokens() and refreshTokens()
+     * (TWO-40 follow-up) so a future change to this request has one call
+     * site, not two.
+     *
+     * Deliberately billingCountry(): that is the SAME resolver
+     * isAvailableForCurrentCountry() answers the chip's visibility from, so
+     * the country the mint is authorised against and the country the chip
+     * was shown for cannot disagree by construction. Sent urlencoded, the
+     * way applyBuyer() posts to saveCompany.
+     *
+     * The server prefers this posted country over anything it holds: the
+     * invoice-address tier that used to outrank it was deleted, not
+     * demoted, so the posted country wins outright and the cart's DELIVERY
+     * address is consulted only when no usable country was posted at all.
+     * It re-checks the registry either way.
+     *
+     * @param {string} country
+     * @returns {Promise} the fetch() promise
+     */
+    mintTokensRequest(country) {
+        const body = new URLSearchParams({ country: country });
+        return fetch(this.moduleUrl('soleTraderTokens'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString()
+        });
+    }
+
+    /**
      * Mint tokens, guarded against a request storm: refuses re-entry
      * while a request is already outstanding (isFetchingTokens) and
      * enforces a minimum gap between attempts after a failure
@@ -1026,25 +1083,7 @@ class TwoSoleTrader {
         // failure once caught.
         let request;
         try {
-            // Post the country the buyer currently has selected (TWO-40).
-            // The server prefers THIS over anything it holds: the invoice-
-            // address tier that used to outrank it was deleted, not
-            // demoted, so the posted country wins outright and the cart's
-            // DELIVERY address is consulted only when no usable country was
-            // posted at all. It re-checks the registry either way.
-            //
-            // Deliberately billingCountry(): that is the SAME resolver
-            // isAvailableForCurrentCountry() answers the chip's visibility
-            // from, so the country the mint is authorised against and the
-            // country the chip was shown for cannot disagree by
-            // construction. Sent urlencoded, the way applyBuyer() posts to
-            // saveCompany.
-            const body = new URLSearchParams({ country: this.billingCountry() });
-            request = fetch(this.moduleUrl('soleTraderTokens'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: body.toString()
-            });
+            request = this.mintTokensRequest(this.billingCountry());
         } catch (e) {
             this.isFetchingTokens = false;
             this.nextRetryAt = Date.now() + this.retryCooldownMs;
@@ -1054,8 +1093,21 @@ class TwoSoleTrader {
         request
             .then(function (response) { return response.json(); })
             .then(function (json) {
+                if (self._destroyed) {
+                    // Round 2 adversarial review (Leia): this instance is
+                    // gone - nothing below is safe to act on, and arming a
+                    // NEW setInterval here would leak it (destroy() already
+                    // ran, so nothing will ever call stopTokenRefreshInterval()
+                    // on this instance again).
+                    return;
+                }
                 if (json && json.success && json.autofill_token) {
                     self.tokens = json;
+                    // Idempotent (see its own guard) - started on the FIRST
+                    // real mint, not eagerly in the constructor, since a
+                    // buyer who has never touched the sole-trader flow has
+                    // no tokens to keep alive (TWO-40 follow-up).
+                    self.startTokenRefreshInterval();
                     // Stamp with the CAPTURED generation, not the current
                     // one - see the comment above. If cancelEnrollment() ran
                     // while this request was out, `generation` is already
@@ -1108,6 +1160,176 @@ class TwoSoleTrader {
                 self.tokens = null;
                 self.nextRetryAt = Date.now() + self.retryCooldownMs;
                 self.showError();
+            })
+            .finally(function () {
+                self.isFetchingTokens = false;
+            });
+    }
+
+    /**
+     * Start the 30-minute background re-mint (TWO-40 follow-up, Doug: a
+     * buyer who sits on checkout too long can outlast the delegated auth
+     * tokens' server-side lifetime, breaking autofill and the sole-trader
+     * flow entirely). Idempotent - a mint that FAILS after the interval is
+     * already running (a later click retries fetchTokens(), which reaches
+     * this same success branch a second time) must not arm a second,
+     * duplicate interval.
+     *
+     * A single setInterval, not a recursive setTimeout chain: refreshTokens()
+     * has no per-tick backoff to carry between calls, so there is nothing a
+     * chain would buy here over a fixed 30-minute cadence.
+     *
+     * @returns {void}
+     */
+    startTokenRefreshInterval() {
+        if (this._tokenRefreshIntervalId) {
+            return;
+        }
+        const self = this;
+        this._tokenRefreshIntervalId = setInterval(function () {
+            self.refreshTokens();
+        }, TwoSoleTrader._TOKEN_REFRESH_INTERVAL_MS);
+    }
+
+    /**
+     * @returns {void}
+     */
+    stopTokenRefreshInterval() {
+        if (this._tokenRefreshIntervalId) {
+            clearInterval(this._tokenRefreshIntervalId);
+            this._tokenRefreshIntervalId = null;
+        }
+    }
+
+    /**
+     * One periodic re-mint tick (TWO-40 follow-up). Reuses fetchTokens()'s own
+     * `isFetchingTokens` guard rather than a second, uncoordinated one: if a
+     * user-driven mint is already out when this fires, that mint will land
+     * and refresh `this.tokens` itself - issuing a second concurrent request
+     * here would break the "exactly one mint in flight" invariant fetchTokens()'s
+     * own comments document at length. This tick is simply skipped; the next
+     * scheduled one will try again.
+     *
+     * Deliberately NOT gated on `_enrollGeneration`/`_tokensGeneration`: unlike
+     * fetchTokens()'s success branch, this call does not ACT on the tokens -
+     * no afterTokensReady(), no popup, no getCurrentBuyer() - it only replaces
+     * the token VALUES a later, generation-checked call will read. Which
+     * enrolment attempt (if any) those values belong to is unaffected by
+     * refreshing them, so there is nothing here for a generation check to
+     * protect.
+     *
+     * IS gated on the open-popup and country checks below (adversarial
+     * review, round 1 - Han/Vader/Yoda independently) - both protect an
+     * invariant that has nothing to do with `_enrollGeneration` but that this
+     * call can still break silently.
+     *
+     * Known residual gap (round 2/3 adversarial review, Vader finding,
+     * accepted): while a popup stays open, EVERY tick is skipped, so tokens
+     * baked into that popup's URL at open time are never refreshed for as
+     * long as it stays open. A popup left open past the server's own token
+     * TTL still hits the expiry this file exists to fix - just narrowed from
+     * "always broken past 30 minutes" to "broken only if the buyer leaves
+     * the popup open that long". A "re-mint the moment the popup closes"
+     * fix would NOT meaningfully narrow this further: the dominant
+     * completion path is the OTP 'ACCEPTED' postMessage
+     * (bindPopupMessageListener() -> getCurrentBuyer()), which fires and
+     * reads `this.tokens.autofill_token` BEFORE the popup close is ever
+     * observed - watchPopupUntilClosed()'s poll runs after, not before,
+     * that read. So the accepted trade is specifically against the
+     * round-1 bug (silently authenticating against a token pair the
+     * popup's own OTP flow never ran through), not a placeholder for an
+     * easy popup-close-triggered fix. Not fixed here.
+     *
+     * Unlike fetchTokens()'s OWN failure handling, a failed refresh leaves
+     * `this.tokens` exactly as it was rather than nulling it out: the existing
+     * (not-yet-expired) tokens are still the buyer's best option until a
+     * later tick actually replaces them, and nulling them on a transient
+     * failure would break autofill immediately instead of waiting for the
+     * next scheduled retry.
+     *
+     * @returns {void}
+     */
+    refreshTokens() {
+        if (this.isFetchingTokens || !this.tokens) {
+            return;
+        }
+        // A popup opened against the CURRENT `this.tokens` (openPopup() bakes
+        // `delegation_token`/`autofill_token`/`signup_url` into its URL at
+        // open time, not read live) is still tracked open and awaiting its
+        // own 'ACCEPTED' completion. Swapping `this.tokens` under it would
+        // authenticate that completion's buyer lookup
+        // (bindPopupMessageListener() -> getCurrentBuyer() ->
+        // `this.tokens.autofill_token`) against a pair the buyer's OTP flow
+        // never actually ran through - exactly the "real auth, rejected"
+        // failure class this file has hardened against elsewhere. Skip the
+        // tick; watchPopupUntilClosed() clears `this._popup` once it closes,
+        // letting a later tick through.
+        if (this._popup && !this._popup.closed) {
+            return;
+        }
+        // The buyer may have changed billing country since these tokens were
+        // minted without the country becoming ineligible (which would have
+        // routed through cancelEnrollment() instead). fetchTokens()'s own
+        // mint deliberately keeps the posted country and the eligibility
+        // country in agreement "by construction" (see its own comment) -
+        // re-minting here for a country that no longer matches
+        // `this.tokens.country` would mint fresh tokens for a country the
+        // buyer's on-screen enrolment no longer belongs to. Skip the tick
+        // rather than silently disagree with it.
+        if (this.tokens.country && this.billingCountry() !== this.tokens.country) {
+            return;
+        }
+        this.isFetchingTokens = true;
+        const self = this;
+        let request;
+        try {
+            // Same synchronous-throw protection as fetchTokens()'s own try -
+            // billingCountry()/moduleUrl() reading a malformed config must
+            // not leave `isFetchingTokens` stuck true forever. Unlike that
+            // failure branch, there is no showError() here (nothing user-
+            // facing to interrupt on a background tick) - but a persistent
+            // throw would otherwise go completely unsignalled forever, so
+            // this gets the same console.error breadcrumb as the other
+            // background failure this file has no on-page UI for (see
+            // openPopup()'s blocked-popup branch).
+            request = this.mintTokensRequest(this.billingCountry());
+        } catch (e) {
+            this.isFetchingTokens = false;
+            // eslint-disable-next-line no-console
+            console.error('Two: background sole-trader token refresh failed to build its request.', e);
+            return;
+        }
+        request
+            .then(function (response) { return response.json(); })
+            .then(function (json) {
+                if (self._destroyed) {
+                    // Same reasoning as fetchTokens()'s own success branch -
+                    // this instance is gone, nothing below is safe to act on.
+                    // Arms nothing here (unlike that branch), but writing
+                    // `self.tokens` on a torn-down instance is still not a
+                    // legitimate effect to have.
+                    return;
+                }
+                // Re-checked, not just checked at entry (round 2 adversarial
+                // review, Han finding): the guard above only proves no popup
+                // was open when this tick STARTED. The buyer can still click
+                // the on-page prompt - openPopup() has no isFetchingTokens
+                // guard of its own and bakes whatever `this.tokens` holds
+                // RIGHT NOW into its URL - while this mint's POST is still
+                // out. Applying `json` after that would silently orphan the
+                // just-opened popup's tokens exactly as the entry guard was
+                // built to prevent, just through the async gap instead of a
+                // stale read at tick-start.
+                if (self._popup && !self._popup.closed) {
+                    return;
+                }
+                if (json && json.success && json.autofill_token) {
+                    self.tokens = json;
+                }
+                // Else: leave the existing tokens in place, see doc above.
+            })
+            .catch(function () {
+                // Transport failure - leave the existing tokens in place.
             })
             .finally(function () {
                 self.isFetchingTokens = false;

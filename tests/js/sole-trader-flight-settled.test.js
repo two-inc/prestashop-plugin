@@ -317,7 +317,10 @@ test('no popup poll interval survives a normal popup-close settle', async () => 
             expect(jest.getTimerCount()).toBeGreaterThan(0);
             popup.closed = true;
             jest.advanceTimersByTime(500);
-            expect(jest.getTimerCount()).toBe(0);
+            // 1, not 0: the poll interval is gone, but TWO-40's 30-minute
+            // background token-refresh interval is a real timer that
+            // legitimately outlives the settle - only destroy() clears it.
+            expect(jest.getTimerCount()).toBe(1);
         } finally {
             instance.destroy();
         }
@@ -343,7 +346,10 @@ test('a popup blocked outright (window.open() returns null) never starts a poll 
             await flushPromises();
 
             expect(calls.length).toBe(1);
-            expect(jest.getTimerCount()).toBe(0);
+            // 1, not 0: the mint still succeeded (openPopup() itself is what
+            // fails here), so TWO-40's background token-refresh interval is
+            // legitimately running.
+            expect(jest.getTimerCount()).toBe(1);
         } finally {
             instance.destroy();
         }
@@ -413,7 +419,11 @@ test('cancelEnrollment() while a popup is open stops the poll instead of leaking
 
             expect(jest.getTimerCount()).toBeGreaterThan(0);
             instance.cancelEnrollment();
-            expect(jest.getTimerCount()).toBe(0);
+            // 1, not 0: cancelEnrollment() deliberately does not discard
+            // `tokens` (resumable by design, see its own comment), so
+            // TWO-40's background refresh interval keeps them alive too -
+            // only destroy() clears it.
+            expect(jest.getTimerCount()).toBe(1);
         } finally {
             instance.destroy();
         }
