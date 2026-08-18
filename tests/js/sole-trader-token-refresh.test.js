@@ -1,0 +1,245 @@
+/**
+ * TWO-40 follow-up, Doug: delegated auth tokens can expire server-side if a
+ * buyer sits on checkout too long, breaking autofill and the sole-trader
+ * flow. Pins the fixed behaviour: a 30-minute background re-mint, started
+ * only once a real mint has actually succeeded, reusing fetchTokens()'s own
+ * `isFetchingTokens` guard rather than a second, uncoordinated mint path.
+ */
+
+'use strict';
+
+const { loadSoleTrader, buildPaymentTile, flushPromises } = require('./ps-harness');
+
+let TwoSoleTrader;
+
+function build(overrides) {
+    return new TwoSoleTrader(Object.assign({
+        checkoutHost: 'https://api.example.test',
+        orderIntentUrl: 'https://shop.example.test/module/twopayment/orderintent',
+        ajaxToken: 'test-token',
+        billingCountry: 'GB'
+    }, overrides || {}));
+}
+
+function tokenPayload(suffix) {
+    return {
+        success: true,
+        autofill_token: 'af-token-' + suffix,
+        delegation_token: 'del-token-' + suffix,
+        signup_url: 'https://signup.example.test/',
+        country: 'GB'
+    };
+}
+
+/**
+ * Stubs fetch(), routing soleTraderTokens calls through `mintHandler` (so
+ * tests can hand back a fresh payload, a pending Promise, or a failure per
+ * call) and answering every other endpoint (availability, buyer lookup)
+ * inertly so they cannot interfere with what each test is asserting.
+ */
+function stubFetch(mintHandler) {
+    global.window.fetch = (url) => {
+        if (String(url).includes('soleTraderAvailability')) {
+            return Promise.resolve({ json: () => Promise.resolve({ success: true, available: true }) });
+        }
+        if (String(url).includes('soleTraderTokens')) {
+            return mintHandler();
+        }
+        if (String(url).includes('/autofill/v1/buyer/current')) {
+            return Promise.resolve({ ok: false, status: 404 });
+        }
+        return Promise.resolve({ json: () => Promise.resolve({ success: true }) });
+    };
+    global.fetch = global.window.fetch;
+}
+
+beforeEach(() => {
+    buildPaymentTile();
+    TwoSoleTrader = loadSoleTrader();
+});
+
+afterEach(() => {
+    delete global.fetch;
+    delete global.window.fetch;
+    delete global.window.TwoCompanyNumber;
+    delete global.window.open;
+    delete global.window.TwoCheckoutManager_Instance;
+    document.body.innerHTML = '';
+    global.window.localStorage.clear();
+});
+
+test('the refresh interval does not start before any mint has ever succeeded', () => {
+    jest.useFakeTimers();
+    try {
+        let mintCalls = 0;
+        stubFetch(() => {
+            mintCalls += 1;
+            return Promise.resolve({ json: () => Promise.resolve(tokenPayload('never-called')) });
+        });
+
+        // Constructed but never enrolled - a buyer who has not touched the
+        // sole-trader flow has no tokens, so nothing should be scheduled.
+        const instance = build();
+        jest.advanceTimersByTime(60 * 60 * 1000);
+
+        expect(mintCalls).toBe(0);
+        instance.destroy();
+    } finally {
+        jest.useRealTimers();
+    }
+});
+
+test('a real mint starts the interval, which re-mints via the guarded fetchTokens() path at the 30-minute mark', async () => {
+    jest.useFakeTimers();
+    try {
+        let mintCalls = 0;
+        stubFetch(() => {
+            mintCalls += 1;
+            return Promise.resolve({ json: () => Promise.resolve(tokenPayload(String(mintCalls))) });
+        });
+
+        const instance = build();
+        instance.startEnrollment();
+        await flushPromises();
+
+        expect(mintCalls).toBe(1);
+        expect(instance.tokens.autofill_token).toBe('af-token-1');
+
+        jest.advanceTimersByTime(30 * 60 * 1000);
+        await flushPromises();
+
+        expect(mintCalls).toBe(2);
+        expect(instance.tokens.autofill_token).toBe('af-token-2');
+
+        instance.destroy();
+    } finally {
+        jest.useRealTimers();
+    }
+});
+
+test('a tick is skipped, not queued, while a mint is already in flight', async () => {
+    jest.useFakeTimers();
+    try {
+        let mintCalls = 0;
+        let resolveSecondMint;
+        stubFetch(() => {
+            mintCalls += 1;
+            if (mintCalls === 1) {
+                return Promise.resolve({ json: () => Promise.resolve(tokenPayload('1')) });
+            }
+            // The buyer clicks "select a different sole trader" right as the
+            // 30-minute tick fires - a real mint is genuinely in flight.
+            return new Promise((resolve) => { resolveSecondMint = resolve; });
+        });
+
+        const instance = build();
+        instance.startEnrollment();
+        await flushPromises();
+        expect(mintCalls).toBe(1);
+
+        instance.isFetchingTokens = true;
+        instance.refreshTokens();
+        // The guard skips the tick outright - no second request queued
+        // behind the in-flight one.
+        expect(mintCalls).toBe(1);
+
+        instance.isFetchingTokens = false;
+        resolveSecondMint = null;
+        instance.destroy();
+    } finally {
+        jest.useRealTimers();
+    }
+});
+
+test('a failed refresh tick leaves the existing tokens in place for the next scheduled retry', async () => {
+    jest.useFakeTimers();
+    try {
+        let mintCalls = 0;
+        stubFetch(() => {
+            mintCalls += 1;
+            if (mintCalls === 1) {
+                return Promise.resolve({ json: () => Promise.resolve(tokenPayload('good')) });
+            }
+            return Promise.reject(new Error('network down'));
+        });
+
+        const instance = build();
+        instance.startEnrollment();
+        await flushPromises();
+        const mintedTokens = instance.tokens;
+
+        jest.advanceTimersByTime(30 * 60 * 1000);
+        await flushPromises();
+
+        expect(mintCalls).toBe(2);
+        // Unlike fetchTokens()'s own failure handling (which nulls tokens
+        // out), a failed background refresh must not break autofill for a
+        // buyer who still has valid, not-yet-expired tokens.
+        expect(instance.tokens).toBe(mintedTokens);
+        expect(instance.isFetchingTokens).toBe(false);
+
+        instance.destroy();
+    } finally {
+        jest.useRealTimers();
+    }
+});
+
+test('a refresh tick after cancelEnrollment() still silently replaces the tokens, without re-entering the enrolment flow', async () => {
+    jest.useFakeTimers();
+    try {
+        let mintCalls = 0;
+        stubFetch(() => {
+            mintCalls += 1;
+            return Promise.resolve({ json: () => Promise.resolve(tokenPayload(String(mintCalls))) });
+        });
+        global.window.open = jest.fn();
+
+        const instance = build();
+        instance.startEnrollment();
+        await flushPromises();
+        expect(mintCalls).toBe(1);
+
+        // Buyer abandons the flow - bumps `_enrollGeneration`, but does NOT
+        // discard `tokens` (see cancelEnrollment()'s own comment).
+        instance.cancelEnrollment();
+
+        jest.advanceTimersByTime(30 * 60 * 1000);
+        await flushPromises();
+
+        // The tick still re-minted (tokens are kept alive regardless of
+        // enrolment state), but did not act on them: no popup, no new
+        // buyer lookup - refreshTokens() never calls afterTokensReady().
+        expect(mintCalls).toBe(2);
+        expect(instance.tokens.autofill_token).toBe('af-token-2');
+        expect(global.window.open).not.toHaveBeenCalled();
+
+        instance.destroy();
+    } finally {
+        jest.useRealTimers();
+    }
+});
+
+test('destroy() clears the timer - no further mint after teardown', async () => {
+    jest.useFakeTimers();
+    try {
+        let mintCalls = 0;
+        stubFetch(() => {
+            mintCalls += 1;
+            return Promise.resolve({ json: () => Promise.resolve(tokenPayload(String(mintCalls))) });
+        });
+
+        const instance = build();
+        instance.startEnrollment();
+        await flushPromises();
+        expect(mintCalls).toBe(1);
+
+        instance.destroy();
+
+        jest.advanceTimersByTime(60 * 60 * 1000);
+        await flushPromises();
+
+        expect(mintCalls).toBe(1);
+    } finally {
+        jest.useRealTimers();
+    }
+});
