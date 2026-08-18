@@ -115,6 +115,14 @@ class TwoSoleTrader {
         this._tokensGeneration = 0;
         this.tokens = null;
         this.flowStarted = false;
+        // The handle returned by window.open() for the currently-open signup
+        // popup, and the setInterval id polling it - held so
+        // notifyEnrollmentSettled() can hold off until the popup actually
+        // closes rather than just handing off to it. See openPopup()/
+        // watchPopupUntilClosed() (TWO-40 follow-up, Doug: the query-field
+        // spinner was clearing as soon as window.open() returned).
+        this._popup = null;
+        this._popupPollInterval = null;
         // Set by startReplacement() ("Select a different sole trader"),
         // consumed by afterTokensReady() once tokens are ready. Tells that
         // point to skip getCurrentBuyer()'s silent-autofill check and go
@@ -359,6 +367,8 @@ class TwoSoleTrader {
      */
     destroy() {
         this.stopObserving();
+        this.stopPopupWatch();
+        this._popup = null;
         if (this._countryChangeHandler) {
             document.removeEventListener('change', this._countryChangeHandler);
             this._countryChangeHandler = null;
@@ -939,6 +949,12 @@ class TwoSoleTrader {
         // abandoned startReplacement() must not leave this set for whatever
         // ORDINARY flow resumes next.
         this._skipAutofillCheck = false;
+        // The buyer moved on to a different search interaction, not the
+        // popup itself closing - stop tracking it (no leaked poll interval)
+        // and clear the reference so the notify below isn't held back by
+        // notifyEnrollmentSettled()'s popup-open guard.
+        this.stopPopupWatch();
+        this._popup = null;
         if (!this.enrolling) {
             return;
         }
@@ -1729,13 +1745,54 @@ class TwoSoleTrader {
                 console.error('Two: sole-trader signup popup was blocked and no on-page error UI is available here.');
             }
         } else {
-            // Opened fine - this click's own round trip has handed off to
-            // the popup window, whether called directly from
-            // getCurrentBuyer() (no on-page prompt to show first) or from
-            // showPrompt()'s own click listener (TWO-40 round 4).
-            this.notifyEnrollmentSettled();
+            // Opened fine - hand off to the popup window, but do NOT settle
+            // the spinner yet (TWO-40 follow-up, Doug: it was clearing as
+            // soon as this line ran, not when the popup actually closed).
+            // watchPopupUntilClosed() settles it once `popup.closed` is
+            // actually true.
+            this._popup = popup;
+            this.watchPopupUntilClosed();
         }
         return popup;
+    }
+
+    /**
+     * Poll the popup handle until the buyer actually closes it - completes
+     * the signup, cancels inside it, or just closes the window. A
+     * cross-origin popup fires no event for any of those, so polling
+     * `.closed` is the only reliable signal; 500ms is frequent enough to
+     * feel immediate without hammering the main thread.
+     *
+     * Deliberately not "settled by the postMessage 'ACCEPTED' handler
+     * instead" - that message means the buyer authenticated, not that the
+     * popup has gone away, and the spinner must track the popup's own
+     * lifetime (see notifyEnrollmentSettled()'s guard).
+     */
+    watchPopupUntilClosed() {
+        this.stopPopupWatch();
+        const self = this;
+        this._popupPollInterval = window.setInterval(function () {
+            if (!self._popup || self._popup.closed) {
+                self._popup = null;
+                self.stopPopupWatch();
+                self.notifyEnrollmentSettled();
+            }
+        }, 500);
+    }
+
+    /**
+     * Clear the popup-close poll, if one is running, without touching
+     * `this._popup` - callers that already know the popup is gone clear that
+     * themselves first (see watchPopupUntilClosed()); callers tearing down a
+     * still-open popup's tracking (cancelEnrollment(), destroy()) clear it
+     * right after calling this. Idempotent, and every exit path calls it so
+     * no interval outlives its popup.
+     */
+    stopPopupWatch() {
+        if (this._popupPollInterval) {
+            window.clearInterval(this._popupPollInterval);
+            this._popupPollInterval = null;
+        }
     }
 
     /**
@@ -1879,18 +1936,34 @@ class TwoSoleTrader {
      * startEnrollment()'s call graph:
      *  - showError() (covers both fetchTokens() failure paths, the
      *    getCurrentBuyer() catch, and openPopup()'s popup-blocked branch)
-     *  - getCurrentBuyer()'s showPrompt()/openPopup() branches (no error,
-     *    but nothing left for the spinner to wait on - the flow has handed
-     *    off to on-page prompt UI or a popup window)
+     *  - getCurrentBuyer()'s showPrompt() branch (no error, but nothing left
+     *    for the spinner to wait on - the flow now waits on the buyer
+     *    clicking the on-page prompt)
      *  - applyBuyer()'s success branch
+     *  - watchPopupUntilClosed()'s poll, once a popup that WAS opened has
+     *    actually closed
      *
      * Deliberately NOT gated on `_enrollGeneration`: TwoCompanySearch.js's
      * listener is bound fresh per click and unbound on its own next close,
      * so a stale event from an abandoned attempt finding no listener left
      * to hear it is already a no-op, the same way a stale popup message
      * finding this object gone would be.
+     *
+     * Gated on `this._popup`, though (TWO-40 follow-up, Doug): while a
+     * signup popup is open, the spinner must wait for the popup itself to
+     * close - completed, cancelled inside it, or just closed by the buyer -
+     * not for whichever internal call happens to settle first. applyBuyer()'s
+     * success branch and showError() both still call this directly on every
+     * one of their own terminal paths; this guard is what makes those calls
+     * defer to watchPopupUntilClosed()'s poll instead of firing early
+     * whenever a popup is the thing still open. cancelEnrollment() clears
+     * `this._popup` itself first, since that path means the buyer moved on
+     * to a different search interaction, not the popup closing.
      */
     notifyEnrollmentSettled() {
+        if (this._popup && !this._popup.closed) {
+            return;
+        }
         document.dispatchEvent(new CustomEvent('two:sole-trader-flight-settled'));
     }
 }
