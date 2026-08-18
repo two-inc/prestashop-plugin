@@ -104,6 +104,96 @@ test('a successful autofill (buyer match) fires the settle event', async () => {
     instance.destroy();
 });
 
+/**
+ * Adversarial review finding (Yoda): every OTHER test drives
+ * notifyEnrollmentSettled()'s popup-open guard through a path where
+ * `this._popup` is either never set or already nulled by the poll itself -
+ * none of them actually exercises the guard suppressing a call from a
+ * DIFFERENT terminal branch while a popup is still open. This does: a real
+ * OTP round trip (postMessage 'ACCEPTED') resolves through applyBuyer()'s
+ * success branch while the popup the buyer authenticated in is still open on
+ * screen - the spinner must not clear until they actually close it.
+ */
+test('a genuine OTP completion settles the buyer lookup but withholds the spinner until the still-open popup actually closes', async () => {
+    buildPaymentTile();
+    global.window.TwoCompanyNumber = { forDisplay: (v) => v };
+    global.window.TwoCheckoutManager_Instance = { setConfirmedCompanySelection: () => {} };
+    document.body.insertAdjacentHTML('beforeend', "<input name='email' value='order-contact@example.test' />");
+
+    const popup = { closed: false };
+    global.window.open = jest.fn(() => popup);
+
+    let buyerLookupCalls = 0;
+    stubFetch({
+        buyer: () => {
+            buyerLookupCalls += 1;
+            if (buyerLookupCalls === 1) {
+                // Passive cookie-match check on the order's own checkout
+                // email - no match, so this falls through to the on-page
+                // prompt.
+                return Promise.resolve({ ok: false, status: 404 });
+            }
+            // The trusted lookup issued after a genuine OTP completion.
+            return Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({
+                    email: 'sole-trader-real-account@example.test',
+                    company_name: 'Sole Trader AS',
+                    organization_number: '923456789'
+                })
+            });
+        }
+    });
+    const { calls, handler } = recordSettled();
+
+    jest.useFakeTimers();
+    try {
+        const instance = build();
+        try {
+            instance.startEnrollment();
+            await flushPromises();
+            await flushPromises();
+            await flushPromises();
+
+            // No-match on the passive check - handed off to the on-page
+            // prompt (nothing left to wait on until the buyer clicks it).
+            expect(calls.length).toBe(1);
+
+            const prompt = document.querySelector('.two-sole-trader__prompt');
+            prompt.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+            expect(global.window.open).toHaveBeenCalledTimes(1);
+            expect(instance._popup).toBe(popup);
+            // Popup handed off to - must not have settled again yet.
+            expect(calls.length).toBe(1);
+
+            window.dispatchEvent(new window.MessageEvent('message', {
+                data: 'ACCEPTED',
+                origin: 'https://signup.example.test'
+            }));
+            await flushPromises();
+            await flushPromises();
+            await flushPromises();
+
+            // applyBuyer() succeeded - the buyer is enrolled - but the popup
+            // they just authenticated in is STILL open, so the guard must
+            // withhold the settle event.
+            expect(instance.enrolling).toBe(false);
+            expect(calls.length).toBe(1);
+
+            // Buyer now closes the popup.
+            popup.closed = true;
+            jest.advanceTimersByTime(500);
+
+            expect(calls.length).toBe(2);
+        } finally {
+            instance.destroy();
+        }
+    } finally {
+        jest.useRealTimers();
+    }
+    document.removeEventListener('two:sole-trader-flight-settled', handler);
+});
+
 test('a failed token mint fires the settle event', async () => {
     buildPaymentTile();
     stubFetch({ tokens: () => Promise.resolve({ json: () => Promise.resolve({ success: false }) }) });
@@ -262,6 +352,42 @@ test('a popup blocked outright (window.open() returns null) never starts a poll 
     }
     errorSpy.mockRestore();
     document.removeEventListener('two:sole-trader-flight-settled', handler);
+});
+
+/**
+ * Adversarial review finding (Han): calling openPopup() a second time while
+ * the first popup from the SAME attempt is still open (e.g. the buyer
+ * double-clicks the on-page "sign up" prompt) used to open a SECOND browser
+ * window and silently retarget `this._popup` to it - orphaning the first
+ * window untracked, so a buyer closing the ORIGINAL window instead of the
+ * new one left the spinner stuck forever. openPopup() must refuse to open a
+ * second window while one is still tracked open and just refocus it.
+ */
+test('calling openPopup() again while a popup is already open refocuses it instead of opening a second window', () => {
+    buildAddressForm();
+    const popup = { closed: false, focus: jest.fn() };
+    const openSpy = jest.fn(() => popup);
+    global.window.open = openSpy;
+    stubFetch({});
+
+    const instance = build();
+    try {
+        instance.tokens = {
+            autofill_token: 'af-token',
+            delegation_token: 'del-token',
+            signup_url: 'https://signup.example.test/',
+            country: 'GB'
+        };
+        const first = instance.openPopup();
+        const second = instance.openPopup();
+
+        expect(openSpy).toHaveBeenCalledTimes(1);
+        expect(popup.focus).toHaveBeenCalledTimes(1);
+        expect(second).toBe(first);
+        expect(instance._popup).toBe(popup);
+    } finally {
+        instance.destroy();
+    }
 });
 
 /**

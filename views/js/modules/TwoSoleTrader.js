@@ -1691,6 +1691,17 @@ class TwoSoleTrader {
         if (!this.tokens) {
             return null;
         }
+        if (this._popup && !this._popup.closed) {
+            // Round trip already handed off to a popup that is still open
+            // (adversarial review finding, Han + Vader independently) -
+            // opening a SECOND window here would orphan the first one,
+            // untracked: `this._popup` would move to the new popup and the
+            // poll would never learn the first window even existed, so a
+            // buyer who closes THAT one instead of the new one would leave
+            // the spinner stuck forever. Focus the existing popup instead.
+            this._popup.focus();
+            return this._popup;
+        }
         const ps = window.prestashop;
         const customer = (ps && ps.customer) || {};
         const firstName = document.querySelector("input[name='firstname']");
