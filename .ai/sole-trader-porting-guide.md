@@ -356,10 +356,12 @@ useful to a browser pointed at a remote domain.
 
 ## 11. Adoption is a MODE, not a populated field
 
-All three rules below are Doug's, from live testing on 2026-08-19, and are now
-implemented on both platforms: PrestaShop `1c1b3d7`, WooCommerce `38bc49a` +
-`48edd08`. They are one design, not three fixes: **once a sole trader is adopted,
-that is the state of the control**, and every surface has to agree with it.
+All three rules below are Doug's, from live testing on 2026-08-19. They are one
+design, not three fixes: **once a sole trader is adopted, that is the state of the
+control**, and every surface has to agree with it. Rules 2 and 3 are implemented on
+both platforms (PrestaShop `1c1b3d7`, WooCommerce `38bc49a` + `48edd08`); rule 1 is
+implemented on WooCommerce and is a **known open gap on PrestaShop** — see its own
+entry.
 
 1. **A passive autofill/prefetch adoption on first load is a FULL adoption.** If the
    cookie-driven prefetch that runs on initial checkout load resolves to a sole
@@ -378,6 +380,19 @@ that is the state of the control**, and every surface has to agree with it.
    there means "the autofill cookie disagrees with a settled adoption", not "abandon
    sole trader". Adoption is a one-way latch until the buyer explicitly asks for a
    different company.
+
+   **Open on PrestaShop — don't port the gap, and don't treat PrestaShop as the
+   reference for this rule.** PrestaShop has no load-time autofill prefetch at all (its
+   buyer lookup runs only from an explicit enrolment click or a signup completion), but
+   it has the same shape of restore: the checkout manager seeds the confirmed company
+   name and org number from the server on init, and a returning buyer's saved address
+   carries an adopted sole trader's name plus its `TWO:` number. Nothing on that path
+   renders the "select a different sole trader" element, which is the single source of
+   truth for "adopted" (§0) — so on such a load the field looks right while the control
+   is still in registered-company mode: reopening shows the wrong chip selected and a
+   typable query. Not fixed as of this writing; the fix is the same shape as
+   WooCommerce's — recognise a `TWO:`-prefixed seeded number on that path and enter the
+   adopted state from it.
 2. **Reopening the dropdown once adopted offers no free-text query.** The Sole trader
    chip shows as selected (§0), and the query input must not accept typed input —
    `readonly`, not `disabled` and not unbound: the click that opens the panel must
