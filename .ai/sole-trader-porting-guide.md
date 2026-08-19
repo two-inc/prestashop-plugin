@@ -48,7 +48,7 @@ claim below as DOM-verified, cited by the actual structure captured live:
   alongside the chips — it no longer exists as separate copy on PrestaShop (confirmed:
   zero occurrences of "not on the list" or "my company" anywhere in the page, in any
   state). It has been fully absorbed into the third chip, class
-  `two-company-not-listed`, visible label "Enter Manually." A port that keeps its own
+  `two-company-not-listed`, visible label "Enter manually." A port that keeps its own
   platform's old fallback link *and* adds the chips as a second, separate mechanism
   has not implemented this design — it has implemented two overlapping ones.
 - **Chip selection must survive a reopen — was a live PrestaShop bug, now FIXED
