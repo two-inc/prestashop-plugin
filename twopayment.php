@@ -4425,7 +4425,7 @@ class Twopayment extends PaymentModule
             // deliberately DIVERGES from the other three plugins' current
             // wording for this affordance, pending their own rollout of the
             // same three-chip pattern.
-            'company_search_manual_entry' => $this->l('Enter Manually'),
+            'company_search_manual_entry' => $this->l('Enter manually'),
             'company_search_back_to_search' => $this->l('Search for company'),
             // Zero-result wording (TWO-25326 §1). EXACT across all four
             // plugins - "No results found" is a different string and the
@@ -4438,14 +4438,14 @@ class Twopayment extends PaymentModule
             // The three-chip mode selector (TWO-40 design revision). Shown
             // immediately on interacting with the search control, no
             // upfront choice OUTSIDE the control any more, no waiting for
-            // characters to be typed. "Registered Company" is the default;
-            // "Enter Manually" (above) is always visible alongside it;
-            // "Sole Trader" is added to the set only when the registry says
+            // characters to be typed. "Registered company" is the default;
+            // "Enter manually" (above) is always visible alongside it;
+            // "Sole trader" is added to the set only when the registry says
             // the currently-selected billing country supports sole traders
             // (TwoSoleTrader::isAvailable), and removed again live if the
             // buyer changes the country selector to one that does not.
-            'company_search_registered_entry' => $this->l('Registered Company'),
-            'company_search_sole_trader_entry' => $this->l('Sole Trader'),
+            'company_search_registered_entry' => $this->l('Registered company'),
+            'company_search_sole_trader_entry' => $this->l('Sole trader'),
             // Fallback status label shown once enrolment succeeds but the
             // registration carries no displayable company name or number
             // (TwoCompanyNumber.forDisplay() answers '' for both a blank name
