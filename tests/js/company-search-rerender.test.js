@@ -638,7 +638,7 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
         expect(notListed().parent().parent().is('.two-company-dropdown')).toBe(true);
         expect(notListed().parent().prev().is('.two-company-dropdown__results')).toBe(true);
         expect(notListed().text()).toBe(instance.getManualEntryText());
-        expect(instance.getManualEntryText()).toBe('Enter Manually');
+        expect(instance.getManualEntryText()).toBe('Enter manually');
         expect(shown(notListed())).toBe(true);
     });
 
@@ -3026,7 +3026,7 @@ describe('the custom fallback used when jQuery UI is absent', () => {
             expect(button.attr('role')).toBeUndefined();
             expect(button.attr('tabindex')).toBeUndefined();
             // Its accessible name is its text content; nothing else supplies one.
-            expect(button.text()).toBe('Enter Manually');
+            expect(button.text()).toBe('Enter manually');
             // NOT disabled and NOT aria-disabled, unlike the message rows.
             expect(button.prop('disabled')).toBe(false);
             expect(button.attr('aria-disabled')).toBeUndefined();

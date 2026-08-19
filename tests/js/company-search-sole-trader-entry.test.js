@@ -71,7 +71,7 @@ describe('visibility', () => {
         openPanel();
 
         expect(shown(panelParts().soleTrader)).toBe(true);
-        expect(panelParts().soleTrader.text()).toBe('Sole Trader');
+        expect(panelParts().soleTrader.text()).toBe('Sole trader');
     });
 
     test('is hidden when TwoSoleTrader says the country is not eligible', () => {
