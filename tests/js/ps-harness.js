@@ -884,6 +884,9 @@ function panelParts() {
     return {
         panel: $('.two-company-dropdown'),
         query: $('.two-company-dropdown__query'),
+        // The query field's row - the unit that is hidden while the Sole
+        // trader chip is selected, since the spinner is a sibling inside it.
+        searchRow: $('.two-company-dropdown__search'),
         results: $('.two-company-dropdown__results'),
         // The three-chip mode selector (TWO-40 design revision).
         modeChips: $('.two-company-mode-chips'),

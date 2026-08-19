@@ -359,7 +359,9 @@ useful to a browser pointed at a remote domain.
 All three rules below are Doug's, from live testing on 2026-08-19. They are one
 design, not three fixes: **once a sole trader is adopted, that is the state of the
 control**, and every surface has to agree with it. Rules 2 and 3 are implemented on
-both platforms (PrestaShop `1c1b3d7`, WooCommerce `38bc49a` + `48edd08`); rule 1 is
+both platforms (PrestaShop `1c1b3d7`, WooCommerce `38bc49a` + `48edd08`) — but rule
+2's first round on both was readonly-only, which Doug rejected on re-test; it is
+corrected on PrestaShop and still open on WooCommerce, see the rule. Rule 1 is
 implemented on WooCommerce and is a **known open gap on PrestaShop** — see its own
 entry.
 
@@ -390,14 +392,50 @@ entry.
    renders the "select a different sole trader" element, which is the single source of
    truth for "adopted" (§0) — so on such a load the field looks right while the control
    is still in registered-company mode: reopening shows the wrong chip selected and a
-   typable query. Not fixed as of this writing; the fix is the same shape as
+   visible, typable query. Not fixed as of this writing; the fix is the same shape as
    WooCommerce's — recognise a `TWO:`-prefixed seeded number on that path and enter the
    adopted state from it.
 2. **Reopening the dropdown once adopted offers no free-text query.** The Sole trader
-   chip shows as selected (§0), and the query input must not accept typed input —
-   `readonly`, not `disabled` and not unbound: the click that opens the panel must
-   still land, and the field must stay focusable and in the tab order. There is
-   exactly ONE way to change company from that state: the explicit "select a
+   chip shows as selected (§0), and the query input is **not rendered at all**.
+
+   **`readonly` is NOT an acceptable reading of this rule — it was an incomplete
+   implementation of it.** The first round on PrestaShop (`1c1b3d7`) made the field
+   readonly and left it on screen; Doug's correction on re-test was verbatim: "the
+   field should not be *visible*. I did not tell you it was editable, I told you it
+   was visible." A search box that is painted but inert reads as a search box that
+   has broken, which is worse than one that is absent. Hide it — `display:none` or
+   the `hidden` attribute, **not** `visibility:hidden`/`opacity:0`, which leave it in
+   the tab order for a keyboard buyer to land on something they cannot see. Keeping
+   `readonly` on as well costs nothing and is worth it as defence in depth against a
+   programmatic write, but it satisfies nothing on its own.
+
+   **WooCommerce has this gap too, as of `8af86d4`** — its select2 search input is
+   made readonly on the adopted state and stays on screen, which is the exact
+   implementation Doug rejected here. Fix it there rather than porting the readonly.
+
+   Two consequences that are easy to miss, both found by review rather than by
+   testing the happy path:
+
+   - **Hide the query field's whole ROW, not the input.** The in-field spinner is an
+     absolutely-positioned sibling *inside* that row, so hiding the input alone
+     collapses the row to zero height and strands the spinner at its top edge. And
+     the hide has to stand down for the duration of a sole-trader flight, because
+     that same spinner in that same field IS the in-progress state the keep-open
+     window exists to show (rule 3's ordering trap lives next door to this).
+   - **Something else in the panel has to take focus on open.** The open path focuses
+     the query field; `.focus()` on a `display:none` element silently does nothing,
+     leaving focus on the company-name field — *outside* the panel, and the panel is
+     where Escape-to-close and close-on-focus-leave are bound. A keyboard buyer would
+     have opened a panel they cannot close. Focus the selected chip instead, with the
+     always-visible Registered company chip as the fallback for the one state where
+     the Sole trader chip is itself hidden (adopted, then the registry stops offering
+     that country).
+
+   Drop any query term on the way out, too: it describes a company the buyer then did
+   not pick, and restoring it above results that no longer match it is worse than an
+   empty field.
+
+   There is exactly ONE way to change company from that state: the explicit "select a
    different" affordance. That is deliberately two entry points into one call — the
    standalone link, and re-clicking the Sole trader chip — and re-clicking the chip
    must route through the IDENTICAL relaunch call the link uses. Not a no-op (an
@@ -412,9 +450,10 @@ entry.
    flow — it means "stay here, search normally" — so it must not close the panel, and
    the query field must become typable again in the same click. Implemented on
    PrestaShop (`1c1b3d7`, pinned by tests): the handler reverses manual-entry and
-   cancels any enrolment, re-renders the chip selection (which is also what clears
-   the `readonly` from rule 2), and focuses the query field, with no close call
-   anywhere in it. One ordering trap, worth copying rather than rediscovering:
+   cancels any enrolment, re-renders the chip selection (which is also what brings
+   the query field back from rule 2's hide, readonly and all), and focuses the query
+   field, with no close call anywhere in it. One ordering trap, worth copying rather
+   than rediscovering:
    cancelling the enrolment fires the same "flight settled" event that the keep-open
    spinner's own listener answers by CLOSING the panel, so that listener has to be
    unbound before the cancel can dispatch, or this click closes the very panel it is
