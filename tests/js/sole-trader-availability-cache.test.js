@@ -363,11 +363,16 @@ describe('a transport failure is never persisted to the cache', () => {
         second.destroy();
     });
 
-    test('a genuine "success: false" server answer (not a transport failure) IS persisted as false', async () => {
-        // Distinct from the catch()/reject path: the fetch resolved, the
-        // server responded, it just said "not available" (or malformed
-        // success). That is a real answer, not a blip - see the comment in
-        // TwoSoleTrader.js's refreshAvailability() fetch handler.
+    test('a "success: false" server answer is NOT an answer, and is cached nowhere', async () => {
+        // Reverses what this test asserted before (TWO-40 follow-up, Doug
+        // live-test finding - the GB chip disappearing). The fetch resolving is
+        // not the same as the server ANSWERING: `success: false` is what this
+        // endpoint says for a stale ajax token and for an unknown action, HTTP
+        // 200 with a JSON body either way, so the catch() below never sees it.
+        // Treating it as "this country does not do sole traders" cached a
+        // declined request as a real answer - for the page in memory, and for
+        // 24h in localStorage on every later load, with nothing that re-asks
+        // inside the TTL. Full coverage in sole-trader-chip-visibility.test.js.
         global.window.fetch = (url) => {
             fetchCalls.push(url);
             return Promise.resolve({ json: () => Promise.resolve({ success: false }) });
@@ -381,9 +386,8 @@ describe('a transport failure is never persisted to the cache', () => {
 
         expect(fetchCalls).toHaveLength(1);
         expect(instance.isAvailableForCurrentCountry()).toBe(false);
-        expect(window.localStorage.getItem(storageKey('GB'))).not.toBeNull();
-        const cached = JSON.parse(window.localStorage.getItem(storageKey('GB')));
-        expect(cached.available).toBe(false);
+        expect(instance.availabilityByCountry.GB).toBeUndefined();
+        expect(window.localStorage.getItem(storageKey('GB'))).toBeNull();
         instance.destroy();
     });
 });
@@ -511,8 +515,10 @@ describe('a superseded in-flight request is not resurrected by a concurrent cach
         buildPaymentTileWithSoleTraderAnswer('0', 'GB');
         await flushPromises();
         expect(instance.isAvailableForCurrentCountry()).toBe(false);
-        const afterAdopt = JSON.parse(window.localStorage.getItem(storageKey('GB')));
-        expect(afterAdopt.available).toBe(false);
+        // A negative answer is REMOVED from the persisted cache rather than
+        // stored in it (TWO-40 follow-up) - there was nothing here to remove,
+        // so the assertion is simply that it still holds no answer.
+        expect(window.localStorage.getItem(storageKey('GB'))).toBeNull();
 
         // The original request now resolves with the OPPOSITE answer. It
         // must not win in memory (pre-existing invariant) OR overwrite the
@@ -522,8 +528,7 @@ describe('a superseded in-flight request is not resurrected by a concurrent cach
         await drain();
 
         expect(instance.isAvailableForCurrentCountry()).toBe(false);
-        const afterSettle = JSON.parse(window.localStorage.getItem(storageKey('GB')));
-        expect(afterSettle.available).toBe(false);
+        expect(window.localStorage.getItem(storageKey('GB'))).toBeNull();
         instance.destroy();
     });
 });

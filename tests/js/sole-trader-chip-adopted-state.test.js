@@ -206,6 +206,50 @@ describe('re-clicking "Sole Trader" while adopted (item 3)', () => {
     });
 });
 
+describe('clicking back to "Registered company" while adopted (item 4)', () => {
+    /**
+     * The way out of the adopted state without launching a signup: the
+     * "Registered company" chip is deliberately NOT a hand-off to another
+     * flow, so it must leave the panel open with the buyer able to type a
+     * query immediately. Pinned here rather than assumed - the sole-trader
+     * chip's own handler closes the panel on one of its branches, and this
+     * one runs cancelEnrollment(), which fires the same settle event another
+     * listener answers by closing.
+     */
+    function adoptAndReopen() {
+        const instance = makeInstance();
+        openPanel();
+        instance.adoptSoleTraderBuyer(NAMED_BUYER);
+        instance.closeDropdown(false);
+        $("input[name='company']").trigger('mousedown');
+        stubSoleTrader();
+        return instance;
+    }
+
+    test('the panel stays OPEN, with the "Registered company" chip selected', () => {
+        const instance = adoptAndReopen();
+
+        panelParts().registered.trigger('click');
+
+        expect(shown(panelParts().panel)).toBe(true);
+        expect(panelParts().registered.hasClass('two-company-mode-chip--selected')).toBe(true);
+        expect(panelParts().soleTrader.hasClass('two-company-mode-chip--selected')).toBe(false);
+
+        instance.destroy();
+    });
+
+    test('focus lands in the query field, which is typable again', () => {
+        const instance = adoptAndReopen();
+
+        panelParts().registered.trigger('click');
+
+        expect(document.activeElement).toBe(panelParts().query.get(0));
+        expect(panelParts().query.prop('readonly')).toBe(false);
+
+        instance.destroy();
+    });
+});
+
 describe('unaffected: a fresh (non-adopted) "Sole Trader" click still enrolls normally', () => {
     test('calls startEnrollment(), not startReplacement()', () => {
         const instance = makeInstance();
