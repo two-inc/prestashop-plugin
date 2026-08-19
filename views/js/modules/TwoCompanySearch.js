@@ -1316,13 +1316,43 @@ class TwoCompanySearch {
         this.syncNotListedVisibility();
         this.syncSoleTraderEntryVisibility();
         this.syncRegisteredEntryVisibility();
-        this._queryField.trigger('focus');
+        this.focusPanelEntry();
         // Render the current state immediately - for an empty query that is
         // the "type N more characters" hint (§1), not an empty or absent
         // panel. Matches the requirement that the hint is visible as soon as
         // the control opens, which is the Hyvä failure recorded on this
         // ticket.
         this.openSearchForCurrentTerm();
+    }
+
+    /**
+     * Where focus goes when the panel opens.
+     *
+     * The query field, normally. But in sole-trader mode that field is not
+     * rendered at all (syncQueryFieldSuppression()), and `.focus()` on a
+     * `display:none` element does nothing - which would leave focus on the
+     * company-name field, OUTSIDE the panel, where neither the
+     * Escape-to-close nor the close-on-focus-leave handler can see a
+     * keystroke: a keyboard buyer would have no way to close the panel they
+     * just opened. So focus the selected chip instead - inside the panel, and
+     * the only control this state offers. The Registered company chip is the
+     * fallback for the one state where the Sole trader chip is itself hidden
+     * (adopted, then the registry stops offering that country).
+     */
+    focusPanelEntry() {
+        if (this._chipMode === 'sole_trader') {
+            const chips = [this._soleTraderButton, this._registeredButton];
+            for (let i = 0; i < chips.length; i++) {
+                const chip = chips[i];
+                if (chip && chip.length && chip.css('display') !== 'none') {
+                    chip.trigger('focus');
+                    return;
+                }
+            }
+        }
+        if (this._queryField && this._queryField.length) {
+            this._queryField.trigger('focus');
+        }
     }
 
     /**
@@ -1497,17 +1527,46 @@ class TwoCompanySearch {
      * deliberately only one way to pick a different company while a sole
      * trader is selected - the chip/link re-launching the signup flow (see
      * triggerSelectDifferentSoleTrader()) - typing a fresh live-search query
-     * is not it. `readonly`, not `disabled`: the field must stay focusable
-     * and part of the dropdown's own tab order, it just must not accept
-     * typed input. Called from renderChipSelection() so every place the chip
+     * is not it. Called from renderChipSelection() so every place the chip
      * selection changes - a fresh open, either chip's click handler - stays
      * in sync with no separate call site to remember.
+     *
+     * HIDDEN, not merely `readonly` (Doug live-test finding, TWO-40 follow-up
+     * round 2): an earlier round made the field readonly and left it on
+     * screen, which reads as a search box that has stopped working. A field
+     * offering nothing must not be painted. `display:none` (plus the `hidden`
+     * attribute, same belt-and-braces as the panel itself) rather than
+     * `visibility`/`opacity`, so it leaves the tab order with it - a
+     * keyboard-only buyer must not land on an input they cannot see.
+     *
+     * The whole SEARCH ROW is hidden, not just the input: the spinner is an
+     * absolutely-positioned sibling inside that row, so hiding the input
+     * alone collapses the row to zero height and strands the spinner at its
+     * top edge. Which is also why the hide stands down while a sole-trader
+     * flight is in progress - that spinner, in this field, IS the in-flight
+     * state (see beginSoleTraderLoading()).
+     *
+     * The term is dropped on the way out. The row comes back on the
+     * "Registered company" chip, and a query the buyer typed before adopting
+     * describes a company they then did not pick; restoring it would put a
+     * stale term above results that no longer match it.
      */
     syncQueryFieldSuppression() {
         if (!this._queryField || !this._queryField.length) {
             return;
         }
-        this._queryField.prop('readonly', this._chipMode === 'sole_trader');
+        const suppressed = this._chipMode === 'sole_trader';
+        this._queryField.prop('readonly', suppressed);
+        const searchRow = this._queryField.closest('.two-company-dropdown__search');
+        if (!searchRow.length) {
+            return;
+        }
+        if (suppressed && !this._soleTraderLoading) {
+            this._queryField.val('');
+            searchRow.hide().attr('hidden', 'hidden');
+        } else {
+            searchRow.removeAttr('hidden').show();
+        }
     }
 
     /**
@@ -1551,6 +1610,11 @@ class TwoCompanySearch {
         if (this._queryField && this._queryField.length) {
             this._queryField.addClass('two-company-search-loading');
         }
+        // The chip is already `sole_trader` by the time this runs, so the
+        // search row has just been hidden by syncQueryFieldSuppression() -
+        // re-show it for the flight, or the spinner this method exists to
+        // paint has nowhere to appear.
+        this.syncQueryFieldSuppression();
         $(document).off('two:sole-trader-flight-settled.twoSoleTraderFlight' + this._instanceNs)
             .on('two:sole-trader-flight-settled.twoSoleTraderFlight' + this._instanceNs, () => {
                 // closeDropdown() itself calls endSoleTraderLoading() as its
@@ -1580,6 +1644,10 @@ class TwoCompanySearch {
         if (this._queryField && this._queryField.length) {
             this._queryField.removeClass('two-company-search-loading');
         }
+        // Mirror of the call in beginSoleTraderLoading(): the keep-open
+        // window is over, so a still-selected Sole Trader chip goes back to
+        // hiding the row. A no-op for every other mode.
+        this.syncQueryFieldSuppression();
     }
 
     /**
@@ -1713,10 +1781,10 @@ class TwoCompanySearch {
             // single code point exactly when the keypress produced text. Not
             // forwarded while the Sole Trader chip is selected (TWO-40
             // follow-up): openDropdown() just set that chip mode when a
-            // sole trader is adopted, and the query field is `readonly` in
-            // that state (syncQueryFieldSuppression()) - `.val()` would
-            // still write through a readonly attribute, so this has to check
-            // explicitly rather than relying on the attribute alone.
+            // sole trader is adopted, and the query field is hidden and
+            // `readonly` in that state (syncQueryFieldSuppression()) -
+            // `.val()` writes through both of those, so this has to check
+            // the mode explicitly rather than relying on the field's state.
             if (key && key.length === 1 && this._chipMode !== 'sole_trader'
                 && this._queryField && this._queryField.length) {
                 this._queryField.val(key);
@@ -3580,8 +3648,9 @@ class TwoCompanySearch {
                         return;
                     }
                     // Sole Trader selected (TWO-40 follow-up): the query field
-                    // is `readonly` in this state (syncQueryFieldSuppression())
-                    // so no real keystroke reaches here, but this is the same
+                    // is not even rendered in this state
+                    // (syncQueryFieldSuppression()) so no real keystroke
+                    // reaches here, but this is the same
                     // "defence in depth" posture as the manual-entry check
                     // above - a programmatic `input`/`search` trigger must not
                     // run a live search while a sole trader is what's selected.
