@@ -42,6 +42,13 @@ function stubSoleTrader(available) {
         startEnrollment: jest.fn(),
         cancelEnrollment: jest.fn(),
         closeSignupPopup: jest.fn(),
+        // The atomic "buyer is leaving this flow" pair (TWO-40 follow-up,
+        // Doug). Stubbed as ONE fn, not as a composition of the two above:
+        // what belongs to TwoCompanySearch is which operation each gesture
+        // picks. That it really does close before cancelling is
+        // TwoSoleTrader's own contract, pinned against the real module in
+        // sole-trader-abandon-enrollment.test.js.
+        abandonEnrollment: jest.fn(),
         // "Was there a popup to raise?" - false is the no-popup-open default,
         // and the tests that need one still up flip it (see soleTraderPopupOpen()).
         focusSignupPopup: jest.fn(() => false)
@@ -360,13 +367,14 @@ describe('a chip clicked while the signup popup is open (TWO-40 follow-up, Doug 
         popupOpen(soleTrader);
         soleTrader.closeSignupPopup.mockClear();
         soleTrader.focusSignupPopup.mockClear();
+        soleTrader.abandonEnrollment.mockClear();
     }
 
     test.each([
-        ['soleTrader', false, true, 'the one exception - raises the popup, never closes it'],
-        ['registered', true, false, 'closes the popup, keeps the panel'],
-        ['notListed', true, false, 'closes the popup, hands off to manual entry']
-    ])('%s: closed=%s raised=%s - %s', (chip, closed, raised) => {
+        ['soleTrader', false, true, 'the one exception - raises the popup, never abandons'],
+        ['registered', true, false, 'abandons the flow, keeps the panel'],
+        ['notListed', true, false, 'abandons the flow, hands off to manual entry']
+    ])('%s: abandoned=%s raised=%s - %s', (chip, abandoned, raised) => {
         const soleTrader = stubSoleTrader(true);
         makeInstance();
         launchThenPopupOpen(soleTrader);
@@ -376,11 +384,14 @@ describe('a chip clicked while the signup popup is open (TWO-40 follow-up, Doug 
         // adversarial review finding, mutation-proved): letting it run lets
         // "Enter manually" satisfy this through the OLD accidental route -
         // enterManualEntryMode() focuses the company-name field, re-schedules
-        // a close, and that close calls closeSignupPopup(). The assertion then
-        // passes with the chip's own call deleted, which is precisely the line
-        // this table exists to pin. Asserted synchronously, only the handler's
-        // own call can have happened.
-        expect(soleTrader.closeSignupPopup.mock.calls.length > 0).toBe(closed);
+        // a close, and that close closes the popup. Asserted synchronously,
+        // only the handler's own call can have happened.
+        //
+        // On abandonEnrollment() rather than closeSignupPopup(), which also
+        // shuts that accidental route out by construction: the deferred close
+        // only ever takes the popup down, never the enrolment with it, so it
+        // cannot satisfy this column however the timers are advanced.
+        expect(soleTrader.abandonEnrollment.mock.calls.length > 0).toBe(abandoned);
         expect(soleTrader.focusSignupPopup.mock.calls.length > 0).toBe(raised);
     });
 
@@ -491,7 +502,7 @@ describe('a chip clicked while the signup popup is open (TWO-40 follow-up, Doug 
      * #5.2. Closing the popup must not cost the chip its own job - "stay here,
      * search normally" still means the query row is back and focused.
      */
-    test('Registered company: closes the popup AND still shows and focuses the query field', () => {
+    test('Registered company: abandons the flow AND still shows and focuses the query field', () => {
         const soleTrader = stubSoleTrader(true);
         makeInstance();
         launchThenPopupOpen(soleTrader);
@@ -499,29 +510,35 @@ describe('a chip clicked while the signup popup is open (TWO-40 follow-up, Doug 
         panelParts().registered.trigger('click');
         jest.advanceTimersByTime(10);
 
-        expect(soleTrader.closeSignupPopup).toHaveBeenCalledTimes(1);
+        expect(soleTrader.abandonEnrollment).toHaveBeenCalledTimes(1);
         expect(shown(panelParts().searchRow)).toBe(true);
         expect(document.activeElement).toBe(panelParts().query.get(0));
         expect(shown(panelParts().panel)).toBe(true);
     });
 
     /**
-     * The ordering that makes #5.2 work at all: cancelEnrollment() nulls
-     * TwoSoleTrader's popup handle - deliberately, so a genuine completion
-     * survives a mere reopen - so a close attempted after it has no handle left
-     * and the window would sit there orphaned.
+     * The ordering that makes #5.2 work at all - close BEFORE cancel, because
+     * the cancel nulls the popup handle - is no longer any caller's to get
+     * right: it lives inside abandonEnrollment() (Doug, TWO-40 follow-up,
+     * "closure and enrolment cancelation [must be] a single atomic operation,
+     * not two separate functions as now"). Pinned against the real
+     * implementation in sole-trader-abandon-enrollment.test.js.
+     *
+     * What is pinned HERE is that this handler no longer takes the two halves
+     * itself, in any order. A future edit reaching for the pair directly is
+     * the failure mode the merge exists to stop, so it fails here.
      */
-    test('Registered company: closes the popup BEFORE cancelling, while a handle still exists', () => {
+    test('Registered company: goes through the atomic pair, never the halves', () => {
         const soleTrader = stubSoleTrader(true);
         makeInstance();
         launchThenPopupOpen(soleTrader);
 
-        const order = [];
-        soleTrader.closeSignupPopup.mockImplementation(() => order.push('close'));
-        soleTrader.cancelEnrollment.mockImplementation(() => order.push('cancel'));
+        soleTrader.cancelEnrollment.mockClear();
         panelParts().registered.trigger('click');
 
-        expect(order).toEqual(['close', 'cancel']);
+        expect(soleTrader.abandonEnrollment).toHaveBeenCalledTimes(1);
+        expect(soleTrader.closeSignupPopup).not.toHaveBeenCalled();
+        expect(soleTrader.cancelEnrollment).not.toHaveBeenCalled();
     });
 
     /**
@@ -529,8 +546,15 @@ describe('a chip clicked while the signup popup is open (TWO-40 follow-up, Doug 
      * via enterManualEntryMode() focusing the company-name field OUTSIDE the
      * panel and re-scheduling a close nobody asked for. Pinned here on the
      * chip's own call, together with the effects that must survive it.
+     *
+     * The ENROLMENT half is the bug Doug found (TWO-40 follow-up): this chip
+     * used to close the popup and leave the enrolment running, so a lookup
+     * already in flight still resolved into adoptSoleTraderBuyer() and
+     * overwrote the name the buyer had just typed by hand. That the abandon
+     * really does stop such a resolution is pinned on the real modules in
+     * sole-trader-abandon-enrollment.test.js.
      */
-    test('Enter manually: closes the popup AND still switches to manual entry', () => {
+    test('Enter manually: abandons the flow AND still switches to manual entry', () => {
         const soleTrader = stubSoleTrader(true);
         makeInstance();
         launchThenPopupOpen(soleTrader);
@@ -539,7 +563,7 @@ describe('a chip clicked while the signup popup is open (TWO-40 follow-up, Doug 
         // Same reason as the table above: the chip's OWN call is the claim, and
         // it is only distinguishable from the deferred close's before the
         // timers run.
-        expect(soleTrader.closeSignupPopup).toHaveBeenCalledTimes(1);
+        expect(soleTrader.abandonEnrollment).toHaveBeenCalledTimes(1);
 
         jest.advanceTimersByTime(10);
         expect(shown(panelParts().panel)).toBe(false);
@@ -583,11 +607,11 @@ describe('reopening search cancels a pending enrolment (TWO-40)', () => {
     test('opening the dropdown again cancels an in-progress sole-trader enrolment', () => {
         const soleTrader = stubSoleTrader(true);
         makeInstance();
-        // openDropdown() unconditionally calls cancelEnrollment() on every
+        // openDropdown() abandons unconditionally on every buyer-initiated
         // open - cheap and idempotent when nothing was pending - so this
         // baselines against the FIRST open rather than asserting zero calls.
         openPanel();
-        const callsBeforeEnrolling = soleTrader.cancelEnrollment.mock.calls.length;
+        const callsBeforeEnrolling = soleTrader.abandonEnrollment.mock.calls.length;
         panelParts().soleTrader.trigger('click');
         expect(soleTrader.startEnrollment).toHaveBeenCalledTimes(1);
 
@@ -595,6 +619,68 @@ describe('reopening search cancels a pending enrolment (TWO-40)', () => {
         // company field again - rather than completing the sole-trader flow.
         openPanel();
 
-        expect(soleTrader.cancelEnrollment.mock.calls.length).toBe(callsBeforeEnrolling + 1);
+        expect(soleTrader.abandonEnrollment.mock.calls.length).toBe(callsBeforeEnrolling + 1);
+    });
+
+    /**
+     * The other side of that rule, and the bug Doug found (TWO-40 follow-up):
+     * an address-form re-render restores a panel the buyer already had, which
+     * says nothing about their intent - so it must NOT abandon. It used to,
+     * and because the cancel nulls TwoSoleTrader's popup handle without
+     * closing the window, that left a live popup tracked by nothing, from
+     * where the Sole trader chip would open a SECOND one (guide §14).
+     *
+     * Not a focus event and not blocked by one: PrestaShop fires
+     * `updatedAddressForm` for shipping recalculations whose XHR callback runs
+     * with the buyer looking at the popup in another window.
+     */
+    test('a re-render restore leaves an in-flight enrolment and its popup alone', () => {
+        const soleTrader = stubSoleTrader(true);
+        const instance = makeInstance();
+        openPanel();
+        panelParts().soleTrader.trigger('click');
+        soleTrader.focusSignupPopup.mockReturnValue(true);
+        soleTrader.abandonEnrollment.mockClear();
+        soleTrader.closeSignupPopup.mockClear();
+        soleTrader.cancelEnrollment.mockClear();
+
+        // Arm the window the re-render restore runs inside, exactly as the
+        // `updatedAddressForm` handler does for a panel that was open.
+        TwoCompanySearch._reopenPanelUntil = Date.now() + 1000;
+        instance.restorePanelAfterRerender();
+
+        // Neither the pair nor either half - the popup is still the buyer's,
+        // and still TwoSoleTrader's to track.
+        expect(soleTrader.abandonEnrollment).not.toHaveBeenCalled();
+        expect(soleTrader.closeSignupPopup).not.toHaveBeenCalled();
+        expect(soleTrader.cancelEnrollment).not.toHaveBeenCalled();
+        // Still tracked, so the Sole trader chip raises that popup rather than
+        // opening a second one beside it.
+        expect(shown(panelParts().panel)).toBe(true);
+        soleTrader.focusSignupPopup.mockClear();
+        panelParts().soleTrader.trigger('click');
+        expect(soleTrader.focusSignupPopup).toHaveBeenCalledTimes(1);
+        expect(soleTrader.startEnrollment).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * The restore path is told what it is, rather than inferring it from
+     * `_reopenPanelUntil` being armed - which the buyer's OWN click arms too
+     * (setupAddressFormListener()). So a re-render landing in the same tick as
+     * a genuine click cannot make one look like the other: this is the genuine
+     * click, inside an armed window, and it still abandons.
+     */
+    test('a buyer-initiated open inside the re-render window still abandons', () => {
+        const soleTrader = stubSoleTrader(true);
+        makeInstance();
+        openPanel();
+        panelParts().soleTrader.trigger('click');
+        soleTrader.focusSignupPopup.mockReturnValue(true);
+        soleTrader.abandonEnrollment.mockClear();
+
+        TwoCompanySearch._reopenPanelUntil = Date.now() + 1000;
+        openPanel();
+
+        expect(soleTrader.abandonEnrollment).toHaveBeenCalledTimes(1);
     });
 });

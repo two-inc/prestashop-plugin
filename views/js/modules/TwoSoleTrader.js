@@ -901,8 +901,13 @@ class TwoSoleTrader {
         // eligible (buyer changed country mid-flow) must not keep showing a
         // prompt/status for it - mirrors the old chip's hide()-forces-business
         // behaviour, without a "business" mode to fall back to.
+        //
+        // The full abandon, popup included: the tokens this popup is signing
+        // against were minted for the country that just stopped being
+        // eligible (mintTokensRequest()), so there is nothing for the buyer to
+        // usefully finish in it.
         if (!available && this.enrolling) {
-            this.cancelEnrollment();
+            this.abandonEnrollment();
         }
         this.resyncSoleTraderChip();
     }
@@ -1108,6 +1113,31 @@ class TwoSoleTrader {
         // and waiting would hold a spinner up over a flow the buyer has
         // already left for a different search interaction.
         this.notifyEnrollmentSettled(true);
+    }
+
+    /**
+     * The buyer is leaving the sole-trader flow: take the popup down AND
+     * disown what it started, as ONE operation.
+     *
+     * ONE method rather than two calls every caller has to remember (Doug,
+     * TWO-40 follow-up: "closure and enrolment cancelation [must be] a single
+     * atomic operation, not two separate functions as now. It's just begging
+     * to fail in some way."). It had already failed twice: "Enter manually"
+     * closed the popup and never cancelled, so a lookup still in flight landed
+     * on a company name the buyer had since typed by hand and ran the credit
+     * check against the identity they walked away from; openDropdown()
+     * cancelled and never closed, orphaning a window still on screen.
+     *
+     * closeSignupPopup() FIRST, and that ordering is the reason this pair
+     * cannot be left to callers: cancelEnrollment() nulls `this._popup`, so
+     * after it there is no handle left to close with.
+     *
+     * The one caller that wants only ONE half calls that half directly, and
+     * says why - see TwoCompanySearch.destroy().
+     */
+    abandonEnrollment() {
+        this.closeSignupPopup();
+        this.cancelEnrollment();
     }
 
     /**
@@ -2162,14 +2192,12 @@ class TwoSoleTrader {
     /**
      * Close the hosted signup popup, if one is still up.
      *
-     * Deliberately NOT folded into cancelEnrollment() (TWO-40 follow-up, Doug
-     * live test: PrestaShop stopped the spinner and closed the panel when focus
-     * came back to the checkout page, but left the popup on screen).
-     * cancelEnrollment() runs on EVERY openDropdown(), which per
-     * bindPopupMessageListener()'s own doc is "still glancing around" rather
-     * than "abandoned" - a genuine completion arriving from a popup the buyer
-     * left open has to survive it. This is the narrower route: the buyer's
-     * focus is on the checkout page instead of the popup, so the popup goes.
+     * Still a separate method from cancelEnrollment() rather than folded INTO
+     * it, because cancelEnrollment() has one caller that must NOT close a
+     * popup (TwoCompanySearch.destroy(), see there). What no longer exists is a
+     * caller that wants BOTH and has to remember to say so twice:
+     * abandonEnrollment() is that pair, and is what "the buyer is leaving this
+     * flow" calls.
      *
      * `close()` is ours to call however cross-origin the popup's document is -
      * we are the opener - and it is a no-op on a window that has already gone,

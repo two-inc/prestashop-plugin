@@ -336,28 +336,37 @@ describe('popup URL (c)', () => {
 });
 
 describe('country change abandons an in-flight replacement flow (e, round-2 review finding)', () => {
-    test('changing the billing country calls TwoSoleTrader_Instance.cancelEnrollment()', () => {
+    test('changing the billing country calls TwoSoleTrader_Instance.abandonEnrollment()', () => {
         const instance = makeSearchInstance();
         instance.adoptSoleTraderBuyer(NAMED_BUYER);
 
+        // The POPUP goes with the enrolment here (TWO-40 follow-up): its
+        // tokens were minted against the country the buyer just left, so
+        // cancelling without closing left a window up that nothing could
+        // complete and nothing was tracking.
+        const abandonEnrollment = jest.fn();
         const cancelEnrollment = jest.fn();
         global.window.TwoSoleTrader_Instance = {
             startReplacement: jest.fn(),
-            cancelEnrollment: cancelEnrollment
+            cancelEnrollment: cancelEnrollment,
+            abandonEnrollment: abandonEnrollment
         };
 
         // Simulate the buyer having clicked "Select a different sole
         // trader" (a mint/lookup is now conceptually in flight for the OLD
         // country) - this test targets the country-change listener itself,
         // not startReplacement(), so the click is not required to exercise
-        // the fix; the point is that cancelEnrollment() fires REGARDLESS of
+        // the fix; the point is that the abandon fires REGARDLESS of
         // whether a flow is actually in flight, exactly like the
         // "Registered Company" chip handler and openDropdown() already do.
         const countryField = document.querySelector("select[name='id_country']");
         expect(countryField).not.toBeNull();
         countryField.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        expect(cancelEnrollment).toHaveBeenCalledTimes(1);
+        expect(abandonEnrollment).toHaveBeenCalledTimes(1);
+        // Through the atomic pair, not the halves - see
+        // sole-trader-abandon-enrollment.test.js.
+        expect(cancelEnrollment).not.toHaveBeenCalled();
 
         instance.destroy();
     });

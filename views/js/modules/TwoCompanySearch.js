@@ -885,13 +885,16 @@ class TwoCompanySearch {
                 // never asked for. Correct outcome, reached by accident of
                 // where focus landed.
                 //
-                // Closing the popup is NOT the same as cancelling the
-                // enrolment, and this handler deliberately claims only the
-                // first - "Registered Company" does both. See §14 of
-                // .ai/sole-trader-porting-guide.md for the gap that leaves
-                // open: a lookup already in flight can still land after this,
-                // and its write-back has no manual-entry guard.
-                this.closeSoleTraderSignupPopup();
+                // The enrolment goes WITH it (Doug, TWO-40 follow-up). An
+                // earlier version of this handler closed the popup and left
+                // the enrolment running, on the reasoning that the two are
+                // different questions - they are not, for a buyer who has just
+                // said "I'll type it myself": a lookup or mint already in
+                // flight would still resolve into adoptSoleTraderBuyer(), which
+                // has no manual-entry guard, overwriting the name the buyer
+                // typed by hand and running the credit check against the
+                // identity they walked away from.
+                this.abandonSoleTraderFlow();
                 this.enterManualEntryMode();
             });
         }
@@ -921,13 +924,20 @@ class TwoCompanySearch {
                 // be unreachable in exactly the state it exists for.
                 //
                 // Reachable ONLY with a flight of this panel-open session still
-                // in progress today, because openDropdown() nulls the popup
-                // handle on every open - which is itself the orphan gap logged
-                // in §14 of .ai/sole-trader-porting-guide.md. Whoever closes
-                // that gap makes this branch reachable with no flight running
-                // and an identity already adopted, and must then decide what
-                // it owes beginSoleTraderLoading() - a raise with no spinner
-                // and no settle listener is not it.
+                // in progress: a buyer-initiated open takes any earlier popup
+                // down with it (openDropdown() -> abandonSoleTraderFlow()), so
+                // there is nothing left from a previous panel session to raise.
+                // A re-render restore does NOT, deliberately - but it restores
+                // a panel whose flight was already running, so it reaches this
+                // branch in the same state a buyer's own click would.
+                //
+                // Anything that later leaves a popup up across a panel session
+                // with no flight running - a completed, already-adopted
+                // identity - makes this branch reachable in a state it was not
+                // written for, and must decide what it owes
+                // beginSoleTraderLoading() first: a raise with no spinner and
+                // no settle listener is not it. destroy()'s known gap (§14) is
+                // exactly that shape.
                 if (this.focusSoleTraderSignupPopup()) {
                     this._chipMode = 'sole_trader';
                     this.renderChipSelection();
@@ -1054,15 +1064,10 @@ class TwoCompanySearch {
                 // Focus is coming back to the panel's query field, so the
                 // popup goes (Doug, TWO-40 follow-up - the question 928a84a
                 // left open, now answered: only the Sole trader chip keeps
-                // it). BEFORE cancelEnrollment(), which nulls TwoSoleTrader's
-                // popup handle to let a genuine completion survive a mere
-                // "still glancing around" reopen - after it there is no handle
-                // left to close with, and the window would sit there orphaned.
-                this.closeSoleTraderSignupPopup();
-                if (window.TwoSoleTrader_Instance
-                    && typeof window.TwoSoleTrader_Instance.cancelEnrollment === 'function') {
-                    window.TwoSoleTrader_Instance.cancelEnrollment();
-                }
+                // it), and the enrolment with it. The close-before-cancel
+                // ordering this used to spell out itself now lives inside
+                // abandonSoleTraderFlow().
+                this.abandonSoleTraderFlow();
                 this.renderChipSelection();
                 if (this._queryField && this._queryField.length) {
                     this._queryField.trigger('focus');
@@ -1343,6 +1348,15 @@ class TwoCompanySearch {
             // browser behaviour holding up a spec rule. The panel's own close
             // keeps its existing meaning either way, deliberately - narrowing
             // this to the popup decision is the whole point.
+            //
+            // The CLOSE HALF ONLY, not abandonSoleTraderFlow(): looking away
+            // from the popup is not a decision about the enrolment. The
+            // enrolment stays live and resumable, its tokens unspent, and a
+            // completion that was already on its way still publishes - which
+            // is the whole reason bindPopupMessageListener() is not gated on
+            // `enrolling`. The gestures that DO cancel are the ones that say
+            // what the buyer wants instead: the two chips, and reopening
+            // ordinary search.
             if (typeof document.hasFocus !== 'function' || document.hasFocus()) {
                 this.closeSoleTraderSignupPopup();
             }
@@ -1377,6 +1391,31 @@ class TwoCompanySearch {
     }
 
     /**
+     * The buyer is leaving the sole-trader flow: popup down AND enrolment
+     * cancelled, as one call.
+     *
+     * Every gesture that means "I am done with sole trader" routes here rather
+     * than making the two calls itself (Doug, TWO-40 follow-up - closure and
+     * cancellation are "a single atomic operation, not two separate functions
+     * as now"). Both ways of getting the pair wrong had already shipped: one
+     * chip closed without cancelling, openDropdown() cancelled without
+     * closing. The ordering that makes the pair work lives in
+     * TwoSoleTrader.abandonEnrollment(), once, where no future caller can get
+     * it wrong.
+     *
+     * Callers must still unbind their own settle listener FIRST where they mean
+     * to keep the panel open - see endSoleTraderLoading()'s callers - because
+     * the cancel dispatches a settle event. That is a separate contract from
+     * this pair, not part of it.
+     */
+    abandonSoleTraderFlow() {
+        if (window.TwoSoleTrader_Instance
+            && typeof window.TwoSoleTrader_Instance.abandonEnrollment === 'function') {
+            window.TwoSoleTrader_Instance.abandonEnrollment();
+        }
+    }
+
+    /**
      * Raise an already-open signup popup back to the front.
      *
      * @returns {boolean} whether there was a popup to raise - false means this
@@ -1400,8 +1439,13 @@ class TwoCompanySearch {
      * field. Seeding it would re-run a search for a company the buyer has
      * already confirmed, and the first thing they would see on reopening is a
      * list containing only the company they are trying to move away from.
+     *
+     * @param {boolean} [buyerInitiated] Whether a buyer gesture asked for this
+     *   open. True for every ordinary caller, hence the default. Only
+     *   restorePanelAfterRerender() passes false - see the abandon below for
+     *   what turns on it.
      */
-    openDropdown() {
+    openDropdown(buyerInitiated = true) {
         if (this._destroyed || this._manualEntry) {
             return;
         }
@@ -1409,21 +1453,32 @@ class TwoCompanySearch {
             || !this._queryField || !this._queryField.length) {
             return;
         }
-        // BEFORE cancelEnrollment() (TWO-40 round 5, adversarial review
-        // finding - same reasoning as the "Registered Company" handler):
-        // cancelEnrollment() now fires the settle event too, and this
-        // method's own listener reacting to it would call closeDropdown(true)
-        // from INSIDE openDropdown() itself, re-closing the very panel this
-        // call is in the middle of opening. Unbind first.
+        // BEFORE abandonSoleTraderFlow() (TWO-40 round 5, adversarial review
+        // finding - same reasoning as the "Registered Company" handler): the
+        // cancel inside it fires the settle event too, and this method's own
+        // listener reacting to it would call closeDropdown(true) from INSIDE
+        // openDropdown() itself, re-closing the very panel this call is in the
+        // middle of opening. Unbind first.
         this.endSoleTraderLoading();
         // Reopening the search control is the buyer choosing ordinary company
         // search over an "I'm a sole trader" row they may have clicked
-        // moments earlier (TWO-40). Cancel any not-yet-completed enrolment -
-        // TwoSoleTrader.js keeps its minted tokens either way, so a buyer who
-        // comes back to this row resumes rather than re-mints.
-        if (window.TwoSoleTrader_Instance
-            && typeof window.TwoSoleTrader_Instance.cancelEnrollment === 'function') {
-            window.TwoSoleTrader_Instance.cancelEnrollment();
+        // moments earlier (TWO-40), so the popup goes and the enrolment with
+        // it. TwoSoleTrader.js keeps its minted tokens either way, so a buyer
+        // who comes back to this row resumes rather than re-mints.
+        //
+        // ONLY for an open a buyer actually asked for. An address-form
+        // re-render restores a panel the buyer already had
+        // (restorePanelAfterRerender()) without anything about their intent
+        // having changed - and PrestaShop fires `updatedAddressForm` for
+        // ordinary things like a shipping recalculation, whose XHR callback is
+        // not blocked by the buyer being in another window. So this used to
+        // reach a buyer sitting looking AT their signup popup and cancel the
+        // enrolment out from under them; worse, the cancel nulls
+        // TwoSoleTrader's popup handle without closing the window, leaving it
+        // on screen tracked by nothing, from where the Sole trader chip would
+        // open a SECOND one (guide §14, "Han/Vader's finding").
+        if (buyerInitiated) {
+            this.abandonSoleTraderFlow();
         }
         clearTimeout(this._closeTimerId);
         this._closeTimerId = null;
@@ -4142,7 +4197,12 @@ class TwoCompanySearch {
         // leave the real one closed. The deadline expires on its own, and any
         // close clears it.
         const deadline = TwoCompanySearch._reopenPanelUntil;
-        this.openDropdown();
+        // NOT buyer-initiated, which is what keeps this path's hands off an
+        // open signup popup and the enrolment behind it (see openDropdown()).
+        // Stated as an argument rather than inferred from `_reopenPanelUntil`
+        // being armed: that deadline is armed by the buyer's OWN click too, so
+        // it says a re-render is plausible, never that this open is one.
+        this.openDropdown(false);
         TwoCompanySearch._reopenPanelUntil = deadline;
     }
 
@@ -5896,10 +5956,12 @@ class TwoCompanySearch {
                 // reads as still-current, and can pop a signup popup - or
                 // worse, silently publish a completed enrolment - for a
                 // country the buyer has already moved off.
-                if (window.TwoSoleTrader_Instance
-                    && typeof window.TwoSoleTrader_Instance.cancelEnrollment === 'function') {
-                    window.TwoSoleTrader_Instance.cancelEnrollment();
-                }
+                //
+                // The popup goes too, for the same reason: its tokens were
+                // minted against the country the buyer just left, so nothing
+                // the buyer does in that window can complete. Cancelling
+                // without closing left it up and tracked by nothing.
+                this.abandonSoleTraderFlow();
 
                 if (this.companyField && this.companyField.length > 0) {
                     this.companyField.val('');
@@ -6071,6 +6133,21 @@ class TwoCompanySearch {
         // reference - silently adopting the identity into an address context
         // the buyer has since moved on from, ungated because no generation
         // bump ever ran for this trigger.
+        //
+        // The CANCEL HALF ONLY - the one caller that deliberately does not use
+        // abandonSoleTraderFlow(). Tearing down a search instance is not the
+        // buyer saying anything about their popup: `TwoSoleTrader_Instance` is
+        // a singleton that outlives this object, and on the
+        // `updatedAddressForm` path a replacement instance is built
+        // immediately, so closing the window here would take down a popup the
+        // buyer may be actively filling in because their shipping total
+        // recalculated behind it.
+        //
+        // KNOWN GAP, guide §14: cancelEnrollment() still nulls the popup
+        // handle, so this path leaves a live popup tracked by nothing exactly
+        // as openDropdown() used to. Closing it here is the wrong fix (above);
+        // the fix is for the cancel to stop discarding the handle, which needs
+        // its own change to notifyEnrollmentSettled()'s popup-open guard.
         try {
             if (window.TwoSoleTrader_Instance
                 && typeof window.TwoSoleTrader_Instance.cancelEnrollment === 'function') {
