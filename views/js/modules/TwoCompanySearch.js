@@ -1235,7 +1235,8 @@ class TwoCompanySearch {
     }
 
     /**
-     * Close once focus has genuinely settled somewhere outside the panel.
+     * Close once focus has genuinely settled somewhere outside the panel -
+     * and with it any hosted sole-trader signup popup still on screen.
      *
      * Deliberately does NOT move focus. This fires on the way OUT - a Tab off
      * the "not on the list" button, or a click elsewhere on the form - and the
@@ -1256,6 +1257,20 @@ class TwoCompanySearch {
             const active = document.activeElement;
             if (active && this._dropdown.get(0).contains(active)) {
                 return;
+            }
+            // Focus is back on the checkout page and has settled OUTSIDE the
+            // panel, so the buyer is looking at checkout rather than at the
+            // hosted signup popup - take the popup down with the panel and the
+            // spinner (Doug live test: those two already went on this path,
+            // the popup was the one thing left up).
+            //
+            // AFTER this handler's own guards, deliberately. A focus-out caused by
+            // clicking one of the panel's own chips puts focus straight back
+            // inside the panel, so it never reaches here - that chip's handler
+            // owns what happens to the flow instead.
+            if (window.TwoSoleTrader_Instance
+                && typeof window.TwoSoleTrader_Instance.closeSignupPopup === 'function') {
+                window.TwoSoleTrader_Instance.closeSignupPopup();
             }
             this.closeDropdown(false);
         }, 0);

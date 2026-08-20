@@ -2152,6 +2152,33 @@ class TwoSoleTrader {
     }
 
     /**
+     * Close the hosted signup popup, if one is still up.
+     *
+     * Deliberately NOT folded into cancelEnrollment() (TWO-40 follow-up, Doug
+     * live test: PrestaShop stopped the spinner and closed the panel when focus
+     * came back to the checkout page, but left the popup on screen).
+     * cancelEnrollment() runs on EVERY openDropdown(), which per
+     * bindPopupMessageListener()'s own doc is "still glancing around" rather
+     * than "abandoned" - a genuine completion arriving from a popup the buyer
+     * left open has to survive it. This is the narrower route: the buyer's
+     * focus is on the checkout page instead of the popup, so the popup goes.
+     *
+     * `close()` is ours to call however cross-origin the popup's document is -
+     * we are the opener - and it is a no-op on a window that has already gone,
+     * which covers a buyer who closed it by hand and the hosted flow closing
+     * itself the moment it posted 'ACCEPTED'. `this._popup` is deliberately
+     * left for watchPopupUntilClosed()'s poll to clear, so the settle event
+     * still has exactly one owner.
+     *
+     * @returns {void}
+     */
+    closeSignupPopup() {
+        if (this._popup && !this._popup.closed) {
+            this._popup.close();
+        }
+    }
+
+    /**
      * The hosted signup posts 'ACCEPTED' back to the opener when the
      * buyer completes registration; re-fetch the buyer to autofill.
      * Origin must be the signup page's own. Any other message from that
