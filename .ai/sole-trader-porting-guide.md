@@ -900,46 +900,86 @@ Rules that generalise:
   can fall through to an ordinary first-time launch when there was not. A void raise
   forces the caller to keep its own second opinion about whether a popup is open, which
   is the drift §0 warns about in a different register.
-- **Close BEFORE the cancel.** The cancel path deliberately nulls the popup handle so a
-  genuine completion survives a mere "still glancing around" reopen — so a close
-  attempted after it has no handle left and the window sits there orphaned.
+- **Close BEFORE the cancel — and make that ordering unreachable.** The cancel path
+  deliberately nulls the popup handle, so a close attempted after it has no handle left
+  and the window sits there orphaned. Do not leave the sequence to callers; see the
+  atomic-operation rule below.
 - **Wrap the `focus()`.** The hosted flow closes its own window the instant it has
   posted `ACCEPTED`, so `closed` flipping between the check and the call is a real
   interleaving, not a theoretical one. Nothing to raise then and nothing to report; the
   close poll still solely owns clearing the handle and dispatching the settle.
-- **Closing the popup is not the same as cancelling the enrolment**, and a handler may
-  legitimately claim only the first. On PrestaShop "Registered company" does both;
-  "Enter manually" closes the popup and deliberately does not cancel. Whichever you
-  choose, know which one you chose — see the second known gap below for what the
-  narrower choice leaves open.
+- **Closure and cancellation are ONE operation, not two functions callers pair up.**
+  Doug's architectural call (PrestaShop #176 `4156ad3`), after both ways of getting the
+  pair wrong had shipped: *"the fix also requires that we make closure and enrolment
+  cancelation a single atomic operation, not two separate functions as now. It's just
+  begging to fail in some way."* It was. "Enter manually" closed without cancelling;
+  every dropdown open cancelled without closing. Neither is a bug you find by reading the
+  handler that has it — each one reads as a deliberate narrow choice, and the earlier
+  version of this very bullet blessed it as one.
 
-**Known gaps here, documented rather than fixed (PrestaShop, as of `8c7447f`).** Both are
-pre-existing and both want the records-not-a-handle design this section argues for, rather
-than a patch; a port building fresh should start from records and never acquire either.
+  So expose `abandonEnrollment()` — close, then cancel — and let every "the buyer is
+  leaving this flow" gesture call that. Keep the halves callable only for a caller that
+  genuinely wants one, and make it say why in a comment: on PrestaShop exactly two do
+  (see the remaining gap below, and the panel's focus-out close, which takes the popup
+  down without deciding anything about the enrolment because looking away is not a
+  decision). The win is not tidiness, it is that a THIRD caller cannot be added with the
+  ordering wrong or a half forgotten.
+- **Prefer one atomic operation over a skip-this-half parameter.** The first draft of the
+  re-render fix was a flag telling the reopen path not to cancel — which leaves the pair
+  separable and the next caller free to get it wrong again. A parameter is still right for
+  distinguishing *who is asking* (see the re-render rule below); it is wrong for
+  splitting an operation that should not be splittable.
 
-- **A live popup goes untracked whenever the panel reopens.** Reopening calls the cancel
-  path unconditionally, which nulls the popup handle — so the window is left on screen
-  with nothing holding it, and the next Sole trader click opens a second one. Escape
-  reaches this by hand (it goes straight to the panel close and never touches the popup),
-  but the *common* trigger is not a buyer gesture at all: the platform's own address-form
-  re-render restores the panel through the same reopen path, and per §17 that event can
-  land tens of milliseconds after the click that opened the panel. The billing-country
-  change listener reaches it too. The nulling is deliberate — it is what lets a genuine
-  completion survive a mere "still glancing around" reopen — so this is a design change,
-  not a line fix.
-- **"Enter manually" closes the popup without cancelling the enrolment**, so a buyer
-  lookup already in flight can still resolve afterwards, and its write-back has no
-  manual-entry guard: it overwrites the company name the buyer is now typing by hand and
-  renders the adopted-sole-trader affordance inside manual-entry mode. The credit check
-  then runs on the identity they just walked away from — §5's write-back state machine,
+**Both gaps this section used to log as "documented rather than fixed" are now FIXED
+(PrestaShop #176 `4156ad3`).** Kept here because the *shape* of both is what a port needs
+to avoid, and because the fix is the atomic-operation rule above rather than anything
+local to either symptom.
+
+- **FIXED — a live popup went untracked whenever the panel reopened.** Reopening called
+  the cancel path unconditionally, which nulls the popup handle — so the window was left
+  on screen with nothing holding it, and the next Sole trader click opened a second one.
+  Escape reaches this by hand (it goes straight to the panel close and never touches the
+  popup), but the *common* trigger was not a buyer gesture at all: the platform's own
+  address-form re-render restores the panel through the same reopen path, and per §17 that
+  event can land tens of milliseconds after the click that opened the panel — its XHR
+  callback is not blocked by the buyer being away in the popup window, so this fired at
+  buyers who were *looking at* the thing it cancelled. Now a buyer-initiated reopen closes
+  the popup as well as cancelling (so nothing is orphaned), and the re-render restore does
+  neither. The billing-country change listener reached this too, and now closes as well —
+  its tokens were minted against the country the buyer just left, so there is nothing to
+  finish in that window.
+- **FIXED — "Enter manually" closed the popup without cancelling the enrolment**, so a
+  buyer lookup already in flight still resolved afterwards, and its write-back has no
+  manual-entry guard: it overwrote the company name the buyer was now typing by hand and
+  rendered the adopted-sole-trader affordance inside manual-entry mode. The credit check
+  then ran on the identity they had just walked away from — §5's write-back state machine,
   reached through a gesture rather than a race. Escape has the same hole for the same
-  reason (the panel close never cancels either).
-- **These gaps are load-bearing for the Sole trader chip's raise branch, which is a trap
-  when fixing them.** That branch sits before the re-entrancy guard, and it is only
-  reachable today with a flight of the current panel-open session still running —
-  precisely *because* reopening nulls the handle. Close the first gap and the branch
-  becomes reachable with no flight running and an identity already adopted, at which
-  point it must decide what it owes the spinner/settle bookkeeping. A raise with no
+  reason (the panel close never cancels either). The chip now abandons; note the earlier
+  round's reasoning that the reopen's own cancel covered it was wrong, because that cancel
+  happens *before* the buyer can start a new flight from the reopened panel.
+- **A silent auto-restore must not inherit a buyer gesture's side effects.**
+  `restorePanelAfterRerender()` reopens a panel the platform tore down, and its doc already
+  said it "restores only what the buyer already had" — but it reached that by calling the
+  same `openDropdown()` a buyer click does, so it silently inherited the abandon. Pass the
+  distinction explicitly (`openDropdown(buyerInitiated)`), and do NOT try to infer it from
+  the reopen deadline being armed: the buyer's own click arms that too, so a re-render
+  landing in the same tick as a genuine click would be indistinguishable. An argument at
+  the call site cannot be ambiguous however the timing falls.
+- **REMAINING GAP — instance teardown still discards the handle.** The platform destroys
+  and rebuilds the search instance on every address-form re-render (§17), and `destroy()`
+  cancels the enrolment to disown flights that would otherwise resolve against a replaced
+  instance. That cancel still nulls the popup handle, so the full re-render path can still
+  leave a live popup owned by nobody. Closing it there would be wrong — the enrolment
+  object is a singleton that outlives the search instance, and the buyer may be filling the
+  popup in because their shipping total recalculated behind it. The real fix is for the
+  cancel to stop discarding a handle it is not closing, which needs the settle event's
+  popup-open guard reworked with it; that is the records-not-a-handle design below.
+- **The raise branch is load-bearing on all of this, and is a trap when changing it.** That
+  branch sits before the re-entrancy guard, and is reachable only with a flight of the
+  current panel-open session still running. Anything that later leaves a popup up across a
+  panel session with no flight running — a completed, already-adopted identity, which is
+  exactly the remaining gap's shape — makes it reachable in a state it was not written for,
+  and it must then decide what it owes the spinner/settle bookkeeping. A raise with no
   spinner and no settle listener is not an answer.
 
 ## 15. Delegated-auth tokens expire while checkout sits open
