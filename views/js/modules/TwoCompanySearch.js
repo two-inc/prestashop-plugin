@@ -1050,16 +1050,16 @@ class TwoCompanySearch {
                 if (this._manualEntry) {
                     this.exitManualEntryMode();
                 }
-                // BEFORE cancelEnrollment() (TWO-40 round 5, adversarial
+                // BEFORE abandonSoleTraderFlow() (TWO-40 round 5, adversarial
                 // review finding), not after - see the reasoning at
-                // notifyEnrollmentSettled() in TwoSoleTrader.js:
-                // cancelEnrollment() now fires the SAME settle event that
+                // notifyEnrollmentSettled() in TwoSoleTrader.js: the cancel
+                // inside it fires the SAME settle event that
                 // beginSoleTraderLoading()'s own listener reacts to by
                 // calling closeDropdown(true). This handler wants to STAY
                 // OPEN, not close - so its own listener must already be
-                // unbound before cancelEnrollment() can dispatch, or this
-                // click would immediately close the very panel it is trying
-                // to keep open.
+                // unbound before that cancel can dispatch, or this click
+                // would immediately close the very panel it is trying to
+                // keep open.
                 this.endSoleTraderLoading();
                 // Focus is coming back to the panel's query field, so the
                 // popup goes (Doug, TWO-40 follow-up - the question 928a84a
