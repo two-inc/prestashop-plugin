@@ -197,6 +197,14 @@ class TwoSoleTrader {
         // already true for a different call (TWO-40 round 8, adversarial
         // review finding, Han) - see getCurrentBuyer()'s own .finally().
         this._pendingTrustedResume = false;
+        // How many applyBuyer() write-backs are still out. A COUNT, not a
+        // boolean: a generation bump can leave two overlapping saveCompany
+        // round trips in the air, and the first one's `.finally()` must not
+        // report the second one finished. See isWriteRoundTripOutstanding().
+        this._pendingAdoptionWrites = 0;
+        // A notifyEnrollmentSettled() call that isWriteRoundTripOutstanding()
+        // held back, to be re-fired once it isn't. See flushDeferredSettle().
+        this._settleDeferred = false;
         // The setInterval handle for the 30-minute background token refresh
         // (TWO-40 follow-up) - held so destroy() can clear it. Started once,
         // by fetchTokens()'s own success branch, on the first real mint; see
@@ -415,6 +423,13 @@ class TwoSoleTrader {
             this._messageHandler = null;
         }
         this.messageListenerBound = false;
+        // A deferred settle belongs to the flight that deferred it, and this
+        // instance is not going to finish that flight - drop it rather than
+        // let a late `.finally()` dispatch it over whatever the buyer is
+        // doing by then. `_pendingAdoptionWrites` is deliberately NOT reset:
+        // an outstanding applyBuyer() still owns its own decrement, and
+        // zeroing the count here would just drive it negative.
+        this._settleDeferred = false;
     }
 
     container() {
@@ -1086,7 +1101,13 @@ class TwoSoleTrader {
         // cancelEnrollment(), all of which now unbind their listener BEFORE
         // calling this, so this dispatch reaching an already-unbound
         // listener there is the expected, harmless case.
-        this.notifyEnrollmentSettled();
+        //
+        // Forced past notifyEnrollmentSettled()'s write-round-trip guard: the
+        // generation bump above has already disowned whatever lookup or write
+        // is still in the air, so there is nothing left worth waiting for -
+        // and waiting would hold a spinner up over a flow the buyer has
+        // already left for a different search interaction.
+        this.notifyEnrollmentSettled(true);
     }
 
     /**
@@ -1610,6 +1631,11 @@ class TwoSoleTrader {
                     return true;
                 }
             }
+            // AFTER the resume above, not before it: a resume re-holds the
+            // guard for a lookup that has not answered yet, and releasing a
+            // deferred settle in between would end the spinner in the middle
+            // of the very round trip it is waiting on.
+            self.flushDeferredSettle();
             return false;
         };
         // Same reasoning as fetchTokens()'s own try/catch around its
@@ -1822,6 +1848,12 @@ class TwoSoleTrader {
      */
     applyBuyer(buyer, generation) {
         const self = this;
+        // Held for this whole chain so the flight cannot settle - and the
+        // buyer's spinner cannot stop - before the company name and number
+        // are actually in the form. Released in `.finally()` below, which
+        // covers the superseded early return and showError() as well as the
+        // success branch. See notifyEnrollmentSettled().
+        this._pendingAdoptionWrites += 1;
         const companyLabel = buyer.company_name || buyer.organization_number || '';
         const body = new URLSearchParams({
             company: companyLabel,
@@ -1906,6 +1938,10 @@ class TwoSoleTrader {
             })
             .catch(function () {
                 self.showError();
+            })
+            .finally(function () {
+                self._pendingAdoptionWrites -= 1;
+                self.flushDeferredSettle();
             });
     }
 
@@ -2279,12 +2315,60 @@ class TwoSoleTrader {
      * whenever a popup is the thing still open. cancelEnrollment() clears
      * `this._popup` itself first, since that path means the buyer moved on
      * to a different search interaction, not the popup closing.
+     *
+     * Gated on the post-popup WRITE too (Doug, TWO-40 follow-up: "the flow is
+     * complete when the popup is gone AND the lookup has come back AND the
+     * name and number are saved"). The popup poll fires within 500ms of the
+     * window closing, and the hosted flow closes it as soon as it has posted
+     * 'ACCEPTED' - so the poll routinely won this race against the
+     * getCurrentBuyer() -> saveCompany -> adoptEnrolledIdentity() chain that
+     * message starts, and settled the flight with the company field still
+     * empty. isWriteRoundTripOutstanding() covers that chain; whichever of
+     * the two finishes last is the one that dispatches.
+     *
+     * @param {boolean} [force] Dispatch even with a write round trip out.
+     *   For cancelEnrollment() only: the generation bump it just made means
+     *   that write can no longer publish anything, so waiting for it would
+     *   only leave the spinner up for a flow the buyer has already left.
      */
-    notifyEnrollmentSettled() {
+    notifyEnrollmentSettled(force = false) {
         if (this._popup && !this._popup.closed) {
             return;
         }
+        if (!force && this.isWriteRoundTripOutstanding()) {
+            this._settleDeferred = true;
+            return;
+        }
+        this._settleDeferred = false;
         document.dispatchEvent(new CustomEvent('two:sole-trader-flight-settled'));
+    }
+
+    /**
+     * @returns {boolean} whether a round trip that could still write the
+     *   company name/number into the form is outstanding - the buyer lookup
+     *   itself (`isFetchingBuyer`, which is deliberately held across the
+     *   read-after-write retry wait too, see getCurrentBuyer()) or an
+     *   applyBuyer() write-back it led to.
+     */
+    isWriteRoundTripOutstanding() {
+        return this.isFetchingBuyer || this._pendingAdoptionWrites > 0;
+    }
+
+    /**
+     * Re-fire a settle that isWriteRoundTripOutstanding() held back.
+     *
+     * Re-checks the predicate itself rather than trusting its callers, which
+     * is what lets it be called from every point one of those flags drops
+     * without each caller reasoning about the others - notably
+     * getCurrentBuyer()'s `settle()`, which may immediately re-issue a
+     * lookup for a pending trusted resume and so must NOT release the settle
+     * it is about to make outstanding again.
+     */
+    flushDeferredSettle() {
+        if (!this._settleDeferred || this.isWriteRoundTripOutstanding()) {
+            return;
+        }
+        this.notifyEnrollmentSettled();
     }
 }
 

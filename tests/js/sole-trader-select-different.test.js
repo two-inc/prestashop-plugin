@@ -19,7 +19,11 @@ const {
     loadCompanySearch,
     loadSoleTrader,
     buildAddressForm,
-    flushPromises
+    flushPromises,
+    installStylesheet,
+    panelParts,
+    shown,
+    openPanel
 } = require('./ps-harness');
 
 const CHECKOUT_HOST = 'https://api.example.test';
@@ -377,5 +381,137 @@ describe('destroy() abandons an in-flight replacement flow too (f, round-3 revie
         instance.destroy();
 
         expect(cancelEnrollment).toHaveBeenCalledTimes(1);
+    });
+});
+
+/**
+ * TWO-40 follow-up, Doug: the replacement flow gets the SAME in-flight
+ * spinner, in the SAME place, for the SAME duration as the Sole trader chip's
+ * first-time enrolment - it previously showed none at all, so a buyer who
+ * clicked "Select a different sole trader" got an idle-looking checkout while
+ * tokens were minted and a popup was opened.
+ *
+ * Both entry points now run through beginSoleTraderLoading(). The only
+ * difference between them is whether a dropdown happens to be open, and that
+ * is resolved by closing it only if it is - never by a second code path.
+ */
+describe('the shared in-flight spinner (TWO-40 follow-up)', () => {
+    let sheet;
+
+    beforeEach(() => {
+        sheet = installStylesheet('views/css/two.css');
+    });
+
+    afterEach(() => {
+        if (sheet && sheet.parentNode) {
+            sheet.parentNode.removeChild(sheet);
+        }
+    });
+
+    test('clicking the link paints the spinner over the company-NAME field, and holds it until the flight completes', () => {
+        const instance = makeSearchInstance();
+        instance.adoptSoleTraderBuyer(NAMED_BUYER);
+        global.window.TwoSoleTrader_Instance = { startReplacement: jest.fn() };
+
+        expect(shown(panelParts().nameSpinner)).toBe(false);
+
+        document.querySelector('.two-company-select-different-sole-trader')
+            .dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+
+        expect(panelParts().nameField.hasClass('two-company-name-loading')).toBe(true);
+        expect(shown(panelParts().nameSpinner)).toBe(true);
+        // Over the name field, not somewhere else in the form: a sibling
+        // inside the same wrapper, positioned against the input's own row.
+        expect(panelParts().nameSpinner.parent().hasClass('two-company-field-wrap')).toBe(true);
+
+        // Held for the WHOLE round trip - which for this flow spans a token
+        // mint, a popup, and the write-back after it. Only the settle event
+        // ends it, and TwoSoleTrader.js withholds that until the company name
+        // and number have actually been written (see
+        // sole-trader-flight-settled.test.js).
+        document.dispatchEvent(new window.CustomEvent('two:sole-trader-flight-settled'));
+
+        expect(panelParts().nameField.hasClass('two-company-name-loading')).toBe(false);
+        expect(shown(panelParts().nameSpinner)).toBe(false);
+
+        instance.destroy();
+    });
+
+    /**
+     * Doug's own resolution of the one real difference between the two entry
+     * points: hide the dropdown at flow-complete ONLY IF it is open, a no-op
+     * otherwise. The link click never had one open, so the settle must not run
+     * closeDropdown()'s side effects - of which yanking focus back to the
+     * company field is the one a buyer would actually feel, since by then they
+     * may well have tabbed on.
+     */
+    test('completing a link-launched flight does not run a close on a dropdown that was never open', () => {
+        const instance = makeSearchInstance();
+        instance.adoptSoleTraderBuyer(NAMED_BUYER);
+        global.window.TwoSoleTrader_Instance = { startReplacement: jest.fn() };
+
+        document.querySelector('.two-company-select-different-sole-trader')
+            .dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+
+        const elsewhere = document.querySelector("input[name='vat_number']")
+            || document.querySelector("input[name='dni']");
+        expect(elsewhere).not.toBeNull();
+        elsewhere.focus();
+
+        document.dispatchEvent(new window.CustomEvent('two:sole-trader-flight-settled'));
+
+        // Spinner gone - the flight really did settle, so this is not just
+        // "nothing happened at all".
+        expect(shown(panelParts().nameSpinner)).toBe(false);
+        // But focus stayed where the buyer put it.
+        expect(document.activeElement).toBe(elsewhere);
+
+        instance.destroy();
+    });
+
+    test('completing a chip-launched flight DOES close the dropdown the chip left open', () => {
+        const instance = makeSearchInstance();
+        instance.adoptSoleTraderBuyer(NAMED_BUYER);
+        global.window.TwoSoleTrader_Instance = { startReplacement: jest.fn() };
+
+        openPanel();
+        expect(shown(panelParts().panel)).toBe(true);
+
+        // Re-clicking the chip while adopted routes into the SAME call the
+        // link uses (see the adopted-state suite) - the dropdown being open
+        // is the only thing that differs.
+        panelParts().soleTrader.trigger('click');
+        expect(shown(panelParts().panel)).toBe(true);
+        expect(shown(panelParts().nameSpinner)).toBe(true);
+
+        document.dispatchEvent(new window.CustomEvent('two:sole-trader-flight-settled'));
+
+        expect(shown(panelParts().panel)).toBe(false);
+        expect(shown(panelParts().nameSpinner)).toBe(false);
+
+        instance.destroy();
+    });
+
+    /**
+     * The guard is now shared between the two entry points, which is a real
+     * behaviour change and the one guide §14 asks for: one hosted popup at a
+     * time, whichever control asked for it.
+     */
+    test('a link click is refused while a chip-launched flight is still in progress, and vice versa', () => {
+        const instance = makeSearchInstance();
+        instance.adoptSoleTraderBuyer(NAMED_BUYER);
+        const startReplacement = jest.fn();
+        global.window.TwoSoleTrader_Instance = { startReplacement: startReplacement };
+
+        openPanel();
+        panelParts().soleTrader.trigger('click');
+        expect(startReplacement).toHaveBeenCalledTimes(1);
+
+        document.querySelector('.two-company-select-different-sole-trader')
+            .dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+
+        expect(startReplacement).toHaveBeenCalledTimes(1);
+
+        instance.destroy();
     });
 });

@@ -225,15 +225,14 @@ class TwoCompanySearch {
         // freezeResultsHeight().
         this._resultsHeightFrozen = false;
         this._resultsFreezeReleaseId = null;
-        // True between beginSoleTraderLoading() and endSoleTraderLoading() -
-        // the panel is being kept open with the query-field spinner showing
-        // for a Sole Trader click's autofill round trip (TWO-40 round 4).
+        // True between beginSoleTraderLoading() and endSoleTraderLoading():
+        // a sole-trader round trip is in flight, the company-name field is
+        // showing its spinner, and any open panel is being kept open for the
+        // duration. Shared by BOTH entry points - the Sole trader chip and
+        // the "Select a different sole trader" button - and therefore also
+        // the re-entrancy guard that keeps them to one hosted popup between
+        // them (TWO-40 follow-up).
         this._soleTraderLoading = false;
-        // Re-entrancy guard for the "Select a different sole trader" link's
-        // click handler (TWO-40 follow-up) - same shape as
-        // `_soleTraderLoading` above, released on the same settle event, but
-        // its own flag/namespace since the two buttons/flows are independent.
-        this._selectDifferentSoleTraderLoading = false;
         // Per-instance event namespace suffix. The `mouseup` guard has to be
         // bound on `document` (a drag can end anywhere, including outside the
         // panel), and `document` is a page-wide singleton - so unbinding by
@@ -386,6 +385,15 @@ class TwoCompanySearch {
         if (!wrapper.length || !wrapper.hasClass('two-company-field-wrap')) {
             this.companyField.wrap('<span class="two-company-field-wrap"></span>');
             wrapper = this.companyField.parent();
+        }
+        // The sole-trader in-flight spinner (beginSoleTraderLoading()). Lives
+        // here rather than in buildDropdown() because it has to exist for the
+        // "Select a different sole trader" flow too, which never opens a
+        // panel. Absolutely positioned over the input's own row, so DOM order
+        // only has to keep it somewhere AFTER the input for the sibling
+        // selector in two.css to reach it.
+        if (!wrapper.children('.two-company-name-spinner').length) {
+            wrapper.append('<span class="two-company-name-spinner" aria-hidden="true"></span>');
         }
         // TWO-25326 bug 10: RELEASE any width this method pinned on a previous
         // call before measuring, or the pin latches and the control never
@@ -865,7 +873,7 @@ class TwoCompanySearch {
                 this._chipMode = 'manual';
                 // Abandons any Sole Trader wait in progress (TWO-40 round 4)
                 // - this handler does not go through closeDropdown(), so
-                // without this the query-field spinner would keep spinning
+                // without this the name-field spinner would keep spinning
                 // and the settle listener would stay bound past the flow the
                 // buyer just walked away from.
                 this.endSoleTraderLoading();
@@ -923,7 +931,7 @@ class TwoCompanySearch {
                 }
                 if (window.TwoSoleTrader_Instance
                     && typeof window.TwoSoleTrader_Instance.startEnrollment === 'function') {
-                    // Keep the panel OPEN and show the query field's own
+                    // Keep the panel OPEN and show the company-name field's
                     // spinner for the actual duration of this click's
                     // autofill round trip (Doug, TWO-40 round 4), instead of
                     // closing immediately. This also subsumes the round-3
@@ -1542,12 +1550,23 @@ class TwoCompanySearch {
      * `visibility`/`opacity`, so it leaves the tab order with it - a
      * keyboard-only buyer must not land on an input they cannot see.
      *
-     * The whole SEARCH ROW is hidden, not just the input: the spinner is an
-     * absolutely-positioned sibling inside that row, so hiding the input
-     * alone collapses the row to zero height and strands the spinner at its
-     * top edge. Which is also why the hide stands down while a sole-trader
-     * flight is in progress - that spinner, in this field, IS the in-flight
-     * state (see beginSoleTraderLoading()).
+     * The whole SEARCH ROW is hidden, not just the input: the ordinary
+     * live-search spinner is an absolutely-positioned sibling inside that
+     * row, so hiding the input alone collapses the row to zero height and
+     * strands that spinner at its top edge.
+     *
+     * A PURE FUNCTION OF `_chipMode`, with no second condition of any kind
+     * (Doug, TWO-40 follow-up: the hide must be immediate on the click that
+     * selects the chip, whatever else that click starts). An earlier round
+     * stood the hide down for the duration of a sole-trader flight, because
+     * the in-flight spinner lived in this very field and hiding the row would
+     * have left nothing to spin. That spinner has since moved onto the
+     * company-name field (beginSoleTraderLoading()), which removes the reason
+     * for the exception - and the exception WAS the bug: the chip click hid
+     * the row and then immediately un-hid it for the flight, so a row the
+     * buyer had been told would go stayed on screen for the whole round trip.
+     * Do not reintroduce a condition here; anything that must survive in
+     * sole-trader mode belongs outside this row.
      *
      * The term is dropped on the way out. The row comes back on the
      * "Registered company" chip, and a query the buyer typed before adopting
@@ -1564,7 +1583,7 @@ class TwoCompanySearch {
         if (!searchRow.length) {
             return;
         }
-        if (suppressed && !this._soleTraderLoading) {
+        if (suppressed) {
             this._queryField.val('');
             searchRow.hide().attr('hidden', 'hidden');
             // Re-render the panel body for the term that was just dropped
@@ -1596,45 +1615,77 @@ class TwoCompanySearch {
     }
 
     /**
-     * Keep the panel open and show the query field's own spinner for the
-     * duration of a Sole Trader click's real autofill round trip (TWO-40
-     * round 4, Doug's explicit request: "keep the company search control
-     * open, show spinner in query field"). Reuses the SAME spinner the
-     * ordinary search path already shows - `.two-company-dropdown__spinner`,
-     * toggled by the `two-company-search-loading` class on the query field
-     * (see two.css) - rather than inventing a second one; §1 already settled
-     * where an in-field spinner on this control lives.
+     * Show the in-flight spinner for a sole-trader round trip, and arrange
+     * for it - and the dropdown, if one is open - to be cleared when that
+     * round trip is COMPLETE.
      *
-     * Bound to a single, namespaced `document` listener for
-     * `two:sole-trader-flight-settled` - the event TwoSoleTrader.js's
-     * notifyEnrollmentSettled() fires from every terminal branch of
-     * startEnrollment()'s call graph (success, failure, or a hand-off to the
-     * on-page prompt/popup). One-shot in effect: endSoleTraderLoading()
-     * unbinds it as its first act, so a second, unrelated settle (there
-     * should not be one for a single click, but nothing here depends on
-     * that) is a no-op rather than a second close.
+     * THE ONE ENTRY POINT for both sole-trader flows (Doug, TWO-40
+     * follow-up): the Sole trader chip's first-time enrolment, and
+     * triggerSelectDifferentSoleTrader()'s replacement flow, which the chip
+     * also routes into once an identity is adopted. The only genuine
+     * difference between them is whether a dropdown happens to be open - the
+     * chip click leaves it open throughout, the standalone button never had
+     * one - and that difference is resolved by the settle handler closing the
+     * panel only if it is open, rather than by two parallel flows.
+     *
+     * ON THE COMPANY-NAME FIELD, not the query field (Doug, TWO-40
+     * follow-up). The round-4 spinner lived in the dropdown's query input,
+     * which cannot work now that selecting the Sole trader chip hides that
+     * whole row immediately (syncQueryFieldSuppression()), and never worked
+     * for the replacement flow at all, which shows no spinner today and has
+     * no dropdown to put one in. The company-name field is the surface the
+     * buyer is actually watching for the name to land in, it exists in both
+     * flows, and it is where the value being fetched is going to appear.
+     *
+     * A distinct class from the ordinary live-search spinner
+     * (`two-company-name-loading` vs `two-company-search-loading`): that one
+     * still belongs to the query field and its own dropdown-row spinner, and
+     * the two can be in flight for different reasons.
+     *
+     * "Complete" is `two:sole-trader-flight-settled`, which TwoSoleTrader.js
+     * holds back until the popup has closed AND the buyer lookup has resolved
+     * AND the company name/number write-back has landed - see
+     * notifyEnrollmentSettled()/isWriteRoundTripOutstanding() there. Popup
+     * close alone used to fire it, which is why this spinner used to
+     * disappear while the name was still on its way.
+     *
+     * One-shot in effect: endSoleTraderLoading() unbinds the listener as its
+     * first act, so a second, unrelated settle is a no-op rather than a
+     * second close.
+     *
+     * @returns {boolean} false if a sole-trader flight was ALREADY in
+     *   progress, which makes this the shared re-entrancy guard for both
+     *   entry points - one hosted popup at a time, whichever control asked
+     *   for it (guide §14).
      */
     beginSoleTraderLoading() {
         if (this._soleTraderLoading) {
-            return;
+            return false;
         }
         this._soleTraderLoading = true;
-        if (this._queryField && this._queryField.length) {
-            this._queryField.addClass('two-company-search-loading');
+        if (this.companyField && this.companyField.length) {
+            this.companyField.addClass('two-company-name-loading');
         }
-        // The chip is already `sole_trader` by the time this runs, so the
-        // search row has just been hidden by syncQueryFieldSuppression() -
-        // re-show it for the flight, or the spinner this method exists to
-        // paint has nowhere to appear.
-        this.syncQueryFieldSuppression();
         $(document).off('two:sole-trader-flight-settled.twoSoleTraderFlight' + this._instanceNs)
             .on('two:sole-trader-flight-settled.twoSoleTraderFlight' + this._instanceNs, () => {
-                // closeDropdown() itself calls endSoleTraderLoading() as its
-                // own first line (TWO-40 round 5 cleanup, Yoda finding) - no
-                // need to call it again here too, and this keeps every close
-                // path funnelled through the one centralized call.
-                this.closeDropdown(true);
+                if (this._dropdownOpen) {
+                    // closeDropdown() itself calls endSoleTraderLoading() as
+                    // its own first line (TWO-40 round 5 cleanup, Yoda
+                    // finding) - no need to call it again here too, and this
+                    // keeps every close path funnelled through the one
+                    // centralized call.
+                    this.closeDropdown(true);
+                    return;
+                }
+                // No panel to close - the replacement flow launched from the
+                // standalone button. Drop the spinner directly rather than
+                // closing a dropdown that is already closed: closeDropdown()
+                // also blanks the query term, resets the reopen deadline and
+                // pulls focus back to the company field, none of which this
+                // flow asked for.
+                this.endSoleTraderLoading();
             });
+        return true;
     }
 
     /**
@@ -1653,13 +1704,9 @@ class TwoCompanySearch {
         }
         this._soleTraderLoading = false;
         $(document).off('two:sole-trader-flight-settled.twoSoleTraderFlight' + this._instanceNs);
-        if (this._queryField && this._queryField.length) {
-            this._queryField.removeClass('two-company-search-loading');
+        if (this.companyField && this.companyField.length) {
+            this.companyField.removeClass('two-company-name-loading');
         }
-        // Mirror of the call in beginSoleTraderLoading(): the keep-open
-        // window is over, so a still-selected Sole Trader chip goes back to
-        // hiding the row. A no-op for every other mode.
-        this.syncQueryFieldSuppression();
     }
 
     /**
@@ -3527,7 +3574,7 @@ class TwoCompanySearch {
                 // `_queryField`, so it is unaffected by the nulling here.
                 this.removeDropdown();
                 previousField.removeClass(
-                    'two-company-search-input two-company-search-loading ui-autocomplete-loading'
+                    'two-company-search-input two-company-search-loading two-company-name-loading ui-autocomplete-loading'
                 );
                 // Bound directly via jQuery, not through the widget -
                 // `autocomplete('destroy')` above only unwinds bindings the
@@ -4314,22 +4361,21 @@ class TwoCompanySearch {
      * opens the popup SYNCHRONOUSLY with no guard of its own (unlike
      * getCurrentBuyer()'s `isFetchingBuyer`) - without this, a double-click
      * reliably opened two signup popups from one gesture.
+     *
+     * That guard, the spinner and the settle listener are now
+     * beginSoleTraderLoading()'s, shared with the chip's own first-time
+     * enrolment path rather than duplicated here under a second namespace
+     * (Doug, TWO-40 follow-up). It buys three things beyond the tidying: this
+     * flow shows the same in-flight spinner in the same place as the chip's,
+     * which it previously showed nowhere at all; the guard is now shared, so
+     * a chip click cannot open a second popup over a replacement already in
+     * flight (guide §14) or vice versa; and there is one settle contract to
+     * reason about instead of two.
      */
     triggerSelectDifferentSoleTrader() {
-        if (this._selectDifferentSoleTraderLoading) {
+        if (!this.beginSoleTraderLoading()) {
             return;
         }
-        this._selectDifferentSoleTraderLoading = true;
-        // Released on TwoSoleTrader.js's own settle event - fired from
-        // EVERY terminal branch of startReplacement()'s call graph (popup
-        // opened, popup blocked, mint failed, or abandoned via a
-        // cancelEnrollment() elsewhere) - same event beginSoleTraderLoading()
-        // already relies on for the "Sole Trader" chip's fresh-enrolment
-        // path, own namespace so the two guards never interfere.
-        $(document).off('two:sole-trader-flight-settled.twoSoleTraderReplace' + this._instanceNs)
-            .on('two:sole-trader-flight-settled.twoSoleTraderReplace' + this._instanceNs, () => {
-                this._selectDifferentSoleTraderLoading = false;
-            });
         try {
             if (window.TwoSoleTrader_Instance
                 && typeof window.TwoSoleTrader_Instance.startReplacement === 'function') {
@@ -4341,12 +4387,10 @@ class TwoCompanySearch {
                 // (adversarial review finding).
                 // eslint-disable-next-line no-console
                 console.error('Two: TwoSoleTrader_Instance is missing or malformed; cannot reopen the signup popup.');
-                this._selectDifferentSoleTraderLoading = false;
-                $(document).off('two:sole-trader-flight-settled.twoSoleTraderReplace' + this._instanceNs);
+                this.endSoleTraderLoading();
             }
         } catch (e) {
-            this._selectDifferentSoleTraderLoading = false;
-            $(document).off('two:sole-trader-flight-settled.twoSoleTraderReplace' + this._instanceNs);
+            this.endSoleTraderLoading();
         }
     }
 
@@ -4404,15 +4448,13 @@ class TwoCompanySearch {
             this._selectDifferentSoleTraderLink = null;
         }
         $('.two-company-select-different-sole-trader').off('.twoSoleTraderReplace').remove();
-        // Belt-and-braces: release the re-entrancy guard and its settle
-        // listener too, in case this runs while a flight it started is still
-        // outstanding (e.g. clearSelectedCompany() firing mid-flight) - a
-        // stuck-true guard would otherwise silently no-op every future click
-        // on a FUTURE re-rendered link, exactly the failure shape
-        // fetchTokens()'s own try/catch elsewhere in this flow exists to
-        // avoid.
-        this._selectDifferentSoleTraderLoading = false;
-        $(document).off('two:sole-trader-flight-settled.twoSoleTraderReplace' + this._instanceNs);
+        // Deliberately does NOT release the in-flight guard/spinner. This
+        // method runs mid-flight on the success path - adoptSoleTraderBuyer()
+        // renders the link, and renderSelectDifferentSoleTraderLink() removes
+        // the old one first - and the spinner has to outlive that (Doug: the
+        // flow is not complete until the name and number are written). The
+        // guard's own release points are endSoleTraderLoading()'s callers,
+        // led by the settle event itself.
     }
 
     /**
@@ -5848,7 +5890,7 @@ class TwoCompanySearch {
             // and a fresh instance may reuse this very node.
             if (this.companyField && this.companyField.length) {
                 this.companyField.removeClass(
-                    'two-company-search-input two-company-search-loading ui-autocomplete-loading'
+                    'two-company-search-input two-company-search-loading two-company-name-loading ui-autocomplete-loading'
                 );
                 this.companyField.off('.twoCompanyOpen');
                 this.companyField.removeAttr('readonly aria-haspopup aria-expanded');

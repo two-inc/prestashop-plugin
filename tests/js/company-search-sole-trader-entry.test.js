@@ -127,14 +127,19 @@ describe('activation', () => {
     });
 
     /**
-     * TWO-40 round 4, Doug's explicit request: "keep the company search
-     * control open, show spinner in query field" for the duration of the
-     * Sole Trader autofill round trip. Driven by the REAL settle event
+     * TWO-40 round 4, Doug's explicit request: keep the company search
+     * control open, with a spinner, for the duration of the Sole Trader
+     * autofill round trip. Driven by the REAL settle event
      * TwoSoleTrader.js's notifyEnrollmentSettled() fires (see
      * TwoSoleTrader.js), not a fixed timeout - the panel must stay open for
      * however long the actual call takes, and no longer.
+     *
+     * The spinner is on the company-NAME field, not the query field (TWO-40
+     * follow-up, Doug). The query field's whole row is hidden the instant
+     * this chip is selected, so a spinner in it would have nowhere to paint;
+     * and the name field is where the value being fetched is going to land.
      */
-    test('clicking it starts sole-trader enrolment, keeps the panel open with the query-field spinner, and only closes when the flight settles', () => {
+    test('clicking it starts sole-trader enrolment, keeps the panel open with the name-field spinner, and only closes when the flight settles', () => {
         const soleTrader = stubSoleTrader(true);
         makeInstance();
         openPanel();
@@ -144,18 +149,22 @@ describe('activation', () => {
 
         expect(soleTrader.startEnrollment).toHaveBeenCalledTimes(1);
         expect(shown(panelParts().panel)).toBe(true);
-        expect(panelParts().query.hasClass('two-company-search-loading')).toBe(true);
+        expect(panelParts().nameField.hasClass('two-company-name-loading')).toBe(true);
+        expect(shown(panelParts().nameSpinner)).toBe(true);
+        // And NOT in the query field it used to live in - that row is gone.
+        expect(panelParts().query.hasClass('two-company-search-loading')).toBe(false);
 
         // No fixed timeout closes it - it would still be open five seconds
         // later if the real call were still out.
         jest.advanceTimersByTime(5000);
         expect(shown(panelParts().panel)).toBe(true);
-        expect(panelParts().query.hasClass('two-company-search-loading')).toBe(true);
+        expect(shown(panelParts().nameSpinner)).toBe(true);
 
         document.dispatchEvent(new CustomEvent('two:sole-trader-flight-settled'));
 
         expect(shown(panelParts().panel)).toBe(false);
-        expect(panelParts().query.hasClass('two-company-search-loading')).toBe(false);
+        expect(panelParts().nameField.hasClass('two-company-name-loading')).toBe(false);
+        expect(shown(panelParts().nameSpinner)).toBe(false);
     });
 
     test('does nothing destructive if TwoSoleTrader_Instance is missing, and still closes (after a paint) rather than dead-ending open', () => {
