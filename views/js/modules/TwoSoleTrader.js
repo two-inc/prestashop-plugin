@@ -279,7 +279,16 @@ class TwoSoleTrader {
         // readPersistedAvailability() already re-validates freshness, so a
         // stale-but-matching entry still gets its `ts` refreshed rather than
         // being (wrongly) treated as "no write needed".
-        if (this.readPersistedAvailability(country) !== available) {
+        //
+        // Asymmetric, because the two answers are stored asymmetrically: a
+        // negative is REMOVED rather than written (writePersistedAvailability()),
+        // so a stored negative does not exist and `persisted` can never read
+        // back `false`. Comparing it to `available` directly made this guard a
+        // no-op for every negative answer - a redundant synchronous removeItem
+        // on each of the replacements it exists to absorb. A negative has work
+        // to do only when there is an entry to remove.
+        const persisted = this.readPersistedAvailability(country);
+        if (available ? persisted !== true : persisted !== null) {
             this.writePersistedAvailability(country, available);
         }
     }
