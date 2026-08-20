@@ -82,6 +82,11 @@ claim below as DOM-verified, cited by the actual structure captured live:
   already-ADOPTED identity — cancelling a signup in progress does not un-adopt a
   completed one. Derive the reopened selection from whether an identity is adopted,
   not from a mode variable the reopen path is free to clobber. Full rules in §11.
+- **Being inside the panel means every chip click is a `focusout`/`focusin` pair the
+  panel's own close machinery reacts to**, so any behaviour the panel hangs off "focus
+  left me" is a behaviour the chips silently opt out of. That is not a detail of the
+  close handler; it is a consequence of this section's nesting, and it cost three chips
+  the popup-lifetime decision — see §14's gesture rules.
 - **Chip labels are sentence case on both platforms** — "Registered company", "Sole
   trader", "Enter manually" (`1c1b3d7` aligned PrestaShop onto WooCommerce's existing
   wording; WooCommerce `f8ca174` then fixed its own last title-cased straggler,
@@ -844,6 +849,98 @@ Rules that generalise:
   adopted flag while that popup was undecided.
 - If you are writing round N+1 of a predicate over a list of popup records, stop and
   change the design. That is what this section is.
+
+**Once there is exactly one popup, decide which GESTURE closes it — in each gesture's
+own handler, never in the shared focus machinery.** Doug's rule: focus returning to the
+checkout page closes the popup, and the ONE exception is clicking the Sole trader chip,
+which means "give me that popup back" and must raise it to the front instead. Whichever
+other chip took the focus closes the popup *and* still does its own job unchanged.
+
+The trap is §0's fact — the chips are DOM children of the search panel — meeting the
+panel's own deferred close-on-focus-leaving. That close is what owns the popup
+(PrestaShop `928a84a`), and it cancels itself on any `focusin` back into the panel,
+which is exactly what a chip click produces. So all three chips escaped the popup
+decision, and which of them nevertheless closed it was decided by where its own action
+happened to leave focus afterwards (PrestaShop #176 `8c7447f`):
+
+- **"Enter manually" got the right outcome by accident** — it ends by focusing the
+  company-name field *outside* the panel, which re-scheduled a close nobody asked for.
+  Correct on screen, untested, and one refactor of that focus destination from breaking.
+- **"Registered company" left the popup up** — it focuses the query field, *inside* the
+  panel, so the close it needed was the one it cancelled.
+- **The Sole trader chip resolved to NOTHING AT ALL** — neither closing nor raising. Its
+  re-entrancy guard reads the in-flight spinner flag, and that flag stays true for the
+  popup's whole lifetime, so a re-click was swallowed before anything could raise the
+  window the buyer was asking for. The focus-the-existing-popup branch this guide already
+  credits above (`06655fb`) was live and correct, and unreachable.
+
+Rules that generalise:
+
+- Each gesture states its own answer explicitly. Three cases that differ must be
+  *structurally* distinct and readable as such, not separated by which one happens to
+  move focus where. A correct outcome you cannot point at a line for is a timing
+  accident with a good week.
+- **Gate the popup close on the PAGE having focus (`document.hasFocus()`), not on where
+  `activeElement` landed.** The rule is "focus came back to the *page*", so a focus-out
+  to another window — the popup you just raised, or another application — must leave the
+  popup alone. The first round of this fix cancelled only the close already pending when
+  the chip was clicked, and the close that the *raise itself* provokes arrives after that
+  handler has returned; what actually saved it was Chrome leaving `activeElement` on a
+  clicked `<button>` across the window deactivation. Incidental browser behaviour holding
+  up a spec rule. **Scope the guard to the popup decision only** — widening it to the
+  panel's own close changes when the panel survives an app switch, which is a separate
+  question and broke a pinned test when tried.
+- **Mutation-test this class of fix; the tests lie otherwise.** Three of the first
+  round's tests passed with the line they existed to pin deleted: two because letting
+  the deferred close run lets "Enter manually" satisfy the assertion through the old
+  accidental route, one because leaving focus on a control inside the panel means the
+  earlier `activeElement` guard returns before the code under test. Assert the handler's
+  own call *before* advancing timers, and put focus genuinely outside the panel.
+- **Report the raise as a boolean** ("was there a popup to raise?"), so the same handler
+  can fall through to an ordinary first-time launch when there was not. A void raise
+  forces the caller to keep its own second opinion about whether a popup is open, which
+  is the drift §0 warns about in a different register.
+- **Close BEFORE the cancel.** The cancel path deliberately nulls the popup handle so a
+  genuine completion survives a mere "still glancing around" reopen — so a close
+  attempted after it has no handle left and the window sits there orphaned.
+- **Wrap the `focus()`.** The hosted flow closes its own window the instant it has
+  posted `ACCEPTED`, so `closed` flipping between the check and the call is a real
+  interleaving, not a theoretical one. Nothing to raise then and nothing to report; the
+  close poll still solely owns clearing the handle and dispatching the settle.
+- **Closing the popup is not the same as cancelling the enrolment**, and a handler may
+  legitimately claim only the first. On PrestaShop "Registered company" does both;
+  "Enter manually" closes the popup and deliberately does not cancel. Whichever you
+  choose, know which one you chose — see the second known gap below for what the
+  narrower choice leaves open.
+
+**Known gaps here, documented rather than fixed (PrestaShop, as of `8c7447f`).** Both are
+pre-existing and both want the records-not-a-handle design this section argues for, rather
+than a patch; a port building fresh should start from records and never acquire either.
+
+- **A live popup goes untracked whenever the panel reopens.** Reopening calls the cancel
+  path unconditionally, which nulls the popup handle — so the window is left on screen
+  with nothing holding it, and the next Sole trader click opens a second one. Escape
+  reaches this by hand (it goes straight to the panel close and never touches the popup),
+  but the *common* trigger is not a buyer gesture at all: the platform's own address-form
+  re-render restores the panel through the same reopen path, and per §17 that event can
+  land tens of milliseconds after the click that opened the panel. The billing-country
+  change listener reaches it too. The nulling is deliberate — it is what lets a genuine
+  completion survive a mere "still glancing around" reopen — so this is a design change,
+  not a line fix.
+- **"Enter manually" closes the popup without cancelling the enrolment**, so a buyer
+  lookup already in flight can still resolve afterwards, and its write-back has no
+  manual-entry guard: it overwrites the company name the buyer is now typing by hand and
+  renders the adopted-sole-trader affordance inside manual-entry mode. The credit check
+  then runs on the identity they just walked away from — §5's write-back state machine,
+  reached through a gesture rather than a race. Escape has the same hole for the same
+  reason (the panel close never cancels either).
+- **These gaps are load-bearing for the Sole trader chip's raise branch, which is a trap
+  when fixing them.** That branch sits before the re-entrancy guard, and it is only
+  reachable today with a flight of the current panel-open session still running —
+  precisely *because* reopening nulls the handle. Close the first gap and the branch
+  becomes reachable with no flight running and an identity already adopted, at which
+  point it must decide what it owes the spinner/settle bookkeeping. A raise with no
+  spinner and no settle listener is not an answer.
 
 ## 15. Delegated-auth tokens expire while checkout sits open
 
