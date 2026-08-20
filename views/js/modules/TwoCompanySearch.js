@@ -909,6 +909,18 @@ class TwoCompanySearch {
                 // lost by closing - but doing it before keeps this handler's
                 // ordering symmetric with the other two.
                 this.renderChipSelection();
+                // Re-clicking this chip while a sole trader is already
+                // adopted (TWO-40 follow-up, Doug's explicit ruling: an
+                // earlier round made this a no-op, treating the standalone
+                // "select a different sole trader" link/button as the only
+                // entry point - that was wrong). Route through the exact
+                // same call the link uses rather than starting a fresh
+                // enrolment, which would re-mint tokens for an identity
+                // that's already adopted.
+                if (this.isSoleTraderAdopted()) {
+                    this.triggerSelectDifferentSoleTrader();
+                    return;
+                }
                 if (window.TwoSoleTrader_Instance
                     && typeof window.TwoSoleTrader_Instance.startEnrollment === 'function') {
                     // Keep the panel OPEN and show the query field's own
@@ -1289,22 +1301,58 @@ class TwoCompanySearch {
         this._dropdown.removeAttr('hidden').show();
         this.setDropdownExpandedState();
         // Every FRESH open starts at the default chip (TWO-40: "Default
-        // selected chip: Registered Company"). Not reachable from manual
-        // entry (early-returns above), so the only mode this could be
-        // carrying over from is 'sole_trader' - and cancelEnrollment() just
-        // above already reversed that.
-        this._chipMode = 'registered';
+        // selected chip: Registered Company") - UNLESS a sole trader is
+        // currently adopted (TWO-40 follow-up, Doug live-test finding). The
+        // earlier version of this comment reasoned that cancelEnrollment()
+        // above already reverses the only other source of 'sole_trader',
+        // which is true for an in-flight ENROLMENT but not for an already-
+        // ADOPTED identity: cancelEnrollment() only cancels a signup in
+        // progress, it does not un-adopt a completed one. A sole trader IS
+        // what's currently selected in that state, so the reopened panel
+        // must show that chip selected, not silently fall back to
+        // "Registered Company".
+        this._chipMode = this.isSoleTraderAdopted() ? 'sole_trader' : 'registered';
         this.renderChipSelection();
         this.syncNotListedVisibility();
         this.syncSoleTraderEntryVisibility();
         this.syncRegisteredEntryVisibility();
-        this._queryField.trigger('focus');
+        this.focusPanelEntry();
         // Render the current state immediately - for an empty query that is
         // the "type N more characters" hint (§1), not an empty or absent
         // panel. Matches the requirement that the hint is visible as soon as
         // the control opens, which is the Hyvä failure recorded on this
         // ticket.
         this.openSearchForCurrentTerm();
+    }
+
+    /**
+     * Where focus goes when the panel opens.
+     *
+     * The query field, normally. But in sole-trader mode that field is not
+     * rendered at all (syncQueryFieldSuppression()), and `.focus()` on a
+     * `display:none` element does nothing - which would leave focus on the
+     * company-name field, OUTSIDE the panel, where neither the
+     * Escape-to-close nor the close-on-focus-leave handler can see a
+     * keystroke: a keyboard buyer would have no way to close the panel they
+     * just opened. So focus the selected chip instead - inside the panel, and
+     * the only control this state offers. The Registered company chip is the
+     * fallback for the one state where the Sole trader chip is itself hidden
+     * (adopted, then the registry stops offering that country).
+     */
+    focusPanelEntry() {
+        if (this._chipMode === 'sole_trader') {
+            const chips = [this._soleTraderButton, this._registeredButton];
+            for (let i = 0; i < chips.length; i++) {
+                const chip = chips[i];
+                if (chip && chip.length && chip.css('display') !== 'none') {
+                    chip.trigger('focus');
+                    return;
+                }
+            }
+        }
+        if (this._queryField && this._queryField.length) {
+            this._queryField.trigger('focus');
+        }
     }
 
     /**
@@ -1432,11 +1480,14 @@ class TwoCompanySearch {
      * availability cache rather than duplicated here. `TwoSoleTrader_Instance`
      * may not exist yet (script load order) or may not have resolved an
      * answer for the current country yet; both read as "not available",
-     * matching this control's fail-soft posture everywhere else. Reactivity
-     * to a live country-selector change is inherited rather than built here:
-     * setupCountryChangeListener() already closes the panel on every country
-     * change, so the next open always re-evaluates this against the current
-     * country - the chip cannot go stale while sitting open across a change.
+     * matching this control's fail-soft posture everywhere else - which is
+     * why TwoSoleTrader.apply() calls back into this method (via
+     * resyncSoleTraderChip()) once an answer lands: a panel opened before that
+     * round trip returned would otherwise sit there with no chip in it and
+     * nothing to add one. That push is additive in practice - an answer already
+     * resolved for a country is memoised for the page's life, and a
+     * country-selector change closes the panel first (setupCountryChangeListener())
+     * - so a chip on screen does not vanish from under the buyer mid-panel.
      */
     syncSoleTraderEntryVisibility() {
         if (!this._soleTraderButton || !this._soleTraderButton.length) {
@@ -1470,6 +1521,78 @@ class TwoCompanySearch {
                 button.toggleClass('two-company-mode-chip--selected', this._chipMode === mode);
             }
         });
+        this.syncQueryFieldSuppression();
+    }
+
+    /**
+     * Suppress the free-text query input while the Sole Trader chip is the
+     * selected one (TWO-40 follow-up, Doug live-test finding). There is
+     * deliberately only one way to pick a different company while a sole
+     * trader is selected - the chip/link re-launching the signup flow (see
+     * triggerSelectDifferentSoleTrader()) - typing a fresh live-search query
+     * is not it. Called from renderChipSelection() so every place the chip
+     * selection changes - a fresh open, either chip's click handler - stays
+     * in sync with no separate call site to remember.
+     *
+     * HIDDEN, not merely `readonly` (Doug live-test finding, TWO-40 follow-up
+     * round 2): an earlier round made the field readonly and left it on
+     * screen, which reads as a search box that has stopped working. A field
+     * offering nothing must not be painted. `display:none` (plus the `hidden`
+     * attribute, same belt-and-braces as the panel itself) rather than
+     * `visibility`/`opacity`, so it leaves the tab order with it - a
+     * keyboard-only buyer must not land on an input they cannot see.
+     *
+     * The whole SEARCH ROW is hidden, not just the input: the spinner is an
+     * absolutely-positioned sibling inside that row, so hiding the input
+     * alone collapses the row to zero height and strands the spinner at its
+     * top edge. Which is also why the hide stands down while a sole-trader
+     * flight is in progress - that spinner, in this field, IS the in-flight
+     * state (see beginSoleTraderLoading()).
+     *
+     * The term is dropped on the way out. The row comes back on the
+     * "Registered company" chip, and a query the buyer typed before adopting
+     * describes a company they then did not pick; restoring it would put a
+     * stale term above results that no longer match it.
+     */
+    syncQueryFieldSuppression() {
+        if (!this._queryField || !this._queryField.length) {
+            return;
+        }
+        const suppressed = this._chipMode === 'sole_trader';
+        this._queryField.prop('readonly', suppressed);
+        const searchRow = this._queryField.closest('.two-company-dropdown__search');
+        if (!searchRow.length) {
+            return;
+        }
+        if (suppressed && !this._soleTraderLoading) {
+            this._queryField.val('');
+            searchRow.hide().attr('hidden', 'hidden');
+            // Re-render the panel body for the term that was just dropped
+            // (final-review finding). Blanking the field with `.val()` fires no
+            // event, so nothing else re-evaluates: the result rows the OLD term
+            // produced stayed painted and clickable, offering registered
+            // companies next to a search row that is no longer rendered. Both
+            // engines' entry points answer an empty term in sole-trader mode
+            // with an empty list, so this is the same one call openDropdown()
+            // already makes rather than a second way to clear the menu.
+            this.openSearchForCurrentTerm();
+        } else {
+            searchRow.removeAttr('hidden').show();
+        }
+    }
+
+    /**
+     * Whether a sole-trader identity is currently adopted into the form
+     * (TWO-40 follow-up). The "Select a different sole trader" link/button
+     * only ever exists for exactly this state (see
+     * renderSelectDifferentSoleTraderLink()/removeSelectDifferentSoleTraderLink()),
+     * so its presence is the single source of truth rather than a second,
+     * independently-maintained flag that could drift from it.
+     *
+     * @returns {boolean}
+     */
+    isSoleTraderAdopted() {
+        return !!(this._selectDifferentSoleTraderLink && this._selectDifferentSoleTraderLink.length);
     }
 
     /**
@@ -1499,6 +1622,11 @@ class TwoCompanySearch {
         if (this._queryField && this._queryField.length) {
             this._queryField.addClass('two-company-search-loading');
         }
+        // The chip is already `sole_trader` by the time this runs, so the
+        // search row has just been hidden by syncQueryFieldSuppression() -
+        // re-show it for the flight, or the spinner this method exists to
+        // paint has nowhere to appear.
+        this.syncQueryFieldSuppression();
         $(document).off('two:sole-trader-flight-settled.twoSoleTraderFlight' + this._instanceNs)
             .on('two:sole-trader-flight-settled.twoSoleTraderFlight' + this._instanceNs, () => {
                 // closeDropdown() itself calls endSoleTraderLoading() as its
@@ -1528,6 +1656,10 @@ class TwoCompanySearch {
         if (this._queryField && this._queryField.length) {
             this._queryField.removeClass('two-company-search-loading');
         }
+        // Mirror of the call in beginSoleTraderLoading(): the keep-open
+        // window is over, so a still-selected Sole Trader chip goes back to
+        // hiding the row. A no-op for every other mode.
+        this.syncQueryFieldSuppression();
     }
 
     /**
@@ -1658,8 +1790,15 @@ class TwoCompanySearch {
             this.openDropdown();
             // The character that opened the panel belongs in the query field,
             // not lost. Only for a real printable character - `key` is a
-            // single code point exactly when the keypress produced text.
-            if (key && key.length === 1 && this._queryField && this._queryField.length) {
+            // single code point exactly when the keypress produced text. Not
+            // forwarded while the Sole Trader chip is selected (TWO-40
+            // follow-up): openDropdown() just set that chip mode when a
+            // sole trader is adopted, and the query field is hidden and
+            // `readonly` in that state (syncQueryFieldSuppression()) -
+            // `.val()` writes through both of those, so this has to check
+            // the mode explicitly rather than relying on the field's state.
+            if (key && key.length === 1 && this._chipMode !== 'sole_trader'
+                && this._queryField && this._queryField.length) {
                 this._queryField.val(key);
                 this._queryField.trigger('input');
             }
@@ -3520,6 +3659,28 @@ class TwoCompanySearch {
                         response([]);
                         return;
                     }
+                    // Sole Trader selected (TWO-40 follow-up): the query field
+                    // is not even rendered in this state
+                    // (syncQueryFieldSuppression()) so no real keystroke
+                    // reaches here, but this is the same
+                    // "defence in depth" posture as the manual-entry check
+                    // above - a programmatic `input`/`search` trigger must not
+                    // run a live search while a sole trader is what's selected.
+                    if (this._chipMode === 'sole_trader') {
+                        // Cleared explicitly, exactly as the too-short branch
+                        // below does and for the same jQuery UI reason:
+                        // `response([])` runs `_close()`, which HIDES the menu
+                        // without emptying it. Unlike manual entry above -
+                        // which closes the whole panel (enterManualEntryMode())
+                        // so a stale list cannot be seen - this mode
+                        // deliberately keeps the panel OPEN, so those rows stay
+                        // on screen and clickable: registered companies offered
+                        // for a term the field no longer even holds, since
+                        // syncQueryFieldSuppression() blanks it on the way in.
+                        this.clearAutocompleteMenu();
+                        response([]);
+                        return;
+                    }
                     // Too short to search on - INCLUDING the empty query the
                     // panel opens with. No search is made and no row is
                     // rendered for this any more (TWO-40 follow-up): the
@@ -3865,7 +4026,7 @@ class TwoCompanySearch {
      */
     getManualEntryText() {
         return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_manual_entry)
-            || 'Enter Manually';
+            || 'Enter manually';
     }
 
     /**
@@ -3875,7 +4036,7 @@ class TwoCompanySearch {
      */
     getRegisteredEntryText() {
         return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_registered_entry)
-            || 'Registered Company';
+            || 'Registered company';
     }
 
     /**
@@ -3883,7 +4044,7 @@ class TwoCompanySearch {
      */
     getSoleTraderEntryText() {
         return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_sole_trader_entry)
-            || 'Sole Trader';
+            || 'Sole trader';
     }
 
     /**
@@ -4141,6 +4302,55 @@ class TwoCompanySearch {
     }
 
     /**
+     * Relaunch the sole-trader signup/re-selection flow (TWO-40 follow-up).
+     * The single shared call for BOTH entry points that mean "pick a
+     * different sole trader" - the standalone link/button below the company
+     * field, and re-clicking the "Sole Trader" mode chip while a sole
+     * trader is already adopted (Doug's ruling: the two must behave
+     * identically, not one being a no-op).
+     *
+     * Re-entrancy guard (adversarial review finding, TWO-40 follow-up -
+     * Han/Vader independently caught this): `TwoSoleTrader.startReplacement()`
+     * opens the popup SYNCHRONOUSLY with no guard of its own (unlike
+     * getCurrentBuyer()'s `isFetchingBuyer`) - without this, a double-click
+     * reliably opened two signup popups from one gesture.
+     */
+    triggerSelectDifferentSoleTrader() {
+        if (this._selectDifferentSoleTraderLoading) {
+            return;
+        }
+        this._selectDifferentSoleTraderLoading = true;
+        // Released on TwoSoleTrader.js's own settle event - fired from
+        // EVERY terminal branch of startReplacement()'s call graph (popup
+        // opened, popup blocked, mint failed, or abandoned via a
+        // cancelEnrollment() elsewhere) - same event beginSoleTraderLoading()
+        // already relies on for the "Sole Trader" chip's fresh-enrolment
+        // path, own namespace so the two guards never interfere.
+        $(document).off('two:sole-trader-flight-settled.twoSoleTraderReplace' + this._instanceNs)
+            .on('two:sole-trader-flight-settled.twoSoleTraderReplace' + this._instanceNs, () => {
+                this._selectDifferentSoleTraderLoading = false;
+            });
+        try {
+            if (window.TwoSoleTrader_Instance
+                && typeof window.TwoSoleTrader_Instance.startReplacement === 'function') {
+                window.TwoSoleTrader_Instance.startReplacement();
+            } else {
+                // Nothing is going to fire the settle event for this click,
+                // so release the guard here rather than leaving it stuck and
+                // log visibly rather than a completely silent no-op
+                // (adversarial review finding).
+                // eslint-disable-next-line no-console
+                console.error('Two: TwoSoleTrader_Instance is missing or malformed; cannot reopen the signup popup.');
+                this._selectDifferentSoleTraderLoading = false;
+                $(document).off('two:sole-trader-flight-settled.twoSoleTraderReplace' + this._instanceNs);
+            }
+        } catch (e) {
+            this._selectDifferentSoleTraderLoading = false;
+            $(document).off('two:sole-trader-flight-settled.twoSoleTraderReplace' + this._instanceNs);
+        }
+    }
+
+    /**
      * Render the "Select a different sole trader" link below the company
      * field (TWO-40 follow-up) - same slot, same styling/gating shape as
      * renderBackToSearchLink() above, but for a COMPLETED sole-trader
@@ -4168,50 +4378,7 @@ class TwoCompanySearch {
             // sibling inside the address step's markup, not something the
             // theme's delegated collapse handler is meant to hear from.
             event.stopPropagation();
-            // Re-entrancy guard (adversarial review finding, TWO-40 follow-
-            // up - Han/Vader independently caught this): THIS button only
-            // ever renders once tokens already exist from an earlier
-            // enrolment, which is exactly the branch of
-            // TwoSoleTrader.startReplacement() that opens the popup
-            // SYNCHRONOUSLY with no guard of its own (unlike
-            // getCurrentBuyer()'s `isFetchingBuyer`) - without this, a
-            // double-click reliably opened two signup popups from one
-            // gesture, the exact defect class `isFetchingBuyer`/
-            // `_soleTraderLoading` already exist elsewhere in this flow to
-            // close.
-            if (this._selectDifferentSoleTraderLoading) {
-                return;
-            }
-            this._selectDifferentSoleTraderLoading = true;
-            // Released on TwoSoleTrader.js's own settle event - fired from
-            // EVERY terminal branch of startReplacement()'s call graph
-            // (popup opened, popup blocked, mint failed, or abandoned via a
-            // cancelEnrollment() elsewhere) - same event
-            // beginSoleTraderLoading() already relies on for the "Sole
-            // Trader" chip, own namespace so the two guards never interfere.
-            $(document).off('two:sole-trader-flight-settled.twoSoleTraderReplace' + this._instanceNs)
-                .on('two:sole-trader-flight-settled.twoSoleTraderReplace' + this._instanceNs, () => {
-                    this._selectDifferentSoleTraderLoading = false;
-                });
-            try {
-                if (window.TwoSoleTrader_Instance
-                    && typeof window.TwoSoleTrader_Instance.startReplacement === 'function') {
-                    window.TwoSoleTrader_Instance.startReplacement();
-                } else {
-                    // Same shape as the "Sole Trader" chip's own missing-
-                    // instance branch: nothing is going to fire the settle
-                    // event for this click, so release the guard here rather
-                    // than leaving it stuck and log visibly rather than a
-                    // completely silent no-op (adversarial review finding).
-                    // eslint-disable-next-line no-console
-                    console.error('Two: TwoSoleTrader_Instance is missing or malformed; cannot reopen the signup popup.');
-                    this._selectDifferentSoleTraderLoading = false;
-                    $(document).off('two:sole-trader-flight-settled.twoSoleTraderReplace' + this._instanceNs);
-                }
-            } catch (e) {
-                this._selectDifferentSoleTraderLoading = false;
-                $(document).off('two:sole-trader-flight-settled.twoSoleTraderReplace' + this._instanceNs);
-            }
+            this.triggerSelectDifferentSoleTrader();
         });
 
         // Same placement as renderBackToSearchLink(): appended to the field
@@ -4664,6 +4831,21 @@ class TwoCompanySearch {
             clearTimeout(debounce.id);
             if (this._manualEntry) {
                 debounce.id = null;
+                return;
+            }
+            // Sole Trader selected (TWO-40 follow-up) - same defence-in-depth
+            // reasoning as the jQuery UI `source` callback's own check.
+            if (this._chipMode === 'sole_trader') {
+                debounce.id = null;
+                // Same clear as the widget path's own sole-trader branch, for
+                // the same reason: this mode keeps the panel open, so rows left
+                // from the previous term stay on screen above a blanked field.
+                // Rows only - deliberately NOT setLoadingState(false) the way
+                // the too-short branch below does: that branch abandons a real
+                // pending search, this one never issued a request, and the class
+                // it would clear is the one beginSoleTraderLoading() uses to
+                // spin for a sole-trader flight.
+                renderRows([]);
                 return;
             }
             // Handled SYNCHRONOUSLY, outside the debounce: there is no

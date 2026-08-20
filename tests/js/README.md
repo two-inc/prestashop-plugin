@@ -359,6 +359,14 @@ The server half is in `tests/SoleTraderTokenPreconditionSpec.php`, which drives 
 action through the controller's own switch: the tier ordering, the shape check on the posted
 country, and that a posted country is still gated by the registry rather than trusted.
 
+`sole-trader-chip-visibility.test.js` — why the "Sole trader" chip did not render for GB
+at all (Doug, 2026-08-19). The only suite that runs the REAL `TwoSoleTrader` beside the
+real search control: all three defects live in the seam between the module that resolves
+the availability answer and the one that draws the chip, so a stub on either side hides
+them. Covers the answer landing while the panel is already open, every declined-request
+body shape (`success: false` and friends, all HTTP 200, so none reaches the transport
+catch), and that a negative answer is never persisted across page loads.
+
 ## Known gaps
 
 Deliberately out of scope for this suite, which covers company-search resilience and

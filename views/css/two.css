@@ -712,6 +712,13 @@
     position: relative;
 }
 
+/* Hidden while the Sole trader chip is the selected one - same reason the
+   panel's own `[hidden]` rule exists above: the attribute has to out-rank a
+   theme that resets `[hidden]`. */
+.two-company-dropdown__search[hidden] {
+    display: none;
+}
+
 .two-company-dropdown__query {
     box-sizing: border-box;
     width: 100%;

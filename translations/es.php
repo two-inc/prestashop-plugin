@@ -412,7 +412,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_128ce19a81ca82c86adfed35ed88578a'] 
 $_MODULE['<{twopayment}prestashop>twopayment_822f646e52655f26a80e2b6d0c79f41c'] = 'No se permite un límite de 0. Si no quieres cobrar nada en un plazo, establece el porcentaje y la cuota fija de ese plazo en 0.';
 $_MODULE['<{twopayment}prestashop>twopayment_d132286ce060a9349df55de2808b4d5f'] = 'No se han encontrado coincidencias';
 $_MODULE['<{twopayment}prestashop>twopayment_8fba17b1e1abfeb9ccc08c9248824add'] = 'Autónomo';
-$_MODULE['<{twopayment}prestashop>twopayment_156b5d6812dcb5dcf1867a145cf5f1bf'] = 'Introducir manualmente';
-$_MODULE['<{twopayment}prestashop>twopayment_040583ad2de8733ea4280fdf16dfef61'] = 'Empresa registrada';
-$_MODULE['<{twopayment}prestashop>twopayment_bd2b7238dd5be2875d527d62a880d043'] = 'Autónomo';
+$_MODULE['<{twopayment}prestashop>twopayment_90a5f22cdff46c106eb927b92562347f'] = 'Introducir manualmente';
+$_MODULE['<{twopayment}prestashop>twopayment_22294ef90aa68e15429879889a0cdaf5'] = 'Empresa registrada';
 $_MODULE['<{twopayment}prestashop>twopayment_f2b8ff605311079f7ab03db9fd5da02c'] = 'Seleccionar otro autónomo';
