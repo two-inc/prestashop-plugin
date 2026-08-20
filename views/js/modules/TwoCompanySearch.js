@@ -877,6 +877,15 @@ class TwoCompanySearch {
                 // and the settle listener would stay bound past the flow the
                 // buyer just walked away from.
                 this.endSoleTraderLoading();
+                // Same rule as "Registered Company" (Doug, TWO-40 follow-up):
+                // this chip is a focus return to the checkout, so the popup
+                // goes with the spinner. Stated here rather than left to the
+                // deferred close, which DID reach it - but only because
+                // enterManualEntryMode() ends by focusing the company-name
+                // field outside the panel, re-scheduling a close this chip
+                // never asked for. Correct outcome, reached by accident of
+                // where focus landed, and invisible to any test.
+                this.closeSoleTraderSignupPopup();
                 this.enterManualEntryMode();
             });
         }
@@ -891,6 +900,32 @@ class TwoCompanySearch {
             this._soleTraderButton.on('click.twoDropdown', (event) => {
                 event.preventDefault();
                 event.stopPropagation();
+                // THE ONE CHIP that does not take an open signup popup down
+                // (Doug, TWO-40 follow-up): clicking it while a popup from an
+                // earlier launch is still up means "give me that popup back",
+                // so raise it to the front instead. Everything else this
+                // handler would otherwise do is already done - the popup IS
+                // the flight in progress - which is why this returns rather
+                // than falling through to the guard below, whose bail-out was
+                // the whole gap: `_soleTraderLoading` stays true for the
+                // popup's entire lifetime, so the click resolved to nothing at
+                // all, neither closing nor raising.
+                //
+                // BEFORE that guard, deliberately: after it, this branch would
+                // be unreachable in exactly the state it exists for.
+                if (this.focusSoleTraderSignupPopup()) {
+                    this._chipMode = 'sole_trader';
+                    this.renderChipSelection();
+                    // The deferred close this click's own focus-out scheduled
+                    // would call closeSoleTraderSignupPopup() if focus were to
+                    // settle outside the panel - the popup taking focus is
+                    // precisely that. Cancel it here rather than relying on
+                    // the `focusin` a chip click happens to produce, which is
+                    // the timing accident this whole rework replaces.
+                    clearTimeout(this._closeTimerId);
+                    this._closeTimerId = null;
+                    return;
+                }
                 // Re-entrancy guard (TWO-40 round 5, adversarial review
                 // finding - Han/Vader both independently caught this): round
                 // 4 keeps this button clickable for the WHOLE round trip
@@ -997,6 +1032,14 @@ class TwoCompanySearch {
                 // click would immediately close the very panel it is trying
                 // to keep open.
                 this.endSoleTraderLoading();
+                // Focus is coming back to the panel's query field, so the
+                // popup goes (Doug, TWO-40 follow-up - the question 928a84a
+                // left open, now answered: only the Sole trader chip keeps
+                // it). BEFORE cancelEnrollment(), which nulls TwoSoleTrader's
+                // popup handle to let a genuine completion survive a mere
+                // "still glancing around" reopen - after it there is no handle
+                // left to close with, and the window would sit there orphaned.
+                this.closeSoleTraderSignupPopup();
                 if (window.TwoSoleTrader_Instance
                     && typeof window.TwoSoleTrader_Instance.cancelEnrollment === 'function') {
                     window.TwoSoleTrader_Instance.cancelEnrollment();
@@ -1266,14 +1309,51 @@ class TwoCompanySearch {
             //
             // AFTER this handler's own guards, deliberately. A focus-out caused by
             // clicking one of the panel's own chips puts focus straight back
-            // inside the panel, so it never reaches here - that chip's handler
-            // owns what happens to the flow instead.
-            if (window.TwoSoleTrader_Instance
-                && typeof window.TwoSoleTrader_Instance.closeSignupPopup === 'function') {
-                window.TwoSoleTrader_Instance.closeSignupPopup();
-            }
+            // inside the panel, so it never reaches here - each chip's handler
+            // states its own answer to the popup question directly instead
+            // (see closeSoleTraderSignupPopup()'s callers).
+            this.closeSoleTraderSignupPopup();
             this.closeDropdown(false);
         }, 0);
+    }
+
+    /**
+     * Take down the hosted sole-trader signup popup, if one is up.
+     *
+     * The rule the whole panel obeys (Doug, TWO-40 follow-up): focus coming
+     * back to the checkout page means the buyer is looking at checkout rather
+     * than at the popup, so the popup goes - whether focus came back by
+     * alt-tab, by a click on the form, or by clicking one of the panel's own
+     * chips. THE ONE EXCEPTION is the Sole trader chip, which is a statement
+     * that the popup is what the buyer wants; that handler calls
+     * focusSoleTraderSignupPopup() instead.
+     *
+     * Each of the three chip handlers calls one or the other EXPLICITLY rather
+     * than leaving it to scheduleDropdownClose()'s deferred path, which by its
+     * own design cancels itself on any `focusin` back into the panel - so a
+     * chip click reached it only when the chip's own action happened to move
+     * focus out of the panel again ("Enter manually", via the company-name
+     * field). Which of the three closed the popup was therefore a property of
+     * where each one happened to leave focus, not of what any of them meant.
+     */
+    closeSoleTraderSignupPopup() {
+        if (window.TwoSoleTrader_Instance
+            && typeof window.TwoSoleTrader_Instance.closeSignupPopup === 'function') {
+            window.TwoSoleTrader_Instance.closeSignupPopup();
+        }
+    }
+
+    /**
+     * Raise an already-open signup popup back to the front.
+     *
+     * @returns {boolean} whether there was a popup to raise - false means this
+     *   click is an ordinary Sole trader chip click with nothing on screen to
+     *   go back to.
+     */
+    focusSoleTraderSignupPopup() {
+        return !!(window.TwoSoleTrader_Instance
+            && typeof window.TwoSoleTrader_Instance.focusSignupPopup === 'function'
+            && window.TwoSoleTrader_Instance.focusSignupPopup());
     }
 
     /**
