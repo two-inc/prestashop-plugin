@@ -251,6 +251,74 @@ test('closeSignupPopup() closes a still-open popup, and leaves the settle to the
 });
 
 /**
+ * focusSignupPopup() is closeSignupPopup()'s opposite number, for the ONE
+ * gesture that means "give me that popup back" - re-clicking the Sole trader
+ * chip. It reports whether there WAS a popup to raise, so TwoCompanySearch can
+ * tell that from "nothing open" and fall through to an ordinary launch.
+ *
+ * The throw case is not defensive padding: the hosted flow closes its own
+ * window the instant it has posted 'ACCEPTED', so `closed` flipping between
+ * the check and the call is a real interleaving. It must report false rather
+ * than propagate - a raise nobody can perform is not a failure worth taking
+ * the chip handler down with.
+ */
+test.each([
+    [() => null, false, false, 'no popup was ever opened'],
+    [() => ({ closed: true, focus: jest.fn() }), false, false, 'the popup has already gone'],
+    [() => ({ closed: false, focus: jest.fn() }), true, true, 'a live popup is raised'],
+    [() => ({ closed: false, focus: jest.fn(() => { throw new Error('gone'); }) }), false, true,
+        'the window went away between the check and the raise'],
+])('focusSignupPopup(): raised=%s called=%s when %s', (makePopup, raised, called) => {
+    buildPaymentTile();
+    stubFetch({});
+
+    const instance = build();
+    try {
+        const popup = makePopup();
+        instance._popup = popup;
+
+        expect(instance.focusSignupPopup()).toBe(raised);
+        if (popup) {
+            expect(popup.focus.mock.calls.length > 0).toBe(called);
+            // Never clears the handle - watchPopupUntilClosed()'s poll is the
+            // one owner of that, and of the settle it dispatches.
+            expect(instance._popup).toBe(popup);
+        }
+    } finally {
+        instance.destroy();
+    }
+});
+
+/**
+ * openPopup()'s never-open-over-a-live-window guard is gated on the window
+ * being live, NOT on the raise succeeding (round 2 adversarial review finding).
+ * A focus() that throws must still return the existing handle: falling through
+ * would window.open() a second popup and retarget `this._popup` onto it,
+ * orphaning the first untracked - the exact failure that guard exists for
+ * (guide §14).
+ */
+test('openPopup() returns the live popup even when raising it throws, rather than opening a second', () => {
+    buildPaymentTile();
+    stubFetch({});
+
+    const instance = build();
+    try {
+        const popup = {
+            closed: false,
+            focus: jest.fn(() => { throw new Error('gone'); })
+        };
+        instance._popup = popup;
+        instance.tokens = { signup_url: 'https://signup.example.test/', delegation_token: 'd', autofill_token: 'a' };
+        global.window.open = jest.fn();
+
+        expect(instance.openPopup()).toBe(popup);
+        expect(global.window.open).not.toHaveBeenCalled();
+    } finally {
+        instance.destroy();
+    }
+});
+
+/**
  * The abandon can land on a window that is already gone - the buyer closed it
  * by hand, or the hosted flow closed it itself the moment it posted
  * 'ACCEPTED', which is the ordinary ordering (see the test below). Both must
