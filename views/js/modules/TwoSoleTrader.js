@@ -279,7 +279,16 @@ class TwoSoleTrader {
         // readPersistedAvailability() already re-validates freshness, so a
         // stale-but-matching entry still gets its `ts` refreshed rather than
         // being (wrongly) treated as "no write needed".
-        if (this.readPersistedAvailability(country) !== available) {
+        //
+        // Asymmetric, because the two answers are stored asymmetrically: a
+        // negative is REMOVED rather than written (writePersistedAvailability()),
+        // so a stored negative does not exist and `persisted` can never read
+        // back `false`. Comparing it to `available` directly made this guard a
+        // no-op for every negative answer - a redundant synchronous removeItem
+        // on each of the replacements it exists to absorb. A negative has work
+        // to do only when there is an entry to remove.
+        const persisted = this.readPersistedAvailability(country);
+        if (available ? persisted !== true : persisted !== null) {
             this.writePersistedAvailability(country, available);
         }
     }
@@ -663,7 +672,27 @@ class TwoSoleTrader {
                 if (superseded()) {
                     return;
                 }
-                const available = !!(json && json.success && json.available);
+                // `success: false` is NOT an answer about this country
+                // (TWO-40 follow-up, Doug live-test finding: the sole-trader
+                // chip stopped rendering for GB). This endpoint answers
+                // `{success: false, error: ...}` for a stale/absent ajax token
+                // and for an unknown action - a 200 with a JSON body, so the
+                // catch() below never sees it - and flattening that into
+                // `available: false` cached it as a definite "this country does
+                // not do sole traders": for the page's life in memory, and for a
+                // FULL DAY in localStorage, on every later page load, with
+                // nothing that would ever re-ask. One expired token was enough
+                // to remove the chip for 24h. Same posture as the transport
+                // failure below instead: nothing cached, pending marker already
+                // released, so the next mutation batch or country change asks
+                // again.
+                if (!json || !json.success) {
+                    if (self.billingCountry() === country) {
+                        self.apply(country, false);
+                    }
+                    return;
+                }
+                const available = !!json.available;
                 self.availabilityByCountry[country] = available;
                 // A resolved server response - true or false - is a real
                 // answer about this country, unlike the transport-failure
@@ -817,6 +846,19 @@ class TwoSoleTrader {
      * Best-effort and silent: a write failure (quota, disabled storage) must
      * not affect checkout, only the latency this cache is there to cut.
      *
+     * A NEGATIVE answer REMOVES any stored entry rather than storing itself
+     * (TWO-40 follow-up, Doug live-test finding). This cache exists to paint an
+     * available chip on first evaluation instead of waiting out a round trip -
+     * there is nothing to paint faster for a country that has no chip, so
+     * storing "no" buys nothing, while a stored "no" costs a full day of the
+     * chip staying gone after the answer behind it changes (a registry country
+     * being enrolled, a merchant's environment being fixed) with nothing that
+     * re-asks inside the TTL. Removing rather than merely skipping the write
+     * matters: skipping would leave an earlier stored "yes" standing for up to
+     * 24h after the country stopped being eligible, which is the same bug
+     * pointing the other way. Either way the answer is still cached IN MEMORY
+     * for the page's life by the callers, so no extra request is made per page.
+     *
      * @param {string} country ISO-2, already uppercased by the caller
      * @param {boolean} available
      * @returns {void}
@@ -827,7 +869,11 @@ class TwoSoleTrader {
             if (!key) {
                 return;
             }
-            window.localStorage.setItem(key, JSON.stringify({ available: !!available, ts: Date.now() }));
+            if (!available) {
+                window.localStorage.removeItem(key);
+                return;
+            }
+            window.localStorage.setItem(key, JSON.stringify({ available: true, ts: Date.now() }));
         } catch (e) {
             // no-op: presentation-only cache, never a gate.
         }
@@ -842,6 +888,47 @@ class TwoSoleTrader {
         // behaviour, without a "business" mode to fall back to.
         if (!available && this.enrolling) {
             this.cancelEnrollment();
+        }
+        this.resyncSoleTraderChip();
+    }
+
+    /**
+     * Tell the company-search control to re-evaluate its "Sole trader" chip
+     * now that an availability answer has landed (TWO-40 follow-up, Doug
+     * live-test finding: the chip did not render at all on a GB address step).
+     *
+     * The chip is a child of the search dropdown and TwoCompanySearch decides
+     * its visibility by READING this instance's cache
+     * (isAvailableForCurrentCountry()) at the moments it already re-evaluates
+     * its own rows - the panel opening, an address-form re-render, an adoption.
+     * Availability resolves ASYNCHRONOUSLY, off a round trip this module owns,
+     * and nothing pushed the answer the other way: a buyer who reached the
+     * company field before that request landed - which is every first
+     * evaluation on a page with no server-rendered answer to adopt and no
+     * persisted one to read, i.e. the whole address step - got a panel with no
+     * Sole trader chip in it and nothing to add one while it stayed open.
+     *
+     * Resolved lazily through the manager, exactly as adoptEnrolledIdentity()
+     * does and for the same reason: the manager destroys and rebuilds its
+     * search instance on every `updatedAddressForm`. Fails soft - a missing
+     * instance costs this repaint, not the answer, which is already cached
+     * above by the time this runs.
+     *
+     * WooCommerce already pushes this way round (`twoincSoleTrader.apply()`
+     * calls the equivalent chip re-sync); this is the same shape, not a new
+     * mechanism.
+     *
+     * @returns {void}
+     */
+    resyncSoleTraderChip() {
+        try {
+            const manager = window.TwoCheckoutManager_Instance;
+            const search = manager && manager.companySearch;
+            if (search && typeof search.syncSoleTraderEntryVisibility === 'function') {
+                search.syncSoleTraderEntryVisibility();
+            }
+        } catch (e) {
+            // Presentation-only repaint; never let it cost the answer.
         }
     }
 
