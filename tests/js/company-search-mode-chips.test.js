@@ -142,7 +142,7 @@ describe('clicking "Registered Company"', () => {
         const soleTraderInstance = {
             isAvailableForCurrentCountry: () => true,
             startEnrollment: jest.fn(),
-            cancelEnrollment: jest.fn()
+            abandonEnrollment: jest.fn()
         };
         global.window.TwoSoleTrader_Instance = soleTraderInstance;
 
@@ -150,67 +150,68 @@ describe('clicking "Registered Company"', () => {
         openPanel();
         panelParts().soleTrader.trigger('click');
         expect(soleTraderInstance.startEnrollment).toHaveBeenCalledTimes(1);
-        const cancelCallsBefore = soleTraderInstance.cancelEnrollment.mock.calls.length;
+        const callsBefore = soleTraderInstance.abandonEnrollment.mock.calls.length;
 
-        // Reopening ALSO calls cancelEnrollment() once, unconditionally, via
-        // openDropdown() - isolate the chip's OWN call by asserting the exact
-        // delta (+2: one from the reopen, one from the chip click), not just
-        // "more than before". A weaker assertion here would still pass even
-        // if the chip's own handler stopped calling cancelEnrollment() at
-        // all, since the reopen's call alone already satisfies
-        // `toBeGreaterThan`.
+        // Reopening ALSO abandons once, unconditionally, via openDropdown() -
+        // isolate the chip's OWN call by asserting the exact delta (one from
+        // the reopen, one from the chip click), not just "more than before". A
+        // weaker assertion here would still pass even if the chip's own
+        // handler stopped abandoning at all, since the reopen's call alone
+        // already satisfies `toBeGreaterThan`.
         $("input[name='company']").trigger('mousedown');
-        const cancelCallsAfterReopen = soleTraderInstance.cancelEnrollment.mock.calls.length;
-        expect(cancelCallsAfterReopen).toBe(cancelCallsBefore + 1);
+        const callsAfterReopen = soleTraderInstance.abandonEnrollment.mock.calls.length;
+        expect(callsAfterReopen).toBe(callsBefore + 1);
 
         panelParts().registered.trigger('click');
 
-        expect(soleTraderInstance.cancelEnrollment.mock.calls.length).toBe(cancelCallsAfterReopen + 1);
+        expect(soleTraderInstance.abandonEnrollment.mock.calls.length).toBe(callsAfterReopen + 1);
     });
 });
 
 describe('clicking "Enter Manually" while a sole-trader enrolment is active', () => {
     /**
-     * Round 2 adversarial review OBSERVATION: "Enter Manually" has no
-     * click-handler call to cancelEnrollment() of its own - only
-     * "Registered Company" and openDropdown() call it. That is safe ONLY
-     * because "Enter Manually" is unreachable except through an open panel,
-     * and every route into an open panel goes through openDropdown(), which
-     * calls cancelEnrollment() unconditionally before the chip is even
-     * visible. This test pins THAT invariant directly, so a future change
-     * that makes the panel reachable some other way (a deep link, a
-     * programmatic re-open) trips a failure here instead of silently
-     * reintroducing the cross-flow selection clobber
-     * sole-trader-generation-guard.test.js covers.
+     * This test used to pin the OPPOSITE, and was wrong to (Doug, TWO-40
+     * follow-up). A round-2 review observed that "Enter Manually" had no
+     * cancel of its own and reasoned it was safe because the chip is
+     * unreachable except through an open panel, and openDropdown() cancels
+     * before the chip is even visible. The reopen's cancel does happen - but
+     * it happens BEFORE the buyer clicks this chip, so it cannot disown a
+     * lookup the buyer sets going afterwards by clicking Sole trader from the
+     * reopened panel. That flight resolved into adoptSoleTraderBuyer(), which
+     * has no manual-entry guard, over a name the buyer had typed by hand.
+     *
+     * So the chip now abandons on its own account, and what is pinned is that
+     * it does so on the CLICK - the timing the earlier invariant could not
+     * give.
      */
-    test('cancelEnrollment has already been called by the time the chip is clickable', () => {
+    test('abandons the flow on the click itself, not only via the earlier reopen', () => {
         const soleTraderInstance = {
             isAvailableForCurrentCountry: () => true,
             startEnrollment: jest.fn(),
-            cancelEnrollment: jest.fn()
+            abandonEnrollment: jest.fn()
         };
         global.window.TwoSoleTrader_Instance = soleTraderInstance;
 
         makeInstance();
-        // The FIRST open already calls cancelEnrollment() once too
-        // (openDropdown() calls it unconditionally, even with nothing to
-        // cancel yet) - baseline against that rather than assuming zero.
+        // The FIRST open already abandons once too (openDropdown() does it
+        // unconditionally, even with nothing to cancel yet) - baseline against
+        // that rather than assuming zero.
         openPanel();
-        const callsAfterFirstOpen = soleTraderInstance.cancelEnrollment.mock.calls.length;
+        const callsAfterFirstOpen = soleTraderInstance.abandonEnrollment.mock.calls.length;
         panelParts().soleTrader.trigger('click');
-        expect(soleTraderInstance.cancelEnrollment.mock.calls.length).toBe(callsAfterFirstOpen);
+        expect(soleTraderInstance.abandonEnrollment.mock.calls.length).toBe(callsAfterFirstOpen);
 
-        // The only way back to a clickable "Enter Manually" is reopening the
-        // panel - which must have already cancelled the enrolment BEFORE
-        // this click fires.
+        // Reopen, then start a SECOND enrolment from the reopened panel - the
+        // flight the reopen's own abandon cannot possibly have covered.
         $("input[name='company']").trigger('mousedown');
-        const callsAfterReopen = soleTraderInstance.cancelEnrollment.mock.calls.length;
-        expect(callsAfterReopen).toBe(callsAfterFirstOpen + 1);
+        panelParts().soleTrader.trigger('click');
+        expect(soleTraderInstance.startEnrollment).toHaveBeenCalledTimes(2);
+        const callsBeforeChip = soleTraderInstance.abandonEnrollment.mock.calls.length;
 
+        $("input[name='company']").trigger('mousedown');
         panelParts().notListed.trigger('click');
 
-        // The click itself adds nothing further - proving the safety came
-        // from the reopen, not from "Enter Manually" doing its own cancel.
-        expect(soleTraderInstance.cancelEnrollment.mock.calls.length).toBe(callsAfterReopen);
+        // Two: the reopen's, and the chip's own.
+        expect(soleTraderInstance.abandonEnrollment.mock.calls.length).toBe(callsBeforeChip + 2);
     });
 });
