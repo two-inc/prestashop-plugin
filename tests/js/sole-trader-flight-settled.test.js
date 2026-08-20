@@ -195,6 +195,88 @@ test('a genuine OTP completion settles the buyer lookup but withholds the spinne
 });
 
 /**
+ * TWO-40 follow-up, Doug live test: focus coming back to the checkout page has
+ * to take the hosted signup popup down with the panel and the spinner.
+ * TwoCompanySearch.js only ASKS for that (scheduleDropdownClose()); the close
+ * is this module's, since it holds the handle window.open() returned.
+ *
+ * The settle must still come from watchPopupUntilClosed()'s poll - the one
+ * owner it already had - not from a second dispatch on the close itself, or
+ * an abandon would settle a flight whose write-back may still be in the air.
+ */
+test('closeSignupPopup() closes a still-open popup, and leaves the settle to the poll that owns it', async () => {
+    buildPaymentTile();
+    document.body.insertAdjacentHTML('beforeend', "<input name='email' value='order-contact@example.test' />");
+
+    const popup = {
+        closed: false,
+        close: jest.fn(() => { popup.closed = true; })
+    };
+    global.window.open = jest.fn(() => popup);
+    stubFetch({ buyer: () => Promise.resolve({ ok: false, status: 404 }) });
+    const { calls, handler } = recordSettled();
+
+    jest.useFakeTimers();
+    try {
+        const instance = build();
+        try {
+            instance.startEnrollment();
+            await flushPromises();
+            await flushPromises();
+            await flushPromises();
+
+            document.querySelector('.two-sole-trader__prompt')
+                .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+            expect(instance._popup).toBe(popup);
+            const settlesBefore = calls.length;
+
+            instance.closeSignupPopup();
+
+            expect(popup.close).toHaveBeenCalledTimes(1);
+            // Nothing settled yet: the poll has not run, and this method
+            // deliberately does not dispatch on its own.
+            expect(calls.length).toBe(settlesBefore);
+
+            jest.advanceTimersByTime(500);
+
+            expect(calls.length).toBe(settlesBefore + 1);
+            expect(instance._popup).toBe(null);
+        } finally {
+            instance.destroy();
+        }
+    } finally {
+        jest.useRealTimers();
+    }
+    document.removeEventListener('two:sole-trader-flight-settled', handler);
+});
+
+/**
+ * The abandon can land on a window that is already gone - the buyer closed it
+ * by hand, or the hosted flow closed it itself the moment it posted
+ * 'ACCEPTED', which is the ordinary ordering (see the test below). Both must
+ * be no-ops rather than a throw that takes the panel close down with it.
+ */
+test('closeSignupPopup() is a safe no-op with no popup, or one that has already gone', async () => {
+    buildPaymentTile();
+    stubFetch({});
+
+    const instance = build();
+    try {
+        expect(instance._popup).toBe(null);
+        expect(() => instance.closeSignupPopup()).not.toThrow();
+
+        const alreadyClosed = { closed: true, close: jest.fn() };
+        instance._popup = alreadyClosed;
+        instance.closeSignupPopup();
+
+        expect(alreadyClosed.close).not.toHaveBeenCalled();
+    } finally {
+        instance.destroy();
+    }
+    await flushPromises();
+});
+
+/**
  * The OPPOSITE ordering to the test above, and the common one in a real
  * browser: the hosted flow closes its own window as soon as it has posted
  * 'ACCEPTED', so the 500ms popup poll routinely observes `closed` while the

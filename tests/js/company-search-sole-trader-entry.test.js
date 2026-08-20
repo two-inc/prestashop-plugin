@@ -40,7 +40,8 @@ function stubSoleTrader(available) {
     const instance = {
         isAvailableForCurrentCountry: jest.fn(() => available),
         startEnrollment: jest.fn(),
-        cancelEnrollment: jest.fn()
+        cancelEnrollment: jest.fn(),
+        closeSignupPopup: jest.fn()
     };
     global.window.TwoSoleTrader_Instance = instance;
     return instance;
@@ -276,6 +277,90 @@ describe('activation', () => {
         expect(soleTrader.hasClass('two-company-mode-chip--selected')).toBe(true);
         expect(registered.hasClass('two-company-mode-chip--selected')).toBe(false);
         expect(notListed.hasClass('two-company-mode-chip--selected')).toBe(false);
+    });
+});
+
+describe('focus returning to the checkout page abandons the flow (TWO-40 follow-up, Doug live test)', () => {
+    /**
+     * Doug's live finding: the spinner stopped and the panel closed when the
+     * buyer clicked back onto the checkout page with the hosted signup popup
+     * still open, but the popup itself stayed on screen. All three go together.
+     *
+     * Driven with a real focusable element outside the panel rather than
+     * `<body>`, for the same reason company-search-dropdown.test.js's own
+     * focus-out tests are: jsdom will not make `<body>` the activeElement, so
+     * the guard this has to get PAST would hold vacuously.
+     */
+    test('closes the hosted signup popup, and not only the panel and the spinner', () => {
+        const soleTrader = stubSoleTrader(true);
+        makeInstance();
+        openPanel();
+        panelParts().soleTrader.trigger('click');
+        expect(soleTrader.startEnrollment).toHaveBeenCalledTimes(1);
+        expect(soleTrader.closeSignupPopup).not.toHaveBeenCalled();
+
+        const outside = $("input[name='dni']").get(0);
+        outside.focus();
+        panelParts().panel.trigger('focusout');
+        jest.advanceTimersByTime(10);
+
+        expect(soleTrader.closeSignupPopup).toHaveBeenCalledTimes(1);
+        // The two that already worked before this fix - asserted separately so
+        // a regression in either is not mistaken for the popup one.
+        expect(shown(panelParts().panel)).toBe(false);
+        expect(panelParts().nameField.hasClass('two-company-name-loading')).toBe(false);
+    });
+
+    /**
+     * The same focus-out, caused by the buyer clicking a DIFFERENT chip on the
+     * panel. The pending close is cancelled by the `focusin` that chip's own
+     * handler produces when it puts focus back in the query field, so the
+     * popup-close must not run either - "Registered Company" means "stay here,
+     * search normally", and it owns what happens to the flow (endSoleTraderLoading()
+     * then cancelEnrollment()).
+     *
+     * Whether it should ALSO take an abandoned popup down is a separate
+     * question, deliberately not answered here: its route is
+     * cancelEnrollment(), which openDropdown() calls on every open and which
+     * TwoSoleTrader.js documents as "still glancing around" rather than
+     * "abandoned".
+     */
+    test('a focus-out from clicking a different chip leaves the popup to that chip handler', () => {
+        const soleTrader = stubSoleTrader(true);
+        makeInstance();
+        openPanel();
+        panelParts().soleTrader.trigger('click');
+
+        const { panel, registered } = panelParts();
+        panel.trigger('focusout');
+        registered.trigger('click');
+        jest.advanceTimersByTime(10);
+
+        expect(soleTrader.closeSignupPopup).not.toHaveBeenCalled();
+        expect(soleTrader.cancelEnrollment).toHaveBeenCalled();
+        expect(shown(panelParts().panel)).toBe(true);
+    });
+
+    /**
+     * The second layer of the same guard, and the one that makes the popup
+     * close's PLACEMENT matter: a focus-out whose deferred close does run, but
+     * finds focus settled on a control inside the panel. Nothing has been
+     * abandoned, so neither the panel nor the popup may go.
+     */
+    test('a deferred close that finds focus still inside the panel closes neither the panel nor the popup', () => {
+        const soleTrader = stubSoleTrader(true);
+        makeInstance();
+        openPanel();
+        panelParts().soleTrader.trigger('click');
+
+        const { panel, registered } = panelParts();
+        registered.get(0).focus();
+        panel.triggerHandler('focusout');
+        jest.advanceTimersByTime(10);
+
+        expect(document.activeElement).toBe(registered.get(0));
+        expect(soleTrader.closeSignupPopup).not.toHaveBeenCalled();
+        expect(shown(panelParts().panel)).toBe(true);
     });
 });
 

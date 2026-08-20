@@ -383,6 +383,24 @@ is not persisted here", never to a dropped payment record.
     on the success path, so every failure and abandon would spin forever.
     A cancel/abandon must be able to FORCE the dispatch past that gate, since the
     generation bump it performs has already disowned whatever is still in the air.
+  - **Focus returning to the checkout page must take the POPUP down with the
+    spinner and the panel** (Doug, live, PrestaShop
+    `doug/two40-soletrader-spinner-rehome`). All three are one abandon, and it is
+    easy to implement a subset of it: PrestaShop stopped the spinner and closed the
+    dropdown on that path but left the hosted popup on screen. The trigger already exists if the
+    panel has a deferred close-on-focus-leaving handler (§1) — hang the popup close
+    off THAT decision point, not off the generic "panel closed" path, which also
+    covers a completed selection and a platform re-render and would slam a live
+    popup shut. It must sit AFTER that handler's own guards: a focus-out caused by
+    clicking one of the panel's own chips puts focus back inside the panel and
+    that chip's handler owns the flow. Closing is the opener's privilege however
+    cross-origin the popup is, and is a no-op on a window that has already gone —
+    so a buyer who hand-closed it, and a hosted flow that closed itself the moment
+    it posted its completion message, both need no special case. Leave the
+    `.closed` poll to clear the handle and dispatch the settle, so that stays a
+    one-owner job. Do NOT fold this into the resumable cancel/abandon call (§14's
+    "still glancing around" case) — that one runs on every reopen of the search
+    control and must leave the popup alone.
 - **Tokens must already exist when the chip is clicked.** A chip click has exactly two
   allowed outcomes — populate a company, or open the signup popup — and a fallback
   note/link is neither (WooCommerce `df1aaa1`). Minting inside the click handler puts
