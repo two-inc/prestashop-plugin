@@ -344,19 +344,45 @@ is not persisted here", never to a dropped payment record.
 
 - **In-flight spinner:** while the sole-trader autofill/token-fetch/signup-check
   round trip is running, keep the company-search control OPEN (don't close it) and
-  show a spinner inside the query/search input field itself — not a separate overlay.
-  Wire it to the real async duration (resolve on an actual "flight settled" event
-  fired from every terminal branch of the async call graph — success, failure,
-  retry-exhausted, abandoned), never a fixed timeout. Adversarial review on this
-  exact feature found real races on every iteration (stuck-forever spinners on two
-  different abandon/retry paths, a missing re-entrancy guard causing double signup
-  popups, a guard released too early) — budget for multiple review rounds, don't
-  expect to get this right in one pass.
+  show a spinner over the company-NAME field — not a separate overlay, and not in
+  the dropdown's query field. Wire it to the real async duration (resolve on an
+  actual "flight settled" event fired from every terminal branch of the async call
+  graph — success, failure, retry-exhausted, abandoned), never a fixed timeout.
+  Adversarial review on this exact feature found real races on every iteration
+  (stuck-forever spinners on two different abandon/retry paths, a missing
+  re-entrancy guard causing double signup popups, a guard released too early) —
+  budget for multiple review rounds, don't expect to get this right in one pass.
+  - **The NAME field, not the query field, and this was arrived at the long way
+    round.** Earlier rounds put it in the query input, which §1 does settle as
+    where an in-field spinner on ordinary company search belongs. It cannot be
+    where the sole-trader one belongs, for two independent reasons: selecting the
+    Sole trader chip hides that whole row immediately (§11 rule 2), so the spinner
+    has nowhere to paint and an earlier round had to un-hide the row for the flight
+    — which reintroduced the very bug rule 2 exists to fix; and the "select a
+    different sole trader" flow opens no dropdown at all, so it had no query field
+    to use and showed no spinner whatsoever. The name field is on screen in both
+    flows and is where the value being fetched is going to land. PrestaShop
+    `doug/two40-soletrader-spinner-rehome`.
   - **"Settled" means the popup CLOSED, not that `window.open()` returned**
     (PrestaShop `5651374`, live-reported). The spinner was clearing the instant the
     window was handed to the browser, leaving the buyer's whole signup happening
     behind an idle-looking checkout. Poll the popup handle's `.closed`, and make every
     exit path (popup close, cancel, teardown) stop that poll so no interval leaks.
+  - **…and popup-closed is still not the END of it — the WRITE is** (Doug, live,
+    PrestaShop `doug/two40-soletrader-spinner-rehome`). "Complete" is: the popup is
+    gone, AND the post-popup buyer lookup has fired and resolved, AND the company
+    name/number have been written to every field and variable that holds them.
+    Those are separate moments, and the popup one usually comes FIRST: the hosted
+    flow closes its own window as soon as it has posted its completion message, so
+    a 500ms `.closed` poll routinely wins the race against the lookup → save →
+    write chain that message starts, and the spinner dropped with the field still
+    empty. Extend the existing settle gate rather than adding a second signal
+    beside it — hold the dispatch while a lookup or a write-back is outstanding,
+    and let whichever finishes last do the dispatching. Do NOT reach for the
+    "adoption succeeded" event as the spinner's clear signal instead: it fires only
+    on the success path, so every failure and abandon would spin forever.
+    A cancel/abandon must be able to FORCE the dispatch past that gate, since the
+    generation bump it performs has already disowned whatever is still in the air.
 - **Tokens must already exist when the chip is clicked.** A chip click has exactly two
   allowed outcomes — populate a company, or open the signup popup — and a fallback
   note/link is neither (WooCommerce `df1aaa1`). Minting inside the click handler puts
@@ -590,12 +616,21 @@ than a wrong implementation of it — read both corrections before implementing 
    Three consequences that are easy to miss, all found by review rather than by
    testing the happy path:
 
-   - **Hide the query field's whole ROW, not the input.** The in-field spinner is an
-     absolutely-positioned sibling *inside* that row, so hiding the input alone
-     collapses the row to zero height and strands the spinner at its top edge. And
-     the hide has to stand down for the duration of a sole-trader flight, because
-     that same spinner in that same field IS the in-progress state the keep-open
-     window exists to show (rule 3's ordering trap lives next door to this).
+   - **Hide the query field's whole ROW, not the input.** The ordinary live-search
+     spinner is an absolutely-positioned sibling *inside* that row, so hiding the
+     input alone collapses the row to zero height and strands that spinner at its
+     top edge.
+   - **Gate the hide on the selected chip and NOTHING ELSE** (Doug, live). It has to
+     take effect on the click that selects the chip, synchronously, with no reopen
+     required — so drive it from wherever chip selection is rendered, not from the
+     panel's open handler, or it will look correct in every test that closes and
+     reopens and be wrong for the buyer who never closes anything. An earlier round
+     added a second condition — stand the hide down while a sole-trader flight is in
+     progress, because the in-flight spinner then lived in this very field — and
+     that condition WAS the bug: the chip click hid the row and un-hid it in the
+     same gesture, so a row the buyer had been told would go stayed up for the whole
+     round trip. The spinner belongs on the company-name field instead (§7); with it
+     gone, no second condition is needed and none should be added back.
    - **Something else in the panel has to take focus on open.** The open path focuses
      the query field; `.focus()` on a `display:none` element silently does nothing,
      leaving focus on the company-name field — *outside* the panel, and the panel is
@@ -628,6 +663,23 @@ than a wrong implementation of it — read both corrections before implementing 
    opposite of what "select a different" means. Shared entry points need a shared
    re-entrancy guard: the relaunch opens the popup SYNCHRONOUSLY with no guard of its
    own, so without one a double-click reliably opens two signup popups (§14).
+
+   **"The same call" means the same in-flight state too, not just the same
+   function** (Doug, live). Both entry points show the same spinner, in the same
+   place, for the same §7 duration. The first implementation shared the relaunch
+   function but gave each entry point its own loading flag and its own settle
+   listener under its own namespace — with the result that the standalone button
+   showed no spinner at all, and a chip click could open a second hosted popup over
+   a replacement flow already in flight, which is exactly what §14 forbids. One
+   flag, one listener, one spinner, for both. The single genuine difference is the
+   dropdown's open/closed state — the chip click leaves it open throughout, the
+   button never had one — and the resolution is to close the dropdown at
+   flow-complete **only if it is open**, a no-op otherwise. Not two flows; one flow
+   and one conditional. (Consequence worth stating: whatever renders/re-renders the
+   "select a different" element must NOT release that shared flag as a
+   belt-and-braces measure, because the successful adoption re-renders it
+   *mid-flight* — that release would drop the spinner just before the write it is
+   waiting for.)
 3. **Clicking back to "Registered company" keeps the dropdown OPEN with focus in the
    query field.** Unlike the other two chips, this one is not a hand-off to another
    flow — it means "stay here, search normally" — so it must not close the panel, and

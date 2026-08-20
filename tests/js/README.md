@@ -367,6 +367,27 @@ them. Covers the answer landing while the panel is already open, every declined-
 body shape (`success: false` and friends, all HTTP 200, so none reaches the transport
 catch), and that a negative answer is never persisted across page loads.
 
+### The sole-trader in-flight spinner: three suites, and which one is load-bearing
+
+The spinner sits over the company-NAME field, and "in flight" runs until the popup has
+closed AND the buyer lookup has resolved AND the name/number have been written. Those
+last two are what make the coverage awkward to place, so it is split deliberately:
+
+- `sole-trader-flight-settled.test.js` owns the DURATION, on the `TwoSoleTrader` side,
+  and is the load-bearing one. Note especially the test that closes the popup while the
+  write-back is still held open by hand: it asserts the settle event has NOT fired at
+  that point, which is the only assertion in the suite that fails against a
+  popup-close-only signal. Every other test here passes either way, so removing that
+  one silently removes the coverage for this rule.
+- `sole-trader-select-different.test.js` owns the shared flow: the spinner appearing for
+  the standalone-button entry point (it previously showed none), the shared re-entrancy
+  guard now refusing a chip click during a button-launched flight, and the
+  close-the-dropdown-only-if-open split between the two.
+- `sole-trader-chip-adopted-state.test.js` owns the LOCATION's consequence — the query
+  row hiding immediately on the chip click and staying hidden for the flight, driven
+  with no close/reopen in between, since a suite that reopens the panel cannot tell an
+  open-handler-only implementation from a correct one.
+
 ## Known gaps
 
 Deliberately out of scope for this suite, which covers company-search resilience and
