@@ -2036,15 +2036,14 @@ class TwoSoleTrader {
         if (!this.tokens) {
             return null;
         }
-        if (this._popup && !this._popup.closed) {
-            // Round trip already handed off to a popup that is still open
-            // (adversarial review finding, Han + Vader independently) -
-            // opening a SECOND window here would orphan the first one,
-            // untracked: `this._popup` would move to the new popup and the
-            // poll would never learn the first window even existed, so a
-            // buyer who closes THAT one instead of the new one would leave
-            // the spinner stuck forever. Focus the existing popup instead.
-            this._popup.focus();
+        // Round trip already handed off to a popup that is still open
+        // (adversarial review finding, Han + Vader independently) - opening a
+        // SECOND window here would orphan the first one, untracked:
+        // `this._popup` would move to the new popup and the poll would never
+        // learn the first window even existed, so a buyer who closes THAT one
+        // instead of the new one would leave the spinner stuck forever. Focus
+        // the existing popup instead.
+        if (this.focusSignupPopup()) {
             return this._popup;
         }
         const ps = window.prestashop;
@@ -2176,6 +2175,38 @@ class TwoSoleTrader {
         if (this._popup && !this._popup.closed) {
             this._popup.close();
         }
+    }
+
+    /**
+     * Raise the hosted signup popup back to the front, if one is still up.
+     *
+     * The counterpart to closeSignupPopup() for the ONE gesture that means
+     * "I want that popup, not this page" (Doug, TWO-40 follow-up): re-clicking
+     * the Sole trader chip while a popup from an earlier launch is still open.
+     * Every other way focus comes back to the checkout takes the popup down.
+     *
+     * `focus()` is wrapped because `closed` can flip between the check and the
+     * call - the hosted flow closes its own window the moment it has posted
+     * 'ACCEPTED', so a buyer completing signup in the same instant as this
+     * runs is a real interleaving, not a theoretical one. There is nothing to
+     * raise in that case and nothing to report either: the popup is going
+     * away for the right reason, and watchPopupUntilClosed()'s poll still owns
+     * clearing the handle and dispatching the settle.
+     *
+     * @returns {boolean} whether a popup was actually there to raise, so a
+     *   caller can tell "brought it to the front" from "no popup open" and
+     *   pick a different behaviour for the latter.
+     */
+    focusSignupPopup() {
+        if (!this._popup || this._popup.closed) {
+            return false;
+        }
+        try {
+            this._popup.focus();
+        } catch (e) {
+            return false;
+        }
+        return true;
     }
 
     /**

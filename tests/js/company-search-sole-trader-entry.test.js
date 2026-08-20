@@ -41,7 +41,10 @@ function stubSoleTrader(available) {
         isAvailableForCurrentCountry: jest.fn(() => available),
         startEnrollment: jest.fn(),
         cancelEnrollment: jest.fn(),
-        closeSignupPopup: jest.fn()
+        closeSignupPopup: jest.fn(),
+        // "Was there a popup to raise?" - false is the no-popup-open default,
+        // and the tests that need one still up flip it (see soleTraderPopupOpen()).
+        focusSignupPopup: jest.fn(() => false)
     };
     global.window.TwoSoleTrader_Instance = instance;
     return instance;
@@ -312,36 +315,6 @@ describe('focus returning to the checkout page abandons the flow (TWO-40 follow-
     });
 
     /**
-     * The same focus-out, caused by the buyer clicking a DIFFERENT chip on the
-     * panel. The pending close is cancelled by the `focusin` that chip's own
-     * handler produces when it puts focus back in the query field, so the
-     * popup-close must not run either - "Registered Company" means "stay here,
-     * search normally", and it owns what happens to the flow (endSoleTraderLoading()
-     * then cancelEnrollment()).
-     *
-     * Whether it should ALSO take an abandoned popup down is a separate
-     * question, deliberately not answered here: its route is
-     * cancelEnrollment(), which openDropdown() calls on every open and which
-     * TwoSoleTrader.js documents as "still glancing around" rather than
-     * "abandoned".
-     */
-    test('a focus-out from clicking a different chip leaves the popup to that chip handler', () => {
-        const soleTrader = stubSoleTrader(true);
-        makeInstance();
-        openPanel();
-        panelParts().soleTrader.trigger('click');
-
-        const { panel, registered } = panelParts();
-        panel.trigger('focusout');
-        registered.trigger('click');
-        jest.advanceTimersByTime(10);
-
-        expect(soleTrader.closeSignupPopup).not.toHaveBeenCalled();
-        expect(soleTrader.cancelEnrollment).toHaveBeenCalled();
-        expect(shown(panelParts().panel)).toBe(true);
-    });
-
-    /**
      * The second layer of the same guard, and the one that makes the popup
      * close's PLACEMENT matter: a focus-out whose deferred close does run, but
      * finds focus settled on a control inside the panel. Nothing has been
@@ -361,6 +334,178 @@ describe('focus returning to the checkout page abandons the flow (TWO-40 follow-
         expect(document.activeElement).toBe(registered.get(0));
         expect(soleTrader.closeSignupPopup).not.toHaveBeenCalled();
         expect(shown(panelParts().panel)).toBe(true);
+    });
+});
+
+describe('a chip clicked while the signup popup is open (TWO-40 follow-up, Doug spec)', () => {
+    /**
+     * The rule: focus returning to the checkout closes the popup, and the ONLY
+     * exception is the Sole trader chip, which raises it to the front instead.
+     *
+     * Every chip now says so in its own handler. Before this, none of the three
+     * reached the popup by intent: the deferred close is cancelled by the
+     * `focusin` a chip click produces, so whether a chip closed the popup was
+     * decided by whether its own action happened to push focus out of the panel
+     * again - which "Enter manually" does (the company-name field) and
+     * "Registered company" does not (the query field, inside the panel).
+     */
+    function popupOpen(soleTrader) {
+        soleTrader.focusSignupPopup.mockReturnValue(true);
+    }
+
+    /** Launch the flow so a popup is notionally up, then clear the bookkeeping. */
+    function launchThenPopupOpen(soleTrader) {
+        openPanel();
+        panelParts().soleTrader.trigger('click');
+        popupOpen(soleTrader);
+        soleTrader.closeSignupPopup.mockClear();
+        soleTrader.focusSignupPopup.mockClear();
+    }
+
+    test.each([
+        ['soleTrader', false, true, 'the one exception - raises the popup, never closes it'],
+        ['registered', true, false, 'closes the popup, keeps the panel'],
+        ['notListed', true, false, 'closes the popup, hands off to manual entry']
+    ])('%s: closed=%s raised=%s - %s', (chip, closed, raised) => {
+        const soleTrader = stubSoleTrader(true);
+        makeInstance();
+        launchThenPopupOpen(soleTrader);
+
+        panelParts()[chip].trigger('click');
+        jest.advanceTimersByTime(10);
+
+        expect(soleTrader.closeSignupPopup.mock.calls.length > 0).toBe(closed);
+        expect(soleTrader.focusSignupPopup.mock.calls.length > 0).toBe(raised);
+    });
+
+    /**
+     * #5.1. The gap was not "closed the popup when it should not have" - it was
+     * that the click resolved to NOTHING: `_soleTraderLoading` stays true for
+     * the popup's whole lifetime, so the re-entrancy guard swallowed the click
+     * before anything could raise the window the buyer was asking for.
+     */
+    test('Sole trader: raises the popup, keeps the panel open, and stays the selected chip', () => {
+        const soleTrader = stubSoleTrader(true);
+        makeInstance();
+        launchThenPopupOpen(soleTrader);
+
+        const { soleTrader: chip } = panelParts();
+        chip.trigger('click');
+        jest.advanceTimersByTime(10);
+
+        expect(soleTrader.focusSignupPopup).toHaveBeenCalledTimes(1);
+        expect(soleTrader.closeSignupPopup).not.toHaveBeenCalled();
+        expect(shown(panelParts().panel)).toBe(true);
+        expect(panelParts().soleTrader.hasClass('two-company-mode-chip--selected')).toBe(true);
+        // No second enrolment either - the popup on screen IS the flight.
+        expect(soleTrader.startEnrollment).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * A pending deferred close must not survive the raise: the popup taking
+     * focus is itself "focus settled outside the panel", which is exactly the
+     * condition scheduleDropdownClose() closes the popup on.
+     */
+    test('Sole trader: a close already scheduled by this click\'s own focus-out does not fire', () => {
+        const soleTrader = stubSoleTrader(true);
+        makeInstance();
+        launchThenPopupOpen(soleTrader);
+
+        const { panel, soleTrader: chip } = panelParts();
+        panel.trigger('focusout');
+        chip.trigger('click');
+        jest.advanceTimersByTime(10);
+
+        expect(soleTrader.closeSignupPopup).not.toHaveBeenCalled();
+        expect(shown(panelParts().panel)).toBe(true);
+    });
+
+    /**
+     * #5.2. Closing the popup must not cost the chip its own job - "stay here,
+     * search normally" still means the query row is back and focused.
+     */
+    test('Registered company: closes the popup AND still shows and focuses the query field', () => {
+        const soleTrader = stubSoleTrader(true);
+        makeInstance();
+        launchThenPopupOpen(soleTrader);
+
+        panelParts().registered.trigger('click');
+        jest.advanceTimersByTime(10);
+
+        expect(soleTrader.closeSignupPopup).toHaveBeenCalledTimes(1);
+        expect(shown(panelParts().searchRow)).toBe(true);
+        expect(document.activeElement).toBe(panelParts().query.get(0));
+        expect(shown(panelParts().panel)).toBe(true);
+    });
+
+    /**
+     * The ordering that makes #5.2 work at all: cancelEnrollment() nulls
+     * TwoSoleTrader's popup handle - deliberately, so a genuine completion
+     * survives a mere reopen - so a close attempted after it has no handle left
+     * and the window would sit there orphaned.
+     */
+    test('Registered company: closes the popup BEFORE cancelling, while a handle still exists', () => {
+        const soleTrader = stubSoleTrader(true);
+        makeInstance();
+        launchThenPopupOpen(soleTrader);
+
+        const order = [];
+        soleTrader.closeSignupPopup.mockImplementation(() => order.push('close'));
+        soleTrader.cancelEnrollment.mockImplementation(() => order.push('cancel'));
+        panelParts().registered.trigger('click');
+
+        expect(order).toEqual(['close', 'cancel']);
+    });
+
+    /**
+     * "Enter manually" reached the same outcome before this change, but only
+     * via enterManualEntryMode() focusing the company-name field OUTSIDE the
+     * panel and re-scheduling a close nobody asked for. Pinned here on the
+     * chip's own call, together with the effects that must survive it.
+     */
+    test('Enter manually: closes the popup AND still switches to manual entry', () => {
+        const soleTrader = stubSoleTrader(true);
+        makeInstance();
+        launchThenPopupOpen(soleTrader);
+
+        panelParts().notListed.trigger('click');
+        jest.advanceTimersByTime(10);
+
+        expect(soleTrader.closeSignupPopup.mock.calls.length).toBeGreaterThanOrEqual(1);
+        expect(shown(panelParts().panel)).toBe(false);
+        expect(panelParts().nameField.attr('readonly')).toBeUndefined();
+        expect(document.activeElement).toBe(panelParts().nameField.get(0));
+    });
+
+    /**
+     * The no-popup-open case for the one chip that behaves differently: with
+     * nothing to raise, the Sole trader chip must still be an ordinary chip.
+     */
+    test('Sole trader with no popup open starts an enrolment as before', () => {
+        const soleTrader = stubSoleTrader(true);
+        makeInstance();
+        openPanel();
+
+        panelParts().soleTrader.trigger('click');
+
+        expect(soleTrader.focusSignupPopup).toHaveBeenCalledTimes(1);
+        expect(soleTrader.startEnrollment).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * Fail-soft against an older TwoSoleTrader.js that has no focusSignupPopup()
+     * - twopayment.js loads the two modules independently, and the panel must
+     * not lose its chip behaviour to a missing method.
+     */
+    test('a TwoSoleTrader without focusSignupPopup() still gets an ordinary chip click', () => {
+        const soleTrader = stubSoleTrader(true);
+        delete soleTrader.focusSignupPopup;
+        makeInstance();
+        openPanel();
+
+        panelParts().soleTrader.trigger('click');
+
+        expect(soleTrader.startEnrollment).toHaveBeenCalledTimes(1);
     });
 });
 
