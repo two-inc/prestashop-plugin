@@ -877,14 +877,20 @@ class TwoCompanySearch {
                 // and the settle listener would stay bound past the flow the
                 // buyer just walked away from.
                 this.endSoleTraderLoading();
-                // Same rule as "Registered Company" (Doug, TWO-40 follow-up):
-                // this chip is a focus return to the checkout, so the popup
-                // goes with the spinner. Stated here rather than left to the
-                // deferred close, which DID reach it - but only because
+                // The popup goes: this chip is a focus return to the checkout
+                // (Doug, TWO-40 follow-up). Stated here rather than left to
+                // the deferred close, which DID reach it - but only because
                 // enterManualEntryMode() ends by focusing the company-name
                 // field outside the panel, re-scheduling a close this chip
                 // never asked for. Correct outcome, reached by accident of
-                // where focus landed, and invisible to any test.
+                // where focus landed.
+                //
+                // Closing the popup is NOT the same as cancelling the
+                // enrolment, and this handler deliberately claims only the
+                // first - "Registered Company" does both. See §14 of
+                // .ai/sole-trader-porting-guide.md for the gap that leaves
+                // open: a lookup already in flight can still land after this,
+                // and its write-back has no manual-entry guard.
                 this.closeSoleTraderSignupPopup();
                 this.enterManualEntryMode();
             });
@@ -913,15 +919,28 @@ class TwoCompanySearch {
                 //
                 // BEFORE that guard, deliberately: after it, this branch would
                 // be unreachable in exactly the state it exists for.
+                //
+                // Reachable ONLY with a flight of this panel-open session still
+                // in progress today, because openDropdown() nulls the popup
+                // handle on every open - which is itself the orphan gap logged
+                // in §14 of .ai/sole-trader-porting-guide.md. Whoever closes
+                // that gap makes this branch reachable with no flight running
+                // and an identity already adopted, and must then decide what
+                // it owes beginSoleTraderLoading() - a raise with no spinner
+                // and no settle listener is not it.
                 if (this.focusSoleTraderSignupPopup()) {
                     this._chipMode = 'sole_trader';
                     this.renderChipSelection();
-                    // The deferred close this click's own focus-out scheduled
-                    // would call closeSoleTraderSignupPopup() if focus were to
-                    // settle outside the panel - the popup taking focus is
-                    // precisely that. Cancel it here rather than relying on
-                    // the `focusin` a chip click happens to produce, which is
-                    // the timing accident this whole rework replaces.
+                    // Cancels the close ALREADY PENDING from this click's own
+                    // focus-out, and only that one - explicitly, rather than
+                    // relying on the `focusin` a chip click happens to
+                    // produce, which is the timing accident this rework
+                    // replaces. It cannot cover the close that the raise
+                    // itself provokes when the popup takes focus: that
+                    // focus-out arrives after this handler has returned
+                    // (round 2 adversarial review finding - an earlier comment
+                    // here claimed otherwise). scheduleDropdownClose()'s
+                    // document.hasFocus() guard is what covers that one.
                     clearTimeout(this._closeTimerId);
                     this._closeTimerId = null;
                     return;
@@ -1312,7 +1331,21 @@ class TwoCompanySearch {
             // inside the panel, so it never reaches here - each chip's handler
             // states its own answer to the popup question directly instead
             // (see closeSoleTraderSignupPopup()'s callers).
-            this.closeSoleTraderSignupPopup();
+            //
+            // Gated on the CHECKOUT PAGE having focus, which the panel's own
+            // close deliberately is not (round 2 adversarial review finding).
+            // Doug's rule is specifically "if I move focus back to the page the
+            // popup should be closed" - so a focus-out to another window,
+            // including the popup the Sole trader chip just raised, must leave
+            // it alone. Without this, the raise survived only because Chrome
+            // leaves `activeElement` on a clicked `<button>` across the window
+            // deactivation, so the guard above happened to catch it: incidental
+            // browser behaviour holding up a spec rule. The panel's own close
+            // keeps its existing meaning either way, deliberately - narrowing
+            // this to the popup decision is the whole point.
+            if (typeof document.hasFocus !== 'function' || document.hasFocus()) {
+                this.closeSoleTraderSignupPopup();
+            }
             this.closeDropdown(false);
         }, 0);
     }

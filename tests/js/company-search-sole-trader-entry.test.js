@@ -372,8 +372,14 @@ describe('a chip clicked while the signup popup is open (TWO-40 follow-up, Doug 
         launchThenPopupOpen(soleTrader);
 
         panelParts()[chip].trigger('click');
-        jest.advanceTimersByTime(10);
-
+        // NOT advanced past the deferred close, deliberately (round 2
+        // adversarial review finding, mutation-proved): letting it run lets
+        // "Enter manually" satisfy this through the OLD accidental route -
+        // enterManualEntryMode() focuses the company-name field, re-schedules
+        // a close, and that close calls closeSignupPopup(). The assertion then
+        // passes with the chip's own call deleted, which is precisely the line
+        // this table exists to pin. Asserted synchronously, only the handler's
+        // own call can have happened.
         expect(soleTrader.closeSignupPopup.mock.calls.length > 0).toBe(closed);
         expect(soleTrader.focusSignupPopup.mock.calls.length > 0).toBe(raised);
     });
@@ -402,22 +408,83 @@ describe('a chip clicked while the signup popup is open (TWO-40 follow-up, Doug 
     });
 
     /**
-     * A pending deferred close must not survive the raise: the popup taking
-     * focus is itself "focus settled outside the panel", which is exactly the
-     * condition scheduleDropdownClose() closes the popup on.
+     * A close ALREADY PENDING when the chip is clicked must not survive the
+     * raise - it would close the popup the click just asked for.
+     *
+     * Driven with focus genuinely OUTSIDE the panel (round 2 adversarial review
+     * finding, mutation-proved): with focus left on a control inside the panel,
+     * scheduleDropdownClose()'s own activeElement guard returns first and the
+     * test passes with the `clearTimeout` deleted, pinning nothing.
      */
-    test('Sole trader: a close already scheduled by this click\'s own focus-out does not fire', () => {
+    test('Sole trader: a close already pending when the chip is clicked does not fire', () => {
         const soleTrader = stubSoleTrader(true);
         makeInstance();
         launchThenPopupOpen(soleTrader);
 
-        const { panel, soleTrader: chip } = panelParts();
-        panel.trigger('focusout');
-        chip.trigger('click');
+        $("input[name='dni']").get(0).focus();
+        panelParts().panel.trigger('focusout');
+        panelParts().soleTrader.trigger('click');
         jest.advanceTimersByTime(10);
 
         expect(soleTrader.closeSignupPopup).not.toHaveBeenCalled();
         expect(shown(panelParts().panel)).toBe(true);
+    });
+
+    /**
+     * The close the RAISE itself provokes, which the `clearTimeout` above
+     * cannot reach: the popup taking focus fires its focus-out after the chip
+     * handler has already returned, so that close is scheduled with nothing
+     * left to cancel it.
+     *
+     * What stops it is the checkout page no longer having focus at all - the
+     * direct form of Doug's rule ("if I move focus back to the page the popup
+     * should be closed"), rather than the browser incidentally leaving
+     * `activeElement` on the clicked chip, which is what the first round
+     * actually relied on.
+     */
+    test('Sole trader: the close provoked by the raise itself does not fire either', () => {
+        const soleTrader = stubSoleTrader(true);
+        makeInstance();
+        launchThenPopupOpen(soleTrader);
+
+        panelParts().soleTrader.trigger('click');
+        // The popup now holds focus, and the page's own activeElement is
+        // OUTSIDE the panel - which is the whole point of this test. With it
+        // left on the clicked chip, scheduleDropdownClose()'s activeElement
+        // guard returns first and this passes with the hasFocus() guard
+        // deleted (caught by re-running the mutation: Chrome retaining focus
+        // on a clicked `<button>` is exactly the incidental behaviour round 1
+        // leaned on, so a test that reproduces it pins nothing).
+        $("input[name='dni']").get(0).focus();
+        jest.spyOn(document, 'hasFocus').mockReturnValue(false);
+        panelParts().panel.trigger('focusout');
+        jest.advanceTimersByTime(10);
+
+        expect(soleTrader.closeSignupPopup).not.toHaveBeenCalled();
+        // The PANEL is not asserted here. Its close keeps its existing meaning
+        // - focus left it, so it goes - and narrowing the new guard to the
+        // popup decision alone is deliberate: widening it to the panel too
+        // changes when the panel survives an app switch, which is neither
+        // asked for nor covered by the spec.
+    });
+
+    /**
+     * The other half of that guard, and the case Doug listed as case 4: focus
+     * coming back to the checkout page itself still closes the popup, with no
+     * chip involved.
+     */
+    test('focus returning to the page with the page focused still closes the popup', () => {
+        const soleTrader = stubSoleTrader(true);
+        makeInstance();
+        launchThenPopupOpen(soleTrader);
+
+        jest.spyOn(document, 'hasFocus').mockReturnValue(true);
+        $("input[name='dni']").get(0).focus();
+        panelParts().panel.trigger('focusout');
+        jest.advanceTimersByTime(10);
+
+        expect(soleTrader.closeSignupPopup).toHaveBeenCalledTimes(1);
+        expect(shown(panelParts().panel)).toBe(false);
     });
 
     /**
@@ -469,9 +536,12 @@ describe('a chip clicked while the signup popup is open (TWO-40 follow-up, Doug 
         launchThenPopupOpen(soleTrader);
 
         panelParts().notListed.trigger('click');
-        jest.advanceTimersByTime(10);
+        // Same reason as the table above: the chip's OWN call is the claim, and
+        // it is only distinguishable from the deferred close's before the
+        // timers run.
+        expect(soleTrader.closeSignupPopup).toHaveBeenCalledTimes(1);
 
-        expect(soleTrader.closeSignupPopup.mock.calls.length).toBeGreaterThanOrEqual(1);
+        jest.advanceTimersByTime(10);
         expect(shown(panelParts().panel)).toBe(false);
         expect(panelParts().nameField.attr('readonly')).toBeUndefined();
         expect(document.activeElement).toBe(panelParts().nameField.get(0));

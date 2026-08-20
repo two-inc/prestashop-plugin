@@ -2043,7 +2043,16 @@ class TwoSoleTrader {
         // learn the first window even existed, so a buyer who closes THAT one
         // instead of the new one would leave the spinner stuck forever. Focus
         // the existing popup instead.
-        if (this.focusSignupPopup()) {
+        //
+        // Gated on LIVENESS, not on whether the raise succeeded (round 2
+        // adversarial review finding). focusSignupPopup() answers "did I raise
+        // it?", which is what the Sole trader chip needs and NOT what this
+        // branch needs: it reports false for a focus() that threw, and
+        // returning false here would fall through and open the second window
+        // this guard exists to prevent. A window we hold and that is not
+        // `closed` must never be opened over, whether or not it can be raised.
+        if (this._popup && !this._popup.closed) {
+            this.focusSignupPopup();
             return this._popup;
         }
         const ps = window.prestashop;
