@@ -26,10 +26,18 @@ const {
     panelParts,
     openPanel,
     typeQuery,
+    resultTexts,
     shown
 } = require('./ps-harness');
 
 const CHECKOUT_HOST = 'https://api.example.test';
+
+const SEARCH_RESPONSE = {
+    items: [
+        { name: 'Example Trading Ltd', lookup_id: 'lk-1', national_identifier: { id: '11111111' } },
+        { name: 'Example Holdings Ltd', lookup_id: 'lk-2', national_identifier: { id: '22222222' } }
+    ]
+};
 
 const NAMED_BUYER = {
     company_name: 'Sole Trader Test Co',
@@ -41,6 +49,7 @@ const NAMED_BUYER = {
 
 let TwoCompanySearch;
 let $;
+let ajax;
 
 function makeInstance(config) {
     return new TwoCompanySearch(Object.assign({ checkoutHost: CHECKOUT_HOST }, config || {}));
@@ -66,7 +75,7 @@ beforeEach(() => {
     $ = loaded.$;
     buildAddressForm();
     installStylesheet('views/css/two.css');
-    stubAjax($);
+    ajax = stubAjax($);
 });
 
 afterEach(() => {
@@ -268,6 +277,79 @@ describe('query input suppressed while Sole Trader is selected (item 2)', () => 
         // hiding the row for the duration would leave nothing to spin.
         expect(shown(panelParts().query)).toBe(true);
         expect(panelParts().query.hasClass('two-company-search-loading')).toBe(true);
+
+        instance.destroy();
+    });
+});
+
+/**
+ * Cross-round gap (final review before merge): item 1 made a reopen land in
+ * sole-trader mode, item 2 blanked the query field on the way into that mode -
+ * and nothing emptied the RESULT ROWS the blanked term had produced. jQuery
+ * UI's `response([])` only runs `_close()`, which hides the menu without
+ * emptying it, and this mode is the one that keeps the panel OPEN (manual entry
+ * closes it), so those rows stayed painted and clickable: registered companies
+ * still on offer for a term the field no longer held, next to a search row that
+ * is not even rendered.
+ */
+describe('no stale result rows survive into sole-trader mode', () => {
+    function searchAndSettle(term) {
+        typeQuery(term);
+        jest.advanceTimersByTime(400);
+        const pending = ajax.last();
+        if (pending) {
+            pending.succeed(SEARCH_RESPONSE);
+        }
+        jest.advanceTimersByTime(50);
+    }
+
+    test('reopening while adopted does not re-offer the previous search\'s results', () => {
+        const instance = makeInstance();
+        stubSoleTrader();
+        openPanel();
+        searchAndSettle('Example');
+        expect(resultTexts().length).toBeGreaterThan(0);
+
+        instance.adoptSoleTraderBuyer(NAMED_BUYER);
+        instance.closeDropdown(false);
+        $("input[name='company']").trigger('mousedown');
+
+        // The field is hidden and blank here (see item 2 above), so a list of
+        // registered companies above it belongs to nothing the buyer can see.
+        expect(resultTexts()).toEqual([]);
+
+        instance.destroy();
+    });
+
+    test('picking the chip mid-search clears the rows that search produced', () => {
+        const instance = makeInstance();
+        stubSoleTrader();
+        openPanel();
+        searchAndSettle('Example');
+
+        panelParts().soleTrader.trigger('click');
+
+        // The panel stays open for the flight (round 4's keep-open window), so
+        // this is on screen, not merely in the DOM.
+        expect(shown(panelParts().panel)).toBe(true);
+        expect(resultTexts()).toEqual([]);
+
+        instance.destroy();
+    });
+
+    test('coming back to "Registered company" starts from an empty list, not the old one', () => {
+        const instance = makeInstance();
+        stubSoleTrader();
+        openPanel();
+        searchAndSettle('Example');
+
+        panelParts().soleTrader.trigger('click');
+        panelParts().registered.trigger('click');
+
+        // The term went with the trip into sole-trader mode; results matching
+        // it must not outlive it.
+        expect(panelParts().query.val()).toBe('');
+        expect(resultTexts()).toEqual([]);
 
         instance.destroy();
     });

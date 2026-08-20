@@ -1480,11 +1480,14 @@ class TwoCompanySearch {
      * availability cache rather than duplicated here. `TwoSoleTrader_Instance`
      * may not exist yet (script load order) or may not have resolved an
      * answer for the current country yet; both read as "not available",
-     * matching this control's fail-soft posture everywhere else. Reactivity
-     * to a live country-selector change is inherited rather than built here:
-     * setupCountryChangeListener() already closes the panel on every country
-     * change, so the next open always re-evaluates this against the current
-     * country - the chip cannot go stale while sitting open across a change.
+     * matching this control's fail-soft posture everywhere else - which is
+     * why TwoSoleTrader.apply() calls back into this method (via
+     * resyncSoleTraderChip()) once an answer lands: a panel opened before that
+     * round trip returned would otherwise sit there with no chip in it and
+     * nothing to add one. That push is additive in practice - an answer already
+     * resolved for a country is memoised for the page's life, and a
+     * country-selector change closes the panel first (setupCountryChangeListener())
+     * - so a chip on screen does not vanish from under the buyer mid-panel.
      */
     syncSoleTraderEntryVisibility() {
         if (!this._soleTraderButton || !this._soleTraderButton.length) {
@@ -1564,6 +1567,15 @@ class TwoCompanySearch {
         if (suppressed && !this._soleTraderLoading) {
             this._queryField.val('');
             searchRow.hide().attr('hidden', 'hidden');
+            // Re-render the panel body for the term that was just dropped
+            // (final-review finding). Blanking the field with `.val()` fires no
+            // event, so nothing else re-evaluates: the result rows the OLD term
+            // produced stayed painted and clickable, offering registered
+            // companies next to a search row that is no longer rendered. Both
+            // engines' entry points answer an empty term in sole-trader mode
+            // with an empty list, so this is the same one call openDropdown()
+            // already makes rather than a second way to clear the menu.
+            this.openSearchForCurrentTerm();
         } else {
             searchRow.removeAttr('hidden').show();
         }
@@ -3655,6 +3667,17 @@ class TwoCompanySearch {
                     // above - a programmatic `input`/`search` trigger must not
                     // run a live search while a sole trader is what's selected.
                     if (this._chipMode === 'sole_trader') {
+                        // Cleared explicitly, exactly as the too-short branch
+                        // below does and for the same jQuery UI reason:
+                        // `response([])` runs `_close()`, which HIDES the menu
+                        // without emptying it. Unlike manual entry above -
+                        // which closes the whole panel (enterManualEntryMode())
+                        // so a stale list cannot be seen - this mode
+                        // deliberately keeps the panel OPEN, so those rows stay
+                        // on screen and clickable: registered companies offered
+                        // for a term the field no longer even holds, since
+                        // syncQueryFieldSuppression() blanks it on the way in.
+                        this.clearAutocompleteMenu();
                         response([]);
                         return;
                     }
@@ -4814,6 +4837,15 @@ class TwoCompanySearch {
             // reasoning as the jQuery UI `source` callback's own check.
             if (this._chipMode === 'sole_trader') {
                 debounce.id = null;
+                // Same clear as the widget path's own sole-trader branch, for
+                // the same reason: this mode keeps the panel open, so rows left
+                // from the previous term stay on screen above a blanked field.
+                // Rows only - deliberately NOT setLoadingState(false) the way
+                // the too-short branch below does: that branch abandons a real
+                // pending search, this one never issued a request, and the class
+                // it would clear is the one beginSoleTraderLoading() uses to
+                // spin for a sole-trader flight.
+                renderRows([]);
                 return;
             }
             // Handled SYNCHRONOUSLY, outside the debounce: there is no
