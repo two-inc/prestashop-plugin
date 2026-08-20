@@ -612,6 +612,47 @@
 }
 
 /*
+ * The sole-trader in-flight spinner (TWO-40 follow-up, Doug): shown over the
+ * company-NAME field for the whole round trip, from the click that starts it
+ * until the name and number have actually been written.
+ *
+ * It used to be the dropdown row's own spinner, which cannot work now that
+ * selecting the Sole trader chip hides that row immediately, and which the
+ * "Select a different sole trader" flow could not use at all - it opens no
+ * panel. Same 16px loader as `.two-company-dropdown__spinner`, same
+ * right-hand lane, one field further out.
+ *
+ * Height comes from `--two-company-input-height`, not from the wrapper: the
+ * wrapper also carries the org-number hint and the "select a different sole
+ * trader" button below the input, so `100%` here would centre the spinner
+ * somewhere under the field. Same variable, and the same reason, as the
+ * dropdown panel's own `top` below - ensureFieldWrapper() keeps it current.
+ */
+.two-company-name-spinner {
+    display: none;
+    position: absolute;
+    top: 0;
+    right: 8px;
+    width: 16px;
+    height: var(--two-company-input-height, 100%);
+    background: url('../img/loader.gif') no-repeat center center;
+    background-size: 16px 16px;
+    pointer-events: none;
+}
+
+/* Deliberately NOT also qualified on `.two-company-search-input`, the way
+   `.two-company-dropdown__query`'s spinner rule is on its own field. That
+   marker class is applied only once the dropdown is known to have built
+   (setupAutocomplete()), and it is skipped entirely on the fallback where the
+   panel failed to build - a state the "Select a different sole trader" flow
+   still reaches, since that button is rendered from the adoption and needs no
+   panel. `two-company-name-loading` is only ever set on the company field, so
+   the extra qualifier bought nothing but a way to silently not paint. */
+.two-company-name-loading ~ .two-company-name-spinner {
+    display: block;
+}
+
+/*
  * Selected company's organisation number, shown as a plain label BELOW the
  * company-name field once a search result is chosen (TWO-25326 §5).
  *
