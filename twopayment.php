@@ -169,7 +169,7 @@ class Twopayment extends PaymentModule
     // The order note is the fifth field in that standard sequence and is
     // deliberately absent from here: it is PrestaShop core's own
     // `delivery_message` textarea on the checkout SHIPPING step, not a field
-    // this module renders So "order note last" has no expression in
+    // this module renders. So "order note last" has no expression in
     // the payment tile - there is nothing to sort - and no plugin order-note
     // field was invented to give it one. The module relays core's value to Two
     // as `order_note`; see getCartOrderNote().

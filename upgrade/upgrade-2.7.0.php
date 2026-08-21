@@ -4,7 +4,7 @@
  *
  * 2.7.0 moves the optional buyer reference fields out of the billing address
  * block and into the Two payment tile, adds two more of them, and makes all
- * four visible out of the box on a FRESH install
+ * four visible out of the box on a FRESH install.
  *
  * WHAT THIS SCRIPT DOES - seed only, never overwrite:
  *

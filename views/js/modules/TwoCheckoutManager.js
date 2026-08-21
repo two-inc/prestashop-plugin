@@ -1421,7 +1421,12 @@ class TwoCheckoutManager {
                 const insertionPoint = this.twoPaymentOption.querySelector('.payment-option-content') ||
                                      this.twoPaymentOption.querySelector('.additional-information') ||
                                      this.twoPaymentOption;
-                insertionPoint.appendChild(container);
+
+                if (insertionPoint === this.twoPaymentOption) {
+                    insertionPoint.appendChild(container);
+                } else {
+                    insertionPoint.appendChild(container);
+                }
             }
         }
         return container;
