@@ -888,6 +888,12 @@ function panelParts() {
         // trader chip is selected, since the spinner is a sibling inside it.
         searchRow: $('.two-company-dropdown__search'),
         results: $('.two-company-dropdown__results'),
+        // The company-NAME field and the sole-trader in-flight spinner that
+        // now sits over it (TWO-40 follow-up). Outside the panel, unlike
+        // everything else here, and deliberately so: the spinner has to serve
+        // the "Select a different sole trader" flow, which opens no panel.
+        nameField: $("input[name='company']"),
+        nameSpinner: $('.two-company-name-spinner'),
         // The three-chip mode selector (TWO-40 design revision).
         modeChips: $('.two-company-mode-chips'),
         notListed: $('.two-company-not-listed'),

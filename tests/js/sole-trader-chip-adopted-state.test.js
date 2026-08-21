@@ -266,17 +266,58 @@ describe('query input suppressed while Sole Trader is selected (item 2)', () => 
         instance.destroy();
     });
 
-    test('the field stays visible for the flight of a FIRST sole-trader click, spinner and all', () => {
+    /**
+     * The direct reversal of what this test asserted for one round (Doug,
+     * TWO-40 follow-up): the row used to be un-hidden again for the duration
+     * of the flight, because the in-flight spinner lived inside it. The
+     * spinner has moved to the company-name field, and the rule is now that
+     * the hide is a pure function of the selected chip - "gate on mode alone,
+     * nothing else". A regression here means someone reintroduced a second
+     * condition in syncQueryFieldSuppression().
+     */
+    test('the row is hidden IMMEDIATELY by the chip click, and stays hidden for the flight', () => {
+        const instance = makeInstance();
+        stubSoleTrader();
+        openPanel();
+        expect(shown(panelParts().searchRow)).toBe(true);
+
+        panelParts().soleTrader.trigger('click');
+
+        // Synchronous with the click - no reopen needed, and the flight this
+        // same click just started does not buy the row a reprieve.
+        expect(shown(panelParts().searchRow)).toBe(false);
+        expect(shown(panelParts().query)).toBe(false);
+        // The panel is still open around it, and the spinner is on the name
+        // field where it can actually be seen.
+        expect(shown(panelParts().panel)).toBe(true);
+        expect(shown(panelParts().nameSpinner)).toBe(true);
+
+        instance.destroy();
+    });
+
+    /**
+     * The reopen-independence half of the same rule. `openPanel()` is what
+     * ran syncQueryFieldSuppression() in the version of this code where the
+     * sync was only reachable from the open path, so a test that closes and
+     * reopens cannot tell the two implementations apart - this one never
+     * closes the panel at all, and drives the mode purely from clicks.
+     */
+    test('the row hides and returns on chip clicks alone, with no close or reopen in between', () => {
         const instance = makeInstance();
         stubSoleTrader();
         openPanel();
 
         panelParts().soleTrader.trigger('click');
+        expect(shown(panelParts().searchRow)).toBe(false);
+        expect(shown(panelParts().panel)).toBe(true);
 
-        // Round 4's keep-open window: the spinner lives IN this field, so
-        // hiding the row for the duration would leave nothing to spin.
-        expect(shown(panelParts().query)).toBe(true);
-        expect(panelParts().query.hasClass('two-company-search-loading')).toBe(true);
+        panelParts().registered.trigger('click');
+        expect(shown(panelParts().searchRow)).toBe(true);
+        expect(shown(panelParts().panel)).toBe(true);
+
+        panelParts().soleTrader.trigger('click');
+        expect(shown(panelParts().searchRow)).toBe(false);
+        expect(shown(panelParts().panel)).toBe(true);
 
         instance.destroy();
     });
