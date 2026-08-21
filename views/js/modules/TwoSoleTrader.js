@@ -197,6 +197,14 @@ class TwoSoleTrader {
         // already true for a different call (TWO-40 round 8, adversarial
         // review finding, Han) - see getCurrentBuyer()'s own .finally().
         this._pendingTrustedResume = false;
+        // How many applyBuyer() write-backs are still out. A COUNT, not a
+        // boolean: a generation bump can leave two overlapping saveCompany
+        // round trips in the air, and the first one's `.finally()` must not
+        // report the second one finished. See isWriteRoundTripOutstanding().
+        this._pendingAdoptionWrites = 0;
+        // A notifyEnrollmentSettled() call that isWriteRoundTripOutstanding()
+        // held back, to be re-fired once it isn't. See flushDeferredSettle().
+        this._settleDeferred = false;
         // The setInterval handle for the 30-minute background token refresh
         // (TWO-40 follow-up) - held so destroy() can clear it. Started once,
         // by fetchTokens()'s own success branch, on the first real mint; see
@@ -415,6 +423,13 @@ class TwoSoleTrader {
             this._messageHandler = null;
         }
         this.messageListenerBound = false;
+        // A deferred settle belongs to the flight that deferred it, and this
+        // instance is not going to finish that flight - drop it rather than
+        // let a late `.finally()` dispatch it over whatever the buyer is
+        // doing by then. `_pendingAdoptionWrites` is deliberately NOT reset:
+        // an outstanding applyBuyer() still owns its own decrement, and
+        // zeroing the count here would just drive it negative.
+        this._settleDeferred = false;
     }
 
     container() {
@@ -886,8 +901,13 @@ class TwoSoleTrader {
         // eligible (buyer changed country mid-flow) must not keep showing a
         // prompt/status for it - mirrors the old chip's hide()-forces-business
         // behaviour, without a "business" mode to fall back to.
+        //
+        // The full abandon, popup included: the tokens this popup is signing
+        // against were minted for the country that just stopped being
+        // eligible (mintTokensRequest()), so there is nothing for the buyer to
+        // usefully finish in it.
         if (!available && this.enrolling) {
-            this.cancelEnrollment();
+            this.abandonEnrollment();
         }
         this.resyncSoleTraderChip();
     }
@@ -1057,19 +1077,29 @@ class TwoSoleTrader {
      * buyer explicitly moved on to search and select, with the order-intent
      * credit check then running against the WRONG entity and nothing on
      * screen to show it happened. See getCurrentBuyer()/applyBuyer().
+     *
+     * @param {boolean} [keepPopupTracked] Disown the WRITE without giving up
+     *   the popup handle. For a caller that is NOT a buyer gesture and does
+     *   not close the window it is walking away from -
+     *   TwoCompanySearch.destroy(), see there. Default false, because every
+     *   other caller IS such a gesture: the buyer has visibly moved on, so
+     *   tracking a window they are no longer looking at only holds the settle
+     *   back behind notifyEnrollmentSettled()'s popup-open guard.
      */
-    cancelEnrollment() {
+    cancelEnrollment(keepPopupTracked = false) {
         this._enrollGeneration += 1;
         // Belt-and-braces alongside afterTokensReady()'s own reset: an
         // abandoned startReplacement() must not leave this set for whatever
         // ORDINARY flow resumes next.
         this._skipAutofillCheck = false;
-        // The buyer moved on to a different search interaction, not the
-        // popup itself closing - stop tracking it (no leaked poll interval)
-        // and clear the reference so the notify below isn't held back by
-        // notifyEnrollmentSettled()'s popup-open guard.
-        this.stopPopupWatch();
-        this._popup = null;
+        if (!keepPopupTracked) {
+            // The buyer moved on to a different search interaction, not the
+            // popup itself closing - stop tracking it (no leaked poll interval)
+            // and clear the reference so the notify below isn't held back by
+            // notifyEnrollmentSettled()'s popup-open guard.
+            this.stopPopupWatch();
+            this._popup = null;
+        }
         if (!this.enrolling) {
             return;
         }
@@ -1086,7 +1116,41 @@ class TwoSoleTrader {
         // cancelEnrollment(), all of which now unbind their listener BEFORE
         // calling this, so this dispatch reaching an already-unbound
         // listener there is the expected, harmless case.
-        this.notifyEnrollmentSettled();
+        //
+        // Forced past notifyEnrollmentSettled()'s write-round-trip guard: the
+        // generation bump above has already disowned whatever lookup or write
+        // is still in the air, so there is nothing left worth waiting for -
+        // and waiting would hold a spinner up over a flow the buyer has
+        // already left for a different search interaction. Under
+        // `keepPopupTracked` the popup-open guard still holds it back, which is
+        // the point: nothing was taken away from the buyer, so the popup's own
+        // close is what settles.
+        this.notifyEnrollmentSettled(true);
+    }
+
+    /**
+     * The buyer is leaving the sole-trader flow: take the popup down AND
+     * disown what it started, as ONE operation.
+     *
+     * ONE method rather than two calls every caller has to remember (Doug,
+     * TWO-40 follow-up: "closure and enrolment cancelation [must be] a single
+     * atomic operation, not two separate functions as now. It's just begging
+     * to fail in some way."). It had already failed twice: "Enter manually"
+     * closed the popup and never cancelled, so a lookup still in flight landed
+     * on a company name the buyer had since typed by hand and ran the credit
+     * check against the identity they walked away from; openDropdown()
+     * cancelled and never closed, orphaning a window still on screen.
+     *
+     * closeSignupPopup() FIRST, and that ordering is the reason this pair
+     * cannot be left to callers: cancelEnrollment() nulls `this._popup`, so
+     * after it there is no handle left to close with.
+     *
+     * The one caller that wants only ONE half calls that half directly, and
+     * says why - see TwoCompanySearch.destroy().
+     */
+    abandonEnrollment() {
+        this.closeSignupPopup();
+        this.cancelEnrollment();
     }
 
     /**
@@ -1610,6 +1674,11 @@ class TwoSoleTrader {
                     return true;
                 }
             }
+            // AFTER the resume above, not before it: a resume re-holds the
+            // guard for a lookup that has not answered yet, and releasing a
+            // deferred settle in between would end the spinner in the middle
+            // of the very round trip it is waiting on.
+            self.flushDeferredSettle();
             return false;
         };
         // Same reasoning as fetchTokens()'s own try/catch around its
@@ -1822,6 +1891,12 @@ class TwoSoleTrader {
      */
     applyBuyer(buyer, generation) {
         const self = this;
+        // Held for this whole chain so the flight cannot settle - and the
+        // buyer's spinner cannot stop - before the company name and number
+        // are actually in the form. Released in `.finally()` below, which
+        // covers the superseded early return and showError() as well as the
+        // success branch. See notifyEnrollmentSettled().
+        this._pendingAdoptionWrites += 1;
         const companyLabel = buyer.company_name || buyer.organization_number || '';
         const body = new URLSearchParams({
             company: companyLabel,
@@ -1906,6 +1981,10 @@ class TwoSoleTrader {
             })
             .catch(function () {
                 self.showError();
+            })
+            .finally(function () {
+                self._pendingAdoptionWrites -= 1;
+                self.flushDeferredSettle();
             });
     }
 
@@ -2000,15 +2079,23 @@ class TwoSoleTrader {
         if (!this.tokens) {
             return null;
         }
+        // Round trip already handed off to a popup that is still open
+        // (adversarial review finding, Han + Vader independently) - opening a
+        // SECOND window here would orphan the first one, untracked:
+        // `this._popup` would move to the new popup and the poll would never
+        // learn the first window even existed, so a buyer who closes THAT one
+        // instead of the new one would leave the spinner stuck forever. Focus
+        // the existing popup instead.
+        //
+        // Gated on LIVENESS, not on whether the raise succeeded (round 2
+        // adversarial review finding). focusSignupPopup() answers "did I raise
+        // it?", which is what the Sole trader chip needs and NOT what this
+        // branch needs: it reports false for a focus() that threw, and
+        // returning false here would fall through and open the second window
+        // this guard exists to prevent. A window we hold and that is not
+        // `closed` must never be opened over, whether or not it can be raised.
         if (this._popup && !this._popup.closed) {
-            // Round trip already handed off to a popup that is still open
-            // (adversarial review finding, Han + Vader independently) -
-            // opening a SECOND window here would orphan the first one,
-            // untracked: `this._popup` would move to the new popup and the
-            // poll would never learn the first window even existed, so a
-            // buyer who closes THAT one instead of the new one would leave
-            // the spinner stuck forever. Focus the existing popup instead.
-            this._popup.focus();
+            this.focusSignupPopup();
             return this._popup;
         }
         const ps = window.prestashop;
@@ -2116,6 +2203,76 @@ class TwoSoleTrader {
     }
 
     /**
+     * Close the hosted signup popup, if one is still up.
+     *
+     * Still a separate method from cancelEnrollment() rather than folded INTO
+     * it, because cancelEnrollment() has one caller that must NOT close a
+     * popup (TwoCompanySearch.destroy(), see there). What no longer exists is a
+     * caller that wants BOTH and has to remember to say so twice:
+     * abandonEnrollment() is that pair, and is what "the buyer is leaving this
+     * flow" calls.
+     *
+     * `close()` is ours to call however cross-origin the popup's document is -
+     * we are the opener - and it is a no-op on a window that has already gone,
+     * which covers a buyer who closed it by hand and the hosted flow closing
+     * itself the moment it posted 'ACCEPTED'. `this._popup` is deliberately
+     * left for watchPopupUntilClosed()'s poll to clear, so the settle event
+     * still has exactly one owner.
+     *
+     * @returns {void}
+     */
+    closeSignupPopup() {
+        if (this._popup && !this._popup.closed) {
+            this._popup.close();
+        }
+    }
+
+    /**
+     * Raise the hosted signup popup back to the front, if one is still up.
+     *
+     * The counterpart to closeSignupPopup() for the ONE gesture that means
+     * "I want that popup, not this page" (Doug, TWO-40 follow-up): re-clicking
+     * the Sole trader chip while a popup from an earlier launch is still open.
+     * Every other way focus comes back to the checkout takes the popup down.
+     *
+     * `focus()` is wrapped because `closed` can flip between the check and the
+     * call - the hosted flow closes its own window the moment it has posted
+     * 'ACCEPTED', so a buyer completing signup in the same instant as this
+     * runs is a real interleaving, not a theoretical one. There is nothing to
+     * raise in that case and nothing to report either: the popup is going
+     * away for the right reason, and watchPopupUntilClosed()'s poll still owns
+     * clearing the handle and dispatching the settle.
+     *
+     * Raising a popup RE-ADOPTS it, which is why the tokens are re-stamped as
+     * current here (adversarial review round 2). "I want that popup" is exactly
+     * the explicit resume that startEnrollment()/startReplacement() re-stamp
+     * for, and without it a raise is the one way back into a popup that leaves
+     * `_tokensGeneration` behind - so the buyer's completion arrives and
+     * bindPopupMessageListener() drops it on the generation check, silently.
+     * That became reachable when destroy() started keeping a live popup across
+     * an instance rebuild: the cancel bumps the generation, the raise is the
+     * only thing the buyer does next, and nothing else would ever re-stamp it.
+     * A no-op on every other path here, which reaches this with the two
+     * generations already in agreement.
+     *
+     * @returns {boolean} whether a popup was actually there to raise, so a
+     *   caller can tell "brought it to the front" from "no popup open" and
+     *   pick a different behaviour for the latter.
+     */
+    focusSignupPopup() {
+        if (!this._popup || this._popup.closed) {
+            return false;
+        }
+        try {
+            this._popup.focus();
+        } catch (e) {
+            return false;
+        }
+        this._tokensGeneration = this._enrollGeneration;
+        return true;
+    }
+
+    /**
      * The hosted signup posts 'ACCEPTED' back to the opener when the
      * buyer completes registration; re-fetch the buyer to autofill.
      * Origin must be the signup page's own. Any other message from that
@@ -2163,11 +2320,11 @@ class TwoSoleTrader {
             // arrives, which reads as a brand-new legitimate attempt however
             // stale the tokens actually are - silently overwriting the real
             // selection the buyer made in between. `_tokensGeneration` is
-            // only re-stamped as current by an EXPLICIT resume
-            // (fetchTokens()'s success handler, or startEnrollment() calling
-            // back into an existing token set) - never by this listener
-            // itself - so a stale popup finishing on its own has no way to
-            // pass this check.
+            // only re-stamped as current by an EXPLICIT resume - fetchTokens()'s
+            // success handler, startEnrollment()/startReplacement() calling back
+            // into an existing token set, or focusSignupPopup() raising a popup
+            // the buyer asked for by name - never by this listener itself, so a
+            // stale popup finishing on its own has no way to pass this check.
             if (self._enrollGeneration !== self._tokensGeneration) {
                 return;
             }
@@ -2278,13 +2435,63 @@ class TwoSoleTrader {
      * defer to watchPopupUntilClosed()'s poll instead of firing early
      * whenever a popup is the thing still open. cancelEnrollment() clears
      * `this._popup` itself first, since that path means the buyer moved on
-     * to a different search interaction, not the popup closing.
+     * to a different search interaction, not the popup closing - except
+     * under its `keepPopupTracked` caller, which relies on this guard
+     * holding the settle back until the popup it left open closes.
+     *
+     * Gated on the post-popup WRITE too (Doug, TWO-40 follow-up: "the flow is
+     * complete when the popup is gone AND the lookup has come back AND the
+     * name and number are saved"). The popup poll fires within 500ms of the
+     * window closing, and the hosted flow closes it as soon as it has posted
+     * 'ACCEPTED' - so the poll routinely won this race against the
+     * getCurrentBuyer() -> saveCompany -> adoptEnrolledIdentity() chain that
+     * message starts, and settled the flight with the company field still
+     * empty. isWriteRoundTripOutstanding() covers that chain; whichever of
+     * the two finishes last is the one that dispatches.
+     *
+     * @param {boolean} [force] Dispatch even with a write round trip out.
+     *   For cancelEnrollment() only: the generation bump it just made means
+     *   that write can no longer publish anything, so waiting for it would
+     *   only leave the spinner up for a flow the buyer has already left.
      */
-    notifyEnrollmentSettled() {
+    notifyEnrollmentSettled(force = false) {
         if (this._popup && !this._popup.closed) {
             return;
         }
+        if (!force && this.isWriteRoundTripOutstanding()) {
+            this._settleDeferred = true;
+            return;
+        }
+        this._settleDeferred = false;
         document.dispatchEvent(new CustomEvent('two:sole-trader-flight-settled'));
+    }
+
+    /**
+     * @returns {boolean} whether a round trip that could still write the
+     *   company name/number into the form is outstanding - the buyer lookup
+     *   itself (`isFetchingBuyer`, which is deliberately held across the
+     *   read-after-write retry wait too, see getCurrentBuyer()) or an
+     *   applyBuyer() write-back it led to.
+     */
+    isWriteRoundTripOutstanding() {
+        return this.isFetchingBuyer || this._pendingAdoptionWrites > 0;
+    }
+
+    /**
+     * Re-fire a settle that isWriteRoundTripOutstanding() held back.
+     *
+     * Re-checks the predicate itself rather than trusting its callers, which
+     * is what lets it be called from every point one of those flags drops
+     * without each caller reasoning about the others - notably
+     * getCurrentBuyer()'s `settle()`, which may immediately re-issue a
+     * lookup for a pending trusted resume and so must NOT release the settle
+     * it is about to make outstanding again.
+     */
+    flushDeferredSettle() {
+        if (!this._settleDeferred || this.isWriteRoundTripOutstanding()) {
+            return;
+        }
+        this.notifyEnrollmentSettled();
     }
 }
 

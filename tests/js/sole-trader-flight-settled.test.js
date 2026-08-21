@@ -194,6 +194,271 @@ test('a genuine OTP completion settles the buyer lookup but withholds the spinne
     document.removeEventListener('two:sole-trader-flight-settled', handler);
 });
 
+/**
+ * TWO-40 follow-up, Doug live test: focus coming back to the checkout page has
+ * to take the hosted signup popup down with the panel and the spinner.
+ * TwoCompanySearch.js only ASKS for that (scheduleDropdownClose()); the close
+ * is this module's, since it holds the handle window.open() returned.
+ *
+ * The settle must still come from watchPopupUntilClosed()'s poll - the one
+ * owner it already had - not from a second dispatch on the close itself, or
+ * an abandon would settle a flight whose write-back may still be in the air.
+ */
+test('closeSignupPopup() closes a still-open popup, and leaves the settle to the poll that owns it', async () => {
+    buildPaymentTile();
+    document.body.insertAdjacentHTML('beforeend', "<input name='email' value='order-contact@example.test' />");
+
+    const popup = {
+        closed: false,
+        close: jest.fn(() => { popup.closed = true; })
+    };
+    global.window.open = jest.fn(() => popup);
+    stubFetch({ buyer: () => Promise.resolve({ ok: false, status: 404 }) });
+    const { calls, handler } = recordSettled();
+
+    jest.useFakeTimers();
+    try {
+        const instance = build();
+        try {
+            instance.startEnrollment();
+            await flushPromises();
+            await flushPromises();
+            await flushPromises();
+
+            document.querySelector('.two-sole-trader__prompt')
+                .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+            expect(instance._popup).toBe(popup);
+            const settlesBefore = calls.length;
+
+            instance.closeSignupPopup();
+
+            expect(popup.close).toHaveBeenCalledTimes(1);
+            // Nothing settled yet: the poll has not run, and this method
+            // deliberately does not dispatch on its own.
+            expect(calls.length).toBe(settlesBefore);
+
+            jest.advanceTimersByTime(500);
+
+            expect(calls.length).toBe(settlesBefore + 1);
+            expect(instance._popup).toBe(null);
+        } finally {
+            instance.destroy();
+        }
+    } finally {
+        jest.useRealTimers();
+    }
+    document.removeEventListener('two:sole-trader-flight-settled', handler);
+});
+
+/**
+ * focusSignupPopup() is closeSignupPopup()'s opposite number, for the ONE
+ * gesture that means "give me that popup back" - re-clicking the Sole trader
+ * chip. It reports whether there WAS a popup to raise, so TwoCompanySearch can
+ * tell that from "nothing open" and fall through to an ordinary launch.
+ *
+ * The throw case is not defensive padding: the hosted flow closes its own
+ * window the instant it has posted 'ACCEPTED', so `closed` flipping between
+ * the check and the call is a real interleaving. It must report false rather
+ * than propagate - a raise nobody can perform is not a failure worth taking
+ * the chip handler down with.
+ */
+test.each([
+    [() => null, false, false, 'no popup was ever opened'],
+    [() => ({ closed: true, focus: jest.fn() }), false, false, 'the popup has already gone'],
+    [() => ({ closed: false, focus: jest.fn() }), true, true, 'a live popup is raised'],
+    [() => ({ closed: false, focus: jest.fn(() => { throw new Error('gone'); }) }), false, true,
+        'the window went away between the check and the raise'],
+])('focusSignupPopup(): raised=%s called=%s when %s', (makePopup, raised, called) => {
+    buildPaymentTile();
+    stubFetch({});
+
+    const instance = build();
+    try {
+        const popup = makePopup();
+        instance._popup = popup;
+
+        expect(instance.focusSignupPopup()).toBe(raised);
+        if (popup) {
+            expect(popup.focus.mock.calls.length > 0).toBe(called);
+            // Never clears the handle - watchPopupUntilClosed()'s poll is the
+            // one owner of that, and of the settle it dispatches.
+            expect(instance._popup).toBe(popup);
+        }
+    } finally {
+        instance.destroy();
+    }
+});
+
+/**
+ * openPopup()'s never-open-over-a-live-window guard is gated on the window
+ * being live, NOT on the raise succeeding (round 2 adversarial review finding).
+ * A focus() that throws must still return the existing handle: falling through
+ * would window.open() a second popup and retarget `this._popup` onto it,
+ * orphaning the first untracked - the exact failure that guard exists for
+ * (guide §14).
+ */
+test('openPopup() returns the live popup even when raising it throws, rather than opening a second', () => {
+    buildPaymentTile();
+    stubFetch({});
+
+    const instance = build();
+    try {
+        const popup = {
+            closed: false,
+            focus: jest.fn(() => { throw new Error('gone'); })
+        };
+        instance._popup = popup;
+        instance.tokens = { signup_url: 'https://signup.example.test/', delegation_token: 'd', autofill_token: 'a' };
+        global.window.open = jest.fn();
+
+        expect(instance.openPopup()).toBe(popup);
+        expect(global.window.open).not.toHaveBeenCalled();
+    } finally {
+        instance.destroy();
+    }
+});
+
+/**
+ * The abandon can land on a window that is already gone - the buyer closed it
+ * by hand, or the hosted flow closed it itself the moment it posted
+ * 'ACCEPTED', which is the ordinary ordering (see the test below). Both must
+ * be no-ops rather than a throw that takes the panel close down with it.
+ */
+test('closeSignupPopup() is a safe no-op with no popup, or one that has already gone', async () => {
+    buildPaymentTile();
+    stubFetch({});
+
+    const instance = build();
+    try {
+        expect(instance._popup).toBe(null);
+        expect(() => instance.closeSignupPopup()).not.toThrow();
+
+        const alreadyClosed = { closed: true, close: jest.fn() };
+        instance._popup = alreadyClosed;
+        instance.closeSignupPopup();
+
+        expect(alreadyClosed.close).not.toHaveBeenCalled();
+    } finally {
+        instance.destroy();
+    }
+    await flushPromises();
+});
+
+/**
+ * The OPPOSITE ordering to the test above, and the common one in a real
+ * browser: the hosted flow closes its own window as soon as it has posted
+ * 'ACCEPTED', so the 500ms popup poll routinely observes `closed` while the
+ * getCurrentBuyer() -> saveCompany -> adoptEnrolledIdentity() chain that
+ * message started is still in the air.
+ *
+ * Doug's definition of complete (TWO-40 follow-up) is popup closed AND the
+ * lookup resolved AND the company name/number written - all three, not the
+ * first one. The buyer watches a spinner over the company-name field for
+ * exactly this duration, and settling at popup-close dropped it while the
+ * field was still empty.
+ *
+ * This test is written to FAIL against a popup-close-only settle: the
+ * assertion right after `popup.closed = true` is the whole point of it, and
+ * the ordering assertion at the end is what stops the two events being
+ * "eventually both true" in an order nobody checked.
+ */
+test('the popup closing does NOT settle the flight while the write-back is still out - the write does', async () => {
+    buildPaymentTile();
+    global.window.TwoCompanyNumber = { forDisplay: (v) => v };
+
+    const order = [];
+    global.window.TwoCheckoutManager_Instance = {
+        setConfirmedCompanySelection: () => {},
+        companySearch: {
+            adoptSoleTraderBuyer: () => {
+                order.push('write');
+                return true;
+            }
+        }
+    };
+    document.body.insertAdjacentHTML('beforeend', "<input name='email' value='order-contact@example.test' />");
+
+    const popup = { closed: false };
+    global.window.open = jest.fn(() => popup);
+
+    // Held open so the popup can close first, then released by hand.
+    let releaseSave;
+    const savePending = new Promise((resolve) => { releaseSave = resolve; });
+
+    let buyerLookupCalls = 0;
+    stubFetch({
+        buyer: () => {
+            buyerLookupCalls += 1;
+            if (buyerLookupCalls === 1) {
+                return Promise.resolve({ ok: false, status: 404 });
+            }
+            return Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({
+                    email: 'sole-trader-real-account@example.test',
+                    company_name: 'Sole Trader AS',
+                    organization_number: '923456789'
+                })
+            });
+        },
+        save: () => savePending.then(() => ({ json: () => Promise.resolve({ success: true }) }))
+    });
+
+    const calls = [];
+    const handler = () => { calls.push(true); order.push('settle'); };
+    document.addEventListener('two:sole-trader-flight-settled', handler);
+
+    jest.useFakeTimers();
+    try {
+        const instance = build();
+        try {
+            instance.startEnrollment();
+            await flushPromises();
+            await flushPromises();
+            await flushPromises();
+            expect(calls.length).toBe(1);
+
+            document.querySelector('.two-sole-trader__prompt')
+                .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+            expect(instance._popup).toBe(popup);
+
+            window.dispatchEvent(new window.MessageEvent('message', {
+                data: 'ACCEPTED',
+                origin: 'https://signup.example.test'
+            }));
+            await flushPromises();
+            await flushPromises();
+
+            // The lookup came back and applyBuyer() is now waiting on
+            // saveCompany - nothing has been written yet.
+            expect(order).not.toContain('write');
+
+            // The hosted flow closes its window here, BEFORE the write lands.
+            popup.closed = true;
+            jest.advanceTimersByTime(500);
+            await flushPromises();
+
+            // The assertion this test exists for. Popup gone, poll fired,
+            // and the flight is still NOT settled.
+            expect(calls.length).toBe(1);
+
+            releaseSave();
+            await flushPromises();
+            await flushPromises();
+            await flushPromises();
+
+            expect(calls.length).toBe(2);
+            // And in this order, not merely both eventually true.
+            expect(order).toEqual(['settle', 'write', 'settle']);
+        } finally {
+            instance.destroy();
+        }
+    } finally {
+        jest.useRealTimers();
+    }
+    document.removeEventListener('two:sole-trader-flight-settled', handler);
+});
+
 test('a failed token mint fires the settle event', async () => {
     buildPaymentTile();
     stubFetch({ tokens: () => Promise.resolve({ json: () => Promise.resolve({ success: false }) }) });

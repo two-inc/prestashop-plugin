@@ -82,6 +82,11 @@ claim below as DOM-verified, cited by the actual structure captured live:
   already-ADOPTED identity — cancelling a signup in progress does not un-adopt a
   completed one. Derive the reopened selection from whether an identity is adopted,
   not from a mode variable the reopen path is free to clobber. Full rules in §11.
+- **Being inside the panel means every chip click is a `focusout`/`focusin` pair the
+  panel's own close machinery reacts to**, so any behaviour the panel hangs off "focus
+  left me" is a behaviour the chips silently opt out of. That is not a detail of the
+  close handler; it is a consequence of this section's nesting, and it cost three chips
+  the popup-lifetime decision — see §14's gesture rules.
 - **Chip labels are sentence case on both platforms** — "Registered company", "Sole
   trader", "Enter manually" (`1c1b3d7` aligned PrestaShop onto WooCommerce's existing
   wording; WooCommerce `f8ca174` then fixed its own last title-cased straggler,
@@ -344,19 +349,63 @@ is not persisted here", never to a dropped payment record.
 
 - **In-flight spinner:** while the sole-trader autofill/token-fetch/signup-check
   round trip is running, keep the company-search control OPEN (don't close it) and
-  show a spinner inside the query/search input field itself — not a separate overlay.
-  Wire it to the real async duration (resolve on an actual "flight settled" event
-  fired from every terminal branch of the async call graph — success, failure,
-  retry-exhausted, abandoned), never a fixed timeout. Adversarial review on this
-  exact feature found real races on every iteration (stuck-forever spinners on two
-  different abandon/retry paths, a missing re-entrancy guard causing double signup
-  popups, a guard released too early) — budget for multiple review rounds, don't
-  expect to get this right in one pass.
+  show a spinner over the company-NAME field — not a separate overlay, and not in
+  the dropdown's query field. Wire it to the real async duration (resolve on an
+  actual "flight settled" event fired from every terminal branch of the async call
+  graph — success, failure, retry-exhausted, abandoned), never a fixed timeout.
+  Adversarial review on this exact feature found real races on every iteration
+  (stuck-forever spinners on two different abandon/retry paths, a missing
+  re-entrancy guard causing double signup popups, a guard released too early) —
+  budget for multiple review rounds, don't expect to get this right in one pass.
+  - **The NAME field, not the query field, and this was arrived at the long way
+    round.** Earlier rounds put it in the query input, which §1 does settle as
+    where an in-field spinner on ordinary company search belongs. It cannot be
+    where the sole-trader one belongs, for two independent reasons: selecting the
+    Sole trader chip hides that whole row immediately (§11 rule 2), so the spinner
+    has nowhere to paint and an earlier round had to un-hide the row for the flight
+    — which reintroduced the very bug rule 2 exists to fix; and the "select a
+    different sole trader" flow opens no dropdown at all, so it had no query field
+    to use and showed no spinner whatsoever. The name field is on screen in both
+    flows and is where the value being fetched is going to land. PrestaShop
+    `doug/two40-soletrader-spinner-rehome`.
   - **"Settled" means the popup CLOSED, not that `window.open()` returned**
     (PrestaShop `5651374`, live-reported). The spinner was clearing the instant the
     window was handed to the browser, leaving the buyer's whole signup happening
     behind an idle-looking checkout. Poll the popup handle's `.closed`, and make every
     exit path (popup close, cancel, teardown) stop that poll so no interval leaks.
+  - **…and popup-closed is still not the END of it — the WRITE is** (Doug, live,
+    PrestaShop `doug/two40-soletrader-spinner-rehome`). "Complete" is: the popup is
+    gone, AND the post-popup buyer lookup has fired and resolved, AND the company
+    name/number have been written to every field and variable that holds them.
+    Those are separate moments, and the popup one usually comes FIRST: the hosted
+    flow closes its own window as soon as it has posted its completion message, so
+    a 500ms `.closed` poll routinely wins the race against the lookup → save →
+    write chain that message starts, and the spinner dropped with the field still
+    empty. Extend the existing settle gate rather than adding a second signal
+    beside it — hold the dispatch while a lookup or a write-back is outstanding,
+    and let whichever finishes last do the dispatching. Do NOT reach for the
+    "adoption succeeded" event as the spinner's clear signal instead: it fires only
+    on the success path, so every failure and abandon would spin forever.
+    A cancel/abandon must be able to FORCE the dispatch past that gate, since the
+    generation bump it performs has already disowned whatever is still in the air.
+  - **Focus returning to the checkout page must take the POPUP down with the
+    spinner and the panel** (Doug, live, PrestaShop
+    `doug/two40-soletrader-spinner-rehome`). All three are one abandon, and it is
+    easy to implement a subset of it: PrestaShop stopped the spinner and closed the
+    dropdown on that path but left the hosted popup on screen. The trigger already exists if the
+    panel has a deferred close-on-focus-leaving handler (§1) — hang the popup close
+    off THAT decision point, not off the generic "panel closed" path, which also
+    covers a completed selection and a platform re-render and would slam a live
+    popup shut. It must sit AFTER that handler's own guards: a focus-out caused by
+    clicking one of the panel's own chips puts focus back inside the panel and
+    that chip's handler owns the flow. Closing is the opener's privilege however
+    cross-origin the popup is, and is a no-op on a window that has already gone —
+    so a buyer who hand-closed it, and a hosted flow that closed itself the moment
+    it posted its completion message, both need no special case. Leave the
+    `.closed` poll to clear the handle and dispatch the settle, so that stays a
+    one-owner job. Do NOT fold this into the resumable cancel/abandon call (§14's
+    "still glancing around" case) — that one runs on every reopen of the search
+    control and must leave the popup alone.
 - **Tokens must already exist when the chip is clicked.** A chip click has exactly two
   allowed outcomes — populate a company, or open the signup popup — and a fallback
   note/link is neither (WooCommerce `df1aaa1`). Minting inside the click handler puts
@@ -590,12 +639,21 @@ than a wrong implementation of it — read both corrections before implementing 
    Three consequences that are easy to miss, all found by review rather than by
    testing the happy path:
 
-   - **Hide the query field's whole ROW, not the input.** The in-field spinner is an
-     absolutely-positioned sibling *inside* that row, so hiding the input alone
-     collapses the row to zero height and strands the spinner at its top edge. And
-     the hide has to stand down for the duration of a sole-trader flight, because
-     that same spinner in that same field IS the in-progress state the keep-open
-     window exists to show (rule 3's ordering trap lives next door to this).
+   - **Hide the query field's whole ROW, not the input.** The ordinary live-search
+     spinner is an absolutely-positioned sibling *inside* that row, so hiding the
+     input alone collapses the row to zero height and strands that spinner at its
+     top edge.
+   - **Gate the hide on the selected chip and NOTHING ELSE** (Doug, live). It has to
+     take effect on the click that selects the chip, synchronously, with no reopen
+     required — so drive it from wherever chip selection is rendered, not from the
+     panel's open handler, or it will look correct in every test that closes and
+     reopens and be wrong for the buyer who never closes anything. An earlier round
+     added a second condition — stand the hide down while a sole-trader flight is in
+     progress, because the in-flight spinner then lived in this very field — and
+     that condition WAS the bug: the chip click hid the row and un-hid it in the
+     same gesture, so a row the buyer had been told would go stayed up for the whole
+     round trip. The spinner belongs on the company-name field instead (§7); with it
+     gone, no second condition is needed and none should be added back.
    - **Something else in the panel has to take focus on open.** The open path focuses
      the query field; `.focus()` on a `display:none` element silently does nothing,
      leaving focus on the company-name field — *outside* the panel, and the panel is
@@ -628,6 +686,23 @@ than a wrong implementation of it — read both corrections before implementing 
    opposite of what "select a different" means. Shared entry points need a shared
    re-entrancy guard: the relaunch opens the popup SYNCHRONOUSLY with no guard of its
    own, so without one a double-click reliably opens two signup popups (§14).
+
+   **"The same call" means the same in-flight state too, not just the same
+   function** (Doug, live). Both entry points show the same spinner, in the same
+   place, for the same §7 duration. The first implementation shared the relaunch
+   function but gave each entry point its own loading flag and its own settle
+   listener under its own namespace — with the result that the standalone button
+   showed no spinner at all, and a chip click could open a second hosted popup over
+   a replacement flow already in flight, which is exactly what §14 forbids. One
+   flag, one listener, one spinner, for both. The single genuine difference is the
+   dropdown's open/closed state — the chip click leaves it open throughout, the
+   button never had one — and the resolution is to close the dropdown at
+   flow-complete **only if it is open**, a no-op otherwise. Not two flows; one flow
+   and one conditional. (Consequence worth stating: whatever renders/re-renders the
+   "select a different" element must NOT release that shared flag as a
+   belt-and-braces measure, because the successful adoption re-renders it
+   *mid-flight* — that release would drop the spinner just before the write it is
+   waiting for.)
 3. **Clicking back to "Registered company" keeps the dropdown OPEN with focus in the
    query field.** Unlike the other two chips, this one is not a hand-off to another
    flow — it means "stay here, search normally" — so it must not close the panel, and
@@ -774,6 +849,181 @@ Rules that generalise:
   adopted flag while that popup was undecided.
 - If you are writing round N+1 of a predicate over a list of popup records, stop and
   change the design. That is what this section is.
+
+**Once there is exactly one popup, decide which GESTURE closes it — in each gesture's
+own handler, never in the shared focus machinery.** Doug's rule: focus returning to the
+checkout page closes the popup, and the ONE exception is clicking the Sole trader chip,
+which means "give me that popup back" and must raise it to the front instead. Whichever
+other chip took the focus closes the popup *and* still does its own job unchanged.
+
+The trap is §0's fact — the chips are DOM children of the search panel — meeting the
+panel's own deferred close-on-focus-leaving. That close is what owns the popup
+(PrestaShop `928a84a`), and it cancels itself on any `focusin` back into the panel,
+which is exactly what a chip click produces. So all three chips escaped the popup
+decision, and which of them nevertheless closed it was decided by where its own action
+happened to leave focus afterwards (PrestaShop #176 `8c7447f`):
+
+- **"Enter manually" got the right outcome by accident** — it ends by focusing the
+  company-name field *outside* the panel, which re-scheduled a close nobody asked for.
+  Correct on screen, untested, and one refactor of that focus destination from breaking.
+- **"Registered company" left the popup up** — it focuses the query field, *inside* the
+  panel, so the close it needed was the one it cancelled.
+- **The Sole trader chip resolved to NOTHING AT ALL** — neither closing nor raising. Its
+  re-entrancy guard reads the in-flight spinner flag, and that flag stays true for the
+  popup's whole lifetime, so a re-click was swallowed before anything could raise the
+  window the buyer was asking for. The focus-the-existing-popup branch this guide already
+  credits above (`06655fb`) was live and correct, and unreachable.
+
+Rules that generalise:
+
+- Each gesture states its own answer explicitly. Three cases that differ must be
+  *structurally* distinct and readable as such, not separated by which one happens to
+  move focus where. A correct outcome you cannot point at a line for is a timing
+  accident with a good week.
+- **Gate the popup close on the PAGE having focus (`document.hasFocus()`), not on where
+  `activeElement` landed.** The rule is "focus came back to the *page*", so a focus-out
+  to another window — the popup you just raised, or another application — must leave the
+  popup alone. The first round of this fix cancelled only the close already pending when
+  the chip was clicked, and the close that the *raise itself* provokes arrives after that
+  handler has returned; what actually saved it was Chrome leaving `activeElement` on a
+  clicked `<button>` across the window deactivation. Incidental browser behaviour holding
+  up a spec rule. **Scope the guard to the popup decision only** — widening it to the
+  panel's own close changes when the panel survives an app switch, which is a separate
+  question and broke a pinned test when tried.
+- **Mutation-test this class of fix; the tests lie otherwise.** Three of the first
+  round's tests passed with the line they existed to pin deleted: two because letting
+  the deferred close run lets "Enter manually" satisfy the assertion through the old
+  accidental route, one because leaving focus on a control inside the panel means the
+  earlier `activeElement` guard returns before the code under test. Assert the handler's
+  own call *before* advancing timers, and put focus genuinely outside the panel.
+- **Report the raise as a boolean** ("was there a popup to raise?"), so the same handler
+  can fall through to an ordinary first-time launch when there was not. A void raise
+  forces the caller to keep its own second opinion about whether a popup is open, which
+  is the drift §0 warns about in a different register.
+- **Close BEFORE the cancel — and make that ordering unreachable.** The cancel path
+  deliberately nulls the popup handle, so a close attempted after it has no handle left
+  and the window sits there orphaned. Do not leave the sequence to callers; see the
+  atomic-operation rule below.
+- **Wrap the `focus()`.** The hosted flow closes its own window the instant it has
+  posted `ACCEPTED`, so `closed` flipping between the check and the call is a real
+  interleaving, not a theoretical one. Nothing to raise then and nothing to report; the
+  close poll still solely owns clearing the handle and dispatching the settle.
+- **Closure and cancellation are ONE operation, not two functions callers pair up.**
+  Doug's architectural call (PrestaShop #176 `4156ad3`), after both ways of getting the
+  pair wrong had shipped: *"the fix also requires that we make closure and enrolment
+  cancelation a single atomic operation, not two separate functions as now. It's just
+  begging to fail in some way."* It was. "Enter manually" closed without cancelling;
+  every dropdown open cancelled without closing. Neither is a bug you find by reading the
+  handler that has it — each one reads as a deliberate narrow choice, and the earlier
+  version of this very bullet blessed it as one.
+
+  So expose `abandonEnrollment()` — close, then cancel — and let every "the buyer is
+  leaving this flow" gesture call that. Keep the halves callable only for a caller that
+  genuinely wants one, and make it say why in a comment: on PrestaShop exactly two do
+  (see the remaining gap below, and the panel's focus-out close, which takes the popup
+  down without deciding anything about the enrolment because looking away is not a
+  decision). The win is not tidiness, it is that a THIRD caller cannot be added with the
+  ordering wrong or a half forgotten.
+- **Prefer one atomic operation over a skip-this-half parameter.** The first draft of the
+  re-render fix was a flag telling the reopen path not to cancel — which leaves the pair
+  separable and the next caller free to get it wrong again. A parameter is still right for
+  distinguishing *who is asking* (see the re-render rule below); it is wrong for
+  splitting an operation that should not be splittable.
+
+**Every gap this section used to log as "documented rather than fixed" is now FIXED
+(PrestaShop #176 `4156ad3`, `ffe4b53`).** Kept here because the *shape* of each is what a
+port needs to avoid, and because the fix is the atomic-operation rule above rather than
+anything local to either symptom.
+
+- **FIXED — a live popup went untracked whenever the panel reopened.** Reopening called
+  the cancel path unconditionally, which nulls the popup handle — so the window was left
+  on screen with nothing holding it, and the next Sole trader click opened a second one.
+  Escape reaches this by hand (it goes straight to the panel close and never touches the
+  popup), but the *common* trigger was not a buyer gesture at all: the platform's own
+  address-form re-render restores the panel through the same reopen path, and per §17 that
+  event can land tens of milliseconds after the click that opened the panel — its XHR
+  callback is not blocked by the buyer being away in the popup window, so this fired at
+  buyers who were *looking at* the thing it cancelled. Now a buyer-initiated reopen closes
+  the popup as well as cancelling (so nothing is orphaned), and the re-render restore does
+  neither. The billing-country change listener reached this too, and now closes as well —
+  its tokens were minted against the country the buyer just left, so there is nothing to
+  finish in that window.
+- **FIXED — "Enter manually" closed the popup without cancelling the enrolment**, so a
+  buyer lookup already in flight still resolved afterwards, and its write-back has no
+  manual-entry guard: it overwrote the company name the buyer was now typing by hand and
+  rendered the adopted-sole-trader affordance inside manual-entry mode. The credit check
+  then ran on the identity they had just walked away from — §5's write-back state machine,
+  reached through a gesture rather than a race. Escape has the same hole for the same
+  reason (the panel close never cancels either). The chip now abandons; note the earlier
+  round's reasoning that the reopen's own cancel covered it was wrong, because that cancel
+  happens *before* the buyer can start a new flight from the reopened panel.
+- **A silent auto-restore must not inherit a buyer gesture's side effects.**
+  `restorePanelAfterRerender()` reopens a panel the platform tore down, and its doc already
+  said it "restores only what the buyer already had" — but it reached that by calling the
+  same `openDropdown()` a buyer click does, so it silently inherited the abandon. Pass the
+  distinction explicitly (`openDropdown(buyerInitiated)`), and do NOT try to infer it from
+  the reopen deadline being armed: the buyer's own click arms that too, so a re-render
+  landing in the same tick as a genuine click would be indistinguishable. An argument at
+  the call site cannot be ambiguous however the timing falls.
+- **FIXED — instance teardown discarded the handle** (PrestaShop #176 `ffe4b53`). The
+  platform destroys and rebuilds the search instance on every address-form re-render (§17),
+  and `destroy()` cancels the enrolment to disown flights that would otherwise resolve
+  against a replaced instance — but that cancel also nulled the popup handle, so the full
+  re-render path left a live popup owned by nobody. Closing it there would be wrong: the
+  enrolment object is a singleton that outlives the search instance, and the buyer may be
+  filling the popup in because their shipping total recalculated behind it. So the cancel
+  now takes a flag that disowns the WRITE only (`cancelEnrollment(keepPopupTracked)`) and
+  leaves the poll and the handle alone; the settle event's popup-open guard needs no change
+  and instead becomes the mechanism, holding the spinner until the buyer's own popup closes.
+- **A surviving popup has to be RE-ADOPTABLE, not just re-findable** (round 2 adversarial
+  review of the fix above). Disowning the write bumps the generation the popup's own
+  completion message is checked against, so keeping the handle alive is only half an
+  answer: the buyer finishes signing up, the message is dropped on that check, and they get
+  an empty company field, no error, and — once the raise arms a spinner — something on
+  screen actively claiming progress. Raising a tracked popup is therefore the same explicit
+  resume as starting one, and re-stamps the token generation. Miss this and the two entry
+  points silently disagree, because the replacement-flow link re-stamps on its own path and
+  the chip does not.
+- **The raise branch is load-bearing on all of this, and is a trap when changing it.** That
+  branch sits before the re-entrancy guard. It used to be reachable only with a flight of
+  the current panel-open session still running — and the fix above deliberately widened
+  that: a popup now outlives the instance that launched it, so a *replacement* instance
+  meets one it never started, with no flight of its own. Anything in that shape must decide
+  what it owes the spinner/settle bookkeeping, because a raise with no spinner and no settle
+  listener is not an answer — it leaves the restored panel with nothing to close it when the
+  popup finally goes. The branch therefore arms the spinner itself, which is a no-op on its
+  own re-entrancy guard in the ordinary same-session case.
+
+**Cross-platform: WooCommerce had one of these two gaps and its architecture rules out the
+other (WooCommerce PR #487 `7a11acb`).**
+
+- **The re-render trigger cannot reach the flow.** WooCommerce's equivalent reopen path is
+  `refresh()` → `hide()`, bound to `updated_checkout` — a coupon apply, a shipping-method
+  change, a quantity edit, not only a country change. Its mode revert is gated on nothing
+  being outstanding, and that predicate is true for as long as any popup RECORD exists, so
+  an incidental re-render cannot null popup state under a live popup. The widget-rebuild
+  paths are DOM-only and never touch popup or flight state, because the records live in a
+  module-level array rather than being torn down with the widget. The porting lesson:
+  records kept OFF the widget, plus every *derived* mode revert gated on "is anything still
+  outstanding", is what makes the platform's own re-render harmless — a single handle
+  nulled by a UI-restore function is what makes it fatal.
+- **The gesture trigger did reach it.** Every exit from sole-trader mode funnelled through
+  one function that dropped the popup records without CLOSING the windows and left the
+  autofill lookup running. So a deliberate exit — click-to-reopen on a captured field, the
+  Registered company chip, an ordinary registry pick — orphaned a still-open popup (the
+  next chip click then opened a second over it) AND let the lookup re-enter sole-trader
+  mode and re-adopt behind the buyer, credit check included. Fixed as one operation at that
+  single choke point: close the windows, THEN drop the records, then invalidate the lookup
+  through the same supersession counter the newer-flight case already used. Having exactly
+  one choke point is why this was a small fix and not a redesign — the records-not-a-handle
+  argument applies to the EXITS, not only the launches.
+- **One divergence by design, not a gap.** PrestaShop counts "the write-back has no
+  manual-entry guard" as a bug (fixed above). WooCommerce counts it as supported and pins
+  it (#486): a buyer who says "my company isn't in the registry", starts typing, then
+  corrects their email to one Two knows IS adopted, with the picker re-attached to render
+  the adopted name. The two platforms disagree here by design, not by oversight — settle it
+  the same way on both, or record why not, before porting a third platform from either one
+  alone.
 
 ## 15. Delegated-auth tokens expire while checkout sits open
 
