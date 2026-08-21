@@ -2243,6 +2243,18 @@ class TwoSoleTrader {
      * away for the right reason, and watchPopupUntilClosed()'s poll still owns
      * clearing the handle and dispatching the settle.
      *
+     * Raising a popup RE-ADOPTS it, which is why the tokens are re-stamped as
+     * current here (adversarial review round 2). "I want that popup" is exactly
+     * the explicit resume that startEnrollment()/startReplacement() re-stamp
+     * for, and without it a raise is the one way back into a popup that leaves
+     * `_tokensGeneration` behind - so the buyer's completion arrives and
+     * bindPopupMessageListener() drops it on the generation check, silently.
+     * That became reachable when destroy() started keeping a live popup across
+     * an instance rebuild: the cancel bumps the generation, the raise is the
+     * only thing the buyer does next, and nothing else would ever re-stamp it.
+     * A no-op on every other path here, which reaches this with the two
+     * generations already in agreement.
+     *
      * @returns {boolean} whether a popup was actually there to raise, so a
      *   caller can tell "brought it to the front" from "no popup open" and
      *   pick a different behaviour for the latter.
@@ -2256,6 +2268,7 @@ class TwoSoleTrader {
         } catch (e) {
             return false;
         }
+        this._tokensGeneration = this._enrollGeneration;
         return true;
     }
 
