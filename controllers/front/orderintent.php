@@ -16,17 +16,11 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $this->context = Context::getContext();
     }
 
-    /**
-     * Basic initialization - called for any request to this controller
-     */
     public function init()
     {
         parent::init();
     }
 
-    /**
-     * Post processing - another fallback for AJAX handling
-     */
     public function postProcess()
     {
         
@@ -95,12 +89,10 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
 
     /**
      * Whether the sole trader toggle applies for a billing country
-     * (TWO-24755). Combines the registry endpoint's country answer with
-     * the merchant toggle, both server-side; JS only renders the result.
-     * Runs live as the buyer edits the address form (before any invoice
-     * address is necessarily saved on the cart), so the country is
-     * whatever the buyer currently has selected - this endpoint only
-     * decides whether to SHOW the toggle, not anything security-bearing.
+     * (TWO-24755). Runs live as the buyer edits the address form (before any
+     * invoice address is necessarily saved on the cart), so the country is
+     * whatever the buyer currently has selected - this endpoint only decides
+     * whether to SHOW the toggle, not anything security-bearing.
      */
     public function ajaxProcessSoleTraderAvailability()
     {
@@ -111,21 +103,12 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $country = (string) Tools::getValue('country');
         $available = TwoSoleTrader::isAvailable($this->module, $country);
         // Persist the registry answer this lookup may have just cached BEFORE the
-        // response ends the request (TWO-25326 round 4 review). The payment tile
-        // renders the toggle from that cookie and never resolves it itself, so
-        // this write is what makes the server-rendered toggle exist at all - it is
-        // not a tidy-up. PrestaShop's Cookie writes itself from its destructor,
-        // which does run on the exit() below, but only while headers are still
-        // unsent - i.e. contingent on output buffering, which is an ini setting
-        // and not something this endpoint should depend on.
-        //
-        // Several other cookie-mutating actions here already write explicitly, so
-        // this is the established pattern rather than a new one - though not all of
-        // them do, and some only on part of their paths. Those are the same latent
-        // dependence, noted rather than changed because none of them is what this
-        // ticket is about and none has ever been reported failing. Deliberately not
-        // enumerated: a list of which actions do and do not is exactly the comment
-        // that goes stale, and has already been wrong twice on this branch.
+        // response ends the request (TWO-25326). The payment tile renders the
+        // toggle from that cookie and never resolves it itself, so this write is
+        // what makes the server-rendered toggle exist at all. PrestaShop's Cookie
+        // writes itself from its destructor, which does run on the exit() below,
+        // but only while headers are still unsent - i.e. contingent on output
+        // buffering, an ini setting this endpoint should not depend on.
         if ($this->context->cookie) {
             $this->context->cookie->write();
         }
@@ -137,50 +120,24 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
 
     /**
      * Mint the delegation + autofill tokens for the sole-trader flow
-     * (TWO-24755) and hand the browser what it needs to open the hosted
-     * signup popup and autofill the buyer. The merchant API key stays
-     * server-side; tokens are scoped and short-lived by the Two API.
+     * (TWO-24755). The merchant API key stays server-side; tokens are scoped
+     * and short-lived by the Two API.
      *
-     * The one authorisation gate on minting is
-     * TwoSoleTrader::isAvailable($this->module, $iso) - the registry's answer
-     * for a billing country, re-evaluated SERVER-SIDE on every call. It is
-     * never taken from the browser, and a country that does not resolve at
-     * all is refused rather than defaulted. That is what stops this endpoint
-     * being a token oracle where the flow is off or the country ineligible.
+     * The one authorisation gate on minting is TwoSoleTrader::isAvailable() -
+     * re-evaluated SERVER-SIDE on every call, never taken from the browser, and
+     * a country that does not resolve at all is refused rather than defaulted.
+     * That is what stops this endpoint being a token oracle where the flow is
+     * off or the country ineligible.
      *
-     * What the country is resolved FROM is a correctness question, not a
-     * security boundary (TWO-40): the country the request POSTS is the answer
-     * whenever it has the shape of one, and the cart's delivery address is a
-     * last resort for a request that carried no usable country at all. The
-     * buyer's live in-page selection is the only value that describes the
-     * address this order will actually be billed to; a country already
-     * committed to the cart is a snapshot that the buyer may be in the middle
-     * of changing, which is the bug this ordering exists to close.
+     * A posted country is preferred over the cart's (TWO-40) and grants no
+     * privilege: mintTokens() takes no country, its delegation scopes are
+     * fixed, so a spoofed country only ever permits minting in a country the
+     * registry already supports sole traders in - which the browser can learn
+     * anyway from the `soleTraderAvailability` action.
      *
-     * Preferring the posted value grants no privilege whatsoever:
-     *
-     *  - the mint itself takes no country - TwoSoleTrader::mintTokens() has a
-     *    single `$module` parameter and both delegation payloads it posts are
-     *    fixed scope lists with no country in them, so the tokens are
-     *    country-independent and there is no per-country capability to
-     *    escalate into;
-     *  - the registry check still runs here, on the server, on every call, so
-     *    a spoofed country only ever permits minting in a country the registry
-     *    ALREADY supports sole traders in;
-     *  - and the browser can already learn exactly that set for any country it
-     *    likes from the `soleTraderAvailability` action above, which answers a
-     *    client-supplied country by design.
-     *
-     * So the posted value can move the answer from "unresolved" to "the
-     * registry's own answer for some real country", and nothing else. The
-     * other Two plugins' equivalent handlers resolve it the same way.
-     *
-     * Why a posted country has to be usable at all: on the checkout
-     * address-editor page the cart usually has NO invoice address yet, which
-     * is precisely when the buyer clicks "I'm a sole trader". Requiring one
-     * refused every single one of those attempts, and the browser has no place
-     * to show that error on that page, so the entry point simply dead-ended in
-     * silence.
+     * A posted country has to be usable at all because on the checkout
+     * address-editor page the cart usually has NO invoice address yet, which is
+     * precisely when the buyer clicks "I'm a sole trader".
      */
     public function ajaxProcessSoleTraderTokens()
     {
@@ -211,10 +168,8 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             'delegation_token' => $tokens['delegation_token'],
             'autofill_token' => $tokens['autofill_token'],
             'signup_url' => TwoSoleTrader::getSignupPageUrl(),
-            // The country this mint was authorised against, as resolved
-            // server-side by resolveSoleTraderCountryIso(): the JS must use
-            // THIS, not a DOM guess, when it later saves the enrolled
-            // company - getTwoValidatedSessionCompanyData() wipes the
+            // The JS must use THIS, not a DOM guess, when it later saves the
+            // enrolled company - getTwoValidatedSessionCompanyData() wipes the
             // session company on any country mismatch.
             'country' => $countryIso,
         ]));
@@ -225,30 +180,13 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
      * See ajaxProcessSoleTraderTokens() for why preferring what the request
      * carries is not a privilege escalation.
      *
-     * Ordering:
-     *   1. a posted `country`, accepted only in exactly the ISO-3166-1 alpha-2
-     *      shape (two upper-case letters). This is the buyer's live selection
-     *      in the address they are looking at, and it wins outright: it is the
-     *      only source that describes the address this order will be billed
-     *      to as it stands right now.
-     *   2. the cart's delivery address, and ONLY when no usable country was
-     *      posted at all - an older cached script, a stripped body. It is a
-     *      last resort, not a preference.
-     *
-     * The cart's INVOICE address is deliberately not consulted, at any tier. A
-     * committed invoice address is precisely the stale value this ordering
-     * rules out, and keeping it as a lower tier would let it silently win
-     * whenever a POST is missing a country for an innocuous reason - the same
-     * bug in different clothes.
-     *
-     * The shape check is what stops junk reaching the registry, and it is the
-     * only thing it was ever doing: a value that is not exactly two letters is
-     * treated as though nothing was posted.
-     *
-     * An address that cannot resolve a country (a row that no longer loads, an
-     * id_country with no ISO) yields nothing rather than terminating the search
-     * with a wrong answer - with one address tier left that means '', which the
-     * caller refuses on.
+     * A posted country wins outright: it is the buyer's live selection, the
+     * only source describing the address this order will be billed to as it
+     * stands right now. The cart's delivery address is a last resort for a
+     * request that carried no usable country at all (an older cached script, a
+     * stripped body). The cart's INVOICE address is deliberately not consulted
+     * at any tier - a committed invoice address is precisely the stale value
+     * this ordering rules out.
      *
      * @return string ISO-3166-1 alpha-2 code, or '' when nothing resolves -
      *                which the caller refuses on, rather than defaulting
@@ -284,9 +222,6 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         return (string) Country::getIsoById((int) $address->id_country);
     }
 
-    /**
-     * Persist selected payment term (days) into PrestaShop cookie
-     */
     public function ajaxProcessSavePaymentTerm()
     {
         if (!$this->validateAjaxToken()) {
@@ -310,10 +245,8 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
 
     /**
      * Live per-term buyer surcharge amounts for the checkout term chips.
-     * Reads nothing from POST beyond the token - the current cart is ambient
-     * via the context. Fail-soft: any failure inside the module method yields
-     * {success:false} and the frontend keeps its static rate preview (always
-     * a 200 JSON response, never breaks checkout).
+     * Fail-soft: any failure yields {success:false} and the frontend keeps its
+     * static rate preview (always a 200 JSON response, never breaks checkout).
      */
     public function ajaxProcessFetchTermSurcharges()
     {
@@ -326,13 +259,10 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
 
     /**
      * Reconcile the cart's hidden surcharge line with the buyer's payment
-     * selection (selected=1 -> exactly one line at the current quoted fee,
-     * selected=0 -> no line). Idempotent by contract of
-     * Twopayment::syncTwoSurchargeCartLine: repeat calls with the same
-     * selection are no-ops ({changed:false}), so re-clicks, reloads and
-     * re-fired change events can never stack duplicate lines. Fail-soft:
-     * always answers 200 JSON; a {success:false} tells the JS nothing was
-     * reconciled (the create-time parity gate remains the hard guarantee).
+     * selection. Idempotent by contract of
+     * Twopayment::syncTwoSurchargeCartLine, so re-clicks, reloads and re-fired
+     * change events can never stack duplicate lines. Fail-soft: always answers
+     * 200 JSON (the create-time parity gate remains the hard guarantee).
      */
     public function ajaxProcessSyncSurchargeLine()
     {
@@ -345,19 +275,16 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             return;
         }
         $selected = (int) Tools::getValue('selected') === 1;
-        // Ordering guard: the checkout JS sends a monotonically increasing
-        // sequence number so a slower, older request (rapid method switches)
-        // cannot overwrite a newer one server-side. Absent/invalid seq
-        // (legacy cached JS) falls back to unguarded behaviour.
+        // The checkout JS sends a monotonically increasing sequence number so a
+        // slower, older request (rapid method switches) cannot overwrite a newer
+        // one server-side. Absent/invalid seq (legacy cached JS) falls back to
+        // unguarded behaviour.
         $seqRaw = Tools::getValue('seq');
         $syncSeq = (is_numeric($seqRaw) && (float) $seqRaw > 0) ? (int) $seqRaw : null;
         $result = $this->module->syncTwoSurchargeCartLine($this->context->cart, $selected, $syncSeq);
         $this->sendJsonResponse(json_encode($result));
     }
 
-    /**
-     * Persist company data into PrestaShop cookie (no secrets)
-     */
     public function ajaxProcessSaveCompany()
     {
         if (!$this->validateAjaxToken()) {
@@ -398,8 +325,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
      * Forget the session company (TWO-25288).
      *
      * Its own action rather than a `saveCompany` carrying empty values, because
-     * that action rejects an empty company or company id up front and answers
-     * "missing company data" - so using it to clear would be a silent no-op.
+     * that action rejects an empty company or company id up front.
      *
      * Needed because the session company is the FIRST thing the order payload and
      * the order-intent handler consult, ahead of the address, and it is otherwise
@@ -409,7 +335,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
      * previously selected company credit-checked at placement.
      *
      * Every key `saveCompany` writes is unset here, including the country and
-     * address markers: leaving a marker behind with no company is the half-record
+     * address markers: leaving a marker behind with no company is a half-record
      * state whose interpretation differs between the two readers of this cookie.
      */
     public function ajaxProcessClearCompany()
@@ -436,14 +362,10 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
      * next page load can still tell those values apart from ones the buyer typed
      * (TWO-40).
      *
-     * Its own action rather than a field on `saveCompany`, because the two records
-     * have different invalidation rules and `saveCompany` rejects a body with no
-     * company in it - see Twopayment::MIRROR_WRITE_SESSION_KEYS.
-     *
-     * Every field is optional and a field the body does not carry is left exactly
-     * as it was, so the browser can report one field's write without republishing
-     * the rest. An EMPTY string is a real value here, not an omission: it is how the
-     * browser disowns a value it has just cleared out of the form.
+     * A field the body does not carry is left exactly as it was, so the browser
+     * can report one field's write without republishing the rest. An EMPTY string
+     * is a real value here, not an omission: it is how the browser disowns a
+     * value it has just cleared out of the form.
      */
     public function ajaxProcessSaveMirrorWrites()
     {
@@ -473,10 +395,8 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         }
 
         if (empty($fields)) {
-            // A machine code rather than a translated sentence, deliberately: this
-            // endpoint is fire-and-forget bookkeeping and its body is never rendered
-            // to a buyer, so a translatable string here would add rows to every
-            // catalogue that nobody will ever read.
+            // A machine code rather than a translated sentence: this endpoint's
+            // body is never rendered to a buyer.
             $this->sendJsonResponse(json_encode([
                 'success' => false,
                 'error' => 'no_mirrored_values'
@@ -495,9 +415,6 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $this->sendJsonResponse(json_encode(['success' => true]));
     }
 
-    /**
-     * Retrieve company data from PrestaShop cookie
-     */
     public function ajaxProcessGetCompany()
     {
         if (!$this->validateAjaxToken()) {
@@ -518,13 +435,9 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         ]));
     }
 
-    /**
-     * Handle non-AJAX requests (for testing)
-     */
     public function initContent()
     {
-        
-        // If this is a direct access (not AJAX), return simple response
+
         if (!Tools::getValue('ajax')) {
             exit;
         }
@@ -533,19 +446,13 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
     }
 
 
-    /**
-     * AJAX method for order intent validation
-     * Called via: ?ajax=1&action=checkOrderIntent
-     */
     public function ajaxProcessCheckOrderIntent()
     {
         // Order intent pre-approval preview toggle (TWO-25386 #8). Server-side
         // hard gate, defense-in-depth alongside the client-side
-        // shouldRunOrderIntent() check in TwoOrderIntent.js which normally
-        // prevents this call from firing at all when disabled. Never touches
-        // Twopayment::checkTwoOrderIntentApprovalAtPayment() - the
-        // authoritative approval check at actual payment submission always
-        // runs regardless of this setting.
+        // shouldRunOrderIntent() check in TwoOrderIntent.js. Never touches
+        // Twopayment::checkTwoOrderIntentApprovalAtPayment() - the authoritative
+        // approval check at payment submission always runs regardless.
         if (!$this->module->isTwoOrderIntentPreviewEnabled()) {
             $this->sendJsonResponse(json_encode([
                 'success' => false,
@@ -555,7 +462,6 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             return;
         }
 
-        // Rate limiting protection
         if (!$this->checkRateLimit()) {
             $this->sendJsonResponse(json_encode([
                 'success' => false,
@@ -564,7 +470,6 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             return;
         }
 
-        // Validate AJAX token for security
         if (!$this->validateAjaxToken()) {
             $this->sendJsonResponse(json_encode([
                 'success' => false,
@@ -573,7 +478,6 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             return;
         }
 
-        // Only allow POST requests
         if (!$this->isPost()) {
             $this->sendJsonResponse(json_encode([
                 'success' => false,
@@ -588,21 +492,19 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $customer = new Customer($cart->id_customer);
         $currency = new Currency($cart->id_currency);
         
-        // Use invoice/billing address as authoritative company identity source.
+        // Invoice/billing address is the authoritative company identity source.
         $addressId = (int)Tools::getValue('id_address_invoice');
         if (empty($addressId)) {
-            // Backward compatibility: older clients may still send delivery id only.
+            // Older clients may still send delivery id only.
             $addressId = (int)Tools::getValue('id_address_delivery');
         }
         if (empty($addressId)) {
-            // Fallback to invoice address from cart, then delivery address.
             $addressId = $cart->id_address_invoice ?: $cart->id_address_delivery;
         }
-        
-        $address = new Address($addressId);
-        
 
-        // Validate cart and customer with proper PrestaShop validation
+        $address = new Address($addressId);
+
+
         if ($cart->id_customer == 0 || !Validate::isLoadedObject($customer) || !Validate::isLoadedObject($address)) {
             PrestaShopLogger::addLog('TwoPayment: Invalid cart, customer, or address data in order intent (address ID: ' . $addressId . ')', 3);
             $this->sendJsonResponse(json_encode([
@@ -612,24 +514,18 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             return;
         }
 
-        // PRESTASHOP NATIVE APPROACH - Multiple data sources with fallback chain
         $companyData = $this->getCompanyDataWithFallbacks();
         $companyName = $companyData['company'];
         $companyId = $companyData['companyid'];
 
-        // Store company data in PrestaShop session for future use
         $this->storeCompanyDataInSession($companyData);
-        
-        // ENHANCED VALIDATION: Provide clear status codes for different company data scenarios
-        // This allows frontend to show specific guidance to users
-        
+
         // An org number is the business identity Two resolves against the
         // company registry, and it resolves the company NAME from that registry
         // too - overwriting whatever the plugin sent. So an org number without a
         // local company name is a complete, usable identity and must not be
         // blocked here (TWO-25206); the payload path has always sent it that way.
         if (empty($companyId)) {
-            // Case 1: No company name and no org number - user hasn't entered company details
             if (empty($companyName)) {
                 PrestaShopLogger::addLog('TwoPayment: No company name provided - prompting user', 2);
                 $this->sendJsonResponse(json_encode([
@@ -640,7 +536,6 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
                 return;
             }
 
-            // Case 2: Has company name but no org number - common with existing addresses
             PrestaShopLogger::addLog('TwoPayment: Company name exists but no org number - prompting user to search', 2);
             $this->sendJsonResponse(json_encode([
                 'success' => false,
@@ -650,34 +545,27 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             return;
         }
 
-        // An org number is the business guard (TWO-24755): registered
-        // businesses search/select their company, and enrolled sole traders
-        // carry the synthetic org number their Two registration minted, so both
+        // An org number is the business guard (TWO-24755): enrolled sole traders
+        // carry the synthetic org number their Two registration minted, so they
         // arrive here as a valid business - there is no account-type selector to
         // also check. Whether the org number is real is Two's call, made on the
         // order-intent request itself (TWO-25206).
 
         try {
-            // Set address with validated form data for API call (form-first approach)
             $address->company = $companyName;
             $address->companyid = $companyId;
-            
-            // Get order intent data
+
             $paymentdata = $this->module->getTwoIntentOrderData($cart, $customer, $currency, $address);
 
-            // TWO-24799: snapshot-dedupe the UX-only intent check. Every
-            // checkout update (payment-option toggle, surcharge cart-line
-            // refresh, payment form re-render) re-runs this handler and the
-            // browser then pays a 2.5-3s /v1/order_intent round trip, even when
-            // none of the decision inputs moved. Hand the browser back the
-            // decision it already got for this exact snapshot so it can skip
-            // that call. Any cart, address, country or company change yields a
-            // different hash and the call happens for real.
+            // TWO-24799: snapshot-dedupe the UX-only intent check. Every checkout
+            // update re-runs this handler and the browser then pays a 2.5-3s
+            // /v1/order_intent round trip even when no decision input moved. Any
+            // cart, address, country or company change yields a different hash
+            // and the call happens for real.
             //
-            // This is a UX cache only: the authoritative gate remains
+            // A UX cache only: the authoritative gate remains
             // Twopayment::checkTwoOrderIntentApprovalAtPayment() at payment
-            // submit, which always calls the provider and is never served from
-            // here.
+            // submit, which is never served from here.
             $snapshotHash = $this->module->calculateTwoOrderIntentSnapshotHash($cart, $paymentdata);
             $cachedDecision = $this->module->getTwoCachedOrderIntentDecision($snapshotHash);
             $this->module->markTwoPendingOrderIntentSnapshot($snapshotHash);
@@ -701,11 +589,10 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
 
             $this->context->cookie->write();
 
-            // Return payload only (frontend will call Two API directly)
+            // Payload only - the frontend calls the Two API directly.
             $this->sendJsonResponse(json_encode($response));
             return;
         } catch (Exception $e) {
-            // Log exception for debugging
             PrestaShopLogger::addLog('TwoPayment: Build order intent payload exception - ' . $e->getMessage(), 3);
             
             $this->sendJsonResponse(json_encode([
@@ -716,12 +603,8 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         }
     }
 
-    /**
-     * New action that mirrors ajaxProcessCheckOrderIntent behavior: build payload only
-     */
     public function ajaxProcessBuildPayload()
     {
-        // Reuse the same logic path
         $this->ajaxProcessCheckOrderIntent();
     }
 
@@ -742,17 +625,13 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $approved = (bool)Tools::getValue('approved');
         $timestamp = time();
 
-        // Store in PrestaShop cookie (session-based) for server-side validation
         $this->context->cookie->two_order_intent_approved = $approved ? '1' : '0';
         $this->context->cookie->two_order_intent_timestamp = (string)$timestamp;
 
-        // TWO-24799: bind the reported decision to the snapshot hash the server
-        // computed when it handed this browser the payload, so the next
-        // checkout update with identical decision inputs can skip the provider
-        // round trip. The hash is never taken from the request.
+        // TWO-24799: binds to the snapshot hash the server computed when it handed
+        // this browser the payload. The hash is never taken from the request.
         $this->module->storeTwoOrderIntentDecisionForPendingSnapshot($approved);
 
-        // Write cookie to ensure it's saved
         $this->context->cookie->write();
 
         PrestaShopLogger::addLog('TwoPayment: Order intent telemetry saved in session', 1);
@@ -765,8 +644,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
     }
 
     /**
-     * Clear order intent telemetry from session
-     * Called when user switches away from Two payment method
+     * Called when the buyer switches away from the Two payment method.
      */
     public function ajaxProcessClearOrderIntentResult()
     {

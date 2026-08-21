@@ -2,11 +2,6 @@
 
 declare(strict_types=1);
 
-/**
- * Coverage for the deploy-version helpers shown on the Plugin Information tab:
- * getTwoDeployedCommitHash() (file-read-only .git inspection, fail-soft) and
- * getTwoDeployedAtLabel() (module file mtime, fail-soft).
- */
 final class DeployVersionInfoSpec
 {
     public static function runAll(): void
@@ -36,17 +31,9 @@ final class DeployVersionInfoSpec
     }
 
     /**
-     * The browser makes four calls straight to Two (company search, company
-     * detail, order intent, sole-trader autofill) and identifies itself with the
-     * same `client`/`client_v` pair the PHP calls send. It reads them out of the
-     * config this hook publishes - so if that config carries a DIFFERENT version
-     * than getTwoClientVersion() reports, one shop reports itself as two
-     * versions depending on which side of the module made the call.
-     *
-     * That was the live state: the payload published a bare `$this->version`
-     * while every PHP call sent version + `+<sha7>`. Pinned by driving the real
-     * hook rather than by reading the source, because the failure is a value
-     * mismatch and only the value proves it.
+     * The browser identifies itself with the same `client`/`client_v` pair the
+     * PHP calls send, read out of the config this hook publishes - a different
+     * version there makes one shop report itself as two.
      */
     private static function testBrowserConfigPublishesTheShaSuffixedVersion(): void
     {
@@ -98,14 +85,12 @@ final class DeployVersionInfoSpec
             }
         }
 
-        // The two sides must agree exactly - not merely both be non-empty.
         TinyAssert::same(
             $module->getTwoClientVersion(),
             $published['client_version'],
             'the config handed to the browser must carry the SAME version the PHP calls send'
         );
         TinyAssert::same('2.4.0+fbdc80b', $published['client_version']);
-        // The specific regression: a bare $this->version silently drops the sha.
         TinyAssert::false(
             $published['client_version'] === '2.4.0',
             'the published version dropped its +<sha7> suffix - it is sourced from $this->version again'
@@ -178,11 +163,8 @@ final class DeployVersionInfoSpec
 
     private static function testPackedRefsExactMatchIgnoresSuffixDecoy(): void
     {
-        // A packed-refs line whose full ref merely *ends with* the same string as our
-        // target ref (e.g. a nested/differently-prefixed namespace) must NOT be treated
-        // as a match — only an exact ref-path match is acceptable. The decoy is listed
-        // first (and would win under a naive suffix comparison since it breaks on first
-        // hit), the real ref is listed second with a different sha.
+        // The decoy ref merely *ends with* the target ref path and is listed
+        // first, so a naive suffix comparison would return its sha.
         $git = self::makeTempGitDir();
         file_put_contents($git . '/HEAD', "ref: refs/heads/staging\n");
         file_put_contents(
@@ -225,9 +207,8 @@ final class DeployVersionInfoSpec
 
     private static function testGitDirTakesPrecedenceOverSidecar(): void
     {
-        // TWO-25194: live git state wins over the build-time sidecar stamp. The stamp is
-        // frozen when package-release.sh runs, so a stamped tree that is later checked
-        // out over would otherwise keep reporting the stale build sha forever.
+        // TWO-25194: live git state wins over the build-time sidecar stamp,
+        // which is frozen when package-release.sh runs.
         $git = self::makeTempGitDir();
         file_put_contents($git . '/HEAD', "ref: refs/heads/staging\n");
         mkdir($git . '/refs/heads', 0777, true);
@@ -241,8 +222,6 @@ final class DeployVersionInfoSpec
 
     private static function testInvalidSidecarFallsBackToGitDir(): void
     {
-        // A sidecar file with non-sha contents (or empty) must not short-circuit the
-        // .git-directory fallback.
         $git = self::makeTempGitDir();
         file_put_contents($git . '/HEAD', "ref: refs/heads/staging\n");
         mkdir($git . '/refs/heads', 0777, true);
@@ -276,10 +255,9 @@ final class DeployVersionInfoSpec
 
     private static function testGitlinkTakesPrecedenceOverValidSidecar(): void
     {
-        // TWO-25194: the gitlink reflects what the git-sync loop has checked out RIGHT
-        // NOW, so it must beat a perfectly well-formed build-time stamp. package-release.sh
-        // only removes its stamp via an EXIT trap, so an interrupted run leaves a stale
-        // (but syntactically valid) sidecar behind that must never win.
+        // TWO-25194: the gitlink reflects what git-sync has checked out right
+        // now, and package-release.sh removes its stamp only via an EXIT trap,
+        // so an interrupted run leaves a valid-looking stale sidecar behind.
         $dir = self::makeTempModuleDir();
         $gitlink = $dir . '/.git';
         file_put_contents($gitlink, "gitdir: ../../.git/worktrees/fbdc80b92070eded9a2acbef222da0d55ac4af48\n");
@@ -292,9 +270,8 @@ final class DeployVersionInfoSpec
 
     private static function testMalformedGitlinkFallsBackToValidSidecar(): void
     {
-        // The gitlink exists and is readable but carries no worktree sha (plain gitdir
-        // pointer). That must FALL THROUGH to the sidecar, not return null — the bug the
-        // pre-TWO-25194 early `return null` introduced once gitlink moved to first place.
+        // TWO-25194: a readable gitlink carrying no worktree sha (plain gitdir
+        // pointer) must fall through to the sidecar, not return null.
         $dir = self::makeTempModuleDir();
         $gitlink = $dir . '/.git';
         file_put_contents($gitlink, "gitdir: /srv/repos/prestashop-plugin/.git\n");
@@ -307,7 +284,6 @@ final class DeployVersionInfoSpec
 
     private static function testUnreadableGitlinkFallsBackToValidSidecar(): void
     {
-        // An unreadable gitlink file must also fall through rather than hard-null.
         $dir = self::makeTempModuleDir();
         $gitlink = $dir . '/.git';
         file_put_contents($gitlink, "gitdir: ../../.git/worktrees/fbdc80b92070eded9a2acbef222da0d55ac4af48\n");
@@ -315,8 +291,8 @@ final class DeployVersionInfoSpec
         file_put_contents($sidecar, "1234abc\n");
         @chmod($gitlink, 0000);
 
-        // Skip the assertion when running as a user that bypasses mode bits (e.g. root
-        // in CI containers), where the file stays readable no matter the chmod.
+        // A user that bypasses mode bits (root in CI containers) keeps the file
+        // readable no matter the chmod.
         if (!is_readable($gitlink)) {
             TinyAssert::same('1234abc', self::callCommitHash($gitlink, $sidecar));
         }
@@ -327,8 +303,7 @@ final class DeployVersionInfoSpec
 
     private static function testEmptySidecarFallsBackToGitlinkFile(): void
     {
-        // The staging sidecar is currently written as a 0-byte file by broken deploy
-        // infra; that must NOT short-circuit into an empty/absent hash.
+        // Broken deploy infra writes the staging sidecar as a 0-byte file.
         $dir = self::makeTempModuleDir();
         $gitlink = $dir . '/.git';
         file_put_contents($gitlink, "gitdir: ../../.git/worktrees/fbdc80b92070eded9a2acbef222da0d55ac4af48\n");
@@ -361,8 +336,6 @@ final class DeployVersionInfoSpec
 
     private static function testGitlinkFileWithoutShaReturnsNull(): void
     {
-        // A gitlink pointing at a plain (non-worktree) gitdir carries no sha, and with no
-        // sidecar to fall through to there is nothing left to resolve.
         $dir = self::makeTempModuleDir();
         $gitlink = $dir . '/.git';
         file_put_contents($gitlink, "gitdir: /srv/repos/prestashop-plugin/.git\n");
@@ -412,9 +385,6 @@ final class DeployVersionInfoSpec
     }
 }
 
-/**
- * Harness where no deployed commit can be resolved (no sidecar, no .git).
- */
 final class TwopaymentClientVersionNoShaHarness extends TwopaymentTestHarness
 {
     protected function getTwoDeployedCommitHash($git_dir = null, $sidecar_file = null)
@@ -423,9 +393,6 @@ final class TwopaymentClientVersionNoShaHarness extends TwopaymentTestHarness
     }
 }
 
-/**
- * Harness where the deployed commit resolves to a known short sha.
- */
 final class TwopaymentClientVersionWithShaHarness extends TwopaymentTestHarness
 {
     protected function getTwoDeployedCommitHash($git_dir = null, $sidecar_file = null)

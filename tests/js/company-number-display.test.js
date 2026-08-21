@@ -1,19 +1,17 @@
 /**
- * TWO-25326 requirement 12 (cross-platform): a company/organisation number that
- * starts with `TWO:` is an internal identifier - the sole-trader enrolment flow
- * mints one (`TWO:ST…`) and stores it in the same field as a real register
- * number - and must never be displayed. Where removing it would leave empty
- * brackets, the brackets go too: `Example Ltd`, never `Example Ltd ()`.
+ * TWO-25326 requirement 12 (cross-platform): a company/organisation number
+ * starting with `TWO:` is an internal identifier and must never be
+ * displayed. Where removing it would leave empty brackets, the brackets go
+ * too: `Example Ltd`, never `Example Ltd ()`.
  *
  * Three display sites, in two modules, all routed through ONE helper
- * (views/js/modules/TwoCompanyNumber.js) rather than three prefix tests:
+ * (views/js/modules/TwoCompanyNumber.js):
  *
  *   a) the label under the company-name field  - TwoCompanySearch.setCompanyIdHint
  *   b) the search-results rows                 - TwoCompanySearch's result mapping
  *   c) the order-intent sentence in the tile   - TwoOrderIntent.buildCompanyIntentMessage
  *
- * The value itself is untouched everywhere it is not being RENDERED: it is what
- * gets selected, persisted to the session and sent for the credit decision.
+ * The value itself is untouched everywhere it is not being RENDERED.
  */
 
 'use strict';
@@ -62,16 +60,13 @@ describe('the shared helper', () => {
     });
 
     test('is case- and whitespace-insensitive about the prefix', () => {
-        // The value round-trips through a cookie, a form post and the API; a
-        // display gate must not be defeated by casing or a stray space.
         expect(TwoCompanyNumber.forDisplay('two:st1')).toBe('');
         expect(TwoCompanyNumber.forDisplay('  TWO:ST1  ')).toBe('');
         expect(TwoCompanyNumber.forDisplay('Two:ST1')).toBe('');
     });
 
     test('does not suppress a number that merely CONTAINS the prefix text', () => {
-        // The rule is "starts with", not "contains" - a register number that
-        // happens to embed those characters is still the buyer's real number.
+        // Rule is "starts with", not "contains".
         expect(TwoCompanyNumber.forDisplay('NOTWO:1')).toBe('NOTWO:1');
     });
 
@@ -109,9 +104,8 @@ describe('site (a): the label under the company-name field', () => {
         search.setCompanyIdHint('TWO:ST12345');
         const hint = document.querySelector('.two-company-id-hint');
         expect(hint.textContent).toBe('');
-        // Not merely blank text: the visible class is what reserves a line box
-        // in normal flow, so leaving it on would add height for a label that
-        // shows nothing.
+        // The visible class reserves a line box in normal flow, so leaving it on
+        // would add height for a label that shows nothing.
         expect(hint.classList.contains('two-company-id-hint--visible')).toBe(false);
     });
 
@@ -120,7 +114,6 @@ describe('site (a): the label under the company-name field', () => {
         search.onCompanySelected(null, { item: { value: 'Sole Trader AS', organization_number: 'TWO:ST777' } });
 
         expect(document.querySelector('.two-company-id-hint').textContent).toBe('');
-        // The number is still the buyer's identity for the credit decision.
         expect($("input[name='companyid']").val()).toBe('TWO:ST777');
     });
 });
@@ -145,14 +138,11 @@ describe('site (b): the search-results list', () => {
 
         const labels = recorder.calls[0].results.map((row) => row.label);
         expect(labels).toEqual(['Sole Trader AS', 'Real Company AS (923456789)']);
-        // The row still carries the real number, so selecting it captures it.
         expect(recorder.calls[0].results[0].organization_number).toBe('TWO:ST777');
     });
 
     test('the rendered rows show no TWO: text', () => {
-        // Fake timers: the query field's search is debounced 300ms by the
-        // widget, so without running that out no request is ever made and the
-        // assertions below would have nothing to look at.
+        // Search is debounced 300ms; without advancing timers no request is made.
         jest.useFakeTimers();
         try {
             buildAddressForm();
@@ -165,8 +155,7 @@ describe('site (b): the search-results list', () => {
             jest.advanceTimersByTime(400);
 
             const request = ajax.calls.find((record) => String(record.url).includes('companies'));
-            // Asserted, not tolerated: with no request there are no rows, and
-            // the loop below would pass without ever seeing a rendered result.
+            // With no request there are no rows, and the loop below would pass vacuously.
             expect(request).toBeDefined();
             request.succeed({ items: [{ name: 'Sole Trader AS', lookup_id: 'l1', national_identifier: { id: 'TWO:ST777' } }] });
             jest.advanceTimersByTime(400);
@@ -219,12 +208,8 @@ describe('site (c): the order-intent sentence', () => {
 /**
  * A FOURTH display site (review round 2): TwoSoleTrader.applyBuyer() falls
  * back to `buyer.organization_number` as its status LABEL when
- * `buyer.company_name` is blank - and blank company_name is exactly when a
- * sole trader's organisation number is the synthetic `TWO:`-prefixed one this
- * whole requirement exists to hide (it stands in for a buyer with no name or
- * number of their own). Missed by the "three display sites" this requirement
- * was scoped to, because this one is a STATUS label, not a company/number pair
- * being formatted - but it renders the same forbidden value to the buyer.
+ * `buyer.company_name` is blank - exactly when the number is the synthetic
+ * `TWO:`-prefixed one this requirement exists to hide.
  */
 describe('a fourth site: the sole-trader status label', () => {
     function buildSoleTrader() {

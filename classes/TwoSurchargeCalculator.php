@@ -2,13 +2,10 @@
 /**
  * Buyer surcharge (offset pricing fee) payload builder — pure logic.
  *
- * PrestaShop equivalent of Magento's Service/Order/SurchargeCalculator and the
- * WooCommerce plugin's WC_Twoinc_Payment_Terms::build_buyer_fee_share. All fee
- * arithmetic is done server-side by POST /v1/pricing/order/fee; this class only
- * maps merchant config onto the request's `buyer_fee_share` block. Keeping it
- * dependency-free (no PrestaShop classes) makes it directly unit-testable and
- * satisfies TWO-24752's requirement that surcharge business logic live in PHP,
- * callable independently of the checkout rendering path.
+ * All fee arithmetic is done server-side by POST /v1/pricing/order/fee; this
+ * class only maps merchant config onto the request's `buyer_fee_share` block.
+ * Kept dependency-free (no PrestaShop classes) so it stays unit-testable
+ * independently of the checkout rendering path.
  *
  * TWO-24752 (offset pricing fee) + TWO-24893 (brand-driven rounding relay).
  */
@@ -19,32 +16,23 @@ if (!defined('_PS_VERSION_')) {
 
 class TwoSurchargeCalculator
 {
-    /**
-     * Stored surcharge-rounding basis -> pricing-API basis. "none" (and any
-     * unmapped value) omits the rounding block. Mirrors Magento's
-     * SurchargeCalculator::ROUNDING_BASIS_TO_API and the WooCommerce plugin's
-     * ROUNDING_BASIS_TO_API.
-     */
+    /** "none" (and any unmapped value) omits the rounding block. */
     const ROUNDING_BASIS_TO_API = array(
         'up' => 'UP',
         'down' => 'DOWN',
         'standard' => 'STANDARD',
     );
 
-    /** Surcharge methods that carry a fee (anything else is treated as "none"). */
+    /** Anything else is treated as "none". */
     const VALID_TYPES = array('percentage', 'fixed', 'fixed_and_percentage');
 
     /**
-     * Decimal places every monetary member of the block is rounded to. The
-     * pricing API refuses a value finer than two places rather than rounding
-     * it itself, so an over-precise configured amount would be rejected
-     * outright (TWO-25289).
+     * The pricing API refuses a value finer than two places rather than
+     * rounding it itself (TWO-25289).
      */
     const MONEY_DECIMALS = 2;
 
     /**
-     * Coerce a stored surcharge type to a known value, defaulting to "none".
-     *
      * @param mixed $type
      * @return string
      */
@@ -56,17 +44,9 @@ class TwoSurchargeCalculator
     }
 
     /**
-     * Build the buyer_fee_share block for one term, or null when no surcharge
-     * is configured. Mirrors Magento/WooCommerce:
-     *  - percentage types supply `percentage` (0.0 for fixed-only so the API
-     *    default of 100% is never silently applied)
-     *  - `surcharge_basis` is sent explicitly
-     *  - fixed types supply `surcharge`
-     *  - a limit that is SET on a percentage type supplies `cap`; only a null
-     *    (unconfigured) limit means "no cap"
-     *  - rounding (percentage modes only) supplies `rounding`
-     *  - differential mode supplies `reference_terms` (default term) so the
-     *    API computes the delta itself — no delta math in the plugin
+     * `percentage` is sent as 0.0 for fixed-only fees so the API default of
+     * 100% is never silently applied. Differential mode sends
+     * `reference_terms` so the API computes the delta itself.
      *
      * @param array    $settings   {type, differential(bool), grid, rounding_basis, rounding_step}
      * @param int      $days       selected term in days
@@ -93,35 +73,28 @@ class TwoSurchargeCalculator
             'surcharge_basis' => 'buyer_pays',
         );
 
-        // Fixed amounts and caps are emitted here in the store currency they
-        // are configured in; the module re-denominates them into the quote
-        // currency via Two's FX rates before the wire call
-        // (Twopayment::convertTwoBuyerFeeShareCurrency, TWO-25105).
-        // Percentage surcharge is currency-agnostic.
+        // Fixed amounts and caps are emitted in the store currency they are
+        // configured in; the module re-denominates them into the quote currency
+        // before the wire call (Twopayment::convertTwoBuyerFeeShareCurrency,
+        // TWO-25105).
         if ($hasFixed && isset($row['fixed']) && (float) $row['fixed'] > 0) {
             $buyer_fee_share['surcharge'] = round((float) $row['fixed'], self::MONEY_DECIMALS);
         }
 
-        // `cap` only applies where the fee has a percentage component — a
-        // fixed-only fee is constant, nothing to bound — so a stored limit left
-        // over from a previous surcharge type must not leak into a fixed-only
-        // request.
+        // `cap` only applies where the fee has a percentage component, so a
+        // stored limit left over from a previous surcharge type must not leak
+        // into a fixed-only request.
         //
-        // Only a NULL limit means "no cap". A limit of exactly 0 is relayed as
-        // `cap => 0`, which bounds the fee at zero (TWO-25289). This used to be
-        // a `> 0` test, so a configured 0 became "no cap" and the percentage
-        // went out UNCAPPED — an overcharge, and the opposite of the merchant's
-        // instruction. The admin form now refuses a zero cap outright
-        // (Twopayment::validTwoSurchargeFormValues), but the filter had to go
-        // with it: a 0 arriving by any route the form does not police — a value
-        // stored before that validation existed, a direct Configuration write,
-        // an import — would otherwise still be relayed uncapped.
+        // Only a NULL limit means "no cap"; a limit of exactly 0 is relayed as
+        // `cap => 0`, bounding the fee at zero (TWO-25289). Not filtered on
+        // `> 0` even though the admin form refuses a zero cap: a 0 arriving by
+        // a route the form does not police (direct Configuration write, import)
+        // would otherwise go out UNCAPPED.
         if ($hasPercentage && isset($row['limit'])) {
             $buyer_fee_share['cap'] = round((float) $row['limit'], self::MONEY_DECIMALS);
         }
 
-        // `rounding` snaps the final buyer line to a clean increment,
-        // server-side. Percentage modes only, for the same reason as `cap`.
+        // Percentage modes only, for the same reason as `cap`.
         if ($hasPercentage) {
             $rounding = self::buildRounding(
                 isset($settings['rounding_basis']) ? $settings['rounding_basis'] : 'none',
@@ -140,11 +113,8 @@ class TwoSurchargeCalculator
     }
 
     /**
-     * The rounding block for buyer_fee_share, or null when rounding is off.
-     * The backend does the arithmetic; the plugin only relays {step, basis}.
-     * A None/unmapped basis or a non-positive step omits the block (the API
-     * requires both keys and rejects step <= 0). Mirrors Magento's
-     * SurchargeCalculator::buildRounding and WooCommerce's build_rounding.
+     * The API requires both keys and rejects step <= 0, so an unmapped basis
+     * or a non-positive step omits the block entirely.
      *
      * @param mixed      $basis
      * @param float|null $step
@@ -171,10 +141,6 @@ class TwoSurchargeCalculator
     }
 
     /**
-     * A NET_TERMS block for a duration, adding
-     * duration_days_calculated_from = END_OF_MONTH when the merchant uses
-     * end-of-month terms (Magento/WooCommerce parity).
-     *
      * @param int  $days
      * @param bool $isEndOfMonth
      * @return array

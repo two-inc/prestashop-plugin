@@ -16,7 +16,6 @@
             {$two_invoice_notice.message|escape:'html':'UTF-8'}
         </div>
         {/if}
-        {* Order Details Section *}
         <div class="two-details-section">
             {if $twopaymentdata.two_order_id}
             <div class="two-info-item">
@@ -62,7 +61,6 @@
             {/if}
         </div>
 
-        {* Action Links Section *}
         <div class="two-actions-section">
             {if $twopaymentdata.two_order_id && $two_portal_url}
             <a href="{$two_portal_url|escape:'html':'UTF-8'}/merchant/orders/{$twopaymentdata.two_order_id|escape:'url':'UTF-8'}" target="_blank" rel="noopener noreferrer" class="two-action-link two-action-primary">

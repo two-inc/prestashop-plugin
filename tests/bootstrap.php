@@ -31,11 +31,10 @@ namespace {
 
 namespace PrestaShop\PrestaShop\Core\Payment {
     /**
-     * Core's fluent payment-option value object. The setters were previously
-     * absent, which was fine while nothing invoked getTwoPaymentOption() - it is
-     * exercised now (TWO-25326 bug 9, round 3, for the server-rendered
-     * sole-trader answer it assigns), and a fluent builder is unusable without
-     * them: the first call fatals rather than failing an assertion.
+     * Core's fluent payment-option value object, exercised through
+     * getTwoPaymentOption() (TWO-25326 bug 9). A fluent builder is unusable
+     * without its setters: the first call fatals rather than failing an
+     * assertion.
      *
      * Records rather than validates - the specs that use this care about what the
      * module hands the TEMPLATE, and core's own contract for these values is not
@@ -244,9 +243,7 @@ namespace {
         public static array $tabAddCalls = [];
 
         /**
-         * Resolve a tax rules group's effective rate for a destination
-         * country - the stub twin of core's
-         * TaxManagerFactory::getManager($address, $groupId)
+         * Stub twin of core's TaxManagerFactory::getManager($address, $groupId)
          *     ->getTaxCalculator()->getTotalRate().
          * See $taxRuleRates for the fixture shapes.
          */
@@ -293,9 +290,8 @@ namespace {
         /**
          * Regexes for DDL/DML the stub should REJECT (return false from
          * Db::execute()) instead of applying. The real Db does fail - a database
-         * user with no ALTER privilege, a locked table - and code that assumes
-         * success is exactly what review round 4 found, so the suite needs a way
-         * to make it fail on purpose.
+         * user with no ALTER privilege, a locked table - so the suite needs a
+         * way to make it fail on purpose.
          */
         public static array $dbFailOn = [];
         /** @var array<int,array> Orders by id (controller specs) */
@@ -455,11 +451,9 @@ namespace {
     }
 
     // Guarded the same way phpstan-stubs.php guards its PrestaShop core
-    // stand-ins: these three classes are only ever loaded together with the
-    // rest of this bootstrap in the offline test process, but the guard is
-    // cheap insurance against a "cannot redeclare class" fatal if a future
-    // refactor ever loads this file alongside another stub source in the
-    // same PHP process.
+    // stand-ins: cheap insurance against a "cannot redeclare class" fatal if a
+    // future refactor loads this file alongside another stub source in the same
+    // PHP process.
     if (!class_exists('ModuleFrontController', false)) {
     class ModuleFrontController
     {
@@ -515,11 +509,9 @@ namespace {
         }
 
         /**
-         * Core's uninstall lifecycle is not otherwise exercised by this
-         * suite - a real uninstall happens against a real PrestaShop core,
-         * never this stub. A no-op true lets Twopayment::uninstall()'s OWN
-         * gating logic (TWO-25386 #5, the "clear settings on deactivation"
-         * toggle) be exercised end-to-end without a real core underneath it.
+         * A no-op true lets Twopayment::uninstall()'s OWN gating logic
+         * (TWO-25386 #5, the "clear settings on deactivation" toggle) be
+         * exercised end-to-end without a real core underneath it.
          */
         public function uninstall()
         {
@@ -607,10 +599,9 @@ namespace {
         // deprecates - and a deprecation notice on every suite run is noise the
         // next real one hides in.
         public $country;
-        // Core has one on every request. Declared for the same reason as
-        // $country above: the module scopes its module_country lookup to the
-        // current shop (TWO-25387), and a dynamic property would raise a PHP
-        // 8.2 deprecation on every suite run.
+        // Core has one on every request; declared for the same reason as
+        // $country above. The module scopes its module_country lookup to the
+        // current shop (TWO-25387).
         public $shop;
 
         private static ?self $instance = null;
@@ -711,8 +702,7 @@ namespace {
     }
 
     /**
-     * Core's order-comment storage. Only the one static reader the module uses;
-     * core keys exactly one row per cart.
+     * Core's order-comment storage; core keys exactly one row per cart.
      */
     class Message
     {
@@ -731,16 +721,12 @@ namespace {
 
         public static function updateValue($key, $value): bool
         {
-            // Core's Db can also RAISE on a failed write; see
-            // StubStore::$configurationUpdateThrowsOnce.
             if (!empty(StubStore::$configurationUpdateThrowsOnce[$key])) {
                 $message = StubStore::$configurationUpdateThrowsOnce[$key];
                 unset(StubStore::$configurationUpdateThrowsOnce[$key]);
                 throw new PrestaShopDatabaseException($message);
             }
 
-            // Core can answer falsy here without throwing; see
-            // StubStore::$configurationUpdateFailsOnce.
             if (!empty(StubStore::$configurationUpdateFailsOnce[$key])) {
                 unset(StubStore::$configurationUpdateFailsOnce[$key]);
                 return false;
@@ -757,7 +743,6 @@ namespace {
 
         public static function deleteByName($key): bool
         {
-            // Same failure shape as updateValue(): false, no throw, row intact.
             if (!empty(StubStore::$configurationDeleteFailsOnce[$key])) {
                 unset(StubStore::$configurationDeleteFailsOnce[$key]);
                 return false;
@@ -878,18 +863,15 @@ namespace {
         }
 
         /**
-         * Core's shape: one row per country, with the module only ever reading
-         * id_country and iso_code out of it (see the checkout media hook).
-         *
          * @return array<int,array{id_country:int,iso_code:string}>
          */
         public static function getCountries($idLang = null, $active = false, $containStates = false, $listStates = true): array
         {
             $rows = [];
             foreach (StubStore::$countries as $id => $iso) {
-                // Keyed by id_country, as core keys it: the only consumer reads the
-                // id out of the row, but a stub that keys sequentially would let a
-                // future caller pass here and fail in production.
+                // Keyed by id_country, as core keys it: a stub that keyed
+                // sequentially would let a future caller pass here and fail in
+                // production.
                 $rows[(int) $id] = ['id_country' => (int) $id, 'iso_code' => (string) $iso];
             }
 
@@ -953,10 +935,7 @@ namespace {
             }
         }
 
-        /**
-         * Core-faithful static resolver: the product's tax rules group id
-         * (product+shop scoped; combinations do not carry their own group).
-         */
+        /** Product+shop scoped; combinations do not carry their own group. */
         public static function getIdTaxRulesGroupByIdProduct($idProduct, $context = null)
         {
             $idProduct = (int) $idProduct;
@@ -1055,7 +1034,6 @@ namespace {
             StubStore::$specificPrices[$this->id] = $data;
         }
 
-        /** Core-shape result: rows of ['id_specific_price' => n]. */
         public static function getIdsByProductId($idProduct, $idProductAttribute = false, $idCart = 0): array
         {
             $ids = [];
@@ -1081,7 +1059,6 @@ namespace {
             return true;
         }
 
-        /** Net unit price for a cart-scoped row, or null. */
         public static function getCartUnitPrice(int $idCart, int $idProduct): ?float
         {
             foreach (StubStore::$specificPrices as $row) {
@@ -1172,7 +1149,6 @@ namespace {
             return true;
         }
 
-        /** Core-shape rows: id_tax_rules_group / name / active. */
         public static function getTaxRulesGroups($onlyActive = true): array
         {
             $rows = [];
@@ -1386,13 +1362,9 @@ namespace {
     /**
      * Stub of the parts of core's AddressFormat the module touches (TWO-25326).
      *
-     * `$requireFormFieldsList` is core's own public static "default required
-     * form fields" list, seeded here with core's real defaults;
+     * `$requireFormFieldsList` is seeded with core's real defaults, and
      * `getFieldsRequired()` merges it with the merchant's `required_field` table
-     * rows exactly as core does (`array_unique(array_merge(...))`).
-     * `$fieldsRequiredDatabase` stands in for those rows, and
-     * `$addFieldsRequiredDatabaseCalls` counts writes to that table so a spec
-     * can assert the module never makes one.
+     * rows (`$fieldsRequiredDatabase`) exactly as core does.
      */
     class AddressFormat
     {
@@ -1623,8 +1595,6 @@ namespace {
             $id = (int) $id;
             if ($id > 0) {
                 $this->id = $id;
-                // Hydrate by id so code that constructs its own Cart from
-                // an order (getTwoUpdateOrderData) sees the fixture.
                 foreach (StubStore::$carts[$id] ?? [] as $property => $value) {
                     $this->$property = $value;
                 }
@@ -1664,11 +1634,11 @@ namespace {
         }
 
         /**
-         * Minimal core-faithful updateQty: prices a NEW line from the
-         * cart-scoped SpecificPrice (net) and the product's tax rules group
-         * rate (gross), mirroring what PS core computes for the hidden
-         * surcharge product. Repeat 'up' calls INCREMENT quantity - exactly
-         * like core - so idempotency must come from the module, not the stub.
+         * Prices a NEW line from the cart-scoped SpecificPrice (net) and the
+         * product's tax rules group rate (gross), mirroring what PS core
+         * computes for the hidden surcharge product. Repeat 'up' calls
+         * INCREMENT quantity - exactly like core - so idempotency must come
+         * from the module, not the stub.
          */
         public function updateQty($quantity, $idProduct, $idProductAttribute = null, $idCustomization = false, $operator = 'up')
         {
@@ -1890,8 +1860,7 @@ namespace {
             // Injected failure, checked before any SCHEMA bookkeeping: a statement
             // the real database refused changed nothing, so the simulated schema must
             // not record it. It IS still appended to $dbExecuted above, deliberately -
-            // that list is an attempt log, and a spec asserting "the ALTER was tried"
-            // should still see it.
+            // that list is an attempt log.
             foreach (StubStore::$dbFailOn as $failPattern) {
                 if (preg_match($failPattern, $sql)) {
                     return false;
@@ -1947,10 +1916,8 @@ namespace {
             // Core's Db::getValue() delegates to getRow(), which appends its OWN
             // ' LIMIT 1' - its docblock documents the argument as "the select
             // query (without LIMIT 1)". A caller that supplies one produces
-            // `LIMIT 1 LIMIT 1` and a real MariaDB syntax error. The stub used
-            // to accept it silently, so that bug could only be caught by the
-            // Playwright e2e job against a live shop; it shipped once
-            // (TWO-25387) and cost a full CI round. Reproduce the fatal here.
+            // `LIMIT 1 LIMIT 1` and a real MariaDB syntax error (TWO-25387),
+            // reproduced here rather than left to a live-shop e2e run.
             if (preg_match('/\bLIMIT\s+\d+\s*(?:,\s*\d+\s*)?;?\s*$/i', $sql)) {
                 throw new PrestaShopDatabaseException(
                     'Db::getValue() appends its own LIMIT 1 - the query must not carry one: ' . $sql
@@ -2054,9 +2021,8 @@ namespace {
         }
 
         /**
-         * Core returns the first row, or false when nothing matches. Only the
-         * module's own order-scoped table is modelled; every other query answers
-         * false, exactly as core does on an empty result.
+         * Only the module's own order-scoped table is modelled; every other
+         * query answers false, exactly as core does on an empty result.
          */
         public function getRow($sql, $useCache = true)
         {

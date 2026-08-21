@@ -1,21 +1,16 @@
 /**
- * TWO-25326 bug 10. Doug live-tested: the optional fields (invoice email et al)
- * reflow when the window is resized; the company-search control does not.
+ * TWO-25326 bug 10: the company-search control does not reflow on resize.
  *
- * ROOT CAUSE. The optional fields have no JS width anywhere - they are theme
- * `.form-control` inputs at `width: 100%`, so the browser reflows them for free.
- * The company control's wrapper, by contrast, has its width PINNED in pixels by
- * ensureFieldWrapper(), measured from the input's own `outerWidth()`. Once that
- * pin is on, the input - being `width: 100%` of its container, which is now that
- * wrapper - measures the pinned value back. So the resize listener re-runs the
- * measurement on every viewport change, reads the number it wrote last time, and
- * re-pins it: a latch, not a missing listener.
+ * ROOT CAUSE. ensureFieldWrapper() PINS the wrapper width in pixels, measured
+ * from the input's own `outerWidth()`. Once pinned, the input - being
+ * `width: 100%` of that wrapper - measures the pinned value back, so the resize
+ * listener reads the number it wrote last time and re-pins it: a latch, not a
+ * missing listener.
  *
  * jsdom has no layout engine, so `outerWidth()` cannot be measured here. The
- * model below reproduces the ONE property that matters and nothing else: an
- * input whose width is 100% of its container, i.e. the pinned wrapper width when
- * there is one, and the available viewport width when there is not. Under that
- * model the latch is exactly reproducible, and so is its absence.
+ * model below reproduces the one property that matters: an input whose width is
+ * 100% of its container - the pinned wrapper width when there is one, the
+ * viewport width when there is not.
  */
 
 'use strict';
@@ -74,9 +69,6 @@ describe('the company-search control follows the viewport', () => {
         search.ensureFieldWrapper();
         expect(wrapperWidth()).toBe('600px');
 
-        // The buyer drags the window narrower. Before the fix the measurement
-        // read the 600px pin straight back and the control stayed 600px wide
-        // inside a 320px viewport - the defect Doug reported.
         viewportWidth = 320;
         search.ensureFieldWrapper();
 

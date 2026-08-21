@@ -3,76 +3,41 @@
  * Refreshes the SHOP-LEVEL override tree so it matches the version of the
  * module that is actually installed (TWO-25265).
  *
- * WHY THIS HAS TO EXIST AT ALL
+ * PrestaShop copies a module's `override/` directory into the shop's own
+ * `override/` tree once, at install/reset (`Module::installOverrides()`), and
+ * that copy is what actually runs — an upgrade or a deploy never touches it.
+ * `Module::addOverride()` also can't rewrite an existing shop-level method: it
+ * throws if the method is already there and only ever splices in missing
+ * methods. So changing or retiring an override in a release leaves every
+ * existing shop silently running the old behaviour forever, and a module reset
+ * doesn't help since it re-runs the same add-only `installOverrides()`.
  *
- * A module's `override/` directory is not deployed content. PrestaShop copies
- * it, once, into the shop's own `override/` tree - `_PS_OVERRIDE_DIR_` - and
- * from then on the shop's copy is the file that runs. That copy is written
- * exclusively by `Module::installOverrides()`, which runs at install and at
- * reset and nowhere else. It is NOT rewritten by an upgrade, and it is NOT
- * rewritten by a deploy that replaces the module directory.
+ * Observed in production-shaped staging on 2026-07-29: a shop on the 2.4.0
+ * `CustomerAddressFormatter` override kept injecting fields into the address
+ * form long after 2.7.0 moved them elsewhere, with module version, files on
+ * disk, and git-sync all reporting current — only the shop-level override was
+ * stale.
  *
- * Worse, `Module::addOverride()` cannot rewrite it even when it does run. Read
- * its body in PrestaShop core: when a shop-level override for the class already
- * exists, it reflects over both copies and, for every method the shop copy
- * already declares, THROWS - "The method %s in the class %s is already
- * overridden by the module %s version %s". It only ever splices in methods that
- * are missing. There is no path in core that replaces a method body and no path
- * that removes one. So:
- *
- *   - CHANGE an override's behaviour in a release and every existing shop keeps
- *     running the old behaviour, forever, silently;
- *   - RETIRE an override in a release and every existing shop keeps running it,
- *     forever, silently. A module reset does not help - it re-runs
- *     `installOverrides()`, which adds and never strips.
- *
- * Both were observed in production-shaped staging on 2026-07-29: a shop
- * carrying the 2.4.0 `CustomerAddressFormatter` override kept injecting the
- * department and project fields into the address form long after 2.7.0 moved
- * them into the payment tile. Module version reported 2.7.0, files on disk were
- * 2.7.0, git-sync healthy, deploy Synced. The shop-level override was the only
- * stale thing, and nothing in the module or in core was ever going to fix it.
- *
- * THE CONVENTION THIS ESTABLISHES
- *
- * Changing or retiring an override is a MIGRATION, not an edit. The version
+ * Convention: changing or retiring an override is a MIGRATION. The version
  * that does it calls `TwoOverrideMigrator::refresh()` from its
- * `upgrade/upgrade-<version>.php`, and `.github/scripts/check-override-migration.sh`
- * fails the pull request if it does not.
+ * `upgrade/upgrade-<version>.php`; `.github/scripts/check-override-migration.sh`
+ * fails the PR if it doesn't.
  *
- * WHAT `refresh()` DOES, AND THE THREE THINGS IT REFUSES TO DO
+ * `refresh()` deletes a shop-level override file, then rebuilds the class
+ * index and re-runs `installOverrides()`, only when the file is stale AND
+ * exclusively ours. It refuses to touch:
  *
- * For each candidate shop-level override file it deletes the file when - and
- * only when - the file is stale AND exclusively ours, then regenerates the
- * class index and re-runs `installOverrides()` so the current version's copy is
- * written fresh. A retired override is simply never re-written, because the
- * module no longer ships one; that is the same code path, not a second one.
+ *   1. A file stamped by any OTHER module too — PrestaShop's `override/` tree
+ *      is a shared merge target; deleting a co-owned file would silently
+ *      uninstall that module's override. Logged and left for a human.
+ *   2. A file with no `module:` stamp at all — PrestaShop core's or a
+ *      merchant's hand-written override, not ours.
+ *   3. A file whose every stamp already matches the current module version —
+ *      a no-op, so a second run of the same upgrade doesn't churn.
  *
- * It refuses to touch:
- *
- *   1. A file carrying ANY other module's `module:` stamp. PrestaShop's
- *      `override/` tree is a SHARED merge target - several modules splice
- *      methods into one file. Deleting a co-owned file would silently
- *      uninstall another module's override, which is a far worse failure than
- *      the one being fixed. Co-owned files are logged and left alone; a human
- *      has to unpick them.
- *   2. A file carrying no `module:` stamp at all. That is either PrestaShop's
- *      own or a merchant's hand-written override. Not ours, not our business.
- *   3. A file whose every stamp already reads the current module version.
- *      Nothing to do, so nothing is done - which is what makes a second run of
- *      the same upgrade a genuine no-op rather than a delete-and-rewrite churn.
- *
- * The stamp is PrestaShop's own, written by `addOverride()` immediately above
- * each spliced member:
- *
- *     \/*
- *      * module: twopayment
- *      * date: 2026-07-08 09:12:44
- *      * version: 2.4.0
- *      *\/
- *
- * so ownership and staleness are read from the artifact core itself produced,
- * not from anything this module has to remember to write.
+ * Ownership/staleness is read from the `module:`/`version:` stamp PrestaShop's
+ * own `addOverride()` writes above each spliced member, never from anything
+ * this module has to remember to record itself.
  *
  * @author Plugin Developer from Two <support@two.inc>
  * @copyright Since 2021 Two Team
@@ -103,21 +68,14 @@ class TwoOverrideMigrator
     /**
      * The comment text of a PHP source file, and nothing else.
      *
-     * Stamps are only ever read out of real comment tokens, never out of raw
-     * source. A multiline string literal can contain text that is
-     * indistinguishable from a stamp once you are matching line by line:
+     * Stamps are read only out of real comment tokens, never raw source: a
+     * multiline string literal could contain text indistinguishable from a
+     * stamp (e.g. `"\n * module: twopayment\n"`), which matched on raw source
+     * would misclassify a current override as stale and rewrite it.
      *
-     *     $doc = "\n    * module: twopayment\n    * version: 2.4.0\n";
-     *
-     * Matching that on raw source would classify a perfectly current override as
-     * stale and rewrite it. Tokenising first makes the whole ownership decision
-     * structurally incapable of reading a string literal.
-     *
-     * `token_get_all()` is stdlib - no parser dependency, and this module has no
-     * runtime composer dependencies to add one to. It needs a `<?php` open tag to
-     * produce tokens at all; a file without one yields no comments, which lands
-     * on UNSTAMPED, which means "leave it alone". That is the safe direction, and
-     * it is the same direction taken when the file cannot be tokenised at all.
+     * `token_get_all()` needs a `<?php` open tag to produce tokens; a file
+     * without one (or that fails to tokenise) yields no comments, landing on
+     * UNSTAMPED — "leave it alone", the safe direction.
      *
      * @param string $source
      *
