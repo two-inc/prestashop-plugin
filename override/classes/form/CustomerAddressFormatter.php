@@ -80,7 +80,7 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
             $format['phone']->setRequired(true);
         }
 
-        // Department and project are deliberately NOT injected here any more
+        // Department and project are deliberately NOT injected here any more.
         // They now render inside the Two payment tile at the payment
         // step, gated by the same PS_TWO_ENABLE_DEPARTMENT /
         // PS_TWO_ENABLE_PROJECT switches, alongside the new purchase-order-
