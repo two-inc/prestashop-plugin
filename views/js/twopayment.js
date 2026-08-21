@@ -166,7 +166,7 @@
                 });
             }
 
-            // ABN-472. Always constructed: which fields exist in the DOM is
+            // Always constructed: which fields exist in the DOM is
             // decided server-side by the four PS_TWO_ENABLE_* switches, and
             // with none of them on this module finds nothing to mirror.
             if (typeof TwoOptionalFields !== 'undefined') {

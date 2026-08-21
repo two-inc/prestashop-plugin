@@ -169,15 +169,14 @@ class Twopayment extends PaymentModule
     // The order note is the fifth field in that standard sequence and is
     // deliberately absent from here: it is PrestaShop core's own
     // `delivery_message` textarea on the checkout SHIPPING step, not a field
-    // this module renders (ABN-472). So "order note last" has no expression in
+    // this module renders So "order note last" has no expression in
     // the payment tile - there is nothing to sort - and no plugin order-note
     // field was invented to give it one. The module relays core's value to Two
     // as `order_note`; see getCartOrderNote().
     //
-    // Single source of truth
-    // for the admin switch that gates each one, the POST parameter that
-    // carries it from the payment tile, and its length/validation shape
-    // (ABN-472). Every one of them renders inside the Two payment tile at the
+    // Single source of truth for the admin switch that gates each one, the
+    // POST parameter that carries it from the payment tile, and its
+    // length/validation shape. Every one of them renders inside the Two payment tile at the
     // payment step: PrestaShop asks for the shipping address FIRST and only
     // reveals the billing address block when the buyer ticks "Billing address
     // differs from shipping address", so a field hosted there - which is where
@@ -4536,7 +4535,7 @@ class Twopayment extends PaymentModule
                 // only matters at all when the control is in the address area.
                 'address_lookup' => $this->getAddressLookupEnabled(),
                 // Deliberately NOT handing the optional-field switches to the
-                // JS (ABN-472). Nothing ever read `enable_department` /
+                // JS. Nothing ever read `enable_department` /
                 // `enable_project` here - the gate is server-side and total:
                 // a disabled field renders no input in the tile and declares
                 // no hidden twin in the payment form, so there is nothing for
@@ -4958,7 +4957,7 @@ class Twopayment extends PaymentModule
             'module_dir' => $this->_path, // Module directory path for assets
             'two_portal_url' => $this->getTwoPortalUrl(), // Dynamic portal URL based on environment
             // Optional buyer reference fields, rendered inside the tile rather
-            // than in the billing address block (ABN-472).
+            // than in the billing address block.
             'two_optional_fields' => $optional_fields,
             // TWO-25326 §7.1 (2026-08-03 ruling): "here vs there" for the ONE
             // company-search control (TwoCompanySearch.js), driven by the
@@ -5082,7 +5081,7 @@ class Twopayment extends PaymentModule
      * CheckoutSession::setMessage(), which stores one row per cart in the
      * `message` table - so it is readable from any request that knows the cart,
      * including the ones with no buyer submission in scope. No plugin
-     * order-note field exists and none should be added (ABN-472).
+     * order-note field exists and none should be added.
      *
      * Core writes the value through Tools::safeOutput(), i.e. htmlentities, so
      * it is decoded back to plain text here rather than shipping `&amp;` and
@@ -6082,7 +6081,7 @@ class Twopayment extends PaymentModule
         $shippingOrgName = !empty($shippingData['company_name']) ? $shippingData['company_name'] : $buyerCompanyName;
 
         // Optional buyer reference fields, submitted with the payment form from
-        // the Two payment tile (ABN-472).
+        // the Two payment tile.
         $optional_fields = $this->getSubmittedOptionalCheckoutFields();
 
         if (!is_array($merchant_urls)) {
@@ -6135,7 +6134,7 @@ class Twopayment extends PaymentModule
             'recurring' => false,
             // PrestaShop core's own checkout order comment (`delivery_message`
             // on the shipping step), relayed rather than duplicated by a plugin
-            // field (ABN-472). Read from the cart, so the value survives into
+            // field. Read from the cart, so the value survives into
             // the requests that carry no buyer submission.
             'order_note' => $this->getCartOrderNote($cart),
             'line_items' => $line_items,
@@ -6278,7 +6277,7 @@ class Twopayment extends PaymentModule
             'recurring' => false,
             // PrestaShop core's own checkout order comment (`delivery_message`
             // on the shipping step), relayed rather than duplicated by a plugin
-            // field (ABN-472). Read from the cart, so the value survives into
+            // field. Read from the cart, so the value survives into
             // the requests that carry no buyer submission.
             'order_note' => $this->getCartOrderNote($cart),
             'line_items' => $line_items,

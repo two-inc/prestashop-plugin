@@ -81,7 +81,7 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
         }
 
         // Department and project are deliberately NOT injected here any more
-        // (ABN-472). They now render inside the Two payment tile at the payment
+        // They now render inside the Two payment tile at the payment
         // step, gated by the same PS_TWO_ENABLE_DEPARTMENT /
         // PS_TWO_ENABLE_PROJECT switches, alongside the new purchase-order-
         // number and invoice-email fields. Two reasons, both fatal to the old
