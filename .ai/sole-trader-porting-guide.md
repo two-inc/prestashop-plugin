@@ -975,8 +975,15 @@ anything local to either symptom.
   now takes a flag that disowns the WRITE only (`cancelEnrollment(keepPopupTracked)`) and
   leaves the poll and the handle alone; the settle event's popup-open guard needs no change
   and instead becomes the mechanism, holding the spinner until the buyer's own popup closes.
-  The write staying disowned is deliberate and is the residue: an OTP completed after an
-  incidental re-render is still dropped on the generation check, as it was before.
+- **A surviving popup has to be RE-ADOPTABLE, not just re-findable** (round 2 adversarial
+  review of the fix above). Disowning the write bumps the generation the popup's own
+  completion message is checked against, so keeping the handle alive is only half an
+  answer: the buyer finishes signing up, the message is dropped on that check, and they get
+  an empty company field, no error, and — once the raise arms a spinner — something on
+  screen actively claiming progress. Raising a tracked popup is therefore the same explicit
+  resume as starting one, and re-stamps the token generation. Miss this and the two entry
+  points silently disagree, because the replacement-flow link re-stamps on its own path and
+  the chip does not.
 - **The raise branch is load-bearing on all of this, and is a trap when changing it.** That
   branch sits before the re-entrancy guard. It used to be reachable only with a flight of
   the current panel-open session still running — and the fix above deliberately widened

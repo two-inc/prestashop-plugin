@@ -259,6 +259,58 @@ test('cancelEnrollment(true) disowns the write but keeps the popup tracked', asy
 });
 
 /**
+ * The consequence of that survival, and the round-2 adversarial review finding
+ * it produced: the cancel bumps `_enrollGeneration`, so the popup it leaves
+ * behind is one the message listener would drop on its generation check. The
+ * buyer raising it is an explicit resume - the same statement
+ * startEnrollment()/startReplacement() re-stamp for - so the raise re-stamps
+ * too, or a buyer who completes signup after a shipping recalculation gets
+ * nothing written and no error, with a spinner over it saying otherwise.
+ *
+ * Asserted on the publish rather than on the counters: the stamp is the
+ * mechanism, the silently dropped completion is the bug.
+ */
+test('a popup kept across a teardown still completes once the buyer raises it', async () => {
+    const publishes = stubManager();
+    global.window.TwoCompanyNumber = { forDisplay: (v) => v };
+    document.body.insertAdjacentHTML('beforeend', "<input name='email' value='buyer@example.test' />");
+    const { instance, popup } = await enrolWithPopupOpen();
+
+    // The address form re-renders under the buyer - a shipping recalculation,
+    // not a gesture - so the search instance is torn down and rebuilt.
+    instance.cancelEnrollment(true);
+
+    // The buyer clicks Sole trader again: "give me that popup back".
+    expect(instance.focusSignupPopup()).toBe(true);
+    expect(instance._tokensGeneration).toBe(instance._enrollGeneration);
+
+    // ...and finishes signing up in it.
+    stubFetch({
+        '/autofill/v1/buyer/current': () => Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({
+                email: 'buyer@example.test',
+                company_name: 'Sole Trader AS',
+                organization_number: '923456789'
+            })
+        })
+    });
+    window.dispatchEvent(new window.MessageEvent('message', {
+        data: 'ACCEPTED',
+        origin: 'https://signup.example.test'
+    }));
+    await flushPromises();
+    await flushPromises();
+    await flushPromises();
+
+    expect(publishes.length).toBe(1);
+    expect(publishes[0].company).toBe('Sole Trader AS');
+    expect(popup.closeCalls).toBe(0);
+
+    instance.destroy();
+});
+
+/**
  * The buyer-facing half of bug 2 (Doug, TWO-40 follow-up), end to end on the
  * real module: "Enter manually" used to close the popup and leave the enrolment
  * running, so a buyer lookup already in flight still resolved and published the
