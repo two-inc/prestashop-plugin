@@ -3,38 +3,10 @@
 declare(strict_types=1);
 
 /**
- * ABN-472 - the optional buyer reference fields in the Two payment tile.
- *
- * Four fields (department, project, purchase order number, invoice email),
- * each gated by its own PS_TWO_ENABLE_* switch, all rendered inside the payment
- * tile rather than in the billing address block.
- *
- * The placement is the point. PrestaShop collects the SHIPPING address first
- * and only reveals the billing block when the buyer ticks "Billing address
- * differs from shipping address", so department and project - which used to be
- * injected into that block by the CustomerAddressFormatter override - were
- * invisible to most buyers. Nothing persisted them either: the address table
- * has no such columns, so the order payload read them off the Address entity
- * and always sent empty strings.
- *
- * What these tests pin:
- *
- *  - a fresh install seeds all four keys to 1, and upgrade-2.7.0 WRITES all
- *    four on an existing shop, including over a stored 0 (this is the accepted
- *    behaviour change - see the upgrade script's docblock for why seed-if-absent
- *    would have been a no-op);
- *  - a switch that is off means no field in the tile AND no value in the
- *    payload, even when the POST parameter is forged onto the request;
- *  - the values the buyer submits with the payment form reach the order-create
- *    payload under Two's names, with the two conditional ones present only when
- *    filled in;
- *  - an invalid invoice email is dropped and logged, never a checkout blocker;
- *  - the order-UPDATE payload sends no optional values at all, because no
- *    buyer submission is in scope there.
+ * the optional buyer reference fields in the Two payment tile.
  */
 final class OptionalCheckoutFieldsSpec
 {
-    /** Config key per field, in render order. */
     private const KEYS = [
         'department' => 'PS_TWO_ENABLE_DEPARTMENT',
         'project' => 'PS_TWO_ENABLE_PROJECT',
@@ -42,7 +14,6 @@ final class OptionalCheckoutFieldsSpec
         'invoice_email' => 'PS_TWO_ENABLE_INVOICE_EMAIL',
     ];
 
-    /** POST parameter per field. */
     private const INPUTS = [
         'department' => 'two_department',
         'project' => 'two_project',
@@ -68,10 +39,6 @@ final class OptionalCheckoutFieldsSpec
         self::testUpdateOrderPayloadSendsNoOptionalValues();
         self::testAddressFormatterNoLongerInjectsDepartmentOrProject();
     }
-
-    // -----------------------------------------------------------------
-    // Fixtures
-    // -----------------------------------------------------------------
 
     private static function reset(): void
     {
@@ -114,7 +81,6 @@ final class OptionalCheckoutFieldsSpec
         $method->invoke($module);
     }
 
-    /** Did any log line mention this fragment? */
     private static function loggedContains(string $needle): bool
     {
         foreach (PrestaShopLogger::$logs as $entry) {
@@ -214,10 +180,6 @@ final class OptionalCheckoutFieldsSpec
         ];
     }
 
-    // -----------------------------------------------------------------
-    // Configuration lifecycle
-    // -----------------------------------------------------------------
-
     private static function testFreshInstallEnablesAllFour(): void
     {
         self::reset();
@@ -236,10 +198,6 @@ final class OptionalCheckoutFieldsSpec
         }
     }
 
-    /**
-     * An install from before any of these keys existed: every one absent, so
-     * every one gets seeded to 1.
-     */
     private static function testUpgrade270SeedsOnlyAbsentKeys(): void
     {
         self::reset();
@@ -263,19 +221,10 @@ final class OptionalCheckoutFieldsSpec
     }
 
     /**
-     * The shape practically every LIVE pre-2.7.0 shop is in, and the case the
-     * seed-only guard exists for: department and project already carry a stored
-     * 0, so the upgrade must leave both exactly as they are and seed only the
-     * two genuinely new keys.
-     *
-     * A stored value is treated as the merchant's choice regardless of how it
-     * got there - the same call the WooCommerce plugin makes - even though on
-     * these two keys the 0 most likely came from install() never having written
-     * a default rather than from a decision. The documented consequence is that
-     * such a shop keeps department and project OFF after upgrading and only the
-     * two new fields appear. That near-no-op is the intended outcome; if this
-     * test starts failing because both keys came back as 1, the guard has been
-     * dropped, not fixed.
+     * A stored value is the merchant's choice regardless of how it got there, so
+     * a pre-2.7.0 shop keeps department and project OFF after upgrading and only
+     * the two new fields appear. That near-no-op is intended: if this test fails
+     * because both keys came back as 1, the seed-only guard has been dropped.
      */
     private static function testUpgrade270LeavesAStoredZeroAlone(): void
     {
@@ -294,7 +243,6 @@ final class OptionalCheckoutFieldsSpec
         TinyAssert::false($module->isOptionalCheckoutFieldEnabled('department'));
         TinyAssert::false($module->isOptionalCheckoutFieldEnabled('project'));
 
-        // Only the two new fields turn up at checkout on such a shop.
         TinyAssert::same(1, Configuration::get('PS_TWO_ENABLE_PO_NUMBER'));
         TinyAssert::same(1, Configuration::get('PS_TWO_ENABLE_INVOICE_EMAIL'));
         TinyAssert::same(
@@ -303,8 +251,6 @@ final class OptionalCheckoutFieldsSpec
             'An upgraded shop with both older switches off shows only the two new fields'
         );
 
-        // Re-runnable: a stored 1 is equally a stored value, and a merchant who
-        // switches something back off afterwards must not have it resurrected.
         Configuration::updateValue('PS_TWO_ENABLE_PO_NUMBER', 0);
         self::upgrade($module);
         TinyAssert::same(0, (int) Configuration::get('PS_TWO_ENABLE_PO_NUMBER'), 'A later opt-out must not be resurrected');
@@ -321,7 +267,7 @@ final class OptionalCheckoutFieldsSpec
         self::save($module);
         foreach (self::KEYS as $field => $key) {
             // The switch posts a string and the save stores it as posted, so
-            // compare on the int the readers coerce to rather than on shape.
+            // compare on the int the readers coerce to.
             TinyAssert::same(0, (int) Configuration::get($key), 'Expected save to store 0 for ' . $key);
             TinyAssert::same('0', (string) self::formValues($module)[$key]);
             TinyAssert::false($module->isOptionalCheckoutFieldEnabled($field));
@@ -361,10 +307,6 @@ final class OptionalCheckoutFieldsSpec
         TinyAssert::count(0, $module->getOptionalCheckoutFieldsForDisplay());
     }
 
-    // -----------------------------------------------------------------
-    // Rendering and reading
-    // -----------------------------------------------------------------
-
     private static function testEnabledFieldsAreExposedToTheTileInRenderOrder(): void
     {
         self::reset();
@@ -373,28 +315,26 @@ final class OptionalCheckoutFieldsSpec
 
         $fields = $module->getOptionalCheckoutFieldsForDisplay();
 
-        // The agreed standard field order, shared with the admin switches.
-        // The fifth field in that sequence, the order note, is core's
-        // `delivery_message` on the shipping step and has no tile presence, so
-        // it cannot and does not appear here.
+        // The fifth field in the agreed standard order, the order note, is
+        // core's `delivery_message` on the shipping step and has no tile
+        // presence, so it cannot appear here.
         TinyAssert::same(
             ['invoice_email', 'purchase_order_number', 'project', 'department'],
             array_keys($fields),
             'Render order is part of the checkout layout, not incidental'
         );
         TinyAssert::same('two_invoice_email', $fields['invoice_email']['input_name']);
-        // An <input type="email"> is what gives the buyer the browser's own
-        // keyboard and hint on mobile; the plugin validates it again itself.
+        // type=email for the mobile keyboard and hint; the plugin validates it
+        // again itself.
         TinyAssert::same('email', $fields['invoice_email']['type']);
         TinyAssert::same('text', $fields['department']['type']);
         TinyAssert::same('255', $fields['department']['max_length']);
     }
 
     /**
-     * The admin pane is supposed to read like the thing it configures, so the
-     * switches must render in the same sequence as the checkout fields. Two
-     * separate lists express that order - the constant the tile iterates and the
-     * form's input array - and nothing but a test stops them drifting apart.
+     * Two separate lists express the field order - the constant the tile
+     * iterates and the form's input array - and nothing but this test stops
+     * them drifting apart.
      */
     private static function testAdminSwitchesRenderInTheSameOrderAsTheTile(): void
     {
@@ -432,13 +372,11 @@ final class OptionalCheckoutFieldsSpec
     }
 
     /**
-     * The order note is core's field, relayed rather than duplicated.
-     *
-     * Core writes it through Tools::safeOutput() (htmlentities), so the relay
-     * has to decode it - otherwise Two receives `&amp;` and `&quot;`. It is read
-     * from the cart rather than the request, which is what lets the UPDATE
-     * payload carry it too: were it read from the buyer's submission, an admin
-     * order edit would blank the note on Two's side.
+     * Core writes the order note through Tools::safeOutput() (htmlentities), so
+     * the relay has to decode it - otherwise Two receives `&amp;` and `&quot;`.
+     * It is read from the cart rather than the request, which is what lets the
+     * UPDATE payload carry it: read from the buyer's submission, an admin order
+     * edit would blank the note on Two's side.
      */
     private static function testCoreOrderNoteIsRelayedOnCreateAndUpdate(): void
     {
@@ -463,8 +401,6 @@ final class OptionalCheckoutFieldsSpec
         $payload = $module->getTwoNewOrderData('merchant-attempt-7204b', $cart, self::merchantUrls());
         TinyAssert::same('Leave at reception & ring "twice"', $payload['order_note']);
 
-        // The update path has no buyer submission but does have the cart, so the
-        // note survives an admin edit instead of being wiped.
         $order = new class {
             public bool $loaded = true;
             public int $id = 7204;
@@ -500,8 +436,7 @@ final class OptionalCheckoutFieldsSpec
             'A disabled field renders no element at all, hidden or otherwise'
         );
 
-        // Forged parameter: nothing renders the input, so the only way this
-        // arrives is by hand. The switch has to win.
+        // Forged parameter: nothing renders the input, so the switch has to win.
         self::post(['project' => 'Smuggled', 'department' => 'Finance']);
         $submitted = $module->getSubmittedOptionalCheckoutFields();
 
@@ -543,19 +478,14 @@ final class OptionalCheckoutFieldsSpec
         self::post(['department' => 'Finance', 'invoice_email' => 'not-an-email']);
         $submitted = $module->getSubmittedOptionalCheckoutFields();
 
-        // Dropped, not fatal: the buyer-side script rejects it before submit,
-        // and failing a checkout over an optional field would be worse than
-        // sending the order without it.
+        // Dropped, not fatal: failing a checkout over an optional field would be
+        // worse than sending the order without it.
         TinyAssert::same(['department' => 'Finance'], $submitted);
         TinyAssert::true(
             self::loggedContains('Dropped invalid optional checkout field "invoice_email"'),
             'A dropped value must leave a trail'
         );
     }
-
-    // -----------------------------------------------------------------
-    // Payload
-    // -----------------------------------------------------------------
 
     private static function testOrderPayloadCarriesEveryFieldTheBuyerFilledIn(): void
     {
@@ -600,11 +530,9 @@ final class OptionalCheckoutFieldsSpec
 
     /**
      * The order-UPDATE payload is built from admin order edits, provider
-     * webhooks and status transitions. None of them carry the buyer's
-     * payment-step submission and the values are not persisted locally, so the
-     * optional fields go out empty - exactly as they always did, now stated
-     * outright instead of hidden behind an Address property check that could
-     * never be true.
+     * webhooks and status transitions. None carry the buyer's payment-step
+     * submission and the values are not persisted locally, so the optional
+     * fields go out empty.
      */
     private static function testUpdateOrderPayloadSendsNoOptionalValues(): void
     {
@@ -640,17 +568,12 @@ final class OptionalCheckoutFieldsSpec
         TinyAssert::false(array_key_exists('invoice_details', $payload));
     }
 
-    // -----------------------------------------------------------------
-    // The placement the whole ticket is about
-    // -----------------------------------------------------------------
-
     private static function testAddressFormatterNoLongerInjectsDepartmentOrProject(): void
     {
         self::reset();
-        // Both switches ON is the case that used to inject them. The fields
-        // must still not appear in the address form: PrestaShop only shows the
-        // billing block when the buyer ticks "Billing address differs from
-        // shipping address", which is what made this placement unusable.
+        // Both switches ON, yet no field in the address form: PrestaShop only
+        // shows the billing block when the buyer ticks "Billing address differs
+        // from shipping address", which makes that placement unusable.
         self::enableAll();
 
         $overridePath = dirname(__DIR__) . '/override/classes/form/CustomerAddressFormatter.php';
@@ -676,7 +599,6 @@ final class OptionalCheckoutFieldsSpec
             array_key_exists('project', $format),
             'project must not be injected into the address form any more'
         );
-        // The override still does its other job.
         TinyAssert::true(isset($format['company']) && $format['company'] instanceof FormField);
     }
 }

@@ -3,33 +3,25 @@
 declare(strict_types=1);
 
 /**
- * TWO-24775 - minimum-order-value gate. The platform minimum
- * (min_order_amount/min_order_currency/min_order_basis on GET /v1/merchant)
- * rides the SAME merchant-record fetch/cache as available_terms and
- * due_in_days; the merchant's own optional minimum (admin config, shop
- * default currency) stacks on top. hookPaymentOptions hides the payment
- * option when either bar is unmet; the payment/intent decline paths surface
- * a currency-formatted hint when a rejection is attributable to the minimum.
+ * TWO-24775 - minimum-order-value gate. The platform minimum rides the SAME
+ * merchant-record fetch/cache as available_terms; the merchant's own optional
+ * minimum (shop default currency) stacks on top.
  *
- * Failure posture parity with magento-plugin's MinimumOrderGate:
- * fail-open on an unresolved minimum, fail-CLOSED on an unconvertible
- * cross-currency basket vs the platform minimum, fail-open on the merchant's
- * own optional bar, fail-soft (no hint) on the decline hint.
+ * Failure posture: fail-open on an unresolved minimum, fail-CLOSED on an
+ * unconvertible cross-currency basket vs the platform minimum, fail-open on
+ * the merchant's own bar, fail-soft (no hint) on the decline hint.
  */
 final class MinimumOrderGateSpec
 {
     public static function runAll(): void
     {
-        // Tuple parsing.
         self::testParseAcceptsFullTuple();
         self::testParseRejectsPartialOrMalformedTuples();
 
-        // Shared merchant-record fetch / cache behaviour.
         self::testSharedFetchCachesPlatformMinimum();
         self::testSharedFetchCachesTheNoMinimumOutcome();
         self::testInvalidateClearsPlatformMinimum();
 
-        // Checkout gate.
         self::testGateInclusiveSameCurrency();
         self::testGateComparesOnDeclaredBasis();
         self::testGateConvertsCrossCurrencyBasket();
@@ -40,13 +32,11 @@ final class MinimumOrderGateSpec
         self::testMerchantBasisFallsBackToPlatformThenGross();
         self::testGatePassesWhenNoMinimumResolved();
 
-        // Decline hint.
         self::testDeclineHintFromDeclineReason();
         self::testDeclineHintConvertsToCartCurrency();
         self::testDeclineHintStrictlyBelowFallback();
         self::testDeclineHintFailsSoftWhenUnattributable();
 
-        // Admin save validation.
         self::testSaveValidationRejectsNegativeAndBelowFloor();
         self::testSaveValidationAllowsFloorAndAbove();
     }
@@ -66,8 +56,7 @@ final class MinimumOrderGateSpec
             3 => ['iso_code' => 'GBP', 'conversion_rate' => 999.0, 'symbol' => "\u{A3}"],
         ];
         Configuration::updateValue('PS_CURRENCY_DEFAULT', 1);
-        // Cached FX table (EUR pivot: rates[CCY] = 1 CCY in EUR), matching
-        // the historical fixture rates 11.5 NOK/EUR and 0.85 GBP/EUR.
+        // Cached FX table, EUR pivot: rates[CCY] = 1 CCY in EUR.
         Configuration::updateValue(Twopayment::CONFIG_FX_RATES, json_encode([
             'base' => 'EUR',
             'as_of' => '2026-07-15',
@@ -174,7 +163,6 @@ final class MinimumOrderGateSpec
             $module->getPlatformMinimumOrder()
         );
 
-        // Within TTL the cached tuple is served with no refetch.
         $module->getMerchantAvailableTerms(true);
         TinyAssert::same(1, $module->fetchCount, 'fresh cache must not refetch');
     }
@@ -197,7 +185,6 @@ final class MinimumOrderGateSpec
         TinyAssert::same(null, $module->getPlatformMinimumOrder());
         TinyAssert::same('', Configuration::get(Twopayment::CONFIG_PLATFORM_MIN_ORDER));
 
-        // The no-minimum outcome is cached: no refetch per checkout render.
         $module->getMerchantAvailableTerms(true);
         TinyAssert::same(1, $module->fetchCount, 'no-minimum outcome must be cached too');
     }
@@ -258,7 +245,6 @@ final class MinimumOrderGateSpec
         Configuration::updateValue(Twopayment::CONFIG_MERCHANT_MIN_ORDER, '200');
         Configuration::updateValue(Twopayment::CONFIG_MERCHANT_MIN_ORDER_BASIS, 'gross');
 
-        // Above the platform floor but below the merchant's own bar.
         TinyAssert::false($module->isTwoMinimumOrderSatisfied(self::cart(1, 150.0, 120.0)));
         TinyAssert::true($module->isTwoMinimumOrderSatisfied(self::cart(1, 200.0, 160.0)));
     }
@@ -320,7 +306,6 @@ final class MinimumOrderGateSpec
         );
         TinyAssert::same("Minimum order value is \u{20AC}100.00 including tax.", $hint);
 
-        // Nested under data (order-intent response shape).
         $hint = $module->getTwoMinimumOrderDeclineHint(
             ['data' => ['decline_reason' => 'ORDER_BELOW_MIN_INVOICE_AMOUNT']],
             self::cart(1, 50.0, 40.0)
@@ -333,7 +318,6 @@ final class MinimumOrderGateSpec
         $module = self::freshModule();
         self::cachePlatformMinimum(['amount' => 100.0, 'currency' => 'EUR', 'basis' => 'net']);
 
-        // Buyer shops in NOK: the hint must speak the buyer's currency.
         $hint = $module->getTwoMinimumOrderDeclineHint(
             ['decline_reason' => 'ORDER_BELOW_MIN_INVOICE_AMOUNT'],
             self::cart(2, 500.0, 400.0)
@@ -346,7 +330,6 @@ final class MinimumOrderGateSpec
         $module = self::freshModule();
         self::cachePlatformMinimum(['amount' => 100.0, 'currency' => 'EUR', 'basis' => 'gross']);
 
-        // No machine-readable reason, but the basket is strictly below.
         $hint = $module->getTwoMinimumOrderDeclineHint([], self::cart(1, 99.0, 80.0));
         TinyAssert::same("Minimum order value is \u{20AC}100.00 including tax.", $hint);
 

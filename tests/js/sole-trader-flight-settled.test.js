@@ -1,17 +1,9 @@
 /**
- * TWO-40 round 4, Doug's explicit request: "keep the company search control
- * open, show spinner in query field" for the duration of a Sole Trader
- * click's real autofill round trip.
- *
- * TwoCompanySearch.js needs to know when that round trip is DONE - whatever
- * the outcome - so it can stop the spinner and close the panel. This pins
- * the signal it listens for: TwoSoleTrader.js's notifyEnrollmentSettled(),
- * which fires `document.dispatchEvent(new CustomEvent('two:sole-trader-flight-settled'))`
- * from every terminal branch of startEnrollment()'s call graph. Each test
- * below drives one branch and asserts the event actually fires from it -
- * a fixed timeout in TwoCompanySearch.js would pass every one of these
- * trivially without ever wiring the real signal, which is exactly the
- * class of bug this file exists to rule out.
+ * TWO-40 round 4: pins TwoSoleTrader.js's notifyEnrollmentSettled(), which
+ * dispatches 'two:sole-trader-flight-settled' from every terminal branch of
+ * startEnrollment()'s call graph. Each test drives one branch and asserts
+ * the event fires - a fixed timeout in TwoCompanySearch.js would pass all
+ * of these without ever wiring the real signal.
  */
 
 'use strict';
@@ -105,14 +97,9 @@ test('a successful autofill (buyer match) fires the settle event', async () => {
 });
 
 /**
- * Adversarial review finding (Yoda): every OTHER test drives
- * notifyEnrollmentSettled()'s popup-open guard through a path where
- * `this._popup` is either never set or already nulled by the poll itself -
- * none of them actually exercises the guard suppressing a call from a
- * DIFFERENT terminal branch while a popup is still open. This does: a real
- * OTP round trip (postMessage 'ACCEPTED') resolves through applyBuyer()'s
- * success branch while the popup the buyer authenticated in is still open on
- * screen - the spinner must not clear until they actually close it.
+ * Adversarial review finding (Yoda): other tests don't exercise the settle
+ * guard while a popup is still open. This one does - a real OTP round trip
+ * resolves while the popup the buyer authenticated in is still open.
  */
 test('a genuine OTP completion settles the buyer lookup but withholds the spinner until the still-open popup actually closes', async () => {
     buildPaymentTile();
@@ -128,12 +115,10 @@ test('a genuine OTP completion settles the buyer lookup but withholds the spinne
         buyer: () => {
             buyerLookupCalls += 1;
             if (buyerLookupCalls === 1) {
-                // Passive cookie-match check on the order's own checkout
-                // email - no match, so this falls through to the on-page
-                // prompt.
+                // Passive cookie-match check - no match, falls through to on-page prompt.
                 return Promise.resolve({ ok: false, status: 404 });
             }
-            // The trusted lookup issued after a genuine OTP completion.
+            // Trusted lookup after genuine OTP completion.
             return Promise.resolve({
                 ok: true,
                 json: () => Promise.resolve({
@@ -155,15 +140,14 @@ test('a genuine OTP completion settles the buyer lookup but withholds the spinne
             await flushPromises();
             await flushPromises();
 
-            // No-match on the passive check - handed off to the on-page
-            // prompt (nothing left to wait on until the buyer clicks it).
+            // No-match on passive check - handed off to on-page prompt.
             expect(calls.length).toBe(1);
 
             const prompt = document.querySelector('.two-sole-trader__prompt');
             prompt.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
             expect(global.window.open).toHaveBeenCalledTimes(1);
             expect(instance._popup).toBe(popup);
-            // Popup handed off to - must not have settled again yet.
+            // Handed off to popup - not settled again yet.
             expect(calls.length).toBe(1);
 
             window.dispatchEvent(new window.MessageEvent('message', {
@@ -174,13 +158,10 @@ test('a genuine OTP completion settles the buyer lookup but withholds the spinne
             await flushPromises();
             await flushPromises();
 
-            // applyBuyer() succeeded - the buyer is enrolled - but the popup
-            // they just authenticated in is STILL open, so the guard must
-            // withhold the settle event.
+            // applyBuyer() succeeded but popup still open - guard must withhold settle.
             expect(instance.enrolling).toBe(false);
             expect(calls.length).toBe(1);
 
-            // Buyer now closes the popup.
             popup.closed = true;
             jest.advanceTimersByTime(500);
 
@@ -195,14 +176,10 @@ test('a genuine OTP completion settles the buyer lookup but withholds the spinne
 });
 
 /**
- * TWO-40 follow-up, Doug live test: focus coming back to the checkout page has
- * to take the hosted signup popup down with the panel and the spinner.
- * TwoCompanySearch.js only ASKS for that (scheduleDropdownClose()); the close
- * is this module's, since it holds the handle window.open() returned.
- *
- * The settle must still come from watchPopupUntilClosed()'s poll - the one
- * owner it already had - not from a second dispatch on the close itself, or
- * an abandon would settle a flight whose write-back may still be in the air.
+ * TWO-40 follow-up: focus returning to checkout must take the popup down
+ * with panel/spinner. The settle must come from watchPopupUntilClosed()'s
+ * poll, not a second dispatch on close - an abandon could settle a flight
+ * whose write-back is still in flight.
  */
 test('closeSignupPopup() closes a still-open popup, and leaves the settle to the poll that owns it', async () => {
     buildPaymentTile();
@@ -233,8 +210,7 @@ test('closeSignupPopup() closes a still-open popup, and leaves the settle to the
             instance.closeSignupPopup();
 
             expect(popup.close).toHaveBeenCalledTimes(1);
-            // Nothing settled yet: the poll has not run, and this method
-            // deliberately does not dispatch on its own.
+            // Not settled yet - poll hasn't run; method doesn't dispatch itself.
             expect(calls.length).toBe(settlesBefore);
 
             jest.advanceTimersByTime(500);
@@ -251,16 +227,10 @@ test('closeSignupPopup() closes a still-open popup, and leaves the settle to the
 });
 
 /**
- * focusSignupPopup() is closeSignupPopup()'s opposite number, for the ONE
- * gesture that means "give me that popup back" - re-clicking the Sole trader
- * chip. It reports whether there WAS a popup to raise, so TwoCompanySearch can
- * tell that from "nothing open" and fall through to an ordinary launch.
- *
- * The throw case is not defensive padding: the hosted flow closes its own
- * window the instant it has posted 'ACCEPTED', so `closed` flipping between
- * the check and the call is a real interleaving. It must report false rather
- * than propagate - a raise nobody can perform is not a failure worth taking
- * the chip handler down with.
+ * focusSignupPopup() re-raises the popup for the "give me that popup back"
+ * gesture (re-clicking the chip). The throw case is real, not defensive
+ * padding: the hosted flow can close its own window between the check and
+ * the call, so it must report false rather than propagate.
  */
 test.each([
     [() => null, false, false, 'no popup was ever opened'],
@@ -280,8 +250,7 @@ test.each([
         expect(instance.focusSignupPopup()).toBe(raised);
         if (popup) {
             expect(popup.focus.mock.calls.length > 0).toBe(called);
-            // Never clears the handle - watchPopupUntilClosed()'s poll is the
-            // one owner of that, and of the settle it dispatches.
+            // Doesn't clear the handle - the poll owns that and the settle.
             expect(instance._popup).toBe(popup);
         }
     } finally {
@@ -290,12 +259,10 @@ test.each([
 });
 
 /**
- * openPopup()'s never-open-over-a-live-window guard is gated on the window
- * being live, NOT on the raise succeeding (round 2 adversarial review finding).
- * A focus() that throws must still return the existing handle: falling through
- * would window.open() a second popup and retarget `this._popup` onto it,
- * orphaning the first untracked - the exact failure that guard exists for
- * (guide §14).
+ * openPopup()'s never-open-over-a-live-window guard gates on the window
+ * being live, not on the raise succeeding (round 2 finding). A throwing
+ * focus() must still return the existing handle, or a second popup opens
+ * and orphans the first untracked (guide §14).
  */
 test('openPopup() returns the live popup even when raising it throws, rather than opening a second', () => {
     buildPaymentTile();
@@ -319,10 +286,8 @@ test('openPopup() returns the live popup even when raising it throws, rather tha
 });
 
 /**
- * The abandon can land on a window that is already gone - the buyer closed it
- * by hand, or the hosted flow closed it itself the moment it posted
- * 'ACCEPTED', which is the ordinary ordering (see the test below). Both must
- * be no-ops rather than a throw that takes the panel close down with it.
+ * An abandon can land on a window already gone (buyer closed it, or the
+ * hosted flow closed it on 'ACCEPTED'). Both must be no-ops.
  */
 test('closeSignupPopup() is a safe no-op with no popup, or one that has already gone', async () => {
     buildPaymentTile();
@@ -345,22 +310,13 @@ test('closeSignupPopup() is a safe no-op with no popup, or one that has already 
 });
 
 /**
- * The OPPOSITE ordering to the test above, and the common one in a real
- * browser: the hosted flow closes its own window as soon as it has posted
- * 'ACCEPTED', so the 500ms popup poll routinely observes `closed` while the
- * getCurrentBuyer() -> saveCompany -> adoptEnrolledIdentity() chain that
- * message started is still in the air.
+ * The opposite, common-in-browser ordering: the hosted flow closes its own
+ * window on 'ACCEPTED', so the 500ms poll often observes `closed` while the
+ * write-back chain it started is still in flight.
  *
- * Doug's definition of complete (TWO-40 follow-up) is popup closed AND the
- * lookup resolved AND the company name/number written - all three, not the
- * first one. The buyer watches a spinner over the company-name field for
- * exactly this duration, and settling at popup-close dropped it while the
- * field was still empty.
- *
- * This test is written to FAIL against a popup-close-only settle: the
- * assertion right after `popup.closed = true` is the whole point of it, and
- * the ordering assertion at the end is what stops the two events being
- * "eventually both true" in an order nobody checked.
+ * Doug's definition of complete (TWO-40 follow-up): popup closed AND lookup
+ * resolved AND company written - all three. This test is written to FAIL
+ * against a popup-close-only settle, and checks the ordering too.
  */
 test('the popup closing does NOT settle the flight while the write-back is still out - the write does', async () => {
     buildPaymentTile();
@@ -429,17 +385,15 @@ test('the popup closing does NOT settle the flight while the write-back is still
             await flushPromises();
             await flushPromises();
 
-            // The lookup came back and applyBuyer() is now waiting on
-            // saveCompany - nothing has been written yet.
+            // Lookup back, applyBuyer() waiting on saveCompany - nothing written yet.
             expect(order).not.toContain('write');
 
-            // The hosted flow closes its window here, BEFORE the write lands.
+            // Hosted flow closes window here, before the write lands.
             popup.closed = true;
             jest.advanceTimersByTime(500);
             await flushPromises();
 
-            // The assertion this test exists for. Popup gone, poll fired,
-            // and the flight is still NOT settled.
+            // The assertion this test exists for: popup gone, poll fired, not settled.
             expect(calls.length).toBe(1);
 
             releaseSave();
@@ -491,10 +445,9 @@ test('a network failure on the buyer lookup fires the settle event', async () =>
 });
 
 /**
- * TWO-40 follow-up, Doug: the spinner was clearing as soon as window.open()
- * returned, not when the popup itself closed. Pins the fixed behavior: the
- * settle event stays held while the popup is open, and only fires once
- * watchPopupUntilClosed()'s poll observes `popup.closed`.
+ * TWO-40 follow-up, Doug: spinner was clearing as soon as window.open()
+ * returned, not when the popup closed. Pins the fix: settle stays held
+ * until watchPopupUntilClosed()'s poll observes `popup.closed`.
  */
 test('a no-match buyer lookup handed off directly to the popup (address-editor page) keeps the spinner up until the popup actually closes', async () => {
     buildAddressForm();
@@ -512,12 +465,10 @@ test('a no-match buyer lookup handed off directly to the popup (address-editor p
             await flushPromises();
             await flushPromises();
 
-            // Popup handed off to - the spinner must NOT settle yet, even
-            // though window.open() has already returned.
+            // Handed off to popup - must not settle yet despite window.open() returning.
             expect(calls.length).toBe(0);
 
-            // Buyer closes the popup (completes, cancels inside it, or just
-            // closes the window - all three read identically as `.closed`).
+            // Buyer closes popup - completes/cancels/closes all read as `.closed`.
             popup.closed = true;
             jest.advanceTimersByTime(500);
 
@@ -582,9 +533,8 @@ test('no popup poll interval survives a normal popup-close settle', async () => 
             expect(jest.getTimerCount()).toBeGreaterThan(0);
             popup.closed = true;
             jest.advanceTimersByTime(500);
-            // 1, not 0: the poll interval is gone, but TWO-40's 30-minute
-            // background token-refresh interval is a real timer that
-            // legitimately outlives the settle - only destroy() clears it.
+            // 1 not 0: poll gone, but TWO-40's background refresh timer
+            // outlives the settle - only destroy() clears it.
             expect(jest.getTimerCount()).toBe(1);
         } finally {
             instance.destroy();
@@ -611,9 +561,8 @@ test('a popup blocked outright (window.open() returns null) never starts a poll 
             await flushPromises();
 
             expect(calls.length).toBe(1);
-            // 1, not 0: the mint still succeeded (openPopup() itself is what
-            // fails here), so TWO-40's background token-refresh interval is
-            // legitimately running.
+            // 1 not 0: mint succeeded (openPopup() is what failed) - TWO-40
+            // refresh timer legitimately running.
             expect(jest.getTimerCount()).toBe(1);
         } finally {
             instance.destroy();
@@ -626,13 +575,10 @@ test('a popup blocked outright (window.open() returns null) never starts a poll 
 });
 
 /**
- * Adversarial review finding (Han): calling openPopup() a second time while
- * the first popup from the SAME attempt is still open (e.g. the buyer
- * double-clicks the on-page "sign up" prompt) used to open a SECOND browser
- * window and silently retarget `this._popup` to it - orphaning the first
- * window untracked, so a buyer closing the ORIGINAL window instead of the
- * new one left the spinner stuck forever. openPopup() must refuse to open a
- * second window while one is still tracked open and just refocus it.
+ * Adversarial review finding (Han): a second openPopup() while the first
+ * popup from the same attempt is still open used to open a second window
+ * and silently retarget `_popup`, orphaning the first - closing the
+ * original left the spinner stuck forever. Must refuse and refocus instead.
  */
 test('calling openPopup() again while a popup is already open refocuses it instead of opening a second window', () => {
     buildAddressForm();
@@ -662,10 +608,8 @@ test('calling openPopup() again while a popup is already open refocuses it inste
 });
 
 /**
- * cancelEnrollment() means the buyer moved on to a different search
- * interaction, not the popup closing - it must stop the poll (no leaked
- * interval) rather than leave it running against a popup nobody is tracking
- * for this attempt any more.
+ * cancelEnrollment() means the buyer moved to a different interaction, not
+ * the popup closing - it must stop the poll rather than leave it running.
  */
 test('cancelEnrollment() while a popup is open stops the poll instead of leaking it', async () => {
     buildAddressForm();
@@ -684,10 +628,8 @@ test('cancelEnrollment() while a popup is open stops the poll instead of leaking
 
             expect(jest.getTimerCount()).toBeGreaterThan(0);
             instance.cancelEnrollment();
-            // 1, not 0: cancelEnrollment() deliberately does not discard
-            // `tokens` (resumable by design, see its own comment), so
-            // TWO-40's background refresh interval keeps them alive too -
-            // only destroy() clears it.
+            // 1 not 0: cancelEnrollment() keeps `tokens` (resumable by design)
+            // so TWO-40's refresh interval stays alive too - only destroy() clears it.
             expect(jest.getTimerCount()).toBe(1);
         } finally {
             instance.destroy();
@@ -755,12 +697,10 @@ test('a blocked popup still fires the settle event exactly once (not twice, desp
 });
 
 /**
- * TWO-40 round 5, adversarial review finding (Leia): cancelEnrollment() only
- * bumped the generation counter and hid the prompt - it never told
- * TwoCompanySearch.js's spinner/listener that the flight it was watching is
- * over. apply() calls cancelEnrollment() directly off a live billing-country
- * change while enrolling, not just from a click handler, so this is a real
- * path, not a hypothetical.
+ * TWO-40 round 5, adversarial review finding (Leia): cancelEnrollment()
+ * only bumped the generation counter and hid the prompt - it never told
+ * TwoCompanySearch.js's spinner/listener the flight was over. apply() calls
+ * it directly off a billing-country change while enrolling, a real path.
  */
 test('cancelEnrollment() fires the settle event when it actually cancels an in-progress enrolment', () => {
     buildPaymentTile();
@@ -791,17 +731,12 @@ test('cancelEnrollment() does NOT fire the settle event when there was nothing t
 });
 
 /**
- * TWO-40 round 5, adversarial review finding (Han + Yoda, independently):
- * abandon-then-retry while the FIRST mint is still outstanding used to leave
- * the second attempt's spinner running forever. Sequence: click Sole Trader
- * (mint 1 in flight) -> buyer abandons (cancelEnrollment() bumps the
- * generation) -> buyer clicks Sole Trader again. Because fetchTokens() has a
- * single in-flight guard, the SECOND click's startEnrollment() rides mint
- * 1's request rather than issuing its own - there is only ever one mint in
- * flight. When that shared mint resolves successfully, the fix must resume
- * the buyer lookup for whichever generation is CURRENT, not silently drop
- * newly-minted tokens because they no longer match the STALE generation
- * that originally requested them.
+ * TWO-40 round 5, adversarial review finding (Han + Yoda): abandon-then-
+ * retry while the FIRST mint is still outstanding used to leave the second
+ * attempt's spinner running forever. fetchTokens()'s single in-flight guard
+ * means the second click rides the first mint's request; when it resolves,
+ * the fix must resume the lookup for whichever generation is CURRENT, not
+ * drop tokens because they no longer match the stale generation.
  */
 test('a mint that resolves after abandon-then-retry still resumes the buyer lookup for the current attempt', async () => {
     buildAddressForm();
@@ -828,7 +763,7 @@ test('a mint that resolves after abandon-then-retry still resumes the buyer look
             expect(instance._enrollGeneration).not.toBe(generationAtFirstClick);
             expect(instance.tokens).toBeNull();
 
-            // Mint 1 (the only request that ever went out) now resolves.
+            // Mint 1 (only request that went out) resolves.
             resolveTokens({
                 json: () => Promise.resolve({
                     success: true,
@@ -842,18 +777,16 @@ test('a mint that resolves after abandon-then-retry still resumes the buyer look
             await flushPromises();
             await flushPromises();
 
-            // Click 2 resumed and handed off to the popup - tokens landed,
-            // but the popup is still open, so click 2's own settle must not
-            // have fired yet (TWO-40 follow-up).
+            // Click 2 handed off to popup - tokens landed but popup still
+            // open, so its settle must not have fired (TWO-40 follow-up).
             expect(instance.tokens).not.toBeNull();
             expect(calls.length).toBe(1);
 
             popup.closed = true;
             jest.advanceTimersByTime(500);
 
-            // Click 2 must have been resumed and settled on its own once the
-            // popup closed - not left hanging because the tokens landed
-            // under click 1's stale generation.
+            // Click 2 must settle once popup closes - not hang because
+            // tokens landed under click 1's stale generation.
             expect(calls.length).toBe(2);
         } finally {
             instance.destroy();
@@ -865,10 +798,9 @@ test('a mint that resolves after abandon-then-retry still resumes the buyer look
 });
 
 /**
- * TWO-40 round 5, adversarial review finding (Han + Vader, independently):
- * getCurrentBuyer() had no in-flight guard of its own (unlike fetchTokens()'s
- * isFetchingTokens) - a second concurrent lookup on the no-match path opened
- * a second signup popup from one buyer gesture.
+ * TWO-40 round 5, adversarial review finding (Han + Vader): getCurrentBuyer()
+ * had no in-flight guard of its own (unlike fetchTokens()'s isFetchingTokens)
+ * - a second concurrent lookup opened a second signup popup from one gesture.
  */
 test('two concurrent getCurrentBuyer() calls only open one popup', async () => {
     buildAddressForm();
@@ -894,18 +826,12 @@ test('two concurrent getCurrentBuyer() calls only open one popup', async () => {
 });
 
 /**
- * TWO-40 round 5 follow-up, adversarial review round 2 finding (Han): the
- * abandon-then-retry resume fixed above for the MINT stage had no
- * equivalent for the BUYER-LOOKUP stage - getCurrentBuyer() got the exact
- * same isFetchingBuyer single-flight guard in the same commit, but its own
- * superseded() branches just bare-returned, one call deeper than the bug
- * this whole PR chain exists to fix. Sequence: click 1 mints fast and its
- * buyer lookup is outstanding -> buyer abandons (cancelEnrollment() bumps
- * the generation) -> buyer clicks Sole Trader again; tokens already exist,
- * so click 2 goes straight to getCurrentBuyer(), which no-ops on
- * isFetchingBuyer (click 1's lookup still out). When click 1's lookup
- * resolves, the fix must resume for whichever generation is CURRENT rather
- * than dropping the result with nothing left to ever settle click 2.
+ * TWO-40 round 5 follow-up, adversarial review round 2 (Han): the abandon-
+ * then-retry resume fixed for the MINT stage had no equivalent for the
+ * BUYER-LOOKUP stage - getCurrentBuyer()'s isFetchingBuyer guard's
+ * superseded() branches just bare-returned. When click 1's lookup resolves,
+ * the fix must resume for whichever generation is CURRENT rather than
+ * dropping the result with nothing left to settle click 2.
  */
 test('a buyer lookup that resolves after abandon-then-retry during the lookup stage still resumes for the current attempt', async () => {
     buildAddressForm();
@@ -936,41 +862,35 @@ test('a buyer lookup that resolves after abandon-then-retry during the lookup st
             instance.enrolling = true; // as startEnrollment()'s "resume" branch would set it
             instance.getCurrentBuyer(); // click 2: no-ops, lookup 1 still in flight
 
-            // Lookup 1 (the only request that ever went out) now resolves with a
-            // 404 - no match. superseded() is true (generation moved on from the
-            // abandon), so this settles into resumeIfStillEnrolling() rather than
-            // acting on it directly.
+            // Lookup 1 resolves 404 - superseded() true (generation moved on),
+            // settles into resumeIfStillEnrolling().
             resolveBuyer({ ok: false, status: 404 });
             await flushPromises();
             await flushPromises();
             await flushPromises();
-            // resumeIfStillEnrolling() defers via setTimeout(0) - advance the fake
-            // macrotask queue too, not just the microtask queue flushPromises()
-            // covers, so the resumed getCurrentBuyer() call actually runs and
-            // issues ITS OWN fetch (`buyer` factory is called again, rebinding
-            // `resolveBuyer` to that new promise's resolver below).
+            // resumeIfStillEnrolling() defers via setTimeout(0) - advance
+            // macrotasks too so the resumed call issues its own fetch
+            // (rebinds `resolveBuyer`).
             jest.advanceTimersByTime(0);
             await flushPromises();
 
-            // The resumed lookup's own, SEPARATE request now resolves the same way
-            // - still no match, hands off to the popup on this containerless page.
+            // Resumed lookup's own separate request resolves the same way -
+            // no match, hands off to popup.
             resolveBuyer({ ok: false, status: 404 });
             await flushPromises();
             await flushPromises();
             await flushPromises();
 
-            // Click 2 was resumed and handed off to the popup - but the popup
-            // is still open, so its own settle must not have fired yet
-            // (TWO-40 follow-up).
+            // Click 2 handed off to popup - still open, so its settle must
+            // not have fired (TWO-40 follow-up).
             expect(global.window.open).toHaveBeenCalledTimes(1);
             expect(calls.length).toBe(1);
 
             popup.closed = true;
             jest.advanceTimersByTime(500);
 
-            // Click 2 must have been settled on its own once the popup
-            // closed - not left hanging because the response landed under
-            // click 1's stale generation.
+            // Click 2 must settle once popup closes - not hang on click 1's
+            // stale generation.
             expect(calls.length).toBe(2);
         } finally {
             instance.destroy();
@@ -982,13 +902,10 @@ test('a buyer lookup that resolves after abandon-then-retry during the lookup st
 });
 
 /**
- * TWO-40 round 7, adversarial review round 3 finding (Han): resumeIfStillEnrolling()
- * checked `enrolling` once, at SCHEDULE time, then deferred via setTimeout(0)
- * - the real time gap between scheduling and firing is exactly wide enough
- * for a SECOND abandonment to land in it. Without a re-check at fire time,
- * the deferred callback ran a full, unwanted buyer lookup for someone who
- * had already walked away from the flow a second time - on the no-match
- * path, popping a signup window nobody asked for any more.
+ * TWO-40 round 7, adversarial review round 3 (Han): resumeIfStillEnrolling()
+ * checked `enrolling` once at SCHEDULE time then deferred via setTimeout(0)
+ * - a second abandonment landing in that gap ran an unwanted lookup, popping
+ * a signup window nobody asked for on the no-match path.
  */
 test('a second abandonment landing during the deferred resume window does not fire an unwanted lookup', async () => {
     buildAddressForm();
@@ -1019,33 +936,27 @@ test('a second abandonment landing during the deferred resume window does not fi
     await flushPromises();
     await flushPromises();
 
-    // A SECOND abandonment, landing in the gap before the deferred resume's
-    // setTimeout(0) has fired - `enrolling` is false again by the time it does.
+    // Second abandonment lands before the deferred setTimeout(0) fires -
+    // `enrolling` false by then.
     instance.cancelEnrollment();
     expect(instance.enrolling).toBe(false);
 
-    // Now let the deferred macrotask actually fire.
     await new Promise((resolve) => setTimeout(resolve, 0));
     await flushPromises();
     await flushPromises();
 
-    // No lookup should have run for the abandoned second attempt - no fetch
-    // issued, no popup opened.
+    // No lookup should run for the abandoned attempt - no fetch, no popup.
     expect(openSpy).not.toHaveBeenCalled();
     document.removeEventListener('two:sole-trader-flight-settled', handler);
     instance.destroy();
 });
 
 /**
- * TWO-40 round 5 follow-up, adversarial review round 2 finding (Vader): the
+ * TWO-40 round 5 follow-up, adversarial review round 2 (Vader): the
  * synchronous stretch between setting isFetchingTokens/isFetchingBuyer true
- * and the fetch() call actually starting was unprotected. A throw there
- * left the guard stuck true FOREVER - unlike a throw from
- * TwoSoleTrader_Instance.startEnrollment() itself (which
- * TwoCompanySearch.js's own try/catch recovers), this one has no recovery
- * at all: every future click silently no-ops on the guard for the rest of
- * the page's life, with nothing ever in flight and no settle event to ever
- * close a THEN-open panel/spinner.
+ * and the fetch() call starting was unprotected. A throw there left the
+ * guard stuck true FOREVER, with no recovery and no settle to ever close
+ * an already-open panel/spinner.
  */
 test('a synchronous throw building the token-mint request does not permanently wedge fetchTokens()', () => {
     buildPaymentTile();
@@ -1054,8 +965,7 @@ test('a synchronous throw building the token-mint request does not permanently w
     const { handler } = recordSettled();
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
-    // Force a synchronous throw from inside fetchTokens()'s own pre-fetch
-    // setup, the same way a malformed billingCountry() config could.
+    // Force a synchronous throw the way a malformed billingCountry() config could.
     const originalBillingCountry = instance.billingCountry;
     instance.billingCountry = () => { throw new Error('boom'); };
 
@@ -1076,16 +986,12 @@ test('a synchronous throw building the token-mint request does not permanently w
 });
 
 /**
- * TWO-40 round 7, adversarial review round 3 finding (Vader): the retry
- * cooldown (`nextRetryAt`) predates the round-4 "keep panel open until
- * settle" redesign and was never wired into it. Unlike the isFetchingTokens
- * branch (where a request really is out and will eventually resume this
- * click), a click landing inside the cooldown window has NOTHING in flight
- * to ever settle it - the panel/spinner used to be stuck open indefinitely,
- * recoverable only by an unrelated action (Escape, reopening, switching
- * chips). A buyer clicking "I'm a sole trader" again within 5 seconds of a
- * failed attempt - "did that work? let me retry" - is an entirely ordinary
- * gesture, not an edge case.
+ * TWO-40 round 7, adversarial review round 3 (Vader): the retry cooldown
+ * (`nextRetryAt`) predates the round-4 "keep panel open until settle"
+ * redesign and was never wired into it. Unlike isFetchingTokens (where a
+ * request is out and will eventually resume), a click inside the cooldown
+ * has nothing in flight to ever settle it - the panel used to stick open
+ * indefinitely.
  */
 test('a click landing inside the retry cooldown still settles its own flight, rather than dead-ending open', () => {
     buildPaymentTile();
@@ -1111,8 +1017,7 @@ test('a synchronous throw building the buyer-lookup request does not permanently
     stubFetch({});
     const instance = build();
 
-    // this.tokens is null - the exact shape of throw Vader flagged
-    // (`this.tokens.autofill_token` reads off null).
+    // this.tokens is null - the exact throw shape Vader flagged.
     expect(instance.tokens).toBeNull();
 
     expect(() => instance.getCurrentBuyer()).not.toThrow();

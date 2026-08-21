@@ -1,8 +1,3 @@
-{*
- * Buyer-facing confirmation card for Two payment
- * Shows invoice terms and a link to Two Buyer Portal only
- *}
-
 <div id="two-payment-info" class="box">
     <h4>{l s='%s Payment' mod='twopayment' sprintf=[$two_product_name]}</h4>
     <div class="table-responsive">

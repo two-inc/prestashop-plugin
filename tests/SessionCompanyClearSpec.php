@@ -10,21 +10,9 @@ require_once __DIR__ . '/../controllers/front/orderintent.php';
  * A buyer who says "my company is not on the list" and types their own name must
  * not have the company they just disowned credit-checked and invoiced. The
  * session company is the FIRST thing the resolver consults - ahead of the address
- * - and it returns that company with no comparison against the address, so a
- * session company that outlives its selection is not a stale-value nuisance, it
- * is a wrong order placed silently in a genuine buyer's name.
+ * - and it returns that company with no comparison against the address.
  *
- * Two independent mechanisms have to hold, and these specs DRIVE them rather than
- * reading the source:
- *
- *  - the clearCompany action, reached through the controller's own action switch,
- *    empties every key saveCompany writes, and refuses an invalid token;
- *  - Twopayment::hookActionCustomerAddressSave() drops the session organisation
- *    number when the address saves a different company name with no organisation
- *    number beside it. This is the backstop that makes the browser's
- *    fire-and-forget clear safe: it holds whether or not that request arrives.
- *
- * Why behavioural and not a source grep: the coverage this file replaces asserted
+ * Behavioural rather than a source grep: the coverage this file replaces asserted
  * that the controller source CONTAINED `case 'clearCompany':` and each
  * `unset(...)` literal. An early `return` inserted above those unsets left every
  * literal in place and the whole suite stayed green, and inverting the token guard
@@ -87,8 +75,6 @@ final class SessionCompanyClearSpec
     /* ---- TWO-40 #13: what the browser is allowed to be told ---- */
 
     /**
-     * The record handed to the checkout JS is what lets a company chosen on the
-     * shipping pass survive the page load that reveals the invoice address form.
      * Happy path first, so the withholding cases below cannot pass by publishing
      * nothing ever.
      */
@@ -106,11 +92,6 @@ final class SessionCompanyClearSpec
         TinyAssert::same(self::ADDRESS_ID, (int) $published['address_id']);
     }
 
-    /**
-     * Cart scoping applies here as everywhere: a record chosen on another cart is
-     * not published, so a page load cannot restore a selection from a previous
-     * order.
-     */
     private static function testBrowserSelectionWithholdsARecordFromAnotherCart(): void
     {
         self::seedBillingAddress('gb', self::OTHER_CART_ID);
@@ -188,8 +169,8 @@ final class SessionCompanyClearSpec
      * cart's committed invoice address country disagreed with it - and that
      * committed snapshot is the value this same work declares untrustworthy.
      *
-     * Withheld AND intact, therefore. Clearing stays with the paths that consume a
-     * company, where it was before.
+     * Withheld AND intact, therefore: clearing stays with the paths that consume
+     * a company.
      */
     private static function testBrowserSelectionIsReadOnlyOnACountryMismatch(): void
     {
@@ -225,10 +206,6 @@ final class SessionCompanyClearSpec
         );
     }
 
-    /**
-     * Same requirement on the other country guard: a record with no country marker
-     * is withheld from the browser without being destroyed.
-     */
     private static function testBrowserSelectionIsReadOnlyOnAMissingCountryMarker(): void
     {
         self::seedBillingAddress('gb');
@@ -255,8 +232,7 @@ final class SessionCompanyClearSpec
 
     /**
      * The happy path first, so the rest cannot pass by breaking persistence
-     * outright: a record stamped with the cart the request is running against is
-     * returned in full.
+     * outright.
      */
     private static function testCurrentCartRecordIsFullyReadable(): void
     {
@@ -273,10 +249,9 @@ final class SessionCompanyClearSpec
     }
 
     /**
-     * The requirement itself. A cart id changes at order placement, so a record
-     * stamped with cart A must be invisible once the buyer is on cart B - which is
-     * what stops a company selected for one order being credit-checked on a later
-     * one.
+     * A cart id changes at order placement, so a record stamped with cart A must
+     * be invisible once the buyer is on cart B - which is what stops a company
+     * selected for one order being credit-checked on a later one.
      */
     private static function testRecordFromAnotherCartIsInvisible(): void
     {
@@ -338,11 +313,9 @@ final class SessionCompanyClearSpec
     }
 
     /**
-     * Drift is the failure mode centralising the keys exists to prevent, so assert
-     * the stamp lands on EVERY write path rather than only on the helper. All
-     * three of them: the address-save hook, the save action the browser calls,
-     * and the order-intent handler's own store-back
-     * (TwopaymentOrderintentModuleFrontController::storeCompanyDataInSession()).
+     * The stamp must land on EVERY write path, not only on the helper: the
+     * address-save hook, the save action the browser calls, and the order-intent
+     * handler's own store-back.
      *
      * The third is driven through ajaxProcessCheckOrderIntent() - the public
      * entry point that calls it - rather than by reflection, so a write site
@@ -368,7 +341,6 @@ final class SessionCompanyClearSpec
         try {
             $controller->ajaxProcessSaveCompany();
         } catch (StubOrderIntentResponded $responded) {
-            // Stands in for the production exit.
         }
 
         TinyAssert::same(
@@ -385,7 +357,6 @@ final class SessionCompanyClearSpec
         try {
             $controller->ajaxProcessCheckOrderIntent();
         } catch (StubOrderIntentResponded $responded) {
-            // Stands in for the production exit.
         }
 
         TinyAssert::same(
@@ -484,8 +455,7 @@ final class SessionCompanyClearSpec
 
     /**
      * Centralising the keys exists to stop a write site inventing its own field
-     * name. A mistyped one used to be skipped in silence, which is the exact drift
-     * the constant was introduced to catch - so it is reported.
+     * name, so a mistyped one is reported rather than skipped in silence.
      */
     private static function testUnknownWriteFieldIsReported(): void
     {
@@ -754,10 +724,7 @@ final class SessionCompanyClearSpec
      *
      * Paired with testAddressSaveDropsTheNumberOfADisownedCompany(), which pins
      * the other side of the same boundary: a record that DOES carry a real
-     * organisation number is still disowned on a mismatched name. Together they
-     * fix where the guard fires and where it does not - the two conditions are
-     * NOT equivalent, and this pair is what makes that a checked fact rather
-     * than a claim in a comment.
+     * organisation number is still disowned on a mismatched name.
      */
     private static function testAddressSaveKeepsCountryMarkerWhenNumberWasAlreadyEmpty(): void
     {
@@ -828,10 +795,6 @@ final class SessionCompanyClearSpec
         self::seedSessionCompany($recordCartId);
     }
 
-    /**
-     * Put a loaded cart of the given id on the shared context, or clear the cart
-     * entirely when the id is 0.
-     */
     private static function attachCart(int $cartId): void
     {
         if ($cartId <= 0) {
@@ -844,9 +807,6 @@ final class SessionCompanyClearSpec
         Context::getContext()->cart = new Cart($cartId);
     }
 
-    /**
-     * A module bound to the shared context, running against the given cart.
-     */
     private static function makeModule(int $cartId): TwopaymentTestHarness
     {
         self::attachCart($cartId);
@@ -977,9 +937,6 @@ final class SessionCompanyClearSpec
     }
 
     /**
-     * Fire the actionCustomerAddressSave hook the way core does when the buyer
-     * saves the address form.
-     *
      * @param string $company   the company name on the saved address
      * @param string $companyId the hidden organisation-number field in the POST
      */
@@ -1011,7 +968,6 @@ final class SessionCompanyClearSpec
                 $controller->ajaxProcessClearCompany();
             }
         } catch (StubOrderIntentResponded $responded) {
-            // Stands in for the production exit.
         }
     }
 

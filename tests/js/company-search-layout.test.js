@@ -1,49 +1,19 @@
 /**
- * TWO-30.x.10. Regression tests for four live layout/reachability bugs Doug
- * found testing the checkout by hand, on top of a widget already confirmed
- * working (PR two-inc/prestashop-plugin#128):
+ * TWO-30.x.10. Regression tests for layout bugs found in checkout, on top of
+ * the widget already confirmed working (PR two-inc/prestashop-plugin#128):
+ * jQuery UI's own `_resizeMenu` sizes the dropdown to whichever is WIDER, the
+ * field or the longest label, so it needs to be explicitly clamped (2.1/2.2).
  *
- *   - 2.1 the dropdown auto-widened past the field (jQuery UI's own
- *     `_resizeMenu` sizes it to whichever is WIDER, the field or the longest
- *     label) instead of staying a small control anchored to the field.
- *   - 2.2/2.3 the post-selection chip and the org-number hint were positioned
- *     against the field's THEME wrapper (a Bootstrap column div, commonly
- *     padded) rather than the field itself, so both rendered wider than the
- *     field and offset from its edge - and, live, the chip's opaque
- *     background painted directly over the hint, which is why a plain
- *     DOM-visibility assertion on the hint would have passed throughout.
- *   - 2.4 the manual-entry row was reachable only by scrolling past every
- *     other result first - with up to 50 companies ahead of it in a 200px
- *     scroll viewport, effectively never in practice.
- *
- * RESHAPED BY TWO-25326, which changed what several of those bugs even mean:
- *
- *   - the reveal chip is gone outright (2.3), so nothing can paint over the
- *     hint any more;
- *   - the hint stopped being absolutely positioned and the wrapper stopped
- *     reserving padding for it (§5/§7) - that pairing was itself the cause of
- *     a second, worse collision with the VAT field, since `top: 100%` on an
- *     absolutely positioned child resolves against the containing block's
- *     PADDING box, so the reserved space pushed the hint DOWN rather than
- *     making room for it;
- *   - 2.4's manual-entry ROW is gone (§2): "My company is not on the list" is
- *     a real <button> outside the scroll container now, so reachability is a
- *     structural property rather than a sticky-positioning one, and it is
- *     pinned as such in company-search-dropdown.test.js.
- *
- * The width work (2.1/2.2) survives all of that unchanged, and is still the
- * bulk of this file. Its widget lives on the panel's query field now rather
- * than on `input[name='company']` - the only mechanical change those tests
- * needed.
+ * TWO-25326 removed the reveal chip and manual-entry row those bugs also
+ * touched (2.3/2.4); their reachability behaviour is now pinned in
+ * company-search-dropdown.test.js. Only the width work (2.1/2.2) survives
+ * here, now anchored to the panel's query field rather than
+ * `input[name='company']`.
  *
  * jsdom computes no real layout (offsetWidth/getBoundingClientRect are 0
- * regardless of CSS), so these tests pin what jsdom CAN observe: the DOM
- * structure the width fix depends on, the exact value the CSS custom
- * property is set to, and the computed style the sticky-positioning rule
- * resolves to. The visual result (dropdown no longer 625px against a 281px
- * field; hint visible below the field, not painted over) was verified live
- * against https://prestashop-dev.staging.two.inc both before and after this
- * change - that is what these unit tests cannot themselves prove.
+ * regardless of CSS), so these tests pin the DOM structure and computed-style
+ * values the width fix depends on; the actual pixel result was verified live
+ * against https://prestashop-dev.staging.two.inc instead.
  */
 
 'use strict';
@@ -92,13 +62,9 @@ function liveField() {
     return $("input[name='company']");
 }
 
-/**
- * The field the autocomplete widget is actually bound to.
- *
- * TWO-25326 §1: the panel's query field, not `input[name='company']`. The panel
- * is built by setupAutocomplete(), so this resolves as soon as an instance
- * exists - it does not have to be opened first.
- */
+// TWO-25326 §1: the panel's query field, not `input[name='company']`. Resolves
+// without the panel being open - setupAutocomplete() builds it at instance
+// creation.
 function widgetField() {
     return panelParts().query;
 }
@@ -136,13 +102,9 @@ describe('the field wrapper (2.2/2.3)', () => {
     });
 
     test('the org-id hint lands inside the field wrapper, and nothing can cover it', () => {
-        // Was "the org-id hint and the reveal chip both land inside the field
-        // wrapper". TWO-25326 removed the chip: it existed to re-open the search
-        // over a confirmed selection, which the panel's own trigger now does,
-        // and its opaque background painted over the hint (2.3). Its absence is
-        // asserted rather than merely un-asserted, because "the hint cannot be
-        // occluded" is the property 2.3 was about and re-adding a chip is
-        // exactly how it would come back.
+        // TWO-25326 removed the chip (its opaque background painted over the
+        // hint, 2.3); absence is asserted explicitly since re-adding a chip is
+        // exactly how that regression would come back.
         makeInstance();
 
         const wrapper = liveField().parent();
@@ -153,9 +115,8 @@ describe('the field wrapper (2.2/2.3)', () => {
 
     test('the hidden organisation-number field is NOT pulled into the wrapper', () => {
         // createOrganizationField() runs before ensureFieldWrapper() in init()
-        // and inserts a plain sibling - it must stay a sibling of the wrapper,
-        // not get swept inside it, since jQuery's wrap() only wraps the
-        // selected element itself.
+        // and inserts a plain sibling - wrap() only wraps the selected element
+        // itself.
         makeInstance();
 
         const wrapper = liveField().parent();
@@ -177,10 +138,8 @@ describe('the dropdown width CSS variable (2.1)', () => {
     });
 
     test('a falsy width (e.g. a detached/hidden field) CLEARS the property rather than leaving a stale value', () => {
-        // TWO-30.x.10 review finding (Han + Vader, convergent): this is a
-        // page-wide singleton variable. Leaving a stale value behind when a
-        // field goes hidden/detached would silently mis-clamp whatever
-        // dropdown reads the variable next.
+        // TWO-30.x.10 (Han + Vader): page-wide singleton var - a stale value
+        // would silently mis-clamp whatever dropdown reads it next.
         const instance = makeInstance();
         document.documentElement.style.setProperty('--two-company-search-width', '999px');
         jest.spyOn($.fn, 'outerWidth').mockReturnValue(0);
@@ -209,11 +168,9 @@ describe('the dropdown width CSS variable (2.1)', () => {
     });
 
     test('the widget gets the scoping marker class, not left as bare .ui-autocomplete', () => {
-        // TWO-30.x.10 review finding (Han): `.ui-autocomplete` is jQuery UI's
-        // own un-namespaced default class - shared by any OTHER jQuery UI
-        // autocomplete the page might have live. The width clamp must be
-        // scoped to a marker THIS class controls, or it would mis-size an
-        // unrelated widget elsewhere on the page.
+        // TWO-30.x.10 (Han): `.ui-autocomplete` is jQuery UI's own
+        // un-namespaced class, shared by any other autocomplete widget on the
+        // page.
         makeInstance();
 
         const widget = widgetField().autocomplete('widget');
@@ -222,14 +179,10 @@ describe('the dropdown width CSS variable (2.1)', () => {
     });
 
     test('a throwing autocomplete("widget") degrades to an unclamped dropdown, not a dead company search', () => {
-        // TWO-30.x.10 round-2 review finding (Han): this is a cosmetic
-        // clamp, not core search functionality. `autocomplete('widget')`/
-        // `autocomplete('instance')` right below it in the source are
-        // already documented as capable of throwing on a non-standard
-        // jQuery UI build - an uncaught throw here would escape
-        // setupAutocomplete(), init() and the constructor itself, since
-        // TwoCheckoutManager.initializeCompanySearch() calls `new
-        // TwoCompanySearch(...)` with no surrounding try/catch.
+        // TWO-30.x.10 (Han): cosmetic clamp, not core search - an uncaught
+        // throw here would escape setupAutocomplete()/init()/the ctor since
+        // TwoCheckoutManager.initializeCompanySearch() has no surrounding
+        // try/catch.
         buildAddressForm({ country: 'GB' });
         const original = $.fn.autocomplete;
         jest.spyOn($.fn, 'autocomplete').mockImplementation(function (...args) {
@@ -244,13 +197,10 @@ describe('the dropdown width CSS variable (2.1)', () => {
 
     test('the stylesheet clamps only the scoped marker class, never the bare .ui-autocomplete', () => {
         // jsdom's CSS engine does not resolve `var()` at getComputedStyle time
-        // (it reports the raw value), so this cannot assert the resolved
-        // pixel figure the way a real browser would - that is exactly what
-        // the live verification against the staging shop covers instead.
-        // What jsdom CAN prove is that the rule keys off the variable this
-        // class publishes AND is scoped to the marker class, rather than a
-        // single fixed width applied to every jQuery UI autocomplete on the
-        // page.
+        // (raw value reported), so this can't assert the resolved pixel
+        // figure - it proves instead that the rule keys off the variable and
+        // is scoped to the marker class, not applied to every jQuery UI
+        // autocomplete on the page.
         installStylesheet('views/css/two.css');
         const bareUl = document.createElement('ul');
         bareUl.className = 'ui-autocomplete';
@@ -259,11 +209,8 @@ describe('the dropdown width CSS variable (2.1)', () => {
         scopedUl.className = 'ui-autocomplete two-company-autocomplete-menu';
         document.body.appendChild(scopedUl);
 
-        // jsdom reports an unmatched property as '' rather than the browser's
-        // 'none' initial value - a jsdom quirk, not a claim about real
-        // browsers. What matters here is that the two elements resolve
-        // DIFFERENTLY: the bare class gets nothing, the scoped one gets the
-        // clamp.
+        // jsdom reports an unmatched property as '' rather than browser's
+        // 'none' - what matters is the two elements resolve DIFFERENTLY.
         expect(getComputedStyle(bareUl).maxWidth).toBe('');
         const scopedMaxWidth = getComputedStyle(scopedUl).maxWidth;
         expect(scopedMaxWidth).toContain('var(--two-company-search-width');
@@ -273,11 +220,10 @@ describe('the dropdown width CSS variable (2.1)', () => {
 
 describe('the field wrapper width is pinned explicitly, not left to block auto-sizing (2.2 hardening)', () => {
     test('ensureFieldWrapper() sets the wrapper width to the field\'s own outerWidth()', () => {
-        // TWO-30.x.10 review finding (Han + Vader, convergent): a
-        // `display:block` wrapper with no padding only matches the input's
-        // width when the input already fills its container - false on a
-        // theme where the field has its own narrower intrinsic width. Pin it
-        // explicitly instead of trusting block auto-sizing.
+        // TWO-30.x.10 (Han + Vader): a `display:block` wrapper with no
+        // padding only matches input width when the input already fills its
+        // container - false when the theme gives the field its own narrower
+        // intrinsic width.
         const instance = makeInstance();
         jest.spyOn($.fn, 'outerWidth').mockReturnValue(240);
 
@@ -287,9 +233,9 @@ describe('the field wrapper width is pinned explicitly, not left to block auto-s
     });
 
     test('a falsy width clears a previously-set inline width rather than leaving it stale', () => {
-        // jQuery's `.css('width')` reads the COMPUTED style, which jsdom
-        // resolves to '0px' for an unset width regardless - the inline style
-        // itself is what proves whether a stale pixel value was left behind.
+        // jQuery's `.css('width')` reads the computed style, which jsdom
+        // always resolves to '0px' - the inline style itself proves whether a
+        // stale value was left behind.
         const instance = makeInstance();
         liveField().parent().get(0).style.width = '999px';
         jest.spyOn($.fn, 'outerWidth').mockReturnValue(0);
@@ -302,10 +248,8 @@ describe('the field wrapper width is pinned explicitly, not left to block auto-s
 
 describe('the width-refresh listener on resize/orientationchange (2.1/2.2 hardening)', () => {
     test('is bound at most once per instance across repeated setupAutocomplete() calls', () => {
-        // makeInstance() itself already runs init() -> setupAutocomplete(),
-        // which is the FIRST bind - so the spy has to be in place before
-        // construction to see it, and two MORE explicit calls after should
-        // add no further binds.
+        // makeInstance() itself runs init() -> setupAutocomplete(), the first
+        // bind - so the spy must be in place before construction to see it.
         const onSpy = jest.spyOn($.fn, 'on');
         const instance = makeInstance();
 
@@ -319,10 +263,9 @@ describe('the width-refresh listener on resize/orientationchange (2.1/2.2 harden
     });
 
     test('destroy() actually unbinds the handler - a later resize no longer refreshes geometry', () => {
-        // TWO-30.x.10 round-2 review finding (Yoda): a bare "does not throw"
-        // assertion passes identically whether or not the listener was ever
-        // removed, since the handler itself never throws. Spy on the two
-        // methods the handler calls to prove the unbind actually happened.
+        // TWO-30.x.10 (Yoda): a bare "does not throw" assertion passes
+        // whether or not the listener was removed, since the handler itself
+        // never throws.
         jest.useFakeTimers();
         const instance = makeInstance();
         const wrapperSpy = jest.spyOn(instance, 'ensureFieldWrapper');
@@ -355,10 +298,9 @@ describe('the width-refresh listener on resize/orientationchange (2.1/2.2 harden
     });
 
     test('unbinds by function reference, not by namespace alone, so a sibling instance is never at risk', () => {
-        // TWO-30.x.10 round-2 review finding (Vader): `window` is a genuine
-        // page-wide singleton; a namespace-only `.off('.twoCompanyWidth')`
-        // would remove ANY instance's handler under that name, not just the
-        // one being destroyed. Assert the actual call shape.
+        // TWO-30.x.10 (Vader): `window` is page-wide - a namespace-only
+        // `.off('.twoCompanyWidth')` would remove ANY instance's handler
+        // under that name, not just this one.
         const instance = makeInstance();
         const offSpy = jest.spyOn($.fn, 'off');
 
@@ -373,13 +315,10 @@ describe('the width-refresh listener on resize/orientationchange (2.1/2.2 harden
     });
 
     test('the search source callback also refreshes the wrapper width, not just the CSS variable', () => {
-        // TWO-30.x.10 round-2 review finding (Vader): a field hidden behind a
-        // collapsed checkout step at page load measures 0 width, so its
-        // wrapper's pinned width is cleared at construction time - and no
-        // resize/orientationchange fires just because a later step reveals
-        // it. The first keystroke is the next point either measurement can
-        // be trusted, so ensureFieldWrapper() has to run alongside the CSS
-        // variable refresh already known to run there.
+        // TWO-30.x.10 (Vader): a field hidden behind a collapsed checkout
+        // step measures 0 width at construction, and no resize fires when a
+        // later step reveals it - the first keystroke is the next chance to
+        // remeasure.
         const instance = makeInstance();
         const query = widgetField();
         const ensureSpy = jest.spyOn(instance, 'ensureFieldWrapper');
@@ -392,12 +331,9 @@ describe('the width-refresh listener on resize/orientationchange (2.1/2.2 harden
     });
 
     test('the geometry refresh also fires in manual-entry mode, not only normal search', () => {
-        // TWO-30.x.10 round-3 review finding (Vader): the manual-entry
-        // early-return (`response([])`, no dropdown at all while the buyer
-        // types their own company name) sits BELOW both geometry calls in
-        // `source`, not above them - confirmed correct by inspection, and
-        // pinned here so a future reordering that moved the early-return
-        // above them would fail this test rather than regress silently.
+        // TWO-30.x.10 (Vader): the manual-entry early-return (`response([])`)
+        // sits below both geometry calls in `source` - pinned so a future
+        // reordering above them fails this test rather than regress silently.
         const instance = makeInstance();
         const query = widgetField();
         instance._manualEntry = true;
@@ -415,41 +351,25 @@ describe('the width-refresh listener on resize/orientationchange (2.1/2.2 harden
 });
 
 describe('the manual-entry route stays reachable without scrolling (2.4, reshaped by TWO-25326 §2)', () => {
-    // DELETED with this reshaping, each because the thing it pinned no longer
-    // exists rather than because it became inconvenient:
-    //
-    //   - '.two-autocomplete-manual-entry resolves to a sticky, opaque row'
-    //   - 'the SAME rule covers the custom (non-jQuery-UI) fallback path's row'
-    //         The sticky-row CSS is gone. 2.4's answer was to pin the row to
-    //         the bottom of a scrolling list; §2's answer is to take it out of
-    //         the list entirely. There is no row left to make sticky.
-    //   - 'buildManualEntryItem() / withManualEntryRow() are unchanged'
-    //         Both methods are gone with the pseudo-row they built.
-    //
-    // What replaces all three is the structural property below: the route out
-    // is a SIBLING of the scroll container, so no amount of scrolling can move
-    // it. Its behaviour (real <button>, tab order, activation) is pinned in
-    // company-search-dropdown.test.js; what is asserted HERE is the layout
-    // half - that the CSS really does confine the scrolling to the results
-    // host, and gives the button none of it.
+    // TWO-25326 §2 took the route out of the scroll container entirely (a
+    // real <button>, sibling of it) rather than pinning it to the bottom of
+    // the list. Behaviour (tab order, activation) is pinned in
+    // company-search-dropdown.test.js; this covers only the layout half.
 
     test('the scrolling is confined to the results host, which the route out sits outside', () => {
         installStylesheet('views/css/two.css');
         makeInstance();
         const { panel, results, notListed } = panelParts();
 
-        // The panel's one scroll box, and a BOUNDED one: an unbounded height
-        // would push the button below the fold on a long result set, which is
-        // precisely where the old row was unreachable.
+        // The panel's one scroll box, and bounded - unbounded height would
+        // push the button below the fold on a long result set.
         const resultsStyle = getComputedStyle(results.get(0));
         expect(resultsStyle.overflowY).toBe('auto');
         expect(resultsStyle.maxHeight).toBe('240px');
 
-        // The button sits outside that box, painted below it, so it cannot be
-        // scrolled away from - nested one level deeper since TWO-40's
-        // three-chip mode selector (a sibling of the other two chips inside
-        // `.two-company-mode-chips`, which is itself the panel's own direct
-        // child), but still outside the results container either way.
+        // Sits outside the scroll box so it can't be scrolled away from -
+        // nested one level deeper since TWO-40's three-chip mode selector,
+        // but still outside the results container either way.
         expect(results.get(0).contains(notListed.get(0))).toBe(false);
         expect(notListed.parent().is(panelParts().modeChips)).toBe(true);
         expect(panelParts().modeChips.parent().is(panel)).toBe(true);
@@ -458,12 +378,11 @@ describe('the manual-entry route stays reachable without scrolling (2.4, reshape
 });
 
 describe('the org-number hint reserves no space until it has something to say (TWO-25326 §5/§7)', () => {
-    // Replaces the wrapper's `padding-bottom` / `--two-company-hint-clearance`
-    // pairing, which this file used to own. That mechanism was not merely
-    // redundant, it was the defect: the hint was absolutely positioned at
-    // `top: 100%`, which resolves against the containing block's PADDING box,
-    // so the reserved padding pushed the hint further down and onto the VAT
-    // field below rather than making room above it.
+    // The wrapper's old `padding-bottom` / `--two-company-hint-clearance`
+    // pairing was the defect: `top: 100%` on an absolutely positioned child
+    // resolves against the containing block's PADDING box, so reserved
+    // padding pushed the hint onto the VAT field below rather than making
+    // room above it.
 
     test('the wrapper reserves nothing and defines no clearance constant', () => {
         installStylesheet('views/css/two.css');
@@ -471,9 +390,8 @@ describe('the org-number hint reserves no space until it has something to say (T
         const wrapper = liveField().parent().get(0);
         const style = getComputedStyle(wrapper);
 
-        // jsdom reports an unmatched property as '' rather than the browser's
-        // initial value, so both spellings of "nothing reserved" are accepted -
-        // what must not appear is a positive reservation.
+        // jsdom reports an unmatched property as '' rather than the initial
+        // value, so both spellings of "nothing reserved" are accepted.
         expect(['', '0px']).toContain(style.paddingBottom);
         expect(style.getPropertyValue('--two-company-hint-clearance')).toBe('');
     });
@@ -483,14 +401,14 @@ describe('the org-number hint reserves no space until it has something to say (T
         const instance = makeInstance();
         const hint = $('.two-company-id-hint');
 
-        // Empty: no line box, so an address form with nothing selected is the
-        // same height as every other row on it.
+        // Empty: no line box, so the address form is the same height as any
+        // other row when nothing's selected.
         expect(getComputedStyle(hint.get(0)).display).toBe('none');
 
         instance.setCompanyIdHint('12345678');
 
-        // Populated: an in-flow block, which cannot overlap the field below it
-        // by construction - the whole point of moving off `position: absolute`.
+        // Populated: an in-flow block, so it can't overlap the field below by
+        // construction.
         const style = getComputedStyle(hint.get(0));
         expect(style.display).toBe('block');
         expect(style.position).not.toBe('absolute');

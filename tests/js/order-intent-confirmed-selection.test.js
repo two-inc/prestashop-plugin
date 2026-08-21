@@ -4,31 +4,23 @@
  * search again, select a DIFFERENT company -> the intent fires for the FIRST
  * one.
  *
- * WHY THE EXISTING TESTS DID NOT CATCH IT
- * order-intent-stale-selection.test.js pins a monotonic `requestSeq` gate that
- * stops a slow response for company A overwriting a fast one for company B.
- * That gate is correct and stays. It is also the wrong layer: it can only
- * choose between two answers that are already in flight. Those tests mock
- * `collectFormData` out entirely (`() => Promise.resolve({})`), so the one
- * thing they cannot see is WHICH COMPANY THE REQUEST WAS BUILT FOR - and that
- * is where the staleness actually lives.
+ * order-intent-stale-selection.test.js pins a `requestSeq` gate against a slow
+ * response overwriting a fast one, but mocks `collectFormData` out entirely -
+ * it can't see WHICH COMPANY the request was built for, which is where the
+ * staleness lives.
  *
- * THE ROOT CAUSE
- * In tile mode collectFormData() reads nothing from the address-area DOM (by
- * design, §7.1) and therefore always falls through to the `getCompany` round
- * trip, which answers from the SESSION COOKIE. That cookie is written by
+ * Root cause: in tile mode collectFormData() reads nothing from the
+ * address-area DOM (by design, §7.1) and falls through to a `getCompany`
+ * round trip answered from the SESSION COOKIE. That cookie is written by
  * TwoCompanySearch.persistCompanyToCookie()'s fire-and-forget `saveCompany`
- * request, and the intent check is fired in the SAME TICK - so the cookie the
- * `getCompany` request carries is the one the browser had before this
- * selection: empty on the first search (the server's own fallbacks repair
- * that, which is why cycle one looked fine) and the PREVIOUS company on every
- * search after it. The request that fires for company A is, at that layer,
- * entirely in-order and current. No response-sequencing gate can see it.
+ * request, fired the SAME TICK as the intent check - so the cookie the
+ * request carries is whatever the browser had BEFORE this selection: empty
+ * on the first search, the PREVIOUS company on every one after.
  *
- * So these tests are deliberately built the opposite way round from the
- * existing ones: collectFormData is REAL, `$.ajax` is stubbed to answer
- * `getCompany` with a stale cookie exactly as the server would, and the
- * assertions are on the company the request carries.
+ * So these tests run the opposite way round from the existing ones:
+ * collectFormData is REAL, `$.ajax` stubs `getCompany` with a stale cookie
+ * exactly as the server would, and assertions are on the company the request
+ * carries.
  */
 
 'use strict';

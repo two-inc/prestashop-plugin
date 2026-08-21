@@ -1,29 +1,21 @@
 /**
  * TWO-40 follow-up, Doug live-test finding (2026-08-19): with the billing
- * country set to United Kingdom - a country the registry DOES support sole
- * traders for - the "Sole trader" mode chip did not render in the
- * company-search dropdown at all.
+ * country set to United Kingdom, which the registry DOES support sole
+ * traders for, the "Sole trader" chip did not render at all.
  *
  * Unlike company-search-sole-trader-entry.test.js, which stubs
- * `TwoSoleTrader_Instance` to test TwoCompanySearch's own wiring, these run the
- * REAL TwoSoleTrader beside the real search control: the defects below are in
- * the seam between the two - who resolves the availability answer, when, and
- * who is told once it lands - and a stub on either side hides all three.
+ * `TwoSoleTrader_Instance`, these run the REAL TwoSoleTrader beside the real
+ * search control: the defects are in the seam between the two, which a stub
+ * on either side would hide.
  *
- *  1. `{success: false}` (this endpoint's answer for a stale ajax token) was
- *     flattened into `available: false` and cached as a real answer: in memory
- *     for the page, and in localStorage for 24h on EVERY later load, with
- *     nothing that re-asks inside the TTL. One expired token removed the chip
- *     for a day.
- *  2. A negative answer was persisted, so a country becoming eligible - or a
- *     merchant environment being fixed - stayed invisible for up to 24h. It is
- *     now REMOVED from the cache instead, which also stops an earlier "yes"
- *     outliving the country's eligibility.
- *  3. Availability resolves asynchronously and nothing pushed the answer to the
- *     search control, which only reads it when IT re-evaluates - so a panel
- *     opened before the round trip landed had no chip in it and nothing to add
- *     one while it stayed open. TwoSoleTrader.apply() now re-syncs the chip,
- *     the same direction WooCommerce already pushes it.
+ *  1. `{success: false}` (a stale ajax token) was flattened into
+ *     `available: false` and cached as a real answer for 24h, with nothing
+ *     that re-asks inside the TTL.
+ *  2. A negative answer was persisted, so eligibility becoming true again
+ *     stayed invisible for up to 24h. It's now REMOVED from the cache instead.
+ *  3. Availability resolves asynchronously and nothing pushed the answer to
+ *     the search control until it next re-evaluated. TwoSoleTrader.apply()
+ *     now re-syncs the chip, the direction WooCommerce already pushes it.
  */
 
 'use strict';
@@ -57,13 +49,10 @@ function storageKey(country) {
 }
 
 /**
- * Both modules, wired to each other exactly as twopayment.js wires them: the
- * search instance is reachable only through the manager (which is what
- * TwoSoleTrader resolves lazily, since the manager rebuilds it on every
- * `updatedAddressForm`), and TwoSoleTrader is reachable through its own global.
- *
- * Search FIRST: TwoSoleTrader resolves availability from its own constructor,
- * so the manager has to be in place before it can push the answer anywhere.
+ * Wired as twopayment.js wires them: the search instance is reachable only
+ * through the manager, TwoSoleTrader through its own global. Search FIRST:
+ * TwoSoleTrader resolves availability from its own constructor, so the
+ * manager must be in place before it can push the answer anywhere.
  */
 function mount() {
     const search = new TwoCompanySearch({ checkoutHost: CHECKOUT_HOST });
@@ -99,7 +88,7 @@ beforeEach(() => {
     const loaded = loadCompanySearch();
     TwoCompanySearch = loaded.TwoCompanySearch;
     $ = loaded.$;
-    // Defaults to GB, `data-iso-code` and all - the country under test.
+    // Defaults to GB, `data-iso-code` and all.
     buildAddressForm();
     installStylesheet('views/css/two.css');
     ajax = stubAjax($);
@@ -135,11 +124,11 @@ afterEach(() => {
 
 describe('the "Sole trader" chip renders for a supported billing country (GB)', () => {
     test('shown once the availability answer has landed', async () => {
-        // Given a GB address step and a registry answer of "supported"
+        // Given GB address step, registry answer "supported"
         mount();
         await drain();
 
-        // When the buyer opens the company-search panel
+        // When buyer opens the company-search panel
         openPanel();
 
         // Then the chip is there
@@ -150,23 +139,22 @@ describe('the "Sole trader" chip renders for a supported billing country (GB)', 
     });
 
     test('appears without a reopen when the answer lands while the panel is already open', async () => {
-        // Given a round trip still in flight (the whole address step, on a
-        // first visit: no server-rendered answer to adopt, nothing cached)
+        // Given a round trip still in flight
         let settle;
         respond = () => new Promise((resolve) => { settle = resolve; });
         mount();
         jest.advanceTimersByTime(150);
         await flushPromises();
 
-        // When the buyer opens the panel BEFORE it lands...
+        // When buyer opens the panel BEFORE it lands...
         openPanel();
         expect(shown(panelParts().soleTrader)).toBe(false);
 
-        // ...and it then lands, with the panel still open
+        // ...and it lands, panel still open
         settle({ success: true, available: true });
         await drain();
 
-        // Then the chip appears in the open panel - no close/reopen needed
+        // Then the chip appears, no close/reopen needed
         expect(shown(panelParts().soleTrader)).toBe(true);
     });
 
@@ -182,9 +170,7 @@ describe('the "Sole trader" chip renders for a supported billing country (GB)', 
 });
 
 describe('an error response is not an availability answer', () => {
-    // Every shape this endpoint answers with when it declines to answer at
-    // all - all of them HTTP 200 with a JSON body, so none reaches the
-    // transport-failure catch().
+    // All HTTP 200 with a JSON body, so none reaches the transport-failure catch().
     const declined = [
         [{ success: false, error: 'Invalid token' }, 'stale/absent ajax token'],
         [{ success: false, error: 'Unknown action requested.' }, 'unknown action'],
@@ -199,9 +185,8 @@ describe('an error response is not an availability answer', () => {
         await drain();
 
         expect(fetchCalls).toHaveLength(1);
-        // Fail-soft on screen, as a transport failure already was...
+        // Fail-soft on screen, but nothing recorded as an answer about GB, either cache.
         expect(soleTrader.isAvailableForCurrentCountry()).toBe(false);
-        // ...but nothing recorded as an answer about GB, either cache.
         expect(soleTrader.availabilityByCountry.GB).toBeUndefined();
         expect(window.localStorage.getItem(storageKey('GB'))).toBeNull();
     });
@@ -214,8 +199,7 @@ describe('an error response is not an availability answer', () => {
         openPanel();
         expect(shown(panelParts().soleTrader)).toBe(false);
 
-        // When anything triggers another refresh (a fragment re-render, a
-        // country change) and the endpoint answers properly this time
+        // When a refresh triggers and the endpoint answers properly this time
         respond = () => Promise.resolve({ success: true, available: true });
         mutateBody();
         await drain();
@@ -237,9 +221,7 @@ describe('the persisted cache never holds a negative answer', () => {
     });
 
     test('a server-rendered "not available" REMOVES a stale cached "available"', () => {
-        // The shape that made this sticky both ways: yesterday's cached "yes"
-        // for GB, and a payment step that has just rendered "no". Skipping the
-        // write would leave the "yes" standing for the rest of its 24h.
+        // Skipping the write would leave yesterday's cached "yes" standing for the rest of its 24h.
         window.localStorage.setItem(
             storageKey('GB'),
             JSON.stringify({ available: true, ts: Date.now() })

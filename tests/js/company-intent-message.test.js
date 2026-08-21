@@ -1,10 +1,8 @@
 /**
- * Coverage for TwoOrderIntent.buildCompanyIntentMessage() (TWO-25326 §7.3,
- * 2026-08-03 design ruling): the standalone tile company-name/number label
- * is gone, and the captured company is folded directly into the intent
- * sentence instead. This is the ONE place that builds that sentence -
- * processResult(), updateUI() and TwoCheckoutManager.handleOrderIntentResult()
- * all call it, so pinning its output here covers every caller.
+ * TWO-25326 §7.3. buildCompanyIntentMessage() is the ONE place that builds the
+ * intent sentence - processResult(), updateUI() and
+ * TwoCheckoutManager.handleOrderIntentResult() all call it, so pinning its
+ * output here covers every caller.
  */
 
 const { loadOrderIntent } = require('./ps-harness');
@@ -55,19 +53,15 @@ describe('TwoOrderIntent.buildCompanyIntentMessage', () => {
     });
 
     test('a name containing "%s" is not treated as a template token - only ONE substitution per placeholder', () => {
-        // Mutation guard: a naive global replace (replace(/%s/g, ...)) would
-        // also replace a literal "%s" that happened to be inside the company
-        // name itself. `.replace('%s', x)` (first-match-only) must not do that.
+        // Mutation guard: a global replace(/%s/g, ...) would also replace a
+        // literal "%s" inside the company name itself.
         const message = intent.buildCompanyIntentMessage(true, '%s Ltd', '123');
         expect(message).toBe('This order by %s Ltd (123) is likely to be accepted by Two');
     });
 
     test('a brand override with an extra %s placeholder degrades to literal text rather than truncating the sentence', () => {
-        // Adversarial review finding: fillTemplate() must not silently drop
-        // everything after the last placeholder it has a value for. A
-        // misconfigured override with two %s tokens (only one value is ever
-        // passed for the approved-override path) must keep the tail of the
-        // sentence, even if the second token itself can't be substituted.
+        // fillTemplate() must not drop everything after the last placeholder it
+        // has a value for.
         global.window.twopayment.intent_approved_notice = 'Approved for %s, ref %s, thanks';
         const message = intent.buildCompanyIntentMessage(true, 'Example Ltd', '556677-8899');
         expect(message).toBe('Approved for Example Ltd, ref %s, thanks');
@@ -126,11 +120,9 @@ describe('TwoOrderIntent.publishPayloadCompany - name/number pairing (adversaria
     });
 
     test('a later name-only payload (manual/sole-trader entry) clears the PREVIOUS company\'s retained number rather than pairing it with the new name', () => {
-        // Mutation guard for the exact bug the deleted TwoCompanySummary.js
-        // was written to avoid: reassigning lastCompany and lastCompanyNumber
-        // as two INDEPENDENT `if`s (rather than one joint reassignment) lets
-        // a stale number from a company the buyer has moved off survive
-        // alongside a completely different, freshly-selected name.
+        // Mutation guard: assigning lastCompany and lastCompanyNumber as two
+        // INDEPENDENT `if`s rather than one joint reassignment lets a stale
+        // number survive alongside a freshly-selected name.
         intent.publishPayloadCompany({ buyer: { company: { company_name: 'First Holdings Ltd', organization_number: '111111-1111' } } });
         expect(intent.lastCompanyNumber).toBe('111111-1111');
 

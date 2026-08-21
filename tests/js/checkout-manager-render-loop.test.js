@@ -1,35 +1,12 @@
 /**
- * TWO-25326. Doug's repro on a real checkout: the Two payment tile rendered
- * and was immediately removed once before any selection, 3-5 times in a
- * rapid cycle on first selecting Two, twice on switching to a different
- * method, and once on re-selecting Two. Varying counts, never zero - the
- * signature of multiple redundant listeners each independently reacting to
- * the same underlying change, not of one broken listener.
+ * TWO-25326: duplicate payment-option listeners multiplying tile re-renders.
  *
- * Root cause: handleDynamicContentChange() - run by setupMutationObserver()'s
- * debounced callback every time PrestaShop replaces the `.payment-options`
- * fragment while the checkout step settles - used to force
- * `_paymentListenersAttached = false` and call
- * setupPaymentOptionSelectionListener() again. That method binds its
- * change/click/submit listeners to `document` (event delegation), so they
- * already keep matching elements inside any number of DOM replacements
- * without ever needing to be re-attached; re-running it anyway added a
- * brand new, permanent set of duplicate document-level listeners on every
- * firing; nothing in cleanup() can remove them afterwards (they are
- * anonymous closures - no reference is ever kept to un-register).
- * handlePaymentOptionChange() calls syncSurchargeCartLine(), which at the
- * time this was written triggered a full payment-step reload - so a single
- * radio change ended up invoking it once per accumulated duplicate, each one
- * independently racing a reload. That reload is what Doug saw as the tile
- * being removed and re-rendered several times in a row. The reload itself is
- * gone (TWO-25326 round 4: refreshCartSummaryInPlace), but duplicate
- * document-level listeners with no way to unbind them are still a defect, and
- * they still multiply the sync round trips, so these tests stand as they are.
- *
- * These tests pin: (1) a single user action still triggers the handler
- * exactly once no matter how many times the DOM-settle path has already run,
- * and (2) the listener-count/isProcessing/interval-leak invariants that
- * regression would reintroduce.
+ * setupPaymentOptionSelectionListener() binds change/click/submit to `document`
+ * by delegation, so those listeners survive any number of `.payment-options`
+ * fragment replacements and must never be re-attached. Re-running it from
+ * handleDynamicContentChange() adds a permanent duplicate set on every
+ * MutationObserver firing that cleanup() cannot remove - they are anonymous
+ * closures with no retained reference to un-register.
  */
 
 'use strict';
@@ -74,10 +51,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-    // handlePaymentOptionChange() fires syncSurchargeCartLine()/
-    // clearOrderIntentResultFromServer() AJAX side-effects this suite is not
-    // about - resolve whatever is still outstanding so nothing logs after
-    // the test that started it has already finished.
+    // Resolve outstanding AJAX so nothing logs after its test has finished.
     ajax.calls.forEach((call) => {
         if (call.aborted) {
             return;
@@ -85,13 +59,8 @@ afterEach(async () => {
         try {
             call.fail('abort', 'abort');
         } catch (e) {
-            // This suite is about listener/render-loop counts, not about
-            // syncSurchargeCartLine()'s own AJAX plumbing (covered
-            // elsewhere) - some of its call sites wire up `.done()/.fail()`
-            // on the jqXHR promise rather than passing settings.error, which
-            // this minimal stub does not simulate. Either way the point
-            // here is just to unstick anything left pending before the test
-            // ends.
+            // Some call sites wire `.done()/.fail()` on the jqXHR promise rather
+            // than settings.error, which this minimal stub does not simulate.
         }
     });
     await flushPromises();
@@ -118,10 +87,7 @@ test('one radio change fires handlePaymentOptionChange exactly once, however man
     const manager = makeManager();
     const spy = jest.spyOn(manager, 'handlePaymentOptionChange');
 
-    // Simulates PrestaShop replacing the `.payment-options` fragment several
-    // times in a row while the checkout step settles - each one debounced
-    // through the MutationObserver into exactly this call, before the buyer
-    // has clicked anything.
+    // PrestaShop replacing `.payment-options` repeatedly while the step settles.
     manager.handleDynamicContentChange();
     manager.handleDynamicContentChange();
     manager.handleDynamicContentChange();
@@ -149,9 +115,7 @@ test('handleDynamicContentChange() does not leak an extra Method-5 selection-che
     manager.handleDynamicContentChange();
     manager.handleDynamicContentChange();
 
-    // Same interval handle - handleDynamicContentChange() must not call
-    // setupPaymentOptionSelectionListener() again, which is the only place a
-    // new one is ever created.
+    // setupPaymentOptionSelectionListener() is the only place a new one is made.
     expect(manager._selectionCheckInterval).toBe(intervalAfterInit);
 });
 

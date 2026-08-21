@@ -1796,7 +1796,7 @@
     pointer-events: none;
 }
 
-/* Optional buyer reference fields in the payment tile (ABN-472) */
+/* Optional buyer reference fields in the payment tile */
 .two-optional-fields {
     margin-top: 12px;
     padding: 12px 16px;

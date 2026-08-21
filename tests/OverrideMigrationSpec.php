@@ -2,25 +2,19 @@
 
 declare(strict_types=1);
 
-// Not loaded by twopayment.php (only the upgrade script that needs it requires
-// it), so the spec pulls it in itself. tests/bootstrap.php has already defined
-// _PS_VERSION_, which the file's guard clause requires.
+// Not loaded by twopayment.php, so the spec pulls it in itself; the file's
+// guard clause needs the _PS_VERSION_ that tests/bootstrap.php defines.
 require_once dirname(__DIR__) . '/classes/TwoOverrideMigrator.php';
 
 /**
- * Pins the ownership and staleness decision in TwoOverrideMigrator (TWO-25265).
+ * TWO-25265: ownership and staleness in TwoOverrideMigrator. `classify()`
+ * returning STALE for a file that is not exclusively ours deletes another
+ * module's override, or a merchant's hand-written one, so the cases below are
+ * weighted towards "refuse to touch it".
  *
- * This is the only part of the shop-level override refresh that can be tested
- * offline, and it is also the only part where a wrong answer is destructive:
- * `classify()` returning STALE for a file that is not exclusively ours means
- * deleting another module's override, or a merchant's hand-written one. So the
- * cases below are weighted towards "refuse to touch it", not towards the happy
- * path.
- *
- * The stamp format is PrestaShop's own, written by `Module::addOverride()` above
- * every member it splices into the shop's copy. It is not something this module
- * emits, so these fixtures mirror core's exact output — comment block, leading
- * asterisk, `module:` / `date:` / `version:` in that order.
+ * The stamp format is PrestaShop's own, written by `Module::addOverride()`, so
+ * these fixtures mirror core's exact output — comment block, leading asterisk,
+ * `module:` / `date:` / `version:` in that order.
  */
 final class OverrideMigrationSpec
 {
@@ -40,12 +34,10 @@ final class OverrideMigrationSpec
     }
 
     /**
-     * An upgrade script's override refresh is housekeeping ON TOP of an upgrade
-     * that has already succeeded, so nothing it can hit may propagate: a throw
-     * here leaves the module version un-bumped and the shop in a state no later
-     * script can reason about. Errors included, not just exceptions - a TypeError
-     * or a missing class on an odd install is exactly the shape that gets past a
-     * `catch (Exception)` (TWO-25326, review round 3).
+     * TWO-25326: the override refresh is housekeeping on top of an upgrade that
+     * already succeeded, so a throw here would leave the module version
+     * un-bumped. Errors included - a `catch (Exception)` misses a TypeError or
+     * a missing class on an odd install.
      */
     private static function testUpgradeScriptNeverFailsTheUpgradeOnAnError(): void
     {
@@ -73,9 +65,7 @@ final class OverrideMigrationSpec
         TinyAssert::true($logged, 'and it must say so, or the shop is silently stale');
     }
 
-    /**
-     * One stamped member, as core writes it.
-     */
+    /** One stamped member, as core writes it. */
     private static function stamp(string $module, string $version): string
     {
         return "    /*\n"
@@ -120,11 +110,9 @@ final class OverrideMigrationSpec
 
     private static function testAnyForeignStampWinsOverOurs(): void
     {
-        // The case that matters: PrestaShop's override/ tree is a SHARED merge
-        // target. `addOverride()` splices each module's methods into ONE file, so
-        // a file can carry our stamp and someone else's at the same time.
-        // Deleting it would silently uninstall their override — a worse failure
-        // than the stale-override bug this whole mechanism exists to fix.
+        // PrestaShop's override/ tree is a SHARED merge target: addOverride()
+        // splices each module's methods into ONE file, so a file can carry our
+        // stamp and someone else's at once.
         $source = self::file(
             self::stamp(TwoOverrideMigrator::MODULE_NAME, '2.4.0'),
             self::stamp('someothermodule', '1.0.0')
@@ -156,9 +144,6 @@ final class OverrideMigrationSpec
 
     private static function testOurStampAtOldVersionIsStale(): void
     {
-        // The actual production case: a 2.4.0-stamped CustomerAddressFormatter
-        // still injecting department and project into the address form on a shop
-        // reporting 2.7.0.
         TinyAssert::same(
             TwoOverrideMigrator::STALE,
             TwoOverrideMigrator::classify(
@@ -172,9 +157,8 @@ final class OverrideMigrationSpec
 
     private static function testMixedOurVersionsIsStale(): void
     {
-        // Possible in practice: methods spliced in at different releases, since
-        // addOverride() only ever ADDS. If any member is off-version the file is
-        // not a faithful copy of the current override.
+        // addOverride() only ever ADDS, so members can be spliced in at
+        // different releases.
         $source = self::file(
             self::stamp(TwoOverrideMigrator::MODULE_NAME, '2.7.1'),
             self::stamp(TwoOverrideMigrator::MODULE_NAME, '2.4.0')
@@ -205,11 +189,8 @@ final class OverrideMigrationSpec
 
     private static function testStampParsingIgnoresProse(): void
     {
-        // The word "module:" inside ordinary prose must not read as a stamp — the
-        // regex is anchored to a comment-continuation line for exactly this
-        // reason. Getting this wrong in the permissive direction turns an
-        // unrelated docblock into a foreign owner and quietly disables the
-        // migration; in the other direction it invents ownership.
+        // The regex is anchored to a comment-continuation line so that a
+        // "module:" in prose cannot invent a foreign owner.
         $source = "<?php\n\n// This file relates to module: somethingelse in passing.\n"
             . 'class Foo extends FooCore {}' . "\n";
 
@@ -228,11 +209,9 @@ final class OverrideMigrationSpec
 
     private static function testStampInsideAStringLiteralIsNotAStamp(): void
     {
-        // Raised in adversarial review. A multiline string literal can contain
-        // text that is byte-identical to a stamp, and matching line-by-line on
-        // raw source cannot tell the two apart. Here the file is genuinely
-        // CURRENT; reading the literal would classify it STALE and rewrite it.
-        // Stamps are therefore extracted from comment TOKENS only.
+        // A multiline string literal can hold text byte-identical to a stamp,
+        // which line-by-line matching on raw source cannot tell apart - so
+        // stamps are extracted from comment TOKENS only.
         $source = "<?php\n\nclass CustomerAddressFormatter extends CustomerAddressFormatterCore\n{\n"
             . self::stamp(TwoOverrideMigrator::MODULE_NAME, '2.7.1')
             . "    public function getFormat()\n    {\n"
@@ -258,10 +237,8 @@ final class OverrideMigrationSpec
 
     private static function testUntokenisableSourceIsLeftAlone(): void
     {
-        // No `<?php` open tag: token_get_all() yields inline HTML and no comment
-        // tokens, so nothing is ours and nothing is touched. Failing towards
-        // "leave it alone" is the whole point — the alternative is deleting a
-        // file we could not read.
+        // No `<?php` open tag: token_get_all() yields inline HTML and no
+        // comment tokens, so nothing is ours and nothing is touched.
         TinyAssert::same(
             TwoOverrideMigrator::UNSTAMPED,
             TwoOverrideMigrator::classify("* module: twopayment\n* version: 2.4.0\n", '2.7.1'),

@@ -7,30 +7,15 @@ require_once __DIR__ . '/../controllers/front/orderintent.php';
 /**
  * TWO-40: what the sole-trader token mint is allowed to run on.
  *
- * The endpoint used to require an invoice address on the cart. On the checkout
- * address-editor page - the one page the "I'm a sole trader" entry is actually
- * clicked from - the cart usually has none, so every attempt was refused, and
- * the browser had nowhere on that page to render the refusal: the entry point
- * dead-ended in silence.
+ * The precondition is a country resolver that prefers what the request POSTS -
+ * the buyer's live in-page selection - and falls back to the cart's delivery
+ * address only when no usable country was posted. The cart's INVOICE address is
+ * not consulted at any tier. Minting still requires TwoSoleTrader::isAvailable()
+ * to answer yes, server-side, for a country that actually resolved.
  *
- * The precondition is now a country resolver that prefers what the request
- * POSTS - the buyer's live in-page selection - and falls back to the cart's
- * delivery address only when no usable country was posted at all. The cart's
- * INVOICE address is not consulted at any tier, and one spec here exists purely
- * to prove that (testACommittedInvoiceAddressIsNeverConsulted).
- *
- * The property these specs pin is that the ONE authorisation gate survived that
- * inversion: minting still requires TwoSoleTrader::isAvailable() to answer yes,
- * server-side, for a country that actually resolved. A posted country can only
- * move the answer from "unresolved" to "the registry's own answer for a real
- * country" - it cannot conjure availability where the registry says no.
- *
- * Behavioural, and driven through the controller's own action switch rather than
- * by reading the source - for the reason recorded on SessionCompanyClearSpec:
- * an early `return` above the work leaves every source literal in place and a
- * grep-shaped spec green. Here the equivalent would be worse, since the thing
- * under test is a REMOVED guard: a spec asserting the absence of a string
- * passes the moment the string is reworded, whether or not anything mints.
+ * Driven through the controller's own action switch rather than by reading the
+ * source: the thing under test is a removed guard, and a spec asserting the
+ * absence of a string passes the moment the string is reworded.
  */
 final class SoleTraderTokenPreconditionSpec
 {
@@ -38,7 +23,6 @@ final class SoleTraderTokenPreconditionSpec
     private const DELIVERY_ADDRESS_ID = 4102;
     private const CART_ID = 991;
 
-    /** Countries the stub country table knows, and what the registry says. */
     private const ISO_GB = 'GB';
     private const ISO_NO = 'NO';
     /** In the country table, absent from the registry's supported list. */
@@ -74,8 +58,8 @@ final class SoleTraderTokenPreconditionSpec
         StubStore::reset();
         TwoSoleTrader::resetCache();
         PrestaShopLogger::reset();
-        // A fresh session: TwoSoleTrader caches the registry's answer in the
-        // cookie (single slot, per country), and Context is a singleton here.
+        // TwoSoleTrader caches the registry's answer in the cookie (single slot,
+        // per country), and Context is a singleton here.
         Context::getContext()->cookie = new Cookie();
         StubStore::$countries = [
             10 => self::ISO_GB,
@@ -87,14 +71,8 @@ final class SoleTraderTokenPreconditionSpec
     /* ---- tier 1: the posted country, i.e. the buyer's live selection ---- */
 
     /**
-     * The inversion, stated as the property that matters: a cart carrying a
-     * committed invoice address in country A, a country B posted, and the gate
-     * evaluated against B. Both countries are eligible, so the pass cannot come
-     * from either one being rejected - only from B being the country resolved.
-     *
-     * This is the mirror of testPostedCountryCannotConjureAvailability(), and
-     * the two together are what say the ordering changed without the gate being
-     * weakened.
+     * Both countries are eligible, so the pass cannot come from either one being
+     * rejected - only from the posted one being the country resolved.
      */
     private static function testPostedCountryWinsOverTheCartsInvoiceAddress(): void
     {
@@ -111,10 +89,9 @@ final class SoleTraderTokenPreconditionSpec
     }
 
     /**
-     * The invoice address is not a tier at all, not even a last resort. A cart
-     * with an eligible invoice address, nothing posted and no delivery address
-     * must be REFUSED - if the invoice tier were merely demoted rather than
-     * deleted, this is the case where it would silently win.
+     * A cart with an eligible invoice address, nothing posted and no delivery
+     * address must be REFUSED - the case where a merely demoted invoice tier
+     * would silently win.
      */
     private static function testACommittedInvoiceAddressIsNeverConsulted(): void
     {
@@ -149,11 +126,9 @@ final class SoleTraderTokenPreconditionSpec
     }
 
     /**
-     * The one input the upper-casing is load-bearing for. The alpha-2 shape
-     * check only accepts upper case, so a lower-case selection - which is what
-     * some themes' country markup carries - would fall straight through to
-     * tier 3 and refuse on a cart with no delivery address. `'gb-'` is already
-     * covered above and must still be rejected; plain `'gb'` must not be.
+     * The alpha-2 shape check only accepts upper case, so a lower-case selection
+     * - which some themes' country markup carries - would fall through and
+     * refuse on a cart with no delivery address.
      */
     private static function testLowercasePostedCountryIsAccepted(): void
     {
@@ -168,9 +143,8 @@ final class SoleTraderTokenPreconditionSpec
     /* ---- tier 2: the cart's delivery address, last resort ---- */
 
     /**
-     * A POST carrying junk where the country should be resolves from the cart's
-     * delivery address rather than refusing - and the junk itself never reaches
-     * the gate. Every shape the alpha-2 check has to reject.
+     * Junk falls back to the delivery address rather than refusing, and never
+     * reaches the gate. Every shape the alpha-2 check has to reject.
      */
     private static function testGarbagePostedCountryFallsBackToTheDeliveryAddress(): void
     {
@@ -203,10 +177,8 @@ final class SoleTraderTokenPreconditionSpec
     }
 
     /**
-     * The last-resort tier, with BOTH addresses on the cart and nothing posted.
-     * The delivery one answers; the invoice one - here an eligible country too,
-     * so a wrong resolution would still mint and only the reported country would
-     * give it away - does not.
+     * The invoice address is an eligible country too, so a wrong resolution
+     * would still mint and only the reported country gives it away.
      */
     private static function testAbsentPostedCountryUsesTheDeliveryAddressNotTheInvoiceOne(): void
     {
@@ -223,10 +195,8 @@ final class SoleTraderTokenPreconditionSpec
     }
 
     /**
-     * The delivery tier's own resolution failure: an address that loads but
-     * whose id_country is not in the country table (a deleted or
-     * never-configured country row). No country resolves, and with no tier below
-     * it that is a refusal rather than a guess.
+     * An address that loads but whose id_country is not in the country table. No
+     * country resolves, and with no tier below it that is a refusal, not a guess.
      */
     private static function testUnresolvableDeliveryAddressIsRefused(): void
     {
@@ -243,11 +213,9 @@ final class SoleTraderTokenPreconditionSpec
     }
 
     /**
-     * The other half: an `id_address_delivery` pointing at a row that no longer
-     * loads at all - a since-deleted address, or one belonging to a different
-     * shop. This is the `Validate::isLoadedObject()` guard in
-     * addressCountryIso(), and deleting that guard leaves every other case here
-     * green.
+     * An `id_address_delivery` pointing at a row that no longer loads. Pins the
+     * `Validate::isLoadedObject()` guard in addressCountryIso(), whose deletion
+     * leaves every other case here green.
      */
     private static function testDeliveryAddressThatNoLongerLoadsIsRefused(): void
     {
@@ -266,9 +234,7 @@ final class SoleTraderTokenPreconditionSpec
     /* ---- fail-closed ---- */
 
     /**
-     * No invoice address, no usable posted country, no delivery address. The
-     * refusal is country-shaped now, and it must still be a refusal: the
-     * registry gate cannot be evaluated against nothing, so defaulting a
+     * The registry gate cannot be evaluated against nothing, so defaulting a
      * country here would be exactly the token oracle the gate exists to stop.
      */
     private static function testNothingResolvableIsRefused(): void
@@ -288,10 +254,6 @@ final class SoleTraderTokenPreconditionSpec
         );
     }
 
-    /**
-     * The gate itself, on the address path: a country that resolves fine but
-     * that the registry does not support sole traders in.
-     */
     private static function testResolvedButIneligibleCountryIsRefused(): void
     {
         self::seedCart(null, self::ISO_DE);
@@ -303,10 +265,8 @@ final class SoleTraderTokenPreconditionSpec
     }
 
     /**
-     * The load-bearing security case for the preferred tier: a posted country is
-     * still gated. If the registry says no for it, no tokens - so promoting the
-     * posted tier to first place cannot be used to mint where the flow is
-     * unavailable.
+     * The preferred tier is still gated: the posted country cannot be used to
+     * mint where the registry says the flow is unavailable.
      */
     private static function testPostedCountryCannotConjureAvailability(): void
     {
@@ -320,8 +280,6 @@ final class SoleTraderTokenPreconditionSpec
         );
         TinyAssert::false(isset($emitted['autofill_token']));
     }
-
-    /* ---- the unchanged request guards ---- */
 
     private static function testInvalidAjaxTokenIsRefused(): void
     {
@@ -343,12 +301,9 @@ final class SoleTraderTokenPreconditionSpec
         TinyAssert::false(isset($emitted['delegation_token']));
     }
 
-    /* ---- fixtures ---- */
-
     /**
-     * A cart in the context, with or without each address. `null` means the
-     * cart carries no such address at all - which is the address-editor state
-     * for the invoice one.
+     * `null` means the cart carries no such address at all - the address-editor
+     * state for the invoice one.
      *
      * @param string|null $invoiceIso
      * @param string|null $deliveryIso
@@ -442,10 +397,6 @@ final class SoleTraderTokenPreconditionSpec
         return $controller->emitted[0];
     }
 
-    /**
-     * A module whose Two API surface answers the registry's supported-types
-     * lookup per country: sole traders in GB and NO, business-only in DE.
-     */
     private static function registryHarness(): TwoSoleTraderTestHarness
     {
         $module = new TwoSoleTraderTestHarness();

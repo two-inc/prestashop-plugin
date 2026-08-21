@@ -2,89 +2,62 @@
  * Two Sole Trader - enrolment mechanics for the sole-trader checkout flow
  * (TWO-24755).
  *
- * TWO-40 removed the upfront Business / Sole trader chip choice this module
- * used to render on the payment step. There is now a single entry point
- * regardless of business type: the company search control
- * (TwoCompanySearch.js). When the registry says the billing country
- * supports sole traders, that control shows an "I'm a sole trader" row
- * alongside "My company is not on the list" and calls
- * `startEnrollment()`/`isAvailableForCurrentCountry()` below directly - there
- * is no chip, and no toggle markup, in between.
+ * The single entry point, regardless of business type, is the company search
+ * control (TwoCompanySearch.js): when the registry says the billing country
+ * supports sole traders, that control shows an "I'm a sole trader" row and
+ * calls `startEnrollment()`/`isAvailableForCurrentCountry()` below directly.
  *
- * This module still owns everything about what happens once enrolment
- * starts: minting the delegation + autofill tokens server-side, opening
- * Two's hosted signup popup, and autofilling the company fields from
- * GET /autofill/v1/buyer/current on completion. An enrolled sole trader
- * then checks out as a regular business - the synthetic organization
- * number their registration minted carries the semantics, so the order
- * payload is unchanged.
+ * This module owns everything about what happens once enrolment starts:
+ * minting the delegation + autofill tokens server-side, opening Two's hosted
+ * signup popup, and autofilling the company fields from
+ * GET /autofill/v1/buyer/current on completion. An enrolled sole trader then
+ * checks out as a regular business - the synthetic organization number their
+ * registration minted carries the semantics, so the order payload is
+ * unchanged.
  *
  * All decisioning (country eligibility, token minting) lives server-side
  * in classes/TwoSoleTrader.php.
  *
- * The availability ANSWER is still handed over server-side, as of TWO-25326
- * bug 9 round 3: paymentinfo.tpl renders `data-two-available`/
- * `data-two-country` on `.two-sole-trader` from the registry answer, and
- * adoptServerRenderedToggle() below takes that over as this instance's
- * settled availability cache - so the search control's "I'm a sole trader"
- * row can appear on first paint with no round trip of its own. That
- * container renders no visible chips or toggle any more; it now exists only
- * to host the prompt/status/error messaging shown once enrolment starts.
+ * The availability ANSWER is handed over server-side (TWO-25326 bug 9):
+ * paymentinfo.tpl renders `data-two-available`/`data-two-country` on
+ * `.two-sole-trader` from the registry answer, and adoptServerRenderedToggle()
+ * below takes that over as this instance's settled availability cache - so the
+ * search control's "I'm a sole trader" row can appear on first paint with no
+ * round trip of its own. That container hosts only the prompt/status/error
+ * messaging shown once enrolment starts.
  *
- * `.two-sole-trader` ONLY EVER exists on the payment step (it is rendered by
+ * `.two-sole-trader` ONLY EVER exists on the payment step (rendered by
  * paymentinfo.tpl and nowhere else) - the address-editor page has no such
- * element at all (TWO-40 follow-up; live bug reported by Doug). Resolving
- * availability must not depend on that container existing: refreshAvailability()
- * below resolves and caches the answer for whatever page it runs on, and only
- * the enrolment-status rendering (showPrompt()/hidePrompt()/showStatus()/
- * showError()) - which genuinely has nowhere to draw without it - stays
- * gated on the container being present. See refreshAvailability()'s own doc.
+ * element at all (TWO-40). Resolving availability must not depend on that
+ * container existing: refreshAvailability() resolves and caches the answer for
+ * whatever page it runs on, and only the enrolment-status rendering
+ * (showPrompt()/hidePrompt()/showStatus()/showError()) stays gated on the
+ * container being present.
  *
- * The availability answer is ALSO cached in localStorage per ISO country
- * code with a 24h TTL (Doug's own follow-up request), namespaced by
- * `config.checkoutHost` so staging/production/sandbox never share an entry -
- * see availabilityStorageKey()'s doc for why that split is the right one and
- * not a finer, per-merchant one. This is what lets the FIRST page a buyer
- * lands on skip the round trip entirely once any earlier page (or an earlier
- * visit, within the TTL) has already resolved that country.
+ * The availability answer is ALSO cached in localStorage per ISO country code
+ * with a 24h TTL, namespaced by `config.checkoutHost` so
+ * staging/production/sandbox never share an entry - see
+ * availabilityStorageKey(). This is what lets the FIRST page a buyer lands on
+ * skip the round trip entirely once any earlier page (or an earlier visit,
+ * within the TTL) has already resolved that country.
  */
 class TwoSoleTrader {
     /**
-     * How long a persisted availability answer (see
-     * readPersistedAvailability()/writePersistedAvailability()) stays valid -
-     * an explicit 24h, per Doug's own request (TWO-40 follow-up): the
-     * registry round trip fired on every fresh page load was the visible
-     * latency this cache exists to cut, and 24h bounds how long a stale
-     * answer can survive a real registry change.
+     * How long a persisted availability answer stays valid: 24h bounds how long
+     * a stale answer can survive a real registry change.
      *
-     * Deliberately NOT claimed to match the server-side registry cookie's
-     * own cache window (`classes/TwoSoleTrader.php::CACHE_TTL_SECONDS`,
-     * currently 3600s/1h - adversarial review, "Han" finding: an earlier
-     * draft of this comment claimed the two "closely" agreed, which is off
-     * by a factor of 24 and was never actually checked against the PHP
-     * constant). The two TTLs are independent by design: this one bounds
-     * the CLIENT's browser cache, the server one bounds ITS OWN registry
-     * lookup: a shorter server TTL just means the server itself may re-ask
-     * the registry several times inside one client TTL window, which is a
-     * server-side cost, not a correctness gap here - whichever one answers
-     * first is what this cache is populated from.
+     * Independent of the server-side registry cache window
+     * (`classes/TwoSoleTrader.php::CACHE_TTL_SECONDS`) by design - this one
+     * bounds the CLIENT's browser cache, the server one bounds its own registry
+     * lookup, and whichever answers first is what this cache is populated from.
      */
-    // Underscore-prefixed to match this file's/TwoCompanySearch.js's own
-    // convention for an internal-only static (adversarial review, "Yoda"
-    // finding) - this is read by nobody outside readPersistedAvailability().
     static _AVAILABILITY_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
-    // TWO-40 follow-up, Doug: a buyer who sits on checkout long enough for
-    // the delegated auth tokens to expire server-side loses autofill and the
-    // sole-trader flow entirely. See startTokenRefreshInterval()/
-    // refreshTokens().
-    //
-    // Unlike `_AVAILABILITY_CACHE_TTL_MS` above, there is no local server-side
-    // constant to cite here: the delegated tokens' own TTL is set upstream, by
-    // whatever mints delegation_token/autofill_token (classes/TwoSoleTrader.php's
-    // mint call), not by this module or its immediate PHP counterpart. 30
-    // minutes is Doug's own considered figure (this ticket's ask verbatim),
-    // not derived from a constant this file can point at.
+    // TWO-40: a buyer who sits on checkout long enough for the delegated auth
+    // tokens to expire server-side loses autofill and the sole-trader flow
+    // entirely. See startTokenRefreshInterval()/refreshTokens(). The tokens'
+    // own TTL is set upstream by whatever mints them, so there is no local
+    // constant this interval can be derived from.
     static _TOKEN_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
 
     constructor(config) {
@@ -92,39 +65,29 @@ class TwoSoleTrader {
             checkoutHost: '',
             orderIntentUrl: '',
             ajaxToken: '',
-            // The country of the cart's OWN billing address, resolved server-side
-            // (TWO-25326 bug 9, round 3 adversarial review). See billingCountry().
+            // The country of the cart's OWN billing address, resolved
+            // server-side (TWO-25326 bug 9). See billingCountry().
             billingCountry: '',
             shopCountry: '',
             // Translated fallback for showStatus() when an enrolled buyer's
             // registration carries no displayable company name or number.
-            // The only i18n this module needs since TWO-40 removed the chip
-            // labels - see applyBuyer().
             statusLabel: '',
             ...config
         };
-        // Whether an enrolment (signup popup + autofill) is currently under
-        // way. Replaces the old chip's 'business'/'sole_trader' mode - there
-        // is no second mode to switch back to any more, just "not enrolling"
-        // and "enrolling".
         this.enrolling = false;
         // Bumped by cancelEnrollment() every time it is called, whatever
-        // `enrolling` was (round 2 adversarial review finding). A
-        // getCurrentBuyer() call captures this before it starts and
-        // applyBuyer() refuses to publish a selection if it has moved -
-        // see cancelEnrollment()'s own comment for the buyer-facing failure
-        // this closes.
+        // `enrolling` was. A getCurrentBuyer() call captures this before it
+        // starts and applyBuyer() refuses to publish a selection if it has
+        // moved - see cancelEnrollment().
         this._enrollGeneration = 0;
-        // The `_enrollGeneration` value that was current when `this.tokens`
-        // was last minted or explicitly resumed (round 3 adversarial review
-        // finding). `cancelEnrollment()` deliberately does NOT invalidate
-        // `tokens` or close the signup popup - the flow is meant to be
-        // resumable - so the popup-completion listener has to be able to
-        // tell "these tokens belong to the CURRENT attempt" from "these
-        // tokens are from an attempt the buyer has since walked away from,
-        // and the popup just happens to still be open" before it reacts to
-        // anything. See fetchTokens()/startEnrollment() (where this is
-        // stamped) and bindPopupMessageListener() (where it is checked).
+        // The `_enrollGeneration` value that was current when `this.tokens` was
+        // last minted or explicitly resumed. `cancelEnrollment()` deliberately
+        // does NOT invalidate `tokens` or close the signup popup - the flow is
+        // meant to be resumable - so the popup-completion listener has to be
+        // able to tell tokens belonging to the CURRENT attempt from tokens of an
+        // attempt the buyer has walked away from while the popup happens to
+        // still be open. Stamped in fetchTokens()/startEnrollment(), checked in
+        // bindPopupMessageListener().
         this._tokensGeneration = 0;
         this.tokens = null;
         this.flowStarted = false;
@@ -132,14 +95,12 @@ class TwoSoleTrader {
         // popup, and the setInterval id polling it - held so
         // notifyEnrollmentSettled() can hold off until the popup actually
         // closes rather than just handing off to it. See openPopup()/
-        // watchPopupUntilClosed() (TWO-40 follow-up, Doug: the query-field
-        // spinner was clearing as soon as window.open() returned).
+        // watchPopupUntilClosed().
         this._popup = null;
         this._popupPollInterval = null;
         // Set by startReplacement() ("Select a different sole trader"),
-        // consumed by afterTokensReady() once tokens are ready. Tells that
-        // point to skip getCurrentBuyer()'s silent-autofill check and go
-        // straight to the popup - see startReplacement()'s own comment.
+        // consumed by afterTokensReady(): skip getCurrentBuyer()'s
+        // silent-autofill check and go straight to the popup.
         this._skipAutofillCheck = false;
         this.messageListenerBound = false;
         // Held so destroy() can detach it. See bindPopupMessageListener().
@@ -150,52 +111,40 @@ class TwoSoleTrader {
         this.availabilityByCountry = {};
         this.renderedForCountry = null;
         // TWO-25326 bug 9: the container node this instance last adopted an
-        // answer into. `renderedForCountry` alone is not a record of what is
-        // on the page: PrestaShop REPLACES the payment fragment (and with it
-        // this whole container) while the checkout step settles, and the
-        // replacement arrives with no adopted answer at all. Keyed on the
-        // node, the settled-check can tell "already adopted" from "adopted
-        // into a node that no longer exists".
+        // answer into. `renderedForCountry` alone is not a record of what is on
+        // the page - PrestaShop REPLACES the payment fragment while the checkout
+        // step settles, and the replacement arrives with no adopted answer at
+        // all. Keyed on the node, the settled-check can tell "already adopted"
+        // from "adopted into a node that no longer exists".
         this.renderedContainer = null;
         this.observer = null;
         // The country-change subscription, held so destroy() can detach it.
         // stopObserving() deliberately does NOT - see both methods.
         this._countryChangeHandler = null;
-        // Bumped every time a SERVER-rendered answer is adopted (TWO-25326 bug 9,
-        // round 3 review, finding 1). An availability request captures it before
-        // it starts and drops its own result if it has moved: the server's answer
-        // arrived later than the request did, so the request is stale however
-        // in-order it looked when it was issued. Without this, a request already
-        // in flight when PrestaShop replaced the fragment could overwrite the
-        // answer that replacement carried - and because a failed request applies
-        // "not available" while availabilityByCountry still held the adopted
-        // `true`, the settled-check then agreed the cache was correct and
-        // isAvailableForCurrentCountry() stayed wrong for the rest of the
-        // page's life.
+        // Bumped every time a SERVER-rendered answer is adopted (TWO-25326
+        // bug 9). An availability request captures it before it starts and drops
+        // its own result if it has moved: the server's answer arrived later than
+        // the request did, so the request is stale however in-order it looked
+        // when it was issued.
         this._adoptGeneration = 0;
         // TWO-25326 bug 9: the country an availability request is currently out
         // for, and the debounce handle for the MutationObserver. See init() and
         // refreshAvailability() for what each prevents.
         this.pendingCountry = null;
         this._refreshTimeoutId = null;
-        // In-flight guard + cooldown: startEnrollment() re-invokes
-        // fetchTokens() whenever tokens aren't set yet, so repeated clicks
-        // on the "I'm a sole trader" row while a mint keeps failing (network
-        // blip, no invoice address yet) would otherwise re-issue the mint
-        // - two upstream Two API calls - on every click, with no backoff.
-        // (The MutationObserver only calls the cheap, self-caching
-        // refreshAvailability(), not fetchTokens(), so it is not the
-        // threat this guards against.)
+        // In-flight guard + cooldown: startEnrollment() re-invokes fetchTokens()
+        // whenever tokens aren't set yet, so repeated clicks on the "I'm a sole
+        // trader" row while a mint keeps failing (network blip, no invoice
+        // address yet) would otherwise re-issue the mint - two upstream Two API
+        // calls - on every click, with no backoff.
         this.isFetchingTokens = false;
         this.nextRetryAt = 0;
         this.retryCooldownMs = 5000;
-        // Same shape as isFetchingTokens above, for getCurrentBuyer()
-        // (TWO-40 round 5, adversarial review finding) - see its own guard.
+        // Same shape as isFetchingTokens above, for getCurrentBuyer().
         this.isFetchingBuyer = false;
-        // Set by bindPopupMessageListener()'s 'ACCEPTED' handler when a
-        // genuine authentication event arrives while isFetchingBuyer is
-        // already true for a different call (TWO-40 round 8, adversarial
-        // review finding, Han) - see getCurrentBuyer()'s own .finally().
+        // Set by bindPopupMessageListener()'s 'ACCEPTED' handler when a genuine
+        // authentication event arrives while isFetchingBuyer is already true for
+        // a different call - see getCurrentBuyer()'s own .finally().
         this._pendingTrustedResume = false;
         // How many applyBuyer() write-backs are still out. A COUNT, not a
         // boolean: a generation bump can leave two overlapping saveCompany
@@ -205,52 +154,34 @@ class TwoSoleTrader {
         // A notifyEnrollmentSettled() call that isWriteRoundTripOutstanding()
         // held back, to be re-fired once it isn't. See flushDeferredSettle().
         this._settleDeferred = false;
-        // The setInterval handle for the 30-minute background token refresh
-        // (TWO-40 follow-up) - held so destroy() can clear it. Started once,
-        // by fetchTokens()'s own success branch, on the first real mint; see
-        // startTokenRefreshInterval().
+        // Held so destroy() can clear it. Started once, by fetchTokens()'s own
+        // success branch, on the first real mint.
         this._tokenRefreshIntervalId = null;
-        // Set by destroy() (TWO-40 follow-up, round 2 adversarial review,
-        // Leia finding): a fetchTokens() mint still outstanding when
+        // Set by destroy(): a fetchTokens() mint still outstanding when
         // destroy() runs (e.g. PrestaShop swaps in a fresh instance for a
         // replaced payment fragment) must not arm a NEW setInterval on the
-        // now-dead instance when it resolves - nothing will ever call
-        // destroy() on it again to clear it. Checked at the top of
-        // fetchTokens()'s success branch.
+        // now-dead instance when it resolves - nothing will ever call destroy()
+        // on it again to clear it.
         this._destroyed = false;
 
-        // TWO-25326 bug 9, round 3: take the availability answer the SERVER
-        // already resolved as this instance's settled state, before init()
-        // can decide to fetch anything.
+        // TWO-25326 bug 9: take the availability answer the SERVER already
+        // resolved as this instance's settled state, before init() can decide to
+        // fetch anything.
         this.adoptServerRenderedToggle();
 
         this.init();
     }
 
     /**
-     * Adopt the server-rendered availability answer as this instance's
-     * settled state.
-     *
-     * WHY THIS EXISTS (TWO-25326 bug 9, round 3; TWO-40 removed the chip UI it
-     * used to feed). The answer used to be resolved ONLY here, in the browser,
-     * behind an availability round trip - so on every single load of the
-     * payment step there was no answer at all until that request came back.
-     * Measured on the staging shop: ~280ms of "no answer" on every load. The
-     * only fix is for the answer to already be in the markup, so
-     * paymentinfo.tpl renders `.two-sole-trader`'s data- attributes from the
-     * server-side registry answer (Twopayment::getTwoPaymentOption ->
-     * TwoSoleTrader::isAvailable, the same source this module's endpoint uses)
-     * and this method takes it over as-is - which is what lets
-     * isAvailableForCurrentCountry() answer correctly for TwoCompanySearch.js's
-     * "I'm a sole trader" row on first paint, with no round trip of its own.
+     * Adopt the server-rendered availability answer as this instance's settled
+     * state (TWO-25326 bug 9), so isAvailableForCurrentCountry() can answer for
+     * TwoCompanySearch.js's "I'm a sole trader" row on first paint rather than
+     * behind an availability round trip.
      *
      * Strict about what counts as a server answer: `data-two-available` must be
      * exactly "1" or "0" and `data-two-country` must be an ISO-2 code. Anything
-     * else - an older cached template, a theme that rebuilt the markup - reads as
-     * "no answer" and leaves the client fetch as the only path, i.e. exactly the
-     * previous behaviour.
-     *
-     * @returns {void}
+     * else - an older cached template, a theme that rebuilt the markup - reads
+     * as "no answer" and leaves the client fetch as the only path.
      */
     adoptServerRenderedToggle() {
         const container = this.container();
@@ -270,31 +201,21 @@ class TwoSoleTrader {
         this.renderedForCountry = country;
         this.renderedContainer = container;
         this._adoptGeneration += 1;
-        // A server-rendered answer is a genuine registry answer, exactly like
-        // a successful soleTraderAvailability response - persist it the same
-        // way so a LATER page with no `.two-sole-trader` container (e.g. the
-        // address-editor page, TWO-40 follow-up) can paint from cache too,
-        // not only a page that happens to render this container itself.
+        // A server-rendered answer is a genuine registry answer, exactly like a
+        // successful soleTraderAvailability response - persist it the same way
+        // so a LATER page with no `.two-sole-trader` container can paint from
+        // cache too.
         //
-        // Skipped when the persisted cache already agrees (adversarial
-        // review, "Han" finding). adoptReplacedContainer() calls this method
-        // EVERY time PrestaShop swaps `.two-sole-trader` for a fresh copy,
-        // undebounced, from the MutationObserver callback - and per this
-        // file's own comments that happens "constantly" while a checkout
-        // step settles. Most of those replacements carry the SAME answer as
-        // the one before, so writing to localStorage on every single one is
-        // a burst of synchronous main-thread writes for no state change.
-        // readPersistedAvailability() already re-validates freshness, so a
-        // stale-but-matching entry still gets its `ts` refreshed rather than
-        // being (wrongly) treated as "no write needed".
+        // Skipped when the persisted cache already agrees:
+        // adoptReplacedContainer() calls this method EVERY time PrestaShop swaps
+        // the container for a fresh copy, undebounced, and most of those
+        // replacements carry the same answer as the one before.
         //
         // Asymmetric, because the two answers are stored asymmetrically: a
-        // negative is REMOVED rather than written (writePersistedAvailability()),
-        // so a stored negative does not exist and `persisted` can never read
-        // back `false`. Comparing it to `available` directly made this guard a
-        // no-op for every negative answer - a redundant synchronous removeItem
-        // on each of the replacements it exists to absorb. A negative has work
-        // to do only when there is an entry to remove.
+        // negative is REMOVED rather than written
+        // (writePersistedAvailability()), so a stored negative does not exist
+        // and `persisted` can never read back `false`. A negative has work to do
+        // only when there is an entry to remove.
         const persisted = this.readPersistedAvailability(country);
         if (available ? persisted !== true : persisted !== null) {
             this.writePersistedAvailability(country, available);
@@ -303,37 +224,26 @@ class TwoSoleTrader {
 
     init() {
         const self = this;
-        // The payment box and the billing country can both re-render
-        // across checkout step transitions; re-evaluate availability on
-        // each change.
-        // Kept on the instance so destroy() can detach it (TWO-25326 bug 9,
-        // round 3). It used to be an anonymous closure with no reference kept, so
-        // there was no way to detach it at all. stopObserving() deliberately does
-        // NOT detach it - see both methods for why the two are separate.
+        // The payment box and the billing country can both re-render across
+        // checkout step transitions; re-evaluate availability on each change.
+        // Kept on the instance so destroy() can detach it; stopObserving()
+        // deliberately does NOT - see both methods.
         this._countryChangeHandler = function (event) {
             if (event.target && event.target.matches("select[name='id_country'], select[name='country']")) {
                 self.refreshAvailability();
             }
         };
         document.addEventListener('change', this._countryChangeHandler);
-        // DEBOUNCED (TWO-25326 bug 9). This observer watches the whole body
-        // subtree, and PrestaShop's own address-form/payment-fragment
-        // re-renders mutate that subtree constantly - so every one of those
-        // fed the observer, which called back synchronously, once per mutation
-        // record. Coalescing a burst into one call is what keeps re-adoption
-        // (below) cheap instead of running once per mutation record.
+        // DEBOUNCED (TWO-25326 bug 9): this observer watches the whole body
+        // subtree, and PrestaShop's own address-form/payment-fragment re-renders
+        // mutate that subtree constantly, once per mutation record.
         this.observer = new MutationObserver(function () {
-            // Container-identity check runs UNDEBOUNCED, the availability refresh
-            // does not (TWO-25326 bug 9, round 3 adversarial review). A replaced
-            // fragment carries its OWN server-rendered availability answer, which
-            // this instance has not adopted yet - so waiting out the 100ms
-            // debounce left the availability cache answering for a node that no
-            // longer exists. Re-adopting is pure DOM work with no request in it. Once a
-            // container IS adopted the check is a no-op however many mutations
-            // follow; when the replacement carries no parseable answer nothing is
-            // adopted, so the check keeps re-running - one querySelector and two
-            // attribute reads per observer batch, which is the price of the
-            // fallback path rather than a loop.
+            // Container-identity check runs UNDEBOUNCED, the availability
+            // refresh does not (TWO-25326 bug 9): a replaced fragment carries
+            // its OWN server-rendered answer, so waiting out the 100ms debounce
+            // leaves the availability cache answering for a node that no longer
+            // exists. Re-adopting is pure DOM work with no request in it, and a
+            // no-op once a container IS adopted.
             self.adoptReplacedContainer();
             self.scheduleRefresh();
         });
@@ -342,16 +252,9 @@ class TwoSoleTrader {
     }
 
     /**
-     * Re-adopt when PrestaShop has swapped the `.two-sole-trader` container
-     * for a fresh one.
-     *
-     * The replacement carries a FRESHER answer than this instance's cache
-     * (TWO-25326 bug 9, round 3 adversarial review). A container rendered
-     * `data-two-available="0"` while the cache still said true for the same
-     * country used to be treated as available, i.e. the stale client answer
-     * overwrote the current server one.
-     *
-     * @returns {void}
+     * Re-adopt when PrestaShop has swapped the `.two-sole-trader` container for
+     * a fresh one: the replacement carries a FRESHER answer than this
+     * instance's cache (TWO-25326 bug 9).
      */
     adoptReplacedContainer() {
         const container = this.container();
@@ -362,8 +265,6 @@ class TwoSoleTrader {
 
     /**
      * Coalesce a burst of DOM mutations into a single availability refresh.
-     *
-     * @returns {void}
      */
     scheduleRefresh() {
         const self = this;
@@ -395,18 +296,11 @@ class TwoSoleTrader {
     /**
      * Detach EVERY page-level subscription this instance owns.
      *
-     * Separate from stopObserving() on purpose (TWO-25326 bug 9, round 3
-     * adversarial review). stopObserving() means "this flow is resolved", which is
-     * NOT the same as "this instance is gone" - a resolved instance must still
-     * react to a country change (see above), and folding the two together
-     * silently dropped that. This is the "gone" one: nothing left bound, for a
-     * teardown or a test that must not leave a second writer behind.
-     *
-     * The country-change handler is held on the instance for exactly this reason;
-     * it used to be an anonymous closure with no reference kept, so there was no
-     * way to detach it at all.
-     *
-     * @returns {void}
+     * Separate from stopObserving() on purpose (TWO-25326 bug 9):
+     * stopObserving() means "this flow is resolved", which is NOT the same as
+     * "this instance is gone" - a resolved instance must still react to a
+     * country change (see above). This is the "gone" one: nothing left bound,
+     * for a teardown or a test that must not leave a second writer behind.
      */
     destroy() {
         this._destroyed = true;
@@ -445,15 +339,9 @@ class TwoSoleTrader {
     }
 
     /**
-     * Append the `client`/`client_v` identification params that every call to
-     * Two carries, read from the server-published config. The client id and the
-     * version are never restated here, so a version bump stays a PHP-only
-     * change.
-     *
      * Query params rather than a body field, on the POSTs too: that is the
      * convention the module's own server-side calls already use for this pair
-     * (getTwoClientParams() / setTwoPaymentRequest() in twopayment.php attach
-     * them to the URL on POST and PUT as well as GET).
+     * (getTwoClientParams() / setTwoPaymentRequest() in twopayment.php).
      *
      * Only for calls to Two's own host. The shop-internal URLs moduleUrl()
      * builds are a different server and do not take these params.
@@ -461,9 +349,6 @@ class TwoSoleTrader {
      * Either param is dropped when the config does not carry it, so a page that
      * somehow runs without the config sends a correct URL rather than a literal
      * `client=undefined`.
-     *
-     * @param {string} url
-     * @returns {string} url with the params appended
      */
     static withTwoClientParams(url) {
         const config = (typeof window !== 'undefined' && window.twopayment) || {};
@@ -494,22 +379,14 @@ class TwoSoleTrader {
             if (iso) {
                 return iso.toUpperCase();
             }
-            // TWO-40 follow-up: this fallback was missing here despite the
-            // comment above CLAIMING parity with TwoOrderIntent.js/
-            // TwoCompanySearch.js - it jumped straight to `this.config`
-            // (page-load-time, never updated on a later country change)
-            // instead. On any theme/PS version whose country <option>s carry
-            // none of the three data- attributes above - exactly why the
-            // other two modules needed this fallback in the first place -
-            // billingCountry() returned the ORIGINAL page-load country
-            // forever, however many times the buyer changed it: this and
-            // isAvailableForCurrentCountry() both silently kept answering for
-            // the WRONG country, with no error and no re-fetch, since the
-            // (wrong) country was already "settled" in availabilityByCountry.
             // `window.twopayment.countries` is the server-built id -> ISO map
-            // (`Country::getCountries()`, injected via `Media::addJsDef`)
+            // (`Country::getCountries()`, injected via `Media::addJsDef`) that
             // TwoCompanySearch.getCurrentCountry() and TwoOrderIntent.js's
-            // getCurrentAddressCountryISO() both already read.
+            // getCurrentAddressCountryISO() both already read. Needed for any
+            // theme/PS version whose country <option>s carry none of the three
+            // data- attributes above: without it a later country change is
+            // never seen, and this instance keeps answering for the country
+            // already "settled" in availabilityByCountry.
             const countryId = option.value;
             const isoFromConfig = (window.twopayment && window.twopayment.countries)
                 ? window.twopayment.countries[countryId]
@@ -526,33 +403,21 @@ class TwoSoleTrader {
                 return fromText;
             }
         }
-        // The cart's billing country BEFORE the shop's own country (TWO-25326 bug
-        // 9, round 3 adversarial review). PrestaShop only renders the address FORM
-        // - and therefore the select read above - while the buyer is editing an
-        // address; on the payment step there is no select at all. So this fallback
-        // is what the payment step actually uses, and `shopCountry` is the wrong
-        // answer there: it is the visitor/shop country, not the country the order
-        // will be billed to. On any cart where the two differ that silently
-        // re-resolved availability for the WRONG country and applied it over the
-        // server-rendered answer - reintroducing the very flicker the server
-        // render exists to remove, with a wrong-country answer on the end of it.
-        // Same value the server rendered the toggle from, so they agree by
-        // construction; shopCountry stays as a last resort for a payload that
-        // predates this key.
+        // The cart's billing country BEFORE the shop's own country (TWO-25326
+        // bug 9). PrestaShop only renders the address FORM - and therefore the
+        // select read above - while the buyer is editing an address; on the
+        // payment step there is no select at all, so this fallback is what that
+        // step uses. `shopCountry` is the wrong answer there (visitor/shop
+        // country, not the country the order will be billed to) and stays only
+        // as a last resort for a payload that predates this key.
         return (this.config.billingCountry || this.config.shopCountry || '').toUpperCase();
     }
 
     /**
-     * Same map as TwoCompanySearch.js's extractCountryFromText() (TWO-40
-     * follow-up) - kept here rather than shared, since these are two
-     * independently-loaded modules with no common utility file between them.
-     * MIRRORED there; keep the two in step by hand.
-     *
-     * nl/no/sv entries added (adversarial review finding, TWO-40 follow-up
-     * round 2) - see the identical comment on the sibling copy in
-     * TwoCompanySearch.js for why: this shop ships those three locales, and
-     * an English/Spanish/French-only map left this fallback blind for all of
-     * them.
+     * Same map as TwoCompanySearch.js's extractCountryFromText() - kept here
+     * rather than shared, since these are two independently-loaded modules with
+     * no common utility file between them. MIRRORED there; keep the two in step
+     * by hand.
      *
      * @param {string} text visible text of the selected <option>
      * @returns {?string} uppercase ISO code, or null
@@ -585,26 +450,18 @@ class TwoSoleTrader {
      * checkout never blocks.
      *
      * Deliberately does NOT require `.two-sole-trader` to exist on the page
-     * (TWO-40 follow-up, live bug on the address-editor page). That container
-     * only ever hosts enrolment prompt/status/error messaging (see the class
-     * doc) - resolving and caching the availability ANSWER is a completely
-     * separate concern from having somewhere to draw enrolment UI, and
+     * (TWO-40): that container only hosts enrolment messaging, while
      * TwoCompanySearch.js's isAvailableForCurrentCountry() read has no
-     * dependency on that container at all. Early-returning here when it was
-     * absent meant `availabilityByCountry` never resolved for ANY country on
-     * any page that never renders it - which is every page except the payment
-     * step - so the "I'm a sole trader" row could never appear anywhere else,
-     * regardless of country. apply() (called below, and from the adopt paths)
-     * still resolves `this.container()` itself and every render helper it
-     * calls (showPrompt()/hidePrompt()/showStatus()/showError()) already
-     * null-guards on it, so this degrades to "no enrolment UI, correct
-     * availability" rather than throwing.
+     * dependency on it at all - and the payment step is the only page that
+     * renders it. apply() resolves `this.container()` itself and every render
+     * helper it calls null-guards on it, so a page without the container
+     * degrades to "no enrolment UI, correct availability".
      */
     refreshAvailability() {
         // Also here, not only in the observer callback: this method is reached
         // from the country-change listener too, which can fire after a fragment
-        // replacement the observer's debounce has not drained yet. Idempotent.
-        // A no-op when there is no container at all (see above).
+        // replacement the observer's debounce has not drained yet. Idempotent,
+        // and a no-op when there is no container at all.
         this.adoptReplacedContainer();
         const country = this.billingCountry();
         if (!country) {
@@ -613,15 +470,11 @@ class TwoSoleTrader {
         }
         const container = this.container();
         // Settled means "this container, for this country" - not the country
-        // alone (TWO-25326 bug 9). A country-only check reported the answer as
-        // settled after PrestaShop had replaced the container out from under it,
-        // until some unrelated later trigger happened to re-adopt it - which is
-        // the render / disappear / reappear cycle Doug saw on the old chips,
-        // distinct from the tile-level mount/unmount guard. Guarded on
-        // `container` truthy (TWO-40 follow-up): with no container at all there
+        // alone (TWO-25326 bug 9): a country-only check reports the answer as
+        // settled after PrestaShop has replaced the container out from under it.
+        // Guarded on `container` truthy (TWO-40): with no container at all there
         // is nothing to have settled INTO, so this must fall through to the
-        // in-memory/persisted-cache/fetch checks below every time, exactly as a
-        // page that has never resolved this country would.
+        // in-memory/persisted-cache/fetch checks below every time.
         if (container && country === this.renderedForCountry && this.isSettledFor(container)) {
             return;
         }
@@ -629,12 +482,10 @@ class TwoSoleTrader {
             this.apply(country, this.availabilityByCountry[country]);
             return;
         }
-        // Persistent cross-page-load cache, per Doug's request (TWO-40
-        // follow-up): checked BEFORE the network fetch, so a fresh page load -
-        // address editor, payment step, or a later visit - can paint the "I'm a
-        // sole trader" row on first evaluation instead of waiting out another
-        // round trip for an answer this browser already has. A miss (absent,
-        // malformed, or expired) falls through to the fetch exactly as before.
+        // Persistent cross-page-load cache (TWO-40), checked BEFORE the network
+        // fetch so a fresh page load can paint the "I'm a sole trader" row on
+        // first evaluation. A miss (absent, malformed, or expired) falls through
+        // to the fetch.
         const persisted = this.readPersistedAvailability(country);
         if (persisted !== null) {
             this.availabilityByCountry[country] = persisted;
@@ -643,39 +494,34 @@ class TwoSoleTrader {
         }
         // One request in flight per country (TWO-25326 bug 9). The observer
         // above fires while the answer for the first-ever country is still
-        // outstanding - `renderedForCountry` is null and nothing is cached yet,
-        // so EVERY firing used to start another `fetch`. Beyond being a request
-        // storm, it made the cached answer a race between those responses: this
-        // endpoint is fail-soft to "not available", so one failing or timing out
-        // among a dozen in-flight duplicates could overwrite an answer another
-        // had just applied, with no real state change behind it at all.
+        // outstanding, with `renderedForCountry` null and nothing cached yet -
+        // and beyond the request storm, this endpoint is fail-soft to "not
+        // available", so one duplicate failing or timing out could overwrite an
+        // answer another had just applied.
         if (this.pendingCountry === country) {
             return;
         }
         this.pendingCountry = country;
         const self = this;
-        // Captured BEFORE the request starts (TWO-25326 bug 9, round 3 review,
-        // finding 1). If a server-rendered answer is adopted while this is in
-        // flight - which happens whenever PrestaShop replaces the payment
-        // fragment, the thing this module is built around - then the server has
-        // answered more recently than this request was even issued, and this
-        // result must be discarded rather than applied over it.
+        // Captured BEFORE the request starts (TWO-25326 bug 9). If a
+        // server-rendered answer is adopted while this is in flight - which
+        // happens whenever PrestaShop replaces the payment fragment - then the
+        // server has answered more recently than this request was even issued,
+        // and this result must be discarded rather than applied over it.
         const generation = this._adoptGeneration;
         const superseded = function () {
             if (self._adoptGeneration === generation) {
                 return false;
             }
-            // Re-ask for whatever the country is NOW before dropping this result
-            // (round 4 review, finding 1). The counter is per instance, not per
-            // country, so a replacement carrying an answer for country A
-            // supersedes an outstanding request for country B - and simply
-            // discarding it left nothing resolved for B and nothing scheduled to
-            // resolve it: pendingCountry had cleared, and the debounced refresh
-            // that would have re-asked had already run and bailed while the
-            // request was still out. A lost wakeup, and a state the previous code
-            // could not reach because it applied the stale answer instead.
-            // Cheap and self-limiting: refreshAvailability() returns immediately
-            // when the country it finds is already settled.
+            // Re-ask for whatever the country is NOW before dropping this
+            // result. The counter is per instance, not per country, so a
+            // replacement carrying an answer for country A supersedes an
+            // outstanding request for country B - and simply discarding it
+            // leaves nothing resolved for B and nothing scheduled to resolve it,
+            // because pendingCountry has cleared and the debounced refresh has
+            // already run and bailed. Cheap and self-limiting:
+            // refreshAvailability() returns immediately when the country it
+            // finds is already settled.
             self.scheduleRefresh();
 
             return true;
@@ -687,20 +533,15 @@ class TwoSoleTrader {
                 if (superseded()) {
                     return;
                 }
-                // `success: false` is NOT an answer about this country
-                // (TWO-40 follow-up, Doug live-test finding: the sole-trader
-                // chip stopped rendering for GB). This endpoint answers
-                // `{success: false, error: ...}` for a stale/absent ajax token
-                // and for an unknown action - a 200 with a JSON body, so the
-                // catch() below never sees it - and flattening that into
-                // `available: false` cached it as a definite "this country does
-                // not do sole traders": for the page's life in memory, and for a
-                // FULL DAY in localStorage, on every later page load, with
-                // nothing that would ever re-ask. One expired token was enough
-                // to remove the chip for 24h. Same posture as the transport
-                // failure below instead: nothing cached, pending marker already
-                // released, so the next mutation batch or country change asks
-                // again.
+                // `success: false` is NOT an answer about this country (TWO-40).
+                // This endpoint answers `{success: false, error: ...}` for a
+                // stale/absent ajax token and for an unknown action - a 200 with
+                // a JSON body, so the catch() below never sees it - and
+                // flattening that into `available: false` would cache it as a
+                // definite "this country does not do sole traders" for a FULL
+                // DAY in localStorage, with nothing that would ever re-ask. Same
+                // posture as the transport failure below instead: nothing
+                // cached, pending marker already released.
                 if (!json || !json.success) {
                     if (self.billingCountry() === country) {
                         self.apply(country, false);
@@ -709,9 +550,8 @@ class TwoSoleTrader {
                 }
                 const available = !!json.available;
                 self.availabilityByCountry[country] = available;
-                // A resolved server response - true or false - is a real
-                // answer about this country, unlike the transport-failure
-                // path below; persist it (TWO-40 follow-up, 24h TTL).
+                // A resolved server response - true or false - is a real answer
+                // about this country, unlike the transport-failure path below.
                 self.writePersistedAvailability(country, available);
                 // The buyer may have changed country mid-request; only
                 // apply if the answer is still for the current one.
@@ -751,53 +591,30 @@ class TwoSoleTrader {
 
     /**
      * Is the availability answer this instance last adopted still current for
-     * the container it is being asked about?
-     *
-     * There is no chip markup to verify building/binding of any more (TWO-40)
-     * - the only thing that can go stale is the container node itself, which
-     * PrestaShop replaces wholesale on a fragment re-render.
-     *
-     * @param {HTMLElement} container
-     * @returns {boolean}
+     * the container it is being asked about? The only thing that can go stale
+     * is the container node itself, which PrestaShop replaces wholesale on a
+     * fragment re-render.
      */
     isSettledFor(container) {
         return !!(container && container === this.renderedContainer && container.isConnected);
     }
 
     /**
-     * The localStorage key an availability answer for `country` is stored
-     * under (TWO-40 follow-up).
+     * The localStorage key an availability answer for `country` is stored under.
      *
-     * Namespaced by `config.checkoutHost` (e.g.
-     * https://checkout.two.inc vs https://checkout.staging.two.inc vs a
-     * sandbox host), NOT further by shop or merchant. The registry answer
-     * behind this cache is resolved per classes/TwoSoleTrader.php's
-     * `isAvailable()` from `GET /registry/v1/supported-company-types/<ISO>` -
-     * country-level legal truth with, by that class's own doc, "deliberately
-     * no merchant admin toggle": two merchants talking to the SAME
-     * environment always get the same answer for a given country, so
-     * namespacing any finer would only fragment the cache for no safety
-     * benefit. The environment split is real, though: staging and
-     * production (and any sandbox) are separate Two backends that can
-     * legitimately disagree on which countries are enrolled, and staging/dev
-     * shops on this repo are routinely tested from one shared browser
-     * profile (`.worktrees/*` dev shops, staging.two.inc) - so an answer
-     * cached for one environment must never be read back for another.
-     * `checkoutHost` is already resolved per-environment server-side
-     * (Twopayment::getTwoCheckoutHostUrl(), handed over as
-     * `window.twopayment.checkout_host`) and is already on `this.config`,
-     * so no new server-side plumbing is needed to get it.
+     * Namespaced by `config.checkoutHost`, NOT further by shop or merchant: the
+     * registry answer behind this cache is country-level legal truth with no
+     * merchant admin toggle, so two merchants on the SAME environment always get
+     * the same answer and a finer namespace would only fragment the cache. The
+     * environment split is real, though - staging, production and sandbox are
+     * separate Two backends that can legitimately disagree on which countries
+     * are enrolled, and dev shops on this repo are routinely tested from one
+     * shared browser profile.
      *
-     * Returns null when `checkoutHost` is not known yet (adversarial review,
-     * "Vader" finding): TwoCompanySearch.js already treats a missing
-     * `checkoutHost` as "nothing safe to do here" for the same reason
-     * (`if (!this.config.checkoutHost) return;`) - the environment split
-     * above is the whole point of this cache, and defaulting to a shared
-     * `''` segment when it is absent would let two DIFFERENT, unidentified
-     * environments silently read and overwrite each other's answers, which
-     * is exactly the cross-contamination this namespacing exists to
-     * prevent. Callers must treat a null return as "cache unavailable", not
-     * as a key to use.
+     * Returns null when `checkoutHost` is not known yet: defaulting to a shared
+     * `''` segment would let two DIFFERENT, unidentified environments read and
+     * overwrite each other's answers. Callers must treat a null return as "cache
+     * unavailable", not as a key to use.
      *
      * @param {string} country ISO-2, already uppercased by the caller
      * @returns {?string}
@@ -835,15 +652,12 @@ class TwoSoleTrader {
             if (!parsed || typeof parsed.available !== 'boolean' || typeof parsed.ts !== 'number') {
                 return null;
             }
-            // A FUTURE `ts` (adversarial review, "Vader"/"Yoda" finding: a
-            // corrected/skewed system clock, or a value planted by another
-            // same-origin script) must not be treated as fresher than now -
-            // `Date.now() - parsed.ts` would be negative and this entry would
-            // never expire, pinning one answer for a country indefinitely
-            // regardless of what the registry actually says. Reject it
-            // outright rather than clamping it forward: a cache write this
-            // module itself never makes (it always stamps `Date.now()` at
-            // write time) is not an answer to trust at all.
+            // A FUTURE `ts` (a skewed system clock, or a value planted by
+            // another same-origin script) must not be treated as fresher than
+            // now - the age would be negative and this entry would never expire,
+            // pinning one answer for a country indefinitely. Rejected outright
+            // rather than clamped forward: a write this module never makes (it
+            // always stamps `Date.now()`) is not an answer to trust at all.
             const age = Date.now() - parsed.ts;
             if (age < 0 || age >= TwoSoleTrader._AVAILABILITY_CACHE_TTL_MS) {
                 return null;
@@ -862,17 +676,12 @@ class TwoSoleTrader {
      * not affect checkout, only the latency this cache is there to cut.
      *
      * A NEGATIVE answer REMOVES any stored entry rather than storing itself
-     * (TWO-40 follow-up, Doug live-test finding). This cache exists to paint an
-     * available chip on first evaluation instead of waiting out a round trip -
-     * there is nothing to paint faster for a country that has no chip, so
-     * storing "no" buys nothing, while a stored "no" costs a full day of the
-     * chip staying gone after the answer behind it changes (a registry country
-     * being enrolled, a merchant's environment being fixed) with nothing that
-     * re-asks inside the TTL. Removing rather than merely skipping the write
-     * matters: skipping would leave an earlier stored "yes" standing for up to
-     * 24h after the country stopped being eligible, which is the same bug
-     * pointing the other way. Either way the answer is still cached IN MEMORY
-     * for the page's life by the callers, so no extra request is made per page.
+     * (TWO-40). There is nothing to paint faster for a country that has no chip,
+     * so storing "no" buys nothing, while a stored "no" costs a full day of the
+     * chip staying gone after the answer behind it changes. Removing rather than
+     * merely skipping the write matters: skipping would leave an earlier stored
+     * "yes" standing for up to 24h after the country stopped being eligible. The
+     * answer is still cached IN MEMORY for the page's life by the callers.
      *
      * @param {string} country ISO-2, already uppercased by the caller
      * @param {boolean} available
@@ -899,8 +708,7 @@ class TwoSoleTrader {
         this.renderedContainer = this.container();
         // An enrolment in progress for a country that has just stopped being
         // eligible (buyer changed country mid-flow) must not keep showing a
-        // prompt/status for it - mirrors the old chip's hide()-forces-business
-        // behaviour, without a "business" mode to fall back to.
+        // prompt/status for it.
         //
         // The full abandon, popup included: the tokens this popup is signing
         // against were minted for the country that just stopped being
@@ -913,32 +721,20 @@ class TwoSoleTrader {
     }
 
     /**
-     * Tell the company-search control to re-evaluate its "Sole trader" chip
-     * now that an availability answer has landed (TWO-40 follow-up, Doug
-     * live-test finding: the chip did not render at all on a GB address step).
+     * Tell the company-search control to re-evaluate its "Sole trader" chip now
+     * that an availability answer has landed (TWO-40).
      *
-     * The chip is a child of the search dropdown and TwoCompanySearch decides
-     * its visibility by READING this instance's cache
-     * (isAvailableForCurrentCountry()) at the moments it already re-evaluates
-     * its own rows - the panel opening, an address-form re-render, an adoption.
-     * Availability resolves ASYNCHRONOUSLY, off a round trip this module owns,
-     * and nothing pushed the answer the other way: a buyer who reached the
-     * company field before that request landed - which is every first
-     * evaluation on a page with no server-rendered answer to adopt and no
-     * persisted one to read, i.e. the whole address step - got a panel with no
-     * Sole trader chip in it and nothing to add one while it stayed open.
+     * TwoCompanySearch decides the chip's visibility by READING this instance's
+     * cache (isAvailableForCurrentCountry()) at the moments it already
+     * re-evaluates its own rows. Availability resolves ASYNCHRONOUSLY, off a
+     * round trip this module owns, so without this push a buyer who reaches the
+     * company field before that request lands gets a panel with no Sole trader
+     * chip in it and nothing to add one while it stays open.
      *
      * Resolved lazily through the manager, exactly as adoptEnrolledIdentity()
-     * does and for the same reason: the manager destroys and rebuilds its
-     * search instance on every `updatedAddressForm`. Fails soft - a missing
-     * instance costs this repaint, not the answer, which is already cached
-     * above by the time this runs.
-     *
-     * WooCommerce already pushes this way round (`twoincSoleTrader.apply()`
-     * calls the equivalent chip re-sync); this is the same shape, not a new
-     * mechanism.
-     *
-     * @returns {void}
+     * does and for the same reason: the manager destroys and rebuilds its search
+     * instance on every `updatedAddressForm`. Fails soft - a missing instance
+     * costs this repaint, not the answer.
      */
     resyncSoleTraderChip() {
         try {
@@ -956,7 +752,7 @@ class TwoSoleTrader {
      * @returns {boolean} whether the registry says the CURRENT billing
      *   country supports sole traders. Read by TwoCompanySearch.js to decide
      *   whether to show its "I'm a sole trader" row - the single place that
-     *   decision is made now that there is no upfront chip (TWO-40).
+     *   decision is made (TWO-40).
      */
     isAvailableForCurrentCountry() {
         const country = this.billingCountry();
@@ -969,8 +765,7 @@ class TwoSoleTrader {
     /**
      * Start (or resume) sole-trader enrolment: mint tokens then autofill (or
      * prompt the signup popup) once per page. Called directly by
-     * TwoCompanySearch.js's "I'm a sole trader" row - there is no chip in
-     * between any more (TWO-40).
+     * TwoCompanySearch.js's "I'm a sole trader" row.
      */
     startEnrollment() {
         this.enrolling = true;
@@ -978,29 +773,23 @@ class TwoSoleTrader {
             this.flowStarted = true;
             this.fetchTokens();
         } else if (this.tokens) {
-            // Re-stamp the existing tokens as CURRENT (round 3 adversarial
-            // review finding). This is an explicit, deliberate resume - the
-            // buyer clicked "Sole Trader" again - so whatever generation was
-            // active when these tokens were originally minted no longer
-            // matters; see the comment on `_tokensGeneration` and
-            // bindPopupMessageListener() for why the stamp exists at all.
+            // Re-stamp the existing tokens as CURRENT: this is an explicit,
+            // deliberate resume - the buyer clicked "Sole Trader" again - so
+            // whatever generation was active when these tokens were originally
+            // minted no longer matters. See `_tokensGeneration`.
             this._tokensGeneration = this._enrollGeneration;
-            // Pre-existing gap, out of scope here, widened but not caused by
-            // TWO-40's OTP-trust fix (round 9/10 adversarial review
-            // observation, Han + Vader): if a lookup is already in flight,
-            // this silently no-ops on getCurrentBuyer()'s own guard with no
-            // notifyEnrollmentSettled() of its own - this click's spinner is
-            // only resolved later, incidentally, by whichever lookup IS out
-            // finishing. bindPopupMessageListener() got an explicit fix for
-            // the equivalent gap on its own call (`_pendingTrustedResume`);
-            // this one did not, since it is not the reported bug and touches
-            // a different, untrusted call path.
+            // Known gap: if a lookup is already in flight, this silently no-ops
+            // on getCurrentBuyer()'s own guard with no notifyEnrollmentSettled()
+            // of its own, and this click's spinner is only resolved later,
+            // incidentally, by whichever lookup IS out finishing.
+            // bindPopupMessageListener() closes the equivalent gap on its own
+            // trusted call path via `_pendingTrustedResume`.
             this.getCurrentBuyer();
         }
     }
 
     /**
-     * "Select a different sole trader" entry point (TWO-40 follow-up).
+     * "Select a different sole trader" entry point (TWO-40).
      * Reuses startEnrollment()'s token-minting, but deliberately SKIPS
      * getCurrentBuyer()'s silent-autofill check and goes straight to the
      * hosted signup popup - the buyer already HAS a sole-trader identity on
@@ -1020,12 +809,10 @@ class TwoSoleTrader {
             this.flowStarted = true;
             this.fetchTokens();
         } else {
-            // Same "explicit resume" re-stamp as startEnrollment()'s own
-            // resume branch, then straight through afterTokensReady() rather
-            // than inlining its own openPopup() call (review finding,
-            // TWO-40 follow-up) - one place consumes `_skipAutofillCheck`,
-            // not two, so a future change to what "tokens ready" means only
-            // has one call site to update.
+            // Same "explicit resume" re-stamp as startEnrollment()'s own resume
+            // branch, then straight through afterTokensReady() rather than
+            // inlining its own openPopup() call - one place consumes
+            // `_skipAutofillCheck`, not two.
             this._tokensGeneration = this._enrollGeneration;
             this.afterTokensReady();
         }
@@ -1055,28 +842,21 @@ class TwoSoleTrader {
      * when the buyer goes back to ordinary company search (opening the
      * dropdown again) or when the billing country stops being eligible.
      *
-     * The `enrolling` bookkeeping is a NO-OP once it is already false
-     * (adversarial review finding, TWO-40). TwoCompanySearch.openDropdown()
-     * calls this UNCONDITIONALLY on every open, including long after a
-     * SUCCESSFUL enrolment - and without that guard, hidePrompt() would hide
-     * the confirmation status showStatus() left on screen every single time
-     * the buyer so much as reopens company search afterward. `enrolling`
-     * flips false on success (see applyBuyer()) precisely so THAT part stays
-     * a no-op past that point.
+     * The `enrolling` bookkeeping is a NO-OP once it is already false (TWO-40).
+     * TwoCompanySearch.openDropdown() calls this UNCONDITIONALLY on every open,
+     * including long after a SUCCESSFUL enrolment - without that guard,
+     * hidePrompt() would hide the confirmation status showStatus() left on
+     * screen every time the buyer reopens company search. `enrolling` flips
+     * false on success (see applyBuyer()) precisely so that part stays a no-op.
      *
-     * `_enrollGeneration` is bumped UNCONDITIONALLY, deliberately outside
-     * that guard (round 2 adversarial review finding). The buyer reopening
-     * search and picking a REAL registered company does not discard a
-     * still-in-flight sole-trader lookup - the message listener for the
-     * hosted signup popup is deliberately NOT gated on `enrolling` any more
-     * (see bindPopupMessageListener(), the round-1 fix for a dropped
-     * genuine completion) - so a getCurrentBuyer() call issued before this
-     * cancel can still resolve to applyBuyer() afterward. Without a
-     * generation to check, that resolution would call
-     * publishConfirmedSelection() and silently overwrite the company the
-     * buyer explicitly moved on to search and select, with the order-intent
-     * credit check then running against the WRONG entity and nothing on
-     * screen to show it happened. See getCurrentBuyer()/applyBuyer().
+     * `_enrollGeneration` is bumped UNCONDITIONALLY, deliberately outside that
+     * guard. The message listener for the hosted signup popup is NOT gated on
+     * `enrolling` (see bindPopupMessageListener()), so a getCurrentBuyer() call
+     * issued before this cancel can still resolve to applyBuyer() afterward.
+     * Without a generation to check, that resolution would call
+     * publishConfirmedSelection() and silently overwrite the company the buyer
+     * moved on to select, with the order-intent credit check then running
+     * against the WRONG entity.
      *
      * @param {boolean} [keepPopupTracked] Disown the WRITE without giving up
      *   the popup handle. For a caller that is NOT a buyer gesture and does
@@ -1105,17 +885,12 @@ class TwoSoleTrader {
         }
         this.enrolling = false;
         this.hidePrompt();
-        // TWO-40 round 5 (adversarial review finding): a genuine cancellation
-        // - `enrolling` really was true - is itself a terminal state for
-        // whichever click started the flight being cancelled, exactly like a
-        // success or a failure. Without this, TwoCompanySearch.js's spinner/
-        // listener only got cleared because every ONE of its own callers
-        // happens to also call endSoleTraderLoading() directly in the same
-        // tick - a coincidence of two files' invariants staying in lockstep,
-        // not an enforced contract. See TwoCompanySearch.js's own callers of
-        // cancelEnrollment(), all of which now unbind their listener BEFORE
-        // calling this, so this dispatch reaching an already-unbound
-        // listener there is the expected, harmless case.
+        // TWO-40: a genuine cancellation - `enrolling` really was true - is
+        // itself a terminal state for whichever click started the flight being
+        // cancelled, exactly like a success or a failure. TwoCompanySearch.js's
+        // callers of cancelEnrollment() unbind their listener BEFORE calling
+        // this, so this dispatch reaching an already-unbound listener there is
+        // the expected, harmless case.
         //
         // Forced past notifyEnrollmentSettled()'s write-round-trip guard: the
         // generation bump above has already disowned whatever lookup or write
@@ -1132,14 +907,11 @@ class TwoSoleTrader {
      * The buyer is leaving the sole-trader flow: take the popup down AND
      * disown what it started, as ONE operation.
      *
-     * ONE method rather than two calls every caller has to remember (Doug,
-     * TWO-40 follow-up: "closure and enrolment cancelation [must be] a single
-     * atomic operation, not two separate functions as now. It's just begging
-     * to fail in some way."). It had already failed twice: "Enter manually"
-     * closed the popup and never cancelled, so a lookup still in flight landed
-     * on a company name the buyer had since typed by hand and ran the credit
-     * check against the identity they walked away from; openDropdown()
-     * cancelled and never closed, orphaning a window still on screen.
+     * ONE method rather than two calls every caller has to remember (TWO-40):
+     * closing without cancelling lets a lookup still in flight land on a company
+     * the buyer has since typed by hand and run the credit check against the
+     * identity they walked away from, and cancelling without closing orphans a
+     * window still on screen.
      *
      * closeSignupPopup() FIRST, and that ordering is the reason this pair
      * cannot be left to callers: cancelEnrollment() nulls `this._popup`, so
@@ -1154,21 +926,16 @@ class TwoSoleTrader {
     }
 
     /**
-     * The actual mint POST, shared by fetchTokens() and refreshTokens()
-     * (TWO-40 follow-up) so a future change to this request has one call
-     * site, not two.
+     * The actual mint POST, shared by fetchTokens() and refreshTokens().
      *
-     * Deliberately billingCountry(): that is the SAME resolver
-     * isAvailableForCurrentCountry() answers the chip's visibility from, so
-     * the country the mint is authorised against and the country the chip
-     * was shown for cannot disagree by construction. Sent urlencoded, the
-     * way applyBuyer() posts to saveCompany.
+     * The caller passes billingCountry(): the SAME resolver
+     * isAvailableForCurrentCountry() answers the chip's visibility from, so the
+     * country the mint is authorised against and the country the chip was shown
+     * for cannot disagree by construction.
      *
-     * The server prefers this posted country over anything it holds: the
-     * invoice-address tier that used to outrank it was deleted, not
-     * demoted, so the posted country wins outright and the cart's DELIVERY
-     * address is consulted only when no usable country was posted at all.
-     * It re-checks the registry either way.
+     * The server prefers this posted country over anything it holds; the cart's
+     * DELIVERY address is consulted only when no usable country was posted at
+     * all. It re-checks the registry either way.
      *
      * @param {string} country
      * @returns {Promise} the fetch() promise
@@ -1198,15 +965,10 @@ class TwoSoleTrader {
             return;
         }
         if (Date.now() < this.nextRetryAt) {
-            // Round 7 adversarial review finding (Vader): unlike the
-            // isFetchingTokens branch above, NOTHING is in flight to ever
-            // resume this click - the cooldown predates the round-4 "keep
-            // panel open until settle" redesign and was never wired into
-            // it. A click landing inside the cooldown window used to
-            // dead-end with the panel/spinner stuck open indefinitely -
-            // TwoCompanySearch.js's listener had nothing left to ever hear.
-            // showError() also notifies (see its own comment), settling
-            // THIS click exactly as a real failed mint would.
+            // Unlike the isFetchingTokens branch above, NOTHING is in flight to
+            // ever resume this click, so it would dead-end with the
+            // panel/spinner stuck open. showError() also notifies (see its own
+            // comment), settling THIS click exactly as a real failed mint would.
             this.showError();
             return;
         }

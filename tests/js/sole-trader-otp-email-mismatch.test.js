@@ -135,14 +135,13 @@ test('a real OTP round trip applies the buyer even when their email differs from
         expect(popupOpenCalls).toBe(0);
         expect(publishes).toEqual([]);
 
-        // The buyer clicks the on-page prompt, opening the hosted signup popup.
         const prompt = document.querySelector('.two-sole-trader__prompt');
         expect(prompt).not.toBeNull();
         prompt.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
         expect(popupOpenCalls).toBe(1);
 
-        // The buyer authenticates in the popup as EMAIL_B and gets a valid
-        // OTP; the popup posts back and (in production) closes itself.
+        // The buyer authenticates as EMAIL_B and gets a valid OTP; the popup
+        // posts back and (in production) closes itself.
         window.dispatchEvent(new window.MessageEvent('message', {
             data: 'ACCEPTED',
             origin: 'https://signup.example.test'
@@ -237,7 +236,7 @@ test('a 404 immediately after a real ACCEPTED is retried once, not treated as no
             await flushPromises();
             await flushPromises();
             expect(buyerLookupCalls).toBe(1);
-            expect(popupOpenCalls).toBe(0); // no container prompt path taken yet in this harness state check
+            expect(popupOpenCalls).toBe(0);
 
             const prompt = document.querySelector('.two-sole-trader__prompt');
             prompt.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
