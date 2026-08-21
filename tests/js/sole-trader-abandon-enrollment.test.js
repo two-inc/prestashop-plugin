@@ -209,6 +209,56 @@ test('cancelling first would leave the window open - which is why the pair is on
 });
 
 /**
+ * The other half of the same rule (guide §14): a caller that is NOT a buyer
+ * gesture and does NOT close the window - TwoCompanySearch.destroy(), which the
+ * platform fires on every address-form re-render - disowns the write and keeps
+ * the popup. The buyer may be filling that popup in right now because their
+ * shipping total recalculated behind it.
+ *
+ * The mutation this catches is dropping the argument: every assertion below
+ * fails against a cancel that nulls the handle, and the pair of them is what
+ * "owned by nobody" actually meant - nothing polling it, and nothing able to
+ * close or raise it afterwards.
+ */
+test('cancelEnrollment(true) disowns the write but keeps the popup tracked', async () => {
+    jest.useFakeTimers();
+    const settles = [];
+    const onSettled = () => settles.push(true);
+    document.addEventListener('two:sole-trader-flight-settled', onSettled);
+    try {
+        const { instance, popup } = await enrolWithPopupOpen();
+        const generationBefore = instance._enrollGeneration;
+
+        instance.cancelEnrollment(true);
+
+        // The write is disowned...
+        expect(instance._enrollGeneration).toBe(generationBefore + 1);
+        expect(instance.enrolling).toBe(false);
+        // ...and the window is not.
+        expect(instance._popup).toBe(popup);
+        expect(instance._popupPollInterval).not.toBeNull();
+        expect(popup.closeCalls).toBe(0);
+        // The live-popup guard still sees it, so the next Sole trader click
+        // raises this window instead of opening a SECOND one over it.
+        expect(instance.openPopup()).toBe(popup);
+        expect(global.window.open).toHaveBeenCalledTimes(1);
+        // Held back by notifyEnrollmentSettled()'s popup-open guard, which is
+        // the point: nothing has been taken away from the buyer, so their own
+        // close is what settles the flight.
+        expect(settles.length).toBe(0);
+
+        popup.closed = true;
+        jest.advanceTimersByTime(500);
+        expect(settles.length).toBe(1);
+
+        instance.destroy();
+    } finally {
+        document.removeEventListener('two:sole-trader-flight-settled', onSettled);
+        jest.useRealTimers();
+    }
+});
+
+/**
  * The buyer-facing half of bug 2 (Doug, TWO-40 follow-up), end to end on the
  * real module: "Enter manually" used to close the popup and leave the enrolment
  * running, so a buyer lookup already in flight still resolved and published the

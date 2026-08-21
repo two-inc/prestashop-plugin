@@ -1077,19 +1077,29 @@ class TwoSoleTrader {
      * buyer explicitly moved on to search and select, with the order-intent
      * credit check then running against the WRONG entity and nothing on
      * screen to show it happened. See getCurrentBuyer()/applyBuyer().
+     *
+     * @param {boolean} [keepPopupTracked] Disown the WRITE without giving up
+     *   the popup handle. For a caller that is NOT a buyer gesture and does
+     *   not close the window it is walking away from -
+     *   TwoCompanySearch.destroy(), see there. Default false, because every
+     *   other caller IS such a gesture: the buyer has visibly moved on, so
+     *   tracking a window they are no longer looking at only holds the settle
+     *   back behind notifyEnrollmentSettled()'s popup-open guard.
      */
-    cancelEnrollment() {
+    cancelEnrollment(keepPopupTracked = false) {
         this._enrollGeneration += 1;
         // Belt-and-braces alongside afterTokensReady()'s own reset: an
         // abandoned startReplacement() must not leave this set for whatever
         // ORDINARY flow resumes next.
         this._skipAutofillCheck = false;
-        // The buyer moved on to a different search interaction, not the
-        // popup itself closing - stop tracking it (no leaked poll interval)
-        // and clear the reference so the notify below isn't held back by
-        // notifyEnrollmentSettled()'s popup-open guard.
-        this.stopPopupWatch();
-        this._popup = null;
+        if (!keepPopupTracked) {
+            // The buyer moved on to a different search interaction, not the
+            // popup itself closing - stop tracking it (no leaked poll interval)
+            // and clear the reference so the notify below isn't held back by
+            // notifyEnrollmentSettled()'s popup-open guard.
+            this.stopPopupWatch();
+            this._popup = null;
+        }
         if (!this.enrolling) {
             return;
         }
@@ -1111,7 +1121,10 @@ class TwoSoleTrader {
         // generation bump above has already disowned whatever lookup or write
         // is still in the air, so there is nothing left worth waiting for -
         // and waiting would hold a spinner up over a flow the buyer has
-        // already left for a different search interaction.
+        // already left for a different search interaction. Under
+        // `keepPopupTracked` the popup-open guard still holds it back, which is
+        // the point: nothing was taken away from the buyer, so the popup's own
+        // close is what settles.
         this.notifyEnrollmentSettled(true);
     }
 
@@ -2409,7 +2422,9 @@ class TwoSoleTrader {
      * defer to watchPopupUntilClosed()'s poll instead of firing early
      * whenever a popup is the thing still open. cancelEnrollment() clears
      * `this._popup` itself first, since that path means the buyer moved on
-     * to a different search interaction, not the popup closing.
+     * to a different search interaction, not the popup closing - except
+     * under its `keepPopupTracked` caller, which relies on this guard
+     * holding the settle back until the popup it left open closes.
      *
      * Gated on the post-popup WRITE too (Doug, TWO-40 follow-up: "the flow is
      * complete when the popup is gone AND the lookup has come back AND the
