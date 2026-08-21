@@ -66,8 +66,7 @@
     <div class="clearfix"></div>
 </div>
 <script type="text/javascript">
-    // Module admin AJAX endpoint for the inline merchant-fee display
-    // (assigned outside the literal block so Smarty expands the URL).
+    // Assigned outside the literal block so Smarty expands the URL.
     var twoMerchantFeeRatesUrl = '{$two_fee_rates_url|escape:'javascript':'UTF-8'}';
 </script>
 {literal}
@@ -79,12 +78,10 @@
             });
             
             // Address lookup is only meaningful while the company search is in
-            // the address area (TWO-25326 §7.1 follow-up). When "Enable
-            // company search in address entry" is "No" the search has moved
-            // into the payment tile and there is no address-area lookup left
-            // to govern, so the switch is unchecked and disabled rather than
-            // left independently settable. Mirrors woocommerce-plugin's
-            // admin.js toggleChildrenFields() for the same pair of settings.
+            // the address area (TWO-25326 §7.1 follow-up): with the search in
+            // the payment tile there is no address-area lookup left to govern,
+            // so the switch is unchecked and disabled rather than left
+            // independently settable.
             //
             // Server-side counterpart in twopayment.php
             // (isAddressLookupSettingAvailable): a disabled radio posts
@@ -92,12 +89,10 @@
             // and the save refuses it there. This half is presentation only.
             // `isUserToggle` distinguishes the initial page-load render (the
             // stored PS_TWO_ADDRESS_LOOKUP position must be respected as-is)
-            // from the admin actually flipping the switch just now (bug
-            // report, TWO-25326): re-enabling the row must also turn the
-            // auto-fill switch ON, not merely stop greying it out. Leaving it
-            // enabled-but-unchecked reads as "on" at a glance but posts '0'
-            // on save, silently keeping auto-fill off after the merchant just
-            // turned company search back on.
+            // from the admin actually flipping the switch just now (TWO-25326):
+            // re-enabling the row must also turn the auto-fill switch ON, not
+            // merely stop greying it out. Leaving it enabled-but-unchecked
+            // reads as "on" at a glance but posts '0' on save.
             function updateAddressLookupAvailability(isUserToggle) {
                 var inAddressArea = $('input[name="PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS"]:checked').val();
                 var lookupInputs = $('input[name="PS_TWO_ADDRESS_LOOKUP"]');
@@ -116,8 +111,7 @@
                     row.removeClass('two-setting-unavailable');
                     return;
                 }
-                // Force the "No" position on screen as well as disabling it:
-                // the merchant must not read a ticked box the module is
+                // The merchant must not read a ticked box the module is
                 // ignoring. This is exactly what the server will store.
                 lookupInputs.prop('disabled', true);
                 lookupInputs.filter('[value="0"]').prop('checked', true);
@@ -129,19 +123,16 @@
                 updateAddressLookupAvailability(true);
             });
 
-            // Payment Term Type - Dynamic show/hide of term options
-            // PHP 7.1+ compatible: Using ES5 syntax (no arrow functions)
+            // ES5 syntax only (no arrow functions).
             function updatePaymentTermsVisibility() {
                 var termType = $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]:checked').val();
                 
                 if (termType === 'EOM') {
-                    // EOM: Only show 30, 45, 60 day options
                     $('.two-term-standard').closest('.form-group').hide();
                     $('.two-term-both').closest('.form-group').show();
                     $('#two-payment-terms-desc-standard').hide();
                     $('#two-payment-terms-desc-eom').show();
                 } else {
-                    // STANDARD: Show all options (7, 15, 20, 30, 45, 60, 90)
                     $('.two-term-standard').closest('.form-group').show();
                     $('.two-term-both').closest('.form-group').show();
                     $('#two-payment-terms-desc-standard').show();
@@ -149,10 +140,8 @@
                 }
             }
             
-            // Run on page load
             updatePaymentTermsVisibility();
             
-            // Run when term type changes
             $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]').on('change', function() {
                 updatePaymentTermsVisibility();
             });
@@ -172,11 +161,7 @@
             $('select[name="PS_TWO_SURCHARGE_ROUNDING_BASIS"]').on('change', updateRoundingStepVisibility);
 
             // Surcharge grid - hide the whole grid when no surcharge is applied,
-            // and hide the columns that don't apply to the selected method:
-            //   none                 -> hide entire grid
-            //   percentage           -> Percentage + Cap (hide Fixed fee)
-            //   fixed                -> Fixed fee only (hide Percentage + Cap)
-            //   fixed_and_percentage -> all columns
+            // and hide the columns that don't apply to the selected method.
             function updateSurchargeGridVisibility() {
                 var type = $('select[name="PS_TWO_SURCHARGE_TYPE"]').val();
                 var grid = $('#two-surcharge-grid');
@@ -194,9 +179,7 @@
                 // rather than left on screen describing a field the merchant
                 // cannot see (TWO-25289). Falls back to the table if the
                 // form-group does not resolve - the markup nests differently
-                // across PrestaShop majors, and before this rescoping an
-                // unresolved gridGroup only broke the whole-grid hide/show;
-                // it must not now also break the column toggles.
+                // across PrestaShop majors.
                 var scope = gridGroup.length ? gridGroup : grid;
                 scope.find('.two-col-percentage').toggle(showPercentage);
                 scope.find('.two-col-fixed').toggle(showFixed);
@@ -208,11 +191,9 @@
             // Surcharge grid ROWS - one row is server-rendered per offerable
             // term; show a row only while its "Available Payment Terms"
             // checkbox is ticked AND the term is valid for the selected term
-            // type (EOM only allows the .two-term-both terms - same split the
-            // checkboxes use). Orthogonal to updateSurchargeGridVisibility(),
-            // which toggles COLUMNS by surcharge type: a cell is visible only
-            // when both its row and its column are (display:none on either
-            // axis wins), so the two functions compose without coordination.
+            // type. Orthogonal to updateSurchargeGridVisibility(), which
+            // toggles COLUMNS: a cell is visible only when both its row and its
+            // column are, so the two functions compose without coordination.
             function updateSurchargeGridRows() {
                 var termType = $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]:checked').val();
                 $('#two-surcharge-grid .two-surcharge-row').each(function () {
@@ -225,19 +206,15 @@
             }
             $('input[name^="PS_TWO_PAYMENT_TERMS_"]').on('change', updateSurchargeGridRows);
             $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]').on('change', updateSurchargeGridRows);
-            // Run once on load (after the checkbox-group and column-visibility
-            // passes above) so row state always derives from the live checkbox
-            // DOM, even if it disagrees with the server-rendered initial state
-            // (e.g. a failed-validation re-render with POSTed values).
+            // Run after the checkbox-group and column-visibility passes above,
+            // so row state always derives from the live checkbox DOM even when
+            // it disagrees with the server-rendered initial state (e.g. a
+            // failed-validation re-render with POSTed values).
             updateSurchargeGridRows();
 
             // Inline merchant fee beside each "Available Payment Terms"
-            // checkbox - the fee Two charges the merchant per term, fetched
-            // live from the module's admin AJAX endpoint (which proxies
-            // POST /pricing/v1/merchant/rates). Mirrors magento-plugin's
-            // payment-terms-config.js loadFees(): fetch on page load and on
-            // any term-checkbox change, dedupe identical term-set requests,
-            // and on failure blank the fee spans silently - the config page
+            // checkbox, fetched from the module's admin AJAX endpoint. On
+            // failure the fee spans are blanked silently - the config page
             // must never break on an API outage.
             var lastFeesKey = null;
 
@@ -250,7 +227,7 @@
                     return;
                 }
                 // Fees render beside EVERY rendered term option regardless of
-                // checked state (Magento parity), so collect all term inputs.
+                // checked state, so collect all term inputs.
                 var terms = [];
                 $('input[name^="PS_TWO_PAYMENT_TERMS_"]').each(function () {
                     var match = String($(this).attr('name') || '').match(/_(\d+)$/);
@@ -265,7 +242,7 @@
                 }
                 var key = terms.join(',');
                 if (key === lastFeesKey) {
-                    return; // identical term set already requested
+                    return;
                 }
                 lastFeesKey = key;
                 $.ajax({
@@ -313,7 +290,7 @@
                     });
                 }).fail(function () {
                     // Allow a retry on the same term set after a transient
-                    // error, and clear any half-populated spans.
+                    // error.
                     lastFeesKey = null;
                     $('.two-term-fee').text('');
                 });

@@ -2,23 +2,19 @@
  * TWO-40: the SECONDARY address's sync pin.
  *
  * Doug's rulings, which these specs exist to hold:
+ *  - triggered by ANY address field entered, not only company/country;
+ *  - no dedicated control - driven by a match on FIELD CONTENTS, trimmed
+ *    and case-folded;
+ *  - compared against the value the MIRROR LAST WROTE, never the primary's
+ *    live value (comparing against the primary would pin forever after the
+ *    first primary change);
+ *  - ADDRESS-WIDE: one field that no longer matches pins the whole
+ *    secondary address.
  *
- *  - the pin is triggered by ANY address field the buyer has entered, not only the
- *    company or the country;
- *  - there is no dedicated control for it. Sync is driven by a match on FIELD
- *    CONTENTS, trimming the address lines and folding case;
- *  - the comparison basis is the value the MIRROR LAST WROTE, never the primary
- *    address's live value. Comparing against the primary is self-defeating: the
- *    instant the primary changes, the secondary cannot equal it, so every legitimate
- *    re-sync would read as a buyer edit and syncing would stop forever;
- *  - the pin is ADDRESS-WIDE. One field that no longer holds what the plugin put
- *    there pins the whole secondary address and no field is synced.
- *
- * The last-written values have to survive a page load, because that is when the pin
- * is evaluated: PrestaShop reveals the invoice address form by NAVIGATING, and every
- * marker attribute the previous page wrote went with the nodes. That is what the
- * cart-scoped record the server publishes as `window.twopayment.mirror_writes` is
- * for, and half of these specs are about it being load-bearing.
+ * The last-written values must survive a page load: PrestaShop reveals the
+ * invoice form by navigating, and every marker attribute goes with the old
+ * nodes. `window.twopayment.mirror_writes` is the cart-scoped record that
+ * carries them across it.
  *
  * Every fixture is core's own markup, through buildAddressesStep() - see its
  * docblock for what is reproduced and from where.

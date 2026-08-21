@@ -1,14 +1,8 @@
 /**
- * TWO-40 sole-trader enrolment write-back:
+ * TWO-40 sole-trader enrolment write-back.
  *
- *  - TwoCompanySearch.adoptSoleTraderBuyer(buyer) / autoFillSoleTraderAddress() /
- *    soleTraderPairReport() - putting a completed enrolment's data into the
- *    checkout form.
- *  - TwoSoleTrader.adoptEnrolledIdentity(buyer) - the thin, fail-soft caller in
- *    applyBuyer()'s success branch.
- *
- * Fixture is a real captured `/autofill/v1/buyer/current` response (Doug,
- * 2026-08-11), not an invented shape.
+ * Fixture is a real captured `/autofill/v1/buyer/current` response, not an
+ * invented shape.
  */
 
 'use strict';
@@ -56,10 +50,6 @@ const REAL_BUYER = {
     shipping_address: null
 };
 
-/**
- * @param {string} number
- * @returns {Object} REAL_BUYER with a real (non-`TWO:`) register number
- */
 function buyerWithNumber(number) {
     return Object.assign({}, REAL_BUYER, { organization_number: number });
 }
@@ -68,13 +58,9 @@ const REGISTER_NUMBER = '923456789';
 const BUYER_REAL_NUMBER = buyerWithNumber(REGISTER_NUMBER);
 const BUYER_INTERNAL_NUMBER = REAL_BUYER; // organization_number is TWO:-prefixed
 
-/**
- * A sole trader with NO trading name - the ordinary case for someone trading
- * under their own name, and the one applyBuyer() falls back to the organisation
- * number to label. Carries a DIFFERENT registered address from REAL_BUYER's, so
- * "the address is still filled" is observable rather than indistinguishable from
- * "the previous fill was left alone".
- */
+// No trading name. Carries a different registered address than
+// REAL_BUYER's, so an address fill is observable rather than
+// indistinguishable from "nothing changed".
 const BUYER_NAMELESS = Object.assign({}, BUYER_REAL_NUMBER, {
     company_name: '',
     billing_address: {
@@ -89,13 +75,9 @@ const BUYER_NAMELESS = Object.assign({}, BUYER_REAL_NUMBER, {
     }
 });
 
-/**
- * The captured response happens to carry a `building` byte-identical to its
- * `street`, which makes the two-line ROUTING unobservable: every assertion about
- * which line got which value passes just as well with the two swapped. This
- * variant makes street, building, apartment and region four distinguishable
- * values, so the routing can actually be asserted.
- */
+// REAL_BUYER's `building` is byte-identical to its `street`, which makes
+// line-routing unobservable. This variant gives street/building/apartment/
+// region four distinct values so routing can be asserted.
 const BUYER_DISTINCT_BUILDING = Object.assign({}, BUYER_REAL_NUMBER, {
     billing_address: Object.assign({}, REAL_BUYER.billing_address, {
         building: 'Unit 4 Wharf Court',
@@ -751,7 +733,6 @@ describe('the invoice form is on screen but cannot be scoped to one address bloc
     test('the address fill is skipped, and nothing is reported into the mirror record', () => {
         buildAddressesStep({ editing: 'invoice', blockContainers: false, blockIds: false });
         const search = mount();
-        // The state this test is about, asserted rather than assumed.
         expect(search.visibleAddressFormType()).toBe('invoice');
         expect(search.visibleAddressFormRoot()).toBeNull();
         expect(search.secondaryAddressFormRoot()).toBeNull();
@@ -1052,12 +1033,10 @@ describe('the scoped writes reach ONE address block and no other', () => {
         const wrote = mount().adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
 
         expect(wrote).toBe(true);
-        // Landed, in the block the buyer is looking at.
         expect($("#invoice-address input[name='dni']").val()).toBe(REGISTER_NUMBER);
         expect($("#invoice-address input[name='address1']").val()).toBe('Wharf Lane');
         expect($("#invoice-address input[name='postcode']").val()).toBe('TN23 1AA');
         expect($("#invoice-address input[name='city']").val()).toBe('Ashford');
-        // Untouched, in the block they are not.
         ['dni', 'address1', 'postcode', 'city'].forEach(name => {
             const field = $(`#delivery-address input[name='${name}']`);
             expect(field.length).toBe(1);
@@ -1101,13 +1080,12 @@ describe('a pre-filled secondary address is still written into (the pin does not
         const wrote = search.adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
 
         expect(wrote).toBe(true);
-        // The identity half.
         expect(companyField().val()).toBe('Sole Trader Test Co');
         expect(companyField().attr(MARKER)).toBe('Sole Trader Test Co');
         expect(organizationField().val()).toBe(REGISTER_NUMBER);
         expect(organizationField().attr('data-two-company-name')).toBe('Sole Trader Test Co');
         expect($("#invoice-address input[name='dni']").val()).toBe(REGISTER_NUMBER);
-        // The address half - the registered address replaces what was rendered.
+        // The registered address replaces what was rendered.
         expect($("#invoice-address input[name='address1']").val()).toBe('Wharf Lane');
         expect($("#invoice-address input[name='postcode']").val()).toBe('TN23 1AA');
         expect($("#invoice-address input[name='city']").val()).toBe('Ashford');
@@ -1168,17 +1146,14 @@ describe('a pre-filled secondary address is still written into (the pin does not
         const wrote = search.adoptSoleTraderBuyer(BUYER_NAMELESS);
 
         expect(wrote).toBe(true);
-        // The residue of the abandoned company is gone.
         expect(organizationField().val()).toBe('');
         expect(organizationField().attr('data-two-company-name')).toBeUndefined();
         expect($("#invoice-address input[name='dni']").val()).toBe('');
         expect($("#invoice-address input[name='dni']").attr(MARKER)).toBeUndefined();
         expect(hintField().text()).toBe('');
-        // And the nameless buyer's own registered address lands.
         expect($("#invoice-address input[name='address1']").val()).toBe('Second Registered Building');
         expect($("#invoice-address input[name='postcode']").val()).toBe('CT16 1AA');
         expect($("#invoice-address input[name='city']").val()).toBe('Dover');
-        // Still never the server session company `saveCompany` has just written.
         expect(ajaxCallsFor('clearCompany')).toEqual([]);
     });
 });

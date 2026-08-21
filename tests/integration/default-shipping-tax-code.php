@@ -4,13 +4,10 @@
  * INTEGRATION PROBE - "Default shipping tax code" (TWO-25200), against a real
  * PrestaShop engine.
  *
- * WHAT THIS ADDS OVER tests/DefaultShippingTaxCodeSpec.php. That spec proves
- * the decision logic - flag on/off, set/unset, resolution order, refusal - but
- * it drives a hand-rolled core stub, so it can only prove the logic is right
- * ABOUT A CART SHAPE IT ASSERTS INTO EXISTENCE. This probe removes the
- * assumption: it asks a real engine for the order-intent payload of a real
- * carrier-less cart and checks the SHIPPING_FEE line and the log severity that
- * come back.
+ * WHAT THIS ADDS OVER tests/DefaultShippingTaxCodeSpec.php, which drives a
+ * hand-rolled core stub: it asks a real engine for the order-intent payload of
+ * a real carrier-less cart and checks the SHIPPING_FEE line and the log
+ * severity that come back.
  *
  * Hermetic: no browser, no network, no Two credentials. It calls
  * getTwoIntentOrderData() directly - the same public entry point the checkout
@@ -169,9 +166,9 @@ function probeBootKernel()
 }
 
 /**
- * Populate the CLI Context. A CLI request has no employee and no shopper
- * cookie, and core reaches into the context from inside ordinary cart
- * operations - Cart::getDeliveryOptionList() reads the cookie's
+ * A CLI request has no employee and no shopper cookie, and core reaches into
+ * the context from inside ordinary cart operations -
+ * Cart::getDeliveryOptionList() reads the cookie's
  * id_lang/id_customer, and product pricing reads the currency's precision
  * (Context::getComputingPrecision), which fatals on a null currency.
  *

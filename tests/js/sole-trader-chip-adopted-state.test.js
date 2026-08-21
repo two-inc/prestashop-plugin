@@ -1,18 +1,13 @@
 /**
- * TWO-40 follow-up, Doug live-test findings (2026-08-19):
+ * TWO-40 follow-up (Doug live-test findings, 2026-08-19):
  *
- *  1. Reopening the dropdown while a sole trader is adopted must show the
- *     "Sole Trader" chip selected, not silently fall back to "Registered
- *     Company" (openDropdown() previously reset `_chipMode` unconditionally
- *     on every open).
- *  2. The free-text query input must not be usable while the Sole Trader
- *     chip is selected - there is deliberately only one way to pick a
- *     different company in that state (item 3 below), typing a query is
- *     not it.
- *  3. Re-clicking the "Sole Trader" chip while already adopted must behave
- *     EXACTLY like the standalone "Select a different sole trader" link
- *     (triggerSelectDifferentSoleTrader()/startReplacement()), not start a
- *     fresh enrolment and not no-op.
+ *  1. Reopening while sole-trader-adopted must keep the "Sole Trader" chip
+ *     selected - openDropdown() previously reset `_chipMode` unconditionally.
+ *  2. The query input must not be usable while that chip is selected - the
+ *     only way to pick a different company is item 3, not typing.
+ *  3. Re-clicking "Sole Trader" while already adopted must call
+ *     startReplacement(), exactly like the standalone link, not restart
+ *     enrolment.
  */
 
 'use strict';
@@ -114,12 +109,9 @@ describe('reopening while sole-trader-adopted (item 1)', () => {
 
 describe('query input suppressed while Sole Trader is selected (item 2)', () => {
     /**
-     * HIDDEN, not merely readonly (Doug, 2026-08-19, second live round on this
-     * same rule): "the field should not be VISIBLE. I did not tell you it was
-     * editable, I told you it was visible." A readonly-but-painted search box
-     * reads as a search box that has stopped working, so the readonly
-     * assertions below are kept only as the defence-in-depth half - the
-     * visibility ones are the requirement.
+     * HIDDEN, not merely readonly (Doug, 2026-08-19): "the field should not
+     * be VISIBLE... I told you it was visible." Readonly assertions below are
+     * kept only as defence-in-depth; visibility is the actual requirement.
      */
     function adoptAndReopen() {
         const instance = makeInstance();
@@ -145,7 +137,6 @@ describe('query input suppressed while Sole Trader is selected (item 2)', () => 
         // The whole row, spinner included - a lone absolutely-positioned
         // spinner in a collapsed row is not "hidden", it is misplaced.
         expect(shown(panelParts().searchRow)).toBe(false);
-        // The panel itself is still open around it.
         expect(shown(panelParts().panel)).toBe(true);
 
         instance.destroy();
@@ -172,11 +163,9 @@ describe('query input suppressed while Sole Trader is selected (item 2)', () => 
         instance.closeDropdown(false);
         $("input[name='company']").trigger('mousedown');
 
-        // The field openDropdown() normally focuses is not rendered, and
-        // focusing a `display:none` element is a no-op - which would strand
-        // focus on the company-name field, outside the panel, where neither
-        // the Escape handler nor the close-on-focus-leave one ever sees a
-        // keystroke.
+        // openDropdown() normally focuses a field that's not rendered here;
+        // focusing display:none is a no-op, which would strand focus outside
+        // the panel where Escape/close-on-blur never see it.
         expect(document.activeElement).toBe(panelParts().soleTrader.get(0));
 
         $(document.activeElement).trigger($.Event('keydown', { key: 'Escape' }));
@@ -267,13 +256,9 @@ describe('query input suppressed while Sole Trader is selected (item 2)', () => 
     });
 
     /**
-     * The direct reversal of what this test asserted for one round (Doug,
-     * TWO-40 follow-up): the row used to be un-hidden again for the duration
-     * of the flight, because the in-flight spinner lived inside it. The
-     * spinner has moved to the company-name field, and the rule is now that
-     * the hide is a pure function of the selected chip - "gate on mode alone,
-     * nothing else". A regression here means someone reintroduced a second
-     * condition in syncQueryFieldSuppression().
+     * The hide is a pure function of the selected chip - "gate on mode
+     * alone, nothing else". A regression here means a second condition crept
+     * into syncQueryFieldSuppression().
      */
     test('the row is hidden IMMEDIATELY by the chip click, and stays hidden for the flight', () => {
         const instance = makeInstance();
@@ -296,11 +281,9 @@ describe('query input suppressed while Sole Trader is selected (item 2)', () => 
     });
 
     /**
-     * The reopen-independence half of the same rule. `openPanel()` is what
-     * ran syncQueryFieldSuppression() in the version of this code where the
-     * sync was only reachable from the open path, so a test that closes and
-     * reopens cannot tell the two implementations apart - this one never
-     * closes the panel at all, and drives the mode purely from clicks.
+     * Reopen-independent: drives the mode purely from clicks, no close or
+     * reopen, so it can't be satisfied by a sync that only runs on the open
+     * path.
      */
     test('the row hides and returns on chip clicks alone, with no close or reopen in between', () => {
         const instance = makeInstance();
@@ -324,14 +307,10 @@ describe('query input suppressed while Sole Trader is selected (item 2)', () => 
 });
 
 /**
- * Cross-round gap (final review before merge): item 1 made a reopen land in
- * sole-trader mode, item 2 blanked the query field on the way into that mode -
- * and nothing emptied the RESULT ROWS the blanked term had produced. jQuery
- * UI's `response([])` only runs `_close()`, which hides the menu without
- * emptying it, and this mode is the one that keeps the panel OPEN (manual entry
- * closes it), so those rows stayed painted and clickable: registered companies
- * still on offer for a term the field no longer held, next to a search row that
- * is not even rendered.
+ * jQuery UI's `response([])` only runs `_close()`, which hides the menu
+ * without emptying it - and this mode keeps the panel OPEN (manual entry
+ * closes it), so stale result rows stayed painted and clickable after item
+ * 1/2 landed a reopen in sole-trader mode with a blanked query field.
  */
 describe('no stale result rows survive into sole-trader mode', () => {
     function searchAndSettle(term) {
@@ -370,8 +349,8 @@ describe('no stale result rows survive into sole-trader mode', () => {
 
         panelParts().soleTrader.trigger('click');
 
-        // The panel stays open for the flight (round 4's keep-open window), so
-        // this is on screen, not merely in the DOM.
+        // The panel stays open for the flight, so this is on screen, not
+        // merely in the DOM.
         expect(shown(panelParts().panel)).toBe(true);
         expect(resultTexts()).toEqual([]);
 
@@ -447,13 +426,9 @@ describe('re-clicking "Sole Trader" while adopted (item 3)', () => {
 
 describe('clicking back to "Registered company" while adopted (item 4)', () => {
     /**
-     * The way out of the adopted state without launching a signup: the
-     * "Registered company" chip is deliberately NOT a hand-off to another
-     * flow, so it must leave the panel open with the buyer able to type a
-     * query immediately. Pinned here rather than assumed - the sole-trader
-     * chip's own handler closes the panel on one of its branches, and this
-     * one runs cancelEnrollment(), which fires the same settle event another
-     * listener answers by closing.
+     * The way out of the adopted state without launching a signup: unlike
+     * the sole-trader chip's own handler, this one runs cancelEnrollment()
+     * and must leave the panel open with the query typable immediately.
      */
     function adoptAndReopen() {
         const instance = makeInstance();

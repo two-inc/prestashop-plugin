@@ -1,16 +1,11 @@
 /**
- * TWO-25326 §7.1 follow-up: the three browser-side defects Doug found by
- * running a real checkout with "Enable company search in address entry" set to
- * "No", i.e. with the one company-search control mounted in the payment tile.
+ * TWO-25326 §7.1 follow-up: three browser-side defects found running a real
+ * checkout with "Enable company search in address entry" set to "No" (the
+ * company-search control mounted in the payment tile instead).
  *
- * Every test here builds the tile WITHOUT an address form, because that is the
- * DOM the tile-mounted control actually lives in. PrestaShop only renders the
- * address FORM - and with it `select[name='id_country']` - while the buyer is
- * editing an address (`checkout/_partials/steps/addresses.tpl` renders
- * `address-form.tpl` behind `$show_delivery_address_form`); on the payment step
- * the step shows an address SELECTOR instead. A test that stands the address
- * form up alongside the tile passes for the wrong reason and would have missed
- * all of this.
+ * Every test builds the tile WITHOUT an address form: PrestaShop only renders
+ * `select[name='id_country']` on the address step, not the payment step, so a
+ * test with the address form present would pass for the wrong reason.
  *
  *   Bug 1  the control renders wider than every other field in the tile
  *   Bug 2  the "go back to your billing address and search for your company"
@@ -43,11 +38,8 @@ let TwoCompanySearch;
 let $;
 let ajax;
 
-/**
- * The payment step as the buyer sees it in tile mode: the tile markup
- * `paymentinfo.tpl` renders behind `{if $company_search_tile}`, and NO address
- * form anywhere on the page.
- */
+/** The payment step in tile mode: `paymentinfo.tpl` renders behind
+ * `{if $company_search_tile}`, no address form anywhere on the page. */
 function buildTileOnlyPaymentStep() {
     document.body.innerHTML = [
         '<div class="two-payment-container">',
@@ -115,11 +107,10 @@ describe('Bug 3: the tile-mounted control actually searches', () => {
     });
 
     /**
-     * The defect itself. `getCurrentCountry()` read only
-     * `select[name='id_country']`, which does not exist on the payment step, so
-     * `searchCompanies()` took its `countryUnresolved` branch on every
-     * keystroke: no request, and a dropdown row telling the buyer to pick a
-     * country "above" - where there is no country control at all.
+     * `getCurrentCountry()` read only `select[name='id_country']`, absent on
+     * the payment step, so `searchCompanies()` took its `countryUnresolved`
+     * branch every keystroke: no request, and a prompt to pick a country
+     * "above" where there is no country control at all.
      */
     test('typing puts a request on the wire for the billing address country', () => {
         window.twopayment = { billing_country: 'GB' };
@@ -147,12 +138,8 @@ describe('Bug 3: the tile-mounted control actually searches', () => {
         expect(resultTexts()).toContain('Example Trading Ltd (11111111)');
     });
 
-    /**
-     * The regression guard, stated as the buyer-visible symptom rather than as
-     * the internals: with nothing to resolve a country from, the control must
-     * still refuse to search (a wrong register is worse than none) - so this
-     * asserts the fix did not become an unconditional default country.
-     */
+    /** Guards against the fix becoming an unconditional default country: a
+     * wrong register is worse than none. */
     test('with no country resolvable anywhere it still declines to search', () => {
         mountOnTile();
         openTilePanel();
@@ -164,11 +151,8 @@ describe('Bug 3: the tile-mounted control actually searches', () => {
         expect(resultTexts()).toContain('Select your country above to search for your company.');
     });
 
-    /**
-     * A malformed payload must read as "no country", not go on the wire. The
-     * `country` parameter decides which national register is searched, so junk
-     * there is a silently wrong answer rather than an error the buyer can see.
-     */
+    /** A malformed payload must read as "no country", not go on the wire -
+     * junk in `country` is a silently wrong register, not a visible error. */
     test.each([['', 'empty'], ['GBR', 'three letters'], ['1', 'a digit'], ['  ', 'whitespace']])(
         'a billing_country of %p (%s) is treated as absent',
         (value) => {
@@ -183,12 +167,8 @@ describe('Bug 3: the tile-mounted control actually searches', () => {
         }
     );
 
-    /**
-     * Ordering, not merely presence: a buyer mid-edit on the address step has a
-     * country selected in the form that no address carries yet, and the
-     * register they are typing against has to be that one - so a live select
-     * outranks the server-resolved billing country.
-     */
+    /** A buyer mid-edit has a country selected that no address carries yet -
+     * a live select must outrank the server-resolved billing country. */
     test('a live country select still outranks the server-resolved billing country', () => {
         window.twopayment = { billing_country: 'GB' };
         document.body.insertAdjacentHTML(
@@ -209,15 +189,10 @@ describe('Bug 3: the tile-mounted control actually searches', () => {
 
 describe('Bug 1: the control is the same width as the tile\'s other fields', () => {
     /**
-     * Asserted on the SHIPPED stylesheet, and as an equality against the
-     * optional-field block rather than against a hardcoded 16px: the
-     * requirement is "matches the other fields in this tile", so a future
-     * change to one inset has to move the other or fail here.
-     *
-     * Both blocks are direct children of `.two-payment-container` and both
-     * their inputs are `width: 100%`, so equal horizontal insets on the two
-     * containers is exactly equal rendered input width - which is what could
-     * not be asserted directly, jsdom performing no layout.
+     * Asserted against the optional-field block, not a hardcoded value: both
+     * blocks are direct children of `.two-payment-container` with
+     * `width: 100%` inputs, so equal insets means equal rendered width -
+     * which jsdom (no layout) can't assert directly.
      */
     test('its horizontal inset equals the optional-fields block\'s', () => {
         installStylesheet('views/css/two.css');
@@ -226,8 +201,7 @@ describe('Bug 1: the control is the same width as the tile\'s other fields', () 
 
         expect(tile.paddingLeft).toBe(optional.paddingLeft);
         expect(tile.paddingRight).toBe(optional.paddingRight);
-        // Not vacuous: an inset of 0 on both would satisfy the equality above
-        // while reproducing the bug (the optional fields ARE inset).
+        // Not vacuous: 0 on both would satisfy the equality while reproducing the bug.
         expect(parseFloat(tile.paddingLeft)).toBeGreaterThan(0);
     });
 });
@@ -235,12 +209,8 @@ describe('Bug 1: the control is the same width as the tile\'s other fields', () 
 describe('Bug 2: no "go back to your billing address" prompt in tile mode', () => {
     let TwoCheckoutManager;
 
-    /**
-     * The prompts live on TwoCheckoutManager, so this block loads that module
-     * too. Its own `init()` runs on construction against the tile-only DOM
-     * built above, which is the point - the manager must reach the same
-     * conclusion from the page the buyer is actually on.
-     */
+    /** The manager's own `init()` runs on construction against the
+     * tile-only DOM built above, matching the page the buyer is on. */
     beforeEach(() => {
         loadScript('views/js/modules/TwoCheckoutManager.js');
         TwoCheckoutManager = window.TwoCheckoutManager;
@@ -257,12 +227,8 @@ describe('Bug 2: no "go back to your billing address" prompt in tile mode', () =
         return document.querySelector('.two-payment-info');
     }
 
-    /**
-     * Both statuses the order-intent check reports a missing/unresolved company
-     * with. Each one renders a sentence telling the buyer to go to the address
-     * step and search there, which is wrong in this mode: the search is in the
-     * tile they are looking at.
-     */
+    /** Both statuses render a "go to the address step" sentence, wrong in
+     * this mode since the search is right there in the tile. */
     test.each(['no_company', 'incomplete_company'])(
         'showCompanyRequiredMessage(%s) renders nothing',
         (status) => {
@@ -290,20 +256,12 @@ describe('Bug 2: no "go back to your billing address" prompt in tile mode', () =
     });
 
     /**
-     * The suppression is scoped to the prompt, not to error reporting. A real
-     * failure with a company already selected still has to reach the buyer,
-     * or a declined checkout shows nothing at all.
+     * Suppression is scoped to the prompt, not error reporting: a real
+     * failure with a company already selected still has to reach the buyer.
      */
     test('a genuine error with a company selected is still shown', () => {
-        // The hidden `companyid` input is the real carrier of the selection, and
-        // the only thing isCompanyDataMissing() reads. This test used to fabricate
-        // a `two_company_id` browser cookie instead, which nothing in the module
-        // ever writes - PrestaShop serialises server-side session keys into one
-        // encrypted cookie of its own name - so it was asserting against a source
-        // that cannot exist outside this file.
-        // Set the field the tile already mounted rather than appending a second
-        // one: the reader takes the FIRST match, so a duplicate would leave the
-        // empty original answering for it.
+        // `companyid` is the only field isCompanyDataMissing() reads (not a
+        // `two_company_id` cookie - nothing in the module writes one).
         let orgField = document.querySelector("input[name='companyid']");
         if (!orgField) {
             orgField = document.createElement('input');
@@ -312,15 +270,9 @@ describe('Bug 2: no "go back to your billing address" prompt in tile mode', () =
             document.body.appendChild(orgField);
         }
         orgField.value = '11111111';
-        // The selection marker goes with it. A number with no marker beside it is
-        // what a stale value left over from a form re-render looks like, and the
-        // search control clears exactly that on mount - so a fixture without the
-        // marker would have its own value wiped before the assertion runs.
+        // Marker must match the company field, or the search control clears
+        // it on mount as a stale re-render leftover.
         orgField.setAttribute('data-two-company-name', 'Example Trading Ltd');
-        // And the visible name the marker is tagged against. The search control
-        // treats a number whose marker does not match the company field as left
-        // over from a re-render and clears it, so a half-built fixture would be
-        // dismantled on mount and the test would pass for the wrong reason.
         document.querySelector('#two_tile_company').value = 'Example Trading Ltd';
 
         manager(false).showOrderIntentError('Something went wrong upstream');
@@ -329,11 +281,8 @@ describe('Bug 2: no "go back to your billing address" prompt in tile mode', () =
         expect(infoSection().querySelector('.two-payment-message').textContent).not.toBe('');
     });
 
-    /**
-     * The other half of the gate: in address-area mode the prompt is CORRECT -
-     * the buyer really does have to go back to the address step - so it must
-     * still render. Without this the fix could pass by never prompting at all.
-     */
+    /** In address-area mode the prompt is CORRECT and must still render -
+     * without this the fix could pass by never prompting at all. */
     test('address-area mode still shows the prompt', () => {
         manager(true).showCompanyRequiredMessage('', 'incomplete_company');
 
@@ -341,11 +290,8 @@ describe('Bug 2: no "go back to your billing address" prompt in tile mode', () =
         expect(infoSection().querySelector('.two-payment-message').textContent).not.toBe('');
     });
 
-    /**
-     * A prompt already on screen from an earlier check - the address step's own
-     * pass, or a check that ran before the tile mounted - has to be taken down,
-     * not merely not re-rendered.
-     */
+    /** A prompt already on screen from an earlier check has to be taken
+     * down, not merely not re-rendered. */
     test('a prompt already on screen is cleared rather than left behind', () => {
         const section = infoSection();
         section.style.display = 'block';

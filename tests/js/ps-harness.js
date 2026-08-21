@@ -1,30 +1,14 @@
 /**
  * TWO-25239. Browser-JS-in-Jest harness for the PrestaShop module.
  *
- * The module's JS is not AMD and not ESM: `views/js/modules/*.js` are plain
- * classic scripts that declare a class and hang it off `window`, loaded by a
- * Smarty template into a page where jQuery, jQuery UI and PrestaShop's own
- * `prestashop` event bus are already globals. There is nothing to `require()`.
+ * The module's JS is plain classic scripts with no AMD/ESM, loaded into a
+ * page where jQuery, jQuery UI and PrestaShop's `prestashop` event bus are
+ * already globals - so this harness assembles the real browser (jsdom + real
+ * jQuery/jQuery UI + a `prestashop` stub) rather than mocking it.
  *
- * So rather than mock the browser, this harness assembles the real one:
- *
- *   - jsdom (Jest's `testEnvironment`) supplies document/window,
- *   - the REAL jQuery and the REAL jQuery UI autocomplete widget are loaded
- *     onto that window,
- *   - `prestashop` is a small stub, because it is an event bus PrestaShop
- *     itself supplies and has no npm distribution,
- *   - the module source is then evaluated in global scope exactly as a
- *     `<script>` tag would evaluate it.
- *
- * Using the real widget rather than a mock is deliberate. Two of the three
- * defects these tests exist to pin are properties OF jQuery UI, not of our
- * code: that the widget bridge reuses an already-initialised instance instead
- * of building a fresh one (so a `_renderItem` wrapper applied on every setup
- * nests), and that it only clears `ui-autocomplete-loading` when a search's
- * `response()` callback actually runs (so a dropped callback leaks the
- * spinner). A hand-written mock would have to reproduce both behaviours
- * correctly to catch either bug, which is precisely the assumption that let
- * them ship.
+ * The real jQuery UI widget is used deliberately: two of the three defects
+ * these tests pin are properties OF jQuery UI itself, which a hand-written
+ * mock would have to reproduce correctly to catch.
  */
 
 'use strict';
@@ -34,45 +18,27 @@ const path = require('path');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
-/**
- * The country id of a country whose address format asks for an identification
- * number - Spain, `id_country` 6 on stock install data.
- *
- * `need_identification_number` is set on ES and MX alone in
- * `install-dev/data/xml/country.xml`, and no stock address format mentions `dni`,
- * so `AddressFormat::getFormat()`'s append is the only thing that puts the field
- * on a form. Any other id in buildAddressesStep()'s select therefore renders a
- * form WITHOUT one, which is the majority case.
- */
+/** Spain, `id_country` 6 - the only stock country besides Mexico whose
+ *  address format includes `dni` (`install-dev/data/xml/country.xml`). */
 const DNI_COUNTRY_ID = '6';
-/** Mexico, `id_country` 144 - the only other one, and the only way to model a
- *  rebuild that changes country while KEEPING the identification field. */
+/** Mexico, `id_country` 144 - the only other one. */
 const OTHER_DNI_COUNTRY_ID = '144';
 const DNI_COUNTRY_IDS = [DNI_COUNTRY_ID, OTHER_DNI_COUNTRY_ID];
 
 /**
- * Put the real jQuery + jQuery UI autocomplete on the jsdom window.
- *
  * @returns {Function} the jQuery instance bound to the current jsdom window
  */
 function installJQuery() {
-    // jquery's UMD head keys on `global.document` — present under
-    // jest-environment-jsdom — and calls its factory with `noGlobal = true`, so
-    // it deliberately does NOT assign window.$ / window.jQuery itself. The four
-    // assignments below are therefore load-bearing, not tidying: without them
-    // the module source's free `$` resolves to nothing. Do not remove them.
+    // jquery's UMD build calls its factory with `noGlobal = true`, so these
+    // four assignments are load-bearing, not tidying - without them the
+    // module's free `$` resolves to nothing.
     const jQuery = require('jquery');
     global.$ = jQuery;
     global.jQuery = jQuery;
     global.window.$ = jQuery;
     global.window.jQuery = jQuery;
-    // Every jquery-ui file the harness needs is AMD-or-browser-globals with no
-    // CommonJS branch (its bundled jquery-color vendor copy does have one, but
-    // nothing here loads it), so under Jest each one falls through to
-    // `factory(jQuery)` and picks up the global set above. That branch does NOT
-    // pull a file's own dependencies, so they have to be required in
-    // dependency order by hand — exactly the load order a theme's <script>
-    // tags would produce.
+    // jquery-ui ships no CommonJS branch, so each file must be required in
+    // its real dependency order by hand.
     require('jquery-ui/ui/jquery-patch');
     require('jquery-ui/ui/version');
     require('jquery-ui/ui/widget');
@@ -91,18 +57,12 @@ function installJQuery() {
 /**
  * Load one of the module's REAL stylesheets into the jsdom document.
  *
- * The in-field company-search spinner is a loader GIF painted by CSS alone,
- * keyed off the loading class the module puts on the input, so a test that only
- * asserted on that class would pass with a spinner that never appears - and did:
- * an unscoped `!important` rule further down the stylesheet out-ranked the scoped
- * one and painted a white background over the field, with the class set correctly
- * throughout. jsdom applies the cascade for selectors of this shape, so reading
- * `getComputedStyle(...)` exercises the rule that actually ships.
+ * Asserting only on the loading class once passed with a rule that never
+ * actually painted the spinner (an unscoped `!important` out-ranked it) -
+ * `getComputedStyle()` exercises the real cascade instead.
  *
- * Not automatic: only the tests that assert on rendered appearance need it, and
- * jsdom's CSS parser drops declarations it does not understand - notably the
- * multi-value `background-position` form, which resolves to an empty string here
- * even when the rule is correct, so do not assert on it.
+ * jsdom's CSS parser drops declarations it does not understand, notably the
+ * multi-value `background-position` form - do not assert on it.
  *
  * @param {string} relPath repo-relative path, e.g. 'views/css/two.css'
  * @returns {HTMLStyleElement} the injected <style>
@@ -147,10 +107,8 @@ function installPrestashopBus() {
 /**
  * Evaluate a module source file the way a <script> tag would.
  *
- * `indirectEval` keeps evaluation in global scope, so the file's top-level
- * `class Foo {}` and its `window.Foo = Foo` both behave as they do in the
- * browser, and its free references to `$` / `prestashop` resolve to the
- * globals installed above.
+ * `indirectEval` keeps evaluation in global scope, so top-level `class Foo {}`
+ * and `window.Foo = Foo` behave as they do in the browser.
  *
  * @param {string} relPath repo-relative path, e.g. 'views/js/modules/X.js'
  */
@@ -161,18 +119,10 @@ function loadScript(relPath) {
 }
 
 /**
- * Load TwoCompanySearch with jQuery, jQuery UI and the event bus in place.
- *
- * @returns {{TwoCompanySearch: Function, $: Function, bus: Object}}
- */
-/**
  * Load the shared company-number display helper (TWO-25326 §12).
  *
- * Registered at a lower priority than every module that renders a number
- * (twopayment.php), so on a real page it is always in place before them. The
- * loaders below mirror that: the modules call `window.TwoCompanyNumber`
- * unguarded, exactly as they do in the browser, so nothing here may load them
- * without it.
+ * Must load before any module that calls `window.TwoCompanyNumber` unguarded
+ * - the priority order twopayment.php uses on a real page.
  *
  * @returns {Object} the helper
  */
@@ -201,11 +151,9 @@ function loadCompanySearch() {
 }
 
 /**
- * Load TwoOrderIntent as a <script> tag would.
- *
- * No jQuery/bus setup like loadCompanySearch(): buildCompanyIntentMessage()
- * (TWO-25326 §7.3) only reads window.twopayment, so a bare load is enough for
- * testing the sentence-building logic in isolation.
+ * Load TwoOrderIntent as a <script> tag would (TWO-25326 §7.3) - no jQuery/
+ * bus setup needed, since buildCompanyIntentMessage() only reads
+ * window.twopayment.
  *
  * @returns {Function} the TwoOrderIntent class
  */
@@ -222,19 +170,11 @@ function loadOrderIntent() {
 /**
  * The subset of the PrestaShop address form the module reads and writes.
  *
- * `id_country` carries `data-iso-code`, which is the first of getCurrentCountry()'s
- * three resolution strategies — after it come the server-supplied
- * `window.twopayment.countries` id-to-ISO map and then the option's visible text.
- * Pass `country: null` to build the select WITHOUT the attribute, which is how a
- * test reaches the later strategies and the unresolvable case.
+ * Pass `country: null` to omit `data-iso-code` and exercise
+ * getCurrentCountry()'s later resolution strategies.
  *
- * Renders `dni` unconditionally, which is NOT what core does - the field's
- * presence follows the rendered country's address format (see
- * buildAddressesStep()). This is the pre-TWO-40 single-form fixture and no test
- * built on it varies the country's format or rebuilds the form around a new one,
- * so here the field simply stands for "a form whose country asks for an
- * identification number". Anything testing the format's effect on which fields
- * exist must use buildAddressesStep(), which models it.
+ * Renders `dni` unconditionally, unlike core (whose presence follows the
+ * address format) - use buildAddressesStep() for anything testing that.
  *
  * @param {Object} [options]
  * @param {?string} [options.country] ISO code for the selected option; null omits
@@ -269,97 +209,53 @@ function buildAddressForm(options) {
 /**
  * The checkout addresses step, in PrestaShop's OWN markup (TWO-40).
  *
- * Reproduced from core's `checkout/_partials/steps/addresses.tpl`,
- * `checkout/_partials/address-form.tpl` and `_partials/form-fields.tpl` as
- * shipped in the official 8 and 9 images (byte-identical between them; 1.7.8.11
- * differs only by an extra attribute and a hook). A fixture invented here would
- * prove nothing about a plugin whose whole job is to read and write that markup,
- * so the structural facts the module depends on are all present and all real:
+ * Reproduced from core's `checkout/_partials/steps/addresses.tpl` and related
+ * partials (byte-identical across the 8 and 9 images), not invented, since
+ * the module's whole job is to read and write that exact markup. Structural
+ * facts it reproduces:
  *
- *  - exactly ONE editable address form, never two: core sets the delivery and
- *    invoice form flags in mutually exclusive branches, and the other side is a
- *    radio selector over saved addresses (`#delivery-addresses` /
- *    `#invoice-addresses`) or absent;
- *  - the editable form lives in `#delivery-address` / `#invoice-address`, which
- *    holds the rendered address form's OWN `<div class="js-address-form">` wrapper
- *    (`customer/_partials/address-form.tpl`'s `address_form` block) inside the
- *    step's outer one - so the block ids and the wrapper class nest, and the
- *    innermost-first root resolution lands on the inner wrapper exactly as it does
- *    in production;
- *  - it emits `<input type="hidden" name="saveAddress" value="delivery|invoice">`;
- *  - the identification field `dni` is present only for a country whose address
- *    format asks for it. That is core, not a convenience: `AddressFormat::getFormat()`
- *    appends `dni` to the format only when `Country::isNeedDniByCountryId()` is
- *    true, no stock address format mentions `dni` otherwise, and the flag is set on
- *    ES and MX alone - so on stock data the field exists exactly where it is also
- *    REQUIRED, and nowhere else. A fixture that emitted it for every country would
- *    hide the case where the mirror's own country write changes which fields the
- *    form has;
- *  - the shared-address checkbox is emitted ONLY while the delivery form is the
- *    editable one, and CHECKED means the two addresses are the same;
- *  - the country select carries a disabled, empty-valued "Please choose"
- *    placeholder option, ALWAYS `selected`, ahead of the real countries - and a
- *    real country option that also carries `selected`, because
- *    `CustomerAddressFormatter` sets that field's value unconditionally
- *    (`setValue($this->country->id)`) and `form-fields.tpl` marks the option
- *    matching it. Two selected options, last one wins, so a fresh unanswered
- *    country select reads as the shop's default country id and NEVER as `''`.
- *    Getting this wrong is not cosmetic: a fixture where the placeholder is the
- *    only selected option makes any "the field is still empty" rule look like it
- *    works, on a state core cannot produce;
- *  - the step's outer `<form>` and the rendered address form's own `<form>` are
- *    nested, which is why the block div - not the form - is the usable scope.
+ *  - exactly ONE editable address form at a time; the other side is a saved-
+ *    address selector or absent;
+ *  - the editable form's own `.js-address-form` wrapper nests inside its
+ *    block id div, and innermost-first root resolution lands on it;
+ *  - `dni` is present only for a country whose address format asks for it
+ *    (ES/MX on stock data) - not for every country;
+ *  - the shared-address checkbox exists only while the delivery form is
+ *    editable;
+ *  - the country select carries a disabled placeholder AND a real option
+ *    both marked `selected` - last one wins, so an unanswered select reads
+ *    as the shop's default country, never `''`;
+ *  - the outer step `<form>` and the address form's own `<form>` nest, so
+ *    the block div - not the form - is the usable scope.
  *
  * @param {Object} [options]
  * @param {string} [options.editing] 'delivery' (default) or 'invoice' - which
  *        side gets the editable form; the other gets a selector
- * @param {boolean} [options.sameAddress] the state the shared-address control
- *        reports, i.e. TRUE means the buyer says both addresses are one. Only
- *        rendered when the delivery form is the editable one, exactly as core
- *        does. Default false.
+ * @param {boolean} [options.sameAddress] shared-address checkbox state
+ *        (rendered only when the delivery form is editable). Default false.
  * @param {boolean} [options.invoiceBlock] whether an invoice block exists at
  *        all. Default: true unless sameAddress.
- * @param {?string} [options.countryId] the country option the SERVER rendered as
- *        selected. Defaults to '1' (Germany) - a real pre-selected country, which
- *        is what core always emits. Also decides whether the form carries a `dni`
- *        field: pass DNI_COUNTRY_ID (Spain) for a country whose address format asks
- *        for one. Pass null for the deliberate EXCEPTION case: a theme whose form
- *        leaves only the placeholder selected. Core does not produce that state, so
- *        any test using it must say why.
+ * @param {?string} [options.countryId] the country rendered as selected.
+ *        Default '1' (Germany). Pass DNI_COUNTRY_ID (Spain) for a `dni`
+ *        field, or null for the placeholder-only EXCEPTION case core does
+ *        not produce.
  * @param {boolean} [options.countryIsoAttrs] give the country options
  *        `data-iso-code` (default false - core's classic theme does not)
  * @param {string} [options.company] initial value of the company input
  * @param {string} [options.address1] initial value of the street input
  * @param {string} [options.postcode] initial value of the postcode input
  * @param {string} [options.city] initial value of the city input
- *        These three, like `company`, are emitted as a real `value` ATTRIBUTE, which
- *        is what the server does when the buyer is EDITING an address that already
- *        exists - `CustomerAddressFormatter` sets each field's value from the address
- *        row. A fixture that set them with `.val()` after render would be a different
- *        state from any core produces.
- * @param {boolean} [options.blockContainers] whether the editable form is wrapped
- *        in its block id div and its own `.js-address-form` (default true, which is
- *        core). Pass false for a THEME that flattens both away: the only scope left
- *        for the field lookups to resolve to is then the step's own wrapper, which
- *        spans BOTH address blocks. Core does not produce this, but a theme
- *        overriding the address-form template can, and a mirror that widened its
- *        scope to it would write into an address the buyer is not looking at.
- * @param {boolean} [options.blockIds] whether the address blocks carry the ids
- *        core gives them (default true, which is core). Pass false for a theme that
- *        keeps core's structure and classes but not its ids - nothing stops a theme
- *        from doing that, and combined with blockContainers:false it is the shape
- *        that defeats a scope guard recognising address blocks by id alone: the only
- *        candidate left is the step wrapper, and the other address is still in it.
- * @param {string} [options.dni] initial value of the identification input, emitted
- *        as a real `value` ATTRIBUTE - i.e. what the SERVER rendered, on a saved
- *        address that already carries an identification number. Only meaningful
- *        alongside a countryId whose address format emits the field at all.
- * @param {boolean} [options.formGroups] wrap each field in the
- *        `<div class="form-group">` + `<label>` pair core's `form-fields.tpl`
- *        emits around every address field (default false - the flat shape every
- *        pre-existing spec here is written against). Pass true for anything about
- *        a field's WRAPPER rather than the field: hiding the input alone leaves an
- *        orphaned label, so the group is what the visibility rule targets.
+ * @param {boolean} [options.blockContainers] whether the editable form has
+ *        its own block id div and `.js-address-form` wrapper (default true).
+ *        false models a theme that flattens both, widening the usable scope
+ *        to span both address blocks.
+ * @param {boolean} [options.blockIds] whether the address blocks carry
+ *        core's ids (default true). false, combined with
+ *        blockContainers:false, defeats an id-based scope guard.
+ * @param {string} [options.dni] initial value of the identification input
+ * @param {boolean} [options.formGroups] wrap each field in core's
+ *        `.form-group` + `<label>` pair (default false, the flat shape most
+ *        specs here use). true is for testing the field's WRAPPER.
  * @returns {void}
  */
 function buildAddressesStep(options) {

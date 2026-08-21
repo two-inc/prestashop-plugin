@@ -65,9 +65,6 @@ class Twocarrierlesstest extends Module
     }
 
     /**
-     * Replace the cart's delivery options with a single option belonging to
-     * carrier 0.
-     *
      * `$params['delivery_option_list']` is a reference slot (Hook::exec is
      * called with `&$delivery_option_list`), and PHP preserves reference slots
      * when the args array is copied into this method - so writing through it
@@ -80,7 +77,6 @@ class Twocarrierlesstest extends Module
     {
         $gross = round((float) Configuration::get(self::CONFIG_GROSS), 2);
         if ($gross <= 0) {
-            // Inert: installed but not armed.
             return;
         }
         $net = round((float) Configuration::get(self::CONFIG_NET), 2);

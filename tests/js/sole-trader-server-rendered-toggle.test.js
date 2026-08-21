@@ -1,34 +1,22 @@
 /**
- * TWO-25326 bug 9, round 3. Doug live-tested the round-2 fix and the chips this
- * module used to render STILL "render, then disappear and reappear again".
- * TWO-40 later removed those chips entirely - there is no upfront Business /
- * Sole trader toggle any more, and the entry point lives inside
- * TwoCompanySearch.js's dropdown instead. What survives from this file, and is
- * still exactly as load-bearing, is the AVAILABILITY ANSWER handover this
- * module adopts from the server: TwoCompanySearch.js's "I'm a sole trader" row
- * reads `isAvailableForCurrentCountry()`, and that has to be correct at first
- * paint, across country changes, and across the payment-fragment replacements
- * PrestaShop performs constantly while a checkout step settles - with no
- * request at all when the server has already answered.
+ * TWO-25326 bug 9, round 3. TWO-40 later removed the upfront Business/Sole
+ * trader toggle chips entirely; the entry point now lives inside
+ * TwoCompanySearch.js's dropdown. What survives here, still load-bearing, is
+ * the AVAILABILITY ANSWER handover this module adopts from the server:
+ * TwoCompanySearch.js's "I'm a sole trader" row reads
+ * `isAvailableForCurrentCountry()`, which must be correct at first paint,
+ * across country changes, and across PrestaShop's payment-fragment
+ * replacements - with no request when the server has already answered.
  *
- * WHY ROUND 2 COULD NOT HAVE FIXED THE ORIGINAL BUG. Round 2 keyed the
- * settled-check on the container node and put an in-flight guard on the
- * availability request. Both were real defects, and neither is this one: they
- * are about not redoing work AFTER an answer arrives, and the flicker lived
- * entirely in the window BEFORE it arrives. Measured on the staging shop with
- * a rAF-rate sampler: the toggle was `display:none` at first paint and only
- * became `display:block` ~280ms later, on EVERY load - because the answer was
- * resolved only by this module, only after a round trip. Selecting a payment
- * option reloads the whole checkout page, so the buyer saw chips, then a
- * document without chips, then chips again. Nothing that runs after the
- * answer can close that window; the answer has to already be in the markup.
- *
- * So paymentinfo.tpl renders `.two-sole-trader`'s data- attributes from the
- * server-side registry answer and this module ADOPTS them. These tests are
- * about that handover: the adopted state must be correct, must cost no
- * request, and must not be trusted further than it goes - a different country
- * still re-resolves, and markup with no answer in it still falls back to the
- * fetch.
+ * Round 2's fixes (keying the settled-check on the container node, an
+ * in-flight guard) were real but did not touch the flicker window BEFORE an
+ * answer arrives - measured on staging at ~280ms of `display:none` on every
+ * load, because the answer was resolved only after a round trip. So
+ * paymentinfo.tpl now renders `.two-sole-trader`'s data- attributes from the
+ * server-side registry answer and this module ADOPTS them. These tests cover
+ * that handover: correct, costs no request, and not trusted further than it
+ * goes (a different country still re-resolves; no answer in markup still
+ * falls back to the fetch).
  */
 
 'use strict';
@@ -127,9 +115,7 @@ describe('a server-rendered answer is adopted, not re-fetched', () => {
         TwoSoleTrader = loadSoleTrader();
 
         // Before construction, i.e. what the buyer's browser knows at FIRST
-        // PAINT. This is the assertion round 2 could not make: previously the
-        // template shipped no answer at all, and TwoCompanySearch.js's "I'm a
-        // sole trader" row could not have known whether to show itself.
+        // PAINT - the assertion round 2 could not make.
         expect(container().getAttribute('data-two-available')).toBe('1');
         expect(container().getAttribute('data-two-country')).toBe('GB');
 
@@ -148,8 +134,6 @@ describe('a server-rendered answer is adopted, not re-fetched', () => {
         const instance = build();
         await drain();
 
-        // The whole risk of moving the answer server-side: an availability
-        // cache that looks right and does not actually gate enrolment.
         const calls = [];
         instance.fetchTokens = () => { calls.push('fetchTokens'); };
         instance.startEnrollment();
@@ -178,8 +162,6 @@ describe('a server-rendered answer is adopted, not re-fetched', () => {
 describe('the adopted answer is trusted exactly as far as it goes', () => {
     test('a different billing country still resolves over the network', async () => {
         buildPaymentTileWithSoleTraderAnswer('1', 'GB');
-        // The buyer's billing country is NOT the one the server rendered for -
-        // e.g. the address was changed in a tab the payment step outlived.
         buildCountry('NO');
         TwoSoleTrader = loadSoleTrader();
         const instance = build();
@@ -208,10 +190,8 @@ describe('the adopted answer is trusted exactly as far as it goes', () => {
     });
 
     test('an UNRESOLVED answer falls back to the request rather than caching a "no"', async () => {
-        // The registry did not answer. isAvailableForCurrentCountry() answers
-        // false until it resolves - fail-soft is unchanged - but the browser
-        // must NOT record that as "business-only country", or one blip
-        // becomes permanent for the page: adoption never re-asks.
+        // Must NOT record an unresolved answer as "business-only country", or
+        // one blip becomes permanent for the page: adoption never re-asks.
         buildPaymentTileWithSoleTraderAnswer('', 'GB');
         buildCountry('GB');
         TwoSoleTrader = loadSoleTrader();
@@ -227,11 +207,8 @@ describe('the adopted answer is trusted exactly as far as it goes', () => {
     });
 
     test('an answer that is neither "1" nor "0" is not adopted', async () => {
-        // A theme or a future template emitting e.g. "true". Adopting it would
-        // read as `false` - sole trader silently unavailable, no request. The
-        // country here is VALID on purpose: with a bad country too, the
-        // country guard rejects first and this guard is never the deciding
-        // branch.
+        // Country is VALID on purpose: with a bad country too, the country
+        // guard rejects first and this guard is never the deciding branch.
         buildPaymentTileWithSoleTraderAnswer('yes', 'GB');
         buildCountry('GB');
         TwoSoleTrader = loadSoleTrader();

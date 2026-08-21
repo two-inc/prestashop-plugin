@@ -1,20 +1,14 @@
 /**
- * TWO-25326. The company-search control must stand down on a shop whose Two
- * API key does not currently verify.
+ * TWO-25326: the company-search control stands down when the Two API key does
+ * not verify.
  *
- * The payment option is withheld server-side on the same verdict, so there is
- * nothing a captured company can be used for - the search would still function
- * (that endpoint is called unauthenticated), it just leads nowhere, and a
- * "verify your company" journey that cannot complete is worse than a plain
- * field. Two things have to happen, and only the first is obvious: no search
- * control is constructed, AND the search-mode placeholder the address-form
- * override applied SERVER-side is taken back off the field. That placeholder
- * survives the control never existing, so without the second half the buyer is
- * told to "enter company name to search" on what is now a plain text input.
+ * Two things have to happen, and only the first is obvious: no search control
+ * is constructed, AND the search-mode placeholder the address-form override
+ * applied SERVER-side is taken back off the field - it survives the control
+ * never existing, leaving a plain input telling the buyer to search.
  *
- * The gate is deliberately explicit-false-only: an absent `api_key_verified`
- * (an older cached config payload, a theme that reconstructs the config) must
- * read as verified rather than take the search away from a healthy shop.
+ * The gate is explicit-false-only: an absent `api_key_verified` must read as
+ * verified rather than take the search away from a healthy shop.
  */
 
 'use strict';
@@ -86,8 +80,6 @@ describe('company search under an unverified API key', () => {
     });
 
     test("a placeholder the module did not set is left alone", () => {
-        // Only the module's own search wording is ours to remove. A theme's
-        // placeholder is the theme's, verified key or not.
         companyField().setAttribute('placeholder', 'Firmenname (optional)');
 
         new TwoCheckoutManager(managerConfig({ apiKeyVerified: false }));
@@ -96,9 +88,8 @@ describe('company search under an unverified API key', () => {
     });
 
     test('every company field is neutralised, not just the first', () => {
-        // PrestaShop renders a SECOND address form, with its own
-        // name='company', the moment the buyer ticks "billing address differs
-        // from shipping address" - and the override places the hint on both.
+        // PrestaShop renders a SECOND address form with its own name='company'
+        // once the buyer ticks "billing address differs from shipping".
         document.body.insertAdjacentHTML(
             'beforeend',
             "<div class='js-address-form'><form data-id-address='9'>" +
@@ -131,9 +122,7 @@ describe('company search under an unverified API key', () => {
     test('a later re-init edge does not sneak the control back in', () => {
         const manager = new TwoCheckoutManager(managerConfig({ apiKeyVerified: false }));
 
-        // The manager calls initializeCompanySearch() again on every DOM-settle
-        // and step-change edge; the gate has to hold on each of them, not only
-        // on the first pass through construction.
+        // Called again on every DOM-settle and step-change edge.
         manager.initializeCompanySearch();
         manager.initializeCompanySearch();
 
@@ -157,10 +146,8 @@ describe('company search on a healthy shop', () => {
     });
 
     test('only an explicit false disables the search', () => {
-        // Guards against the gate being written as a falsiness check: the
-        // sibling switches in this config arrive as the strings '0'/'1', and a
-        // truthy-string test here would disable the search on a shop whose
-        // verdict simply came through in an unexpected shape.
+        // Guards against a falsiness check: the sibling switches in this config
+        // arrive as the strings '0'/'1'.
         [undefined, null, 'false', 0, ''].forEach((value) => {
             const manager = new TwoCheckoutManager(managerConfig({ apiKeyVerified: value }));
             expect(manager.companySearch).not.toBeNull();
@@ -170,11 +157,8 @@ describe('company search on a healthy shop', () => {
 });
 
 describe('the bootstrap translation of the server payload', () => {
-    // views/js/twopayment.js is where the verdict actually crosses from the
-    // server payload into the manager's config, and it used to do that twice
-    // (primary + retry path) with no coverage of either - so the
-    // explicit-false-only semantics the comments and the tests above advertise
-    // could have been an === true check and nothing would have noticed.
+    // views/js/twopayment.js is where the verdict crosses from the server
+    // payload into the manager's config.
     function buildConfig(payload) {
         window.twopayment = payload;
         loadScript('views/js/twopayment.js');

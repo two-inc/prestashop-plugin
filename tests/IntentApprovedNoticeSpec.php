@@ -3,27 +3,11 @@
 declare(strict_types=1);
 
 /**
- * Coverage for the per-brand order-intent APPROVED notice - TWO-25218,
- * superseding the single three-state key shipped under TWO-25213.
- *
- * TWO KEYS, deliberately not one:
- *
- *   'intent_approved_notice_enabled' - the ON/OFF switch, explicit bool ONLY.
- *       true => ON, false => suppressed entirely, absent/null => documented
- *       default TRUE, anything else => a logged error and then TRUE.
- *
- *   'intent_approved_notice'         - the COPY OVERRIDE only.
- *       non-empty string => verbatim company-variant template (%s = company),
- *       absent/null/empty/whitespace-only => platform default copy. Empty is
- *       INERT: it is no longer an off switch, which is the one thing a reader
- *       who remembers TWO-25213 will get wrong.
- *
- * The two properties worth stating: absent can never mean off (so a
- * third-party overlay declaring nothing keeps the notice ON, and an older
- * cached JS payload cannot silently hide it), and a malformed switch is
- * reported rather than silently becoming a third behaviour. The DOM side of
- * the switch (both render sites) is not reachable from this PHP-only harness -
- * see the PR body.
+ * TWO-25218: the per-brand order-intent APPROVED notice is two keys, not one.
+ * 'intent_approved_notice_enabled' is the ON/OFF switch (explicit bool only);
+ * 'intent_approved_notice' is the copy override only - an empty value there is
+ * INERT, not the off switch it was under TWO-25213. Absent can never mean off,
+ * and a malformed switch is reported rather than becoming a third behaviour.
  */
 final class IntentApprovedNoticeSpec
 {
@@ -69,10 +53,8 @@ final class IntentApprovedNoticeSpec
 
     private static function testAbsentSwitchMeansEnabled(): void
     {
-        // getTwoBrandConfig() returns null both for an absent key and for an
-        // explicit null, so these are one input to the normalizer. Both are the
-        // documented default: ON. This is what keeps a third-party overlay that
-        // declares nothing from silently losing the notice.
+        // getTwoBrandConfig() returns null for both an absent key and an
+        // explicit null, so these are one input to the normalizer.
         $error = null;
         TinyAssert::same(true, self::switchOf(null, $error), 'an absent switch must default to enabled');
         TinyAssert::same(null, $error, 'an absent switch is the documented default, not an error');
@@ -80,8 +62,7 @@ final class IntentApprovedNoticeSpec
 
     private static function testNonBooleanSwitchReportsAnErrorAndStaysEnabled(): void
     {
-        // Every one of these was a plausible "off" under a truthiness check.
-        // None of them may be honoured, and none may pass silently.
+        // Each of these reads as "off" under a truthiness check.
         $bad = array(
             'empty string' => '',
             'zero int' => 0,
@@ -118,13 +99,11 @@ final class IntentApprovedNoticeSpec
             );
         }
 
-        // Deliberately a report-and-default, NOT a throw: this resolves on a
-        // buyer-facing checkout render, where a white screen is worse than a
-        // notice that stays on, and ON is the fail-safe direction.
+        // Report-and-default, NOT a throw: this resolves on a buyer-facing
+        // checkout render, where a white screen is worse than a notice left on.
         $error = null;
         TinyAssert::same(true, self::switchOf('nonsense', $error), 'a malformed switch must not throw');
 
-        // The brand code is reported from the caller, not hardcoded.
         $error = null;
         self::switchOf('nonsense', $error, 'someoverlay');
         TinyAssert::true(
@@ -135,14 +114,12 @@ final class IntentApprovedNoticeSpec
 
     private static function testCopyOverrideEmptyIsInert(): void
     {
-        // The TWO-25213 regression guard: '' used to suppress the notice. It is
-        // now inert and resolves to the platform default copy. Nothing about
-        // this key can turn the notice off.
+        // TWO-25213 regression guard: nothing about this key can turn the
+        // notice off - blank resolves to the platform default copy.
         TinyAssert::same(null, self::copyOf(''), 'an empty copy override must be inert, not an off switch');
         TinyAssert::same(null, self::copyOf('   '), 'a whitespace-only copy override must be inert');
         TinyAssert::same(null, self::copyOf("\t\n "), 'any blank copy override must be inert');
         TinyAssert::same(null, self::copyOf(null), 'a null copy override must mean default copy');
-        // A malformed overlay value must not become a copy template.
         TinyAssert::same(null, self::copyOf(false), 'false must mean default copy');
         TinyAssert::same(null, self::copyOf(0), '0 must mean default copy');
         TinyAssert::same(null, self::copyOf(array()), 'an array must mean default copy');
@@ -152,8 +129,6 @@ final class IntentApprovedNoticeSpec
     {
         $template = 'Approved for %s pending final checks.';
         TinyAssert::same($template, self::copyOf($template), 'a non-empty override must pass through verbatim');
-        // Verbatim means untouched, including surrounding whitespace inside a
-        // string that is not blank.
         TinyAssert::same(' %s ', self::copyOf(' %s '), 'a non-blank override must not be trimmed');
     }
 
@@ -161,8 +136,6 @@ final class IntentApprovedNoticeSpec
     {
         $brand = (array) (require dirname(__DIR__) . '/brands/two.php');
 
-        // Declared explicitly true rather than left to the absent-default, so
-        // the brand file states the decision instead of implying it.
         TinyAssert::true(
             array_key_exists('intent_approved_notice_enabled', $brand),
             'brands/two.php must declare intent_approved_notice_enabled explicitly'
@@ -203,20 +176,13 @@ final class IntentApprovedNoticeSpec
     }
 
     /**
-     * TWO-25224: the switch also governs the order-intent LOADING state, not
-     * only the approved sentence. The overlay carries our own "Checking Two
-     * payment eligibility..." copy, so a brand that declined the reassurance
-     * messaging was still announcing the check while it ran.
-     *
-     * Both error paths are deliberately NOT gated on the switch: a merchant
-     * who wants no reassurance still needs failures surfaced, or a declined
-     * buyer sees nothing at all. This test fails if either half regresses -
-     * the overlay coming back, or an error path picking the gate up.
+     * TWO-25224: the switch also governs the order-intent LOADING state, whose
+     * overlay carries reassurance copy. Both error paths are deliberately NOT
+     * gated on it - a merchant who wants no reassurance still needs failures
+     * surfaced, or a declined buyer sees nothing at all.
      *
      * Asserted against the checkout JS source because that is the only render
-     * site and this harness is PHP-only (there is no jsdom/node unit lane in
-     * this repo - see tests/README.md). A source assertion is a coarse but
-     * real tripwire: deleting the gate fails this test.
+     * site and this harness is PHP-only.
      */
     private static function testLoadingOverlayIsGatedOnTheSwitchButErrorPathsAreNot(): void
     {
@@ -251,9 +217,7 @@ final class IntentApprovedNoticeSpec
 
     /**
      * Body of a top-level (four-space indented) class method in the checkout
-     * JS, from its opening brace to the first closing brace at that same
-     * indent. Good enough for this file's consistent formatting, and it fails
-     * loudly rather than silently matching nothing.
+     * JS - relies on that file's consistent indentation.
      */
     private static function jsMethodBody(string $source, string $method): string
     {

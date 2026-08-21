@@ -1,36 +1,18 @@
 /**
- * TWO-25326 bug 9, availability-cache half. TWO-40 removed the "Registered
- * business" / "Sole trader" chips this test used to watch flicker across a
- * payment-fragment replacement - there is no chip UI left to flicker. What
- * survives, and what this file now covers, is the underlying availability
- * cache TwoCompanySearch.js's "I'm a sole trader" row reads via
- * isAvailableForCurrentCountry(): it must settle correctly across the same
- * container replacements and request storms that used to make the chips
- * disappear and reappear.
+ * TWO-25326 bug 9, availability-cache half. The cache
+ * isAvailableForCurrentCountry() reads must settle across payment-fragment
+ * replacements and request storms. Two constraints inside TwoSoleTrader:
  *
- * WHY THE EXISTING TEST DID NOT CATCH THE ORIGINAL BUG
- * checkout-manager-render-loop.test.js covers TwoCheckoutManager's tile-level
- * mount/unmount guard - that handleDynamicContentChange() must not re-attach
- * document-level payment listeners on every debounced MutationObserver firing.
- * That fix was real, and it is not this: the availability cache is owned by a
- * DIFFERENT module (TwoSoleTrader) with a refresh/observe cycle entirely of its
- * own, which that test never loads.
+ *  1. "Settled" must be recorded as an ADOPTED CONTAINER, not as a country.
+ *     PrestaShop replaces the whole `.two-sole-trader` container repeatedly
+ *     while the step settles; keyed on country, the observer reads it as
+ *     unchanged and answers for a container that no longer exists.
  *
- * TWO ROOT CAUSES, both in TwoSoleTrader:
- *
- *  1. "Settled" was recorded as a COUNTRY (`renderedForCountry`), not as an
- *     adopted container. PrestaShop replaces the payment fragment - and with it
- *     the whole `.two-sole-trader` container - repeatedly while the step
- *     settles. The replacement arrives with no answer adopted into it, and the
- *     observer's callback then read the country as unchanged and returned
- *     early. The cache was answering for a container that no longer existed.
- *
- *  2. There was no in-flight guard on the availability request. The observer
- *     watches the whole body subtree while nothing is cached yet, so every
- *     mutation started ANOTHER `fetch`. Beyond the request storm, that made
- *     the cached answer a race between those responses: the endpoint is
- *     fail-soft to "not available", so one failure among a dozen duplicates
- *     could overwrite an answer another had just applied.
+ *  2. The availability request needs an in-flight guard. The observer watches
+ *     the whole body subtree while nothing is cached, so every mutation starts
+ *     another `fetch` - and since the endpoint is fail-soft to "not
+ *     available", one failure among the duplicates can overwrite a good
+ *     answer another had just applied.
  */
 
 'use strict';
@@ -46,9 +28,8 @@ function container() {
 }
 
 /**
- * Replace the `.two-sole-trader` container with a fresh copy of the template's
- * markup, exactly as a payment-fragment re-render does: same selector, new node,
- * no answer adopted, no inline state.
+ * Replace the container as a payment-fragment re-render does: same selector,
+ * new node, no answer adopted, no inline state.
  *
  * @returns {HTMLElement} the new container
  */
@@ -63,7 +44,6 @@ function replaceContainer() {
     return fresh;
 }
 
-/** Country select the module reads, appended outside the tile. */
 function buildCountry(iso) {
     const holder = document.createElement('div');
     holder.innerHTML = "<select name='id_country'>"
@@ -116,10 +96,8 @@ afterEach(() => {
     document.body.innerHTML = '';
     delete global.window.fetch;
     delete global.fetch;
-    // TWO-40 follow-up: the persistent availability cache is real
-    // cross-test-case state now (localStorage, not the instance) - without
-    // clearing it a later test's fetch assertions would silently see a hit
-    // from an earlier test's write instead of the network call under test.
+    // The availability cache lives in localStorage, not the instance, so it is
+    // cross-test state: a later fetch assertion would see an earlier write.
     global.window.localStorage.clear();
 });
 
@@ -129,14 +107,11 @@ describe('the availability cache survives a payment-fragment replacement', () =>
         await settle();
         expect(instance.isAvailableForCurrentCountry()).toBe(true);
 
-        // PrestaShop re-renders the payment step. Same country, brand new node.
+        // Same country, brand new node.
         replaceContainer();
 
         await settle();
 
-        // Before the fix this stayed stuck on the previous container's answer:
-        // the country was unchanged, so the settled-check returned early and
-        // the new node's own answer was never adopted.
         expect(instance.isAvailableForCurrentCountry()).toBe(true);
         instance.stopObserving();
     });
@@ -160,8 +135,6 @@ describe('the availability cache survives a payment-fragment replacement', () =>
         const settledContainer = container();
         const requestsBefore = fetchCalls.length;
 
-        // A mutation somewhere else on the page (the intent message rendering,
-        // a spinner) must not trigger another resolution.
         const noise = document.createElement('div');
         document.body.appendChild(noise);
         await settle();
@@ -174,9 +147,7 @@ describe('the availability cache survives a payment-fragment replacement', () =>
 
 describe('the availability request is made once, not once per mutation', () => {
     test('a burst of mutations while the answer is outstanding issues ONE request', async () => {
-        // Deliberately never resolved: this is the window in which nothing is
-        // cached and `renderedForCountry` is still null, which is exactly when
-        // the storm used to happen.
+        // Never resolved: the window in which nothing is cached yet.
         global.window.fetch = (url) => {
             fetchCalls.push(url);
             return new Promise(() => {});
@@ -201,8 +172,6 @@ describe('the availability request is made once, not once per mutation', () => {
         expect(instance.isAvailableForCurrentCountry()).toBe(false);
         const afterFailure = fetchCalls.length;
 
-        // Caching a transport blip as "not available" would make one dropped
-        // request answer "not available" for the rest of the page's life.
         answer.reject = false;
         replaceContainer();
         await settle();

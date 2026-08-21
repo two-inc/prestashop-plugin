@@ -1,6 +1,6 @@
 /**
- * Two Checkout Manager - IMPROVED with PrestaShop-native patterns
- * Theme-independent, using native PrestaShop events and patterns
+ * Two Checkout Manager - theme-independent, using native PrestaShop events
+ * and patterns.
  */
 class TwoCheckoutManager {
     constructor(config) {
@@ -123,18 +123,10 @@ class TwoCheckoutManager {
             .replace(/'/g, '&#39;');
     }
     
-    /**
-     * Initialize the checkout manager
-     */
     init() {
-        // Detect initial checkout context using PrestaShop-native methods
         this.detectCheckoutStep();
         this.detectAccountType();
-        
-        // Initialize modules based on configuration and context
         this.initializeModules();
-        
-        // Setup PrestaShop-native event listeners
         this.setupPrestaShopEventListeners();
 
         // The company-search control mounted (initializeModules(), above) while
@@ -147,11 +139,8 @@ class TwoCheckoutManager {
         this.isInitialized = true;
     }
     
-    /**
-     * IMPROVED: Detect checkout step using PrestaShop-native patterns
-     */
     detectCheckoutStep() {
-        // Method 1: Check URL path (most reliable for PrestaShop)
+        // URL path is the most reliable signal for PrestaShop.
         const currentPath = window.location.pathname;
         if (currentPath.includes('/order')) {
             const urlParams = new URLSearchParams(window.location.search);
@@ -162,13 +151,10 @@ class TwoCheckoutManager {
             }
         }
         
-        // Method 2: Check PrestaShop body classes (theme-independent)
         const bodyClasses = document.body.className;
-        
-        // Check for PrestaShop controller classes
+
         const controllerMatch = bodyClasses.match(/controller-(\w+)/);
         if (controllerMatch && controllerMatch[1] === 'order') {
-            // We're in order controller - detect sub-step by content
             if (document.querySelector('.payment-options')) {
                 this.currentStep = 'payment';
             } else if (document.querySelector('.js-address-form, form[name*="address"], form[name*="customer"]')) {
@@ -179,7 +165,7 @@ class TwoCheckoutManager {
             return;
         }
         
-        // Method 3: Check for one-page checkout
+        // One-page checkout.
         if (bodyClasses.includes('order-opc') || bodyClasses.includes('checkout')) {
             if (document.querySelector('.payment-options')) {
                 this.currentStep = 'payment';
@@ -189,7 +175,6 @@ class TwoCheckoutManager {
             return;
         }
         
-        // Fallback: Basic content detection (still theme-independent)
         if (document.querySelector('.payment-options')) {
             this.currentStep = 'payment';
         } else if (document.querySelector('form[name*="address"], .js-address-form')) {
@@ -198,7 +183,7 @@ class TwoCheckoutManager {
             this.currentStep = 'unknown';
         }
     }
-    
+
     /**
      * There is no account-type selector (TWO-24755 rework: B2B checkout
      * always allows company search and the Two flow; order intent gates
@@ -207,24 +192,18 @@ class TwoCheckoutManager {
     detectAccountType() {
         this.twoPaymentOption = this.detectTwoPaymentOption();
         this.isBusinessAccount = true;
-        
-        // Also store reference to payment radio for easy access
+
         if (this.twoPaymentOption) {
             this.twoPaymentRadio = this.twoPaymentOption.querySelector('input[type="radio"]');
         }
     }
-    
-    /**
-     * ENHANCED: Detect Two payment option using multiple strategies for maximum compatibility
-     */
+
     detectTwoPaymentOption() {
-        // Strategy 1: Direct data-module-name attribute (most reliable)
         let paymentOption = document.querySelector('[data-module-name="twopayment"]');
         if (paymentOption) {
             return paymentOption;
         }
-        
-        // Strategy 2: Look for payment option containing twopayment input
+
         paymentOption = document.querySelector('.payment-option input[data-module-name="twopayment"]');
         if (paymentOption) {
             paymentOption = paymentOption.closest('.payment-option');
@@ -233,7 +212,6 @@ class TwoCheckoutManager {
             }
         }
         
-        // Strategy 3: Search by form action containing 'twopayment'
         const paymentForms = document.querySelectorAll('.payment-option form, form[action*="twopayment"]');
         for (const form of paymentForms) {
             if (form.action && form.action.includes('twopayment')) {
@@ -244,27 +222,23 @@ class TwoCheckoutManager {
             }
         }
         
-        // Strategy 4: Search all payment options for Two logo or text
         const allPaymentOptions = document.querySelectorAll('.payment-option, [class*="payment-option"], [id*="payment-option"]');
         for (const option of allPaymentOptions) {
             const optionText = option.textContent || '';
             const hasLogo = option.querySelector('img[src*="two"], img[alt*="two" i], img[alt*="Two"]');
-            const hasTwoText = optionText.toLowerCase().includes('two') && 
+            const hasTwoText = optionText.toLowerCase().includes('two') &&
                               (optionText.toLowerCase().includes('pay') || optionText.toLowerCase().includes('invoice'));
-            
+
             if (hasLogo || hasTwoText) {
-                // Verify this is actually Two payment by checking for our module containers
                 const hasTwoContainer = option.querySelector('.two-payment-container, .two-payment-info, #two-payment-terms');
                 if (hasTwoContainer) {
                     return option;
                 }
             }
         }
-        
-        // Strategy 5: Look for our template container and traverse up to payment option
+
         const twoContainer = document.querySelector('.two-payment-container');
         if (twoContainer) {
-            // Traverse up to find payment option container
             let parent = twoContainer.parentElement;
             let maxDepth = 10;
             while (parent && maxDepth > 0) {
@@ -280,28 +254,20 @@ class TwoCheckoutManager {
         return null;
     }
     
-    /**
-     * Setup PrestaShop-native event listeners
-     */
     setupPrestaShopEventListeners() {
-        // Listen for PrestaShop's native events (theme-independent)
         if (typeof prestashop !== 'undefined') {
-            // Address form updates
             prestashop.on('updatedAddressForm', () => {
                 this.handleAddressFormUpdate();
             });
-            
-            // Delivery form updates  
+
             prestashop.on('updatedDeliveryForm', () => {
                 this.handleDeliveryFormUpdate();
             });
-            
-            // Payment form updates
+
             prestashop.on('updatedPaymentForm', () => {
                 this.handlePaymentFormUpdate();
             });
-            
-            // Checkout updates
+
             prestashop.on('checkout', (event) => {
                 this.handleCheckoutEvent(event);
             });
@@ -336,17 +302,11 @@ class TwoCheckoutManager {
         if (this.isTwoPaymentSelected()) {
             this.syncSurchargeCartLine(true);
         }
-        
-        // CRITICAL: Listen for payment option selection (theme-independent)
+
         this.setupPaymentOptionSelectionListener();
-        
-        // Listen for DOM mutations for dynamic content
         this.setupMutationObserver();
     }
 
-    /**
-     * ENHANCED: Only trigger order intent when Two payment is selected (more comprehensive detection)
-     */
     setupPaymentOptionSelectionListener() {
         // Prevent duplicate listeners
         if (this._paymentListenersAttached) return;
@@ -388,29 +348,26 @@ class TwoCheckoutManager {
             }
         });
         
-        // Method 3: Listen for form submissions and payment confirmation attempts
         document.addEventListener('click', (event) => {
             if (this.isPaymentConfirmationButton(event.target)) {
                 this.handlePaymentConfirmation(event);
             }
         });
-        
-        // Method 4: Enhanced form submission listener (catch-all for different themes)
+
         document.addEventListener('submit', (event) => {
             const form = event.target;
             if (this.isPaymentConfirmationForm(form)) {
                 this.handlePaymentConfirmation(event);
             }
         });
-        
-        // Method 5: Periodic check for Two payment selection (fallback for complex themes)
+
+        // Periodic fallback for themes where none of the above listeners fire.
         this._selectionCheckInterval = setInterval(() => {
             this.detectCheckoutStep();
             if (this.currentStep !== 'payment') {
                 return;
             }
             if (this.isTwoPaymentSelected() && this.config.orderIntentEnabled && this.canAutoTriggerOrderIntent()) {
-                // Only trigger if we haven't processed this selection recently AND we don't have a result yet
                 const hasResult = this.orderIntent && this.orderIntent.lastResult;
                 const recentlyChecked = this._lastSelectionCheck && (Date.now() - this._lastSelectionCheck < 5000);
                 
@@ -431,7 +388,6 @@ class TwoCheckoutManager {
      * Handle payment option change - trigger order intent only for Two
      */
     handlePaymentOptionChange(radioButton) {
-        // Check if Two payment is selected using various patterns
         const isTwoSelected = this.isTwoPaymentSelected(radioButton);
 
         // Mirror the buyer surcharge as a real PrestaShop cart line (add on
@@ -440,22 +396,18 @@ class TwoCheckoutManager {
         this.syncSurchargeCartLine(isTwoSelected);
 
         if (isTwoSelected && this.config.orderIntentEnabled && this.canAutoTriggerOrderIntent()) {
-            // Ensure orderIntent is initialized even after dynamic DOM changes
             if (!this.orderIntent && window.TwoOrderIntent) {
                 this.initializeOrderIntent();
             }
             if (this.orderIntent) {
-                // Two payment selected - trigger order intent validation
                 this.triggerOrderIntentForSelection();
             }
         } else if (this.orderIntent) {
-            // Different payment selected - clear any Two-specific UI and reset state
             this.clearOrderIntentUI();
-            // Reset the result so if user switches back, we check again
+            // Reset so a switch back to Two re-checks rather than reusing a stale result.
             if (this.orderIntent && this.orderIntent.lastResult) {
                 this.orderIntent.lastResult = null;
             }
-            // Clear server-side result when switching away from Two
             this.clearOrderIntentResultFromServer();
         }
     }
@@ -525,54 +477,26 @@ class TwoCheckoutManager {
 
     /**
      * Bring the checkout's order summary in line with the surcharge cart line
-     * WITHOUT navigating the document (TWO-25326 bug 11, round 4).
+     * WITHOUT navigating the document (TWO-25326 bug 11).
      *
-     * WHAT THIS REPLACES, and why the previous approach could not be patched
-     * into working. The module used to emit core's own `updateCart` event, which
-     * is the documented way to ask PrestaShop to re-render the cart - but on the
-     * payment step core deliberately turns that into a full page NAVIGATION:
-     * `themes/_core/js/cart.js` calls `refreshCheckoutPage()`
-     * (`themes/_core/js/common.js`), which sets
-     * `window.location.href = pathname + '?updatedTransaction=1'` and, once that
-     * parameter is already on the URL, `window.location.reload()`. Core's own
-     * comment gives the reason: "on payment step we need to refresh page to be
-     * sure amount is correctly updated on payment modules".
+     * Deliberately does NOT emit core's own `updateCart` event: on the payment
+     * step core turns that into a full page navigation
+     * (`refreshCheckoutPage()` in `themes/_core/js/common.js`), which is what
+     * caused the tile to visibly flicker away and back. Instead this POSTs
+     * the same `.js-cart` refresh URL core's handler uses and swaps the same
+     * summary partials out of the response, without navigating.
      *
-     * That navigation IS the flicker, in both of its reported shapes:
-     *  - SELECTING Two: the tile the buyer has just opened is destroyed with the
-     *    old document and rebuilt in the new one - "rendered, then removed and
-     *    re-rendered". There is no first paint to suppress here; the tile
-     *    genuinely goes away and comes back.
-     *  - SELECTING SOMETHING ELSE: the tile collapses (correct), and then the
-     *    reloaded document paints every payment option's additional-information
-     *    block VISIBLE, because core hides the unselected ones only once
-     *    `Payment.init()` -> `toggleOrderButton()` -> `collapseOptions()` runs at
-     *    DOM ready (`themes/_core/js/checkout-payment.js`). So the tile returns
-     *    for a moment and goes again.
+     * Giving up the navigation's side effect (other payment modules
+     * recomputing against the new amount) is safe: nothing here needs it. The
+     * fee line only exists while Two is selected, is removed the instant
+     * another option is picked, and is additionally stripped server-side
+     * before any other payment module computes totals (the
+     * `actionFrontControllerInitAfter` stale-guard). The order-create parity
+     * gate remains the authoritative check either way.
      *
-     * Round 3 kept the navigation and tried to hide its artefacts at first paint
-     * instead. That could only ever address the second shape - it deliberately
-     * did nothing when Two was the option being restored - so the first shape was
-     * never addressed at all. The navigation itself is what had to go.
-     *
-     * WHAT REPLACES IT: exactly what core's own `updateCart` handler does, MINUS
-     * the navigation. POST the same `.js-cart` refresh URL and swap the same
-     * summary partials out of the response. The buyer-visible totals update, the
-     * document is never navigated, and there is no artefact left to hide.
-     *
-     * WHAT THE NAVIGATION BOUGHT, AND WHY GIVING IT UP IS SAFE: re-rendering the
-     * payment options so OTHER payment modules recompute against the new amount.
-     * Nothing here needs that. The fee line exists only while Two is the selected
-     * option and is removed the instant another one is picked, and the module
-     * additionally strips it server-side before any other payment module's
-     * controller can compute totals (the `actionFrontControllerInitAfter`
-     * stale-guard). The authoritative check is, as before, the order-create
-     * parity gate, which fails closed.
-     *
-     * FAIL-SOFT, like the sync it follows: a theme with no `.js-cart` refresh URL,
-     * or a failed request, leaves the summary showing its previous total. That is
-     * a display staleness, never a charge: a buyer cannot complete a Two order
-     * whose PrestaShop total diverges from the Two invoice.
+     * FAIL-SOFT: a theme with no `.js-cart` refresh URL, or a failed request,
+     * leaves the summary showing its previous total - display staleness
+     * only, never a charge mismatch.
      *
      * @returns {void}
      */
@@ -657,7 +581,7 @@ class TwoCheckoutManager {
             if (!target.length) {
                 return;
             }
-            // FIRST match only, deliberately (review round 1). Every one of these
+            // FIRST match only, deliberately. Every one of these
             // selectors is a two-convention alternation - `.cart-summary-totals,
             // .js-cart-summary-totals` - and core's own handler calls
             // `replaceWith()` on the whole matched set. On the shipped classic
@@ -706,7 +630,7 @@ class TwoCheckoutManager {
     }
 
     /**
-     * ENHANCED: Check if Two payment is selected (theme-independent with better detection)
+     * Check if Two payment is selected
      */
     isTwoPaymentSelected(radioButton) {
         // Multiple strategies for different PrestaShop themes and versions
@@ -852,29 +776,22 @@ class TwoCheckoutManager {
             && this.companySearch.isManualEntry());
     }
 
-    /**
-     * Trigger order intent specifically for payment selection
-     */
     triggerOrderIntentForSelection() {
-        // Only proceed if we're in payment step and Two is available
         if (this.currentStep !== 'payment' || !this.twoPaymentOption) {
             return;
         }
-        
-        // Only proceed if Two is actually selected
+
         if (!this.isTwoPaymentSelected()) {
             return;
         }
-        
-        // CRITICAL: If we already have a result, don't check again
-        // This prevents infinite loops from periodic checks
+
+        // Reuse the existing result rather than re-checking, which would loop
+        // against the periodic selection check.
         if (this.orderIntent && this.orderIntent.lastResult && this.orderIntent.lastResult.success !== undefined) {
-            // Just show the existing result
             this.handleOrderIntentResult(this.orderIntent.lastResult);
             return;
         }
-        
-        // Prevent duplicate or rapid calls
+
         if (this.orderIntent && this.orderIntent.isProcessing) {
             this.showOrderIntentLoading();
             return;
@@ -885,10 +802,9 @@ class TwoCheckoutManager {
         }
         this._lastIntentRunAt = now;
 
-        // Show loading state
         this.showOrderIntentLoading();
 
-        // If order intent isn't ready to run yet, keep showing loading and retry shortly
+        // Not ready yet: keep showing loading and retry shortly.
         if (this.orderIntent && typeof this.orderIntent.shouldRunOrderIntent === 'function' && !this.orderIntent.shouldRunOrderIntent()) {
             clearTimeout(this._intentRetryTimeout);
             this._intentRetryTimeout = setTimeout(() => {
@@ -909,34 +825,29 @@ class TwoCheckoutManager {
      */
     handleOrderIntentResult(result) {
         if (!result.success) {
-            // ENHANCED: Handle specific company status codes from backend
             const status = result.status || '';
             const err = (result && result.error) ? String(result.error) : '';
             const errLower = err.toLowerCase();
 
-            // Handle specific status codes for clear user guidance
             // 'no_company' = no company name entered at all
             // 'incomplete_company' = company name exists but backend couldn't auto-resolve org number
             if (status === 'no_company') {
                 this.showCompanyRequiredMessage(err, status);
                 return;
             }
-            
+
             if (status === 'incomplete_company') {
-                // Backend tried to auto-resolve but couldn't find a confident match
-                // Show message asking user to search and select their company
                 this.showCompanyRequiredMessage(err, status);
                 return;
             }
-            
-            // Legacy: If order intent was skipped (frontend-side skip), show appropriate prompt
+
+            // Legacy: order intent skipped frontend-side, before the status-code path existed.
             if (errLower.includes('skipped_no_company')) {
                 this.showCompanyRequiredMessage(err, 'no_company');
                 return;
             }
-            
+
             if (errLower.includes('skipped')) {
-                // Generic skip - show company selection prompt
                 if (this.suppressCompanyRelocationPrompt()) {
                     return;
                 }
@@ -964,8 +875,7 @@ class TwoCheckoutManager {
             return;
         }
 
-        // Save order intent result to server for server-side validation
-        // This prevents bypassing client-side blocking by disabling JavaScript
+        // Saved server-side too so disabling JavaScript can't bypass the client-side block.
         this.saveOrderIntentResultToServer(result.approved);
 
         // Build company-aware message for display (translated). Sentence
@@ -982,7 +892,6 @@ class TwoCheckoutManager {
             }
             this.showOrderIntentApproval(approvedMsg);
         } else {
-            // For declined results, also check if the decline reason should be treated as an error
             const baseDecline = result.message || this.t('payment_not_available_message', 'Two payment is not available for this order.');
             let declineMessage = baseDecline;
             if (companyName && this.orderIntent && typeof this.orderIntent.buildCompanyIntentMessage === 'function') {
@@ -1108,9 +1017,7 @@ class TwoCheckoutManager {
     }
 
     /**
-     * Show company required message with clear guidance (theme-independent)
-     * @param {string} message - The error message from backend
-     * @param {string} status - The status code: 'no_company' or 'incomplete_company'
+     * @param {string} status 'no_company' or 'incomplete_company'
      */
     showCompanyRequiredMessage(message, status) {
         if (this.suppressCompanyRelocationPrompt()) {
@@ -1118,8 +1025,7 @@ class TwoCheckoutManager {
         }
         const messageContainer = this.getOrCreateMessageContainer();
         const actionTitle = this.t('action_required_title', 'Action Required');
-        
-        // Determine help text based on status
+
         let helpText = '';
         if (status === 'no_company') {
             helpText = this.t(
@@ -1127,46 +1033,36 @@ class TwoCheckoutManager {
                 'To pay with Two, go back to your billing address and enter your company name in the Company field.'
             );
         } else if (status === 'incomplete_company') {
-            // IMPROVED: When auto-resolution failed, give clearer guidance
-            // The backend tried to find the company but couldn't get a confident match
             helpText = this.t(
                 'select_company_to_use_two',
                 'To pay with Two, go back to your billing address and search for your company name. Select your company from the search results to verify your business.'
             );
         }
         
-        // Build the message UI
         const messageElement = messageContainer.querySelector('.two-payment-message') || messageContainer;
         if (messageElement !== messageContainer) {
             messageElement.textContent = message || helpText;
         } else {
-            // For incomplete_company, show a more informative message
-            const displayTitle = status === 'incomplete_company' 
+            const displayTitle = status === 'incomplete_company'
                 ? this.t('company_verification_needed', 'Company Verification Needed')
                 : actionTitle;
             const displayMessage = message || helpText;
-            
+
             messageContainer.innerHTML = `
                 <p class="two-subtitle">${this.escapeHtml(displayTitle)}</p>
                 <p class="two-payment-message">${this.escapeHtml(displayMessage)}</p>
                 ${helpText && message !== helpText ? `<p class="two-help-text">${this.escapeHtml(helpText)}</p>` : ''}
             `;
         }
-        
-        // Apply styling
+
         messageContainer.classList.remove('approved', 'loading', 'declined');
         messageContainer.classList.add('show', 'action-required');
         messageContainer.style.display = 'block';
-        
-        // Hide loading overlay
+
         this.hideLoadingOverlay();
-        
-        // Don't show payment terms - company verification required first
     }
-    
+
     /**
-     * Show order intent loading state (theme-independent)
-     *
      * Renders nothing when the brand suppressed the approved notice
      * (TWO-25224). That switch turns off the buyer-facing *reassurance
      * messaging* around the order-intent pre-check, and this overlay is part
@@ -1205,7 +1101,7 @@ class TwoCheckoutManager {
         overlay.classList.add('show');
         this.isLoadingUIShown = true;
 
-        // Also show template loader if present (for themes using paymentinfo.tpl container)
+        // Some themes render a template-side loader in paymentinfo.tpl too.
         try {
             const templateLoader = document.querySelector('.two-payment-container .two-loading-container');
             if (templateLoader) {
@@ -1214,9 +1110,6 @@ class TwoCheckoutManager {
         } catch (e) { /* noop */ }
     }
 
-    /**
-     * Show order intent approval message and payment terms (theme-independent)
-     */
     showOrderIntentApproval(message) {
         // Notice switched off for this brand (TWO-25218): render no approval
         // message and do not create a container for one. Everything else an
@@ -1240,8 +1133,7 @@ class TwoCheckoutManager {
         }
 
         const messageContainer = this.getOrCreateMessageContainer();
-        
-        // Update the payment info section with success message
+
         const messageElement = messageContainer.querySelector('.two-payment-message') || messageContainer;
         const approvedMessage = message || this.t('payment_approved_message', 'Payment approved! Choose your payment terms below.');
         if (messageElement !== messageContainer) {
@@ -1252,28 +1144,19 @@ class TwoCheckoutManager {
                 <p class="two-payment-message">${this.escapeHtml(approvedMessage)}</p>
             `;
         }
-        
-        // Add approved styling to container
+
         messageContainer.classList.remove('declined', 'loading');
         messageContainer.classList.add('approved', 'show');
         messageContainer.style.display = 'block';
-        
-        // Remove loading state and add approved state to payment option
+
         this.clearLoadingState();
         this.hideLoadingOverlay();
-        
-        // Show payment terms selector
-        
         this.showPaymentTerms();
     }
-    
-    /**
-     * Show order intent decline message (theme-independent)
-     */
+
     showOrderIntentDecline(message) {
         const messageContainer = this.getOrCreateMessageContainer();
-        
-        // Update the payment info section with decline message
+
         const messageElement = messageContainer.querySelector('.two-payment-message') || messageContainer;
         const declineMessage = message || this.t('payment_not_available_message', 'Two payment is not available for this order.');
         if (messageElement !== messageContainer) {
@@ -1284,52 +1167,43 @@ class TwoCheckoutManager {
                 <p class="two-payment-message">${this.escapeHtml(declineMessage)}</p>
             `;
         }
-        
-        // Add declined styling to container
+
         messageContainer.classList.remove('approved', 'loading');
         messageContainer.classList.add('declined', 'show');
         messageContainer.style.display = 'block';
-        
-        // Remove loading state and add declined state to payment option
+
         this.clearLoadingState();
         this.hideLoadingOverlay();
     }
-    
+
     /**
-     * Show order intent error (theme-independent)
-     * SMART: If company data is missing, show company-specific message instead of generic error
+     * If company data is missing, show company-specific guidance instead of a
+     * generic error - checked first so a real error with company data present
+     * still surfaces below.
      */
     showOrderIntentError(error) {
-        // SMART CHECK: Before showing generic error, check if company data is actually missing
-        // This handles the common case where error is shown due to missing company selection
         const companyMissing = this.isCompanyDataMissing();
-        
+
         let userFriendlyError;
         if (companyMissing) {
-            // The only thing this branch has to say is "go and search for your
-            // company" - which is the tile's own search control's job to
-            // prompt for once that control lives here, so there is nothing
-            // left to render. Checked before the generic branch on purpose: a
-            // real error with company data present still surfaces below.
+            // The tile's own search control is what prompts "go search for your
+            // company" once it lives here, so there is nothing left to render.
             if (this.suppressCompanyRelocationPrompt()) {
                 return;
             }
-            // Company data is incomplete - show specific guidance
             userFriendlyError = this.t(
                 'select_company_to_use_two',
                 'To pay with Two, go back to your billing address and search for your company name. Select your company from the results to verify your business.'
             );
         } else {
-            // Company data looks complete - show generic error
             userFriendlyError = this.t(
                 'generic_error',
                 'There was an issue processing your Two payment request. Please try again or choose another payment method.'
             );
         }
-        
+
         const messageContainer = this.getOrCreateMessageContainer();
-        
-        // Update the payment info section with error message
+
         const messageElement = messageContainer.querySelector('.two-payment-message') || messageContainer;
         if (messageElement !== messageContainer) {
             messageElement.textContent = userFriendlyError;
@@ -1339,17 +1213,15 @@ class TwoCheckoutManager {
                 <p class="two-payment-message">${this.escapeHtml(userFriendlyError)}</p>
             `;
         }
-        
-        // Add error styling to container
+
         messageContainer.classList.remove('approved', 'loading', 'declined');
         messageContainer.classList.add('show');
         messageContainer.style.display = 'block';
-        
-        // Remove loading state
+
         this.clearLoadingState();
         this.isLoadingUIShown = false;
     }
-    
+
     /**
      * Check if company data is missing (org number not selected)
      *
@@ -1368,17 +1240,10 @@ class TwoCheckoutManager {
      */
     isCompanyDataMissing() {
         // The hidden `companyid` field is the FIRST of the two carriers named in
-        // this method's docblock, and it is consulted before the page-lifetime
-        // selection below: while the address form is on screen the DOM field is the
-        // live one, and the seeded selection stands in for it only once the field is
-        // empty or gone. There used to be a `document.cookie` fallback here
-        // looking for a bare `two_company_id`; nothing ever wrote one. PrestaShop
-        // serialises every server-side session key into a single encrypted cookie
-        // under its own name, so a server write of that key never produces a
-        // browser cookie called `two_company_id`, and no code in this module sets
-        // one directly. The fallback could only ever be satisfied by a test that
-        // fabricated the cookie itself, so it has been removed rather than left
-        // looking like a real second source.
+        // this method's docblock, consulted before the page-lifetime selection
+        // below: while the address form is on screen the DOM field is the live
+        // one, and the seeded selection stands in for it only once the field is
+        // empty or gone.
         let orgNumber = '';
 
         const companyIdField = document.querySelector("input[name='companyid']");
@@ -1399,11 +1264,7 @@ class TwoCheckoutManager {
         return !orgNumber;
     }
 
-    /**
-     * Convert technical error messages to user-friendly ones
-     */
     getUserFriendlyErrorMessage(error) {
-        // Handle specific error cases
         if (typeof error === 'string') {
             const errorLower = error.toLowerCase();
             
@@ -1495,11 +1356,8 @@ class TwoCheckoutManager {
         );
     }
     
-    /**
-     * Clear loading state from payment option
-     */
     clearLoadingState() {
-        // No-op: we no longer toggle visual state classes on the payment option
+        // No-op: no longer toggles visual state classes on the payment option.
     }
 
     hideLoadingOverlay() {
@@ -1511,7 +1369,6 @@ class TwoCheckoutManager {
             overlay.classList.remove('show');
         }
 
-        // Hide template loader if present
         try {
             const templateLoader = document.querySelector('.two-payment-container .two-loading-container');
             if (templateLoader) {
@@ -1520,68 +1377,51 @@ class TwoCheckoutManager {
         } catch (e) { /* noop */ }
     }
 
-    /**
-     * Clear order intent UI
-     */
     clearOrderIntentUI() {
         const messageContainer = document.querySelector('#two-order-intent-messages');
         if (messageContainer) {
             messageContainer.style.display = 'none';
             messageContainer.innerHTML = '';
         }
-        // Also clear payment terms
         this.hidePaymentTerms();
-        
-        // Also clear visual states from payment option
         this.clearLoadingState();
     }
 
-    /**
-     * Hide payment terms selector
-     */
     hidePaymentTerms() {
         const termsContainer = document.querySelector('#two-payment-terms');
         if (termsContainer) {
             termsContainer.classList.remove('show');
-            // Use timeout to allow animation to complete before hiding
+            // Timeout lets the collapse animation finish before hiding.
             setTimeout(() => {
                 termsContainer.style.display = 'none';
             }, 300);
         }
     }
     
-    /**
-     * Get or create message container for order intent feedback (uses existing payment card structure)
-     */
     getOrCreateMessageContainer() {
-        // First try to use the existing payment info section from the template
         let container = document.querySelector('.two-payment-info');
 
         if (container) {
-            // Use existing payment info section and make it visible
             container.style.display = 'block';
             container.classList.add('show');
             return container;
         }
-        
-        // Fallback: create new container if template structure not found
+
         container = document.querySelector('#two-order-intent-messages');
         if (!container) {
             container = document.createElement('div');
             container.id = 'two-order-intent-messages';
             container.className = 'two-order-intent-messages';
             container.style.marginTop = '10px';
-            
-            // Insert in Two payment container using theme-independent method
+
             const twoContainer = document.querySelector('.two-payment-container');
             if (twoContainer) {
                 twoContainer.appendChild(container);
             } else if (this.twoPaymentOption) {
-                // Fallback to payment option insertion
-                const insertionPoint = this.twoPaymentOption.querySelector('.payment-option-content') || 
+                const insertionPoint = this.twoPaymentOption.querySelector('.payment-option-content') ||
                                      this.twoPaymentOption.querySelector('.additional-information') ||
                                      this.twoPaymentOption;
-                
+
                 if (insertionPoint === this.twoPaymentOption) {
                     insertionPoint.appendChild(container);
                 } else {
@@ -1592,73 +1432,57 @@ class TwoCheckoutManager {
         return container;
     }
 
-    /**
-     * ENHANCED: Show payment terms selector with robust fallback for different themes
-     */
+    // Tries several selectors in turn since the terms container's location
+    // varies by theme/template version.
     showPaymentTerms() {
-        // Strategy 1: Direct ID lookup
         let termsContainer = document.querySelector('#two-payment-terms');
-        
-        // Strategy 2: Search by class
+
         if (!termsContainer) {
             termsContainer = document.querySelector('.two-payment-terms');
         }
-        
-        // Strategy 3: Search within Two payment container
+
         if (!termsContainer) {
             const twoContainer = document.querySelector('.two-payment-container');
             if (twoContainer) {
                 termsContainer = twoContainer.querySelector('[id*="payment-terms"], [class*="payment-terms"]');
             }
         }
-        
-        // Strategy 4: Search within payment option
+
         if (!termsContainer && this.twoPaymentOption) {
             termsContainer = this.twoPaymentOption.querySelector('[id*="payment-terms"], [class*="payment-terms"]');
         }
-        
-        // Strategy 5: Search in additional information section
+
         if (!termsContainer) {
             const additionalInfo = document.querySelector('#payment-option-1-additional-information, .additional-information, .js-additional-information');
             if (additionalInfo) {
                 termsContainer = additionalInfo.querySelector('[id*="payment-terms"], [class*="payment-terms"]');
             }
         }
-        
+
         if (termsContainer) {
-            // First make it visible, then add animation class
             termsContainer.style.display = 'block';
             termsContainer.style.visibility = 'visible';
             termsContainer.style.opacity = '1';
-            
-            // Force a reflow before adding the show class for animation
+
+            // Force a reflow before adding the show class, or the animation doesn't play.
             termsContainer.offsetHeight;
             termsContainer.classList.add('show');
-            
-            // Initialize payment terms if not already done
+
             this.initializePaymentTerms();
-            
         } else {
             console.warn('Two Payment: Payment terms container not found - template may not be rendered');
-            
-            // Last resort: Try to inject payment terms if template is missing
             this.injectPaymentTermsIfMissing();
         }
     }
-    
-    /**
-     * FALLBACK: Inject payment terms dynamically if template is missing
-     */
+
     injectPaymentTermsIfMissing() {
-        // Find a suitable container to inject into
         let targetContainer = this.getOrCreateMessageContainer();
-        
+
         if (!targetContainer) {
             console.error('Two Payment: Cannot inject payment terms - no target container found');
             return;
         }
-        
-        // Create payment terms HTML
+
         const termsHtml = `
             <div class="two-payment-terms" id="two-payment-terms" style="display: block;">
                 <div class="two-terms-header">
@@ -1676,49 +1500,38 @@ class TwoCheckoutManager {
             </div>
         `;
         
-        // Inject after message container
         targetContainer.insertAdjacentHTML('afterend', termsHtml);
-        
-        // Initialize the newly created terms
         this.initializePaymentTerms();
     }
 
-    /**
-     * ENHANCED: Initialize payment terms selector with robust error handling
-     */
     initializePaymentTerms() {
-        // Try multiple selectors for the chip container
         let termsContainer = document.querySelector('#two-terms-chips');
         if (!termsContainer) {
             termsContainer = document.querySelector('.two-term-chips__container');
         }
-        
+
         let selectedDays = document.querySelector('#two-selected-days');
         if (!selectedDays) {
             selectedDays = document.querySelector('.two-terms-selected-days');
         }
-        
+
         if (!termsContainer) {
             console.error('Two Payment: Terms chip container not found');
             return;
         }
-        
-        // Check if already initialized with our chips
+
         if (termsContainer.hasChildNodes() && termsContainer.querySelector('.two-term-chip')) {
             return;
         }
-        
+
         if (termsContainer.hasChildNodes()) {
-            // Clear existing content to reinitialize
             termsContainer.innerHTML = '';
         }
-        
-        // Get payment terms from admin configuration (passed via template)
+
         const availableTerms = this.config.available_payment_terms;
         const configuredDefaultTerm = this.config.default_payment_term;
         const termType = this.config.payment_term_type || 'STANDARD';
 
-        // If no terms configured, don't show payment terms
         if (!availableTerms || !Array.isArray(availableTerms) || availableTerms.length === 0) {
             return;
         }
@@ -1833,17 +1646,14 @@ class TwoCheckoutManager {
             }
 
             termChip.addEventListener('click', () => {
-                // Remove selected state from all chips
                 termsContainer.querySelectorAll('.two-term-chip').forEach(chip => {
                     chip.classList.remove('two-term-chip--selected');
                     chip.setAttribute('aria-checked', 'false');
                 });
 
-                // Mark clicked chip as selected
                 termChip.classList.add('two-term-chip--selected');
                 termChip.setAttribute('aria-checked', 'true');
 
-                // Update selected term display
                 if (selectedDays) {
                     selectedDays.textContent = formatPayInLabel(days);
                 }
@@ -2001,20 +1811,14 @@ class TwoCheckoutManager {
                 approved: approved ? 1 : 0,
                 token: window.twopayment.ajax_token
             },
-            success: () => {
-                // Result saved for server-side validation
-            },
+            success: () => {},
             error: (xhr, status, error) => {
-                // Log but don't block - client-side blocking still works
+                // Non-blocking: client-side blocking still works without the server copy.
                 console.warn('TwoPayment: Failed to save order intent result to server:', error);
             }
         });
     }
 
-    /**
-     * Clear order intent result from server
-     * Called when user switches away from Two payment method
-     */
     clearOrderIntentResultFromServer() {
         if (!this.config.orderIntentUrl || !window.twopayment || !window.twopayment.ajax_token) {
             return;
@@ -2028,21 +1832,15 @@ class TwoCheckoutManager {
                 action: 'clearOrderIntentResult',
                 token: window.twopayment.ajax_token
             },
-            success: () => {
-                // Result cleared
-            },
+            success: () => {},
             error: () => {
-                // Non-critical - just log
                 console.warn('TwoPayment: Failed to clear order intent result from server');
             }
         });
     }
 
-    /**
-     * Disable Two payment option (theme-independent)
-     */
     disableTwoPayment() {
-        // Keep functionality minimal: avoid adding custom styles/classes to payment option
+        // No custom styles/classes on the payment option - keep this minimal.
         if (this.twoPaymentRadio) {
             this.twoPaymentRadio.disabled = true;
         }
@@ -2054,9 +1852,6 @@ class TwoCheckoutManager {
         }
     }
     
-    /**
-     * Setup mutation observer for dynamic content (theme-independent)
-     */
     setupMutationObserver() {
         if (this._mutationObserver) {
             this._mutationObserver.disconnect();
@@ -2065,26 +1860,24 @@ class TwoCheckoutManager {
 
         this._mutationObserver = new MutationObserver((mutations) => {
             let shouldReinitialize = false;
-            
+
             mutations.forEach((mutation) => {
                 if (mutation.type === 'childList') {
-                    // Check if payment options were added/changed
                     const addedNodes = Array.from(mutation.addedNodes);
-                    const hasPaymentChanges = addedNodes.some(node => 
+                    const hasPaymentChanges = addedNodes.some(node =>
                         node.nodeType === 1 && (
                             (node.matches && node.matches('.payment-options, [data-module-name="twopayment"]')) ||
                             (node.querySelector && node.querySelector('.payment-options, [data-module-name="twopayment"]'))
                         )
                     );
-                    
+
                     if (hasPaymentChanges) {
                         shouldReinitialize = true;
                     }
                 }
             });
-            
+
             if (shouldReinitialize) {
-                // Debounce reinitializations
                 clearTimeout(this.reinitializeTimeout);
                 this.reinitializeTimeout = setTimeout(() => {
                     this.handleDynamicContentChange();
@@ -2098,16 +1891,11 @@ class TwoCheckoutManager {
         });
     }
     
-    /**
-     * ENHANCED: Handle dynamic content changes with retry mechanism
-     */
     handleDynamicContentChange() {
-        // Re-detect everything
         this.detectCheckoutStep();
         const previousPaymentOption = this.twoPaymentOption;
         this.detectAccountType();
-        
-        // If we previously couldn't find the payment option but now we can, reinitialize
+
         if (!previousPaymentOption && this.twoPaymentOption) {
             this.initializeModules();
         }
@@ -2121,38 +1909,20 @@ class TwoCheckoutManager {
         if (!this.config.companySearchInAddressArea) {
             this.initializeCompanySearch();
         }
-        
-        // Deliberately NOT re-running setupPaymentOptionSelectionListener()
-        // here (TWO-25326 render-loop bug: it used to force
-        // `_paymentListenersAttached = false` and call it again on every
-        // debounced MutationObserver firing - i.e. every time PrestaShop
-        // replaced the `.payment-options` fragment while the checkout step
-        // settled). Every listener that method binds is delegated to
-        // `document`, not to any node inside that fragment, so it keeps
-        // matching the tile's radio/click/submit events across any number
-        // of DOM replacements without ever being re-attached. Re-running it
-        // anyway added a fresh, permanent set of duplicate document-level
-        // listeners (plus another Method-5 setInterval, never cleared) on
-        // every firing - so a single click could invoke
-        // handlePaymentOptionChange() several times concurrently, each
-        // independently racing syncSurchargeCartLine() -> back when that
-        // navigated the payment step, a stack of full page reloads, which
-        // is what Doug saw as the tile rendering and being removed several
-        // times in a row. That navigation is gone now
-        // (refreshCartSummaryInPlace), but the duplicate listeners are
-        // still worth never creating.
-        // cleanup() has no matching removeEventListener calls (the handlers
-        // are anonymous closures, never kept), so nothing this module does
-        // can safely undo the duplicates once bound - the fix is to never
-        // create them, not to fight the guard that already existed to
-        // prevent exactly this.
 
-        // Initialize modules if needed
+        // Deliberately NOT re-running setupPaymentOptionSelectionListener() here:
+        // every listener it binds is delegated to `document`, not to any node
+        // inside the replaced fragment, so it keeps matching events across any
+        // number of DOM replacements without re-attaching. Re-running it would
+        // add a fresh, permanent set of duplicate document-level listeners (plus
+        // another polling setInterval, never cleared) on every firing - and
+        // cleanup() has no matching removeEventListener calls to undo that once
+        // bound, since the handlers are anonymous closures never kept.
+
         if (this.isBusinessAccount && this.config.orderIntentEnabled && !this.orderIntent) {
             this.initializeOrderIntent();
         }
-        
-        // If on payment step and Two is selected, trigger order intent
+
         if (this.currentStep === 'payment' && this.isTwoPaymentSelected() && this.config.orderIntentEnabled && this.canAutoTriggerOrderIntent()) {
             setTimeout(() => {
                 if (this.orderIntent && !this.isLoadingUIShown) {
@@ -2163,16 +1933,11 @@ class TwoCheckoutManager {
     }
 
 
-    /**
-     * Handle PrestaShop address form updates
-     */
     handleAddressFormUpdate() {
-        // Re-detect context
         this.detectCheckoutStep();
         this.detectAccountType();
 
-        // Re-initialize company search when address form updates. Tile mode
-        // (TWO-25326 §7.1) does nothing here deliberately: the address
+        // Tile mode (TWO-25326 §7.1) does nothing here deliberately: the address
         // area's native `company` field stays a plain, unenhanced, typeable
         // text input in that mode (never hidden, never removed - confirmed
         // bug on woocommerce-plugin, checked not to recur here) and is never
@@ -2211,58 +1976,41 @@ class TwoCheckoutManager {
             this.clearConfirmedCompanySelection();
         }
 
-        // Clear cached intent state when address is edited so a new selection can trigger intent
         if (this.orderIntent && this.orderIntent.reset) {
             this.orderIntent.reset();
         }
         this.clearOrderIntentUI();
         this.clearOrderIntentResultFromServer();
         this.enableTwoPayment();
-
-        // Phone validation removed - Two API handles validation
     }
-    
-    /**
-     * Handle PrestaShop delivery form updates  
-     */
+
     handleDeliveryFormUpdate() {
-        // Update step detection as delivery affects checkout flow
         this.detectCheckoutStep();
     }
-    
-    /**
-     * ENHANCED: Handle PrestaShop payment form updates with retry mechanism
-     */
+
     handlePaymentFormUpdate() {
         this.detectAccountType();
         this.handleDynamicContentChange();
-        
-        // Reset order intent result when form updates so it can check again
+
         if (this.orderIntent && this.orderIntent.lastResult) {
             this.orderIntent.lastResult = null;
         }
-        
-        // If Two is available and selected after payment form refresh, ensure order intent runs
+
         if (this.config.orderIntentEnabled) {
             if (!this.orderIntent && window.TwoOrderIntent) {
                 this.initializeOrderIntent();
             }
-            
-            // Only trigger once per form update - no retry loop
+
             if (this.isTwoPaymentSelected() && this.orderIntent && this.canAutoTriggerOrderIntent()) {
-                // Small delay to let DOM settle
+                // Small delay to let the DOM settle.
                 setTimeout(() => {
                     this.triggerOrderIntentForSelection();
                 }, 300);
             }
         }
     }
-    
-    /**
-     * Handle PrestaShop checkout events
-     */
+
     handleCheckoutEvent(event) {
-        // React to various checkout events
         if (event && event.eventType) {
             switch (event.eventType) {
                 case 'updateCart':
@@ -2275,10 +2023,7 @@ class TwoCheckoutManager {
             }
         }
     }
-    
-    /**
-     * Handle payment confirmation
-     */
+
     handlePaymentConfirmation(event) {
         this.detectCheckoutStep();
         if (this.currentStep !== 'payment') {
@@ -2286,7 +2031,6 @@ class TwoCheckoutManager {
         }
 
         if (this.isTwoPaymentSelected() && this.orderIntent && this.config.orderIntentEnabled) {
-            // If processing or no result yet, block and show loading
             if (this.orderIntent.isProcessing || !this.orderIntent.lastResult) {
                 if (event && typeof event.preventDefault === 'function') {
                     event.preventDefault();
@@ -2295,7 +2039,6 @@ class TwoCheckoutManager {
                 this.triggerOrderIntentForSelection();
                 return;
             }
-            // If declined, block with message
             if (this.orderIntent.lastResult && !this.orderIntent.lastResult.approved) {
                 if (event && typeof event.preventDefault === 'function') {
                     event.preventDefault();
@@ -2306,12 +2049,7 @@ class TwoCheckoutManager {
         }
     }
     
-    /**
-     * Initialize modules based on context
-     */
     initializeModules() {
-        // Always initialize field validation (for address step)
-
         // TWO-25326 §7.1: company search is never off - only WHERE it
         // renders varies (this.config.companySearchInAddressArea). In tile
         // mode the address-area's native `company` field is left exactly
@@ -2334,9 +2072,6 @@ class TwoCheckoutManager {
             this.initializeCompanySearch();
         }
 
-        // Phone validation removed - Two API handles validation
-
-        // Initialize order intent for payment step with business accounts
         if (this.config.orderIntentEnabled && this.currentStep === 'payment' && this.isBusinessAccount) {
             this.initializeOrderIntent();
             // If Two is already selected by default (only payment method), trigger intent once.
@@ -2351,8 +2086,6 @@ class TwoCheckoutManager {
     }
     
     /**
-     * Initialize company search module
-     *
      * TWO-25326 §7.1 (2026-08-03 ruling): the admin setting decides WHERE the
      * one shared control mounts, never whether it exists. When the tile mount
      * point (`#two_tile_company`, rendered by paymentinfo.tpl only when the
@@ -2471,13 +2204,10 @@ class TwoCheckoutManager {
             this.t('company_search_placeholder', 'Enter company name to search'),
             'Enter company name to search'
         ];
-        // ALL of them, though PrestaShop only ever renders one: the claim this
-        // comment used to make - that a second editable address form with its own
-        // `name='company'` appears once the buyer states the two addresses differ
-        // - is wrong (TWO-40, verified against core). Core sets the delivery and
-        // invoice form flags in mutually exclusive branches, so the other side is
-        // always a radio selector over saved addresses, never a second form.
-        // Walking all matches stays correct regardless, and costs nothing.
+        // Queries ALL matches, though PrestaShop only ever renders one (TWO-40,
+        // verified against core: delivery/invoice form flags are mutually
+        // exclusive, so the other side is always a radio selector over saved
+        // addresses, never a second `name='company'` form). Costs nothing either way.
         document.querySelectorAll("input[name='company']").forEach(function (field) {
             const current = field.getAttribute('placeholder');
             if (current && ours.indexOf(current) !== -1) {
@@ -2486,20 +2216,8 @@ class TwoCheckoutManager {
         });
     }
 
-    /**
-     * Initialize field validation module
-     */
-    /**
-     * Initialize order intent module
-     */
     initializeOrderIntent() {
         if (!this.orderIntent && window.TwoOrderIntent) {
-            // Block submitting the order while Two is selected and the
-            // last order-intent came back declined - this used to be
-            // conditional on the (now-removed) account-type toggle; there
-            // is no longer a reason to ever skip it, so it is unconditional
-            // (TwoOrderIntent's own default is also true).
-            //
             // TWO-25386 #8: `enabled` now follows the admin's order-intent
             // toggle (this.config.orderIntentEnabled) rather than being
             // hardcoded - shouldRunOrderIntent() reads it to skip the
@@ -2719,26 +2437,17 @@ class TwoCheckoutManager {
         return '';
     }
     
-    /**
-     * Check if Two payment is available
-     */
     isTwoPaymentAvailable() {
         return !!this.twoPaymentOption;
     }
-    
-    /**
-     * Manual order intent trigger (for compatibility)
-     */
+
     triggerOrderIntent() {
         if (this.orderIntent) {
             return this.orderIntent.checkOrderIntent();
         }
         return Promise.resolve({ success: false, error: 'Order intent not available' });
     }
-    
-    /**
-     * Get debug info (for compatibility)
-     */
+
     getDebugInfo() {
         return {
             currentStep: this.currentStep,
@@ -2751,11 +2460,7 @@ class TwoCheckoutManager {
         };
     }
     
-    /**
-     * Cleanup method to prevent memory leaks
-     */
     cleanup() {
-        // Clear intervals
         if (this._selectionCheckInterval) {
             clearInterval(this._selectionCheckInterval);
             this._selectionCheckInterval = null;
@@ -2776,12 +2481,10 @@ class TwoCheckoutManager {
             this._intentRetryTimeout = null;
         }
         
-        // Reset state
         this._paymentListenersAttached = false;
         this._lastSelectionCheck = 0;
         this.isInitialized = false;
-        
-        // Cleanup child modules
+
         if (this.companySearch && typeof this.companySearch.destroy === 'function') {
             this.companySearch.destroy();
         }

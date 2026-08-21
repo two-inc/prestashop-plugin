@@ -4,18 +4,9 @@ declare(strict_types=1);
 
 /**
  * Unit spec for the sole-trader business logic (TWO-24755; toggle removal
- * TWO-25166): the registry's country answer is the ONLY gate - no merchant
- * configuration and no account-type mode are consulted (both features have
- * been removed), registry-only
- * response semantics (empty list = business-only checkout), fail-soft vs
- * fail-closed registry/token handling, the cookie cache's single-slot/TTL
- * behaviour, and that the address form carries no account_type field.
+ * TWO-25166): the registry's country answer is the ONLY gate.
  */
 
-/**
- * Harness whose Two API surface returns canned responses keyed by
- * endpoint prefix, recording every request.
- */
 final class TwoSoleTraderTestHarness extends TwopaymentTestHarness
 {
     /** @var array<string, mixed> */
@@ -103,10 +94,7 @@ final class TwoSoleTraderSpec
     }
 
     /**
-     * The registry's country answer is the ONLY gate (TWO-25166): no
-     * merchant configuration is consulted at all, so a store with no
-     * sole-trader config row whatsoever offers the flow in a
-     * registry-capable country.
+     * TWO-25166: no merchant configuration is consulted at all.
      */
     private static function testAvailableInRegistryCapableCountryWithNoConfig(): void
     {
@@ -122,10 +110,9 @@ final class TwoSoleTraderSpec
     }
 
     /**
-     * The retired merchant toggle is dead weight: a stored 0 - which is
-     * exactly what install() and upgrade-2.6.1 wrote, and why the feature
-     * was invisible on both PrestaShop staging shops - must no longer
-     * suppress the flow.
+     * A stored 0 - what install() and upgrade-2.6.1 wrote, and why the feature
+     * was invisible on both PrestaShop staging shops - must no longer suppress
+     * the flow.
      */
     private static function testRetiredToggleValueHasNoEffect(): void
     {
@@ -143,10 +130,6 @@ final class TwoSoleTraderSpec
         );
     }
 
-    /**
-     * The 2.6.3 upgrade deletes the retired configuration row rather than
-     * leaving a dead value a future reader could mistake for live config.
-     */
     private static function testUpgradeDeletesRetiredToggle(): void
     {
         require_once dirname(__DIR__) . '/upgrade/upgrade-2.6.3.php';
@@ -169,7 +152,6 @@ final class TwoSoleTraderSpec
             ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
         );
         TinyAssert::true(TwoSoleTrader::isAvailable($module, 'GB'));
-        // Lowercase input normalises to the same country
         TwoSoleTrader::resetCache();
         TinyAssert::true(TwoSoleTrader::isAvailable($module, 'gb'));
     }
@@ -191,7 +173,6 @@ final class TwoSoleTraderSpec
         $module = self::harness([], []);
         TinyAssert::same([], TwoSoleTrader::getSupportedCompanyTypes($module, 'GB'));
 
-        // Non-200
         TwoSoleTrader::resetCache();
         StubStore::reset();
         $module->cannedResponses = [
@@ -199,7 +180,6 @@ final class TwoSoleTraderSpec
         ];
         TinyAssert::same([], TwoSoleTrader::getSupportedCompanyTypes($module, 'GB'));
 
-        // 200 with malformed body
         TwoSoleTrader::resetCache();
         StubStore::reset();
         $module->cannedResponses = [
@@ -214,7 +194,6 @@ final class TwoSoleTraderSpec
             [],
             ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
         );
-        // Never hits the API for junk country input
         TinyAssert::same([], TwoSoleTrader::getSupportedCompanyTypes($module, ''));
         TinyAssert::same([], TwoSoleTrader::getSupportedCompanyTypes($module, 'G'));
         TinyAssert::same([], TwoSoleTrader::getSupportedCompanyTypes($module, 'GBR'));
@@ -231,17 +210,14 @@ final class TwoSoleTraderSpec
         TwoSoleTrader::getSupportedCompanyTypes($module, 'GB');
         TwoSoleTrader::getSupportedCompanyTypes($module, 'gb');
         TinyAssert::count(1, $module->requests);
-        // A different country is its own cache entry within the request
         TwoSoleTrader::getSupportedCompanyTypes($module, 'US');
         TinyAssert::count(2, $module->requests);
     }
 
     /**
-     * The cookie cache is a single slot: switching country overwrites it
-     * rather than growing a new key per country, capping the PrestaShop
-     * session cookie's growth regardless of how many countries a caller
-     * requests (the availability check runs on unvalidated client input
-     * live at the address-form step).
+     * A single slot caps the PrestaShop session cookie's growth: the
+     * availability check runs on unvalidated client input live at the
+     * address-form step.
      */
     private static function testCookieCacheIsSingleSlotAndOverwritesOnCountryChange(): void
     {
@@ -258,7 +234,6 @@ final class TwoSoleTraderSpec
         $afterGb = json_decode($cookie->{TwoSoleTrader::COOKIE_KEY}, true);
         TinyAssert::same('GB', $afterGb['country']);
 
-        // Switching country overwrites the same key rather than adding one
         TwoSoleTrader::resetCache();
         TwoSoleTrader::getSupportedCompanyTypes($module, 'US');
         $afterUs = json_decode($cookie->{TwoSoleTrader::COOKIE_KEY}, true);
@@ -266,10 +241,6 @@ final class TwoSoleTraderSpec
         TinyAssert::same([], $afterUs['types']);
     }
 
-    /**
-     * A cached answer for the same country within the TTL is reused
-     * without hitting the registry again; once stale it re-fetches.
-     */
     private static function testCookieCacheExpiresAfterTtl(): void
     {
         $module = self::harness(
@@ -277,8 +248,7 @@ final class TwoSoleTraderSpec
             ['/registry/v1/supported-company-types/GB' => self::registryOk(['SOLE_TRADER'])]
         );
         $cookie = Context::getContext()->cookie;
-        // Seed a stale cookie entry (older than CACHE_TTL_SECONDS) directly,
-        // bypassing the request-scoped static cache this test doesn't want.
+        // Seeded directly to bypass the request-scoped static cache.
         $cookie->{TwoSoleTrader::COOKIE_KEY} = json_encode([
             'country' => 'GB',
             'types' => ['SOME_STALE_VALUE'],
@@ -290,21 +260,18 @@ final class TwoSoleTraderSpec
     }
 
     /**
-     * A registry fetch ERROR must not be cached - otherwise a single
-     * transient blip suppresses the toggle for the rest of the TTL
+     * A cached fetch error would suppress the toggle for the rest of the TTL
      * window, indistinguishable from a real business-only country.
      */
     private static function testFetchErrorIsNotCached(): void
     {
         $module = self::harness([], []);
-        // No canned response for GB => setTwoPaymentRequest returns false => fetch error
+        // No canned response => setTwoPaymentRequest returns false => fetch error
         $types = TwoSoleTrader::getSupportedCompanyTypes($module, 'GB');
         TinyAssert::same([], $types);
         $cookie = Context::getContext()->cookie;
         TinyAssert::true(!isset($cookie->{TwoSoleTrader::COOKIE_KEY}) || empty($cookie->{TwoSoleTrader::COOKIE_KEY}), 'A fetch error must not populate the cookie cache');
 
-        // Now the registry recovers - resetCache clears the request-scoped
-        // cache so the recovered answer is actually fetched and used
         TwoSoleTrader::resetCache();
         $module->cannedResponses = ['/registry/v1/supported-company-types/GB' => self::registryOk(['SOLE_TRADER'])];
         TinyAssert::same(['SOLE_TRADER'], TwoSoleTrader::getSupportedCompanyTypes($module, 'GB'));
@@ -314,8 +281,7 @@ final class TwoSoleTraderSpec
     {
         $module = self::harness([], []);
 
-        // Happy path: both mints return the token header (case handled by
-        // the transport, which lower-cases header names)
+        // Header names arrive lower-cased: the transport does that.
         TwoSoleTrader::$transport = function ($endpoint, $payload) {
             return [
                 'status' => 200,
@@ -327,7 +293,7 @@ final class TwoSoleTraderSpec
             TwoSoleTrader::mintTokens($module)
         );
 
-        // Second mint failing voids the pair — never hand the browser half a flow
+        // Never hand the browser half a flow: one failure voids the pair.
         TwoSoleTrader::$transport = function ($endpoint, $payload) {
             if ($endpoint === '/autofill/v1/delegation') {
                 return ['status' => 500, 'headers' => []];
@@ -336,7 +302,6 @@ final class TwoSoleTraderSpec
         };
         TinyAssert::same(null, TwoSoleTrader::mintTokens($module));
 
-        // Missing header on a 200 also fails closed
         TwoSoleTrader::$transport = function ($endpoint, $payload) {
             return ['status' => 200, 'headers' => []];
         };
@@ -344,15 +309,10 @@ final class TwoSoleTraderSpec
     }
 
     /**
-     * Regression guard: TwoSoleTrader::postCapturingHeaders() calls
-     * $module->configureSslVerification($ch) from OUTSIDE the Twopayment
-     * class (TwoSoleTrader does not extend it). Every $transport-seamed
-     * test above bypasses that real call entirely, so a caught-too-late
-     * bug here (Twopayment::configureSslVerification declared private)
-     * would fatal every real, non-test token mint while every other test
-     * in this suite kept passing. Cheap, network-free tripwire: assert
-     * the method is actually callable from another class without
-     * needing to exercise curl.
+     * TwoSoleTrader::postCapturingHeaders() calls
+     * $module->configureSslVerification($ch) from OUTSIDE the Twopayment class,
+     * a call every $transport-seamed test above bypasses: declaring it private
+     * would fatal every real token mint with this suite still green.
      */
     private static function testConfigureSslVerificationIsCallableFromOutsideTwopayment(): void
     {
@@ -369,7 +329,7 @@ final class TwoSoleTraderSpec
         TinyAssert::same('https://checkout.staging.two.inc/soletrader/signup', TwoSoleTrader::getSignupPageUrl());
 
         // Anything else (legacy 'development', sandbox, empty) => sandbox,
-        // mirroring Twopayment::ENVIRONMENT_HOSTS semantics
+        // mirroring Twopayment::ENVIRONMENT_HOSTS
         Configuration::updateValue('PS_TWO_ENVIRONMENT', 'sandbox');
         TinyAssert::same('https://checkout.sandbox.two.inc/soletrader/signup', TwoSoleTrader::getSignupPageUrl());
         Configuration::updateValue('PS_TWO_ENVIRONMENT', '');
@@ -377,12 +337,8 @@ final class TwoSoleTraderSpec
     }
 
     /**
-     * Resolve the three dev-overridable service URLs in a CHILD process, with
-     * _PS_MODE_DEV_ pinned and a chosen environment block.
-     *
-     * A child process is not ceremony: _PS_MODE_DEV_ is a constant, so the gate
-     * on these overrides cannot be exercised on both sides inside one PHP
-     * process, and the offline suite runs with the constant undefined.
+     * A child process is required: _PS_MODE_DEV_ is a constant, so the gate on
+     * these overrides cannot be exercised on both sides inside one PHP process.
      *
      * @param string $psModeDev '1', '0' or 'unset'
      * @param array<string, string> $env override vars to export
@@ -429,9 +385,8 @@ final class TwoSoleTraderSpec
     }
 
     /**
-     * TWO_CHECKOUT_BASE_URL repoints the hosted signup page in dev mode, so a
-     * dev can serve the checkout-page app themselves (locally, or through a
-     * tunnel a remote shop can reach) while leaving the API and portal alone.
+     * TWO_CHECKOUT_BASE_URL repoints the hosted signup page in dev mode while
+     * leaving the API and portal alone.
      */
     private static function testSignupUrlHonoursCheckoutOverrideInDevMode(): void
     {
@@ -450,18 +405,14 @@ final class TwoSoleTraderSpec
         $urls = self::resolveUrls('1', ['PROBE_EMPTY_VARS' => 'TWO_CHECKOUT_BASE_URL']);
         TinyAssert::same('https://checkout.staging.two.inc/soletrader/signup', $urls['signup']);
 
-        // Same for the other two, whose compose defaults are empty too.
         $urls = self::resolveUrls('1', ['PROBE_EMPTY_VARS' => 'TWO_API_BASE_URL,TWO_PORTAL_BASE_URL']);
         TinyAssert::same('https://api.staging.two.inc', $urls['api']);
         TinyAssert::same('https://portal.staging.two.inc', $urls['portal']);
     }
 
     /**
-     * The security-relevant half of the gate: a shop that is NOT in dev mode
-     * must ignore TWO_CHECKOUT_BASE_URL even when it is set in the process
-     * environment, and resolve the static environment map instead. Covers both
-     * shapes - the constant defined false (what a production PrestaShop does)
-     * and the constant absent altogether.
+     * The security-relevant half of the gate. Covers both shapes - the constant
+     * defined false (what a production PrestaShop does) and absent altogether.
      */
     private static function testSignupUrlIgnoresCheckoutOverrideOutsideDevMode(): void
     {
@@ -473,7 +424,6 @@ final class TwoSoleTraderSpec
         $urls = self::resolveUrls('unset', $env, 'production');
         TinyAssert::same('https://checkout.two.inc/soletrader/signup', $urls['signup']);
 
-        // Same gate, same result for the other two service URLs.
         $urls = self::resolveUrls(
             '0',
             [
@@ -487,10 +437,8 @@ final class TwoSoleTraderSpec
     }
 
     /**
-     * The three overrides are independent: setting one must not move the other
-     * two off their environment defaults, and all three set must each resolve
-     * to their own value (staging API + locally-served checkout page is the
-     * whole point of splitting them).
+     * Staging API plus a locally-served checkout page is the whole point of
+     * splitting the three overrides.
      */
     private static function testServiceUrlOverridesResolveIndependently(): void
     {
@@ -520,10 +468,8 @@ final class TwoSoleTraderSpec
     }
 
     /**
-     * The address form carries no account_type field regardless of
-     * sole-trader registry state - that selector feature has been
-     * removed entirely (TWO-24755 rework). Sole traders enrol via the
-     * payment-step toggle, not the address form.
+     * The account_type selector was removed entirely (TWO-24755 rework): sole
+     * traders enrol via the payment-step toggle, not the address form.
      */
     private static function testFormatterHasNoAccountTypeField(): void
     {
@@ -546,8 +492,7 @@ final class TwoSoleTraderSpec
     }
 
     /**
-     * Capture what getTwoPaymentOption() hands the template, which the stub
-     * Smarty otherwise discards.
+     * The stub Smarty otherwise discards what getTwoPaymentOption() assigns.
      *
      * @return array{vars: array<string, mixed>}
      */
@@ -584,16 +529,13 @@ final class TwoSoleTraderSpec
     }
 
     /**
-     * TWO-25326 bug 9, round 3: the toggle is rendered SERVER-side now, so the
-     * payment tile has to carry the registry answer and the country it is an
-     * answer about.
+     * TWO-25326 bug 9: the toggle is rendered SERVER-side, so the payment tile
+     * carries the registry answer and the country it answers about.
      *
-     * This is the seam no Jest test can see. The browser half
-     * (TwoSoleTrader.adoptServerRenderedToggle) reads exactly two attributes and
-     * treats anything it cannot parse as "no answer" - i.e. it silently falls
-     * back to the round trip that caused the flicker in the first place. So a
-     * rename or a dropped assign here does not break the checkout, it just
-     * quietly restores the bug, with every JS test still green.
+     * The seam no Jest test can see. TwoSoleTrader.adoptServerRenderedToggle
+     * treats anything it cannot parse as "no answer" and silently falls back to
+     * the round trip that caused the flicker, so a rename or a dropped assign
+     * here quietly restores the bug with every JS test still green.
      */
     private static function testPaymentTileCarriesTheServerResolvedToggleAnswer(): void
     {
@@ -605,10 +547,8 @@ final class TwoSoleTraderSpec
             [],
             ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
         );
-        // The tile reads CACHE-ONLY (round 3 review, finding 2), so the answer has
-        // to already be known - which on a real shop is what the browser's own
-        // availability request arranges, through the endpoint that writes the
-        // cookie. This stands in for that having happened.
+        // The tile reads CACHE-ONLY, so the answer has to already be known; on a
+        // real shop the browser's own availability request arranges that.
         TwoSoleTrader::isAvailable($module, 'GB');
         $requestsBefore = count($module->requests);
         $available = self::captureTileVars($module);
@@ -621,9 +561,6 @@ final class TwoSoleTraderSpec
         TinyAssert::same('1', $available['vars']['sole_trader_answer']);
         TinyAssert::same('GB', $available['vars']['sole_trader_country']);
 
-        // The other answer, from the same source: a country the registry does
-        // not list sole traders for. The template renders the toggle hidden and
-        // chipless, and the browser adopts THAT rather than asking again.
         self::reset();
         StubStore::$addresses[8811] = ['id_country' => 44];
         StubStore::$countries[44] = 'gb';
@@ -635,8 +572,8 @@ final class TwoSoleTraderSpec
         TwoSoleTrader::isAvailable($businessOnlyModule, 'GB');
         $businessOnly = self::captureTileVars($businessOnlyModule);
         TinyAssert::same(false, $businessOnly['vars']['sole_trader_available']);
-        // '0' is a real answer and must be distinguishable from '' below - it is
-        // what lets the browser adopt "business-only country" and stop asking.
+        // '0' is a real answer, distinct from '': it lets the browser adopt
+        // "business-only country" and stop asking.
         TinyAssert::same('0', $businessOnly['vars']['sole_trader_answer']);
         TinyAssert::same('GB', $businessOnly['vars']['sole_trader_country']);
     }
@@ -644,17 +581,15 @@ final class TwoSoleTraderSpec
     /**
      * A failed lookup costs the request ONE timeout, not one per caller.
      *
-     * This is the counterpart to testFetchErrorIsNotCached: the error must not
-     * become an ANSWER and must not outlive the request, but it must still be
-     * remembered FOR the request. Round 3 dropped the request-scoped memo along
-     * with the bad one and turned a failing registry into several serial timeouts
-     * on the checkout render path - which took the payment option past the e2e
-     * suite's wait and off the page entirely.
+     * Counterpart to testFetchErrorIsNotCached: the error must not become an
+     * ANSWER nor outlive the request, but must still be remembered FOR it.
+     * Without the request-scoped memo a failing registry becomes several serial
+     * timeouts on the checkout render path, taking the payment option past the
+     * e2e suite's wait and off the page entirely.
      */
     private static function testFailedRegistryLookupIsAttemptedOncePerRequest(): void
     {
-        // No canned response: the harness returns false, the shape of a transport
-        // failure.
+        // No canned response: the harness returns false, a transport failure.
         $module = self::harness([], []);
 
         TinyAssert::same(null, TwoSoleTrader::getSupportedCompanyTypesOrNull($module, 'GB'));
@@ -684,15 +619,14 @@ final class TwoSoleTraderSpec
      * An answer that is not already known is reported as NO answer, and costs the
      * render no request at all.
      *
-     * Two properties in one, and both matter:
-     *  - it must not be "no" (isAvailable() flattens the two, which is right for a
+     *  - it must not be "no": isAvailable() flattens the two, right for a
      *    capability gate and wrong for markup the browser adopts as settled and
-     *    never re-asks - one timeout would become a cached "business-only country"
-     *    for the rest of the page's life);
-     *  - it must not be resolved HERE. This runs in a shopper's checkout render,
-     *    and a payment-option change reloads that page, so a live call meant every
-     *    payment-step render on a shop that cannot reach the registry paid the
-     *    timeout again (round 3 review, finding 2).
+     *    never re-asks - one timeout would become a cached "business-only
+     *    country" for the rest of the page's life;
+     *  - it must not be resolved HERE: this runs in a shopper's checkout render,
+     *    and a payment-option change reloads that page, so a live call makes
+     *    every payment-step render on a shop that cannot reach the registry pay
+     *    the timeout again.
      */
     private static function testPaymentTileWithAnUnknownAnswerAsksNothingAndClaimsNothing(): void
     {
@@ -700,9 +634,8 @@ final class TwoSoleTraderSpec
         StubStore::$countries[44] = 'gb';
         Context::getContext()->cart->id_address_invoice = 8811;
 
-        // A registry that WOULD answer, and a cold cache. The tile must still not
-        // call it - that is the whole point, and a canned success here is what
-        // makes the assertion about the render rather than about the transport.
+        // A registry that WOULD answer, and a cold cache: the canned success is
+        // what makes this about the render rather than about the transport.
         $module = self::harness(
             [],
             ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
@@ -723,8 +656,7 @@ final class TwoSoleTraderSpec
     }
 
     /**
-     * Build the order-intent controller for the availability action, with a
-     * response that unwinds instead of exiting. Same pattern as
+     * The response unwinds instead of exiting. Same pattern as
      * SessionCompanyClearSpec/OrgNumberPreVerificationSpec.
      */
     private static function makeAvailabilityController(string $token, string $country)
@@ -761,15 +693,11 @@ final class TwoSoleTraderSpec
     }
 
     /**
-     * The availability endpoint must PERSIST the registry answer it just cached,
-     * explicitly, before it ends the request.
-     *
-     * This is load-bearing, not hygiene (TWO-25326 round 4/5): the payment tile
-     * renders the sole-trader toggle from that cookie and never resolves the
-     * registry itself, so without this write the server-rendered toggle can never
-     * appear and the chip flicker this ticket fixes comes straight back. It used
-     * to rely on PrestaShop's Cookie destructor, which only writes while headers
-     * are unsent - contingent on output buffering, an ini setting.
+     * TWO-25326: the payment tile renders the sole-trader toggle from that cookie
+     * and never resolves the registry itself, so without an explicit write the
+     * server-rendered toggle can never appear and the chip flicker comes back.
+     * PrestaShop's Cookie destructor is not enough - it only writes while headers
+     * are unsent, contingent on output buffering, an ini setting.
      *
      * Asserted at the moment the response is sent, not afterwards, because a write
      * that happens after the headers are out is exactly the failure mode.
@@ -798,8 +726,8 @@ final class TwoSoleTraderSpec
     }
 
     /**
-     * And nothing is written when the token is rejected: that path returns before
-     * any lookup, so there is no answer to persist and no session to touch.
+     * The token-rejected path returns before any lookup, so there is no answer
+     * to persist and no session to touch.
      */
     private static function testAvailabilityEndpointWritesNothingWhenTheTokenIsRejected(): void
     {
@@ -815,17 +743,14 @@ final class TwoSoleTraderSpec
         TinyAssert::same($before, Context::getContext()->cookie->writes);
         // Not merely `success === false`: the controller's unknown-action branch
         // emits exactly that and also writes nothing, so this test would pass with
-        // the availability case removed entirely. Assert the refusal is the TOKEN
-        // refusal.
+        // the availability case removed entirely.
         TinyAssert::same(
             array(array('success' => false, 'error' => 'Invalid token')),
             $controller->emitted,
             'a rejected token must be refused as a token, not silently as an unknown action'
         );
-        // And that the refusal happens BEFORE any lookup - the half the docblock
-        // claims and nothing asserted. Without this, moving the token check below
-        // the registry call (an unauthenticated request triggering a live outbound
-        // call) passes.
+        // Without this, moving the token check below the registry call - an
+        // unauthenticated request triggering a live outbound call - passes.
         TinyAssert::same(
             array(),
             $controller->module->requests,
@@ -834,13 +759,10 @@ final class TwoSoleTraderSpec
     }
 
     /**
-     * The PaymentOption stub must refuse a setter PrestaShop core does not have.
-     *
-     * Round 4 review: the stub used to accept ANY `set*` name, record it and
-     * return $this - so a module change calling a setter core lacks passed every
-     * spec here and fatalled in production, the one mismatch a stub of a core
-     * value object exists to catch. This asserts the allowlist is load-bearing
-     * rather than decorative.
+     * A stub accepting ANY `set*` name lets a module change calling a setter core
+     * lacks pass every spec here and fatal in production - the one mismatch a stub
+     * of a core value object exists to catch. This pins the allowlist as
+     * load-bearing rather than decorative.
      */
     private static function testPaymentOptionStubRefusesASetterCoreDoesNotHave(): void
     {

@@ -65,15 +65,10 @@ class TwoSoleTrader
      * Countries whose lookup FAILED during this request, so it is attempted at
      * most once per request per country (TWO-25326 bug 9, round 3).
      *
-     * Deliberately separate from $types_cache: the two caches answer different
-     * questions and have different lifetimes. A failure must not become an
-     * ANSWER (that is what flattened a registry blip into a cached
-     * "business-only country", and it is why $types_cache no longer stores one),
-     * and it must not survive the request (that is what the cookie is for, and
-     * why the cookie still never records one). But re-attempting it several times
-     * WITHIN one request is not caution, it is a multiple of the timeout on a
-     * page a buyer is already waiting on. One attempt, null every time after it,
-     * error never persisted.
+     * Deliberately separate from $types_cache: a failure must never be stored
+     * as an ANSWER (a registry blip would then read as a cached "business-only
+     * country") and must not survive past the request (that's what the cookie
+     * is for, and it never records a failure either).
      *
      * @var array<string, bool>
      */
@@ -116,30 +111,18 @@ class TwoSoleTrader
 
     /**
      * The same three-state answer, but ONLY if it is already known - never a
-     * network call (TWO-25326 bug 9, round 3 review, finding 2).
+     * network call (TWO-25326 bug 9, round 3 review, finding 2). This is what
+     * the payment tile renders from: a render-path network call would pay a
+     * registry timeout on every payment-step render for a shop that can't
+     * reach the registry, which is buyer-visible latency a rendering nicety
+     * doesn't justify.
      *
-     * This is what the payment tile renders from, and the only three-state reader
-     * there is. Resolving the answer LIVE here cannot work: the tile renders inside a shopper's
-     * checkout request, so on any shop that cannot reach the registry EVERY
-     * payment-step render paid the request timeout again - and at the time this
-     * was written a payment-option change was a full page reload, so there were
-     * a lot of those renders. That reload is gone (TWO-25326 round 4), which
-     * makes the argument weaker but not wrong: a render-path network call on a
-     * shop that cannot reach the registry is still a buyer-visible timeout. The failure marker bounds that to one
-     * attempt per request, not per session, because only a SUCCESS is written to
-     * the cookie. Net-new buyer-visible latency on a path that previously made no
-     * call at all, which is not a trade worth making for a rendering nicety.
-     *
-     * The rest of the module is built for exactly this: an unknown answer renders
-     * as no answer, the browser's own availability request resolves it, and the
-     * endpoint that answers writes the cookie - so ordinarily the FIRST
-     * payment-step render of a session renders no toggle and every render after
-     * it, including all the surcharge-driven reloads that made the flicker
-     * visible, renders the real answer. Where the cookie cannot be stored at all,
-     * or the registry keeps failing, EVERY render answers "unknown" and the
-     * toggle is client-rendered exactly as it was before this ticket - degraded
-     * to the old behaviour, never worse than it. That is the same shape as this module's other checkout-render
-     * reads (cache-only, primed off the render path).
+     * An unknown answer renders as no answer; the browser's own availability
+     * request resolves it and writes the cookie, so the first payment-step
+     * render of a session shows no toggle and every render after it shows the
+     * real answer. Where the cookie can't be stored, or the registry keeps
+     * failing, every render answers "unknown" and the toggle is client-rendered
+     * as it was pre-ticket.
      *
      * @param string $countryIso
      *
@@ -163,12 +146,9 @@ class TwoSoleTrader
     /**
      * The already-known answer for a country, or null if there is none.
      *
-     * ONE reader for both callers (round 4 review, finding 4). This was written
-     * out twice - once here and once inside getSupportedCompanyTypesOrNull() -
-     * with nothing coupling them, so a change to COOKIE_KEY, to CACHE_TTL_SECONDS
-     * or to the stored JSON shape would have had to be made in two places and
-     * would silently work in one of them. The copies had already drifted on how a
-     * malformed country was reported.
+     * ONE reader for both callers (round 4 review, finding 4): keeps
+     * COOKIE_KEY, CACHE_TTL_SECONDS and the stored JSON shape defined in one
+     * place instead of two independently-maintained copies.
      *
      * Request memo first, then the cookie: the memo is only ever populated from a
      * fresh answer, so it cannot be staler than the cookie it shadows.
@@ -259,15 +239,9 @@ class TwoSoleTrader
 
         $types = self::fetchSupportedCompanyTypes($module, $countryIso);
         if ($types === null) {
-            // Recorded as a FAILURE, not as an answer (TWO-25326 bug 9, round 3).
-            // The class comment above has always said a fetch error is not cached,
-            // and the cookie was already exempt - but $types_cache used to store
-            // the flattened empty list, so within one request a blip WAS cached,
-            // as a definite "business-only country". Invisible while every caller
-            // re-asked over AJAX; not once the answer is rendered into markup the
-            // browser adopts and never re-asks. The separate marker keeps both
-            // properties: the caller is told "unresolved", and the request still
-            // spends at most one timeout on it. See $failed_lookups.
+            // Recorded as a FAILURE, not as an answer (TWO-25326 bug 9, round 3):
+            // caller is told "unresolved" rather than caching a blip as a
+            // definite "business-only country". See $failed_lookups.
             self::$failed_lookups[$countryIso] = true;
 
             return null;

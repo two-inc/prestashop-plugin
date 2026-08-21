@@ -586,13 +586,11 @@ describe('populating and re-marking are two different operations', () => {
 
         expect(companyField().attr(MARKER)).toBe('Acme Trading Ltd');
 
-        // The buyer changes country; core rebuilds the form around them.
         rebuildAddressesStepAsCoreDoes({ editing: 'invoice', countryId: FR_OPTION });
 
         expect(companyField().val()).toBe('Acme Trading Ltd');
         expect(companyField().attr(MARKER)).toBeUndefined();
 
-        // ...and the manager rebuilds the search on `updatedAddressForm`.
         mount(PICKED, { mirrorMemory: memory });
 
         expect(companyField().attr(MARKER)).toBe('Acme Trading Ltd');
@@ -696,7 +694,6 @@ describe('the rebuild that separates the number from the name', () => {
         expect(identifierField().length).toBe(0);
         expect(companyField().val()).toBe('Acme Trading Ltd');
 
-        // The buyer goes back to a country that asks for one.
         rebuildAddressesStepAsCoreDoes({ editing: 'invoice', countryId: ES_OPTION });
         mount(PICKED, { mirrorMemory: memory });
 
@@ -1257,7 +1254,6 @@ describe('the completion records what the writer actually placed', () => {
         // write rather than the attempt.
         expect(search.completeMirroredOrganizationNumber(root)).toBe(false);
 
-        // The visible field is untouched, unclaimed and still visible.
         expect(identifierField().val()).toBe('');
         expect(identifierField().attr(MARKER)).toBeUndefined();
         expect(identifierField().closest('.form-group').get(0).style.display).toBe('');
@@ -1265,7 +1261,6 @@ describe('the completion records what the writer actually placed', () => {
         const organizationField = $("input[name='companyid']");
         expect(organizationField.val()).toBe('TWO:ST123456789012');
         expect(organizationField.attr('data-two-company-name')).toBe('Sole Trader Test Co');
-        // Nothing recorded as written to the secondary address, because nothing was.
         expect(memory.organization).toBe('');
         // Still OWING, deliberately: `organizationPending` is now the only surviving
         // record of the number, and republishMirroredSelection() reads it to restore

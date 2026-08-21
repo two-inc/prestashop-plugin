@@ -1,26 +1,26 @@
 /**
- * TWO-25239. Regression tests for what happens to the company-search widget when
- * the address form is re-rendered.
+ * TWO-25239. Regression tests for the company-search widget across an
+ * address-form re-render.
  *
- * PrestaShop fires `updatedAddressForm` for interactions as ordinary as a
- * country change, and TwoCheckoutManager.handleAddressFormUpdate() responds by
- * destroying the TwoCompanySearch instance and building a fresh one. Two of the
- * three defects found while reviewing the rewrite live on that path:
+ * PrestaShop fires `updatedAddressForm` on ordinary interactions like a
+ * country change; TwoCheckoutManager.handleAddressFormUpdate() responds by
+ * destroying the TwoCompanySearch instance and building a fresh one. Two
+ * defects live on that path:
  *
  *   - `_renderItem` was re-wrapped on every setup. jQuery UI's widget bridge
- *     does not build a fresh instance when `.autocomplete({...})` is called on
- *     an already-initialised field — it runs option() + _init() on the existing
- *     one — so each call captured the previous wrapper and wrapped it again,
- *     nesting a layer deeper per event until rendering a row blew the stack.
- *   - a destroyed instance kept acting. `prestashop.on` has no `off`, so the
- *     handler a destroyed instance registered still fires; once setupAutocomplete()
- *     began re-resolving the field against the live DOM, the zombie resolved to
- *     the SAME live input as the live instance while its own `companyid` field
+ *     does not build a fresh instance when `.autocomplete({...})` runs on an
+ *     already-initialised field — it runs option() + _init() on the existing
+ *     one — so each call wrapped the previous wrapper again, nesting deeper
+ *     per event until rendering a row blew the stack.
+ *   - a destroyed instance kept acting. `prestashop.on` has no `off`, so a
+ *     destroyed instance's handler still fires; once setupAutocomplete()
+ *     re-resolved the field against the live DOM, the zombie resolved to the
+ *     SAME live input as the live instance while its own `companyid` field
  *     was the detached one its init() had created — so a selected company's
  *     organisation number was written somewhere that no longer submits.
  *
- * The third (stuck spinner) is covered here at widget level too, because the
- * spinner is jQuery UI's `pending` counter and only the real widget has one.
+ * A third defect (stuck spinner) is covered here too: the spinner is jQuery
+ * UI's `pending` counter and only the real widget has one.
  */
 
 'use strict';
@@ -75,7 +75,6 @@ function makeInstance(extraConfig) {
     );
 }
 
-/** The live company input as a jQuery object. */
 function liveField() {
     return $("input[name='company']");
 }
@@ -83,32 +82,22 @@ function liveField() {
 /**
  * The input the SEARCH WIDGET is bound to (TWO-25326).
  *
- * Not the same node as `liveField()` any more, and that distinction is the
- * reason most of this file needed touching. The company-name field used to BE
- * the search box; it is now only the trigger that opens the panel, and the
- * widget - with its `minLength`, its `delay`, its loading class and its menu -
- * lives on the panel's own query input.
+ * Not the same node as `liveField()`: the company-name field is now only the
+ * trigger that opens the panel; the widget - `minLength`, `delay`, loading
+ * class, menu - lives on the panel's own query input.
  *
  * Resolved fresh every call, never cached: the panel is rebuilt whenever
- * PrestaShop replaces the address form, which is the whole subject of this
- * suite.
+ * PrestaShop replaces the address form.
  */
 function searchInput() {
     return $('.two-company-dropdown__query');
 }
 
-/** The dropdown panel root. */
 function panel() {
     return $('.two-company-dropdown');
 }
 
-/**
- * Open the panel the way a buyer does - a real mousedown on the company-name
- * field - and return the query input focus has moved into.
- *
- * Most tests below need this before they can type at all: with the panel shut
- * there is no query field in the document to type into.
- */
+/** Open the panel via a real mousedown, and return the query input. */
 function openPanel() {
     liveField().trigger('mousedown');
     return searchInput();
@@ -121,11 +110,9 @@ describe('the real jQuery UI widget is what gets bound', () => {
         expect(liveField().hasClass('two-company-search-input')).toBe(true);
         expect(searchInput().hasClass('ui-autocomplete-input')).toBe(true);
         expect(searchInput().autocomplete('instance')).toBeTruthy();
-        // 0 is deliberate (TWO-25288). jQuery UI does not invoke `source` for a
-        // term shorter than `minLength`, so a threshold here would swallow
-        // sub-threshold keystrokes before `source` ever runs. The threshold
-        // lives in the `source` guard instead - see the hint tests below,
-        // which pin that no request escapes it.
+        // 0 is deliberate (TWO-25288): jQuery UI skips `source` below
+        // `minLength`, so a threshold here would swallow keystrokes before
+        // `source` runs. The threshold lives in the `source` guard instead.
         expect(searchInput().autocomplete('option', 'minLength')).toBe(0);
         expect(searchInput().autocomplete('option', 'delay')).toBe(300);
     });
@@ -133,10 +120,8 @@ describe('the real jQuery UI widget is what gets bound', () => {
     test('#30.x.14 bug 2.1: the menu opens with a visible gap below the field, not flush against it', () => {
         makeInstance();
 
-        // Live-verified: jQuery UI's own default (`my: "left top"` against
-        // `at: "left bottom"`) butted the menu directly against the field
-        // with zero pixels between them, reading as one continuous control.
-        // `top+8` is what actually opens a gap a buyer can see.
+        // Live-verified: jQuery UI's default butted the menu flush against
+        // the field with zero gap, reading as one continuous control.
         expect(searchInput().autocomplete('option', 'position')).toEqual({
             my: 'left top+8',
             at: 'left bottom',
@@ -160,11 +145,10 @@ describe('#30.x.14 bug 2.1: a real click opens a control, plain keyboard focus d
         makeInstance();
         const field = liveField();
 
-        // TWO-25326 §1: what opens (and what is asserted on) is the anchored
-        // PANEL, not jQuery UI's floating menu - the menu now lives inside the
-        // panel, so its own `display` is meaningless while the panel is shut.
-        // `shown()` walks the ancestor chain for exactly that reason; jsdom
-        // computes no layout, so jQuery's `:visible` cannot be used here.
+        // TWO-25326 §1: the PANEL is what opens, not jQuery UI's floating
+        // menu - its own `display` is meaningless while the panel is shut.
+        // `shown()` walks the ancestor chain; jsdom computes no layout, so
+        // jQuery's `:visible` cannot be used here.
         expect(shown(panel())).toBe(false);
 
         click(field);
@@ -177,13 +161,10 @@ describe('#30.x.14 bug 2.1: a real click opens a control, plain keyboard focus d
     });
 
     test('plain keyboard focus (Tab, no mousedown) opens nothing', () => {
-        // Round-1 adversarial review finding (Vader): the hint row is
-        // aria-disabled/keyboard-skipped by design, so opening it for a
-        // keyboard user with no signal of intent to search would announce a
-        // result becoming available with nothing they could actually select
-        // - a regression from the old, silent behaviour. Gating on a real
-        // `mousedown` (which Tab never fires) is what keeps Tab silent while
-        // still opening for an actual click.
+        // Round-1 adversarial review (Vader): opening for keyboard focus with
+        // no signal of intent would announce a result with nothing keyboard-
+        // selectable. Gating on a real `mousedown` (which Tab never fires)
+        // keeps Tab silent while still opening for an actual click.
         makeInstance();
         const field = liveField();
 
@@ -191,12 +172,6 @@ describe('#30.x.14 bug 2.1: a real click opens a control, plain keyboard focus d
 
         expect(shown(panel())).toBe(false);
     });
-
-    // DELETED (TWO-25326 §1): `clicking a field already holding a searchable
-    // term re-opens its results, not the hint`. openDropdown() now starts the
-    // query field EMPTY by design - seeding it would re-offer the company the
-    // buyer has just confirmed - so re-opening on a confirmed name shows the
-    // hint, which is the opposite of what that test pinned.
 
     test('clicking the field while in manual entry opens nothing', () => {
         const instance = makeInstance();
@@ -273,20 +248,17 @@ describe('the company-search hints (TWO-25288)', () => {
      * the `_renderItem` patch are all the things under test.
      */
     function search(term) {
-        // The panel has to be open before there is a query field to search on
-        // (TWO-25326 §1). Opening it renders no row for the empty query it
-        // opens with (TWO-40 follow-up) and makes no request, so the ajax
-        // counts below still measure only what `term` caused.
+        // Panel must be open before a query field exists (TWO-25326 §1); its
+        // empty-query open renders no row and makes no request (TWO-40
+        // follow-up), so ajax counts below measure only what `term` caused.
         openPanel();
         const field = searchInput();
-        // Bootstrapped-guard: without the widget bound, every hint assertion
-        // below would pass vacuously against an untouched DOM.
+        // Guard against passing vacuously with no widget bound.
         expect(field.hasClass('ui-autocomplete-input')).toBe(true);
         expect(field.autocomplete('instance')).toBeTruthy();
         field.val(term);
-        // Driven synchronously through the widget's own `search()` rather than
-        // by typing: this suite installs no fake timers, so an `input` event
-        // would only arm the 300ms debounce and nothing would ever render.
+        // Driven via the widget's own search() - no fake timers here, so an
+        // `input` event would only arm the 300ms debounce and never render.
         field.autocomplete('instance').search(term);
         return field;
     }
@@ -604,17 +576,6 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
         // The literal above is only safe while it agrees with the constant.
         expect(TwoCompanySearch.MIN_SEARCH_LENGTH).toBe(AT_THRESHOLD.length);
     });
-
-    // DELETED (TWO-25326 §2): `it is the LAST row, after every real result`,
-    // `it is absent below the threshold`, `it is absent on an empty field`,
-    // `jQuery UI counts it among the menu items it will navigate to`, and the
-    // whole nested `arrow-keying onto the row leaves the company field alone`
-    // block. All five pinned the pseudo-row - its position in the list, its
-    // `_normalize()`d value and the focus-refusal that kept that value out of
-    // the field. There is no row any more, so none of it has a subject. The
-    // properties that survived the move are pinned below on the button
-    // instead: it is present, it is not gated on the threshold, and it is not
-    // reachable by the cursor keys.
 
     test('it is present, and is not a row in the list at all', () => {
         const instance = makeInstance();
@@ -1019,14 +980,9 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
                 ajax.last().succeed(SEARCH_RESPONSE);
 
                 selectFirstCompany();
-                // Bootstrapped-guard: with this empty the assertion below could
-                // not fail whatever the clear does.
+                // Guard: with this empty the assertion below could not fail.
                 expect($("input[name='dni']").val()).toBe('12345678');
 
-                // Driven through the API rather than by clicking the button:
-                // §2 HIDES that button once hasConfirmedSelection() is true, which
-                // is precisely the state every test in this block sets up. The
-                // action itself is what is under test here, not the affordance.
                 instance.enterManualEntryMode();
 
                 expect($("input[name='dni']").val()).toBe('');
@@ -1048,10 +1004,6 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
                 ajax.last().succeed(SEARCH_RESPONSE);
                 selectFirstCompany();
 
-                // Driven through the API rather than by clicking the button:
-                // §2 HIDES that button once hasConfirmedSelection() is true, which
-                // is precisely the state every test in this block sets up. The
-                // action itself is what is under test here, not the affordance.
                 instance.enterManualEntryMode();
                 // The buyer now types the company they actually are.
                 instance.companyField.val('Unregistered Trading Name');
@@ -1086,10 +1038,6 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
                 // the marker no longer describes what is there.
                 $("input[name='dni']").val('55554444');
 
-                // Driven through the API rather than by clicking the button:
-                // §2 HIDES that button once hasConfirmedSelection() is true, which
-                // is precisely the state every test in this block sets up. The
-                // action itself is what is under test here, not the affordance.
                 instance.enterManualEntryMode();
 
                 expect($("input[name='dni']").val()).toBe('55554444');
@@ -1111,10 +1059,6 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
                 ajax.last().succeed(SEARCH_RESPONSE);
                 selectFirstCompany();
 
-                // Driven through the API rather than by clicking the button:
-                // §2 HIDES that button once hasConfirmedSelection() is true, which
-                // is precisely the state every test in this block sets up. The
-                // action itself is what is under test here, not the affordance.
                 instance.enterManualEntryMode();
                 instance.companyField.val('Unregistered Trading Name');
                 $("input[name='dni']").val('99887766');
@@ -1133,10 +1077,6 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
                 search(AT_THRESHOLD);
                 ajax.last().succeed(SEARCH_RESPONSE);
 
-                // Driven through the API rather than by clicking the button:
-                // §2 HIDES that button once hasConfirmedSelection() is true, which
-                // is precisely the state every test in this block sets up. The
-                // action itself is what is under test here, not the affordance.
                 instance.enterManualEntryMode();
 
                 const cleared = callsFor('clearCompany');
@@ -1164,10 +1104,6 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
                 ajax.last().succeed(SEARCH_RESPONSE);
                 instance.organizationField.val('12345678');
 
-                // Driven through the API rather than by clicking the button:
-                // §2 HIDES that button once hasConfirmedSelection() is true, which
-                // is precisely the state every test in this block sets up. The
-                // action itself is what is under test here, not the affordance.
                 instance.enterManualEntryMode();
 
                 // The local half still has to happen.
@@ -1252,15 +1188,10 @@ describe('the spinner always comes back down', () => {
      * things under test.
      */
     function search(term) {
-        // TWO-25326 §1: the widget - and therefore `pending` and the loading
-        // class - live on the panel's query field, so the panel has to be open
-        // before there is anything to drive or to assert on.
-        //
-        // Opened once and only once. A second mousedown re-runs
-        // openSearchForCurrentTerm() for whatever the query field is holding,
-        // which would insert a search of its own between the two this helper
-        // is being called to make - and every `ajax.calls[N]` index below
-        // would then point at the wrong request.
+        // TWO-25326 §1: the widget lives on the panel's query field, so the
+        // panel must be open first. Opened at most once: a second mousedown
+        // re-runs openSearchForCurrentTerm(), inserting a search that would
+        // shift every `ajax.calls[N]` index below.
         if (!shown(panel())) {
             openPanel();
         }
@@ -1420,10 +1351,10 @@ describe('selecting a company through the real widget', () => {
     /**
      * Search, settle, then pick the first row the way a buyer's click does.
      *
-     * Typed into the PANEL'S query field (TWO-25326 §1), which is what the
-     * widget is bound to now. The company-name field is no longer the search
-     * box - it is the field the selection WRITES INTO, which is exactly what
-     * these tests assert on, so the two must not be conflated.
+     * Typed into the PANEL'S query field (TWO-25326 §1). The company-name
+     * field is no longer the search box - it is what the selection WRITES
+     * INTO, which is what these tests assert on, so the two must not be
+     * conflated.
      */
     function selectFirstResult(term, response) {
         const query = openPanel();
@@ -2932,20 +2863,6 @@ describe('the custom fallback used when jQuery UI is absent', () => {
             expect(chips.is('.two-company-mode-chips')).toBe(true);
             expect(chips.prev().is('.two-company-dropdown__results')).toBe(true);
         });
-
-        // DELETED (TWO-25326 §2): `it survives the loading render`, `it is
-        // absent below the threshold`, `it is absent on an empty field, and the
-        // list closes`, `Enter activates it`, `Space activates it...`, `a key
-        // that is neither Enter nor Space leaves it alone`, `focusing the row
-        // cancels the close the input blur queued`, `blurring the input with
-        // focus going nowhere still closes the list`, `tabbing off the row
-        // re-arms the close...` and `the pointer activation does not blur the
-        // input out from under itself`. Every one pinned the hand-rolled
-        // role=button/tabindex bridge or the fallback's own 150ms blurTimer
-        // close, and both are gone: the control is a real <button> that the
-        // browser gives Enter/Space for free, and the panel's shared deferred
-        // focusout close replaced the timer. The below-threshold gating is
-        // reversed rather than deleted - see `it is offered before any search`.
 
         test('it survives the zero-result render, and the panel stays open for it', () => {
             const search = makeInstance();
