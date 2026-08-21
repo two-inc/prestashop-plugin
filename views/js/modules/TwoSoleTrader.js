@@ -2320,11 +2320,11 @@ class TwoSoleTrader {
             // arrives, which reads as a brand-new legitimate attempt however
             // stale the tokens actually are - silently overwriting the real
             // selection the buyer made in between. `_tokensGeneration` is
-            // only re-stamped as current by an EXPLICIT resume
-            // (fetchTokens()'s success handler, or startEnrollment() calling
-            // back into an existing token set) - never by this listener
-            // itself - so a stale popup finishing on its own has no way to
-            // pass this check.
+            // only re-stamped as current by an EXPLICIT resume - fetchTokens()'s
+            // success handler, startEnrollment()/startReplacement() calling back
+            // into an existing token set, or focusSignupPopup() raising a popup
+            // the buyer asked for by name - never by this listener itself, so a
+            // stale popup finishing on its own has no way to pass this check.
             if (self._enrollGeneration !== self._tokensGeneration) {
                 return;
             }
