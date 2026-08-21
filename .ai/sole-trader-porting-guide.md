@@ -982,6 +982,37 @@ local to either symptom.
   and it must then decide what it owes the spinner/settle bookkeeping. A raise with no
   spinner and no settle listener is not an answer.
 
+**Cross-platform: WooCommerce had one of these two gaps and its architecture rules out the
+other (WooCommerce PR #487 `7a11acb`).**
+
+- **The re-render trigger cannot reach the flow.** WooCommerce's equivalent reopen path is
+  `refresh()` → `hide()`, bound to `updated_checkout` — a coupon apply, a shipping-method
+  change, a quantity edit, not only a country change. Its mode revert is gated on nothing
+  being outstanding, and that predicate is true for as long as any popup RECORD exists, so
+  an incidental re-render cannot null popup state under a live popup. The widget-rebuild
+  paths are DOM-only and never touch popup or flight state, because the records live in a
+  module-level array rather than being torn down with the widget. The porting lesson:
+  records kept OFF the widget, plus every *derived* mode revert gated on "is anything still
+  outstanding", is what makes the platform's own re-render harmless — a single handle
+  nulled by a UI-restore function is what makes it fatal.
+- **The gesture trigger did reach it.** Every exit from sole-trader mode funnelled through
+  one function that dropped the popup records without CLOSING the windows and left the
+  autofill lookup running. So a deliberate exit — click-to-reopen on a captured field, the
+  Registered company chip, an ordinary registry pick — orphaned a still-open popup (the
+  next chip click then opened a second over it) AND let the lookup re-enter sole-trader
+  mode and re-adopt behind the buyer, credit check included. Fixed as one operation at that
+  single choke point: close the windows, THEN drop the records, then invalidate the lookup
+  through the same supersession counter the newer-flight case already used. Having exactly
+  one choke point is why this was a small fix and not a redesign — the records-not-a-handle
+  argument applies to the EXITS, not only the launches.
+- **One divergence by design, not a gap.** PrestaShop counts "the write-back has no
+  manual-entry guard" as a bug (fixed above). WooCommerce counts it as supported and pins
+  it (#486): a buyer who says "my company isn't in the registry", starts typing, then
+  corrects their email to one Two knows IS adopted, with the picker re-attached to render
+  the adopted name. The two platforms disagree here by design, not by oversight — settle it
+  the same way on both, or record why not, before porting a third platform from either one
+  alone.
+
 ## 15. Delegated-auth tokens expire while checkout sits open
 
 The tokens minted for autofill and the signup popup are short-lived. A buyer who parks
