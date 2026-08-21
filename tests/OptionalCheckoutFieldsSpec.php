@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * ABN-472 - the optional buyer reference fields in the Two payment tile.
+ * the optional buyer reference fields in the Two payment tile.
  */
 final class OptionalCheckoutFieldsSpec
 {

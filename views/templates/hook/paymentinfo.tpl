@@ -116,7 +116,7 @@
     </div>
     {/if}
 
-    {* Optional buyer reference fields (ABN-472). These live in the payment tile
+    {* Optional buyer reference fields. These live in the payment tile
        and not in the billing address block: PrestaShop asks for the shipping
        address first and only shows the billing block when the buyer ticks
        "Billing address differs from shipping address", so a field hosted there

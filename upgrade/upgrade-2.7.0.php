@@ -4,7 +4,7 @@
  *
  * 2.7.0 moves the optional buyer reference fields out of the billing address
  * block and into the Two payment tile, adds two more of them, and makes all
- * four visible out of the box on a FRESH install (ABN-472).
+ * four visible out of the box on a FRESH install
  *
  * WHAT THIS SCRIPT DOES - seed only, never overwrite:
  *
@@ -70,7 +70,7 @@ function upgrade_module_2_7_0($module)
         PrestaShopLogger::addLog(
             'Two Payment v2.7.0 upgrade: seeded the absent optional checkout field switches (' .
             implode(', ', $seeded) . ') to 1 - they render in the Two payment tile instead of the billing address block. ' .
-            'Keys already stored were left exactly as the merchant had them (ABN-472)',
+            'Keys already stored were left exactly as the merchant had them',
             1,
             null,
             'Module',

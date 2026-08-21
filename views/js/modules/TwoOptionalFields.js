@@ -1,5 +1,5 @@
 /**
- * Two Payment - optional buyer reference fields (ABN-472).
+ * Two Payment - optional buyer reference fields
  *
  * The fields render inside the Two payment tile, which PrestaShop emits as the
  * payment option's "additional information" block. That block is a SIBLING of
