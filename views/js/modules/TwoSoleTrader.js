@@ -409,11 +409,20 @@ class TwoSoleTrader {
             last_name: (lastName && lastName.value) || customer.lastname || '',
             phone_number: phone ? phone.value : ''
         };
+        // The signup page defaults its whole form to GB when no country is
+        // given (PDEV-4669), so a US buyer would register a GB sole trader.
+        // Same rule as applyBuyer(): the country MUST be the token
+        // response's server-resolved invoice country, never a DOM guess -
+        // it is also what decides whether the hosted flow shows the US
+        // Onfido biometric-consent screen before verification. Omitted when
+        // the server sent nothing, leaving the page on its own GB default.
+        const country = (this.tokens.country || '').toUpperCase();
         const url =
             this.tokens.signup_url +
             '?businessToken=' + encodeURIComponent(this.tokens.delegation_token) +
             '&autofillToken=' + encodeURIComponent(this.tokens.autofill_token) +
-            '&autofillData=' + encodeURIComponent(this.encodeAutofillData(prefill));
+            '&autofillData=' + encodeURIComponent(this.encodeAutofillData(prefill)) +
+            (country ? '&country=' + encodeURIComponent(country) : '');
         const popup = window.open(
             url,
             '_blank',
