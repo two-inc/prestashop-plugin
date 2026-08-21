@@ -112,15 +112,13 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
         $this->context->cookie->id_customer = (int)$customer->id;
         $this->context->cookie->write();
 
-        // Snapshot the buyer company HERE, not down beside the write that
-        // persists it (TWO-40). This is the last point at which the read is
-        // provably correct: context->cart has just been set to the attempt's
-        // cart, so the cart-scoped company record matches, and nothing has yet
-        // created an order. Taken any later and a rotated context->cart would
-        // make readTwoCartScopedCompany() report absent - and, worse, discard
-        // the record on its way out - leaving the resolver to fall back to the
-        // address's identifier fields and produce exactly the empty
-        // organisation number the snapshot exists to prevent.
+        // Snapshot the buyer company HERE, not beside the write that persists
+        // it (TWO-40): this is the last point where context->cart is provably
+        // the attempt's cart. Taken any later, a rotated context->cart would
+        // make readTwoCartScopedCompany() report absent (and discard the
+        // record), leaving the resolver to fall back to the address's
+        // identifier fields and produce exactly the empty organisation number
+        // this snapshot exists to prevent.
         $company_snapshot = $this->module->getTwoOrderCompanySnapshot($cart);
 
         if (empty($attempt['two_order_id'])) {
@@ -295,11 +293,9 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
 
             // FINAL PARITY RE-CHECK, adjacent to the charge: the earlier
             // snapshot check is separated from validateOrder by two provider
-            // round-trips (GET /v1/order, POST /confirm) during which the
-            // cart could theoretically drift (another tab, a stale-guard
-            // hook). Re-run the self-healing snapshot build (sync=true also
-            // enforces cart-vs-payload fee parity, failing closed) and
-            // require the stored hash to still match, so the gate's last
+            // round-trips, during which the cart could theoretically drift.
+            // Re-run the self-healing snapshot build (sync=true also enforces
+            // cart-vs-payload fee parity, failing closed) so the gate's last
             // word is issued immediately before the money moves.
             if (!Tools::isEmpty($stored_snapshot_hash) && $snapshot_includes_secure_key !== null) {
                 try {
@@ -336,14 +332,10 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
                     return;
                 }
             } else {
-                // Legacy attempt without a stored snapshot hash: run the SAME
-                // fail-closed parity gate as the hashed path above. Building
-                // the comparison payload with sync=true both self-heals the
-                // cart's surcharge line AND enforces cart-vs-payload fee
-                // parity, throwing on divergence (core validateOrder performs
-                // NO such check itself - a bare sync here would let a genuine
-                // divergence charge the buyer). The hash result is discarded:
-                // with no stored hash there is nothing to compare it against.
+                // Legacy attempt without a stored snapshot hash: still run the
+                // same fail-closed parity gate as the hashed path above, since
+                // core validateOrder performs no such check itself. The hash
+                // result is discarded - there is nothing to compare it against.
                 try {
                     $this->buildAttemptSnapshotHash($attempt_token, $attempt, $cart, false, true);
                 } catch (Exception $e) {
@@ -628,10 +620,7 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             }
 
             if ($two_state === 'VERIFIED') {
-                // Order is verified, now confirm it to move to CONFIRMED state
                 $confirm_result = $this->module->confirmTwoOrder($two_order_id);
-                
-                // Use the confirmation result or fallback to original state
                 $final_state = $confirm_result['success'] ? $confirm_result['state'] : $response['state'];
                 $final_status = ($confirm_result['success'] && $confirm_result['status']) ? $confirm_result['status'] : $response['status'];
                 $resolved_terms = $this->module->resolveTwoPaymentTermsFromOrderResponse(

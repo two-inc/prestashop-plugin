@@ -47,7 +47,6 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             return;
         }
 
-        // Validate currency
         if (!Validate::isLoadedObject($currency)) {
             $this->failCheckout(
                 '',
@@ -59,17 +58,16 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
 
         // API-key verification gate (TWO-25326). hookPaymentOptions() withholds
         // Two whenever the stored key does not verify, but a buyer holding a
-        // page rendered while it still did can post here afterwards - and
-        // without this that submission proceeds and fails deeper in, at order
-        // creation, as an opaque error. Refuse it here, in the same shape as
-        // every other unavailability on this path.
+        // page rendered while it still did can post here afterwards, and
+        // without this that submission fails deeper in, at order creation, as
+        // an opaque error.
         //
-        // DEFINITIVELY unusable only, and cache-only (review round 2): a
-        // rejected key or no key at all is worth refusing a submission over, a
-        // 5xx or a network blip at this exact instant is not - that would turn a
-        // good order into "not available" and cache the refusal for a minute,
-        // where proceeding would have reached order creation with its own longer
-        // timeout and its own decline handling.
+        // DEFINITIVELY unusable only: a rejected key or no key at all is worth
+        // refusing a submission over, a 5xx or a network blip at this exact
+        // instant is not - that would turn a good order into "not available"
+        // and cache the refusal for a minute, where proceeding would have
+        // reached order creation with its own longer timeout and decline
+        // handling.
         if ($this->module->isTwoApiKeyDefinitelyUnusable()) {
             $this->failCheckout(
                 $this->module->l('This payment method is not available.'),
@@ -110,7 +108,6 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             return;
         }
 
-        // Validate payment form token before any provider request.
         $submittedToken = trim((string) Tools::getValue('token'));
         if (Tools::isEmpty($submittedToken) || !hash_equals((string) Tools::getToken(false), $submittedToken)) {
             $this->failCheckout(
@@ -131,8 +128,7 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             return;
         }
 
-        // Guard: Require company details when placing order with Two.
-        // Use shared module resolver so checkout and order payload logic stay consistent.
+        // Shared module resolver keeps checkout and order payload logic consistent.
         $companyData = $this->module->getTwoCheckoutCompanyData($address);
         $companyName = isset($companyData['company_name']) ? trim((string) $companyData['company_name']) : '';
         $companyId = isset($companyData['organization_number']) ? trim((string) $companyData['organization_number']) : '';
@@ -146,7 +142,6 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
         // Keep attempt table bounded without adding cron requirements.
         $this->module->maybeCleanupStaleTwoCheckoutAttempts();
 
-        // Authoritative server-side order intent check at payment submit.
         $orderIntentResult = $this->module->checkTwoOrderIntentApprovalAtPayment($cart, $customer, $currency, $address);
         $frontendIntentTelemetry = isset($this->context->cookie->two_order_intent_approved)
             ? $this->context->cookie->two_order_intent_approved === '1'
@@ -192,19 +187,14 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             $cart_snapshot_hash = $this->module->calculateTwoCheckoutSnapshotHash($cart, $paymentdata);
             $idempotency_key = $this->module->buildTwoOrderCreateIdempotencyKey($cart, $cart_snapshot_hash);
         } catch (Exception $e) {
-            // Surface WHY the payload could not be built - but only when the
-            // plugin itself raised the failure as a buyer-actionable amount
-            // diagnostic (TwoCheckoutAmountException). Withholding that detail
-            // is what left the buyer staring at a spinner with a generic
-            // message in TWO-25161, and since TWO-24768 the same string also
-            // goes into the AJAX JSON body.
-            //
-            // Payload building walks PrestaShop core (TaxManagerFactory,
-            // Address, Carrier, DB reads), so an arbitrary exception can reach
-            // here: a PrestaShopDatabaseException would put SQL text and
-            // table/column names on a public storefront. Those get the generic
-            // message, with the real exception class and message logged at
-            // severity 4 so nothing is lost for diagnosis.
+            // Surface WHY only when the plugin raised the failure as a
+            // buyer-actionable amount diagnostic (TwoCheckoutAmountException,
+            // TWO-25161); withholding it left the buyer staring at a generic
+            // spinner message. Payload building walks PrestaShop core, so an
+            // arbitrary exception can reach here - e.g. a
+            // PrestaShopDatabaseException would put SQL/table/column text on a
+            // public storefront, so anything else gets the generic message,
+            // with the real class and message logged at severity 4.
             $isBuyerActionable = $e instanceof TwoCheckoutAmountException;
             $message = sprintf($this->module->l('%s could not build this order from your cart.'), $this->module->getTwoBrandConfig('product_name'));
             $detail = $isBuyerActionable ? trim((string)$e->getMessage()) : '';
@@ -221,15 +211,13 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             return;
         }
 
-        // Call Two API to create order
         $response = $this->module->setTwoPaymentRequest(
             '/v1/order',
             $paymentdata,
             'POST',
             ['X-Idempotency-Key: ' . $idempotency_key]
         );
-        
-        // Extract HTTP status code from enhanced response structure
+
         $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
         
         $response_summary = $this->module->buildTwoApiResponseLogSummary($response);
@@ -238,8 +226,7 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             ($http_status === Twopayment::HTTP_STATUS_CREATED ? 1 : 3)
         );
 
-        // CRITICAL CHECK: Only proceed if Two returned 201 Created
-        // Any other status = order creation failed, and no local order should exist
+        // Any status other than 201 means no local order should exist.
         if ($http_status !== Twopayment::HTTP_STATUS_CREATED) {
             PrestaShopLogger::addLog(
                 'TwoPayment: Two API did not return 201 (got ' . $http_status . ') - no local order created for cart ' . $cart->id . ', attempt ' . $attempt_token,
@@ -250,16 +237,14 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                 ', HTTP ' . $http_status,
                 2
             );
-            
-            // Determine user-friendly error message based on response
+
             $message = sprintf($this->module->l('Unable to process your order with %s payment.'), $this->module->getTwoBrandConfig('product_name'));
-            
+
             if (!isset($response) || $http_status === 0) {
                 $message = $this->module->l('Connection error with payment provider. Please try again.');
             } elseif ($http_status === 401 || $http_status === 403) {
                 $message = $this->module->l('Payment method configuration error. Please contact the store.');
             } elseif ($http_status === 400) {
-                // Try to extract specific error from Two's response
                 $two_err = $this->module->getTwoErrorMessage($response);
                 if ($two_err) {
                     $message = $two_err;
@@ -270,13 +255,10 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                 $message = $this->module->l('Payment provider temporarily unavailable. Please try again later.');
             }
 
-            // Surface the platform minimum when the rejection is attributable
-            // to it (TWO-24775): the API's machine-readable decline_reason
-            // first, with a strictly-below-minimum fallback while older
-            // backends carry only a generic reason. Only on a 4xx ORDER
-            // rejection - a connection error, provider outage, or an
-            // auth/config failure (401/403) says nothing about the order
-            // value. Fail-soft: no hint when it cannot be attributed.
+            // Surface the platform minimum when attributable (TWO-24775): a
+            // connection error, provider outage, or auth/config failure
+            // (401/403) says nothing about order value, so restrict to 4xx
+            // order rejections. Fail-soft: no hint when it can't be attributed.
             if ($http_status >= Twopayment::HTTP_STATUS_BAD_REQUEST
                 && $http_status < Twopayment::HTTP_STATUS_SERVER_ERROR
                 && $http_status !== 401
@@ -296,15 +278,13 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
         }
 
         if (isset($response['id']) && $response['id']) {
-            // Extract invoice ID from response if available
             $invoice_id = isset($response['invoice_details']['id']) ? $response['invoice_details']['id'] : null;
             $resolved_terms = $this->module->resolveTwoPaymentTermsFromOrderResponse(
                 $response,
                 (string)$this->module->getSelectedPaymentTerm(),
                 Configuration::get('PS_TWO_PAYMENT_TERM_TYPE')
             );
-            
-            // Log invoice ID extraction for debugging
+
             if ($invoice_id) {
                 PrestaShopLogger::addLog(
                     'TwoPayment: Invoice ID extracted from order creation - attempt ' . $attempt_token . ', Invoice ID: ' . $invoice_id,
@@ -351,24 +331,20 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                     3
                 );
                 if (isset($response['id']) && $response['id']) {
-                    // Best effort cleanup when local attempt persistence fails.
                     $this->module->cancelTwoOrderBestEffort((string)$response['id'], 'attempt_persist_failed');
                 }
                 $this->failCheckout($this->module->l('Temporary checkout issue. Please try again.'));
                 return;
             }
 
-            // Fraud Verification Skip (Must be enabled by Two on request)
-            // If merchant has set fraud_verification_skip=true in paymentdata, handle accordingly
+            // Fraud verification skip must be enabled by Two on request.
             $fraudVerificationSkip = isset($paymentdata['fraud_verification_skip']) && $paymentdata['fraud_verification_skip'] === true;
-            
+
             if ($fraudVerificationSkip) {
-                // Merchant wants to skip fraud verification - validate that Two verified the order
                 $orderState = isset($response['state']) ? strtoupper($response['state']) : '';
                 $validSkipStates = array('VERIFIED', 'CONFIRMED', 'FULFILLED');
-                
+
                 if (in_array($orderState, $validSkipStates, true)) {
-                    // Order is verified - skip payment_url redirect and go directly to local confirmation callback
                     PrestaShopLogger::addLog(
                         'TwoPayment: Fraud verification skipped for attempt ' . $attempt_token . ' - Order state is ' . $orderState . ', proceeding to confirmation',
                         1,
@@ -388,13 +364,11 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
 
                     Tools::redirect($this->context->link->getModuleLink($this->module->name, 'confirmation', ['attempt_token' => $attempt_token, 'key' => $customer->secure_key], true));
                 } else {
-                    // Order is NOT verified but merchant requested to skip verification - this is an error
                     $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED', array(
                         'two_order_state' => isset($response['state']) ? $response['state'] : '',
                         'two_order_status' => isset($response['status']) ? $response['status'] : '',
                     ));
 
-                    // Best effort provider cleanup
                     if (isset($response['id']) && $response['id']) {
                         $this->module->cancelTwoOrderBestEffort((string)$response['id'], 'fraud_skip_state_invalid');
                     }
@@ -406,15 +380,14 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                         'Cart',
                         $cart->id
                     );
-                    
-                    // Generic error message - don't expose fraud verification skip details to customer
+
+                    // Generic message: don't expose fraud verification skip details to the customer.
                     $this->failCheckout(
                         $this->module->l('Unable to process your payment at this time. Please contact the store owner for assistance.')
                     );
                     return;
                 }
             } else {
-                // Standard flow - redirect to Two's payment_url for verification
                 $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'REDIRECTED', array(
                     'two_order_state' => isset($response['state']) ? $response['state'] : '',
                     'two_order_status' => isset($response['status']) ? $response['status'] : '',

@@ -73,7 +73,6 @@ class TwoInvoiceUploadService
                 $id_order
             );
             
-            // Validation
             if (empty($two_invoice_id)) {
                 return $this->errorResult('Two invoice ID is missing');
             }
@@ -82,7 +81,6 @@ class TwoInvoiceUploadService
                 return $this->errorResult('Invalid index (must be 0-9)');
             }
             
-            // STEP 1: Get PrestaShop invoice PDF
             $invoicePdf = $this->getPrestaShopInvoicePdf($id_order);
             if (!$invoicePdf['success']) {
                 return $this->errorResult($invoicePdf['error']);
@@ -91,7 +89,6 @@ class TwoInvoiceUploadService
             $pdfContent = $invoicePdf['content'];
             $pdfSize = strlen($pdfContent);
             
-            // Validate file size
             if ($pdfSize === 0) {
                 return $this->errorResult('Invoice PDF is empty');
             }
@@ -112,7 +109,6 @@ class TwoInvoiceUploadService
                 $id_order
             );
             
-            // STEP 2: Request signed upload URL from Two
             $signedUrlResult = $this->requestSignedUploadUrl($two_invoice_id, $index);
             if (!$signedUrlResult['success']) {
                 return $this->errorResult($signedUrlResult['error']);
@@ -130,7 +126,6 @@ class TwoInvoiceUploadService
                 $id_order
             );
             
-            // STEP 3: Upload PDF to Google Cloud Storage
             $uploadResult = $this->uploadToCloudStorage($uploadUrl, $uploadHeaders, $pdfContent);
             if (!$uploadResult['success']) {
                 return $this->errorResult($uploadResult['error']);
@@ -144,7 +139,6 @@ class TwoInvoiceUploadService
                 $id_order
             );
             
-            // STEP 4: Poll upload status
             $statusResult = $this->pollUploadStatus($uploadReference, $id_order);
             if (!$statusResult['success']) {
                 return $this->errorResult($statusResult['error']);
@@ -191,7 +185,6 @@ class TwoInvoiceUploadService
                 return array('success' => false, 'error' => 'Order not found');
             }
             
-            // Get order invoice collection
             $invoiceCollection = $order->getInvoicesCollection();
             if (!$invoiceCollection || $invoiceCollection->count() === 0) {
                 return array(
@@ -199,18 +192,14 @@ class TwoInvoiceUploadService
                     'error' => 'No invoice generated yet for this order. Invoice generation may be pending.'
                 );
             }
-            
-            // Get the first (and usually only) invoice
+
             $orderInvoice = $invoiceCollection->getFirst();
             if (!Validate::isLoadedObject($orderInvoice)) {
                 return array('success' => false, 'error' => 'Invoice object is invalid');
             }
-            
-            // Generate PDF using PrestaShop's PDF generator
-            // This uses the same class as when merchants download invoices from BO
+
+            // Same PDF class merchants' own BO invoice download uses.
             $pdf = new PDF($orderInvoice, PDF::TEMPLATE_INVOICE, Context::getContext()->smarty);
-            
-            // Render PDF and get raw content
             $pdfContent = $pdf->render(false); // false = return content instead of outputting
             
             if (empty($pdfContent)) {
@@ -245,12 +234,9 @@ class TwoInvoiceUploadService
         $payload = array('content_type' => 'application/pdf');
         
         $response = $this->module->setTwoPaymentRequest($endpoint, $payload, 'PUT');
-        
-        // Check for HTTP status in enhanced response
         $httpStatus = isset($response['http_status']) ? (int)$response['http_status'] : 0;
-        
+
         if ($httpStatus !== 202) {
-            // Handle specific error cases
             $errorMsg = $this->parseUploadUrlError($response, $httpStatus);
             PrestaShopLogger::addLog(
                 'TwoInvoiceUpload: Failed to get signed URL - HTTP ' . $httpStatus . ' - ' . $errorMsg,
@@ -259,7 +245,6 @@ class TwoInvoiceUploadService
             return array('success' => false, 'error' => $errorMsg);
         }
         
-        // Validate response structure
         if (!isset($response['url']) || !isset($response['headers']) || !isset($response['reference'])) {
             return array(
                 'success' => false,
@@ -294,7 +279,6 @@ class TwoInvoiceUploadService
             case 422:
                 return 'Validation error: Invalid content type (must be application/pdf)';
             default:
-                // Try to extract error from response
                 if (isset($response['error'])) {
                     return is_array($response['error']) 
                         ? json_encode($response['error']) 
@@ -324,16 +308,13 @@ class TwoInvoiceUploadService
             $attempt++;
             
             try {
-                // Initialize cURL
                 $ch = curl_init();
-                
-                // Build headers array for cURL
+
                 $curlHeaders = array();
                 foreach ($uploadHeaders as $key => $value) {
                     $curlHeaders[] = $key . ': ' . $value;
                 }
-                
-                // Configure cURL for PUT request
+
                 curl_setopt_array($ch, array(
                     CURLOPT_URL => $uploadUrl,
                     CURLOPT_CUSTOMREQUEST => 'PUT',
@@ -349,21 +330,18 @@ class TwoInvoiceUploadService
                 $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
                 $curlError = curl_error($ch);
                 curl_close($ch);
-                
-                // Success: HTTP 200 with empty body
+
                 if ($httpCode === 200) {
                     return array('success' => true);
                 }
-                
-                // Handle errors
+
                 $lastError = $this->parseCloudStorageError($httpCode, $response, $curlError);
-                
-                // Don't retry on client errors (4xx) - these won't succeed
+
+                // Client errors (4xx) won't succeed on retry.
                 if ($httpCode >= Twopayment::HTTP_STATUS_BAD_REQUEST && $httpCode < Twopayment::HTTP_STATUS_SERVER_ERROR) {
                     break;
                 }
-                
-                // Retry on network errors or 5xx
+
                 if ($attempt < self::MAX_RETRIES) {
                     PrestaShopLogger::addLog(
                         'TwoInvoiceUpload: Cloud storage upload failed (attempt ' . $attempt . 
@@ -371,7 +349,7 @@ class TwoInvoiceUploadService
                         ' - Retrying in 2 seconds...',
                         2
                     );
-                    sleep(2); // Wait before retry
+                    sleep(2);
                 }
                 
             } catch (Exception $e) {
@@ -433,8 +411,7 @@ class TwoInvoiceUploadService
      */
     private function pollUploadStatus($reference, $id_order)
     {
-        // Initial delay before first poll (500ms)
-        usleep(500000);
+        usleep(500000); // let the upload settle before the first poll
         
         $startTime = time();
         $pollCount = 0;
@@ -484,7 +461,7 @@ class TwoInvoiceUploadService
                 case 'PENDING':
                 case 'PROCESSING':
                 case 'AWAITING_UPLOAD':
-                    // Continue polling - these are all valid "in-progress" states
+                    // all valid in-progress states
                     sleep(self::POLLING_INTERVAL);
                     break;
                     
@@ -496,7 +473,6 @@ class TwoInvoiceUploadService
             }
         }
         
-        // Timeout reached
         PrestaShopLogger::addLog(
             'TwoInvoiceUpload: Status polling timeout after ' . self::POLLING_TIMEOUT . 
             ' seconds and ' . $pollCount . ' attempts. Status may complete asynchronously.',

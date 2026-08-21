@@ -9380,25 +9380,18 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Get company name and organization number with fallback chain
      * Priority: Cookie (verified) → Address fields (dni, companyid) → Cookie (unverified)
-     * 
-     * ENHANCED: Now checks multiple address fields for org numbers across all countries,
-     * not just dni for Spain. This supports addresses where org numbers are stored in
-     * dni or companyid (never vat_number - see extractOrgNumberFromAddress()).
      * 
      * @param Address $address Invoice or delivery address
      * @return array ['company_name' => string, 'organization_number' => string, 'country_iso' => string]
      */
     private function getCompanyDataWithFallbacks($address)
     {
-        // Validate address object is loaded
         if (!Validate::isLoadedObject($address)) {
             PrestaShopLogger::addLog('TwoPayment: Invalid address object passed to getCompanyDataWithFallbacks', 3);
             throw new Exception('Invalid address object');
         }
         
-        // CRITICAL: Validate country ID and handle false return from Country::getIsoById()
         $country_iso = Country::getIsoById($address->id_country);
         if (!$country_iso || !is_string($country_iso)) {
             PrestaShopLogger::addLog('TwoPayment: Invalid country ID: ' . $address->id_country . ' for address ID: ' . $address->id, 3);
@@ -9437,7 +9430,6 @@ class Twopayment extends PaymentModule
         }
         
         // Priority 2: Extract org number from address fields (dni, companyid - never vat_number)
-        // This uses the enhanced extraction method that works across all countries
         $org_number = $this->extractOrgNumberFromAddress($address, $country_iso);
         
         // Company name: Address → stored selection.
@@ -9468,15 +9460,12 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Build address array for Two API
-     * 
      * @param Address $address PrestaShop Address object
      * @param string|null $organization_name Company name (may differ from address->company)
      * @return array Two API address format
      */
     private function buildTwoAddress($address, $organization_name = null, $country_iso = null)
     {
-        // Validate address object is loaded
         if (!Validate::isLoadedObject($address)) {
             PrestaShopLogger::addLog('TwoPayment: Invalid address object passed to buildTwoAddress', 3);
             throw new Exception('Invalid address object');
@@ -9486,7 +9475,6 @@ class Twopayment extends PaymentModule
             $organization_name = $address->company;
         }
         
-        // Use provided country_iso or fetch it (validate false return)
         if ($country_iso === null) {
             $country_iso = Country::getIsoById($address->id_country);
             if (!$country_iso || !is_string($country_iso)) {
@@ -9514,7 +9502,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Calculate tax subtotals for Two API compliance
      * Groups line items by tax rate and calculates taxable_amount and tax_amount per rate
      *
      * @param array $line_items Array of line items with tax_rate, net_amount, and tax_amount
@@ -9525,7 +9512,6 @@ class Twopayment extends PaymentModule
         $tax_subtotals = [];
         $tax_groups = [];
         
-        // Group line items by tax rate
         foreach ($line_items as $item) {
             $tax_rate = $this->formatTwoTaxRate(
                 isset($item['tax_rate']) ? (float)$item['tax_rate'] : 0,
@@ -9548,7 +9534,6 @@ class Twopayment extends PaymentModule
             $tax_groups[$tax_rate]['tax_amount'] = round($tax_groups[$tax_rate]['tax_amount'] + $tax_amount, 2);
         }
         
-        // Convert to Two API format
         foreach ($tax_groups as $rate => $group) {
             $tax_subtotals[] = [
                 'tax_rate' => $rate,
@@ -9566,9 +9551,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Validate all line items against Two API formulas (streamlined)
-     * Only logs critical validation failures
-     *
      * @param array $line_items Array of line items to validate
      * @return bool True if all validations pass, false otherwise
      */
@@ -9610,7 +9592,6 @@ class Twopayment extends PaymentModule
                 $validation_issues++;
             }
 
-            // Critical validation: net_amount = (quantity * unit_price) - discount_amount
             $expected_net_amount = ($quantity * $unit_price) - $discount_amount;
             if (abs($net_amount - $expected_net_amount) > self::NET_FORMULA_TOLERANCE) {
                 PrestaShopLogger::addLog(
@@ -9635,8 +9616,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Format tax rate decimal to a fixed precision (2dp).
-     *
      * @param float $tax_rate Decimal tax rate (e.g. 0.21 for 21%)
      * @return string
      */
@@ -9863,7 +9842,6 @@ class Twopayment extends PaymentModule
         curl_setopt($ch, CURLOPT_TIMEOUT, $timeout !== null ? max(1, (int) $timeout) : self::API_TIMEOUT_SHORT);
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, self::API_CONNECT_TIMEOUT);
 
-        // SSL VERIFICATION - Secure by default
         $this->configureSslVerification($ch);
 
         curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'GET');
@@ -9976,7 +9954,7 @@ class Twopayment extends PaymentModule
 
     /**
      * Whether the stored key is known to be unusable, as opposed to merely
-     * unconfirmed (TWO-25326, review round 2). Only the two DEFINITIVE
+     * unconfirmed (TWO-25326). Only the two DEFINITIVE
      * categories count: a key Two rejected, and no key at all. A 5xx, a network
      * blip or a cache miss are all "ask again", not "refuse".
      *
@@ -9998,7 +9976,7 @@ class Twopayment extends PaymentModule
         }
 
         // Deliberately reads PAST the TTL for the definitive categories only
-        // (review round 3). This gate exists for the buyer who was already on the
+        // This gate exists for the buyer who was already on the
         // payment step when the verdict changed - which is to say, minutes later -
         // and a fresh verdict is exactly what it does NOT have: it may not make
         // the call itself, and the failure TTL is a minute. "Two rejected this
@@ -10028,7 +10006,7 @@ class Twopayment extends PaymentModule
 
     /**
      * Whether the company-search affordance this module adds to the checkout is
-     * warranted right now (TWO-25326, review round 4) - the browser control and
+     * warranted right now (TWO-25326) - the browser control and
      * the server-rendered placeholder both, since they are two halves of one
      * thing and this is the one question both ask.
      *
@@ -10036,9 +10014,7 @@ class Twopayment extends PaymentModule
      * which on any known verification failure it cannot: Two is withheld from
      * checkout entirely in that state, so the search has nothing left to feed.
      * It does NOT mean "the search would work" - that endpoint is called
-     * unauthenticated and works regardless of the key (round-6 review corrected
-     * the reasoning; the behaviour is unchanged and matches the sibling
-     * plugins).
+     * unauthenticated and works regardless of the key.
      *
      * Distinct from isTwoApiKeyDefinitelyUnusable(): an affordance is not an
      * order, so this side may stand down on ANY known failure rather than only a
@@ -10192,13 +10168,7 @@ class Twopayment extends PaymentModule
             'claim' => !empty($decoded['claim']),
             // A slot written before this field existed is not ageless: fall back
             // to the slot's own clock, which for a verdict IS when it was
-            // reached. Reading it as 0 made such a slot uncarryable, so the first
-            // re-verification against it withheld Two for the length of one claim
-            // window (review round 4). No released version ever wrote this slot -
-            // it arrives with this change - so the only shops holding a
-            // field-less one are those that ran an intermediate build of this
-            // branch; the fallback stays because the JSON shape is not something
-            // to assume about a value read back out of Configuration.
+            // reached.
             'verified_on' => isset($decoded['verified_on'])
                 ? (int) $decoded['verified_on']
                 : (int) Configuration::get(self::CONFIG_API_KEY_STATUS_TS),
@@ -10295,7 +10265,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Get the Two portal URL based on environment configuration
      * @return string Portal URL for the current environment
      */
     public function getTwoPortalUrl()
@@ -10309,18 +10278,15 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Get the Two buyer portal login URL based on environment
      * @return string Buyer portal login URL for the current environment
      */
     public function getTwoBuyerPortalUrl()
     {
         $environment = strtolower((string) Configuration::get('PS_TWO_ENVIRONMENT'));
-        // Development/non-production environments fall back to the sandbox buyer portal.
         return self::BUYER_PORTAL_HOSTS[$environment] ?? 'https://buyer.sandbox.two.inc/login';
     }
 
     /**
-     * Get the PDF invoice URL for a Two order
      * @param string $two_order_id The Two order ID
      * @param string $lang Language code (optional, defaults to null)
      * @param bool $generate Whether to generate a new PDF (optional, defaults to false)
@@ -10380,7 +10346,6 @@ class Twopayment extends PaymentModule
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, self::API_CONNECT_TIMEOUT);
         curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'GET');
 
-        // SSL VERIFICATION - Secure by default
         $this->configureSslVerification($ch);
 
         $response_body = curl_exec($ch);
@@ -10464,7 +10429,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Confirm a Two order that is in VERIFIED state to move it to CONFIRMED state
      * This signals that the buyer has returned to the merchant site after verification
      * @param string $two_order_id The Two order ID
      * @return array Result array with success status and final state
@@ -10978,7 +10942,7 @@ class Twopayment extends PaymentModule
             'as_of' => isset($response['as_of']) ? (string) $response['as_of'] : '',
             'rates' => $rates,
         )));
-        $this->twoFxRatesMemo = false; // drop the request-scoped memo
+        $this->twoFxRatesMemo = false;
         return true;
     }
 
@@ -11129,7 +11093,6 @@ class Twopayment extends PaymentModule
             return '';
         }
 
-        // Express the minimum in the buyer's (cart) currency for display.
         $display_amount = $this->convertTwoAmountBetweenCurrencies(
             $platform_minimum['amount'],
             $platform_minimum['currency'],
@@ -12141,8 +12104,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Resolve the buyer's country ISO from the cart's invoice address.
-     *
      * @param Cart $cart
      * @return string
      */
@@ -12752,9 +12713,6 @@ class Twopayment extends PaymentModule
      *     Two order at creation time and false for a webservice/back-office
      *     caller grafting the fee onto an arbitrary existing order.
      *
-     * Empirically verified on the live PS8 container (MariaDB 10.11):
-     * legitimate first insert passes, duplicate insert and fee-less-cart
-     * insert are rejected with SIGNAL 45000, ordinary products unaffected.
      * SIGNAL requires MySQL >= 5.5 / MariaDB >= 5.5 - far below any PS8
      * platform floor.
      *
@@ -12963,8 +12921,6 @@ class Twopayment extends PaymentModule
      */
     public function syncTwoSurchargeCartLine($cart, $selected, $syncSeq = null)
     {
-        // Upgrades from versions without the fee-guard trigger (and DB
-        // restores that dropped it) get it back on the next checkout.
         $this->ensureTwoOrderDetailFeeGuardTrigger();
 
         $result = array('success' => false, 'changed' => false, 'present' => false);
@@ -13213,8 +13169,7 @@ class Twopayment extends PaymentModule
         if (method_exists('Product', 'flushPriceCache')) {
             // No arguments: flushPriceCache() takes none on any supported
             // PrestaShop version (1.7.6 through 8.2) — it always clears the
-            // whole static price cache. The previously passed product id was
-            // silently ignored.
+            // whole static price cache.
             Product::flushPriceCache();
         }
     }
@@ -13307,7 +13262,7 @@ class Twopayment extends PaymentModule
      * current shop the two agree.
      *
      * NOT SCOPED TO THE CHECKOUT CONTROLLER, and that was a decision rather than
-     * an oversight (review round 2 raised it). The address form is filled in
+     * an oversight. The address form is filled in
      * BEFORE a payment method is chosen, so "require it only when Two is the
      * selected method" does not exist as a question at the moment the buyer is
      * being asked - and that ordering is exactly the failure this closes. An
@@ -13474,7 +13429,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Whether the current request executes in a back-office context.
      * Primary signal is the controller_type PrestaShop stamps on every
      * controller; _PS_ADMIN_DIR_ is the fallback for early/legacy paths.
      *
@@ -13494,10 +13448,6 @@ class Twopayment extends PaymentModule
      * Buyer-facing label for the surcharge line. A merchant-set description
      * wins (with %s replaced by the term days, Magento/WooCommerce parity);
      * else the brand label; else a translated default that names the term.
-     *
-     * The default is "Payment terms fee - <n> days" (with the selected term's
-     * day count); a merchant who has typed their own Surcharge Line Description
-     * keeps it — this default only applies when that field is left blank.
      *
      * @param int $days
      * @return string
@@ -13683,8 +13633,7 @@ class Twopayment extends PaymentModule
             . '<th class="two-col-percentage">' . $this->l('Percentage') . '</th>'
             . '<th class="two-col-fixed">' . $this->l('Fixed fee') . '</th>'
             // "Cap", not "Cap on percentage": the cap bounds the whole fee
-            // line - the percentage and the fixed fee together - so the old
-            // heading described it wrongly (TWO-25289).
+            // line - the percentage and the fixed fee together (TWO-25289).
             . '<th class="two-col-cap">' . $this->l('Cap') . '</th>'
             . '</tr></thead><tbody>';
 
@@ -13790,7 +13739,6 @@ class Twopayment extends PaymentModule
             array('id' => '', 'name' => $this->l('-- Select surcharge tax treatment --')),
         );
         $groups = TaxRulesGroup::getTaxRulesGroups(true);
-        // No 0 seed: the "No tax" pseudo-id is no longer an option.
         $seen = array();
         foreach ((array) $groups as $group) {
             if (!isset($group['id_tax_rules_group'])) {
@@ -13848,8 +13796,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Current values for the surcharge form fields.
-     *
      * @return array
      */
     protected function getTwoSurchargeFormValues()
@@ -13948,8 +13894,7 @@ class Twopayment extends PaymentModule
                 // An UNSUBMITTED cell is nothing to validate. `false` is what
                 // core returns for an absent key; null is included because a
                 // rendered-but-cleared input and a genuinely absent one must
-                // behave the same, and the earlier `!== false && !== ''` pair
-                // let null through to be reported as a non-numeric value.
+                // behave the same.
                 if ($raw === false || $raw === null || trim((string) $raw) === '') {
                     continue;
                 }
@@ -13988,9 +13933,6 @@ class Twopayment extends PaymentModule
         }
     }
 
-    /**
-     * Persist the surcharge form values, coercing to safe stored forms.
-     */
     protected function saveTwoSurchargeFormValues()
     {
         Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', TwoSurchargeCalculator::normalizeType(Tools::getValue('PS_TWO_SURCHARGE_TYPE')));
@@ -14074,7 +14016,6 @@ class Twopayment extends PaymentModule
         // Source set the admin narrows FROM (backend list, else hardcoded).
         $source = $this->getOfferableTermSource(false);
 
-        // EOM is only offerable for a fixed subset; intersect the source with it.
         if ($term_type === 'EOM') {
             $source = array_values(array_intersect($source, self::EOM_PAYMENT_TERMS_OPTIONS));
         }
@@ -14106,12 +14047,11 @@ class Twopayment extends PaymentModule
             $available_terms[] = $custom_days;
         }
 
-        // If nothing is configured/offerable, default to DEFAULT_PAYMENT_TERM_DAYS
         if (empty($available_terms)) {
             $available_terms = array(self::DEFAULT_PAYMENT_TERM_DAYS);
         }
 
-        sort($available_terms); // Ensure they're in ascending order
+        sort($available_terms);
         return $available_terms;
     }
 
@@ -14140,8 +14080,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Get the default payment term.
-     *
      * Preference order when more than one term is offered:
      *   1. the merchant's OWN explicit admin choice (PS_TWO_DEFAULT_PAYMENT_TERM,
      *      TWO-25386 #10) when it is offered;
@@ -14162,7 +14100,6 @@ class Twopayment extends PaymentModule
     {
         $available_terms = $this->getAvailablePaymentTerms();
 
-        // If only one term is available, use it as default
         if (count($available_terms) === 1) {
             return $available_terms[0];
         }
@@ -14191,19 +14128,13 @@ class Twopayment extends PaymentModule
             return $api_default;
         }
 
-        // If DEFAULT_PAYMENT_TERM_DAYS is available, use it as default
         if (in_array(self::DEFAULT_PAYMENT_TERM_DAYS, $available_terms)) {
             return self::DEFAULT_PAYMENT_TERM_DAYS;
         }
 
-        // Otherwise, use the first available term
         return !empty($available_terms) ? $available_terms[0] : self::DEFAULT_PAYMENT_TERM_DAYS;
     }
 
-    /**
-     * SHARED UTILITY: Restore duplicate cart for failed orders
-     * Used across multiple controllers to maintain consistency
-     */
     public function restoreDuplicateCart($id_order, $id_customer)
     {
         try {
@@ -14235,7 +14166,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * SHARED UTILITY: Delete order completely from database
      * Used when Two API rejects order creation (non-201 response)
      * Ensures no phantom orders in PrestaShop database
      * 
@@ -14256,7 +14186,6 @@ class Twopayment extends PaymentModule
                 return false;
             }
             
-            // Log order details before deletion for audit trail
             PrestaShopLogger::addLog(
                 'TwoPayment: Deleting order ' . $id_order . ' - ' .
                 'Customer: ' . $order->id_customer . ', ' .
@@ -14266,16 +14195,13 @@ class Twopayment extends PaymentModule
                 2
             );
             
-            // Delete Two payment data from our custom table
             try {
-                // Use PrestaShop's delete() method for proper escaping and security
                 Db::getInstance()->delete('twopayment', 'id_order = ' . (int)$id_order);
                 PrestaShopLogger::addLog('TwoPayment: Deleted Two payment data for order ' . $id_order, 1);
             } catch (Exception $e) {
                 PrestaShopLogger::addLog('TwoPayment: Failed to delete Two payment data for order ' . $id_order . ': ' . $e->getMessage(), 2);
             }
             
-            // Use PrestaShop's native delete method (handles cascading deletes)
             // This removes: order_detail, order_history, order_carrier, order_invoice, etc.
             $delete_result = $order->delete();
             
@@ -14293,10 +14219,6 @@ class Twopayment extends PaymentModule
         }
     }
 
-    /**
-     * SHARED UTILITY: Change order status with proper validation
-     * Used across multiple controllers to maintain consistency
-     */
     public function changeOrderStatus($id_order, $id_order_status)
     {
         try {
@@ -14311,7 +14233,6 @@ class Twopayment extends PaymentModule
                 return false;
             }
             
-            // Only change status if it's different
             if ($order->current_state == (int) $id_order_status) {
                 PrestaShopLogger::addLog('TwoPayment: Order ' . $id_order . ' already in target status ' . $id_order_status, 1);
                 return true;
@@ -14332,7 +14253,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Get the selected payment term for the current order
      * @return int Selected payment term in days
      */
     public function getSelectedPaymentTerm()
@@ -14340,13 +14260,11 @@ class Twopayment extends PaymentModule
         $available_terms = $this->getAvailablePaymentTerms();
         $default_term = $this->getDefaultPaymentTerm();
         
-        // Try to get from PrestaShop context cookie first
         $cookie_term_raw = isset($this->context->cookie->two_payment_term)
             ? (string)$this->context->cookie->two_payment_term
             : '';
         $selected_term = (int)$cookie_term_raw;
         
-        // If not found, try to get from browser cookies
         if (!$selected_term && isset($_COOKIE['two_payment_term'])) {
             $selected_term = (int)$_COOKIE['two_payment_term'];
         }
@@ -14358,15 +14276,11 @@ class Twopayment extends PaymentModule
             return $selected_term;
         }
         
-        // Fallback to default payment term
         PrestaShopLogger::addLog('TwoPayment: Using default payment term: ' . $default_term . ' days', 1);
         return $default_term;
     }
     
     /**
-     * Build payment terms payload for Two API
-     * Adds duration_days_calculated_from for EOM terms
-     * 
      * @return array Terms payload
      * 
      * PHP COMPATIBILITY: PHP 7.1+ compatible (no spread operators)
@@ -14376,13 +14290,11 @@ class Twopayment extends PaymentModule
         $term_type = Configuration::get('PS_TWO_PAYMENT_TERM_TYPE');
         $duration_days = $this->getSelectedPaymentTerm();
         
-        // Base terms structure
         $terms = array(
             'type' => 'NET_TERMS',
             'duration_days' => $duration_days
         );
         
-        // Add duration_days_calculated_from for EOM terms
         if ($term_type === 'EOM') {
             $terms['duration_days_calculated_from'] = 'END_OF_MONTH';
         }
@@ -14391,7 +14303,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Resolve local stored payment terms from a Two order response.
      * Supports STANDARD and EOM only; unsupported schemes fall back to STANDARD.
      *
      * @param array $order_response Two API response payload
@@ -14490,7 +14401,6 @@ class Twopayment extends PaymentModule
             curl_setopt($ch, CURLOPT_TIMEOUT, $request_timeout);
             curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, self::API_CONNECT_TIMEOUT);
             
-            // SSL VERIFICATION - Secure by default
             $this->configureSslVerification($ch);
             
             curl_setopt($ch, CURLOPT_POST, 1);
@@ -14502,7 +14412,6 @@ class Twopayment extends PaymentModule
             $curl_error = curl_error($ch);
             curl_close($ch);
             
-            // Handle SSL/connection errors
             if ($response_body === false || !empty($curl_error)) {
                 PrestaShopLogger::addLog(
                     'TwoPayment: cURL error - ' . $curl_error . 
@@ -14524,7 +14433,6 @@ class Twopayment extends PaymentModule
             
             $response_data = json_decode($response_body, true);
             
-            // Return array with HTTP status and response data for proper error handling
             // BACKWARD COMPATIBILITY: Merge data into root for existing code
             return array_merge([
                 'http_status' => (int)$http_status,
@@ -14541,7 +14449,6 @@ class Twopayment extends PaymentModule
             curl_setopt($ch, CURLOPT_TIMEOUT, $request_timeout);
             curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, self::API_CONNECT_TIMEOUT);
             
-            // SSL VERIFICATION - Secure by default
             $this->configureSslVerification($ch);
             
             curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
@@ -14551,7 +14458,6 @@ class Twopayment extends PaymentModule
             $curl_error = curl_error($ch);
             curl_close($ch);
             
-            // Handle SSL/connection errors
             if ($response_body === false || !empty($curl_error)) {
                 PrestaShopLogger::addLog(
                     'TwoPayment: cURL error - ' . $curl_error . 
@@ -14573,7 +14479,6 @@ class Twopayment extends PaymentModule
             
             $response_data = json_decode($response_body, true);
             
-            // Return array with HTTP status and response data for proper error handling
             // BACKWARD COMPATIBILITY: Merge data into root for existing code
             return array_merge([
                 'http_status' => (int)$http_status,
@@ -14617,8 +14522,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Standard client identification query params for Two API calls.
-     *
      * @return array<string, string>
      */
     public function getTwoClientParams()
@@ -14676,8 +14579,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Determine if API key auth should be attached for a given endpoint.
-     *
      * @param string $endpoint
      * @return bool
      */
@@ -14708,7 +14609,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Configure SSL verification for cURL requests
      * Secure by default, with fallback for corporate networks
      * 
      * @param resource|CurlHandle $ch cURL handle
@@ -14716,7 +14616,6 @@ class Twopayment extends PaymentModule
      */
     public function configureSslVerification($ch)
     {
-        // Check if SSL verification is disabled via configuration (for corporate networks)
         $disable_ssl_verify = (bool)Configuration::get('PS_TWO_DISABLE_SSL_VERIFY', false);
         $environment = (string)Configuration::get('PS_TWO_ENVIRONMENT', 'staging');
         
@@ -14736,7 +14635,6 @@ class Twopayment extends PaymentModule
                 return;
             }
 
-            // Only if explicitly configured (corporate networks with custom certificates)
             PrestaShopLogger::addLog(
                 'TwoPayment: SSL verification disabled by configuration (security risk - corporate networks only)',
                 2
@@ -14744,11 +14642,9 @@ class Twopayment extends PaymentModule
             curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
             curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
         } else {
-            // Enable SSL verification (secure by default)
             curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
             curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
             
-            // Try to find CA certificate bundle
             $ca_bundle = $this->findCaBundle();
             if ($ca_bundle) {
                 curl_setopt($ch, CURLOPT_CAINFO, $ca_bundle);
@@ -14757,9 +14653,6 @@ class Twopayment extends PaymentModule
     }
     
     /**
-     * Find CA certificate bundle for SSL verification
-     * Checks common system locations for CA certificates
-     * 
      * @return string|null Path to CA bundle or null if not found
      */
     private function findCaBundle()
@@ -14784,7 +14677,6 @@ class Twopayment extends PaymentModule
             }
         }
         
-        // Log warning if no CA bundle found (but still try with system defaults)
         PrestaShopLogger::addLog(
             'TwoPayment: No CA bundle found in common locations. Using system default CA certificates.',
             2
@@ -14806,7 +14698,6 @@ class Twopayment extends PaymentModule
         }
 
         if (is_string($body)) {
-            // ENHANCED: Parse validation errors and return user-friendly messages
             $friendly_message = $this->parseValidationErrorToFriendlyMessage($body);
             if ($friendly_message) {
                 return $friendly_message;
@@ -14934,9 +14825,6 @@ class Twopayment extends PaymentModule
     }
     
     /**
-     * Parse Two API validation errors and return user-friendly messages
-     * Handles common validation errors like invalid phone numbers, missing fields, etc.
-     * 
      * @param string $error_string Raw error string from Two API
      * @return string|null User-friendly message or null if not a recognized pattern
      */
@@ -14948,31 +14836,26 @@ class Twopayment extends PaymentModule
         
         $error_lower = strtolower($error_string);
         
-        // Phone number validation errors
         if (strpos($error_lower, 'invalid phone number') !== false || 
             strpos($error_lower, 'phone_number') !== false && strpos($error_lower, 'value_error') !== false) {
             return $this->l('The phone number in your billing address appears to be invalid. Please go back and ensure you have entered a valid phone number for your country.');
         }
         
-        // Email validation errors
         if (strpos($error_lower, 'invalid email') !== false || 
             strpos($error_lower, 'email') !== false && strpos($error_lower, 'value_error') !== false) {
             return $this->l('The email address provided is invalid. Please check your email and try again.');
         }
         
-        // Company/organization validation errors
         if (strpos($error_lower, 'invalid company') !== false || 
             strpos($error_lower, 'organization_number') !== false && strpos($error_lower, 'value_error') !== false) {
             return $this->l('The company information provided is invalid. Please go back to your billing address and search for your company name to select a valid company.');
         }
         
-        // Address validation errors
         if (strpos($error_lower, 'invalid address') !== false || 
             strpos($error_lower, 'address') !== false && strpos($error_lower, 'value_error') !== false) {
             return $this->l('The address provided is invalid. Please go back and verify your billing address details.');
         }
         
-        // General validation error - provide helpful generic message
         if (strpos($error_lower, 'validation error') !== false || strpos($error_lower, 'value_error') !== false) {
             return $this->l('Some of the information provided is invalid. Please check your billing address details and try again.');
         }
@@ -14981,8 +14864,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Generate a unique attempt token for the provider-first checkout flow.
-     *
      * @param int $id_cart Cart ID
      * @param int $id_customer Customer ID
      * @return string
@@ -15001,8 +14882,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Validate whether a checkout callback is authorized for the stored attempt.
-     *
      * @param array $attempt Attempt record from twopayment_attempt
      * @param string $provided_secure_key Optional key from callback query string
      * @param int $context_customer_id Current context customer ID
@@ -15081,8 +14960,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Translated, brand-safe user-facing message for an invoice download notice code.
-     *
      * @param string $code One of TwoInvoiceRetrievalService::NOTICE_* codes
      * @param string $state Two order state (only used by the unavailable-state message)
      * @return string
@@ -15185,15 +15062,12 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Build deterministic hash for order creation idempotency key.
-     *
      * @param Cart $cart
      * @param string $snapshot_hash
      * @return string
      */
     public function buildTwoOrderCreateIdempotencyKey($cart, $snapshot_hash)
     {
-        // Keep retries idempotent for the same cart snapshot.
         $seed = 'create_order|' .
             (int)$cart->id . '|' .
             (int)$cart->id_customer . '|' .
@@ -15460,8 +15334,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Normalize snapshot numeric fields to fixed string decimals.
-     *
      * @param mixed $amount
      * @return string
      */
@@ -15471,8 +15343,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Normalize tax rate fields in checkout snapshots with fixed precision.
-     *
      * @param mixed $rate
      * @return string
      */
@@ -15510,8 +15380,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Insert or update a checkout attempt.
-     *
      * @param string $attempt_token Unique attempt token
      * @param array $attempt_data Attempt payload
      * @return bool
@@ -15568,8 +15436,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Retrieve a checkout attempt by token.
-     *
      * @param string $attempt_token
      * @return array|false
      */
@@ -15585,8 +15451,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Update attempt status and selected columns.
-     *
      * @param string $attempt_token
      * @param string $status
      * @param array $extra_data
@@ -15654,8 +15518,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Link an attempt to the created local order.
-     *
      * @param string $attempt_token
      * @param int $id_order
      * @return bool
@@ -15668,8 +15530,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Update merchant_order_id for a stored checkout attempt.
-     *
      * @param string $attempt_token
      * @param string $merchant_order_id
      * @return bool
@@ -15693,8 +15553,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Resolve existing order ID by cart ID with framework fallback.
-     *
      * @param int $id_cart
      * @return int
      */
@@ -15714,7 +15572,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Resolve a local order ID from an attempt record for cancellation paths.
      * Prefers direct attempt linkage and falls back to cart lookup for race windows.
      *
      * @param array $attempt
@@ -15740,8 +15597,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Determine whether callback confirmation must be blocked by attempt status.
-     *
      * @param string $status
      * @return bool
      */
@@ -15752,8 +15607,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Attempt status terminality guard for race-safe state transitions.
-     *
      * @param string $status
      * @return bool
      */
@@ -15763,8 +15616,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Block fulfillment flows for terminal provider-cancelled orders.
-     *
      * @param string $two_state
      * @return bool
      */
@@ -15775,8 +15626,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Determine whether provider order is in a fulfillable state.
-     *
      * @param string $two_state
      * @return bool
      */
@@ -15787,8 +15636,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Resolve the local status ID used when Two order is verified and ready for fulfillment.
-     *
      * @return int
      */
     public function getTwoVerifiedPendingFulfillmentStatusId()
@@ -15805,8 +15652,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Determine whether a local status transition must be blocked for cancelled Two orders.
-     *
      * @param int $status_id
      * @return bool
      */
@@ -15825,8 +15670,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Check whether a provider order response confirms terminal cancellation.
-     *
      * @param mixed $response
      * @param int|null $http_status
      * @return bool
@@ -15852,8 +15695,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Verify that stored payment data contains a usable Two order mapping.
-     *
      * @param mixed $orderpaymentdata
      * @return bool
      */
@@ -15871,8 +15712,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Push a warning message to the current back-office controller when available.
-     *
      * @param string $message
      * @return bool True when warning queue was updated
      */
@@ -15904,8 +15743,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Resolve configured PrestaShop cancelled status used for Two cancellations.
-     *
      * @return int
      */
     public function getTwoCancelledOrderStatusId()
@@ -15966,8 +15803,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Replace a pending fulfillment-trigger history row with cancelled status before insert.
-     *
      * @param object $history
      * @param object $order
      * @param string $two_order_id
@@ -16015,8 +15850,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Keep local order state aligned when provider reports terminal cancellation.
-     *
      * @param int $id_order
      * @param string $two_state
      * @return bool
@@ -16042,8 +15875,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Ensure attempt status values are consistent.
-     *
      * @param string $status
      * @return string
      */
@@ -16059,7 +15890,6 @@ class Twopayment extends PaymentModule
 
     public function setTwoOrderPaymentData($id_order, $payment_data)
     {
-        // PrestaShop standard: (int) casting prevents SQL injection for integer IDs
         $id_order = (int)$id_order;
         
         $result = $this->getTwoOrderPaymentData($id_order);
@@ -16121,7 +15951,6 @@ class Twopayment extends PaymentModule
 
     public function getTwoOrderPaymentData($id_order)
     {
-        // PrestaShop standard: (int) casting prevents SQL injection for integer IDs
         $sql = 'SELECT * FROM `' . _DB_PREFIX_ . 'twopayment` WHERE `id_order` = ' . (int)$id_order;
         $result = Db::getInstance()->getRow($sql);
         return $result;
@@ -16283,8 +16112,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Resolve Two order ID for admin sync from persisted order row or attempt fallback.
-     *
      * @param int $id_order
      * @param array $twopaymentdata
      * @return string
@@ -16347,8 +16174,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Get latest persisted attempt data for a local order (if available).
-     *
      * @param int $id_order
      * @return array|false
      */
@@ -16412,14 +16237,12 @@ class Twopayment extends PaymentModule
         $id_order = $params['order']->id;
         $twopaymentdata = $this->getTwoOrderPaymentData($id_order);
         if ($twopaymentdata) {
-            // Check if order is in VERIFIED state and try to confirm it
             if (!empty($twopaymentdata['two_order_id']) && $twopaymentdata['two_order_state'] == 'VERIFIED') {
                 PrestaShopLogger::addLog('TwoPayment: Payment return page - attempting to confirm VERIFIED order ID: ' . $twopaymentdata['two_order_id'], 1);
                 
                 $confirm_result = $this->confirmTwoOrder($twopaymentdata['two_order_id']);
                 
                 if ($confirm_result['success']) {
-                    // Update the database with the new confirmed state
                     $payment_data = array(
                         'two_order_id' => $twopaymentdata['two_order_id'],
                         'two_order_reference' => $twopaymentdata['two_order_reference'],
@@ -16432,7 +16255,6 @@ class Twopayment extends PaymentModule
                     );
                     $this->setTwoOrderPaymentData($id_order, $payment_data);
                     
-                    // Update local data for template
                     $twopaymentdata['two_order_state'] = $confirm_result['state'];
                     if ($confirm_result['status']) {
                         $twopaymentdata['two_order_status'] = $confirm_result['status'];
@@ -16440,7 +16262,6 @@ class Twopayment extends PaymentModule
                 }
             }
             
-            // Generate PDF URL if Two order ID is available
             $pdf_url = null;
             if (!empty($twopaymentdata['two_order_id'])) {
                 $pdf_url = $this->getTwoPdfUrl($twopaymentdata['two_order_id']);
@@ -16509,8 +16330,8 @@ class Twopayment extends PaymentModule
             
             $this->context->smarty->assign(array(
                 'twopaymentdata' => $twopaymentdata,
-                'two_portal_url' => $this->getTwoPortalUrl(), // Dynamic portal URL based on environment
-                'two_pdf_url' => $pdf_url, // PDF invoice URL if available
+                'two_portal_url' => $this->getTwoPortalUrl(),
+                'two_pdf_url' => $pdf_url,
                 'two_invoice_actions_available' => $invoice_actions_available,
                 'two_invoice_notice' => $this->getTwoInvoiceNoticeFromRequest(),
                 'two_product_name' => $this->getTwoBrandConfig('product_name'),
@@ -16556,8 +16377,8 @@ class Twopayment extends PaymentModule
             
             $this->context->smarty->assign(array(
                 'twopaymentdata' => $twopaymentdata,
-                'two_portal_url' => $this->getTwoPortalUrl(), // Dynamic portal URL based on environment
-                'two_pdf_url' => $pdf_url, // PDF invoice URL if available
+                'two_portal_url' => $this->getTwoPortalUrl(),
+                'two_pdf_url' => $pdf_url,
                 // Show the upload-status section when the merchant currently
                 // has the feature OR this order already carries upload history
                 // (an order uploaded under a past entitlement must keep showing
@@ -16572,10 +16393,6 @@ class Twopayment extends PaymentModule
         }
     }
 
-    /**
-     * Hook: actionCustomerAddressSave
-     * Capture company data when customer saves address for session persistence
-     */
     public function hookActionCustomerAddressSave($params)
     {
         if (!isset($params['address']) || !is_object($params['address'])) {
@@ -16584,12 +16401,10 @@ class Twopayment extends PaymentModule
 
         $address = $params['address'];
 
-        // Only process if this address has company information
         if (empty($address->company)) {
             return;
         }
 
-        // Store company data in session for persistence across checkout steps
         if (isset($this->context->cookie)) {
             $previousRecord = $this->readTwoCartScopedCompany();
             $previousCompanyName = $previousRecord !== null ? $previousRecord['name'] : '';
@@ -16599,7 +16414,6 @@ class Twopayment extends PaymentModule
                 $fields['address_id'] = (string) (int) $address->id;
             }
 
-            // Try to get organization number from form data if available
             $companyId = Tools::getValue('companyid', '');
             if (!empty($companyId)) {
                 $fields['id'] = $companyId;
@@ -16608,45 +16422,6 @@ class Twopayment extends PaymentModule
                 && $previousRecord['id'] !== ''
                 && !$this->twoCompanyNamesMatch($previousCompanyName, (string) $address->company)
             ) {
-                // TWO-40 changed the guard above. It used to read
-                // `isset($cookie->two_company_id)`; it now asks the reader for a
-                // record and tests `$previousRecord['id'] !== ''`. These are NOT
-                // equivalent conditions, and this comment used to imply they were
-                // close enough to call the difference benign drift - they are not
-                // equivalent, full stop, and the ruling below is what makes that a
-                // checked fact rather than a claim.
-                //
-                // This guard's job is to disown a session organisation NUMBER that
-                // no longer matches the address. `isset()` is true on a property
-                // set to an empty string, so the old condition fired even when
-                // there was no number in the record - nothing to disown - and took
-                // the country marker down with it as collateral damage. The new
-                // condition only fires when a real number is present, which is the
-                // only state this guard has anything to do.
-                //
-                // The reachable case: organisation number present but EMPTY, with
-                // a country marker beside it. Stored whenever the order-intent
-                // handler resolves a company name with no number
-                // (storeCompanyDataInSession() writes the number as ''), which is
-                // the ordinary "typed a company, never selected one from the
-                // register" state. Two consequences of the guard no longer firing
-                // on it:
-                //  - a "Dropped session company number" log line that reported
-                //    dropping a number that was never there stops being written;
-                //  - ajaxProcessGetCompany() now answers that stale country
-                //    marker to the browser. With an empty number the browser
-                //    blanks the company name it would previously have kept, so a
-                //    buyer whose address country changed inside one cart sees the
-                //    "enter your company name" prompt where they used to see the
-                //    "search for your company" one. Both block placement, so no
-                //    unselected company can be credit-checked either way - the
-                //    difference is which prompt, not whether the buyer is stopped.
-                //
-                // Pinned by SessionCompanyClearSpec::testAddressSaveKeepsCountryMarkerWhenNumberWasAlreadyEmpty()
-                // on this side of the boundary, and by
-                // testAddressSaveDropsTheNumberOfADisownedCompany() on the other -
-                // a record that DOES carry a real number is still disowned.
-                //
                 // TWO-25288. The buyer saved a DIFFERENT company name with no
                 // organisation number beside it - which is what disowning a
                 // selected company looks like by the time it reaches the server.
@@ -16678,7 +16453,6 @@ class Twopayment extends PaymentModule
 
             $this->storeTwoCartScopedCompany($fields);
 
-            // Set cookie expiration (1 hour)
             $this->context->cookie->setExpire(time() + self::COOKIE_EXPIRY_ONE_HOUR);
 
             PrestaShopLogger::addLog('TwoPayment: Company data captured from address save - Company: ' . $address->company, 1);
@@ -16717,9 +16491,7 @@ class Twopayment extends PaymentModule
      *
      * Note for anyone chasing non-ASCII behaviour under the PHP test suite:
      * tests/bootstrap.php stubs Tools::strtolower() as a byte-wise ASCII
-     * strtolower(), not the real mb_strtolower(). That gap predates this
-     * change (the stub already backed the other Tools::strtolower() call
-     * site) and is not newly introduced here - a non-ASCII capitalisation
+     * strtolower(), not the real mb_strtolower(). A non-ASCII capitalisation
      * tidy-up is untested by this suite either way.
      */
     private function twoCompanyNamesMatch($left, $right)
@@ -16734,11 +16506,6 @@ class Twopayment extends PaymentModule
     }
     
     /**
-     * Upload PrestaShop invoice to Two after successful fulfillment
-     * 
-     * This method is called when an order is fulfilled and "Using Own Invoices" is enabled.
-     * It uploads the PrestaShop-generated invoice PDF to Two using the three-step upload process.
-     * 
      * @param int $id_order PrestaShop order ID
      * @param array $orderpaymentdata Two payment data from database
      * @return void
@@ -16746,7 +16513,6 @@ class Twopayment extends PaymentModule
     private function uploadInvoiceAfterFulfillment($id_order, $orderpaymentdata)
     {
         try {
-            // Validate we have the invoice ID
             if (!isset($orderpaymentdata['two_invoice_id']) || empty($orderpaymentdata['two_invoice_id'])) {
                 PrestaShopLogger::addLog(
                     'TwoInvoiceUpload: Cannot upload invoice - Two invoice ID missing for Order ' . $id_order . 
@@ -16758,7 +16524,6 @@ class Twopayment extends PaymentModule
                     $id_order
                 );
                 
-                // Update status to NOT_APPLICABLE (no invoice ID available)
                 Db::getInstance()->update(
                     'twopayment',
                     array('two_invoice_upload_status' => 'NOT_APPLICABLE'),
@@ -16769,7 +16534,6 @@ class Twopayment extends PaymentModule
             
             $two_invoice_id = $orderpaymentdata['two_invoice_id'];
             
-            // Check if already uploaded
             if (isset($orderpaymentdata['two_invoice_upload_status']) && 
                 $orderpaymentdata['two_invoice_upload_status'] === 'UPLOADED') {
                 PrestaShopLogger::addLog(
@@ -16782,7 +16546,6 @@ class Twopayment extends PaymentModule
                 return;
             }
             
-            // Update status to UPLOADING
             Db::getInstance()->update(
                 'twopayment',
                 array('two_invoice_upload_status' => 'UPLOADING'),
@@ -16797,14 +16560,12 @@ class Twopayment extends PaymentModule
                 $id_order
             );
             
-            // Load the invoice upload service
             require_once dirname(__FILE__) . '/classes/TwoInvoiceUploadService.php';
             $uploadService = new TwoInvoiceUploadService($this);
             
             // Upload invoice (index 0 for first/only document)
             $result = $uploadService->uploadInvoice($id_order, $two_invoice_id, 0);
             
-            // Update status based on result
             if ($result['success']) {
                 Db::getInstance()->update(
                     'twopayment',
@@ -16812,7 +16573,7 @@ class Twopayment extends PaymentModule
                         'two_invoice_upload_status' => 'UPLOADED',
                         'two_invoice_upload_reference' => isset($result['reference']) ? pSQL($result['reference']) : null,
                         'two_invoice_uploaded_at' => date('Y-m-d H:i:s'),
-                        'two_invoice_upload_error' => null, // Clear any previous error
+                        'two_invoice_upload_error' => null,
                     ),
                     'id_order = ' . (int)$id_order
                 );
@@ -16855,7 +16616,6 @@ class Twopayment extends PaymentModule
                 $id_order
             );
             
-            // Update status to FAILED
             Db::getInstance()->update(
                 'twopayment',
                 array(
@@ -16874,14 +16634,7 @@ class Twopayment extends PaymentModule
      * - that fallback was removed in TWO-40 and must not come back.
      *
      * @param Address $address PrestaShop address object
-     * @param string $countryIso Country ISO, for log context ONLY. It stopped
-     *                           influencing any branch when the vat_number
-     *                           fallback went: that was the only tier whose
-     *                           behaviour depended on the country, because it
-     *                           stripped a VAT prefix when it matched. Kept in the
-     *                           signature because callers pass it and the log lines
-     *                           are the trail for "where did this org number come
-     *                           from".
+     * @param string $countryIso Country ISO, for log context ONLY.
      * @return string Organization number or empty string
      */
     public function extractOrgNumberFromAddress($address, $countryIso)
@@ -16895,7 +16648,6 @@ class Twopayment extends PaymentModule
         // Priority 1: dni field (commonly used in ES, PT, IT for fiscal numbers like CIF/NIF)
         if (!empty($address->dni)) {
             $dni = trim($address->dni);
-            // Validate it looks like an org number (alphanumeric, reasonable length)
             if (preg_match('/^[A-Z0-9\-]{5,20}$/i', $dni)) {
                 PrestaShopLogger::addLog(
                     'TwoPayment: Found org number in dni field: ' . $dni . ' for ' . $countryIso,

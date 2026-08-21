@@ -1,12 +1,11 @@
 /**
  * TWO-40: the mint request carries the country.
  *
- * A sole trader has to be able to START enrolment from the address-editor page.
- * The cart has no invoice address at that point in checkout, so the server has
- * nothing else to gate on - and the country sent is `billingCountry()`, the very
- * resolver the "I'm a sole trader" chip's own visibility is decided from, so the
- * country the mint is authorised against cannot disagree with the country the
- * chip was shown for.
+ * Enrolment can start from the address-editor page, where the cart has no
+ * invoice address yet, so the server has nothing else to gate on. The country
+ * sent is `billingCountry()` - the same resolver the chip's visibility is
+ * decided from - so the mint cannot be authorised against a different country
+ * than the chip was shown for.
  *
  * The server half is in `tests/SoleTraderTokenPreconditionSpec.php`.
  */
@@ -27,8 +26,7 @@ const ORDER_INTENT_URL = 'https://shop.example.test/module/twopayment/orderinten
 let $;
 
 beforeEach(() => {
-    // Installs jQuery and TwoCompanyNumber, both of which TwoSoleTrader.js
-    // expects to be in place before it loads (see the harness).
+    // TwoSoleTrader.js expects jQuery and TwoCompanyNumber already in place.
     const loaded = loadCompanySearch();
     $ = loaded.$;
 });
@@ -43,11 +41,6 @@ afterEach(() => {
 });
 
 describe('the mint request carries the buyer\'s current country', () => {
-    /**
-     * Driven through the real fetchTokens(), with the country only reachable
-     * from the DOM select - so a regression to a config-time value, or to no
-     * country at all, fails here rather than passing on a hardcoded fixture.
-     */
     test('fetchTokens POSTs the country billingCountry() resolves, urlencoded', async () => {
         buildAddressForm({ country: 'NO' });
         loadScript('views/js/modules/TwoSoleTrader.js');
@@ -79,12 +72,6 @@ describe('the mint request carries the buyer\'s current country', () => {
         soleTrader.destroy();
     });
 
-    /**
-     * The agreement that makes the gate coherent, asserted as an equality
-     * rather than against a second hardcoded ISO code: whatever the chip's
-     * visibility resolver answers is what goes on the wire. A future change
-     * that gives the mint its own country source has to break this.
-     */
     test('the country sent is the same one the chip\'s visibility is decided from', async () => {
         buildAddressForm({ country: 'SE' });
         loadScript('views/js/modules/TwoSoleTrader.js');

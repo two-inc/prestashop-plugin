@@ -6,16 +6,8 @@ require_once __DIR__ . '/../controllers/front/payment.php';
 
 /**
  * TWO-24768: a checkout failure must reach whoever submitted the payment form.
- *
- * The payment controller's only failure signal used to be a 302 back to the
- * order page with the message flashed into the session. A checkout front-end
- * that posts the payment form over XHR instead of navigating - PrestaShop's
- * own checkout module does - follows that redirect transparently, gets the
- * order page's HTML with HTTP 200, and has nothing it can recognise as a
- * failure. The buyer sees a checkout that never moves.
- *
- * These specs drive the real controller over the stub core, with the provider
- * call canned, and assert on the response the caller actually receives.
+ * A front-end that posts the form over XHR follows a 302 transparently, gets
+ * the order page's HTML with HTTP 200, and cannot recognise a failure at all.
  */
 final class AjaxCheckoutFailureSpec
 {
@@ -35,14 +27,10 @@ final class AjaxCheckoutFailureSpec
         self::testPluginAmountDiagnosticStillReachesTheBuyer();
     }
 
-    /* ---- payload-build failures: what the buyer is allowed to see ---- */
-
     /**
-     * TWO-25161 information disclosure: payload building walks PrestaShop core,
-     * so a core exception can reach the controller's catch. Its message must
-     * NOT be relayed - a PrestaShopDatabaseException carries SQL text and
-     * table/column names, and since TWO-24768 the same string is also written
-     * into the AJAX JSON body. The buyer gets the generic message; the real
+     * TWO-25161 information disclosure: payload building walks PrestaShop
+     * core, and a PrestaShopDatabaseException carries SQL text and
+     * table/column names. The buyer gets the generic message; the real
      * exception class and message are logged.
      */
     private static function testNonPluginExceptionIsNotRelayedToTheBuyer(): void
@@ -71,8 +59,6 @@ final class AjaxCheckoutFailureSpec
             'SQL text must never reach the buyer'
         );
 
-        // Diagnosability is not lost: the real exception is in the shop log,
-        // with its class named.
         TinyAssert::true(
             self::loggedContains('[PrestaShopDatabaseException]'),
             'the real exception class must be logged'
@@ -84,10 +70,9 @@ final class AjaxCheckoutFailureSpec
     }
 
     /**
-     * No regression on the deliberate part of TWO-25161: an amount diagnostic
-     * the plugin itself raised still reaches the buyer with its numbers intact.
-     * That detail is what makes a merchant-side cart/shipping misconfiguration
-     * diagnosable from the checkout page.
+     * The deliberate half of TWO-25161: a plugin-raised amount diagnostic keeps
+     * its numbers, which is what makes a merchant-side cart/shipping
+     * misconfiguration diagnosable from the checkout page.
      */
     private static function testPluginAmountDiagnosticStillReachesTheBuyer(): void
     {
@@ -111,7 +96,6 @@ final class AjaxCheckoutFailureSpec
         );
     }
 
-    /** Did any log line mention this fragment? */
     private static function loggedContains(string $needle): bool
     {
         foreach (PrestaShopLogger::$logs as $entry) {
@@ -122,8 +106,6 @@ final class AjaxCheckoutFailureSpec
 
         return false;
     }
-
-    /* ---- request-shape detection ---- */
 
     private static function testXmlHttpRequestHeaderIsDetectedAsAjax(): void
     {
@@ -164,8 +146,8 @@ final class AjaxCheckoutFailureSpec
 
     private static function testFailurePayloadFallsBackWhenMessageIsEmpty(): void
     {
-        // Internal failures deliberately carry no buyer-facing text. Emitting
-        // an empty message would reproduce the silent hang in the caller's UI.
+        // Internal failures carry no buyer-facing text; an empty message would
+        // be a silent hang in the caller's UI.
         $payload = TwopaymentPaymentModuleFrontController::buildTwoCheckoutFailurePayload(
             '   ',
             'Generic failure text.',
@@ -183,13 +165,9 @@ final class AjaxCheckoutFailureSpec
         TinyAssert::same('Payment method configuration error.', $specific['message']);
     }
 
-    /* ---- end-to-end through postProcess ---- */
-
     /**
-     * Provider rejects order creation (the shape seen in the wild: a store
-     * with no usable API key, so /v1/order answers 401). This path never went
-     * through failCheckout at all - it redirected inline - so it is the one
-     * that actually stranded buyers.
+     * Provider rejects order creation: a store with no usable API key, so
+     * /v1/order answers 401.
      */
     private static function testProviderRejectionReachesAjaxCallerAsJsonError(): void
     {
@@ -236,8 +214,6 @@ final class AjaxCheckoutFailureSpec
             $controller->errors[0]
         );
     }
-
-    /* ---- fixtures ---- */
 
     private static function runPostProcess($controller): ?StubRedirect
     {
@@ -301,8 +277,7 @@ final class AjaxCheckoutFailureSpec
             protected function emitTwoCheckoutJsonFailure(array $payload)
             {
                 $this->emitted[] = $payload;
-                // Stands in for the production `exit` without killing the
-                // test process.
+                // Stands in for the production `exit`.
                 throw new StubJsonFailureEmitted('json failure emitted');
             }
         };
@@ -312,9 +287,8 @@ final class AjaxCheckoutFailureSpec
     }
 
     /**
-     * Module double: everything the controller needs up to the provider call
-     * is canned, and /v1/order answers 401 (no usable API key). Passing an
-     * exception makes the payload build itself fail instead.
+     * Module double: /v1/order answers 401. Passing an exception makes the
+     * payload build fail instead.
      *
      * @param Exception|null $payloadException
      */

@@ -6,13 +6,9 @@ declare(strict_types=1);
  * Offset pricing fee (buyer surcharge) + brand-driven rounding relay.
  * TWO-24752 (offset fee) and TWO-24893 (rounding basis + brand step).
  *
- * Covers: buyer_fee_share payload construction per term, the rounding relay
- * and its edge cases, the fee-quote fetch (fail-soft), fee-line construction
- * with the merchant-selected TaxRulesGroup's destination-resolved rate
- * (CONFIG_SURCHARGE_TAX_RULES_GROUP via getTwoSurchargeTaxRateForCart — the
- * pricing-preview response's total_fee_tax_rate is never a source), and
- * end-to-end injection into the order payload including a rounding-boundary
- * amount.
+ * The pricing-preview response's total_fee_tax_rate is never a source for the
+ * fee line's tax: CONFIG_SURCHARGE_TAX_RULES_GROUP via
+ * getTwoSurchargeTaxRateForCart() is.
  */
 final class SurchargeSpec
 {
@@ -81,7 +77,7 @@ final class SurchargeSpec
         $settings = [
             'type' => 'percentage',
             'differential' => false,
-            // limit null, not 0: a limit of 0 is now a real configured cap
+            // limit null, not 0: a limit of 0 is a real configured cap
             // (relayed as cap => 0). Absence is what means "no cap".
             'grid' => [30 => ['percentage' => 2.5, 'fixed' => 0, 'limit' => null]],
             'rounding_basis' => 'none',
@@ -262,10 +258,8 @@ final class SurchargeSpec
     {
         self::reset();
         $module = new TwopaymentTestHarness();
-        // Default (no config, brand label null): term-naming default label.
         TinyAssert::same('Payment terms fee - 30 days', $module->getTwoSurchargeLineLabel(30));
         TinyAssert::same('Payment terms fee - 60 days', $module->getTwoSurchargeLineLabel(60));
-        // Merchant template with %s term substitution still wins over the default.
         Configuration::updateValue('PS_TWO_SURCHARGE_LINE_DESC', 'Financing fee (%s days)');
         TinyAssert::same('Financing fee (30 days)', $module->getTwoSurchargeLineLabel(30));
     }
@@ -276,9 +270,7 @@ final class SurchargeSpec
      * surcharge preview, even when a non-zero surcharge is configured. That
      * screen is where the merchant picks which terms to OFFER, not a place
      * to preview what the BUYER will be charged - conflating the two showed
-     * the wrong fee concept next to each term. (The configured-rate preview
-     * itself has since been removed everywhere: the checkout chip now shows
-     * a loading indicator until the real quoted amount resolves.)
+     * the wrong fee concept next to each term.
      */
     private static function testPaymentTermCheckboxLabelsNeverCarrySurchargePreview(): void
     {
@@ -352,7 +344,6 @@ final class SurchargeSpec
                 strpos($html, $rowPattern($days, $visible)) !== false,
                 'expected ' . ($visible ? 'visible' : 'hidden') . ' grid row for ' . $days . ' days'
             );
-            // Inputs exist for every offerable term regardless of visibility.
             TinyAssert::true(
                 strpos($html, 'name="PS_TWO_SURCHARGE_PCT_' . $days . '"') !== false,
                 'expected percentage input for ' . $days . ' days'
@@ -453,10 +444,8 @@ final class SurchargeSpec
         $cart->id_address_invoice = 900;
         $cart->id_address_delivery = 901;
 
-        // Covered destination resolves the group's rate as a fraction.
         TinyAssert::same(0.21, $module->getTwoSurchargeTaxRateForCart($cart), 'covered destination resolves the group rate');
 
-        // Destination without a matching rule -> 0 (core zero-rating).
         $cart->id_address_invoice = 901;
         TinyAssert::same(0.0, $module->getTwoSurchargeTaxRateForCart($cart), 'no rule for the destination must resolve 0');
         $cart->id_address_invoice = 900;
@@ -480,12 +469,10 @@ final class SurchargeSpec
         Configuration::updateValue('VATNUMBER_MANAGEMENT', 0);
         TinyAssert::same(0.21, $module->getTwoSurchargeTaxRateForCart($cart), 'exemption only applies when the vatnumber module manages it');
 
-        // "No tax" sentinel (id 0) resolves 0 for every destination.
         Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '0');
         TinyAssert::same(0.0, $module->getTwoSurchargeTaxRateForCart($cart), 'group id 0 must always resolve 0');
     }
 
-    /** Harness exposing the protected config-form helpers under test. */
     private static function makeConfigHarness(): TwopaymentTestHarness
     {
         return new class extends TwopaymentTestHarness {
@@ -575,8 +562,6 @@ final class SurchargeSpec
             TinyAssert::true(!in_array('0', $ids, true), 'the never-taxed sentinel must never be offered (stored: "' . $stored . '")');
         }
 
-        // A core row for the sentinel itself is filtered out by the shared
-        // predicate, so the option list cannot drift from the save guard.
         self::reset();
         StubStore::$taxRulesGroups[400] = ['name' => 'Standard rate', 'active' => 1];
         StubStore::$taxRulesGroups[0] = ['name' => 'No tax', 'active' => 1];
@@ -788,10 +773,10 @@ final class SurchargeSpec
 
     /**
      * While the cap column is HIDDEN (a surcharge type with no percentage) the
-     * zero rule is skipped. The admin JS hides the column and, since the
-     * toggle was rescoped, the help text explaining the rule with it - so
-     * refusing a legacy zero there would abort the whole Payment Settings save
-     * over a field the merchant can neither see nor read about.
+     * zero rule is skipped. The admin JS hides the column and the help text
+     * explaining the rule with it, so refusing a legacy zero there would abort
+     * the whole Payment Settings save over a field the merchant can neither see
+     * nor read about.
      */
     private static function testSurchargeCapZeroRuleIsSkippedWhileTheCapColumnIsHidden(): void
     {
@@ -1182,7 +1167,6 @@ final class SurchargeSpec
         TinyAssert::same('10.10', $line['net_amount']);
         TinyAssert::same('2.53', $line['tax_amount']);
         TinyAssert::same('12.63', $line['gross_amount']);
-        // The constructed line must satisfy the Two line-item formulas.
         TinyAssert::true($module->validateTwoLineItems([$line]));
     }
 

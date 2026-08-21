@@ -319,7 +319,6 @@ test('a tick is skipped while a signup popup opened against the current tokens i
         await flushPromises();
         expect(instance._popup).toBeNull();
 
-        // A later tick is no longer held back.
         jest.advanceTimersByTime(30 * 60 * 1000);
         await flushPromises();
         expect(mintCalls).toBe(2);
@@ -410,7 +409,6 @@ test('a popup opened while a background mint is still in flight is not orphaned 
     expect(global.window.open).toHaveBeenCalledTimes(1);
     expect(instance._popup).toBe(popup);
 
-    // NOW the background tick's mint resolves.
     resolveSecondMint({ json: () => Promise.resolve(tokenPayload('2')) });
     await flushPromises();
 

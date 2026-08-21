@@ -17,7 +17,6 @@
             {$two_invoice_notice.message|escape:'html':'UTF-8'}
         </div>
         {/if}
-        {* Order Information Section *}
         <div class="two-section">
             <h4 class="two-section-title">{l s='Order Information' mod='twopayment'}</h4>
             <div class="two-info-cards">
@@ -66,7 +65,6 @@
             </div>
         </div>
 
-        {* Invoice Upload Status Section *}
         {if $use_own_invoices}
         <div class="two-section">
             <h4 class="two-section-title">{l s='Invoice Upload Status' mod='twopayment'}</h4>
@@ -113,7 +111,6 @@
         </div>
         {/if}
 
-        {* Actions Section *}
         <div class="two-section">
             <h4 class="two-section-title">{l s='Actions' mod='twopayment'}</h4>
             <div class="two-info-cards">

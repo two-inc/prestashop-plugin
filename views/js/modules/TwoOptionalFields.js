@@ -1,13 +1,11 @@
 /**
  * Two Payment - optional buyer reference fields (ABN-472).
  *
- * The fields (department, project, purchase order number, invoice email) render
- * inside the Two payment tile, which PrestaShop emits as the payment option's
- * "additional information" block. That block is a SIBLING of the module's
- * payment form, never a child of it, so the visible inputs are not part of the
- * form's submission. Each one therefore has a hidden twin declared as a payment
- * option input, and this module's whole job is to keep the twin in step and to
- * refuse an invoice email that is not an email.
+ * The fields render inside the Two payment tile, which PrestaShop emits as the
+ * payment option's "additional information" block. That block is a SIBLING of
+ * the module's payment form, never a child of it, so the visible inputs are not
+ * part of the form's submission. Each one therefore has a hidden twin declared
+ * as a payment option input.
  *
  * Everything is delegated off `document` rather than bound to the inputs: the
  * payment step is re-rendered wholesale by PrestaShop whenever the cart total
@@ -39,12 +37,10 @@ class TwoOptionalFields {
         document.removeEventListener('submit', this.boundOnSubmit, true);
     }
 
-    /** @returns {NodeListOf<HTMLInputElement>} */
     static visibleFields() {
         return document.querySelectorAll('[data-two-optional-field]');
     }
 
-    /** @returns {HTMLInputElement|null} */
     static hiddenTwin(field) {
         const target = field.getAttribute('data-two-optional-target');
         if (!target) {
@@ -61,8 +57,6 @@ class TwoOptionalFields {
         }
 
         this.mirror(field);
-        // Clear a previous complaint as soon as the buyer edits the value; the
-        // check runs again on submit, which is the only place it can block.
         TwoOptionalFields.setFieldError(field, '');
     }
 
@@ -83,8 +77,8 @@ class TwoOptionalFields {
             return;
         }
 
-        // Re-mirror unconditionally before validating. A browser autofill or a
-        // theme script can set a value without ever firing input/change.
+        // A browser autofill or a theme script can set a value without ever
+        // firing input/change.
         this.mirrorAll();
 
         const invalid = this.findInvalidField();
@@ -108,8 +102,6 @@ class TwoOptionalFields {
 
     /**
      * The only optional field that can be wrong rather than merely empty.
-     *
-     * @returns {HTMLInputElement|null}
      */
     findInvalidField() {
         let invalid = null;
@@ -127,8 +119,6 @@ class TwoOptionalFields {
     }
 
     /**
-     * Is this the form that posts to the module's payment controller?
-     *
      * Identified by the hidden twins it carries rather than by its action URL
      * or id, both of which vary: the option id is assigned by PrestaShop, and
      * the action is a friendly-URL-dependent module link.
@@ -146,10 +136,8 @@ class TwoOptionalFields {
     }
 
     static isEmail(value) {
-        // Deliberately permissive and structural only - the authority on
-        // whether an address is acceptable is the server-side Validate::isEmail
-        // check in the payload builder. This exists to catch the obvious typo
-        // before the buyer loses the checkout round trip.
+        // Structural only - the authority on whether an address is acceptable
+        // is the server-side Validate::isEmail check in the payload builder.
         return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
     }
 

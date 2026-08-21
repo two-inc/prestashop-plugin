@@ -1,23 +1,12 @@
 /**
- * TWO-40 follow-up: PR #151 fixed the Sole Trader chip's VISIBILITY on the
- * address-editor page but not its click behaviour. `.two-sole-trader` (and
- * everything inside it - `.two-sole-trader__prompt`, `.two-sole-trader__status`,
- * `.two-sole-trader__error`) is only ever rendered by
- * views/templates/hook/paymentinfo.tpl, i.e. only on the payment step. On the
- * address-editor page, getCurrentBuyer()'s no-match branch used to always call
- * showPrompt(), which no-ops when `.two-sole-trader__prompt` cannot be found -
- * so the buyer's click minted tokens, ran a buyer lookup, and then silently
- * dead-ended with no popup and no error.
+ * TWO-40 follow-up: `.two-sole-trader` and everything inside it is only ever
+ * rendered by views/templates/hook/paymentinfo.tpl, i.e. only on the payment
+ * step. So on the address-editor page showPrompt() has no element to show and
+ * silently no-ops; the no-match branch must call openPopup() directly there.
  *
- * Empirically verified in real Chrome against staging that a `window.open()`
- * chained off two async hops (fetchTokens() then the buyer lookup) after a
- * real click survives Chrome's transient-activation window under normal
- * latency, so the fix is: when there is no `.two-sole-trader__prompt` to
- * show, call openPopup() directly instead of falling through to a no-op.
- *
- * Payment-step behaviour, where the container and prompt element genuinely
- * exist, must stay on the original two-click showPrompt()->openPopup() flow -
- * see the "unchanged on payment step" test below.
+ * Verified in real Chrome against staging that a `window.open()` chained off
+ * two async hops (fetchTokens() then the buyer lookup) after a real click still
+ * survives Chrome's transient-activation window under normal latency.
  */
 
 'use strict';
@@ -59,7 +48,6 @@ function stubFetch(buyerAnswer) {
     global.fetch = global.window.fetch;
 }
 
-/** No checkout email in the DOM - always a 404-shaped "no buyer" answer. */
 function noMatchAnswer() {
     return Promise.resolve({ ok: false, status: 404 });
 }

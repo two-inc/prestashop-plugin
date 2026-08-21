@@ -1,20 +1,14 @@
 /**
- * TWO-40 #13. Seeding the page-lifetime confirmed selection from the server's
- * cart-scoped record.
+ * TWO-40 #13. Seeding the page-lifetime confirmed selection from the
+ * server's cart-scoped record.
  *
- * `TwoCheckoutManager._confirmedCompanySelection` is page-lifetime only, and
- * PrestaShop's address step is a sequence of real document loads - the buyer
- * states their invoice address differs by following a link, which navigates. So
- * on the page where the invoice form finally appears, every consumer of the
- * confirmed selection is looking at null: the invoice-form mirror has nothing to
- * mirror, and the intent check falls back to a round trip.
- *
- * The server publishes the record it holds for the current cart, already through
- * its validated read, and the manager adopts it at construction. These specs pin
- * that adoption, and specifically that it carries the CAPTURED address and
- * country through rather than re-deriving them from the page it is being restored
- * onto - which would stamp the selection with values that defeat the very
- * invalidation checks it must stay subject to.
+ * `TwoCheckoutManager._confirmedCompanySelection` is page-lifetime only, but
+ * PrestaShop's address step is a sequence of real document loads, so on the
+ * page where the invoice form finally appears every consumer is looking at
+ * null. The server publishes its cart-scoped record and the manager adopts
+ * it at construction, carrying the CAPTURED address and country through
+ * rather than re-deriving them from the page it's restored onto - which
+ * would defeat the invalidation checks it must stay subject to.
  */
 
 'use strict';
@@ -93,9 +87,7 @@ describe('adopting the server record', () => {
     });
 
     test('the captured address and country come from the record, not from this page', () => {
-        // A page whose own address and country differ from the ones the selection
-        // was captured against. Re-deriving them here would silently make the
-        // record look current and neuter both invalidation checks.
+        // Re-deriving from this page would silently make the record look current.
         document.body.innerHTML = [
             '<div class="payment-options"></div>',
             "<input type='hidden' name='id_address_invoice' value='99' />",
@@ -168,27 +160,17 @@ describe('the config mapping the server payload goes through', () => {
 /**
  * TWO-40, adversarial review round 5, B3.
  *
- * `isCompanyDataMissing()` read ONLY the hidden `companyid` input. Seeding the
- * page-lifetime holder from the server's cart-scoped record added a second
- * legitimate place a real selection lives while that input is empty - or, on the
- * payment step, absent from the document altogether, because PrestaShop has
- * removed the address form by then.
- *
- * So a genuine order-intent failure (a 500, a timeout) with a seeded selection was
- * classified as "the buyer never picked a company". In tile mode that branch is
- * suppressed outright - the tile's own search control is what prompts, so there is
- * nothing to render - and the buyer was therefore shown NOTHING for a real
- * failure.
+ * `isCompanyDataMissing()` read ONLY the hidden `companyid` input. Seeding
+ * the page-lifetime holder from the server's record added a second
+ * legitimate place a real selection lives while that input is empty or
+ * absent (payment step has no address form). So a genuine order-intent
+ * failure with a seeded selection was classified as "buyer never picked a
+ * company" - and in tile mode, suppressed outright, shown as NOTHING.
  */
 describe('a real failure is not misreported as "you did not pick a company"', () => {
     const GENERIC = 'There was an issue processing your Two payment request';
     const RELOCATION_PROMPT = 'go back to your billing address';
 
-    /**
-     * @param {Object} [extraConfig]
-     * @returns {Object} a manager on the payment step with the shipped tile
-     *          rendered and company search relocated into it (tile mode)
-     */
     function tileModeManager(extraConfig) {
         buildPaymentTile();
 
@@ -209,8 +191,8 @@ describe('a real failure is not misreported as "you did not pick a company"', ()
     });
 
     test('in tile mode the failure surfaces an error rather than nothing', () => {
-        // THE REPRO. Before the fix this call returned early inside
-        // suppressCompanyRelocationPrompt() and the panel stayed hidden and empty.
+        // Before the fix this returned early inside
+        // suppressCompanyRelocationPrompt(), leaving the panel hidden and empty.
         const manager = tileModeManager({ confirmedCompany: SERVER_RECORD });
 
         manager.showOrderIntentError('Request failed with status 500');
@@ -233,9 +215,7 @@ describe('a real failure is not misreported as "you did not pick a company"', ()
     });
 
     test('with no selection anywhere, the company branch is unchanged', () => {
-        // The classification this fix must NOT weaken: nothing in the DOM and
-        // nothing seeded really is "no company selected", and tile mode really does
-        // stay silent about it because the tile's own search control prompts.
+        // Must NOT weaken: nothing in the DOM and nothing seeded is really "no company selected".
         const manager = tileModeManager();
 
         expect(manager.isCompanyDataMissing()).toBe(true);
@@ -257,22 +237,17 @@ describe('a real failure is not misreported as "you did not pick a company"', ()
 });
 
 /**
- * The mirror's page-lifetime memory belongs to the MANAGER, not to the search:
- * the manager destroys and rebuilds the search on every `updatedAddressForm`, so
- * a memory kept on the search would be gone at exactly the moment it is needed.
- *
- * These two specs drive that through the real wiring - a real manager, core's own
- * markup, core's own rebuild - rather than asserting on the config object, so the
- * injection cannot rot into passing a fresh object each time.
+ * The mirror's page-lifetime memory belongs to the MANAGER, not the search:
+ * the manager destroys and rebuilds the search on every `updatedAddressForm`,
+ * so memory kept on the search would be gone when it's needed. Driven
+ * through the real wiring rather than asserting on the config object.
  */
 describe('the invoice mirror survives the search being rebuilt', () => {
     const MARKER = 'data-two-autofilled-value';
 
     function mountOnInvoiceStep() {
         buildAddressesStep({ editing: 'invoice' });
-        // core's own body class for the checkout controller, with an address form
-        // and no payment options on the page: the manager's step detection reads
-        // that as the ADDRESS step, which is where the mirror belongs.
+        // Manager's step detection reads this body class as the ADDRESS step.
         document.body.className = 'controller-order';
 
         return makeManager({
