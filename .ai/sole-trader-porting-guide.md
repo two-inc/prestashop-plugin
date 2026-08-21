@@ -930,10 +930,10 @@ Rules that generalise:
   distinguishing *who is asking* (see the re-render rule below); it is wrong for
   splitting an operation that should not be splittable.
 
-**Both gaps this section used to log as "documented rather than fixed" are now FIXED
-(PrestaShop #176 `4156ad3`).** Kept here because the *shape* of both is what a port needs
-to avoid, and because the fix is the atomic-operation rule above rather than anything
-local to either symptom.
+**Every gap this section used to log as "documented rather than fixed" is now FIXED
+(PrestaShop #176 `4156ad3`, `ffe4b53`).** Kept here because the *shape* of each is what a
+port needs to avoid, and because the fix is the atomic-operation rule above rather than
+anything local to either symptom.
 
 - **FIXED — a live popup went untracked whenever the panel reopened.** Reopening called
   the cancel path unconditionally, which nulls the popup handle — so the window was left
@@ -965,22 +965,27 @@ local to either symptom.
   the reopen deadline being armed: the buyer's own click arms that too, so a re-render
   landing in the same tick as a genuine click would be indistinguishable. An argument at
   the call site cannot be ambiguous however the timing falls.
-- **REMAINING GAP — instance teardown still discards the handle.** The platform destroys
-  and rebuilds the search instance on every address-form re-render (§17), and `destroy()`
-  cancels the enrolment to disown flights that would otherwise resolve against a replaced
-  instance. That cancel still nulls the popup handle, so the full re-render path can still
-  leave a live popup owned by nobody. Closing it there would be wrong — the enrolment
-  object is a singleton that outlives the search instance, and the buyer may be filling the
-  popup in because their shipping total recalculated behind it. The real fix is for the
-  cancel to stop discarding a handle it is not closing, which needs the settle event's
-  popup-open guard reworked with it; that is the records-not-a-handle design below.
+- **FIXED — instance teardown discarded the handle** (PrestaShop #176 `ffe4b53`). The
+  platform destroys and rebuilds the search instance on every address-form re-render (§17),
+  and `destroy()` cancels the enrolment to disown flights that would otherwise resolve
+  against a replaced instance — but that cancel also nulled the popup handle, so the full
+  re-render path left a live popup owned by nobody. Closing it there would be wrong: the
+  enrolment object is a singleton that outlives the search instance, and the buyer may be
+  filling the popup in because their shipping total recalculated behind it. So the cancel
+  now takes a flag that disowns the WRITE only (`cancelEnrollment(keepPopupTracked)`) and
+  leaves the poll and the handle alone; the settle event's popup-open guard needs no change
+  and instead becomes the mechanism, holding the spinner until the buyer's own popup closes.
+  The write staying disowned is deliberate and is the residue: an OTP completed after an
+  incidental re-render is still dropped on the generation check, as it was before.
 - **The raise branch is load-bearing on all of this, and is a trap when changing it.** That
-  branch sits before the re-entrancy guard, and is reachable only with a flight of the
-  current panel-open session still running. Anything that later leaves a popup up across a
-  panel session with no flight running — a completed, already-adopted identity, which is
-  exactly the remaining gap's shape — makes it reachable in a state it was not written for,
-  and it must then decide what it owes the spinner/settle bookkeeping. A raise with no
-  spinner and no settle listener is not an answer.
+  branch sits before the re-entrancy guard. It used to be reachable only with a flight of
+  the current panel-open session still running — and the fix above deliberately widened
+  that: a popup now outlives the instance that launched it, so a *replacement* instance
+  meets one it never started, with no flight of its own. Anything in that shape must decide
+  what it owes the spinner/settle bookkeeping, because a raise with no spinner and no settle
+  listener is not an answer — it leaves the restored panel with nothing to close it when the
+  popup finally goes. The branch therefore arms the spinner itself, which is a no-op on its
+  own re-entrancy guard in the ordinary same-session case.
 
 **Cross-platform: WooCommerce had one of these two gaps and its architecture rules out the
 other (WooCommerce PR #487 `7a11acb`).**
