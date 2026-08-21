@@ -664,6 +664,51 @@ describe('reopening search cancels a pending enrolment (TWO-40)', () => {
     });
 
     /**
+     * The FULL re-render path, which is the one that used to still orphan the
+     * window (guide §14): the checkout manager destroys this instance and
+     * builds a replacement, and destroy()'s cancel is what disowns a flight
+     * that would otherwise resolve against an instance owning no fields. It
+     * must disown the WRITE only - `cancelEnrollment(true)` - because the buyer
+     * may be filling that popup in right now.
+     *
+     * The consequence is the second half: the replacement instance meets a live
+     * popup it never launched, so its Sole trader chip has to raise that window
+     * AND pick up the spinner/settle bookkeeping the destroyed instance took
+     * with it. Without the spinner there is no listener left to close the
+     * restored panel when the popup finally goes.
+     */
+    test('destroy() keeps the popup for the replacement instance, which raises it rather than opening a second', () => {
+        const soleTrader = stubSoleTrader(true);
+        const instance = makeInstance();
+        openPanel();
+        panelParts().soleTrader.trigger('click');
+        soleTrader.focusSignupPopup.mockReturnValue(true);
+        // Baselined rather than asserted at zero: the buyer-initiated open
+        // above abandons unconditionally, as every one of them does.
+        soleTrader.cancelEnrollment.mockClear();
+        soleTrader.abandonEnrollment.mockClear();
+        soleTrader.closeSignupPopup.mockClear();
+
+        instance.destroy();
+
+        // The cancel half only, and told to keep the handle.
+        expect(soleTrader.cancelEnrollment.mock.calls).toEqual([[true]]);
+        expect(soleTrader.abandonEnrollment).not.toHaveBeenCalled();
+        expect(soleTrader.closeSignupPopup).not.toHaveBeenCalled();
+
+        const replacement = makeInstance();
+        TwoCompanySearch._reopenPanelUntil = Date.now() + 1000;
+        replacement.restorePanelAfterRerender();
+        soleTrader.focusSignupPopup.mockClear();
+
+        panelParts().soleTrader.trigger('click');
+
+        expect(soleTrader.focusSignupPopup).toHaveBeenCalledTimes(1);
+        expect(soleTrader.startEnrollment).toHaveBeenCalledTimes(1);
+        expect(panelParts().nameField.hasClass('two-company-name-loading')).toBe(true);
+    });
+
+    /**
      * The restore path is told what it is, rather than inferring it from
      * `_reopenPanelUntil` being armed - which the buyer's OWN click arms too
      * (setupAddressFormListener()). So a re-render landing in the same tick as

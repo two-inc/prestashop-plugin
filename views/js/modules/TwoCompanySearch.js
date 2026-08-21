@@ -931,14 +931,17 @@ class TwoCompanySearch {
                 // a panel whose flight was already running, so it reaches this
                 // branch in the same state a buyer's own click would.
                 //
-                // Anything that later leaves a popup up across a panel session
-                // with no flight running - a completed, already-adopted
-                // identity - makes this branch reachable in a state it was not
-                // written for, and must decide what it owes
-                // beginSoleTraderLoading() first: a raise with no spinner and
-                // no settle listener is not it. destroy()'s known gap (§14) is
-                // exactly that shape.
+                // It is ALSO reachable with no flight running on this instance,
+                // now that destroy() keeps a live popup tracked across the
+                // rebuild (§14): the popup outlives the instance that launched
+                // it, so a replacement instance can meet one it never started.
+                // Hence beginSoleTraderLoading() below - a raise with no
+                // spinner and no settle listener leaves the restored panel with
+                // nothing to close it when the popup finally goes. It is a
+                // no-op on its own re-entrancy guard in the ordinary
+                // same-session case, where the flight is already loading.
                 if (this.focusSoleTraderSignupPopup()) {
+                    this.beginSoleTraderLoading();
                     this._chipMode = 'sole_trader';
                     this.renderChipSelection();
                     // Cancels the close ALREADY PENDING from this click's own
@@ -6143,15 +6146,15 @@ class TwoCompanySearch {
         // buyer may be actively filling in because their shipping total
         // recalculated behind it.
         //
-        // KNOWN GAP, guide §14: cancelEnrollment() still nulls the popup
-        // handle, so this path leaves a live popup tracked by nothing exactly
-        // as openDropdown() used to. Closing it here is the wrong fix (above);
-        // the fix is for the cancel to stop discarding the handle, which needs
-        // its own change to notifyEnrollmentSettled()'s popup-open guard.
+        // `keepPopupTracked` for exactly that reason (guide §14): a cancel that
+        // also nulled the handle would leave that same live popup owned by
+        // nobody - nothing polling it for closure, closeSignupPopup() unable to
+        // find it, and the next Sole trader click opening a SECOND window over
+        // it. Disowning the write does not require disowning the window.
         try {
             if (window.TwoSoleTrader_Instance
                 && typeof window.TwoSoleTrader_Instance.cancelEnrollment === 'function') {
-                window.TwoSoleTrader_Instance.cancelEnrollment();
+                window.TwoSoleTrader_Instance.cancelEnrollment(true);
             }
         } catch (e) {
             // no-op
