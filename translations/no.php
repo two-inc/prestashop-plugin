@@ -314,7 +314,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_980d43b4b58ff388e0f1c3c5ff253d1d'] 
 $_MODULE['<{twopayment}prestashop>twopayment_98ec681d588dc0fae27ac945915ffe5e'] = 'Tips for feilsøking';
 $_MODULE['<{twopayment}prestashop>twopayment_84a4c43bbbb88e5efea77f301cad6fe3'] = 'Kunne ikke behandle ordren din med %s-betaling.';
 $_MODULE['<{twopayment}prestashop>twopayment_99315aa41524d1a9a67fb031b473be73'] = 'Dette KAN utvidelsen gjøre';
-$_MODULE['<{twopayment}prestashop>twopayment_9af4c01d9a1ebe24c5ae45e7b07024c3'] = 'Send avgiftsdelsummer i forespørslenes datainnhold';
+$_MODULE['<{twopayment}prestashop>twopayment_02a611f10e0d4c434cc07c1b8e2cff4a'] = 'Valider avgiftsdelsummer';
 $_MODULE['<{twopayment}prestashop>twopayment_9bc4151431237fc71bc676000348f622'] = 'Dette KAN IKKE utvidelsen gjøre';
 $_MODULE['<{twopayment}prestashop>twopayment_4568e870a2def0081479b11f806e7d6f'] = '%s kunne ikke bygge denne ordren fra handlekurven din.';
 $_MODULE['<{twopayment}prestashop>twopayment_9c51eb50fb79bffa2c795ac4773781dc'] = 'Betalingsgodkjenningen din er utløpt. Oppdater siden og prøv igjen.';
@@ -381,7 +381,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_cdca48ec5dde79b84b395c0c557bb290'] 
 $_MODULE['<{twopayment}prestashop>twopayment_8b6ddb993ec11f974a0fa6a46244401e'] = 'Velg hvilket %s-API-miljø som skal brukes. Produksjon for reelle transaksjoner, Staging for testing.';
 $_MODULE['<{twopayment}prestashop>twopayment_cf5f3091e30dee6597885d8c0e0c357f'] = 'Vilkår';
 $_MODULE['<{twopayment}prestashop>twopayment_d132286ce060a9349df55de2808b4d5f'] = 'Ingen treff funnet';
-$_MODULE['<{twopayment}prestashop>twopayment_d2a7c39c5ec025981855847fed006923'] = 'Hvis du velger JA, blir tax_subtotals sendt i datainnholdet til /v1/order og /v1/order_intent. Hvis du velger NEI, utelates tax_subtotals fra dette datainnholdet.';
+$_MODULE['<{twopayment}prestashop>twopayment_f563791313af7708a2964e6c5f813c2a'] = 'Hvis du velger JA, blir en tax_subtotals-oppdeling per avgiftssats sendt i datainnholdet til /v1/order og /v1/order_intent, for validering mot ordrelinjene. Hvis du velger NEI, utelates tax_subtotals fra dette datainnholdet.';
 $_MODULE['<{twopayment}prestashop>twopayment_cf08ddca9326ba095dbdd77a10b9f121'] = '%s kunne ikke verifisere API-nøkkelen nå (HTTP %d). Dette er vanligvis midlertidig - prøv igjen om kort tid.';
 $_MODULE['<{twopayment}prestashop>twopayment_d2f68faa84d4bab378419dae024f85f9'] = 'Betalingen er godkjent! Velg betalingsvilkår nedenfor.';
 $_MODULE['<{twopayment}prestashop>twopayment_d314a00556eb88a960abf8a0de8b45f8'] = 'Noen av opplysningene som er oppgitt er ugyldige. Kontroller opplysningene i fakturaadressen din og prøv igjen.';

@@ -5625,6 +5625,7 @@ require __DIR__ . '/CheckoutLatencySpec.php';
 require __DIR__ . '/FulfilledStatusMappingSpec.php';
 require __DIR__ . '/AddressLookupConfigSpec.php';
 require __DIR__ . '/AddressLookupGatingSpec.php';
+require __DIR__ . '/ValidateTaxSubtotalsSpec.php';
 require __DIR__ . '/CompanySearchLocationConfigSpec.php';
 require __DIR__ . '/CompanySearchLocationKeyMigrationSpec.php';
 require __DIR__ . '/OrgNumberPreVerificationSpec.php';
@@ -5674,6 +5675,7 @@ $tests = [
     'FulfilledStatusMappingSpec::runAll' => [FulfilledStatusMappingSpec::class, 'runAll'],
     'AddressLookupConfigSpec::runAll' => [AddressLookupConfigSpec::class, 'runAll'],
     'AddressLookupGatingSpec::runAll' => [AddressLookupGatingSpec::class, 'runAll'],
+    'ValidateTaxSubtotalsSpec::runAll' => [ValidateTaxSubtotalsSpec::class, 'runAll'],
     'CompanySearchLocationConfigSpec::runAll' => [CompanySearchLocationConfigSpec::class, 'runAll'],
     'CompanySearchLocationKeyMigrationSpec::runAll' => [CompanySearchLocationKeyMigrationSpec::class, 'runAll'],
     'OrgNumberPreVerificationSpec::runAll' => [OrgNumberPreVerificationSpec::class, 'runAll'],
