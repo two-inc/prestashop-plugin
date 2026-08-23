@@ -4621,8 +4621,8 @@ final class OrderBuilderSpec
 
     private static function testSaveOrderManagementFormUpdatesTaxSubtotalsFlag(): void
     {
-        // TWO-25386 Part 1 section regroup: "Send tax subtotals in request
-        // payloads" now renders under, and is saved by, the Order Management
+        // TWO-25386 Part 1 section regroup: "Validate tax subtotals"
+        // now renders under, and is saved by, the Order Management
         // panel (Section E) - it moved out of the former "Advanced
         // Settings"/"Other" panel, which no longer exists as a single form.
         self::reset();

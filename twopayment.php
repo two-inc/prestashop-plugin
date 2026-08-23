@@ -2227,7 +2227,7 @@ class Twopayment extends PaymentModule
                         // SENTENCE CASE, matching every other label on this
                         // page ("Autofill company address", "Automatically
                         // fulfill orders with Two",
-                        // "Send tax subtotals in request payloads"). This was
+                        // "Validate tax subtotals"). This was
                         // Title Case for cross-platform word-for-word parity
                         // with woocommerce-plugin/magento-plugin; house style
                         // on this page wins, so the capitalisation - and ONLY
