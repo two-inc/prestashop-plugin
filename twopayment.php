@@ -14616,24 +14616,9 @@ class Twopayment extends PaymentModule
     public function configureSslVerification($ch)
     {
         $disable_ssl_verify = (bool)Configuration::get('PS_TWO_DISABLE_SSL_VERIFY', false);
-        $environment = (string)Configuration::get('PS_TWO_ENVIRONMENT', 'staging');
-        
-        if ($disable_ssl_verify) {
-            if ($environment === 'production') {
-                // Production hardening: never allow insecure TLS in live traffic.
-                PrestaShopLogger::addLog(
-                    'TwoPayment: SSL verification disable flag ignored in production. Enforcing secure TLS verification.',
-                    3
-                );
-                curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-                $ca_bundle = $this->findCaBundle();
-                if ($ca_bundle) {
-                    curl_setopt($ch, CURLOPT_CAINFO, $ca_bundle);
-                }
-                return;
-            }
 
+        if ($disable_ssl_verify) {
+            // Only if explicitly configured (corporate networks with custom certificates)
             PrestaShopLogger::addLog(
                 'TwoPayment: SSL verification disabled by configuration (security risk - corporate networks only)',
                 2
