@@ -2,7 +2,7 @@
 # Development environment
 # ==============================================================================
 
--include .env.local
+-include .env
 
 CONTAINER  := prestashop
 DB_CONTAINER := prestashop-db
@@ -25,7 +25,7 @@ export PORT
 
 # Internal Two devs (@two.inc gcloud account) point at staging; everyone else
 # at sandbox. Mirrors the Magento plugin convention. Override either via
-# .env.local or `make ... TWO_ENV=...`.
+# .env or `make ... TWO_ENV=...`.
 TWO_ENV              := $(shell gcloud config get-value account 2>/dev/null | grep -q '@two\.inc$$' && echo staging || echo sandbox)
 TWO_API_BASE_URL     ?= https://api.$(TWO_ENV).two.inc
 TWO_PORTAL_BASE_URL  ?= https://portal.$(TWO_ENV).two.inc
