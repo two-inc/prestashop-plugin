@@ -60,6 +60,7 @@ Thumbs.db
 *.wmv
 
 # Local dev
+.env
 .env.local
 .frpc.pid
 *.zip
