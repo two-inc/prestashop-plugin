@@ -2,6 +2,7 @@
 # Development environment
 # ==============================================================================
 
+-include .env
 -include .env.local
 
 CONTAINER  := prestashop
