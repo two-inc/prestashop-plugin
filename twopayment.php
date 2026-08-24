@@ -600,7 +600,7 @@ class Twopayment extends PaymentModule
     {
         $installData = array();
         foreach ($this->languages as $language) {
-            $installData['PS_TWO_TITLE'][(int) $language['id_lang']] = 'Business invoice 30 days';
+            $installData['PS_TWO_TITLE'][(int) $language['id_lang']] = 'Business invoice';
             $installData['PS_TWO_SUB_TITLE'][(int) $language['id_lang']] = 'Buy now, pay later - instant credit';
         }
         Configuration::updateValue('PS_TWO_TAB_VALUE', 1);
