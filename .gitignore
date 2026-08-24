@@ -61,7 +61,6 @@ Thumbs.db
 
 # Local dev
 .env
-.env.local
 .frpc.pid
 *.zip
 
