@@ -792,9 +792,14 @@ class TwoCheckoutManager {
         if (typeof this.isTwoPaymentSelected !== 'function' || !this.isTwoPaymentSelected()) {
             return;
         }
-        if (this.orderIntent && typeof this.orderIntent.reset === 'function') {
-            this.orderIntent.reset();
+        // triggerOrderIntentForSelection() dereferences this.orderIntent
+        // unguarded on its last branch. Nothing to invalidate before one exists
+        // anyway, and the periodic selection check picks the buyer's choice up
+        // once the module is built.
+        if (!this.orderIntent || typeof this.orderIntent.reset !== 'function') {
+            return;
         }
+        this.orderIntent.reset();
         this.triggerOrderIntentForSelection();
     }
 
