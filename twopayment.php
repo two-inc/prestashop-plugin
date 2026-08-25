@@ -4785,6 +4785,20 @@ class Twopayment extends PaymentModule
             return [];
         }
 
+        // Term-discovery gate (TWO-25503). PAYMENT_TERMS_OPTIONS is a
+        // build-time admin UI preset, never a runtime substitute for terms
+        // Two hasn't actually sanctioned for this merchant. Cache-only.
+        if (empty($this->getMerchantAvailableTerms(false))) {
+            if (!$this->twoTermsWithholdLogged) {
+                $this->twoTermsWithholdLogged = true;
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Payment option hidden - merchant offerable payment terms not resolved from API',
+                    2
+                );
+            }
+            return [];
+        }
+
         $cart = $this->context->cart;
         if (!Validate::isLoadedObject($cart) || $cart->id_address_invoice == 0) {
             PrestaShopLogger::addLog('TwoPayment: No valid cart or billing address found for payment options', 2);
@@ -11248,10 +11262,9 @@ class Twopayment extends PaymentModule
 
     /**
      * The offerable term source set (before the admin narrows it): the backend's
-     * `available_terms` when resolved, else the historical hardcoded option list.
-     * The fallback preserves pre-feature behaviour on a cold cache (fresh install
-     * / API blip) rather than blanking the term UI and checkout - the serve-stale
-     * degrade posture (TWO-24813).
+     * `available_terms` when resolved, else the hardcoded option list. Admin
+     * screens only - hookPaymentOptions withholds Two at checkout outright
+     * on an unresolved backend (TWO-25503) rather than reaching this fallback.
      *
      * @param bool $refresh Allow a TTL-gated backend fetch.
      * @return int[]
@@ -11338,6 +11351,9 @@ class Twopayment extends PaymentModule
      * @var bool
      */
     protected $twoCountryWithholdLogged = false;
+
+    /** @var bool Logged the unresolved-terms withhold reason yet (TWO-25503)? */
+    protected $twoTermsWithholdLogged = false;
 
     /**
      * Whether this instance has already reported that the country allowlist

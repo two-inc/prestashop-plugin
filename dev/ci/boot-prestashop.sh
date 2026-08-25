@@ -34,11 +34,12 @@ PS_HOST_PORT="${PS_HOST_PORT:-}"
 # gated on _PS_MODE_DEV_ i.e. PS_DEV_MODE=1). Unset by default, matching
 # every other job's behaviour (module falls back to the real
 # api.sandbox.two.inc host). The e2e job points this at an in-container
-# stub (dev/ci/start-two-api-stub.sh) that answers only the API-key
-# verification endpoint and refuses everything else, so the module's
-# checkout-media priming calls (merchant terms/FX-rate refresh, fired on
-# every checkout page view) fail fast instead of making live calls to
-# Two's real sandbox from public CI with a throwaway key.
+# stub (dev/ci/start-two-api-stub.sh) that answers the API-key
+# verification endpoint and GET /v1/merchant/{id}, and refuses everything
+# else, so the module's checkout-media priming calls (merchant terms/
+# FX-rate refresh, fired on every checkout page view) get real answers
+# instead of live calls to Two's real sandbox from public CI with a
+# throwaway key.
 TWO_API_BASE_URL="${TWO_API_BASE_URL:-}"
 
 # Docker Hub intermittently 429s GitHub-hosted runners; every other network
