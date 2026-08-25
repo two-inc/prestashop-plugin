@@ -5038,17 +5038,9 @@ class TwoCompanySearch {
 
         const triggerOrderIntentRecheck = () => {
             try {
-                if (
-                    window.TwoCheckoutManager_Instance &&
-                    window.TwoCheckoutManager_Instance.isTwoPaymentSelected &&
-                    window.TwoCheckoutManager_Instance.isTwoPaymentSelected()
-                ) {
-                    if (window.TwoCheckoutManager_Instance.orderIntent && window.TwoCheckoutManager_Instance.orderIntent.reset) {
-                        window.TwoCheckoutManager_Instance.orderIntent.reset();
-                    }
-                    if (window.TwoCheckoutManager_Instance.triggerOrderIntentForSelection) {
-                        window.TwoCheckoutManager_Instance.triggerOrderIntentForSelection();
-                    }
+                const manager = window.TwoCheckoutManager_Instance;
+                if (manager && typeof manager.recheckOrderIntentForNewSelection === 'function') {
+                    manager.recheckOrderIntentForNewSelection();
                 }
             } catch (e) {
                 // noop
