@@ -2252,6 +2252,19 @@ namespace {
             // ApiKeyVerificationSpec drives the real thing by clearing this
             // and stubbing the wire call.
             $this->primeTwoApiKeyStatus(Twopayment::API_KEY_STATUS_OK, 200);
+            // A resolved backend term cache by default (TWO-25503). Every
+            // checkout render now withholds Two outright on a cold cache, and
+            // a harness without one would silently hide the payment option
+            // from every unrelated spec. Seeded with the SAME values as the
+            // historical hardcoded fallback list, so admin-narrowing specs
+            // that assert against it see identical numbers either way.
+            // Skipped when a spec has already primed the cache (directly via
+            // Configuration::updateValue, e.g. to test the raw cache getter)
+            // BEFORE constructing the harness - this must not clobber that.
+            // TermDiscoverySpec drives the real (unresolved) thing directly.
+            if (!Configuration::hasKey(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS)) {
+                $this->primeTwoAvailableTerms(Twopayment::PAYMENT_TERMS_OPTIONS);
+            }
         }
 
         /**
@@ -2266,6 +2279,22 @@ namespace {
             $this->twoApiKeyStatusMemo = $status === null
                 ? null
                 : array('status' => (string) $status, 'code' => $code);
+        }
+
+        /**
+         * Sets (or, with an empty array, clears) the cached backend
+         * available-terms the term-discovery gate reads, without going near
+         * the network. An empty array reproduces a cold cache / never-fetched
+         * merchant record.
+         *
+         * @param int[] $terms
+         */
+        public function primeTwoAvailableTerms(array $terms): void
+        {
+            Configuration::updateValue(
+                Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS,
+                empty($terms) ? '' : json_encode(array_values($terms))
+            );
         }
 
         public function l($string)
