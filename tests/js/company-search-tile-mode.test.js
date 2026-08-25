@@ -67,6 +67,7 @@ function buildTileOnlyPaymentStep() {
 function mountOnTile() {
     return new TwoCompanySearch({
         checkoutHost: CHECKOUT_HOST,
+        companySearchInAddressArea: false,
         companyFieldSelector: '#two_tile_company'
     });
 }
@@ -304,5 +305,29 @@ describe('Bug 2: no "go back to your billing address" prompt in tile mode', () =
         expect(shown(section)).toBe(false);
         expect(section.querySelector('.two-payment-message').textContent).toBe('');
         expect(section.classList.contains('show')).toBe(false);
+    });
+});
+
+/**
+ * TWO-25503: the manual-entry gate reads this flag off the search instance, so
+ * the manager has to hand it down at both mount points.
+ */
+describe('the manager hands companySearchInAddressArea down to the search control', () => {
+    let TwoCheckoutManager;
+
+    beforeEach(() => {
+        loadScript('views/js/modules/TwoCheckoutManager.js');
+        TwoCheckoutManager = window.TwoCheckoutManager;
+    });
+
+    test('the tile mount is constructed with it false', () => {
+        const manager = new TwoCheckoutManager({
+            checkoutHost: CHECKOUT_HOST,
+            companySearchInAddressArea: false
+        });
+        manager.initializeCompanySearch();
+
+        expect(manager.companySearch).toBeTruthy();
+        expect(manager.companySearch.config.companySearchInAddressArea).toBe(false);
     });
 });

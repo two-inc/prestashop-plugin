@@ -131,7 +131,11 @@ test.describe("TWO-25326 §7.1 company-search location", () => {
     // behaviour as the address-area control does in the other test.
     await tileField.click();
     await expect(page.locator(".two-company-dropdown")).toBeVisible({ timeout: 10_000 });
-    await expect(page.locator("button.two-company-not-listed")).toBeVisible();
+    await expect(page.locator("button.two-company-registered-entry")).toBeVisible();
+    // "Enter Manually" is the one chip this location suppresses (TWO-25503):
+    // manual entry captures no company number and only the address-step lookup
+    // does, so from the tile it would be a dead end.
+    await expect(page.locator("button.two-company-not-listed")).toBeHidden();
 
     // And it SEARCHES, not merely opens (TWO-25326 §7.1 follow-up). The
     // control opened correctly while being completely unable to search: on
