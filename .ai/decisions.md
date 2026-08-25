@@ -117,6 +117,7 @@ What is written:
 | `billing_address.street` | `address1` | via `autoFillAddress()` |
 | `billing_address.postal_code` | `postcode` | via `autoFillAddress()` |
 | `billing_address.city` | `city` | via `autoFillAddress()` |
+| `phone_number` | `phone` input | via `autoFillAddress()`; carried on the response itself, so it rides with the address fill and a response with no address fills no phone either |
 
 What is deliberately NOT written:
 
@@ -1765,11 +1766,13 @@ rest of the cart unless the contents come back to matching.**
 
 **Which fields.** Company, organisation number, country, street, postcode and city —
 the fields the plugin can ATTRIBUTE, because it writes them and therefore has a
-last-written value for them. The name fields and the phone are deliberately excluded:
-the plugin never writes them, so every value in them is buyer-authored by definition,
-and counting them would pin the secondary address the moment the buyer typed the name
-they are obliged to type before they can save it at all — on the first render, before
-any sync could ever have happened.
+last-written value for them. The name fields and the phone are deliberately excluded.
+Both are required of the buyer before they can save the address at all, so both are
+filled on the first render — counting them would pin the secondary address before any
+sync could ever have happened. The name fields are additionally never written by the
+plugin, so every value in them is buyer-authored by definition; the phone is written
+only by a sole-trader enrolment completion, which is not a mirror sync and records
+nothing for the pin to judge.
 
 **Where it is evaluated.** In `mirrorConfirmedCompanyToInvoiceAddress()`, as the gate
 in front of POPULATE only. The four-way operation split is kept, not collapsed: RE-MARK
