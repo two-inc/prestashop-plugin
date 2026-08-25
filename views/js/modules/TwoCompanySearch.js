@@ -5315,11 +5315,16 @@ class TwoCompanySearch {
         // this class wrote itself, so an unrelated selection can never blank a second
         // line the buyer typed. See autoFillSoleTraderAddress() for what fills it.
         const secondLine = address.address_line_2 || address.addressLine2 || address.address2 || '';
+        // One spelling only, unlike the address keys above: a company-lookup address
+        // carries no phone, and accepting a second spelling would widen this write
+        // into registry data about the COMPANY rather than the buyer.
+        const phone = address.phone_number || '';
         const fieldMappings = {
             'address1': street,
             'address2': secondLine,
             'postcode': postal,
-            'city': city
+            'city': city,
+            'phone': phone
         };
         const owned = {};
         Object.entries(fieldMappings).forEach(([fieldName, value]) => {
@@ -6004,9 +6009,11 @@ class TwoCompanySearch {
      * null must never be allowed to blank anything.
      *
      * EVERY field of the response lands somewhere (Doug's ruling). `street`,
-     * `building`, `apartment`, `postal_code` and `city` are handled here;
-     * `region` is applied by autoFillRegion() after this returns, because on a form
-     * with no state field it appends to the CITY this fill has just written.
+     * `building`, `apartment`, `postal_code`, `city` and the response's own
+     * `phone_number` are handled here; `region` is applied by autoFillRegion() after
+     * this returns, because on a form with no state field it appends to the CITY this
+     * fill has just written. The phone therefore rides with the address: a response
+     * carrying neither address returns early and fills no phone either.
      *
      * `address2` and `state` were added to MIRRORED_ADDRESS_FIELDS and to
      * `Twopayment::MIRROR_WRITE_SESSION_KEYS` so these writes stay ATTRIBUTABLE
@@ -6048,6 +6055,8 @@ class TwoCompanySearch {
         // earlier round proposed exactly that and it was wrong.
         const locator = [apartment, building].filter(Boolean).join(', ');
         const resolved = Object.assign({}, source);
+        // The phone is carried on the response itself, not inside either address.
+        resolved.phone_number = buyer.phone_number;
         if (locator) {
             resolved.street = locator;
             resolved.address_line_2 = street;
