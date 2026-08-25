@@ -2,12 +2,8 @@
 
 declare(strict_types=1);
 
-/**
- * TWO-25503 - term-discovery gate. hookPaymentOptions must withhold Two
- * outright when the merchant's offerable payment terms have never been
- * resolved from the backend, rather than silently offering the hardcoded
- * PAYMENT_TERMS_OPTIONS preset as if it were confirmed merchant data.
- */
+// TWO-25503 - hookPaymentOptions must withhold Two, not fall back to the
+// hardcoded PAYMENT_TERMS_OPTIONS preset, when terms are unresolved.
 final class TermDiscoverySpec
 {
     public static function runAll(): void
@@ -87,10 +83,7 @@ final class TermDiscoverySpec
         TinyAssert::true($logged !== '', 'hiding the payment option must say why in the log');
     }
 
-    /**
-     * PrestaShop asks for payment options several times per payment-step
-     * render, same as the other withhold gates.
-     */
+    // PrestaShop calls hookPaymentOptions several times per render.
     private static function testWithholdReasonIsLoggedOncePerRequestNotPerCall(): void
     {
         $module = self::module();
@@ -111,12 +104,8 @@ final class TermDiscoverySpec
         TinyAssert::same(1, $lines, 'the withhold reason must be logged once per request');
     }
 
-    /**
-     * A merchant-identity change (new API key / merchant id) invalidates the
-     * cached terms (invalidateMerchantAvailableTerms) - Two must stay
-     * withheld until the next successful fetch, never fall back to the old
-     * merchant's data or the hardcoded preset.
-     */
+    // A merchant-identity change invalidates the cache; must stay withheld
+    // until re-resolved, never fall back to the old merchant's data.
     private static function testInvalidatedCacheWithholdsUntilReResolved(): void
     {
         $module = self::module();

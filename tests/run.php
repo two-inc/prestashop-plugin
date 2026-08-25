@@ -4980,9 +4980,7 @@ final class OrderBuilderSpec
         Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
         $module = self::fetchHarness();
-        // The harness seeds a resolved cache by default (TWO-25503) so
-        // unrelated checkout specs are not silently withheld; this test wants
-        // a genuinely cold one.
+        // Harness seeds a resolved cache by default; this test wants cold.
         $module->primeTwoAvailableTerms([]);
         // Cache-only read never fetches, even with a cold cache: the seam is
         // reached from render paths that must not block on HTTP.
