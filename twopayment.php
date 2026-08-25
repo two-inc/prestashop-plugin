@@ -600,7 +600,7 @@ class Twopayment extends PaymentModule
     {
         $installData = array();
         foreach ($this->languages as $language) {
-            $installData['PS_TWO_TITLE'][(int) $language['id_lang']] = 'Business invoice 30 days';
+            $installData['PS_TWO_TITLE'][(int) $language['id_lang']] = 'Business invoice';
             $installData['PS_TWO_SUB_TITLE'][(int) $language['id_lang']] = 'Buy now, pay later - instant credit';
         }
         Configuration::updateValue('PS_TWO_TAB_VALUE', 1);
@@ -630,6 +630,8 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', 1);
         Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', 'STANDARD'); // Default: Standard payment terms (not EOM)
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1); // Default: 30 days enabled
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_60', 1); // Default: 60 days enabled
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_90', 1); // Default: 90 days enabled
         Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1); // Enabled by default; can be disabled for compatibility
         // Custom Two order states will be created by createTwoOrderState()
         // Set sensible default mappings to standard PrestaShop states
