@@ -47,12 +47,13 @@ claim below as DOM-verified, cited by the actual structure captured live:
   search input — there is one intermediate wrapper (`.two-company-mode-chips`) between
   the dropdown panel and the individual chip buttons. Two levels: chip →
   `.two-company-mode-chips` → `.two-company-dropdown`.
-- **Visibility is purely inherited, confirmed with zero independent chip state.** Every
-  chip's `style` attribute is present but empty (`element.style.display === ''` in
-  every observed state); there is exactly one visibility switch in the whole
-  structure — the `hidden` attribute on `.two-company-dropdown` itself. Open it, all
-  three chips become visible; close it, all three become invisible; nothing about an
-  individual chip's presence is ever toggled independently. (Which chip is
+- **The `hidden` attribute on `.two-company-dropdown` is the outer visibility switch;
+  each chip then answers its own question inside it.** Closing the panel makes all three
+  chips invisible. Opening it shows "Registered Company" unconditionally, "Sole Trader"
+  only where the registry says the billing country supports one, and "Enter Manually"
+  only where company search lives in the address area (TWO-25503: manual entry captures
+  no company number, and the address-step lookup is the only path that captures one, so
+  anywhere else the chip is a dead end). (Which chip is
   *selected* — `.two-company-mode-chip--selected` — is a separate, purely cosmetic
   class change, not a visibility mechanism. No `aria-selected`, no `aria-pressed`, no
   `data-*` carries it.)
