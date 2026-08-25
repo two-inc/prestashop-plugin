@@ -1720,6 +1720,12 @@ class TwoSoleTrader {
                     // the in-memory copy and the cookie agreeing on which
                     // entity the buyer is.
                     self.publishConfirmedSelection(companyLabel, buyer.organization_number || '');
+                    // TWO-25503: through the SAME call a search re-selection
+                    // uses. Without it the tile kept showing the previously
+                    // selected company's approval sentence - both for a switch
+                    // into sole-trader mode that adopts an identity, and for
+                    // "select a different sole trader".
+                    self.recheckOrderIntent();
                     // TWO-25326 §12, review round 2: companyLabel falls back to
                     // buyer.organization_number when company_name is blank
                     // (see the comment above applyBuyer) - and that is exactly
@@ -1818,6 +1824,25 @@ class TwoSoleTrader {
             manager._tileCompanySelected = true;
         } catch (e) {
             // no-op: presentation only, never a gate.
+        }
+    }
+
+    /**
+     * Ask the manager to re-run the intent check for the identity just adopted
+     * (TWO-25503). Separate from publishConfirmedSelection() so that method
+     * stays the pure mirror of TwoCompanySearch's own publish, which likewise
+     * does not re-check.
+     *
+     * @returns {void}
+     */
+    recheckOrderIntent() {
+        try {
+            const manager = window.TwoCheckoutManager_Instance;
+            if (manager && typeof manager.recheckOrderIntentForNewSelection === 'function') {
+                manager.recheckOrderIntentForNewSelection();
+            }
+        } catch (e) {
+            // no-op: the intent check re-runs on the periodic sweep anyway.
         }
     }
 
