@@ -65,6 +65,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The per-country answer is now also cached in `localStorage` with a 24h TTL, namespaced per checkout environment (`checkoutHost`) so staging/production/sandbox never share an entry. A cache hit populates availability and skips the network call entirely; a transport failure is never persisted (a blip must not become a day-long "not available"), matching the existing in-memory cache's own rule
 
 ### Changed
+- **The "Enter Manually" mode chip renders only while "Enable company search in address entry" is on** (TWO-25503). "Registered Company" and "Sole Trader" are unaffected
+  - Manual entry captures a company name and no company number, and Two's payment method requires one. The address-step lookup is the only path that captures a number, so with the search relocated into the payment tile the chip led a buyer into a state they could not pay from
+  - The gate is client-side, on the switch the browser already receives (`company_name_search` -> `companySearchInAddressArea`); no new setting, no new config key, and no server-side change
 - **The tax-subtotals switch is now labelled "Validate tax subtotals"** (TWO-25502), aligning the caption with the same setting on the other Two plugins
   - Caption and help text only. The config key stays `PS_TWO_ENABLE_TAX_SUBTOTALS`, its install default stays enabled, and what the switch does is unchanged — it gates whether the per-tax-rate `tax_subtotals` breakdown is sent in `/v1/order` and `/v1/order_intent`
   - The breakdown is computed and reconciled against the order lines regardless of this setting, so switching it off suppresses transmission only; it never relaxes the internal amount gate that refuses a checkout whose subtotals do not add up to its lines

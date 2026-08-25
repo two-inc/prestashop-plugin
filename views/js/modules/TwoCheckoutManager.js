@@ -2166,6 +2166,7 @@ class TwoCheckoutManager {
                 // company picked in the tile silently rewrite an address the
                 // buyer is not even looking at.
                 addressLookupEnabled: false,
+                companySearchInAddressArea: false,
                 companyFieldSelector: '#two_tile_company'
             });
             return;
@@ -2173,6 +2174,7 @@ class TwoCheckoutManager {
         this.companySearch = new TwoCompanySearch({
             checkoutHost: this.config.checkoutHost,
             addressLookupEnabled: this.config.addressLookupEnabled !== false,
+            companySearchInAddressArea: true,
             companyFieldSelector: "input[name='company']",
             // TWO-40: read through a getter, and injected rather than reached for
             // on `window`. This instance is constructed from inside the manager's

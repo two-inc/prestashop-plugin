@@ -123,6 +123,10 @@ class TwoCompanySearch {
             // Merchant toggle for the address lookup (TWO-25203). Default-on,
             // mirroring the server-side resolver.
             addressLookupEnabled: true,
+            // Where this control is mounted (TWO-25326 §7.1). Default-on,
+            // mirroring the server-side resolver. Read by
+            // syncNotListedVisibility().
+            companySearchInAddressArea: true,
             ...config
         };
         
@@ -1252,17 +1256,19 @@ class TwoCompanySearch {
      * Visibility gating for the "Enter Manually" mode chip (TWO-40 design
      * revision of §2's "My company is not on the list").
      *
-     * ALWAYS visible whenever the panel is open - this one and "Registered
-     * Company" are always in the set, unlike "Sole Trader". No gating on a
-     * confirmed selection or on characters typed: the buyer must have a route
-     * into manual entry without typing a doomed query first (the WC regression
-     * recorded on TWO-25326).
+     * Open panel AND company search living in the address area (TWO-25503):
+     * manual entry captures no company number, Two's payment method requires
+     * one, and the address-step lookup is the only path that captures it - so
+     * with address-area search off the chip is a dead end and is not offered.
+     * No gating on a confirmed selection or on characters typed: the buyer must
+     * have a route into manual entry without typing a doomed query first (the
+     * WC regression recorded on TWO-25326).
      */
     syncNotListedVisibility() {
         if (!this._notListedButton || !this._notListedButton.length) {
             return;
         }
-        if (this._dropdownOpen) {
+        if (this._dropdownOpen && this.config.companySearchInAddressArea !== false) {
             this._notListedButton.show();
         } else {
             this._notListedButton.hide();
