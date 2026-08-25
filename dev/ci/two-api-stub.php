@@ -22,6 +22,13 @@
  * The merchant identity returned matches what seed-two-config.sh writes into
  * Configuration, so the two cannot disagree.
  *
+ * Also answers GET /v1/merchant/{id} (TWO-25503): getMerchantAvailableTerms()
+ * withholds the payment option entirely when this fetch has never populated
+ * the available_terms cache, so the e2e suite needs a real term list from the
+ * wire rather than a Configuration value seeded around the fetch. No
+ * min_order_* fields, matching seed-two-config.sh's "no platform minimum"
+ * posture for this harness.
+ *
  * WHAT THIS STUB STOPS THE SUITE FROM COVERING. It answers 200 for ANY API key
  * and ignores the X-API-Key header entirely, so the e2e suite can no longer
  * catch a regression in how the key is sent, nor anything in the REJECT
@@ -38,6 +45,18 @@ if ($path === '/v1/merchant/verify_api_key') {
     echo json_encode(array(
         'id' => 'e2e-merchant-id',
         'short_name' => 'E2E Test Merchant',
+    ));
+    return true;
+}
+
+if ($path === '/v1/merchant/e2e-merchant-id') {
+    header('Content-Type: application/json');
+    echo json_encode(array(
+        'id' => 'e2e-merchant-id',
+        'short_name' => 'E2E Test Merchant',
+        'available_terms' => array(14, 30),
+        'due_in_days' => 14,
+        'invoice_distributed_by_merchant' => false,
     ));
     return true;
 }
