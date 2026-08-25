@@ -898,9 +898,9 @@
  * the shared ".two-company-mode-chip") so the DOM stays selectable the same
  * way, but the visual treatment is now a pill/chip, not a link.
  *
- * flex-wrap on the ROW, not on each chip's own text: with up to three chips
- * and only one hidden conditionally ("Sole Trader"), the row itself wraps
- * to a second line on a narrow field before any single chip's label does.
+ * flex-wrap on the ROW, not on each chip's own text: with up to three chips,
+ * two of them conditional ("Sole Trader", "Enter Manually"), the row itself
+ * wraps to a second line on a narrow field before any single chip's label does.
  */
 .two-company-mode-chips {
     display: flex;
