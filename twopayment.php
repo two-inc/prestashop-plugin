@@ -2229,7 +2229,7 @@ class Twopayment extends PaymentModule
                         // SENTENCE CASE, matching every other label on this
                         // page ("Autofill company address", "Automatically
                         // fulfill orders with Two",
-                        // "Send tax subtotals in request payloads"). This was
+                        // "Validate tax subtotals"). This was
                         // Title Case for cross-platform word-for-word parity
                         // with woocommerce-plugin/magento-plugin; house style
                         // on this page wins, so the capitalisation - and ONLY
@@ -2352,10 +2352,10 @@ class Twopayment extends PaymentModule
                     ),
                     array(
                         'type' => 'switch',
-                        'label' => $this->l('Send tax subtotals in request payloads'),
+                        'label' => $this->l('Validate tax subtotals'),
                         'name' => 'PS_TWO_ENABLE_TAX_SUBTOTALS',
                         'is_bool' => true,
-                        'desc' => $this->l('If you choose YES, tax_subtotals will be sent in /v1/order and /v1/order_intent payloads. If you choose NO, tax_subtotals will be omitted from those payloads.'),
+                        'desc' => $this->l('If you choose YES, a per-tax-rate tax_subtotals breakdown is sent in /v1/order and /v1/order_intent payloads for validation against the order lines. If you choose NO, tax_subtotals is omitted from those payloads.'),
                         'required' => true,
                         'values' => array(
                             array(
