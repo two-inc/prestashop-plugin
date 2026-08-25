@@ -2252,6 +2252,12 @@ namespace {
             // ApiKeyVerificationSpec drives the real thing by clearing this
             // and stubbing the wire call.
             $this->primeTwoApiKeyStatus(Twopayment::API_KEY_STATUS_OK, 200);
+            // A resolved backend term cache by default (TWO-25503), else the
+            // gate hides Two from every unrelated spec. Skipped if a spec
+            // already primed the cache before constructing the harness.
+            if (!Configuration::hasKey(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS)) {
+                $this->primeTwoAvailableTerms(Twopayment::PAYMENT_TERMS_OPTIONS);
+            }
         }
 
         /**
@@ -2266,6 +2272,20 @@ namespace {
             $this->twoApiKeyStatusMemo = $status === null
                 ? null
                 : array('status' => (string) $status, 'code' => $code);
+        }
+
+        /**
+         * Sets (or, with an empty array, clears) the cached backend
+         * available-terms the term-discovery gate reads.
+         *
+         * @param int[] $terms
+         */
+        public function primeTwoAvailableTerms(array $terms): void
+        {
+            Configuration::updateValue(
+                Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS,
+                empty($terms) ? '' : json_encode(array_values($terms))
+            );
         }
 
         public function l($string)

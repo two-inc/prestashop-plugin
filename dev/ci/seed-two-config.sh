@@ -10,14 +10,16 @@
 # script writes the same config keys directly, bypassing the live call.
 # It's for e2e/UI-rendering assertions only. The e2e workflow also points
 # TWO_API_BASE_URL at an in-container stub (dev/ci/start-two-api-stub.sh)
-# that answers ONLY /v1/merchant/verify_api_key and refuses everything
-# else, so the checkout-media priming calls (merchant terms/FX-rate
-# refresh, fired on every checkout page view) still fail fast rather than
-# hitting Two's real sandbox from public CI with this dummy key. That one
-# endpoint has to answer since TWO-25326: the module withholds the payment
-# option entirely - and the company-search control with it - while the
-# stored key cannot be verified, unreachable API included, so seeding
-# PS_TWO_API_KEY_VERIFIED below is no longer sufficient on its own.
+# that answers /v1/merchant/verify_api_key and GET /v1/merchant/e2e-merchant-id
+# (TWO-25503 - the payment option is withheld whenever this fetch has never
+# populated the available_terms cache, so the checkout-media priming call
+# needs a real answer, not just verify_api_key) and refuses everything else,
+# so a fx-rate refresh still fails fast rather than hitting Two's real
+# sandbox from public CI with this dummy key. verify_api_key has to answer
+# since TWO-25326: the module withholds the payment option entirely - and
+# the company-search control with it - while the stored key cannot be
+# verified, unreachable API included, so seeding PS_TWO_API_KEY_VERIFIED
+# below is no longer sufficient on its own.
 #
 # Deliberately NOT seeded: PS_TWO_MERCHANT_MIN_ORDER / the platform
 # minimum-order config (see isTwoMinimumOrderSatisfied /

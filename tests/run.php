@@ -4980,6 +4980,8 @@ final class OrderBuilderSpec
         Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
         $module = self::fetchHarness();
+        // Harness seeds a resolved cache by default; this test wants cold.
+        $module->primeTwoAvailableTerms([]);
         // Cache-only read never fetches, even with a cold cache: the seam is
         // reached from render paths that must not block on HTTP.
         TinyAssert::same([], $module->getMerchantAvailableTerms());
@@ -5646,6 +5648,7 @@ require __DIR__ . '/ApiKeyVerificationSpec.php';
 require __DIR__ . '/RequiredPhoneFieldSpec.php';
 require __DIR__ . '/AdminControlsSpec.php';
 require __DIR__ . '/PaymentCountryRestrictionSpec.php';
+require __DIR__ . '/TermDiscoverySpec.php';
 // LAST, deliberately: DefaultShippingTaxCodeSpec defines
 // _TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_ partway through its own run, and a
 // PHP constant cannot be undefined again. ShippingCostSourcingSpec asserts the
@@ -5697,6 +5700,7 @@ $tests = [
     'RequiredPhoneFieldSpec::runAll' => [RequiredPhoneFieldSpec::class, 'runAll'],
     'AdminControlsSpec::runAll' => [AdminControlsSpec::class, 'runAll'],
     'PaymentCountryRestrictionSpec::runAll' => [PaymentCountryRestrictionSpec::class, 'runAll'],
+    'TermDiscoverySpec::runAll' => [TermDiscoverySpec::class, 'runAll'],
     // Keep last - see the require above.
     'DefaultShippingTaxCodeSpec::runAll' => [DefaultShippingTaxCodeSpec::class, 'runAll'],
 ];
