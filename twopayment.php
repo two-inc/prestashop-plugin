@@ -4785,21 +4785,14 @@ class Twopayment extends PaymentModule
             return [];
         }
 
-        // Term-discovery gate (TWO-25503). Withhold Two when the merchant's
-        // offerable payment terms have never been resolved from the backend -
-        // a cold cache, a merchant record fetch that has only ever failed, or
-        // an identity change that just invalidated the cache. The hardcoded
-        // PAYMENT_TERMS_OPTIONS list is a build-time UI preset for the admin
-        // checkbox screen (buildPaymentTermCheckboxQuery) before a merchant
-        // has any backend data, never a runtime substitute for it - offering
-        // terms Two has not actually sanctioned for this merchant is worse
-        // than not offering Two at all. Cache-only, same discipline as the
-        // other gates here: this never blocks on HTTP.
+        // Term-discovery gate (TWO-25503). PAYMENT_TERMS_OPTIONS is a
+        // build-time admin UI preset, never a runtime substitute for terms
+        // Two hasn't actually sanctioned for this merchant. Cache-only.
         if (empty($this->getMerchantAvailableTerms(false))) {
             if (!$this->twoTermsWithholdLogged) {
                 $this->twoTermsWithholdLogged = true;
                 PrestaShopLogger::addLog(
-                    'TwoPayment: Payment option hidden - merchant offerable payment terms not resolved from backend',
+                    'TwoPayment: Payment option hidden - merchant offerable payment terms not resolved from API',
                     2
                 );
             }
@@ -11269,12 +11262,9 @@ class Twopayment extends PaymentModule
 
     /**
      * The offerable term source set (before the admin narrows it): the backend's
-     * `available_terms` when resolved, else the hardcoded option list. ADMIN
-     * SCREENS ONLY (buildPaymentTermCheckboxQuery and the surcharge grid) - the
-     * hardcoded list is a build-time UI preset so the admin can pre-configure
-     * before a merchant has any backend data, not confirmed merchant data.
-     * hookPaymentOptions withholds Two at checkout outright when the backend
-     * has never resolved (TWO-25503) rather than reaching this fallback.
+     * `available_terms` when resolved, else the hardcoded option list. Admin
+     * screens only - hookPaymentOptions withholds Two at checkout outright
+     * on an unresolved backend (TWO-25503) rather than reaching this fallback.
      *
      * @param bool $refresh Allow a TTL-gated backend fetch.
      * @return int[]
@@ -11362,13 +11352,7 @@ class Twopayment extends PaymentModule
      */
     protected $twoCountryWithholdLogged = false;
 
-    /**
-     * Whether this instance has already logged that it is withholding Two over
-     * unresolved offerable payment terms (TWO-25503). Same once-per-request
-     * reason as the flags above.
-     *
-     * @var bool
-     */
+    /** @var bool Logged the unresolved-terms withhold reason yet (TWO-25503)? */
     protected $twoTermsWithholdLogged = false;
 
     /**
