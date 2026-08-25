@@ -190,3 +190,27 @@ describe('clicking "Enter Manually" while a sole-trader enrolment is active', ()
         expect(soleTraderInstance.abandonEnrollment.mock.calls.length).toBe(callsBeforeChip + 2);
     });
 });
+
+/**
+ * TWO-25503: manual entry captures no company number, and the address-step
+ * lookup is the only path that captures one, so the chip is only offered while
+ * company search lives in the address area.
+ */
+describe('"Enter Manually" is gated on address-area company search', () => {
+    test.each([
+        [undefined, true, 'absent flag reads as address-area, matching the server-side default'],
+        [true, true, 'address-area search: all three chips'],
+        [false, false, 'tile-mounted search: Registered + Sole Trader only']
+    ])('companySearchInAddressArea=%p -> "Enter Manually" shown=%p (%s)', (inAddressArea, manualShown, description) => {
+        global.window.TwoSoleTrader_Instance = { isAvailableForCurrentCountry: () => true };
+        makeInstance(inAddressArea === undefined ? {} : { companySearchInAddressArea: inAddressArea });
+        openPanel();
+
+        const { registered, soleTrader, notListed } = panelParts();
+        // The other two chips are unaffected by this gate.
+        expect(shown(registered)).toBe(true);
+        expect(shown(soleTrader)).toBe(true);
+        expect(shown(notListed)).toBe(manualShown);
+        expect(notListed.length).toBe(1);
+    });
+});
