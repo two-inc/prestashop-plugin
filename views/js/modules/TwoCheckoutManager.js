@@ -776,6 +776,28 @@ class TwoCheckoutManager {
             && this.companySearch.isManualEntry());
     }
 
+    /**
+     * Re-run the intent check for a company the buyer has JUST chosen.
+     *
+     * triggerOrderIntentForSelection() reuses `lastResult` whenever it has one,
+     * so a new choice has to invalidate that first or the tile keeps showing the
+     * PREVIOUS company's answer. Every path that changes which entity the buyer
+     * is goes through here (TWO-25503): a search re-selection, a switch into
+     * sole-trader mode that adopts an identity, and "select a different sole
+     * trader".
+     *
+     * @returns {void}
+     */
+    recheckOrderIntentForNewSelection() {
+        if (typeof this.isTwoPaymentSelected !== 'function' || !this.isTwoPaymentSelected()) {
+            return;
+        }
+        if (this.orderIntent && typeof this.orderIntent.reset === 'function') {
+            this.orderIntent.reset();
+        }
+        this.triggerOrderIntentForSelection();
+    }
+
     triggerOrderIntentForSelection() {
         if (this.currentStep !== 'payment' || !this.twoPaymentOption) {
             return;
