@@ -295,8 +295,15 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $company = trim(Tools::getValue('company', ''));
         $companyId = trim(Tools::getValue('companyid', ''));
         $country = trim(Tools::getValue('country', ''));
-        $addressId = (int) Tools::getValue('id_address', 0);
-        if ($addressId <= 0 && Validate::isLoadedObject($this->context->cart)) {
+        // TWO-25503: an explicit `0` is the browser stating that the address this
+        // selection belongs to does not exist yet - a billing address still being
+        // typed. Substituting the cart's address there stamps the selection with
+        // the address it is NOT for (the shipping one), and every address-switch
+        // guard then throws the selection away at the payment step. Only a
+        // MISSING parameter (older cached JS) takes the cart fallback.
+        $addressIdRaw = Tools::getValue('id_address', false);
+        $addressId = (int) $addressIdRaw;
+        if ($addressIdRaw === false && Validate::isLoadedObject($this->context->cart)) {
             $addressId = (int) $this->context->cart->id_address_invoice;
             if ($addressId <= 0) {
                 $addressId = (int) $this->context->cart->id_address_delivery;
@@ -312,9 +319,10 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         if (!empty($country)) {
             $fields['country'] = $country;
         }
-        if ($addressId > 0) {
-            $fields['address_id'] = (string) $addressId;
-        }
+        // Written even as '0' (TWO-25503): this record is a NEW selection, so
+        // leaving the key out would let the PREVIOUS selection's address stamp
+        // survive beside it and get compared against the buyer's current one.
+        $fields['address_id'] = (string) $addressId;
         $this->module->storeTwoCartScopedCompany($fields);
         $this->context->cookie->setExpire(time() + Twopayment::COOKIE_EXPIRY_ONE_HOUR);
         PrestaShopLogger::addLog('TwoPayment: Saved company in cookie for session', 1);
@@ -926,6 +934,20 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
     private function storeCompanyDataInSession($companyData)
     {
         if (!empty($companyData['company'])) {
+            // TWO-25503: a name-only result is a FAILED resolution, never a
+            // buyer decision - the resolver reaches it when a guard declined the
+            // stored record, which is exactly when that record is still the only
+            // copy of the organisation number. Persisting it here destroyed that
+            // number for the rest of the checkout, so no later re-check could
+            // recover it. Disowning a company has its own action (clearCompany).
+            $stored = $this->module->readTwoCartScopedCompany();
+            if (trim((string) ($companyData['companyid'] ?? '')) === ''
+                && $stored !== null
+                && trim((string) $stored['id']) !== ''
+            ) {
+                return;
+            }
+
             $fields = [
                 'name' => $companyData['company'],
                 'id' => $companyData['companyid'] ?? '',
