@@ -245,6 +245,7 @@ function buildAddressForm(options) {
  * @param {string} [options.address1] initial value of the street input
  * @param {string} [options.postcode] initial value of the postcode input
  * @param {string} [options.city] initial value of the city input
+ * @param {string} [options.phone] initial value of the phone input
  * @param {boolean} [options.blockContainers] whether the editable form has
  *        its own block id div and `.js-address-form` wrapper (default true).
  *        false models a theme that flattens both, widening the usable scope
@@ -269,6 +270,7 @@ function buildAddressesStep(options) {
     const address1 = opts.address1 || '';
     const postcode = opts.postcode || '';
     const city = opts.city || '';
+    const phone = opts.phone || '';
     const blockContainers = opts.blockContainers !== false;
     const blockIds = opts.blockIds !== false;
     const dni = opts.dni || '';
@@ -329,6 +331,7 @@ function buildAddressesStep(options) {
             fieldGroup('Address', '<input type="text" name="address1" id="field-address1" value="' + address1 + '">'),
             fieldGroup('Zip/Postal code', '<input type="text" name="postcode" id="field-postcode" value="' + postcode + '">'),
             fieldGroup('City', '<input type="text" name="city" id="field-city" value="' + city + '">'),
+            fieldGroup('Phone', '<input type="tel" name="phone" id="field-phone" value="' + phone + '">'),
             '        <select id="field-id_country" class="form-control form-control-select js-country" name="id_country" required>',
             // `selected` unconditionally, as core emits it - see this function's
             // docblock. The real country option below carries it too.

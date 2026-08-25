@@ -142,6 +142,10 @@ function hintField() {
     return $('.two-company-id-hint');
 }
 
+function phoneField() {
+    return $("input[name='phone']");
+}
+
 /**
  * Give the module's fire-and-forget endpoint calls somewhere to go.
  *
@@ -1458,5 +1462,41 @@ describe('applyBuyer(): a completed enrolment populates the FORM, end to end', (
 
         expect(companyField().val()).toBe('');
         expect(organizationField().val()).toBe('');
+    });
+});
+
+describe('the response phone number rides with the address fill', () => {
+    test.each([
+        ['on', true],
+        ['off', false]
+    ])('an enrolment completion fills the phone with the address-lookup switch %s, exactly as it fills street and city', (_label, addressLookupEnabled) => {
+        buildAddressesStep({ editing: 'delivery' });
+
+        mount({ addressLookupEnabled: addressLookupEnabled }).adoptSoleTraderBuyer(BUYER_REAL_NUMBER);
+
+        expect(phoneField().val()).toBe('+440000000000');
+        expect(phoneField().attr(MARKER)).toBe('+440000000000');
+    });
+
+    test.each([
+        ['on', true, '+440000000000'],
+        ['off', false, '']
+    ])('a company-LOOKUP fill with the switch %s obeys it for the phone as for every other field', (_label, addressLookupEnabled, expected) => {
+        buildAddressesStep({ editing: 'delivery' });
+
+        mount({ addressLookupEnabled: addressLookupEnabled }).autoFillAddress([
+            { type: 'BUSINESS', street_address: '1 Example Street', phone_number: '+440000000000' }
+        ]);
+
+        expect(phoneField().val()).toBe(expected);
+    });
+
+    test('a phone the buyer typed survives a completion that carries none', () => {
+        buildAddressesStep({ editing: 'delivery', phone: '+441111111111' });
+        const buyer = Object.assign({}, BUYER_REAL_NUMBER, { phone_number: '' });
+
+        mount().adoptSoleTraderBuyer(buyer);
+
+        expect(phoneField().val()).toBe('+441111111111');
     });
 });

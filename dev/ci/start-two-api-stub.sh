@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Shared PrestaShop CI harness (TWO-25326): start a throwaway in-container
-# stand-in for Two's API on 127.0.0.1:$TWO_API_STUB_PORT, answering ONLY
-# /v1/merchant/verify_api_key.
+# stand-in for Two's API on 127.0.0.1:$TWO_API_STUB_PORT, answering
+# /v1/merchant/verify_api_key and GET /v1/merchant/{id}.
 #
 # Needed because the module now withholds the payment option and the
 # company-search control whenever the stored API key cannot be verified -

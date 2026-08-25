@@ -61,12 +61,13 @@ jobs:
       PS_HOST_PORT: ${{ matrix.host-port }}
       # Points the module at an in-container stub (dev/ci/two-api-stub.php,
       # started below) rather than at Two's real sandbox: this repo is public
-      # and its CI holds no merchant key. The stub answers ONLY
+      # and its CI holds no merchant key. The stub answers
       # /v1/merchant/verify_api_key - which the module now requires before it
-      # will offer Two at all (TWO-25326) - and refuses everything else, so
-      # the checkout-media priming calls (merchant terms / FX-rate refresh,
-      # fired on every checkout page view) still fail fast - now as an HTTP 503
-      # rather than the transport failure a dead port produced, a difference
+      # will offer Two at all (TWO-25326) - and GET /v1/merchant/{id}, which
+      # the checkout-media priming call needs to populate the available_terms
+      # cache (TWO-25503: hookPaymentOptions withholds Two when that cache is
+      # empty). Everything else still refuses fast, now as an HTTP 503 rather
+      # than the transport failure a dead port produced, a difference
       # dev/ci/two-api-stub.php spells out.
       # One source for the port: the stub script requires this variable and
       # refuses to default it, so the URL below and the listener cannot drift.
@@ -87,7 +88,7 @@ jobs:
       - name: Install module from HEAD
         run: dev/ci/install-module.sh /tmp/head-module
 
-      - name: Start hermetic Two API stub (verification endpoint only)
+      - name: Start hermetic Two API stub
         run: dev/ci/start-two-api-stub.sh
 
       - name: Seed Two config (hermetic — no live merchant key)
