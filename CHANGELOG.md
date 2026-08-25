@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Sole trader checkout** (TWO-24755, WooCommerce/Magento parity)
   - The payment step shows a Business / Sole trader toggle for buyers in countries where Two's registry supports sole traders (`GET /registry/v1/supported-company-types/<ISO>`, currently the UK and US), gated by a new "Enable sole trader checkout" admin toggle (default off)
   - Choosing Sole Trader mints delegation + autofill tokens server-side with the merchant API key and opens Two's hosted signup popup; on completion the buyer's company data autofills from `GET /autofill/v1/buyer/current` (case-insensitive email match) and persists through the existing company-save path, so order-intent and payment run unchanged
+  - The signup popup URL carries the cart's server-resolved invoice country as `&country=<ISO>`; without it Two's hosted signup defaults its whole form to GB, so a US buyer would have registered as a GB sole trader and skipped the US Onfido biometric-consent screen (PDEV-4669)
   - Module version bumped to `2.5.1`
 - **Buyer surcharge shown as a real PrestaShop cart line** (TWO-24739 parity)
   - Selecting Two at checkout now adds the payment-terms fee as a hidden virtual product line, so the fee appears in PrestaShop's own order summary, cart, order and invoice totals - previously it existed only on the Two-side invoice

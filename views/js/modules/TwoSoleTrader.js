@@ -409,11 +409,13 @@ class TwoSoleTrader {
             last_name: (lastName && lastName.value) || customer.lastname || '',
             phone_number: phone ? phone.value : ''
         };
+        const country = (this.tokens.country || '').toUpperCase();
         const url =
             this.tokens.signup_url +
             '?businessToken=' + encodeURIComponent(this.tokens.delegation_token) +
             '&autofillToken=' + encodeURIComponent(this.tokens.autofill_token) +
-            '&autofillData=' + encodeURIComponent(this.encodeAutofillData(prefill));
+            '&autofillData=' + encodeURIComponent(this.encodeAutofillData(prefill)) +
+            (country ? '&country=' + encodeURIComponent(country) : '');
         const popup = window.open(
             url,
             '_blank',
