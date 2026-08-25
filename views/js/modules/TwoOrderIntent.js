@@ -511,6 +511,23 @@ class TwoOrderIntent {
     }
 
     getCurrentAddressId() {
+        // TWO-25503: the form the buyer is EDITING outranks the saved-address
+        // radios. On the invoice pass of a billing-differs-from-shipping
+        // checkout the delivery side is rendered as a radio selector, so a
+        // radio-first read answers with the SHIPPING address while the buyer is
+        // filling in their billing one - which stamps a billing-address company
+        // selection with the wrong address, and every address-switch guard then
+        // throws that selection away. A form with no id yet (a new address)
+        // answers 0, which those guards read as "unknown" rather than a switch.
+        const editableAddressForm = document.querySelector("input[name='saveAddress']");
+        if (editableAddressForm) {
+            const form = (typeof editableAddressForm.closest === 'function'
+                ? editableAddressForm.closest('form[data-id-address]')
+                : null) || document.querySelector('.js-address-form form[data-id-address]');
+            const parsed = form ? parseInt(form.getAttribute('data-id-address') || '0', 10) : 0;
+            return parsed > 0 ? parsed : 0;
+        }
+
         const checkedAddressSelectors = [
             "input[name='id_address_invoice']:checked",
             "input[name='id_address_delivery']:checked"
