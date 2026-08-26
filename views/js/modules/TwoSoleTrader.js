@@ -2062,10 +2062,11 @@ class TwoSoleTrader {
     /**
      * The hosted signup posts 'ACCEPTED' back to the opener when the
      * buyer completes registration; re-fetch the buyer to autofill.
-     * Origin must be the signup page's own. Any other message from that
-     * origin is ignored rather than treated as a failure - the signup
-     * page may emit unrelated messages (resize/analytics) that are none
-     * of our business.
+     * Origin must be the signup page's own. Anything else that origin
+     * posts for a LIVE attempt is a failure the buyer is shown (TWO-25503,
+     * same as the WooCommerce and Magento sole-trader flows) - dropping it
+     * silently would leave an open panel that never resolves and never
+     * explains itself.
      */
     bindPopupMessageListener() {
         if (this.messageListenerBound) {
@@ -2093,26 +2094,39 @@ class TwoSoleTrader {
             if (event.origin !== new URL(self.tokens.signup_url).origin) {
                 return;
             }
-            if (event.data !== 'ACCEPTED') {
-                return;
-            }
             // Gated on the STAMP, not on `enrolling` (round 3 adversarial
             // review finding). cancelEnrollment() bumps `_enrollGeneration`
             // but deliberately does not close the popup or invalidate
             // `tokens` - the flow is resumable - so this popup can still be
-            // open and go on to complete long after the buyer has walked
-            // away and picked a different, real company via search. Without
-            // this check, `getCurrentBuyer()` would capture the CURRENT
+            // open and go on to complete, or fail, long after the buyer has
+            // walked away and picked a different, real company via search.
+            // Without this check, `getCurrentBuyer()` would capture the CURRENT
             // (already-moved-on) generation fresh at the moment this message
             // arrives, which reads as a brand-new legitimate attempt however
             // stale the tokens actually are - silently overwriting the real
-            // selection the buyer made in between. `_tokensGeneration` is
-            // only re-stamped as current by an EXPLICIT resume - fetchTokens()'s
-            // success handler, startEnrollment()/startReplacement() calling back
+            // selection the buyer made in between - and a stale failure would
+            // put an error in front of a buyer who has already moved on.
+            // `_tokensGeneration` is only re-stamped as current by an EXPLICIT
+            // resume - fetchTokens()'s success handler,
+            // startEnrollment()/startReplacement() calling back
             // into an existing token set, or focusSignupPopup() raising a popup
             // the buyer asked for by name - never by this listener itself, so a
             // stale popup finishing on its own has no way to pass this check.
             if (self._enrollGeneration !== self._tokensGeneration) {
+                return;
+            }
+            if (event.data !== 'ACCEPTED') {
+                // A message positively attributable to a window that is NOT
+                // this flow's popup is someone else's, not this buyer's
+                // failure; a null `source` (sender window already closed) is
+                // not attributable either way and must still surface.
+                if (self._popup && event.source && event.source !== self._popup) {
+                    return;
+                }
+                // Unlike fetchTokens()'s failure branches, `tokens` and
+                // `nextRetryAt` are left alone - the mint itself is fine, so a
+                // retry must not be held off by that failure cooldown.
+                self.showError();
                 return;
             }
             self.enrolling = true;
