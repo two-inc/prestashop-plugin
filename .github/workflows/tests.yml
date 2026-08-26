@@ -37,7 +37,13 @@ jobs:
           php -l tests/TrackingNumberSpec.php
           php -l tests/DefaultPaymentTermSpec.php
           php -l tests/MinimumOrderGateSpec.php
+          php -l tests/TwoApiIdentityParamsSpec.php
+          php -l classes/TwoSoleTrader.php
+          php -l tests/TwoSoleTraderSpec.php
           php -l tests/run.php
 
       - name: Run offline test suite
         run: php tests/run.php
+
+      - name: Run JS test suite
+        run: node tests/js/twoApiIdentityParams.test.js

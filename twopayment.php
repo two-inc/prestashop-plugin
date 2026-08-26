@@ -2946,8 +2946,9 @@ class Twopayment extends PaymentModule
                 'order_intent_url' => $this->context->link->getModuleLink($this->name, 'orderintent'),
                 'ajax_token' => Tools::getToken(false),
                 'module_dir' => $this->_path,
-                'client' => 'PS',
-                'client_version' => $this->version,
+                // Same client/client_v/merchant identity params server-side calls send;
+                // the JS modules attach these to their own direct Two API calls.
+            ) + $this->getTwoApiIdentityParams() + array(
                 'countries' => $param_countries,
                 'available_payment_terms' => $this->getAvailablePaymentTerms(),
                 'default_payment_term' => $this->getDefaultPaymentTerm(),
@@ -6186,6 +6187,19 @@ class Twopayment extends PaymentModule
         return round($rate, self::TAX_RATE_PRECISION);
     }
 
+    /**
+     * client/client_v/merchant identity params attached to every Two API call
+     * (server-side PHP and, via Media::addJsDef, the browser-side JS modules).
+     */
+    public function getTwoApiIdentityParams(array $extra = [])
+    {
+        return array_merge([
+            'client' => 'PS',
+            'client_v' => $this->version,
+            'merchant' => (string) $this->merchant_short_name,
+        ], $extra);
+    }
+
     public function getTwoCheckoutHostUrl()
     {
         $override = $this->getDevEnvOverride('TWO_API_BASE_URL');
@@ -6267,7 +6281,7 @@ class Twopayment extends PaymentModule
     private function verifyTwoApiKey($apiKey, $environment)
     {
         $base = $this->getTwoCheckoutHostUrlForEnvironment($environment);
-        $url = $base . '/v1/merchant/verify_api_key?client=PS&client_v=' . $this->version;
+        $url = $base . '/v1/merchant/verify_api_key?' . http_build_query($this->getTwoApiIdentityParams());
         $headers = [
             'Content-Type: application/json; charset=utf-8',
             'X-API-Key:' . $apiKey,
@@ -6347,7 +6361,7 @@ class Twopayment extends PaymentModule
     public function getTwoPdfUrl($two_order_id, $lang = null, $generate = false, $version = null)
     {
         $pdf_url = $this->getTwoCheckoutHostUrl() . '/v1/invoice/' . urlencode($two_order_id) . '/pdf';
-        
+
         $params = array();
         if ($generate) {
             $params['generate'] = 'true';
@@ -6358,10 +6372,10 @@ class Twopayment extends PaymentModule
         if ($version) {
             $params['v'] = $version;
         }
-        
-        if (!empty($params)) {
-            $pdf_url .= '?' . http_build_query($params);
-        }
+
+        // Buyer's browser navigates directly to this URL, so it needs the same
+        // identity params as every other Two API call.
+        $pdf_url .= '?' . http_build_query($this->getTwoApiIdentityParams($params));
 
         return $pdf_url;
     }
@@ -6381,10 +6395,7 @@ class Twopayment extends PaymentModule
     public function getTwoInvoicePdf($two_order_id, $params = [], $timeout = null)
     {
         $url = $this->getTwoCheckoutHostUrl() . '/v1/invoice/' . urlencode($two_order_id) . '/pdf';
-        $query = array_merge(
-            array('client' => 'PS', 'client_v' => $this->version),
-            is_array($params) ? $params : array()
-        );
+        $query = $this->getTwoApiIdentityParams(is_array($params) ? $params : array());
         $url .= '?' . http_build_query($query);
 
         $headers = $this->getTwoRequestHeaders('/v1/invoice/' . $two_order_id . '/pdf');
@@ -9433,7 +9444,7 @@ class Twopayment extends PaymentModule
         $request_timeout = $timeout !== null ? max(1, (int)$timeout) : self::API_TIMEOUT_LONG;
         if ($method == "POST" || $method == "PUT") {
             $url = sprintf('%s%s', $this->getTwoCheckoutHostUrl(), $endpoint);
-            $url = $url . '?client=PS&client_v=' . $this->version;
+            $url = $url . '?' . http_build_query($this->getTwoApiIdentityParams());
             $params = empty($payload) ? '' : json_encode($payload);
             $headers = $this->getTwoRequestHeaders($endpoint, $additional_headers);
             
@@ -9486,7 +9497,7 @@ class Twopayment extends PaymentModule
             ], is_array($response_data) ? $response_data : []);
         } else {
             $url = sprintf('%s%s', $this->getTwoCheckoutHostUrl(), $endpoint);
-            $url = $url . '?client=PS&client_v=' . $this->version;
+            $url = $url . '?' . http_build_query($this->getTwoApiIdentityParams());
             $headers = $this->getTwoRequestHeaders($endpoint, $additional_headers);
             $ch = curl_init();
             curl_setopt($ch, CURLOPT_URL, $url);
@@ -11479,10 +11490,10 @@ class Twopayment extends PaymentModule
         // Build the search URL - search by organization number for exact match
         // This is the key insight: Two's API accepts org numbers in the 'q' parameter
         $searchUrl = $this->getTwoCheckoutHostUrl() . '/companies/v2/company';
-        $searchUrl .= '?' . http_build_query([
+        $searchUrl .= '?' . http_build_query($this->getTwoApiIdentityParams([
             'q' => $orgNumber,
             'country' => $countryIso
-        ]);
+        ]));
         
         PrestaShopLogger::addLog(
             'TwoPayment: Verifying company by org number: ' . $orgNumber . ' in ' . $countryIso,

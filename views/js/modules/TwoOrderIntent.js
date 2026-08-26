@@ -298,7 +298,8 @@ class TwoOrderIntent {
     callTwoOrderIntent(payload) {
         return new Promise((resolve, reject) => {
             $.ajax({
-                url: (window.twopayment && window.twopayment.checkout_host ? window.twopayment.checkout_host : '') + '/v1/order_intent',
+                url: (window.twopayment && window.twopayment.checkout_host ? window.twopayment.checkout_host : '')
+                    + '/v1/order_intent?' + new URLSearchParams(window.twoApiIdentityParams()),
                 type: 'POST',
                 crossDomain: true,
                 dataType: 'json',

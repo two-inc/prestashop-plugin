@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Customer downloads are protected by the same secure-key ownership guard as the cancel/confirmation callbacks (guest checkout included); admin downloads go through a permission-gated admin controller
 
 ### Changed
+- **Every Two API call now carries a `merchant` query param alongside `client`/`client_v`**
+  - Both the server-side calls (curl) and the browser-side calls (company search, company details, order intent, sole-trader autofill) route through `getTwoApiIdentityParams()` / `twoApiIdentityParams()` so `client`, `client_v` and the merchant's short name are always present together
 - **Removed the Personal/Business/Sole-trader account-type selector on the address form** (TWO-24755 rework)
   - The address form is now plain B2B: the company field is always present, with no `PS_TWO_USE_ACCOUNT_TYPE`-gated selector - matches the Magento and WooCommerce plugins' current structure
   - The order-intent security gate no longer checks an account type; a company name plus a verified organization number is the business guard (registered businesses and enrolled sole traders both arrive with that pair)
