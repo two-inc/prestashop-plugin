@@ -243,7 +243,7 @@ class TwoSoleTrader
             return call_user_func(self::$transport, $endpoint, $payload);
         }
 
-        $url = $module->getTwoCheckoutHostUrl() . $endpoint;
+        $url = $module->getTwoCheckoutHostUrl() . $endpoint . '?' . http_build_query($module->getTwoApiIdentityParams());
         $responseHeaders = array();
 
         $ch = curl_init();

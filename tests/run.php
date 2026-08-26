@@ -4949,6 +4949,7 @@ require __DIR__ . '/SurchargeCartLineSpec.php';
 require __DIR__ . '/ConfirmationLegacyParitySpec.php';
 require __DIR__ . '/MinimumOrderGateSpec.php';
 require __DIR__ . '/TwoSoleTraderSpec.php';
+require __DIR__ . '/TwoApiIdentityParamsSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
@@ -4965,6 +4966,7 @@ $tests = [
     'ConfirmationLegacyParitySpec::runAll' => [ConfirmationLegacyParitySpec::class, 'runAll'],
     'MinimumOrderGateSpec::runAll' => [MinimumOrderGateSpec::class, 'runAll'],
     'TwoSoleTraderSpec::runAll' => [TwoSoleTraderSpec::class, 'runAll'],
+    'TwoApiIdentityParamsSpec::runAll' => [TwoApiIdentityParamsSpec::class, 'runAll'],
 ];
 
 $failed = 0;

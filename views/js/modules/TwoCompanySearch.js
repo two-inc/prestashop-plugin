@@ -1,4 +1,21 @@
 /**
+ * client/client_v/merchant query params every direct browser->Two API call
+ * must carry, sourced from the twopayment JsDef (see twopayment.php's
+ * getTwoApiIdentityParams(), the same helper server-side calls use). This
+ * file loads first (registerJavascript priority 201), so the other checkout
+ * modules reuse window.twoApiIdentityParams rather than rebuilding it.
+ */
+function twoApiIdentityParams(extra) {
+    const identity = window.twopayment || {};
+    return Object.assign({
+        client: identity.client || 'PS',
+        client_v: identity.client_v || '',
+        merchant: identity.merchant || ''
+    }, extra || {});
+}
+window.twoApiIdentityParams = twoApiIdentityParams;
+
+/**
  * Two Company Search Module - Clean, focused company selection
  * Handles company autocomplete, organization number persistence, and address saving
  */
@@ -372,7 +389,7 @@ class TwoCompanySearch {
         const country = this.getCurrentCountry();
 
         // Build URL with correct API parameters
-        const params = new URLSearchParams({ q: term });
+        const params = new URLSearchParams(twoApiIdentityParams({ q: term }));
         if (country) params.set('country', country);
         // Direct Two API call from frontend as required
         const searchUrl = `${this.config.checkoutHost}/companies/v2/company?${params}`;
@@ -586,7 +603,7 @@ class TwoCompanySearch {
      */
     fetchCompanyDetails(lookupId) {
         // Direct Two API call from frontend as required
-        const detailUrl = `${this.config.checkoutHost}/companies/v2/company/${lookupId}`;
+        const detailUrl = `${this.config.checkoutHost}/companies/v2/company/${lookupId}?${new URLSearchParams(twoApiIdentityParams())}`;
         
         return new Promise((resolve, reject) => {
             $.ajax({

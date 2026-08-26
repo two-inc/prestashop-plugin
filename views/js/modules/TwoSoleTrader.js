@@ -309,7 +309,7 @@ class TwoSoleTrader {
      */
     getCurrentBuyer() {
         const self = this;
-        fetch(this.config.checkoutHost + '/autofill/v1/buyer/current', {
+        fetch(this.config.checkoutHost + '/autofill/v1/buyer/current?' + new URLSearchParams(window.twoApiIdentityParams()), {
             credentials: 'include',
             headers: { 'two-delegated-authority-token': this.tokens.autofill_token }
         })
