@@ -13,7 +13,7 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 - **Order Intent Check**: Frontend validation before payment confirmation
 - **Server-Side Verification**: Defense-in-depth security with server-side Order Intent verification
 - **Payment Terms UI**: Configurable payment terms with user selection
-  - **Standard Terms**: 7/15/20/30/45/60/90 days from fulfillment date
+  - **Standard Terms**: 7/14/15/20/30/45/60/90 days from fulfillment date
   - **End-of-Month (EOM) Terms**: 30/45/60 days from end of current month at fulfillment
 - **Admin Integration**: Two order ID, state, status, and invoice URL displayed in order pages
 - **Invoice Upload**: Automatic upload of PrestaShop-generated invoices to Two (optional feature)
@@ -111,7 +111,7 @@ Payment is due **X days from the fulfillment date**.
 - Payment term: 30 days
 - **Payment due: February 14** (Jan 15 + 30 days)
 
-**Available durations:** 7, 15, 20, 30, 45, 60, 90 days
+**Available durations:** 7, 14, 15, 20, 30, 45, 60, 90 days
 
 **When to use:**
 - Simple, straightforward payment terms
