@@ -5740,6 +5740,7 @@ class Twopayment extends PaymentModule
             $delivery_address = $invoice_address;
         }
         $shippingOrgName = !empty($shippingData['company_name']) ? $shippingData['company_name'] : $companyData['company_name'];
+        $buyerCompany = $this->resolveBuyerCompanyData($companyData, $shippingData);
 
         $request_data = [
             'gross_amount' => (string)($this->getTwoRoundAmount($final_gross)),
@@ -5748,9 +5749,9 @@ class Twopayment extends PaymentModule
             'discount_amount' => (string)($this->getTwoRoundAmount($final_discount)),
             'buyer' => [
                 'company' => [
-                    'company_name' => $companyData['company_name'],
-                    'country_prefix' => $companyData['country_iso'],
-                    'organization_number' => $companyData['organization_number'],
+                    'company_name' => $buyerCompany['company_name'],
+                    'country_prefix' => $buyerCompany['country_iso'],
+                    'organization_number' => $buyerCompany['organization_number'],
                     'website' => '',
                 ],
                 'representative' => [
@@ -5763,7 +5764,7 @@ class Twopayment extends PaymentModule
             'currency' => $currency->iso_code,
             'merchant_short_name' => $this->merchant_short_name,
             'invoice_type' => 'FUNDED_INVOICE', // Default product type
-            'billing_address' => $this->buildTwoAddress($invoice_address, $companyData['company_name'], $companyData['country_iso']),
+            'billing_address' => $this->buildTwoAddress($invoice_address, $buyerCompany['company_name'], $companyData['country_iso']),
             'shipping_address' => $this->buildTwoAddress($delivery_address, $shippingOrgName, $shippingData['country_iso']),
             'line_items' => $line_items,
         ];
@@ -6093,8 +6094,9 @@ class Twopayment extends PaymentModule
         // Get company data with fallback chain (reused helper method)
         $buyerData = $this->getCompanyDataWithFallbacks($invoice_address);
         $shippingData = $this->getCompanyDataWithFallbacks($delivery_address);
-        $buyerCompanyName = $buyerData['company_name'];
-        $shippingOrgName = !empty($shippingData['company_name']) ? $shippingData['company_name'] : $buyerCompanyName;
+        $buyerCompany = $this->resolveBuyerCompanyData($buyerData, $shippingData);
+        $buyerCompanyName = $buyerCompany['company_name'];
+        $shippingOrgName = !empty($shippingData['company_name']) ? $shippingData['company_name'] : $buyerData['company_name'];
 
         // Optional buyer reference fields, submitted with the payment form from
         // the Two payment tile.
@@ -6123,8 +6125,8 @@ class Twopayment extends PaymentModule
             'buyer' => [
                 'company' => [
                     'company_name' => $buyerCompanyName,
-                    'country_prefix' => $buyerData['country_iso'],
-                    'organization_number' => $buyerData['organization_number'],
+                    'country_prefix' => $buyerCompany['country_iso'],
+                    'organization_number' => $buyerCompany['organization_number'],
                     'website' => '',
                 ],
                 'representative' => [
@@ -6244,8 +6246,11 @@ class Twopayment extends PaymentModule
         $storedCompanyName = isset($orderpaymentdata['two_company_name'])
             ? trim((string) $orderpaymentdata['two_company_name'])
             : '';
-        $buyerOrgNumber = ($storedOrgNumber !== '') ? $storedOrgNumber : $buyerData['organization_number'];
-        $buyerCompanyName = ($storedCompanyName !== '') ? $storedCompanyName : $buyerData['company_name'];
+        $buyerCompany = $this->resolveBuyerCompanyData($buyerData, $shippingData);
+        $buyerOrgNumber = ($storedOrgNumber !== '') ? $storedOrgNumber : $buyerCompany['organization_number'];
+        $buyerCompanyName = ($storedCompanyName !== '') ? $storedCompanyName : $buyerCompany['company_name'];
+        // country_prefix follows whichever source supplied the organisation number.
+        $buyerCountryIso = ($storedOrgNumber !== '') ? $buyerData['country_iso'] : $buyerCompany['country_iso'];
         $shippingOrgName = !empty($shippingData['company_name']) ? $shippingData['company_name'] : $buyerCompanyName;
 
         $request_data = [
@@ -6259,7 +6264,7 @@ class Twopayment extends PaymentModule
             'buyer' => [
                 'company' => [
                     'company_name' => $buyerCompanyName,
-                    'country_prefix' => $buyerData['country_iso'],
+                    'country_prefix' => $buyerCountryIso,
                     'organization_number' => $buyerOrgNumber,
                     'website' => '',
                 ],
@@ -9395,8 +9400,42 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Invoice company, else shipping company (TWO-25503). Returned whole rather
+     * than field by field: a name from one address beside an organisation number
+     * from the other names a buyer that does not exist.
+     *
+     * @param array $invoice_company getCompanyDataWithFallbacks() output for the invoice address
+     * @param array $shipping_company getCompanyDataWithFallbacks() output for the delivery address
+     * @return array
+     */
+    private function resolveBuyerCompanyData($invoice_company, $shipping_company)
+    {
+        $has_invoice_company = trim((string) $invoice_company['company_name']) !== ''
+            || trim((string) $invoice_company['organization_number']) !== '';
+
+        return $has_invoice_company ? $invoice_company : $shipping_company;
+    }
+
+    /**
+     * Whether an address id is one of the current cart's own two addresses.
+     *
+     * @param int $address_id
+     * @return bool
+     */
+    private function isTwoCurrentCartAddress($address_id)
+    {
+        $cart = isset($this->context->cart) ? $this->context->cart : null;
+        if ((int) $address_id <= 0 || !Validate::isLoadedObject($cart)) {
+            return false;
+        }
+
+        return (int) $address_id === (int) $cart->id_address_invoice
+            || (int) $address_id === (int) $cart->id_address_delivery;
+    }
+
+    /**
      * Priority: Cookie (verified) → Address fields (dni, companyid) → Cookie (unverified)
-     * 
+     *
      * @param Address $address Invoice or delivery address
      * @return array ['company_name' => string, 'organization_number' => string, 'country_iso' => string]
      */
@@ -9428,7 +9467,13 @@ class Twopayment extends PaymentModule
         if (!empty($validated_session_company['company_name']) && !empty($validated_session_company['organization_number'])) {
             $session_company_name = trim((string) $validated_session_company['company_name']);
 
-            if ($session_address_id > 0 && $current_address_id > 0 && $session_address_id !== $current_address_id) {
+            // The record is already cart-scoped, so the cart's OTHER address is
+            // the buyer's own selection, not a switch away from it (TWO-25503).
+            if ($session_address_id > 0
+                && $current_address_id > 0
+                && $session_address_id !== $current_address_id
+                && !$this->isTwoCurrentCartAddress($session_address_id)
+            ) {
                 PrestaShopLogger::addLog(
                     'TwoPayment: Ignoring session company due to address switch. Session address=' .
                     $session_address_id . ', current address=' . $current_address_id,
