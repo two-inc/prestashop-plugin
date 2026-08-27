@@ -5740,6 +5740,7 @@ class Twopayment extends PaymentModule
             $delivery_address = $invoice_address;
         }
         $shippingOrgName = !empty($shippingData['company_name']) ? $shippingData['company_name'] : $companyData['company_name'];
+        $buyerCompany = $this->resolveBuyerCompanyData($companyData, $shippingData);
 
         $request_data = [
             'gross_amount' => (string)($this->getTwoRoundAmount($final_gross)),
@@ -5748,9 +5749,9 @@ class Twopayment extends PaymentModule
             'discount_amount' => (string)($this->getTwoRoundAmount($final_discount)),
             'buyer' => [
                 'company' => [
-                    'company_name' => $companyData['company_name'],
-                    'country_prefix' => $companyData['country_iso'],
-                    'organization_number' => $companyData['organization_number'],
+                    'company_name' => $buyerCompany['company_name'],
+                    'country_prefix' => $buyerCompany['country_iso'],
+                    'organization_number' => $buyerCompany['organization_number'],
                     'website' => '',
                 ],
                 'representative' => [
@@ -5763,7 +5764,7 @@ class Twopayment extends PaymentModule
             'currency' => $currency->iso_code,
             'merchant_short_name' => $this->merchant_short_name,
             'invoice_type' => 'FUNDED_INVOICE', // Default product type
-            'billing_address' => $this->buildTwoAddress($invoice_address, $companyData['company_name'], $companyData['country_iso']),
+            'billing_address' => $this->buildTwoAddress($invoice_address, $buyerCompany['company_name'], $companyData['country_iso']),
             'shipping_address' => $this->buildTwoAddress($delivery_address, $shippingOrgName, $shippingData['country_iso']),
             'line_items' => $line_items,
         ];
@@ -6093,8 +6094,9 @@ class Twopayment extends PaymentModule
         // Get company data with fallback chain (reused helper method)
         $buyerData = $this->getCompanyDataWithFallbacks($invoice_address);
         $shippingData = $this->getCompanyDataWithFallbacks($delivery_address);
-        $buyerCompanyName = $buyerData['company_name'];
-        $shippingOrgName = !empty($shippingData['company_name']) ? $shippingData['company_name'] : $buyerCompanyName;
+        $buyerCompany = $this->resolveBuyerCompanyData($buyerData, $shippingData);
+        $buyerCompanyName = $buyerCompany['company_name'];
+        $shippingOrgName = !empty($shippingData['company_name']) ? $shippingData['company_name'] : $buyerData['company_name'];
 
         // Optional buyer reference fields, submitted with the payment form from
         // the Two payment tile.
@@ -6123,8 +6125,8 @@ class Twopayment extends PaymentModule
             'buyer' => [
                 'company' => [
                     'company_name' => $buyerCompanyName,
-                    'country_prefix' => $buyerData['country_iso'],
-                    'organization_number' => $buyerData['organization_number'],
+                    'country_prefix' => $buyerCompany['country_iso'],
+                    'organization_number' => $buyerCompany['organization_number'],
                     'website' => '',
                 ],
                 'representative' => [
@@ -6232,8 +6234,8 @@ class Twopayment extends PaymentModule
 
         // Same reasoning as $storedTerm above, applied to the buyer company: this
         // path has no buyer request to resolve from, so prefer what the created
-        // order persisted (TWO-40). $buyerData stays as the fallback for orders
-        // placed before these columns existed - and ONLY for those, because in
+        // order persisted (TWO-40). Live address resolution stays as the fallback
+        // for orders placed before these columns existed - and ONLY for those, because in
         // admin/webhook context it resolves to an empty organisation number
         // whenever the identifier is `TWO:`-prefixed or the buyer's country
         // carries no identification number at all, which is precisely the empty
@@ -6244,8 +6246,19 @@ class Twopayment extends PaymentModule
         $storedCompanyName = isset($orderpaymentdata['two_company_name'])
             ? trim((string) $orderpaymentdata['two_company_name'])
             : '';
-        $buyerOrgNumber = ($storedOrgNumber !== '') ? $storedOrgNumber : $buyerData['organization_number'];
-        $buyerCompanyName = ($storedCompanyName !== '') ? $storedCompanyName : $buyerData['company_name'];
+        // A pair: completing a half-stored company from an address would name a
+        // buyer the order was never placed with. No country is stored beside it,
+        // so the prefix alone still follows the invoice address.
+        $buyerCompany = ($storedOrgNumber !== '' || $storedCompanyName !== '')
+            ? array(
+                'company_name' => $storedCompanyName,
+                'organization_number' => $storedOrgNumber,
+                'country_iso' => $buyerData['country_iso'],
+            )
+            : $this->resolveBuyerCompanyData($buyerData, $shippingData);
+        $buyerOrgNumber = $buyerCompany['organization_number'];
+        $buyerCompanyName = $buyerCompany['company_name'];
+        $buyerCountryIso = $buyerCompany['country_iso'];
         $shippingOrgName = !empty($shippingData['company_name']) ? $shippingData['company_name'] : $buyerCompanyName;
 
         $request_data = [
@@ -6259,7 +6272,7 @@ class Twopayment extends PaymentModule
             'buyer' => [
                 'company' => [
                     'company_name' => $buyerCompanyName,
-                    'country_prefix' => $buyerData['country_iso'],
+                    'country_prefix' => $buyerCountryIso,
                     'organization_number' => $buyerOrgNumber,
                     'website' => '',
                 ],
@@ -9164,9 +9177,10 @@ class Twopayment extends PaymentModule
      * Retrieve validated company data from session cookie for a given country.
      *
      * @param string $country_iso
+     * @param int $current_address_id the address being resolved, when the caller knows it
      * @return array ['company_name' => string, 'organization_number' => string]
      */
-    public function getTwoValidatedSessionCompanyData($country_iso)
+    public function getTwoValidatedSessionCompanyData($country_iso, $current_address_id = 0)
     {
         $country_iso = strtoupper(trim((string)$country_iso));
         $stored = $this->readTwoCartScopedCompany();
@@ -9188,8 +9202,16 @@ class Twopayment extends PaymentModule
             );
         }
 
+        // Declined, not cleared, or resolving the invoice address first would
+        // delete the company picked for the delivery one (TWO-25503).
+        $stamped_address_id = ($stored['address_id'] !== '') ? (int) $stored['address_id'] : 0;
+        $held_against_other_cart_address = $stamped_address_id > 0
+            && (int) $current_address_id > 0
+            && $stamped_address_id !== (int) $current_address_id
+            && $this->isTwoCurrentCartAddress($stamped_address_id);
+
         if (Tools::isEmpty($session_company_country) && !Tools::isEmpty($country_iso)) {
-            // Legacy session values without country marker cannot be safely reused across countries.
+            // Cleared even when held against the cart's other address: with no marker there is no country it is valid for.
             $this->clearTwoCartScopedCompany();
 
             PrestaShopLogger::addLog(
@@ -9204,6 +9226,13 @@ class Twopayment extends PaymentModule
         }
 
         if (!Tools::isEmpty($session_company_country) && !Tools::isEmpty($country_iso) && $session_company_country !== $country_iso) {
+            if ($held_against_other_cart_address) {
+                return array(
+                    'company_name' => '',
+                    'organization_number' => '',
+                );
+            }
+
             // Prevent cross-country stale company reuse when customer changes address country.
             $this->clearTwoCartScopedCompany();
 
@@ -9395,8 +9424,40 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Invoice company, else shipping company (TWO-25503). Returned whole rather
+     * than field by field: a name from one address beside an organisation number
+     * from the other names a buyer that does not exist.
+     *
+     * @param array $invoice_company getCompanyDataWithFallbacks() output for the invoice address
+     * @param array $shipping_company getCompanyDataWithFallbacks() output for the delivery address
+     * @return array
+     */
+    private function resolveBuyerCompanyData($invoice_company, $shipping_company)
+    {
+        $has_invoice_company = trim((string) $invoice_company['company_name']) !== ''
+            || trim((string) $invoice_company['organization_number']) !== '';
+
+        return $has_invoice_company ? $invoice_company : $shipping_company;
+    }
+
+    /**
+     * @param int $address_id
+     * @return bool
+     */
+    private function isTwoCurrentCartAddress($address_id)
+    {
+        $cart = isset($this->context->cart) ? $this->context->cart : null;
+        if ((int) $address_id <= 0 || !Validate::isLoadedObject($cart)) {
+            return false;
+        }
+
+        return (int) $address_id === (int) $cart->id_address_invoice
+            || (int) $address_id === (int) $cart->id_address_delivery;
+    }
+
+    /**
      * Priority: Cookie (verified) → Address fields (dni, companyid) → Cookie (unverified)
-     * 
+     *
      * @param Address $address Invoice or delivery address
      * @return array ['company_name' => string, 'organization_number' => string, 'country_iso' => string]
      */
@@ -9424,11 +9485,17 @@ class Twopayment extends PaymentModule
         $allow_cookie_company_fallback = true;
 
         // Priority 1: Session cookie (from company search - already verified and country-validated)
-        $validated_session_company = $this->getTwoValidatedSessionCompanyData($country_iso);
+        $validated_session_company = $this->getTwoValidatedSessionCompanyData($country_iso, $current_address_id);
         if (!empty($validated_session_company['company_name']) && !empty($validated_session_company['organization_number'])) {
             $session_company_name = trim((string) $validated_session_company['company_name']);
 
-            if ($session_address_id > 0 && $current_address_id > 0 && $session_address_id !== $current_address_id) {
+            // The record is already cart-scoped, so the cart's OTHER address is
+            // the buyer's own selection, not a switch away from it (TWO-25503).
+            if ($session_address_id > 0
+                && $current_address_id > 0
+                && $session_address_id !== $current_address_id
+                && !$this->isTwoCurrentCartAddress($session_address_id)
+            ) {
                 PrestaShopLogger::addLog(
                     'TwoPayment: Ignoring session company due to address switch. Session address=' .
                     $session_address_id . ', current address=' . $current_address_id,
@@ -9460,6 +9527,14 @@ class Twopayment extends PaymentModule
         // inside the validated read may have cleared the record in between, and
         // this tier must observe that rather than a snapshot taken before it.
         $fallback_company = $allow_cookie_company_fallback ? $this->readTwoCartScopedCompany() : null;
+        if ($fallback_company !== null
+            && !Tools::isEmpty(trim((string) $fallback_company['country']))
+            && !Tools::isEmpty($country_iso)
+            && strtoupper(trim((string) $fallback_company['country'])) !== strtoupper($country_iso)
+        ) {
+            // A company registered in another country does not name this address.
+            $fallback_company = null;
+        }
         $company_name = !Tools::isEmpty($address_company)
             ? $address_company
             : (($fallback_company !== null) ? trim($fallback_company['name']) : '');
@@ -16647,7 +16722,10 @@ class Twopayment extends PaymentModule
         
         $countryIso = strtoupper(trim($countryIso));
         
-        // Priority 1: dni field (commonly used in ES, PT, IT for fiscal numbers like CIF/NIF)
+        // Priority 1: dni field (commonly used in ES, PT, IT for fiscal numbers like CIF/NIF).
+        // A `TWO:` identifier is not lost to this preference while the cart-scoped
+        // record is readable - every path carrying one resolves through a higher tier
+        // first. With that record gone, a filled dni is returned ahead of it.
         if (!empty($address->dni)) {
             $dni = trim($address->dni);
             if (preg_match('/^[A-Z0-9\-]{5,20}$/i', $dni)) {
