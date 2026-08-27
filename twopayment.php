@@ -6247,7 +6247,8 @@ class Twopayment extends PaymentModule
             ? trim((string) $orderpaymentdata['two_company_name'])
             : '';
         // A pair: completing a half-stored company from an address would name a
-        // buyer the order was never placed with.
+        // buyer the order was never placed with. No country is stored beside it,
+        // so the prefix alone still follows the invoice address.
         $buyerCompany = ($storedOrgNumber !== '' || $storedCompanyName !== '')
             ? array(
                 'company_name' => $storedCompanyName,
@@ -9201,7 +9202,16 @@ class Twopayment extends PaymentModule
             );
         }
 
+        // Declined, not cleared, or resolving the invoice address first would
+        // delete the company picked for the delivery one (TWO-25503).
+        $stamped_address_id = ($stored['address_id'] !== '') ? (int) $stored['address_id'] : 0;
+        $held_against_other_cart_address = $stamped_address_id > 0
+            && (int) $current_address_id > 0
+            && $stamped_address_id !== (int) $current_address_id
+            && $this->isTwoCurrentCartAddress($stamped_address_id);
+
         if (Tools::isEmpty($session_company_country) && !Tools::isEmpty($country_iso)) {
+            // Cleared even when held against the cart's other address: with no marker there is no country it is valid for.
             // Legacy session values without country marker cannot be safely reused across countries.
             $this->clearTwoCartScopedCompany();
 
@@ -9217,17 +9227,7 @@ class Twopayment extends PaymentModule
         }
 
         if (!Tools::isEmpty($session_company_country) && !Tools::isEmpty($country_iso) && $session_company_country !== $country_iso) {
-            $stamped_address_id = ($stored['address_id'] !== '') ? (int) $stored['address_id'] : 0;
-
-            // A record stamped on the cart's OTHER address disagrees on country
-            // by design - the buyer ships abroad. Decline it for this address
-            // without destroying it, or resolving the invoice address first
-            // would delete the company picked for the delivery one (TWO-25503).
-            if ($stamped_address_id > 0
-                && (int) $current_address_id > 0
-                && $stamped_address_id !== (int) $current_address_id
-                && $this->isTwoCurrentCartAddress($stamped_address_id)
-            ) {
+            if ($held_against_other_cart_address) {
                 return array(
                     'company_name' => '',
                     'organization_number' => '',
@@ -9534,8 +9534,6 @@ class Twopayment extends PaymentModule
             && strtoupper(trim((string) $fallback_company['country'])) !== strtoupper($country_iso)
         ) {
             // A company registered in another country does not name this address.
-            // Reachable only since the guard above stopped destroying a record
-            // held against the cart's other address (TWO-25503).
             $fallback_company = null;
         }
         $company_name = !Tools::isEmpty($address_company)
