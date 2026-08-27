@@ -16723,8 +16723,9 @@ class Twopayment extends PaymentModule
         $countryIso = strtoupper(trim($countryIso));
         
         // Priority 1: dni field (commonly used in ES, PT, IT for fiscal numbers like CIF/NIF).
-        // Preferred over companyid, which no `TWO:` identifier is ever lost to: every
-        // path carrying one reaches the payload through a higher tier than this.
+        // A `TWO:` identifier is not lost to this preference while the cart-scoped
+        // record is readable - every path carrying one resolves through a higher tier
+        // first. With that record gone, a filled dni is returned ahead of it.
         if (!empty($address->dni)) {
             $dni = trim($address->dni);
             if (preg_match('/^[A-Z0-9\-]{5,20}$/i', $dni)) {
