@@ -21,6 +21,10 @@
  * and re-runs `installOverrides()`, which writes it fresh. A path the caller
  * named as RETIRED is still skipped when absent - that is its finished state.
  *
+ * This runs during an upgrade and nowhere else. A shop that loses its override
+ * tree again between releases stays without one until the next release that
+ * ships an upgrade script.
+ *
  * WHY A NEW VERSION RATHER THAN AN EDIT TO AN EXISTING SCRIPT
  *
  * PrestaShop discovers upgrade scripts BY FILENAME and runs
@@ -71,11 +75,14 @@ function upgrade_module_2_7_10($module)
         return true;
     }
 
+    // At severity 1 a shop that stayed broken reads as a successful repair.
+    $failed = preg_grep('/' . preg_quote(TwoOverrideMigrator::INSTALL_FAILED_NOTE, '/') . '/', $notes);
+
     PrestaShopLogger::addLog(
         'Two Payment v2.7.10 upgrade: shop-level override refresh (CustomerAddressFormatter) - '
         . (empty($notes) ? 'no override files present, nothing to do' : implode('; ', $notes))
         . ' (TWO-25265)',
-        1,
+        empty($failed) ? 1 : 2,
         null,
         'Module',
         $module->id

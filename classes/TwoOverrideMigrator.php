@@ -67,6 +67,9 @@ class TwoOverrideMigrator
     /** Classification: exclusively ours, at least one stamp on another version. */
     const STALE = 'stale';
 
+    /** Note an upgrade script matches on to log the refresh as a failure rather than as info. */
+    const INSTALL_FAILED_NOTE = 'installOverrides() REPORTED FAILURE - the shop override was not written';
+
     /**
      * The comment text of a PHP source file, and nothing else.
      *
@@ -200,13 +203,14 @@ class TwoOverrideMigrator
         $notes = array();
         $removed = 0;
         $missing = 0;
-        $shipped = array_flip(self::shippedPaths($module));
+        $shipped = self::shippedPaths($module);
+        $isShipped = array_flip($shipped);
 
-        foreach (self::candidatePaths($module, $retiredPaths) as $relative) {
+        foreach (self::candidatePaths($shipped, $retiredPaths) as $relative) {
             $absolute = _PS_OVERRIDE_DIR_ . $relative;
 
             if (!is_file($absolute)) {
-                if (!isset($shipped[$relative])) {
+                if (!isset($isShipped[$relative])) {
                     // Retired, and already gone from the shop tree.
                     continue;
                 }
@@ -274,8 +278,8 @@ class TwoOverrideMigrator
         // `addOverride()` would take its "a shop override already exists"
         // branch and read a file that is no longer there. Rebuild first, then
         // reinstall.
-        self::rebuildClassIndex();
-        $module->installOverrides();
+        $indexed = self::rebuildClassIndex();
+        $installed = $module->installOverrides();
 
         // `addOverride()` only regenerates the index on the branch that COPIES
         // a fresh file. A retired override leaves nothing to copy, so that
@@ -289,6 +293,16 @@ class TwoOverrideMigrator
             $missing
         );
 
+        // Core returns false rather than throwing when an override could not be written.
+        if (!$installed) {
+            $notes[] = self::INSTALL_FAILED_NOTE;
+        }
+
+        if (!$indexed) {
+            $notes[] = 'no class-index generator on this PrestaShop - the autoloader may still '
+                . 'resolve the old path until the cache is cleared';
+        }
+
         return $notes;
     }
 
@@ -296,12 +310,12 @@ class TwoOverrideMigrator
      * Override paths to consider, relative to the override root: everything the
      * module still ships, plus everything the caller says it retired.
      *
-     * @param Module            $module
+     * @param array<int,string> $shippedPaths Already walked by the caller, which needs the set anyway
      * @param array<int,string> $retiredPaths
      *
      * @return array<int, string>
      */
-    private static function candidatePaths($module, array $retiredPaths)
+    private static function candidatePaths(array $shippedPaths, array $retiredPaths)
     {
         $paths = array();
 
@@ -312,7 +326,7 @@ class TwoOverrideMigrator
             }
         }
 
-        foreach (self::shippedPaths($module) as $relative) {
+        foreach ($shippedPaths as $relative) {
             $paths[$relative] = true;
         }
 
@@ -387,18 +401,18 @@ class TwoOverrideMigrator
      * Rebuild the class index, in every cached environment rather than only the
      * one this process happens to be running in.
      *
-     * `Tools::generateIndex()` rewrites `class_index.php` for the CURRENT
-     * environment's cache directory only. An upgrade driven from the CLI can
-     * easily be running in a different environment from the storefront, and
-     * then the storefront keeps resolving the class it was told about last -
-     * the deleted override. Unlinking the other environments' copies makes
-     * PrestaShop rebuild them lazily on their next request.
+     * Generating it rewrites `class_index.php` for the CURRENT environment's
+     * cache directory only. An upgrade driven from the CLI can easily be running
+     * in a different environment from the storefront, and then the storefront
+     * keeps resolving the class it was told about last - the deleted override.
+     * Unlinking the other environments' copies makes PrestaShop rebuild them
+     * lazily on their next request.
      *
-     * @return void
+     * @return bool Whether an index generator was found at all
      */
     private static function rebuildClassIndex()
     {
-        Tools::generateIndex();
+        $generated = self::generateClassIndex();
 
         $indexes = glob(_PS_ROOT_DIR_ . '/var/cache/*/class_index.php');
         foreach ((array) $indexes as $index) {
@@ -409,6 +423,33 @@ class TwoOverrideMigrator
 
         // ...and put the current environment's back, so this request keeps a
         // working autoloader.
-        Tools::generateIndex();
+        return self::generateClassIndex() && $generated;
+    }
+
+    /**
+     * Regenerate the current environment's class index the way the running
+     * PrestaShop does: 8.2 moved it onto the `prestashop/autoload` package and 9
+     * deleted `Tools::generateIndex()`, so either spelling alone fatals on one
+     * major. Core's own `Module::addOverride()` switched with it.
+     *
+     * @return bool Whether an index generator was found at all
+     */
+    private static function generateClassIndex()
+    {
+        $autoload = 'PrestaShop\Autoload\PrestashopAutoload';
+
+        if (class_exists($autoload)) {
+            $autoload::getInstance()->generateIndex();
+
+            return true;
+        }
+
+        if (method_exists('Tools', 'generateIndex')) {
+            Tools::generateIndex();
+
+            return true;
+        }
+
+        return false;
     }
 }

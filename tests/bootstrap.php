@@ -782,9 +782,12 @@ namespace {
         private static array $testValues = [];
         private static bool $hasMediaServer = false;
 
-        /** A no-op: TwoOverrideMigrator::refresh() calls it, and there is no class index offline. */
+        /** Counted so a spec can prove WHICH class-index generator refresh() reached (TWO-25265). */
+        public static int $generateIndexCalls = 0;
+
         public static function generateIndex(): void
         {
+            ++self::$generateIndexCalls;
         }
 
         public static function hasMediaServer(): bool
