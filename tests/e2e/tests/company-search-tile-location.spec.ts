@@ -131,10 +131,13 @@ test.describe("TWO-25326 §7.1 company-search location", () => {
     // behaviour as the address-area control does in the other test.
     await tileField.click();
     await expect(page.locator(".two-company-dropdown")).toBeVisible({ timeout: 10_000 });
-    await expect(page.locator("button.two-company-registered-entry")).toBeVisible();
-    // "Enter Manually" is the one chip this location suppresses (TWO-25503):
-    // manual entry captures no company number and only the address-step lookup
-    // does, so from the tile it would be a dead end.
+    // "Enter Manually" is suppressed here (TWO-25503: manual entry captures no
+    // company number and only the address-step lookup does), and this country
+    // has no sole-trader registry, which leaves "Registered company" as the
+    // only chip - the mode the buyer is already in. A row offering one chip
+    // offers no choice, so it is not rendered (TWO-40).
+    await expect(page.locator(".two-company-mode-chips")).toHaveCount(1);
+    await expect(page.locator(".two-company-mode-chips")).toBeHidden();
     await expect(page.locator("button.two-company-not-listed")).toBeHidden();
 
     // And it SEARCHES, not merely opens (TWO-25326 §7.1 follow-up). The
