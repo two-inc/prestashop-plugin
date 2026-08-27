@@ -5641,6 +5641,7 @@ require __DIR__ . '/MirrorWriteRecordSpec.php';
 require __DIR__ . '/OrderCompanyPersistenceSpec.php';
 require __DIR__ . '/SoleTraderTokenPreconditionSpec.php';
 require __DIR__ . '/OverrideMigrationSpec.php';
+require __DIR__ . '/OverrideReinstallSpec.php';
 require __DIR__ . '/EnvironmentUpgradeMigrationSpec.php';
 require __DIR__ . '/TranslationCatalogueSpec.php';
 require __DIR__ . '/AssetCacheBustingSpec.php';
@@ -5695,6 +5696,7 @@ $tests = [
     'OrderCompanyPersistenceSpec::runAll' => [OrderCompanyPersistenceSpec::class, 'runAll'],
     'SoleTraderTokenPreconditionSpec::runAll' => [SoleTraderTokenPreconditionSpec::class, 'runAll'],
     'OverrideMigrationSpec::runAll' => [OverrideMigrationSpec::class, 'runAll'],
+    'OverrideReinstallSpec::runAll' => [OverrideReinstallSpec::class, 'runAll'],
     'EnvironmentUpgradeMigrationSpec::runAll' => [EnvironmentUpgradeMigrationSpec::class, 'runAll'],
     'TranslationCatalogueSpec::runAll' => [TranslationCatalogueSpec::class, 'runAll'],
     'AssetCacheBustingSpec::runAll' => [AssetCacheBustingSpec::class, 'runAll'],

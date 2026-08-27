@@ -8,10 +8,12 @@
 # A module's `override/` directory is a TEMPLATE, not deployed content.
 # PrestaShop copies it into the SHOP's own override tree once, at install or
 # reset, and from then on the shop's copy is the file that executes. Nothing
-# rewrites that copy - not an upgrade, not a deploy, not a git-sync, not a module
-# reset. `Module::addOverride()` cannot rewrite it even when it runs: for every
-# method the shop copy already declares it throws rather than replacing, and it
-# has no path that removes one.
+# rewrites that copy - not an upgrade, not a deploy, not a git-sync, not a
+# disable/enable. `Module::addOverride()` cannot rewrite it even when it runs: for
+# every method the shop copy already declares it throws rather than replacing, and
+# it has no path that removes one. A module reset does fix it, by uninstalling the
+# override first, but it drops the module's data - a merchant's recovery step, not
+# a release mechanism.
 #
 # So editing a file under `override/` changes NOTHING on any existing shop, and
 # deleting one leaves it running FOREVER. Both are silent. No error, no warning,
@@ -25,7 +27,8 @@
 #
 # Changing or retiring an override is a MIGRATION. The version that does it must
 # carry an `upgrade/upgrade-<version>.php` that calls `TwoOverrideMigrator` and
-# names the affected class. This check fails the PR when it does not.
+# calls `TwoOverrideMigrator::refresh()` and, for a retired override, names the
+# affected class. This check fails the PR when it does not.
 #
 # Consequence, and it is intended rather than a side effect: any override edit
 # now forces a new upgrade script, which
@@ -40,10 +43,17 @@
 #      a stale override from before this check existed stays stale until some
 #      version's migration reaches it. This gate stops new instances; it does not
 #      discover old ones.
-#   2. WHETHER THE MIGRATION WORKS. It greps the added upgrade-script lines for
-#      the class name. A comment mentioning the class satisfies it. It cannot
-#      tell a real `TwoOverrideMigrator::refresh()` call from the word
-#      `CustomerAddressFormatter` in a docblock.
+#   2. WHETHER THE MIGRATION WORKS. It requires the TEXT
+#      `TwoOverrideMigrator::refresh(` on an added line that does not BEGIN with
+#      a comment marker, and for a retired override the class name on one too.
+#      That text still counts inside a string literal, a heredoc body, or a
+#      comment trailing a real statement - grep cannot parse PHP, and hardening
+#      the pattern far enough to tell those apart would start failing legitimate
+#      code, which is the one direction a gate must not fail in. What it closes
+#      is the bypass that was reachable by accident: every upgrade script here
+#      opens with a docblock naming the migrator, and that alone no longer
+#      passes. It never says the call repairs the right thing, runs on the shop,
+#      or succeeds.
 #   3. DRIFT WITH NO PULL REQUEST. A shop installed at an old version and never
 #      upgraded has no PR to gate. Nothing here applies.
 #   4. A DIRECT PUSH. It runs on `pull_request`. A push straight to a protected
@@ -96,17 +106,21 @@ if [ -z "$deleted" ] && [ -z "$modified" ]; then
     exit 0
 fi
 
-# Added lines of any upgrade script this PR adds or edits. Added lines only: an
-# upgrade script that merely already mentions the class, unchanged, is not a
-# migration for THIS change.
+# Added lines of any upgrade script this PR adds or edits, with PHP comment lines
+# dropped. Added lines only: an upgrade script that merely already mentions the
+# class, unchanged, is not a migration for THIS change. Comments dropped because
+# a docblock describing a migration is not one — every upgrade script in this
+# repo opens with a docblock naming both the migrator and the class it repairs,
+# so a comment-only edit would otherwise satisfy the gate by itself.
 upgrade_additions=$(git diff --no-renames "$range" -- 'upgrade/upgrade-*.php' |
-    grep '^+' | grep -v '^+++' || true)
+    grep '^+' | grep -v '^+++' |
+    grep -vE '^\+[[:space:]]*(\*|//|#|/\*)' || true)
 
 explain() {
     echo ""
     echo "A module's override/ directory is a TEMPLATE. PrestaShop copies it into the"
     echo "shop's own override tree once, at install, and never rewrites that copy —"
-    echo "not on upgrade, not on deploy, not on a module reset. So an override edit"
+    echo "not on upgrade, not on deploy, not on a disable/enable. So an override edit"
     echo "reaches NO existing shop, silently, and a retired override keeps running"
     echo "forever. See classes/TwoOverrideMigrator.php and TWO-25265."
 }
@@ -117,9 +131,11 @@ rc=0
 # module's own override tree), so the requirement is only that the version calls
 # the migrator at all.
 if [ -n "$modified" ]; then
-    if printf '%s' "$upgrade_additions" | grep -qF 'TwoOverrideMigrator'; then
+    # The call syntax, not the bare class name: `TwoOverrideMigrator` alone is
+    # satisfied by a `use` line or a string literal that migrates nothing.
+    if printf '%s' "$upgrade_additions" | grep -qE 'TwoOverrideMigrator::refresh[[:space:]]*\('; then
         while IFS= read -r path; do
-            [ -n "$path" ] && echo "OK  ${path} modified — an upgrade script in this PR calls TwoOverrideMigrator."
+            [ -n "$path" ] && echo "OK  ${path} modified — an upgrade script in this PR calls TwoOverrideMigrator::refresh()."
         done <<<"$modified"
     else
         while IFS= read -r path; do

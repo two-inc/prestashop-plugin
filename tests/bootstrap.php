@@ -27,6 +27,13 @@ namespace {
     if (!defined('_DB_NAME_')) {
         define('_DB_NAME_', 'prestashop');
     }
+    // A throwaway shop root: TwoOverrideMigrator::refresh() resolves shop-level override paths against these.
+    if (!defined('_PS_ROOT_DIR_')) {
+        define('_PS_ROOT_DIR_', sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'two-ps-spec-root');
+    }
+    if (!defined('_PS_OVERRIDE_DIR_')) {
+        define('_PS_OVERRIDE_DIR_', _PS_ROOT_DIR_ . DIRECTORY_SEPARATOR . 'override' . DIRECTORY_SEPARATOR);
+    }
 }
 
 namespace PrestaShop\PrestaShop\Core\Payment {
@@ -774,6 +781,14 @@ namespace {
     {
         private static array $testValues = [];
         private static bool $hasMediaServer = false;
+
+        /** Counted so a spec can prove WHICH class-index generator refresh() reached (TWO-25265). */
+        public static int $generateIndexCalls = 0;
+
+        public static function generateIndex(): void
+        {
+            ++self::$generateIndexCalls;
+        }
 
         public static function hasMediaServer(): bool
         {

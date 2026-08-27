@@ -118,9 +118,12 @@ releases need no migration at all) — never add a contiguity check.
 `override/` directory is a **template**. PrestaShop copies it into the *shop's*
 own override tree once, at install or reset, and from then on the shop's copy is
 the file that executes. Nothing rewrites that copy — not an upgrade, not a
-deploy, not a git-sync, not a module reset. `Module::addOverride()` cannot even do
-it when it runs: for every method the shop copy already declares it *throws*
-rather than replacing, and it has no path that removes one. So:
+deploy, not a git-sync, not a disable/enable. `Module::addOverride()` cannot even
+do it when it runs: for every method the shop copy already declares it *throws*
+rather than replacing, and it has no path that removes one. A module **reset**
+is the one back-office action that does fix a stale copy, because it uninstalls
+the override before reinstalling it — but it drops the module's data and hook
+registrations, so it is a merchant's recovery step, never a release mechanism. So:
 
 - **editing** an override changes nothing on any existing shop;
 - **retiring** one leaves it running forever.
