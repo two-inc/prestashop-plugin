@@ -150,6 +150,10 @@ final class OverrideReinstallSpec
                 'No module stamp, so it is core\'s or a merchant hand-edit: left alone, and the '
                 . 'expected "stamp afterwards" is that it still carries none.',
             ],
+            // This row's own call-count assertion is SHADOWED and unproven: drop
+            // the shipped/retired guard and the double throws before it is
+            // reached, so the mutant dies on the throw, not on the count. Soften
+            // the double and this row stops discriminating anything.
             [
                 self::body(self::MODULE_VERSION),
                 [self::RETIRED],

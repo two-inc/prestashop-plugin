@@ -19,6 +19,17 @@ check="${script_dir}/check-override-migration.sh"
 pass=0
 fail=0
 
+# The workflows invoke these scripts directly, not via `bash`, so a lost exec bit
+# is a red job. Editing the repo from a Windows-side tool strips it silently.
+for script in "${script_dir}"/*.sh; do
+    if [ -x "$script" ]; then
+        pass=$((pass + 1))
+    else
+        echo "FAIL  $(basename "$script") is not executable — git update-index --chmod=+x"
+        fail=$((fail + 1))
+    fi
+done
+
 # Build a repo with a `base` branch holding $1 as the override tree, then a
 # `head` branch applying the mutation in $2 (a shell snippet run in the repo).
 # Echoes the repo path.
