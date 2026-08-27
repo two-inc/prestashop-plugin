@@ -8,10 +8,12 @@
 # A module's `override/` directory is a TEMPLATE, not deployed content.
 # PrestaShop copies it into the SHOP's own override tree once, at install or
 # reset, and from then on the shop's copy is the file that executes. Nothing
-# rewrites that copy - not an upgrade, not a deploy, not a git-sync, not a module
-# reset. `Module::addOverride()` cannot rewrite it even when it runs: for every
-# method the shop copy already declares it throws rather than replacing, and it
-# has no path that removes one.
+# rewrites that copy - not an upgrade, not a deploy, not a git-sync, not a
+# disable/enable. `Module::addOverride()` cannot rewrite it even when it runs: for
+# every method the shop copy already declares it throws rather than replacing, and
+# it has no path that removes one. A module reset does fix it, by uninstalling the
+# override first, but it drops the module's data - a merchant's recovery step, not
+# a release mechanism.
 #
 # So editing a file under `override/` changes NOTHING on any existing shop, and
 # deleting one leaves it running FOREVER. Both are silent. No error, no warning,
@@ -118,7 +120,7 @@ explain() {
     echo ""
     echo "A module's override/ directory is a TEMPLATE. PrestaShop copies it into the"
     echo "shop's own override tree once, at install, and never rewrites that copy —"
-    echo "not on upgrade, not on deploy, not on a module reset. So an override edit"
+    echo "not on upgrade, not on deploy, not on a disable/enable. So an override edit"
     echo "reaches NO existing shop, silently, and a retired override keeps running"
     echo "forever. See classes/TwoOverrideMigrator.php and TWO-25265."
 }

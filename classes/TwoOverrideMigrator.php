@@ -9,11 +9,22 @@
  * `Module::addOverride()` also can't rewrite an existing shop-level method: it
  * throws if the method is already there and only ever splices in missing
  * methods. So changing or retiring an override in a release leaves every
- * existing shop silently running the old behaviour forever. A module reset (or
- * a disable/enable, which also re-runs `installOverrides()`) does not help
- * either while the shop copy is STALE, because add-only means the existing
- * members stay. It DOES rebuild a copy that is absent - nothing is there to
- * collide with, so `addOverride()` takes its fresh-copy branch.
+ * existing shop silently running the old behaviour forever.
+ *
+ * The two back-office actions that re-run `installOverrides()` are not
+ * equivalent, and confusing them sends a triage down the wrong path:
+ *
+ *   - DISABLE/ENABLE is add-only. It cannot fix a STALE copy - the existing
+ *     members stay - but it does rebuild an ABSENT one, because nothing is
+ *     there to collide with and `addOverride()` takes its fresh-copy branch.
+ *   - RESET fixes both. It is `uninstall() && install()` (this module defines no
+ *     `reset()` of its own, so PrestaShop never takes its keep-data branch), and
+ *     the uninstall half runs `uninstallOverrides()` first, stripping our
+ *     members or deleting the file before install writes them back current.
+ *
+ * Neither is a substitute for this class: both are merchant actions nobody
+ * performs on deploy, and a reset drops the module's data and hook
+ * registrations. Migration has to happen without anyone asking for it.
  *
  * Observed in production-shaped staging on 2026-07-29: a shop on the 2.4.0
  * `CustomerAddressFormatter` override kept injecting fields into the address
@@ -434,6 +445,13 @@ class TwoOverrideMigrator
      * PrestaShop does: 8.1 moved it onto the `prestashop/autoload` package and 9
      * deleted `Tools::generateIndex()`, so either spelling alone fatals on one
      * major. Core's own `Module::addOverride()` switched with it.
+     *
+     * DETECT, DO NOT COMPARE. The branch is chosen by asking what this install
+     * actually has, never by testing `_PS_VERSION_` against a number. The two
+     * generators overlap for the whole of 8.1 and 8.2, distributions backport,
+     * and a version constant that disagreed with the vendor tree would pick a
+     * method that is not there - which fatals inside an upgrade script's catch
+     * and reports success on a shop that was never repaired.
      *
      * @return bool Whether an index generator was found at all
      */
