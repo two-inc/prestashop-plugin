@@ -816,7 +816,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
                 }
             }
         }
-        $validatedSession = $this->module->getTwoValidatedSessionCompanyData($currentCountryIso);
+        $validatedSession = $this->module->getTwoValidatedSessionCompanyData($currentCountryIso, $selectedAddressId);
         $sessionCompany = isset($validatedSession['company_name']) ? trim($validatedSession['company_name']) : '';
         $sessionCompanyId = isset($validatedSession['organization_number']) ? trim($validatedSession['organization_number']) : '';
         $storedCompany = $this->module->readTwoCartScopedCompany();

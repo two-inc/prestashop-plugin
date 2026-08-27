@@ -59,6 +59,7 @@ final class BuyerCompanyFallbackSpec
         self::testEveryPayloadResolvesTheBuyerCompany();
         self::testSessionCompanySurvivesTheOtherAddressOfTheSameCart();
         self::testAHalfStoredSnapshotIsNotCompletedFromAnAddress();
+        self::testTheAddressIdIsWhatSavesTheRecord();
         self::testACompanyPickedForAForeignDeliveryAddressSurvives();
     }
 
@@ -141,9 +142,10 @@ final class BuyerCompanyFallbackSpec
 
     /**
      * A snapshot is honoured as a pair. Half of one plus half of an address is a
-     * buyer the order was never placed with - and half is the normal shape,
-     * because the organisation number resolves empty in admin context whenever
-     * the identifier is internally minted or the country issues no such number.
+     * buyer the order was never placed with - and half is a normal shape, not a
+     * corrupt one: an invoice address carrying a company name and no
+     * identification number snapshots a name with no organisation number, and
+     * the order was created with exactly that.
      */
     private static function testAHalfStoredSnapshotIsNotCompletedFromAnAddress(): void
     {
@@ -186,23 +188,54 @@ final class BuyerCompanyFallbackSpec
     }
 
     /**
+     * Declining rather than clearing depends entirely on the caller saying which
+     * address it is resolving. A caller that does not still destroys the record -
+     * which is why the order-intent controller, running earlier in the same
+     * request than the payload it feeds, has to pass it.
+     */
+    private static function testTheAddressIdIsWhatSavesTheRecord(): void
+    {
+        // stamped on, resolved as, surviving organisation number, description.
+        $cases = [
+            [self::DELIVERY_ADDRESS_ID, 0, '', 'no address named - the record is destroyed'],
+            [self::DELIVERY_ADDRESS_ID, self::INVOICE_ADDRESS_ID, 'FR-999', 'the cart\'s other address is named - the record is spared'],
+            [self::DELIVERY_ADDRESS_ID + 500, self::INVOICE_ADDRESS_ID, '', 'a stamp outside the cart is not spared'],
+        ];
+
+        foreach ($cases as $case) {
+            list($stampedOn, $resolvedAs, $expectedSurvivor, $description) = $case;
+
+            self::reset();
+            self::seedForeignDeliveryCompany($stampedOn);
+            $module = new TwopaymentTestHarness();
+
+            $module->getTwoValidatedSessionCompanyData('GB', $resolvedAs);
+
+            $cookie = Context::getContext()->cookie;
+            TinyAssert::same(
+                $expectedSurvivor,
+                isset($cookie->two_company_id) ? (string) $cookie->two_company_id : '',
+                'surviving organisation number - ' . $description
+            );
+        }
+
+        // The controller cannot be stood up in the offline harness, so its call
+        // site is pinned as source, the way this suite pins its other ones.
+        $controller = (string) file_get_contents(dirname(__DIR__) . '/controllers/front/orderintent.php');
+        TinyAssert::true(
+            strpos($controller, 'getTwoValidatedSessionCompanyData($currentCountryIso, $selectedAddressId)') !== false,
+            'the order-intent controller must name the address it is resolving, or it destroys the record before the payload reads it'
+        );
+    }
+
+    /**
      * A company picked for a delivery address in another country. Resolving the
      * invoice address first must neither consume nor destroy it.
      */
     private static function testACompanyPickedForAForeignDeliveryAddressSurvives(): void
     {
         self::reset();
-        self::seedCart('', '', '', '');
-        StubStore::$countries[self::DELIVERY_COUNTRY_ID] = 'FR';
-        StubStore::$addresses[self::DELIVERY_ADDRESS_ID]['id_country'] = self::DELIVERY_COUNTRY_ID;
-        Context::getContext()->cart = new Cart(self::CART_ID);
-
-        $cookie = Context::getContext()->cookie;
-        $cookie->two_company_name = 'Searched FR Co';
-        $cookie->two_company_id = 'FR-999';
-        $cookie->two_company_country = 'FR';
-        $cookie->two_company_address_id = (string) self::DELIVERY_ADDRESS_ID;
-        $cookie->two_company_cart_id = (string) self::CART_ID;
+        self::seedForeignDeliveryCompany();
 
         $payload = self::buildPayload(new TwopaymentTestHarness(), 'create');
         $company = $payload['buyer']['company'];
@@ -216,6 +249,22 @@ final class BuyerCompanyFallbackSpec
             (string) Context::getContext()->cookie->two_company_id,
             'resolving the invoice address must not destroy a selection held for the delivery address'
         );
+    }
+
+    /** A GB invoice address, an FR delivery address, and a company picked for the latter. */
+    private static function seedForeignDeliveryCompany(int $stampedOn = self::DELIVERY_ADDRESS_ID): void
+    {
+        self::seedCart('', '', '', '');
+        StubStore::$countries[self::DELIVERY_COUNTRY_ID] = 'FR';
+        StubStore::$addresses[self::DELIVERY_ADDRESS_ID]['id_country'] = self::DELIVERY_COUNTRY_ID;
+        Context::getContext()->cart = new Cart(self::CART_ID);
+
+        $cookie = Context::getContext()->cookie;
+        $cookie->two_company_name = 'Searched FR Co';
+        $cookie->two_company_id = 'FR-999';
+        $cookie->two_company_country = 'FR';
+        $cookie->two_company_address_id = (string) $stampedOn;
+        $cookie->two_company_cart_id = (string) self::CART_ID;
     }
 
     /** @return array the create payload, with a cart-scoped selection stamped on $addressId */
