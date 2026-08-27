@@ -9212,7 +9212,6 @@ class Twopayment extends PaymentModule
 
         if (Tools::isEmpty($session_company_country) && !Tools::isEmpty($country_iso)) {
             // Cleared even when held against the cart's other address: with no marker there is no country it is valid for.
-            // Legacy session values without country marker cannot be safely reused across countries.
             $this->clearTwoCartScopedCompany();
 
             PrestaShopLogger::addLog(
@@ -16723,7 +16722,9 @@ class Twopayment extends PaymentModule
         
         $countryIso = strtoupper(trim($countryIso));
         
-        // Priority 1: dni field (commonly used in ES, PT, IT for fiscal numbers like CIF/NIF)
+        // Priority 1: dni field (commonly used in ES, PT, IT for fiscal numbers like CIF/NIF).
+        // Preferred over companyid, which no `TWO:` identifier is ever lost to: every
+        // path carrying one reaches the payload through a higher tier than this.
         if (!empty($address->dni)) {
             $dni = trim($address->dni);
             if (preg_match('/^[A-Z0-9\-]{5,20}$/i', $dni)) {
