@@ -29,6 +29,8 @@ final class BuyerCompanyFallbackSpec
 
     private const COUNTRY_ID = 8940;
 
+    private const DELIVERY_COUNTRY_ID = 8941;
+
     private const CARRIER_ID = 8950;
 
     /**
@@ -44,6 +46,11 @@ final class BuyerCompanyFallbackSpec
             ['', '', 'Delivery Co Ltd', 'DEL-87654321', 'Delivery Co Ltd', 'DEL-87654321', 'invoice empty - the shipping company is used'],
             ['', '', '', '', '', '', 'both empty - nothing is invented'],
             ['Invoice Co Ltd', 'INV-12345678', '', '', 'Invoice Co Ltd', 'INV-12345678', 'shipping empty - the invoice company is untouched'],
+            // A half-populated invoice company still identifies the buyer, so it
+            // is not "absent" and the complete shipping company does not displace
+            // it. These two rows are what discriminate that rule from an AND.
+            ['Invoice Co Ltd', '', 'Delivery Co Ltd', 'DEL-87654321', 'Invoice Co Ltd', '', 'invoice name only - it is present, and keeps its empty number'],
+            ['', 'INV-12345678', 'Delivery Co Ltd', 'DEL-87654321', '', 'INV-12345678', 'invoice number only - it is present, and keeps its empty name'],
         ];
     }
 
@@ -51,6 +58,8 @@ final class BuyerCompanyFallbackSpec
     {
         self::testEveryPayloadResolvesTheBuyerCompany();
         self::testSessionCompanySurvivesTheOtherAddressOfTheSameCart();
+        self::testAHalfStoredSnapshotIsNotCompletedFromAnAddress();
+        self::testACompanyPickedForAForeignDeliveryAddressSurvives();
     }
 
     /**
@@ -72,8 +81,8 @@ final class BuyerCompanyFallbackSpec
                 $company = $payload['buyer']['company'];
                 $label = $payloadKind . ' payload, ' . $description;
 
-                TinyAssert::same($expectedName, $company['company_name'], $label);
-                TinyAssert::same($expectedOrg, $company['organization_number'], $label);
+                TinyAssert::same($expectedName, $company['company_name'], 'company name - ' . $label);
+                TinyAssert::same($expectedOrg, $company['organization_number'], 'organisation number - ' . $label);
 
                 // Same address for both fields, asserted against the sources
                 // rather than the expectation, so a name/number mix cannot pass
@@ -110,7 +119,11 @@ final class BuyerCompanyFallbackSpec
             $payload['buyer']['company']['company_name'],
             'a selection made on the cart\'s delivery address must survive resolution of its invoice address'
         );
-        TinyAssert::same('SEARCHED-999', $payload['buyer']['company']['organization_number']);
+        TinyAssert::same(
+            'SEARCHED-999',
+            $payload['buyer']['company']['organization_number'],
+            'the same selection supplies the organisation number the address has not got'
+        );
 
         // An address belonging to no cart of this buyer's is still discarded.
         $stale = self::resolveWithSessionCompanyStampedOn(self::DELIVERY_ADDRESS_ID + 500);
@@ -119,7 +132,90 @@ final class BuyerCompanyFallbackSpec
             $stale['buyer']['company']['company_name'],
             'a selection against an address outside the cart is still an address switch'
         );
-        TinyAssert::same('', $stale['buyer']['company']['organization_number']);
+        TinyAssert::same(
+            '',
+            $stale['buyer']['company']['organization_number'],
+            'and supplies no organisation number once discarded'
+        );
+    }
+
+    /**
+     * A snapshot is honoured as a pair. Half of one plus half of an address is a
+     * buyer the order was never placed with - and half is the normal shape,
+     * because the organisation number resolves empty in admin context whenever
+     * the identifier is internally minted or the country issues no such number.
+     */
+    private static function testAHalfStoredSnapshotIsNotCompletedFromAnAddress(): void
+    {
+        $cases = [
+            ['Old Invoice Co', '', 'Old Invoice Co', '', 'name-only snapshot keeps its empty number'],
+            ['', 'OLD-INV-1', '', 'OLD-INV-1', 'number-only snapshot keeps its empty name'],
+        ];
+
+        foreach ($cases as $case) {
+            list($storedName, $storedOrg, $expectedName, $expectedOrg, $description) = $case;
+
+            self::reset();
+            // Invoice address empty and delivery address complete: the shipping
+            // fallback is armed and would fill the missing half if the snapshot
+            // were applied field by field.
+            self::seedCart('', '', 'Delivery Co Ltd', 'DEL-87654321');
+            $module = new TwopaymentTestHarness();
+
+            $payload = $module->getTwoUpdateOrderData(self::makeOrder(), array(
+                'two_order_reference' => 'ref-' . self::ORDER_ID,
+                'two_day_on_invoice' => '30',
+                'two_organization_number' => $storedOrg,
+                'two_company_name' => $storedName,
+            ));
+            $company = $payload['buyer']['company'];
+
+            TinyAssert::same($expectedName, $company['company_name'], 'company name - ' . $description);
+            TinyAssert::same($expectedOrg, $company['organization_number'], 'organisation number - ' . $description);
+            TinyAssert::notSame(
+                'DEL-87654321',
+                $company['organization_number'],
+                'the delivery address must never complete a snapshot - ' . $description
+            );
+            TinyAssert::notSame(
+                'Delivery Co Ltd',
+                $company['company_name'],
+                'the delivery address must never complete a snapshot - ' . $description
+            );
+        }
+    }
+
+    /**
+     * A company picked for a delivery address in another country. Resolving the
+     * invoice address first must neither consume nor destroy it.
+     */
+    private static function testACompanyPickedForAForeignDeliveryAddressSurvives(): void
+    {
+        self::reset();
+        self::seedCart('', '', '', '');
+        StubStore::$countries[self::DELIVERY_COUNTRY_ID] = 'FR';
+        StubStore::$addresses[self::DELIVERY_ADDRESS_ID]['id_country'] = self::DELIVERY_COUNTRY_ID;
+        Context::getContext()->cart = new Cart(self::CART_ID);
+
+        $cookie = Context::getContext()->cookie;
+        $cookie->two_company_name = 'Searched FR Co';
+        $cookie->two_company_id = 'FR-999';
+        $cookie->two_company_country = 'FR';
+        $cookie->two_company_address_id = (string) self::DELIVERY_ADDRESS_ID;
+        $cookie->two_company_cart_id = (string) self::CART_ID;
+
+        $payload = self::buildPayload(new TwopaymentTestHarness(), 'create');
+        $company = $payload['buyer']['company'];
+
+        TinyAssert::same('Searched FR Co', $company['company_name'], 'company name from the foreign delivery address');
+        TinyAssert::same('FR-999', $company['organization_number'], 'organisation number from the same selection');
+        TinyAssert::same('FR', $company['country_prefix'], 'the country prefix travels with the number that was issued under it');
+
+        TinyAssert::same(
+            'FR-999',
+            (string) Context::getContext()->cookie->two_company_id,
+            'resolving the invoice address must not destroy a selection held for the delivery address'
+        );
     }
 
     /** @return array the create payload, with a cart-scoped selection stamped on $addressId */

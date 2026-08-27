@@ -6234,8 +6234,8 @@ class Twopayment extends PaymentModule
 
         // Same reasoning as $storedTerm above, applied to the buyer company: this
         // path has no buyer request to resolve from, so prefer what the created
-        // order persisted (TWO-40). $buyerData stays as the fallback for orders
-        // placed before these columns existed - and ONLY for those, because in
+        // order persisted (TWO-40). Live address resolution stays as the fallback
+        // for orders placed before these columns existed - and ONLY for those, because in
         // admin/webhook context it resolves to an empty organisation number
         // whenever the identifier is `TWO:`-prefixed or the buyer's country
         // carries no identification number at all, which is precisely the empty
@@ -6246,11 +6246,18 @@ class Twopayment extends PaymentModule
         $storedCompanyName = isset($orderpaymentdata['two_company_name'])
             ? trim((string) $orderpaymentdata['two_company_name'])
             : '';
-        $buyerCompany = $this->resolveBuyerCompanyData($buyerData, $shippingData);
-        $buyerOrgNumber = ($storedOrgNumber !== '') ? $storedOrgNumber : $buyerCompany['organization_number'];
-        $buyerCompanyName = ($storedCompanyName !== '') ? $storedCompanyName : $buyerCompany['company_name'];
-        // country_prefix follows whichever source supplied the organisation number.
-        $buyerCountryIso = ($storedOrgNumber !== '') ? $buyerData['country_iso'] : $buyerCompany['country_iso'];
+        // A pair: completing a half-stored company from an address would name a
+        // buyer the order was never placed with.
+        $buyerCompany = ($storedOrgNumber !== '' || $storedCompanyName !== '')
+            ? array(
+                'company_name' => $storedCompanyName,
+                'organization_number' => $storedOrgNumber,
+                'country_iso' => $buyerData['country_iso'],
+            )
+            : $this->resolveBuyerCompanyData($buyerData, $shippingData);
+        $buyerOrgNumber = $buyerCompany['organization_number'];
+        $buyerCompanyName = $buyerCompany['company_name'];
+        $buyerCountryIso = $buyerCompany['country_iso'];
         $shippingOrgName = !empty($shippingData['company_name']) ? $shippingData['company_name'] : $buyerCompanyName;
 
         $request_data = [
@@ -9169,9 +9176,10 @@ class Twopayment extends PaymentModule
      * Retrieve validated company data from session cookie for a given country.
      *
      * @param string $country_iso
+     * @param int $current_address_id the address being resolved, when the caller knows it
      * @return array ['company_name' => string, 'organization_number' => string]
      */
-    public function getTwoValidatedSessionCompanyData($country_iso)
+    public function getTwoValidatedSessionCompanyData($country_iso, $current_address_id = 0)
     {
         $country_iso = strtoupper(trim((string)$country_iso));
         $stored = $this->readTwoCartScopedCompany();
@@ -9209,6 +9217,23 @@ class Twopayment extends PaymentModule
         }
 
         if (!Tools::isEmpty($session_company_country) && !Tools::isEmpty($country_iso) && $session_company_country !== $country_iso) {
+            $stamped_address_id = ($stored['address_id'] !== '') ? (int) $stored['address_id'] : 0;
+
+            // A record stamped on the cart's OTHER address disagrees on country
+            // by design - the buyer ships abroad. Decline it for this address
+            // without destroying it, or resolving the invoice address first
+            // would delete the company picked for the delivery one (TWO-25503).
+            if ($stamped_address_id > 0
+                && (int) $current_address_id > 0
+                && $stamped_address_id !== (int) $current_address_id
+                && $this->isTwoCurrentCartAddress($stamped_address_id)
+            ) {
+                return array(
+                    'company_name' => '',
+                    'organization_number' => '',
+                );
+            }
+
             // Prevent cross-country stale company reuse when customer changes address country.
             $this->clearTwoCartScopedCompany();
 
@@ -9417,8 +9442,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Whether an address id is one of the current cart's own two addresses.
-     *
      * @param int $address_id
      * @return bool
      */
@@ -9463,7 +9486,7 @@ class Twopayment extends PaymentModule
         $allow_cookie_company_fallback = true;
 
         // Priority 1: Session cookie (from company search - already verified and country-validated)
-        $validated_session_company = $this->getTwoValidatedSessionCompanyData($country_iso);
+        $validated_session_company = $this->getTwoValidatedSessionCompanyData($country_iso, $current_address_id);
         if (!empty($validated_session_company['company_name']) && !empty($validated_session_company['organization_number'])) {
             $session_company_name = trim((string) $validated_session_company['company_name']);
 
@@ -9505,6 +9528,16 @@ class Twopayment extends PaymentModule
         // inside the validated read may have cleared the record in between, and
         // this tier must observe that rather than a snapshot taken before it.
         $fallback_company = $allow_cookie_company_fallback ? $this->readTwoCartScopedCompany() : null;
+        if ($fallback_company !== null
+            && !Tools::isEmpty(trim((string) $fallback_company['country']))
+            && !Tools::isEmpty($country_iso)
+            && strtoupper(trim((string) $fallback_company['country'])) !== strtoupper($country_iso)
+        ) {
+            // A company registered in another country does not name this address.
+            // Reachable only since the guard above stopped destroying a record
+            // held against the cart's other address (TWO-25503).
+            $fallback_company = null;
+        }
         $company_name = !Tools::isEmpty($address_company)
             ? $address_company
             : (($fallback_company !== null) ? trim($fallback_company['name']) : '');

@@ -125,7 +125,8 @@ What is deliberately NOT written:
   for. The token, and the session company `saveCompany` has just stored, were minted against the
   country resolved from the LIVE FORM (decision `#12`), and
   `getTwoValidatedSessionCompanyData()` discards the entire session company the moment the saved
-  country disagrees with the cart's invoice-address country. Writing the registered country over
+  country disagrees with the address being resolved — unless the record is held against the cart's
+  other address, where the two countries differ by design. Writing the registered country over
   the form's would destroy the enrolment it is completing. The two agreeing needs no write; the
   two disagreeing is exactly where writing is wrong.
 **Every field in the response now lands somewhere (Doug's ruling).** Nothing is dropped for being
