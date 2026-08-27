@@ -19,6 +19,7 @@ This folder contains deterministic tests for order-building and payload safety l
 - Currency compatibility gating for payment option visibility
 - Large rounded discount split handling keeps tax-formula validation stable
 - Cart-rule monetary (`value_real`/`value_tax_exc`) discount line attribution
+- Buyer company resolution across the intent, create and update payloads: the invoice address wins, the shipping address is the fallback, and the name and organisation number always come from the same address
 - Tracking number sourcing (order_carrier vs legacy shipping_number) and the admin tracking-update hook
 - Partial refunds via credit slips: amount+currency payload, slip-ID idempotency key, remaining-balance guard, and duplicate-refund suppression
 - Default shipping tax code: hidden-unless-activated admin field, no-default-value refusal parity, save-while-hidden never wiping the stored selection, carrier-wins resolution order, and the README/code drift guard on the activation constant
