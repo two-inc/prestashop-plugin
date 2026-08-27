@@ -10,14 +10,20 @@ require_once dirname(__DIR__) . '/classes/TwoOverrideMigrator.php';
  * The module `refresh()` is handed, of which it touches only `$version`,
  * `getLocalPath()` and `installOverrides()`.
  *
- * `installOverrides()` mirrors `Module::addOverride()`'s add-only contract: an
- * existing shop file is left exactly as found, and only a missing one is
- * written, stamped at the installed version.
+ * `installOverrides()` mirrors what `Module::addOverride()` really does, not a
+ * convenient version of it: only a MISSING shop file is written fresh. Core's
+ * existing-file branch reflects both classes and THROWS on a member the shop
+ * copy already declares, so the double throws there too - `refresh()` must
+ * never reach `installOverrides()` while a file it decided to leave alone is
+ * still on disk.
  */
-final class ReinstallModuleDouble
+class ReinstallModuleDouble
 {
     /** @var string */
     public $version = OverrideReinstallSpec::MODULE_VERSION;
+
+    /** @var int PrestaShopLogger's object id, which the upgrade scripts pass through. */
+    public $id = 1;
 
     /** @var int */
     public $installOverridesCalls = 0;
@@ -41,13 +47,24 @@ final class ReinstallModuleDouble
 
         $destination = _PS_OVERRIDE_DIR_ . OverrideReinstallSpec::SHIPPED;
         if (is_file($destination)) {
-            return true;
+            throw new Exception('Method getFormat in class CustomerAddressFormatter is already overridden.');
         }
 
         @mkdir(dirname($destination), 0777, true);
         file_put_contents($destination, OverrideReinstallSpec::body(OverrideReinstallSpec::MODULE_VERSION));
 
         return true;
+    }
+}
+
+/** A module whose overrides cannot be written: core's false return, not a throw. */
+final class RefusingModuleDouble extends ReinstallModuleDouble
+{
+    public function installOverrides()
+    {
+        ++$this->installOverridesCalls;
+
+        return false;
     }
 }
 
@@ -78,6 +95,10 @@ final class OverrideReinstallSpec
         }
 
         self::testReinstallingAMissingOverrideIsIdempotent();
+        self::testAnInstallOverridesFailureIsLoggedAsAFailure();
+        // Last: it loads a class that permanently changes which branch the
+        // generator resolution takes.
+        self::testTheClassIndexGoesThroughWhicheverGeneratorPrestaShopHas();
     }
 
     /**
@@ -192,6 +213,80 @@ final class OverrideReinstallSpec
             $module->installOverridesCalls,
             'A second refresh() after a reinstall must do nothing - otherwise every later '
             . 'upgrade rewrites the tree.'
+        );
+    }
+
+    /**
+     * Core returns false rather than throwing when an override could not be
+     * written, so a swallowed false would report the same "all done" as a real
+     * repair - the exact shape of the bug this release exists to fix.
+     */
+    private static function testAnInstallOverridesFailureIsLoggedAsAFailure(): void
+    {
+        require_once dirname(__DIR__) . '/upgrade/upgrade-2.7.10.php';
+
+        self::freshShop(null);
+        // The REAL module root, so the upgrade script's own require_once of the
+        // migrator resolves and a thrown error cannot be mistaken for the
+        // false-return path under test.
+        $module = new RefusingModuleDouble(dirname(__DIR__) . '/');
+
+        TinyAssert::true(
+            in_array(TwoOverrideMigrator::INSTALL_FAILED_NOTE, TwoOverrideMigrator::refresh($module), true),
+            'A false return from installOverrides() must be reported, not discarded.'
+        );
+
+        PrestaShopLogger::reset();
+        self::freshShop(null);
+        TinyAssert::true(upgrade_module_2_7_10($module), 'and the upgrade itself must still finish.');
+
+        $severities = array();
+        foreach (PrestaShopLogger::$logs as $entry) {
+            $severities[] = $entry['severity'];
+        }
+
+        TinyAssert::same(
+            array(2),
+            $severities,
+            'A shop whose override was not written must be logged as a failure. At severity 1 it '
+            . 'reads as a successful repair, which is how the original defect stayed invisible.'
+        );
+    }
+
+    /**
+     * PrestaShop 8.2 moved the class index onto the `prestashop/autoload`
+     * package and 9 deleted `Tools::generateIndex()`, so a `refresh()` hard-wired
+     * to either spelling fatals on one major - swallowed by the upgrade script's
+     * `catch`, leaving the shop broken while the upgrade reports success.
+     */
+    private static function testTheClassIndexGoesThroughWhicheverGeneratorPrestaShopHas(): void
+    {
+        Tools::$generateIndexCalls = 0;
+        TwoOverrideMigrator::refresh(self::freshShop(null));
+
+        TinyAssert::true(
+            Tools::$generateIndexCalls > 0,
+            'On a PrestaShop with no `prestashop/autoload` package (1.7.6 through 8.1), the '
+            . 'index must be rebuilt through Tools::generateIndex().'
+        );
+
+        require_once __DIR__ . '/fixtures/ps9-autoload-double.php';
+
+        Tools::$generateIndexCalls = 0;
+        PrestaShop\Autoload\PrestashopAutoload::$generateIndexCalls = 0;
+        TwoOverrideMigrator::refresh(self::freshShop(null));
+
+        TinyAssert::true(
+            PrestaShop\Autoload\PrestashopAutoload::$generateIndexCalls > 0,
+            'On 8.2 and 9 it must go through the autoload package, exactly as core\'s own '
+            . 'Module::addOverride() does.'
+        );
+
+        TinyAssert::same(
+            0,
+            Tools::$generateIndexCalls,
+            'and it must NOT call Tools::generateIndex() there - PrestaShop 9 deleted that '
+            . 'method, so calling it is a fatal, not a fallback.'
         );
     }
 
