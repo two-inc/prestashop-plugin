@@ -73,6 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The per-country answer is now also cached in `localStorage` with a 24h TTL, namespaced per checkout environment (`checkoutHost`) so staging/production/sandbox never share an entry. A cache hit populates availability and skips the network call entirely; a transport failure is never persisted (a blip must not become a day-long "not available"), matching the existing in-memory cache's own rule
 
 ### Changed
+- **The mode-chip row is not rendered at all when only one chip would be visible** (TWO-40). Two or more chips, and the row renders exactly as before
+  - The single survivor is always "Registered Company" — the mode the buyer is already in — so the row offered no choice while still reading as an affordance. It happens on any non-sole-trader country with the company search mounted in the payment tile, where both of the other two chips are already withheld
+  - The row element stays in the panel and is hidden, rather than removed: the dropdown holds search row, results host and chip row as its three children in that order, and that shape is the reference the other plugins are built against
 - **The "Enter Manually" mode chip renders only while "Enable company search in address entry" is on** (TWO-25503). "Registered Company" and "Sole Trader" are unaffected
   - Manual entry captures a company name and no company number, and Two's payment method requires one. The address-step lookup is the only path that captures a number, so with the search relocated into the payment tile the chip led a buyer into a state they could not pay from
   - The gate is client-side, on the switch the browser already receives (`company_name_search` -> `companySearchInAddressArea`); no new setting, no new config key, and no server-side change
