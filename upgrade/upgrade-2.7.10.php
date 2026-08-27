@@ -21,9 +21,10 @@
  * and re-runs `installOverrides()`, which writes it fresh. A path the caller
  * named as RETIRED is still skipped when absent - that is its finished state.
  *
- * This runs during an upgrade and nowhere else. A shop that loses its override
- * tree again between releases stays without one until the next release that
- * ships an upgrade script.
+ * This runs during a module upgrade and nowhere else. Nothing repairs the tree
+ * automatically between releases: a shop that loses it again needs a merchant or
+ * admin to install, reset, or disable-and-re-enable the module, all of which
+ * re-run `installOverrides()`.
  *
  * WHY A NEW VERSION RATHER THAN AN EDIT TO AN EXISTING SCRIPT
  *

@@ -41,11 +41,17 @@
 #      a stale override from before this check existed stays stale until some
 #      version's migration reaches it. This gate stops new instances; it does not
 #      discover old ones.
-#   2. WHETHER THE MIGRATION WORKS. It requires a literal
-#      `TwoOverrideMigrator::refresh(` on an added, non-comment line, and for a
-#      retired override the class name on one too. That is as far as grep
-#      reaches: it says a call is written, never that the call repairs the right
-#      thing, runs on the shop, or succeeds.
+#   2. WHETHER THE MIGRATION WORKS. It requires the TEXT
+#      `TwoOverrideMigrator::refresh(` on an added line that does not BEGIN with
+#      a comment marker, and for a retired override the class name on one too.
+#      That text still counts inside a string literal, a heredoc body, or a
+#      comment trailing a real statement - grep cannot parse PHP, and hardening
+#      the pattern far enough to tell those apart would start failing legitimate
+#      code, which is the one direction a gate must not fail in. What it closes
+#      is the bypass that was reachable by accident: every upgrade script here
+#      opens with a docblock naming the migrator, and that alone no longer
+#      passes. It never says the call repairs the right thing, runs on the shop,
+#      or succeeds.
 #   3. DRIFT WITH NO PULL REQUEST. A shop installed at an old version and never
 #      upgraded has no PR to gate. Nothing here applies.
 #   4. A DIRECT PUSH. It runs on `pull_request`. A push straight to a protected
