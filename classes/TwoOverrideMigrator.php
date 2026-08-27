@@ -23,9 +23,11 @@
  * `upgrade/upgrade-<version>.php`; `.github/scripts/check-override-migration.sh`
  * fails the PR if it doesn't.
  *
- * `refresh()` deletes a shop-level override file, then rebuilds the class
- * index and re-runs `installOverrides()`, only when the file is stale AND
- * exclusively ours. It refuses to touch:
+ * `refresh()` rebuilds the class index and re-runs `installOverrides()` when a
+ * shop-level file is stale AND exclusively ours (deleting it first), and when a
+ * file the module still ships is ABSENT from the shop tree — a shop whose copy
+ * was deleted and never rebuilt runs no override at all, which is not the same
+ * as running a current one. It refuses to touch:
  *
  *   1. A file stamped by any OTHER module too — PrestaShop's `override/` tree
  *      is a shared merge target; deleting a co-owned file would silently
@@ -178,7 +180,8 @@ class TwoOverrideMigrator
     /**
      * Bring the shop's override tree into line with the installed module.
      *
-     * Idempotent: a second call finds every file CURRENT and does nothing.
+     * Idempotent: a second call finds every file present and CURRENT and does
+     * nothing.
      *
      * @param Module            $module        The module being upgraded
      * @param array<int,string> $retiredPaths  Override paths this version RETIRED,
@@ -196,12 +199,21 @@ class TwoOverrideMigrator
         $version = isset($module->version) ? (string) $module->version : '';
         $notes = array();
         $removed = 0;
+        $missing = 0;
+        $shipped = array_flip(self::shippedPaths($module));
 
         foreach (self::candidatePaths($module, $retiredPaths) as $relative) {
             $absolute = _PS_OVERRIDE_DIR_ . $relative;
 
             if (!is_file($absolute)) {
-                // Never installed here, or already cleaned up. Both fine.
+                if (!isset($shipped[$relative])) {
+                    // Retired, and already gone from the shop tree.
+                    continue;
+                }
+
+                // Nothing on disk means the override's behaviour is absent, not current.
+                ++$missing;
+                $notes[] = sprintf('%s: MISSING from the shop tree - reinstalling', $relative);
                 continue;
             }
 
@@ -252,7 +264,7 @@ class TwoOverrideMigrator
             );
         }
 
-        if ($removed === 0) {
+        if ($removed === 0 && $missing === 0) {
             return $notes;
         }
 
@@ -271,8 +283,10 @@ class TwoOverrideMigrator
         self::rebuildClassIndex();
 
         $notes[] = sprintf(
-            'rebuilt the class index and re-ran installOverrides() after deleting %d stale override(s)',
-            $removed
+            'rebuilt the class index and re-ran installOverrides() after deleting %d stale '
+            . 'override(s) and finding %d missing',
+            $removed,
+            $missing
         );
 
         return $notes;
@@ -298,7 +312,29 @@ class TwoOverrideMigrator
             }
         }
 
+        foreach (self::shippedPaths($module) as $relative) {
+            $paths[$relative] = true;
+        }
+
+        return array_keys($paths);
+    }
+
+    /**
+     * Override paths the module still SHIPS, relative to the override root.
+     *
+     * Kept apart from the retired paths because absence means opposite things
+     * for the two: a shipped override missing from the shop tree has to be
+     * reinstalled, a retired one missing is the finished state.
+     *
+     * @param Module $module
+     *
+     * @return array<int, string>
+     */
+    private static function shippedPaths($module)
+    {
+        $paths = array();
         $root = rtrim($module->getLocalPath(), '/') . '/override';
+
         foreach (self::phpFilesUnder($root) as $absolute) {
             $relative = ltrim(substr($absolute, strlen($root)), '/');
             // `index.php` is PrestaShop's directory-listing stub, present in
