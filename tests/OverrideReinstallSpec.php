@@ -254,7 +254,7 @@ final class OverrideReinstallSpec
     }
 
     /**
-     * PrestaShop 8.2 moved the class index onto the `prestashop/autoload`
+     * PrestaShop 8.1 moved the class index onto the `prestashop/autoload`
      * package and 9 deleted `Tools::generateIndex()`, so a `refresh()` hard-wired
      * to either spelling fatals on one major - swallowed by the upgrade script's
      * `catch`, leaving the shop broken while the upgrade reports success.
@@ -266,7 +266,7 @@ final class OverrideReinstallSpec
 
         TinyAssert::true(
             Tools::$generateIndexCalls > 0,
-            'On a PrestaShop with no `prestashop/autoload` package (1.7.6 through 8.1), the '
+            'On a PrestaShop with no `prestashop/autoload` package (1.7.6 through 8.0), the '
             . 'index must be rebuilt through Tools::generateIndex().'
         );
 
@@ -278,7 +278,7 @@ final class OverrideReinstallSpec
 
         TinyAssert::true(
             PrestaShop\Autoload\PrestashopAutoload::$generateIndexCalls > 0,
-            'On 8.2 and 9 it must go through the autoload package, exactly as core\'s own '
+            'On 8.1 and later it must go through the autoload package, exactly as core\'s own '
             . 'Module::addOverride() does.'
         );
 

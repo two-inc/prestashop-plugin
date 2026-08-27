@@ -9,8 +9,11 @@
  * `Module::addOverride()` also can't rewrite an existing shop-level method: it
  * throws if the method is already there and only ever splices in missing
  * methods. So changing or retiring an override in a release leaves every
- * existing shop silently running the old behaviour forever, and a module reset
- * doesn't help since it re-runs the same add-only `installOverrides()`.
+ * existing shop silently running the old behaviour forever. A module reset (or
+ * a disable/enable, which also re-runs `installOverrides()`) does not help
+ * either while the shop copy is STALE, because add-only means the existing
+ * members stay. It DOES rebuild a copy that is absent - nothing is there to
+ * collide with, so `addOverride()` takes its fresh-copy branch.
  *
  * Observed in production-shaped staging on 2026-07-29: a shop on the 2.4.0
  * `CustomerAddressFormatter` override kept injecting fields into the address
@@ -299,8 +302,8 @@ class TwoOverrideMigrator
         }
 
         if (!$indexed) {
-            $notes[] = 'no class-index generator on this PrestaShop - the autoloader may still '
-                . 'resolve the old path until the cache is cleared';
+            $notes[] = 'no class-index generator on this PrestaShop - the override was written, '
+                . 'but the autoloader may resolve the old path until the cache is cleared';
         }
 
         return $notes;
@@ -428,7 +431,7 @@ class TwoOverrideMigrator
 
     /**
      * Regenerate the current environment's class index the way the running
-     * PrestaShop does: 8.2 moved it onto the `prestashop/autoload` package and 9
+     * PrestaShop does: 8.1 moved it onto the `prestashop/autoload` package and 9
      * deleted `Tools::generateIndex()`, so either spelling alone fatals on one
      * major. Core's own `Module::addOverride()` switched with it.
      *
