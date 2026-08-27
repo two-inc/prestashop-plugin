@@ -19,6 +19,17 @@ check="${script_dir}/check-override-migration.sh"
 pass=0
 fail=0
 
+# The workflows invoke these scripts directly, not via `bash`, so a lost exec bit
+# is a red job. Editing the repo from a Windows-side tool strips it silently.
+for script in "${script_dir}"/*.sh; do
+    if [ -x "$script" ]; then
+        pass=$((pass + 1))
+    else
+        echo "FAIL  $(basename "$script") is not executable — git update-index --chmod=+x"
+        fail=$((fail + 1))
+    fi
+done
+
 # Build a repo with a `base` branch holding $1 as the override tree, then a
 # `head` branch applying the mutation in $2 (a shell snippet run in the repo).
 # Echoes the repo path.
@@ -133,6 +144,33 @@ expect "an unchanged upgrade script mentioning the class does not count" 1 \
     "$OVERRIDE
      printf '<?php\n// Foo was migrated long ago.\nfunction upgrade_module_1_0_0(\$m) { TwoOverrideMigrator::refresh(\$m); }\n' > upgrade/upgrade-1.0.0.php" \
     "printf '<?php\nclass Foo extends FooCore { public function a() { return 1; } }\n' > override/classes/form/Foo.php"
+
+# A docblock is not a migration. Every upgrade script in this repo opens with one
+# naming the migrator and the class it repairs, so a gate satisfied by prose is
+# satisfied by the boilerplate of a comment-only edit.
+expect "a docblock mentioning the migrator does not count as a call" 1 \
+    "$OVERRIDE" \
+    "printf '<?php\nclass Foo extends FooCore { public function a() { return 1; } }\n' > override/classes/form/Foo.php
+     printf '<?php\n/**\n * Hands off to TwoOverrideMigrator::refresh(), same as the earlier scripts.\n */\nfunction upgrade_module_9_9_9(\$m) { Configuration::updateValue(\"X\", 1); }\n' > upgrade/upgrade-9.9.9.php"
+
+expect "a retired class named only in a comment does not count" 1 \
+    "$OVERRIDE" \
+    "git rm -q override/classes/form/Foo.php
+     printf '<?php\n// Foo.php was retired in this release.\nfunction upgrade_module_9_9_9(\$m) { TwoOverrideMigrator::refresh(\$m); }\n' > upgrade/upgrade-9.9.9.php"
+
+# ...and the tightening must not reject the real thing: the repo's own scripts
+# carry a docblock AND a call, and the call is what counts.
+expect "a docblock plus a real call still passes" 0 \
+    "$OVERRIDE" \
+    "printf '<?php\nclass Foo extends FooCore { public function a() { return 1; } }\n' > override/classes/form/Foo.php
+     printf '<?php\n/**\n * Hands off to TwoOverrideMigrator::refresh().\n */\nfunction upgrade_module_9_9_9(\$m) { TwoOverrideMigrator::refresh(\$m); }\n' > upgrade/upgrade-9.9.9.php"
+
+# The bare class name is not a call: a `use` line, or a string holding the name,
+# migrates nothing.
+expect "the bare class name without a call does not count" 1 \
+    "$OVERRIDE" \
+    "printf '<?php\nclass Foo extends FooCore { public function a() { return 1; } }\n' > override/classes/form/Foo.php
+     printf '<?php\nfunction upgrade_module_9_9_9(\$m) { \$c = \"TwoOverrideMigrator\"; Configuration::updateValue(\"X\", \$c); }\n' > upgrade/upgrade-9.9.9.php"
 
 # Raised in adversarial review. `grep -qF Foo` is satisfied by `FooBar`, so a
 # retired Foo.php would pass the gate on an upgrade script that only ever

@@ -18,7 +18,10 @@
  * upgrade, not a deploy that replaces the module directory, not a git-sync.
  * `Module::addOverride()` cannot even do it when it does run: for any method the
  * shop copy already declares it throws rather than replacing, and it has no path
- * that removes one. A module RESET does not help either, for the same reason.
+ * that removes one. A disable/enable does not help either, for the same reason.
+ * A module RESET does fix it - it uninstalls the override before reinstalling it
+ * - but it is a merchant action that drops the module's data, not something that
+ * happens on deploy.
  *
  * So the shop kept a 2.4.0-stamped `CustomerAddressFormatter` that went on
  * injecting department and project into the address form, while reporting module
