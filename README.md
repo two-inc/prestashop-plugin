@@ -691,6 +691,7 @@ The module builds order payloads that exactly match PrestaShop invoices:
   - `unreachable` means this shop could not reach the Two API at all - check outbound network, DNS and firewall rules. The key itself has not been judged
   - Search the PrestaShop logs for `API key verification status` - the withholding is always logged with its category
   - Also check the plainer causes: the module disabled, no payment terms enabled, cart below the minimum order value, or an unsupported cart currency (each of which logs its own line)
+  - If it is missing only for buyers in certain countries, the merchant record's supported buyer countries may not include theirs - search the logs for `supported buyer country`, which names the country that was refused. The list is set by Two, not in the module configuration; contact Two support to change it. A merchant with no list set is unrestricted, so this is not a cause on a shop where Two is missing for everyone
 
 ### "Invalid Phone Number" Error
 - **Symptom**: Order fails with phone validation error

@@ -86,6 +86,16 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             return;
         }
 
+        // Buyer-country gate (TWO-40): a stale rendered page can still post past the display gate.
+        if (!$this->module->isTwoBuyerCountrySupported($cart)) {
+            $this->failCheckout(
+                $this->module->l('This payment method is not available.'),
+                'TwoPayment: Payment attempt from an unsupported buyer country - cart ' . (int) $cart->id,
+                2
+            );
+            return;
+        }
+
         $authorized = false;
         foreach (Module::getPaymentModules() as $module) {
             if ($module['name'] == 'twopayment') {
