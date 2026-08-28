@@ -12,6 +12,7 @@ const {
     installStylesheet,
     stubAjax,
     releaseWidgets,
+    loadSoleTrader,
     panelParts,
     openPanel,
     shown
@@ -38,6 +39,7 @@ afterEach(() => {
     releaseWidgets($);
     jest.useRealTimers();
     delete global.window.TwoSoleTrader_Instance;
+    delete global.window.TwoCheckoutManager_Instance;
 });
 
 describe('the chip row is only rendered when it offers a choice', () => {
@@ -93,5 +95,29 @@ describe('the chip row is only rendered when it offers a choice', () => {
         expect(children[1].className).toContain('two-company-dropdown__results');
         expect(children[2].className).toContain('two-company-mode-chips');
         expect(shown(panelParts().modeChips)).toBe(false);
+    });
+
+    test('a late sole-trader answer brings the row back with it', () => {
+        // Given a panel opened before the availability round trip landed.
+        let available = false;
+        global.window.TwoSoleTrader_Instance = {
+            isAvailableForCurrentCountry: () => available
+        };
+        const search = new TwoCompanySearch({
+            checkoutHost: CHECKOUT_HOST,
+            companySearchInAddressArea: false
+        });
+        openPanel();
+        expect(shown(panelParts().modeChips)).toBe(false);
+
+        // When the answer lands and TwoSoleTrader pushes it in.
+        available = true;
+        const TwoSoleTrader = loadSoleTrader();
+        global.window.TwoCheckoutManager_Instance = { companySearch: search };
+        TwoSoleTrader.prototype.resyncSoleTraderChip.call({});
+
+        // Then the second chip is reachable, not stranded behind a hidden row.
+        expect(shown(panelParts().soleTrader)).toBe(true);
+        expect(shown(panelParts().modeChips)).toBe(true);
     });
 });
