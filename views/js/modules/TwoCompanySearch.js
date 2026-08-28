@@ -511,8 +511,7 @@ class TwoCompanySearch {
         // after the hint left a screen-reader user tabbing back in after a full
         // query still hearing "Enter 3 or more characters" as what the field IS.
         //
-        // `title` repeats the placeholder because the stylesheet clips it to the
-        // field width: the full hint has to stay reachable on hover.
+        // The stylesheet clips the placeholder, so `title` keeps the full hint.
         const query = $('<input type="text" class="two-company-dropdown__query" autocomplete="off" />')
             .attr('placeholder', TwoCompanySearch.getQueryPlaceholderText())
             .attr('title', TwoCompanySearch.getQueryPlaceholderText())
