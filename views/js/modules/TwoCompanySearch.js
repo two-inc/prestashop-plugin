@@ -42,11 +42,7 @@ class TwoCompanySearch {
      */
     static _resultCache = new Map();
 
-    /**
-     * Monotonic allocator for `_instanceNs`. Class-scoped BECAUSE it is what
-     * makes each instance's namespace unique - per-instance it would hand every
-     * instance the same suffix and defeat its own purpose.
-     */
+    /** Allocator for `_instanceNs`; class-scoped is what makes each unique. */
     static _instanceSeq = 0;
 
     /**
@@ -126,13 +122,13 @@ class TwoCompanySearch {
             // syncNotListedVisibility().
             companySearchInAddressArea: true,
             // Scratch for the dropdown reopen deadline - see reopenDeadline().
-            reopenMemory: null,
+            // Own object when un-injected, so an uninjected control remembers
+            // only its own panel rather than sharing one with every other.
+            reopenMemory: {},
             // Sibling modules, injected so a second control on the page can be
             // given its own; each falls back to the page singleton.
             getManager: null,
             getSoleTrader: null,
-            // This instance's address-form scope - see addressScope().
-            addressScope: null,
             ...config
         };
 
@@ -148,7 +144,7 @@ class TwoCompanySearch {
             orderIntentUrl: page.order_intent_url || '',
             ajaxToken: page.ajax_token || ''
         };
-        this._reopenMemory = this.config.reopenMemory || {};
+        this._reopenMemory = this.config.reopenMemory;
 
         this.companyField = null;
         this.organizationField = null;
@@ -200,10 +196,9 @@ class TwoCompanySearch {
         // re-entrancy guard that keeps them to one hosted popup between them
         // (TWO-40 follow-up).
         this._soleTraderLoading = false;
-        // Per-instance event namespace suffix. The `mouseup` guard has to be
-        // bound on `document` (a drag can end anywhere), and `document` is a
-        // page-wide singleton - so unbinding by the shared `.twoDropdown`
-        // namespace alone would tear off another live instance's handler too.
+        // Per-instance suffix: the `mouseup` guard binds on `document`, so
+        // unbinding by the shared `.twoDropdown` namespace alone would tear off
+        // another live instance's handler too.
         TwoCompanySearch._instanceSeq += 1;
         this._instanceNs = 'i' + TwoCompanySearch._instanceSeq;
 
@@ -295,9 +290,6 @@ class TwoCompanySearch {
      * @returns {?(Document|Element)}
      */
     addressScope() {
-        if (this.config.addressScope) {
-            return this.config.addressScope;
-        }
         const field = this.companyField && this.companyField.get ? this.companyField.get(0) : null;
         if (!field || typeof field.closest !== 'function') {
             return document;
@@ -393,8 +385,10 @@ class TwoCompanySearch {
 
     createOrganizationField() {
         // Scoped: document-wide, a second control adopts the first's hidden
-        // input and the two then write one node.
-        let orgField = $(this.addressScope()).find("input[name='companyid']");
+        // input and the two then write one node. A failed-closed (null) scope
+        // still adopts document-wide, because injecting a second same-named
+        // input submits both and lets the last one win.
+        let orgField = $(this.addressScope() || document).find("input[name='companyid']");
 
         if (orgField.length === 0) {
             orgField = $('<input type="hidden" name="companyid" value="">');
@@ -6469,11 +6463,12 @@ class TwoCompanySearch {
         // TWO-25503: mirror of TwoOrderIntent.getCurrentAddressId() - see there
         // for why the editable form outranks the saved-address radios.
         //
-        // This control's own block first. On core's markup that lands on the
-        // step form either way - the address form's own `<form>` tag is dropped
-        // by the parser, leaving one id for the step - so what this buys there
-        // is only that the OTHER side's saved-address radio cannot answer. It
-        // narrows to a real per-block id on a theme whose block forms survive.
+        // This control's own block first. Unreachable on core's markup: the
+        // block's own `<form>` tag is dropped by the parser, so no per-block
+        // `data-id-address` exists and the step form below answers. It is here
+        // for markup where the block forms DO survive - the two-block fixture,
+        // or a theme that does not nest them - where the document-wide lookup
+        // would otherwise answer with the first block's id, not this one's.
         // The tile mount's scope is `document` and falls through.
         const scope = this.addressScope();
         if (scope && scope !== document && scope.querySelector("input[name='saveAddress']")) {

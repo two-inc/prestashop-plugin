@@ -210,7 +210,7 @@ function buildAddressForm(options) {
  * The checkout addresses step, in PrestaShop's OWN markup (TWO-40).
  *
  * Reproduced from core's `checkout/_partials/steps/addresses.tpl` and related
- * partials (byte-identical across the 8 and 9 images), not invented, since
+ * partials, read out of a PrestaShop 8 image, not invented, since
  * the module's whole job is to read and write that exact markup. Structural
  * facts it reproduces:
  *
@@ -290,16 +290,17 @@ function buildAddressesStep(options) {
      *
      * @param {string} label the visible label text
      * @param {string} control the input/select markup
+     * @param {string} id the control's id, which core's label points at
      * @returns {string}
      */
-    const fieldGroup = function (label, control) {
+    const fieldGroup = function (label, control, id) {
         if (!formGroups) {
             return '        ' + control;
         }
 
         return [
             '        <div class="form-group row">',
-            '          <label class="col-md-3 form-control-label">' + label + '</label>',
+            '          <label class="col-md-3 form-control-label" for="' + id + '">' + label + '</label>',
             '          <div class="col-md-6">',
             '            ' + control,
             '          </div>',
@@ -326,20 +327,37 @@ function buildAddressesStep(options) {
         }
         lines.push(
             '        <form method="POST" data-id-address="' + addressId + '">',
-            fieldGroup('Company', '<input type="text" name="company" id="field-company" value="' + company + '">')
+            fieldGroup(
+                'Company',
+                '<input type="text" name="company" id="field-company" value="' + company + '">',
+                'field-company'
+            )
         );
         if (DNI_COUNTRY_IDS.indexOf(String(countryId)) !== -1) {
             lines.push(fieldGroup(
                 'Identification number',
-                '<input type="text" name="dni" id="field-dni" value="' + dni + '" required>'
+                '<input type="text" name="dni" id="field-dni" value="' + dni + '" required>',
+                'field-dni'
             ));
         }
         lines.push(
-            fieldGroup('VAT number', '<input type="text" name="vat_number" id="field-vat_number" value="">'),
-            fieldGroup('Address', '<input type="text" name="address1" id="field-address1" value="' + address1 + '">'),
-            fieldGroup('Zip/Postal code', '<input type="text" name="postcode" id="field-postcode" value="' + postcode + '">'),
-            fieldGroup('City', '<input type="text" name="city" id="field-city" value="' + city + '">'),
-            fieldGroup('Phone', '<input type="tel" name="phone" id="field-phone" value="' + phone + '">'),
+            fieldGroup(
+                'VAT number',
+                '<input type="text" name="vat_number" id="field-vat_number" value="">',
+                'field-vat_number'
+            ),
+            fieldGroup(
+                'Address',
+                '<input type="text" name="address1" id="field-address1" value="' + address1 + '">',
+                'field-address1'
+            ),
+            fieldGroup(
+                'Zip/Postal code',
+                '<input type="text" name="postcode" id="field-postcode" value="' + postcode + '">',
+                'field-postcode'
+            ),
+            fieldGroup('City', '<input type="text" name="city" id="field-city" value="' + city + '">', 'field-city'),
+            fieldGroup('Phone', '<input type="tel" name="phone" id="field-phone" value="' + phone + '">', 'field-phone'),
             '        <select id="field-id_country" class="form-control form-control-select js-country" name="id_country" required>',
             // `selected` unconditionally, as core emits it - see this function's
             // docblock. The real country option below carries it too.
@@ -350,7 +368,8 @@ function buildAddressesStep(options) {
             countryOption(DNI_COUNTRY_ID, 'Spain', 'ES'),
             countryOption(OTHER_DNI_COUNTRY_ID, 'Mexico', 'MX'),
             '        </select>',
-            '        <input type="hidden" name="saveAddress" value="' + type + '">'
+            '        <input type="hidden" name="saveAddress" value="' + type + '">',
+            '        <input type="hidden" name="submitAddress" value="1">'
         );
         if (type === 'delivery') {
             lines.push(

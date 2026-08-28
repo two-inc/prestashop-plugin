@@ -481,10 +481,12 @@ describe('addressScope() on PrestaShop core markup', () => {
 
     /**
      * The step form is the ONLY `form[data-id-address]` left after parsing, so
-     * this is the narrowest true answer available - the per-block scope cannot
-     * improve on it, and the block's own `data-id-address` is not in the DOM at
-     * all. What the scope DOES buy is the negative below: the other side's saved
-     * address never answers.
+     * this is the narrowest true answer available and the scoped branch in
+     * getCurrentAddressId() cannot improve on it - deleting that branch leaves
+     * this test green. The negative is free too: the editable form outranks the
+     * radios, so the other side's saved address could not answer either way.
+     * The scoped branch is pinned instead by 'each answers with its OWN address
+     * id', on the two-block fixture where per-block forms survive.
      */
     test('the address id is the step form, never the other side saved address', () => {
         const control = mountOnCoreStep('invoice');
@@ -511,6 +513,68 @@ describe('addressScope() on PrestaShop core markup', () => {
         // Then NO scope is claimed. `document` here would be the widest possible
         // scope - the cross-address write this scoping exists to prevent.
         expect(control.addressScope()).toBeNull();
+    });
+
+    /**
+     * @param {Function} [beforeMount] runs against the built fixture
+     * @returns {Object} a control whose addressScope() has failed closed
+     */
+    function mountWithNoScope(beforeMount) {
+        buildAddressesStep({
+            editing: 'invoice',
+            blockContainers: false,
+            blockIds: false,
+            countryIsoAttrs: true,
+            stepAddressId: STEP_ADDRESS_ID
+        });
+        if (beforeMount) {
+            beforeMount();
+        }
+
+        return new TwoCompanySearch({
+            checkoutHost: CHECKOUT_HOST,
+            companyFieldSelector: '#field-company'
+        });
+    }
+
+    test('scopedQuery() answers null on a failed-closed scope, never document-wide', () => {
+        // Given no trusted scope, but a matching field elsewhere on the page
+        const control = mountWithNoScope();
+        expect(control.addressScope()).toBeNull();
+        expect(document.querySelector("select[name='id_country']")).not.toBeNull();
+
+        // Then the lookup finds nothing rather than widening to the document
+        expect(control.scopedQuery("select[name='id_country']")).toBeNull();
+    });
+
+    test('a failed-closed scope reads no country, not the untrusted one on the page', () => {
+        // Given a country select the control must not trust, and a page value
+        window.twopayment = { billing_country: 'NO' };
+        const control = mountWithNoScope();
+
+        // Then the read falls through to the page value rather than the DOM's
+        expect(document.querySelector("select[name='id_country']").selectedOptions[0]
+            .getAttribute('data-iso-code')).toBe('DE');
+        expect(control.getCurrentCountry()).toBe('NO');
+    });
+
+    test('scopedQuery() answers from inside the scope when there is one', () => {
+        const control = mountOnCoreStep('invoice');
+        const found = control.scopedQuery("select[name='id_country']");
+
+        expect(found).not.toBeNull();
+        expect($.contains(control.addressScope(), found)).toBe(true);
+    });
+
+    test('a failed-closed scope adopts the shipped companyid, never a second one', () => {
+        // Given a theme that ships the hidden input, and no trusted scope
+        const control = mountWithNoScope(() => {
+            $('#field-company').after('<input type="hidden" name="companyid" value="" id="shipped" />');
+        });
+
+        // Then it writes that one input, not a duplicate the buyer submits twice
+        expect(document.querySelectorAll("input[name='companyid']").length).toBe(1);
+        expect(control.organizationField.get(0)).toBe(document.getElementById('shipped'));
     });
 
     test('a detached scope is no scope, as core replaceWith() leaves it', () => {
