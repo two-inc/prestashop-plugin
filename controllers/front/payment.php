@@ -134,7 +134,7 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
         $companyId = isset($companyData['organization_number']) ? trim((string) $companyData['organization_number']) : '';
         if (Tools::isEmpty($companyName) || Tools::isEmpty($companyId)) {
             $this->failCheckout(
-                sprintf($this->module->l('To pay with %s, please select your company so we can verify your business and offer invoice terms.'), $this->module->getTwoBrandConfig('product_name'))
+                sprintf($this->module->l('Please select your company before paying with %s.'), $this->module->getTwoBrandConfig('product_name'))
             );
             return;
         }
