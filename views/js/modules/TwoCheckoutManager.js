@@ -60,11 +60,8 @@ class TwoCheckoutManager {
         // rebuild stripped the marker off. See
         // TwoCompanySearch.mirrorConfirmedCompanyToInvoiceAddress().
         this._invoiceMirrorMemory = {};
-        // Per-mount, page-lifetime scratch for the company search's dropdown
-        // reopen deadline, injected for the same reason as _invoiceMirrorMemory:
-        // one `updatedAddressForm` tears that control down twice, so the deadline
-        // cannot live on the instance. Keyed by mount so a control in the tile
-        // cannot reopen a control in the address area.
+        // Page-lifetime because one `updatedAddressForm` tears the search down
+        // twice; per-mount so the tile cannot reopen the address area's panel.
         this._companySearchReopenMemory = { address: {}, tile: {} };
         // TWO-40: and where the server has one for this cart, start from it. Must
         // run before init(), which is what constructs the modules that read the
@@ -783,13 +780,8 @@ class TwoCheckoutManager {
     }
 
     /**
-     * The buyer has picked a company in the payment tile.
-     *
-     * The one way in: `_tileCompanySelected` is this class's own gate state, and
-     * a collaborator reaching into it directly cannot be found by a reader of
-     * canAutoTriggerOrderIntent().
-     *
-     * @returns {void}
+     * The one way in: a collaborator setting `_tileCompanySelected` directly
+     * cannot be found by a reader of canAutoTriggerOrderIntent().
      */
     markTileCompanySelected() {
         this._tileCompanySelected = true;
@@ -2262,7 +2254,11 @@ class TwoCheckoutManager {
                 // value, so the module always sees the CURRENT selection - this
                 // instance is built once, on the first Two selection, and long
                 // outlives any individual company choice.
-                getConfirmedCompany: () => this.getConfirmedCompanySelection()
+                getConfirmedCompany: () => this.getConfirmedCompanySelection(),
+                // Through a getter, not by value: the search instance is
+                // destroyed and rebuilt on every address-form re-render, where
+                // this one is built once.
+                getCompanySearch: () => this.companySearch
             });
         }
     }

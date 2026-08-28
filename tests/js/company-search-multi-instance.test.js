@@ -9,8 +9,11 @@
  * modules reached for on `window`, a CSS custom property on
  * `document.documentElement`, and the country select, the hidden `companyid`
  * input and the current address id all resolved document-wide. A second control
- * inherited all of it. These tests fail against that shape, so they are what
- * stops it coming back.
+ * inherited all of it. Eighteen of the twenty-three tests below fail against
+ * that shape, so they are what stops it coming back. The remaining five pass
+ * either way: they pin state that was already per-instance (the request
+ * counter, the event namespace, the panel and query field, the manual-entry
+ * flag, the no-config fallback) and are regression pins on it, not leak proofs.
  *
  * The shipped module mounts ONE control per page - the address-area field or the
  * payment tile, in mutually exclusive branches of
@@ -397,5 +400,75 @@ describe('two live controls do not share their DOM', () => {
         // Then neither reports the other's
         expect(first.getCurrentAddressId()).toBe(7);
         expect(second.getCurrentAddressId()).toBe(9);
+    });
+});
+
+/**
+ * PrestaShop's real addresses step, which the fixture above deliberately is
+ * not: core wraps BOTH address blocks in one step-wide `.js-address-form`, and
+ * the address form's own inner `<form>` tag is dropped by the parser (a `<form>`
+ * inside a `<form>` is invalid), so there is no per-block form element to scope
+ * to at all. The fixture above nests `.js-address-form` inside each block - the
+ * opposite arrangement - so it cannot see this class of bug.
+ */
+function buildCoreAddressesStep(options) {
+    const settings = options || {};
+    const block = function (id, company, countryId, iso) {
+        return [
+            '<div id="' + id + '">',
+            '  <input type="text" name="company" id="' + company + '" value="" />',
+            "  <input type='text' name='address1' value='' />",
+            '  <select name="id_country">',
+            '    <option value="' + countryId + '" data-iso-code="' + iso + '" selected>' + iso + '</option>',
+            '  </select>',
+            '</div>'
+        ].join('\n');
+    };
+    document.body.innerHTML = [
+        '<div class="js-address-form">',
+        settings.dropBlockIds ? '<div>' : '',
+        block(settings.dropBlockIds ? 'first-block' : 'delivery-address', 'company-a', '17', 'GB'),
+        block(settings.dropBlockIds ? 'second-block' : 'invoice-address', 'company-b', '10', 'NO'),
+        settings.dropBlockIds
+            ? "<input type='radio' name='id_address_invoice' value='9' checked>"
+            : '',
+        settings.dropBlockIds ? '</div>' : '',
+        '  <input type="hidden" name="saveAddress" value="delivery">',
+        '</div>'
+    ].join('\n');
+}
+
+describe('addressScope() on PrestaShop core markup', () => {
+    test('resolves to the control own address block, not the step-wide wrapper', () => {
+        // Given core's markup: one `.js-address-form` around both blocks
+        buildCoreAddressesStep();
+        const first = makeFirst();
+        const second = makeSecond();
+
+        // Then neither scope is the wrapper that spans both
+        expect(first.addressScope()).toBe(document.getElementById('delivery-address'));
+        expect(second.addressScope()).toBe(document.getElementById('invoice-address'));
+    });
+
+    test('so the two controls still own separate companyid inputs', () => {
+        // Given core's markup
+        buildCoreAddressesStep();
+        const first = makeFirst();
+        const second = makeSecond();
+
+        // Then the second has not adopted the first's hidden input
+        expect(first.organizationField.get(0)).not.toBe(second.organizationField.get(0));
+        expect($.contains(document.getElementById('invoice-address'),
+            second.organizationField.get(0))).toBe(true);
+    });
+
+    test('fails closed to the document when the only candidate spans both blocks', () => {
+        // Given a theme that keeps core's structure but drops its block ids, so
+        // the nearest candidate contains the other address's radio
+        buildCoreAddressesStep({ dropBlockIds: true });
+        const first = makeFirst();
+
+        // Then no scope is claimed, rather than one spanning both addresses
+        expect(first.addressScope()).toBe(document);
     });
 });
