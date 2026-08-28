@@ -19,9 +19,8 @@ check="${script_dir}/check-override-migration.sh"
 pass=0
 fail=0
 
-# The workflows invoke these scripts directly, not via `bash` — 11 call sites
-# across smoke.yml, e2e.yml and integration.yml — so a lost exec bit is a red
-# job. Editing the repo from a Windows-side tool strips it silently.
+# The workflows invoke these scripts directly, not via `bash`, so a lost exec bit
+# is a red job. Editing the repo from a Windows-side tool strips it silently.
 for script in "${script_dir}"/*.sh "${script_dir}/../../dev/ci"/*.sh; do
     if [ -x "$script" ]; then
         pass=$((pass + 1))
