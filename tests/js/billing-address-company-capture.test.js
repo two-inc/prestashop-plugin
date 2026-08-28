@@ -110,6 +110,37 @@ describe('the address a company selection is stamped with', () => {
         search.destroy();
     });
 
+    /**
+     * The two mirrors have to answer identically or the stamp is discarded on
+     * comparison. A document-wide read in TwoOrderIntent answers with whichever
+     * block comes first in the markup, so it disagrees with a search mounted in
+     * the other one - which every address-switch guard reads as a switch and
+     * throws the buyer's valid selection away.
+     */
+    test('the intent answers with the block its company search is mounted in', () => {
+        const block = function (id, companyId, addressId) {
+            return [
+                '<div id="' + id + '">',
+                '  <form method="POST" data-id-address="' + addressId + '">',
+                '    <input type="text" name="company" id="' + companyId + '" value="" />',
+                '    <input type="hidden" name="saveAddress" value="delivery">',
+                '  </form>',
+                '</div>'
+            ].join('\n');
+        };
+        document.body.innerHTML = [
+            block('delivery-address', 'company-a', '7'),
+            block('invoice-address', 'company-b', '9')
+        ].join('\n');
+        const search = new TwoCompanySearch({ companyFieldSelector: '#company-b' });
+        const intent = new TwoOrderIntent({ getCompanySearch: () => search });
+
+        expect(search.getCurrentAddressId()).toBe(9);
+        expect(intent.getCurrentAddressId()).toBe(9);
+
+        search.destroy();
+    });
+
     test('the manager stamps a billing selection with the same answer', () => {
         buildAddressesStep({ editing: 'invoice' });
         const manager = new TwoCheckoutManager({

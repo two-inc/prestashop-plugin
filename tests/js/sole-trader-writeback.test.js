@@ -1359,7 +1359,10 @@ describe('applyBuyer(): a completed enrolment populates the FORM, end to end', (
         const publishes = [];
         window.TwoCheckoutManager_Instance = {
             companySearch: search,
-            setConfirmedCompanySelection: selection => publishes.push(selection)
+            setConfirmedCompanySelection: selection => publishes.push(selection),
+            markTileCompanySelected() {
+                this._tileCompanySelected = true;
+            }
         };
         const soleTrader = new TwoSoleTrader({
             checkoutHost: CHECKOUT_HOST,
@@ -1393,8 +1396,8 @@ describe('applyBuyer(): a completed enrolment populates the FORM, end to end', (
     /**
      * TWO-40 follow-up (live bug reported by Doug 2026-08-12): an order-intent
      * check fired off a completed sole-trader enrolment before the buyer had
-     * reached the payment step. TwoCompanySearch.onCompanySelected() stamps
-     * `_tileCompanySelected` on the manager the instant a search RESULT is
+     * reached the payment step. TwoCompanySearch.onCompanySelected() calls the
+     * manager's markTileCompanySelected() the instant a search RESULT is
      * picked - TwoCheckoutManager.canAutoTriggerOrderIntent() reads that flag,
      * in tile mode, as "the buyer has made their choice" before a generic
      * mounted/re-rendered/periodic signal is allowed to auto-fire a check. A

@@ -125,30 +125,21 @@ class TwoCompanySearch {
             // mirroring the server-side resolver. Read by
             // syncNotListedVisibility().
             companySearchInAddressArea: true,
-            // Page-lifetime, per-mount scratch for the dropdown reopen deadline
-            // (see reopenDeadline()). Injected by TwoCheckoutManager; a private
-            // object when standalone, which loses only the reopen across a
-            // rebuild.
+            // Scratch for the dropdown reopen deadline - see reopenDeadline().
             reopenMemory: null,
-            // Sibling modules, injected rather than reached for on `window`, so
-            // a second control on the page can be given its own collaborators
-            // and so the coupling is visible in the construction. Each falls
-            // back to the page singleton the shipped page publishes.
+            // Sibling modules, injected so a second control on the page can be
+            // given its own; each falls back to the page singleton.
             getManager: null,
             getSoleTrader: null,
-            // Where this instance's address-form reads and writes are scoped.
-            // `document` for the tile mount, whose company field is not in the
-            // address form at all; the mount's own form otherwise.
+            // This instance's address-form scope - see addressScope().
             addressScope: null,
             ...config
         };
 
-        // The page config, read ONCE. Every value here is written by the server
-        // into the page and never changes afterwards, so a live read per call
-        // site only creates a way for one control to observe another's writes.
+        // Read ONCE: these are server-written and never change, so a live read
+        // per call site only lets one control observe another's writes.
         // `mirror_writes` is deliberately NOT snapshotted - see
-        // persistedMirrorWrites(); nor `client`/`client_version`, read by the
-        // static withTwoClientParams() that three modules share verbatim.
+        // persistedMirrorWrites().
         const page = (typeof window !== 'undefined' && window.twopayment) || {};
         this._page = {
             i18n: page.i18n || {},
@@ -220,8 +211,6 @@ class TwoCompanySearch {
     }
 
     /**
-     * A translated string from the page config snapshot.
-     *
      * @param {string} key key under `twopayment.i18n`
      * @param {string} fallback English source string
      * @returns {string}
@@ -252,10 +241,7 @@ class TwoCompanySearch {
         return this._reopenMemory.until || 0;
     }
 
-    /**
-     * @param {number} deadline epoch ms; 0 disarms
-     * @returns {void}
-     */
+    /** @param {number} deadline epoch ms; 0 disarms */
     armReopen(deadline) {
         this._reopenMemory.until = deadline;
     }
@@ -301,6 +287,12 @@ class TwoCompanySearch {
      * page-level there. The mount's own form otherwise, so a control in one
      * address block cannot answer for the other.
      *
+     * FAILS CLOSED the way visibleAddressFormRoot() does: a candidate containing
+     * another address block is the STEP, and yields `document` rather than being
+     * used. Core wraps both blocks in one `.js-address-form` and the inner
+     * `<form>` tag is dropped by the parser, so without this the address-area
+     * control scopes to a root spanning both.
+     *
      * @returns {Document|Element}
      */
     addressScope() {
@@ -308,16 +300,20 @@ class TwoCompanySearch {
             return this.config.addressScope;
         }
         const field = this.companyField && this.companyField.get ? this.companyField.get(0) : null;
-        const form = field && typeof field.closest === 'function'
-            ? field.closest('.js-address-form, form[data-id-address]')
-            : null;
-        // A root PrestaShop has already swapped out resolves nothing live, so
-        // fall back to the document rather than reading a detached subtree.
-        if (form && document.contains(form)) {
-            return form;
+        if (!field || typeof field.closest !== 'function') {
+            return document;
         }
+        const candidate = field.closest(
+            '#invoice-address, #delivery-address, .js-invoice-address, form[data-id-address], .js-address-form'
+        );
+        // A root PrestaShop has already swapped out resolves nothing live, so a
+        // detached subtree is no scope either.
+        const usable = candidate
+            && document.contains(candidate)
+            && typeof candidate.querySelector === 'function'
+            && !candidate.querySelector(TwoCompanySearch.ADDRESS_BLOCK_SELECTOR);
 
-        return document;
+        return usable ? candidate : document;
     }
 
     init() {
@@ -386,7 +382,6 @@ class TwoCompanySearch {
         // Scoped: document-wide, a second control adopts the first's hidden
         // input and the two then write one node.
         let orgField = $(this.addressScope()).find("input[name='companyid']");
-
 
         if (orgField.length === 0) {
             orgField = $('<input type="hidden" name="companyid" value="">');
