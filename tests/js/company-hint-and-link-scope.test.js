@@ -56,11 +56,11 @@ function source(relPath) {
 
 describe('the length hint survives a field too narrow to show it', () => {
     test('the query field hovers the FULL hint, not the clipped form', () => {
-        makeInstance();
+        const instance = makeInstance();
         openPanel();
         const query = panelParts().query;
 
-        expect(query.attr('title')).toBe(TwoCompanySearch.getQueryPlaceholderText());
+        expect(query.attr('title')).toBe(instance.getQueryPlaceholderText());
         expect(query.attr('title')).toBe(query.attr('placeholder'));
     });
 

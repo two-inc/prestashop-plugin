@@ -25,7 +25,8 @@ const {
     stubAjax,
     releaseWidgets,
     installStylesheet,
-    panelParts
+    panelParts,
+    openPanel
 } = require('./ps-harness');
 
 const CHECKOUT_HOST = 'https://api.example.test';
@@ -127,26 +128,30 @@ describe('the field wrapper (2.2/2.3)', () => {
 });
 
 describe('the dropdown width CSS variable (2.1)', () => {
-    test('constrainAutocompleteMenuWidth() publishes the field width as a CSS custom property', () => {
+    test('constrainAutocompleteMenuWidth() publishes the field width on the instance own panel', () => {
         const instance = makeInstance();
+        openPanel();
         jest.spyOn($.fn, 'outerWidth').mockReturnValue(281);
 
         instance.constrainAutocompleteMenuWidth();
 
-        expect(document.documentElement.style.getPropertyValue('--two-company-search-width'))
+        expect(instance._dropdown.get(0).style.getPropertyValue('--two-company-search-width'))
             .toBe('281px');
+        // The page root is where it used to live, and where a second control
+        // would have been able to read this one's measurement.
+        expect(document.documentElement.style.getPropertyValue('--two-company-search-width'))
+            .toBe('');
     });
 
     test('a falsy width (e.g. a detached/hidden field) CLEARS the property rather than leaving a stale value', () => {
-        // TWO-30.x.10 (Han + Vader): page-wide singleton var - a stale value
-        // would silently mis-clamp whatever dropdown reads it next.
         const instance = makeInstance();
-        document.documentElement.style.setProperty('--two-company-search-width', '999px');
+        openPanel();
+        instance._dropdown.get(0).style.setProperty('--two-company-search-width', '999px');
         jest.spyOn($.fn, 'outerWidth').mockReturnValue(0);
 
         instance.constrainAutocompleteMenuWidth();
 
-        expect(document.documentElement.style.getPropertyValue('--two-company-search-width'))
+        expect(instance._dropdown.get(0).style.getPropertyValue('--two-company-search-width'))
             .toBe('');
     });
 
@@ -157,14 +162,16 @@ describe('the dropdown width CSS variable (2.1)', () => {
         expect(() => instance.constrainAutocompleteMenuWidth()).not.toThrow();
     });
 
-    test('destroy() clears the property so a later, differently-sized field is not mis-clamped', () => {
+    test('destroy() takes the property out of the document along with the panel', () => {
         const instance = makeInstance();
-        document.documentElement.style.setProperty('--two-company-search-width', '281px');
+        openPanel();
+        jest.spyOn($.fn, 'outerWidth').mockReturnValue(281);
+        instance.constrainAutocompleteMenuWidth();
+        const panel = instance._dropdown.get(0);
 
         instance.destroy();
 
-        expect(document.documentElement.style.getPropertyValue('--two-company-search-width'))
-            .toBe('');
+        expect(document.contains(panel)).toBe(false);
     });
 
     test('the widget gets the scoping marker class, not left as bare .ui-autocomplete', () => {
