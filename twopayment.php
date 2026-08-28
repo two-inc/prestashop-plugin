@@ -9790,8 +9790,7 @@ class Twopayment extends PaymentModule
     /**
      * Returns an env-var-supplied URL when PrestaShop is in dev mode (_PS_MODE_DEV_),
      * or null otherwise. Lets internal devs route the plugin at staging / a local
-     * mock without exposing a staging mode in the merchant admin UI. Mirrors the
-     * convention used by magento-plugin (Model/Config/Repository::getCheckoutApiUrl).
+     * mock without exposing a staging mode in the merchant admin UI.
      *
      * @param string $name Env var name (e.g. TWO_API_BASE_URL)
      * @return string|null
