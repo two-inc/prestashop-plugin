@@ -5653,6 +5653,7 @@ require __DIR__ . '/PaymentCountryRestrictionSpec.php';
 require __DIR__ . '/TermDiscoverySpec.php';
 require __DIR__ . '/BillingCompanyCaptureSpec.php';
 require __DIR__ . '/BuyerCompanyFallbackSpec.php';
+require __DIR__ . '/BuyerCountryGateSpec.php';
 // LAST, deliberately: DefaultShippingTaxCodeSpec defines
 // _TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_ partway through its own run, and a
 // PHP constant cannot be undefined again. ShippingCostSourcingSpec asserts the
@@ -5709,6 +5710,7 @@ $tests = [
     'TermDiscoverySpec::runAll' => [TermDiscoverySpec::class, 'runAll'],
     'BillingCompanyCaptureSpec::runAll' => [BillingCompanyCaptureSpec::class, 'runAll'],
     'BuyerCompanyFallbackSpec::runAll' => [BuyerCompanyFallbackSpec::class, 'runAll'],
+    'BuyerCountryGateSpec::runAll' => [BuyerCountryGateSpec::class, 'runAll'],
     // Keep last - see the require above.
     'DefaultShippingTaxCodeSpec::runAll' => [DefaultShippingTaxCodeSpec::class, 'runAll'],
 ];

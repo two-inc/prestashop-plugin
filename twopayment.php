@@ -60,6 +60,9 @@ class Twopayment extends PaymentModule
     // when the API declares no minimum - the no-minimum outcome is cached too,
     // so the common case costs no refetch per checkout render.
     const CONFIG_PLATFORM_MIN_ORDER = 'PS_TWO_PLATFORM_MIN_ORDER';
+    // Cached buyer-country allowlist (TWO-40), on the same fetch and TTL as
+    // CONFIG_MERCHANT_AVAILABLE_TERMS. JSON alpha-2 list, or '' = unrestricted.
+    const CONFIG_MERCHANT_BUYER_COUNTRIES = 'PS_TWO_MERCHANT_BUYER_COUNTRIES';
     // The merchant's own optional minimum order value (admin config field,
     // interpreted in the shop default currency). Stacks ON TOP of the platform
     // minimum: it may only raise the effective bar, never lower it below the
@@ -927,6 +930,7 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_ENABLE_SOLE_TRADER');
         Configuration::deleteByName('PS_TWO_DEBUG_MODE');
         Configuration::deleteByName(self::CONFIG_MERCHANT_INVOICE_DISTRIBUTED);
+        Configuration::deleteByName(self::CONFIG_MERCHANT_BUYER_COUNTRIES);
         // Retired admin toggle (TWO-25111) - shops upgraded from <=2.5.0 may
         // still carry the row; the upgrade script deletes it, this covers
         // uninstall-without-upgrade.
@@ -4836,6 +4840,23 @@ class Twopayment extends PaymentModule
                     . ($idCountry > 0
                         ? 'billing country ' . $idCountry . ' not enabled for this module'
                         : 'billing address carries no country')
+                    . ', cart ' . (int)$cart->id,
+                    2
+                );
+            }
+            return [];
+        }
+
+        // Buyer-country gate (TWO-40).
+        if (!$this->isTwoBuyerCountrySupported($cart)) {
+            if (!$this->twoBuyerCountryWithholdLogged) {
+                $this->twoBuyerCountryWithholdLogged = true;
+                $iso = $this->resolveTwoGateBuyerCountryIso($cart);
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Payment option hidden - '
+                    . ($iso !== ''
+                        ? 'buyer country ' . $iso . ' is not a supported buyer country for this merchant'
+                        : 'buyer country could not be resolved from the billing or shipping address')
                     . ', cart ' . (int)$cart->id,
                     2
                 );
@@ -10620,6 +10641,15 @@ class Twopayment extends PaymentModule
                             self::CONFIG_PLATFORM_MIN_ORDER,
                             $platform_minimum ? json_encode($platform_minimum) : ''
                         );
+                        // Overwrite rather than serve stale (TWO-40): a lifted
+                        // restriction must actually lift.
+                        $buyer_countries = $this->normaliseMerchantBuyerCountries(
+                            isset($response['supported_buyer_countries']) ? $response['supported_buyer_countries'] : null
+                        );
+                        Configuration::updateValue(
+                            self::CONFIG_MERCHANT_BUYER_COUNTRIES,
+                            $buyer_countries ? json_encode($buyer_countries) : ''
+                        );
                         // Success: keep the full-TTL clock set above.
                     } else {
                         // Failed fetch (network blip / 5xx / bad body). Roll the
@@ -10673,6 +10703,102 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Normalise a raw buyer-country list into unique, sorted, uppercase alpha-2
+     * codes. Only a real array is accepted: casting a bare string would turn
+     * malformed data into a restriction.
+     *
+     * @param mixed $countries
+     * @return string[]
+     */
+    private function normaliseMerchantBuyerCountries($countries)
+    {
+        if (!is_array($countries)) {
+            return array();
+        }
+
+        $isos = array();
+        foreach ($countries as $c) {
+            if (!is_string($c)) {
+                continue;
+            }
+            $iso = strtoupper(trim($c));
+            if (preg_match('/^[A-Z]{2}$/', $iso) === 1) {
+                $isos[$iso] = $iso;
+            }
+        }
+        $isos = array_values($isos);
+        sort($isos);
+        return $isos;
+    }
+
+    /**
+     * The buyer countries the merchant may transact with (TWO-40). Cache-only;
+     * never fetches.
+     *
+     * @return string[] Uppercase alpha-2 codes; empty = unrestricted.
+     */
+    public function getMerchantBuyerCountries()
+    {
+        $cached = Configuration::get(self::CONFIG_MERCHANT_BUYER_COUNTRIES);
+        if (Tools::isEmpty($cached)) {
+            return array();
+        }
+        $decoded = json_decode($cached, true);
+        if (!is_array($decoded)) {
+            return array();
+        }
+        return $this->normaliseMerchantBuyerCountries($decoded);
+    }
+
+    /**
+     * Whether this cart's buyer country is one the merchant may transact with
+     * (TWO-40). An empty allowlist means unrestricted, unlike the module's other
+     * allowlists, which withhold on empty.
+     *
+     * @param Cart $cart
+     * @return bool
+     */
+    public function isTwoBuyerCountrySupported($cart)
+    {
+        $allowed = $this->getMerchantBuyerCountries();
+        if (empty($allowed)) {
+            return true;
+        }
+
+        $iso = $this->resolveTwoGateBuyerCountryIso($cart);
+        if ($iso === '') {
+            return false;
+        }
+
+        return in_array($iso, $allowed, true);
+    }
+
+    /**
+     * The cart's buyer country for the allowlist gate (TWO-40): billing,
+     * falling back to shipping. Separate from resolveTwoBuyerCountryIso(),
+     * which must stay billing-only because it also prices surcharge quotes.
+     *
+     * @param Cart $cart
+     * @return string Uppercase alpha-2, or '' when nothing resolves.
+     */
+    private function resolveTwoGateBuyerCountryIso($cart)
+    {
+        $iso = $this->resolveTwoBuyerCountryIso($cart);
+
+        if ($iso === '' && Validate::isLoadedObject($cart) && (int) $cart->id_address_delivery > 0) {
+            $address = new Address((int) $cart->id_address_delivery);
+            if (Validate::isLoadedObject($address) && (int) $address->id_country > 0) {
+                $shipping = Country::getIsoById((int) $address->id_country);
+                if (!empty($shipping)) {
+                    $iso = (string) $shipping;
+                }
+            }
+        }
+
+        return strtoupper(trim($iso));
+    }
+
+    /**
      * Drop the cached merchant term list. Called when the merchant identity
      * changes (new API key / merchant id) - serve-stale caching must never
      * serve the old merchant's terms under a new identity (TWO-24813).
@@ -10694,6 +10820,7 @@ class Twopayment extends PaymentModule
         // an identity change must never leave the OLD merchant's upload
         // entitlement in force for the new one (TWO-25111). Fail closed.
         Configuration::updateValue(self::CONFIG_MERCHANT_INVOICE_DISTRIBUTED, 0);
+        Configuration::updateValue(self::CONFIG_MERCHANT_BUYER_COUNTRIES, '');
         Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, 0);
     }
 
@@ -11420,6 +11547,9 @@ class Twopayment extends PaymentModule
 
     /** @var bool Logged the unresolved-terms withhold reason yet (TWO-25503)? */
     protected $twoTermsWithholdLogged = false;
+
+    /** @var bool Logged the buyer-country withhold reason yet (TWO-40)? */
+    protected $twoBuyerCountryWithholdLogged = false;
 
     /**
      * Whether this instance has already reported that the country allowlist
