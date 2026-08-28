@@ -3,23 +3,15 @@
  * page each hold their own state, own their own DOM nodes, read their own
  * collaborators, and neither one's mutation reaches the other.
  *
- * The class was already instance-SHAPED - a real constructor with its own
- * fields - but a handful of its state and half its inputs were page-global: two
- * undeclared class statics, ~30 live `window.twopayment` reads, the sibling
- * modules reached for on `window`, a CSS custom property on
- * `document.documentElement`, and the country select, the hidden `companyid`
- * input and the current address id all resolved document-wide. A second control
- * inherited all of it. Most of the tests below fail against that shape, so they
- * are what stops it coming back. A handful pass either way: they pin state that
- * was already per-instance (the request counter, the event namespace, the panel
- * and query field, the manual-entry flag, the no-config fallback) and are
- * regression pins on it, not leak proofs.
- *
- * The shipped module mounts ONE control per page - the address-area field or the
- * payment tile, in mutually exclusive branches of
- * TwoCheckoutManager.initializeCompanySearch(). So the fixture here is not a
- * shape a shop serves today; it is the shape the class must already survive
+ * The shipped module mounts ONE control per page - the address-area field or
+ * the payment tile, in mutually exclusive branches of
+ * TwoCheckoutManager.initializeCompanySearch(). So the two-control fixture here
+ * is not a shape a shop serves today; it is the shape the class must survive
  * before a second mount can be added.
+ *
+ * A handful of the tests below are regression pins rather than leak proofs -
+ * the request counter, the event namespace, the panel and query field, the
+ * manual-entry flag, the no-config fallback.
  *
  * Deliberately NOT covered, because the sharing is the design and not a leak:
  * the result cache (keyed by term and country, so both controls asking the same
@@ -436,9 +428,10 @@ describe('two live controls do not share their DOM', () => {
  *    so the address id is a step-level fact that no per-block scope can narrow.
  *
  * @param {string} editing 'delivery' or 'invoice' - the side core made editable
+ * @param {Function} [beforeMount] runs against the built fixture
  * @returns {Object} a control mounted on that side's company field
  */
-function mountOnCoreStep(editing) {
+function mountOnCoreStep(editing, beforeMount) {
     buildAddressesStep({
         editing: editing,
         countryIsoAttrs: true,
@@ -446,6 +439,9 @@ function mountOnCoreStep(editing) {
         stepAddressId: STEP_ADDRESS_ID,
         addressId: BLOCK_ADDRESS_ID
     });
+    if (beforeMount) {
+        beforeMount();
+    }
 
     return new TwoCompanySearch({
         checkoutHost: CHECKOUT_HOST,
@@ -472,11 +468,20 @@ describe('addressScope() on PrestaShop core markup', () => {
         expect(control.addressScope().querySelector("input[name='" + otherRadio + "']")).toBeNull();
     });
 
-    test('the companyid input is created inside that scope, not adopted', () => {
-        const control = mountOnCoreStep('invoice');
-        control.init();
+    test('the companyid input is created inside the scope, never adopted from the other block', () => {
+        // Given the other side of the step already carrying a hidden companyid
+        const control = mountOnCoreStep('invoice', () => {
+            $('#delivery-addresses').append(
+                '<input type="hidden" name="companyid" value="" id="foreign-companyid" />'
+            );
+        });
 
+        // Then this control built its own inside its own scope and left that
+        // one alone - a document-wide lookup would have adopted it, and the
+        // two blocks would then submit one node between them
+        expect(control.organizationField.get(0)).not.toBe(document.getElementById('foreign-companyid'));
         expect($.contains(control.addressScope(), control.organizationField.get(0))).toBe(true);
+        expect(document.querySelectorAll("input[name='companyid']").length).toBe(2);
     });
 
     /**
@@ -571,6 +576,7 @@ describe('addressScope() on PrestaShop core markup', () => {
         const control = mountWithNoScope(() => {
             $('#field-company').after('<input type="hidden" name="companyid" value="" id="shipped" />');
         });
+        expect(control.addressScope()).toBeNull();
 
         // Then it writes that one input, not a duplicate the buyer submits twice
         expect(document.querySelectorAll("input[name='companyid']").length).toBe(1);

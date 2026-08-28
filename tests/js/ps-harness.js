@@ -210,9 +210,10 @@ function buildAddressForm(options) {
  * The checkout addresses step, in PrestaShop's OWN markup (TWO-40).
  *
  * Reproduced from core's `checkout/_partials/steps/addresses.tpl` and related
- * partials, read out of a PrestaShop 8 image, not invented, since
- * the module's whole job is to read and write that exact markup. Structural
- * facts it reproduces:
+ * partials, read out of a PrestaShop 8 image, not invented, since the module's
+ * whole job is to read and write that exact markup. Fidelity against a
+ * PrestaShop 9 image is unverified, though the e2e specs run there too.
+ * Structural facts it reproduces:
  *
  *  - exactly ONE editable address form at a time; the other side is a saved-
  *    address selector or absent;
@@ -368,8 +369,7 @@ function buildAddressesStep(options) {
             countryOption(DNI_COUNTRY_ID, 'Spain', 'ES'),
             countryOption(OTHER_DNI_COUNTRY_ID, 'Mexico', 'MX'),
             '        </select>',
-            '        <input type="hidden" name="saveAddress" value="' + type + '">',
-            '        <input type="hidden" name="submitAddress" value="1">'
+            '        <input type="hidden" name="saveAddress" value="' + type + '">'
         );
         if (type === 'delivery') {
             lines.push(

@@ -356,13 +356,9 @@ final class CompanySearchCountrySourcingSpec
      * searching, which reads as a broken search rather than as a broken
      * contract. Same class of silent failure as the i18n-key check below.
      *
-     * Three assertions, because the read is a snapshot rather than a live
-     * lookup: the payload is taken off `window.twopayment` once at construction,
-     * the server's `billing_country` key is what is taken from it, and the
-     * snapshot field is what the country resolver consults. The local variable
-     * holding the payload is not assumed - it is captured from the binding and
-     * matched back to its own assignment, so renaming it is not a failure while
-     * losing any of the three links is.
+     * The read is a snapshot, so all three links are pinned: payload off
+     * `window.twopayment`, `billing_country` off the payload, snapshot field
+     * read by the country resolver.
      */
     private static function testJsReadsTheInjectedBillingCountry(): void
     {

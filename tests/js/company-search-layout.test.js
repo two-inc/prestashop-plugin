@@ -137,8 +137,8 @@ describe('the dropdown width CSS variable (2.1)', () => {
 
         expect(instance._dropdown.get(0).style.getPropertyValue('--two-company-search-width'))
             .toBe('281px');
-        // The page root is where it used to live, and where a second control
-        // would have been able to read this one's measurement.
+        // Never the page root, where a second control could read this one's
+        // measurement.
         expect(document.documentElement.style.getPropertyValue('--two-company-search-width'))
             .toBe('');
     });
@@ -168,10 +168,14 @@ describe('the dropdown width CSS variable (2.1)', () => {
         jest.spyOn($.fn, 'outerWidth').mockReturnValue(281);
         instance.constrainAutocompleteMenuWidth();
         const panel = instance._dropdown.get(0);
+        expect(panel.style.getPropertyValue('--two-company-search-width')).toBe('281px');
 
         instance.destroy();
 
+        // The property only ever lived on the panel, so removing the panel is
+        // what takes it out of the document - nothing is left carrying it.
         expect(document.contains(panel)).toBe(false);
+        expect(document.querySelectorAll('[style*="--two-company-search-width"]').length).toBe(0);
     });
 
     test('the widget gets the scoping marker class, not left as bare .ui-autocomplete', () => {

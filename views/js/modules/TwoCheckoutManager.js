@@ -61,7 +61,8 @@ class TwoCheckoutManager {
         // TwoCompanySearch.mirrorConfirmedCompanyToInvoiceAddress().
         this._invoiceMirrorMemory = {};
         // Page-lifetime because one `updatedAddressForm` tears the search down
-        // twice; keyed per mount so no mount can reopen another's panel.
+        // twice; keyed by mount selector, so two mounts sharing one selector
+        // share a deadline.
         this._companySearchReopenMemory = {};
         // TWO-40: and where the server has one for this cart, start from it. Must
         // run before init(), which is what constructs the modules that read the
@@ -2182,8 +2183,8 @@ class TwoCheckoutManager {
             // address-area field. initializeModules() calls this again on
             // every subsequent re-init edge (see its own comment) until this
             // succeeds.
-            const tileField = document.getElementById('two_tile_company');
-            if (!tileField) {
+            const tileSelector = '#two_tile_company';
+            if (!document.querySelector(tileSelector)) {
                 return;
             }
             this.companySearch = new TwoCompanySearch({
@@ -2202,17 +2203,18 @@ class TwoCheckoutManager {
                 // buyer is not even looking at.
                 addressLookupEnabled: false,
                 companySearchInAddressArea: false,
-                companyFieldSelector: '#two_tile_company',
-                reopenMemory: this.companySearchReopenMemory('#two_tile_company'),
+                companyFieldSelector: tileSelector,
+                reopenMemory: this.companySearchReopenMemory(tileSelector),
                 getManager: () => this
             });
             return;
         }
+        const addressCompanySelector = "input[name='company']";
         this.companySearch = new TwoCompanySearch({
             checkoutHost: this.config.checkoutHost,
             addressLookupEnabled: this.config.addressLookupEnabled !== false,
             companySearchInAddressArea: true,
-            companyFieldSelector: "input[name='company']",
+            companyFieldSelector: addressCompanySelector,
             // TWO-40: read through a getter, and injected rather than reached for
             // on `window`. This instance is constructed from inside the manager's
             // own constructor, so `window.TwoCheckoutManager_Instance` is not
@@ -2224,14 +2226,14 @@ class TwoCheckoutManager {
             // buyer cleared, and what lets it re-mark its own writes after core
             // rebuilds the address form.
             mirrorMemory: this._invoiceMirrorMemory,
-            reopenMemory: this.companySearchReopenMemory("input[name='company']"),
+            reopenMemory: this.companySearchReopenMemory(addressCompanySelector),
             getManager: () => this
         });
     }
 
     /**
-     * The reopen scratch belonging to ONE mount, keyed by the selector that
-     * identifies it, so a rebuild of that mount finds its own deadline.
+     * The reopen scratch for one mount selector, so a rebuild of that mount
+     * finds its own deadline. Two mounts sharing a selector share the scratch.
      *
      * @param {string} selector that mount's `companyFieldSelector`
      * @returns {Object}
