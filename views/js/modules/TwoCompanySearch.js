@@ -2410,7 +2410,7 @@ class TwoCompanySearch {
             if (!window.twopayment || !window.twopayment.order_intent_url || !window.twopayment.ajax_token) {
                 return false;
             }
-            $.ajax({
+            TwoCompanySearch.queueAfterCompanyCookieWrite({
                 url: window.twopayment.order_intent_url,
                 method: 'POST',
                 data: Object.assign({
@@ -3843,7 +3843,7 @@ class TwoCompanySearch {
             if (!window.twopayment || !window.twopayment.order_intent_url || !window.twopayment.ajax_token) {
                 return;
             }
-            $.ajax({
+            TwoCompanySearch.trackCompanyCookieWrite($.ajax({
                 url: window.twopayment.order_intent_url,
                 method: 'POST',
                 data: {
@@ -3852,7 +3852,7 @@ class TwoCompanySearch {
                     token: window.twopayment.ajax_token
                 },
                 timeout: 10000
-            });
+            }));
         } catch (e) {
             // no-op
         }
@@ -5038,17 +5038,9 @@ class TwoCompanySearch {
 
         const triggerOrderIntentRecheck = () => {
             try {
-                if (
-                    window.TwoCheckoutManager_Instance &&
-                    window.TwoCheckoutManager_Instance.isTwoPaymentSelected &&
-                    window.TwoCheckoutManager_Instance.isTwoPaymentSelected()
-                ) {
-                    if (window.TwoCheckoutManager_Instance.orderIntent && window.TwoCheckoutManager_Instance.orderIntent.reset) {
-                        window.TwoCheckoutManager_Instance.orderIntent.reset();
-                    }
-                    if (window.TwoCheckoutManager_Instance.triggerOrderIntentForSelection) {
-                        window.TwoCheckoutManager_Instance.triggerOrderIntentForSelection();
-                    }
+                const manager = window.TwoCheckoutManager_Instance;
+                if (manager && typeof manager.recheckOrderIntentForNewSelection === 'function') {
+                    manager.recheckOrderIntentForNewSelection();
                 }
             } catch (e) {
                 // noop
@@ -6274,7 +6266,7 @@ class TwoCompanySearch {
     persistCompanyToCookie(data) {
         try {
             if (!window.twopayment || !window.twopayment.order_intent_url || !window.twopayment.ajax_token) return;
-            $.ajax({
+            TwoCompanySearch.trackCompanyCookieWrite($.ajax({
                 url: window.twopayment.order_intent_url,
                 type: 'POST',
                 dataType: 'json',
@@ -6303,13 +6295,77 @@ class TwoCompanySearch {
                     id_address: this.getCurrentAddressId()
                 },
                 timeout: 10000
-            });
+            }));
         } catch (e) {
             // no-op
         }
     }
 
+    /**
+     * Remember a write to the session COMPANY record, so the mirror write can
+     * be held behind it (TWO-25503).
+     *
+     * PrestaShop's session lives in ONE encrypted cookie that every front
+     * request rewrites WHOLE, from the snapshot it loaded when it started - so
+     * two module requests in flight together is a lost update, and the one that
+     * finishes last wins with pre-selection data. On the invoice address form a
+     * company selection fires `saveCompany` and the address fill's
+     * `saveMirrorWrites` off the same click, and the mirror write routinely
+     * landed last and reverted the company the buyer had just picked. The
+     * shipping pass records no mirror writes, which is why the same selection
+     * stuck there and the loss looked specific to billing-differs-from-shipping.
+     *
+     * Only the MIRROR write is held. The company write and its clear stay
+     * immediate: they are fire-and-forget, they are what a checkout decision
+     * rests on, and a form submit can navigate away from a request that has not
+     * been issued yet.
+     *
+     * Static, so it is page-lifetime: the manager destroys and rebuilds this
+     * class on every address-form re-render, and an instance-scoped handle would
+     * forget an in-flight write across exactly that rebuild.
+     *
+     * @param {Object} request the jqXHR to wait on
+     * @returns {void}
+     */
+    static trackCompanyCookieWrite(request) {
+        const settled = Promise.resolve(request).then(
+            () => undefined,
+            () => undefined
+        );
+        TwoCompanySearch._companyCookieWrite = settled;
+        settled.then(() => {
+            if (TwoCompanySearch._companyCookieWrite === settled) {
+                TwoCompanySearch._companyCookieWrite = null;
+            }
+        });
+    }
+
+    /**
+     * Send once any company-record write is done - see trackCompanyCookieWrite().
+     * Sends immediately when there is none.
+     *
+     * @param {Object} settings jQuery.ajax settings
+     * @returns {Object|Promise} the jqXHR, or a promise of one
+     */
+    static queueAfterCompanyCookieWrite(settings) {
+        const send = () => $.ajax(settings);
+        const pending = TwoCompanySearch._companyCookieWrite;
+
+        return pending ? pending.then(send, send) : send();
+    }
+
     getCurrentAddressId() {
+        // TWO-25503: mirror of TwoOrderIntent.getCurrentAddressId() - see there
+        // for why the editable form outranks the saved-address radios.
+        const editableAddressForm = document.querySelector("input[name='saveAddress']");
+        if (editableAddressForm) {
+            const form = (typeof editableAddressForm.closest === 'function'
+                ? editableAddressForm.closest('form[data-id-address]')
+                : null) || document.querySelector('.js-address-form form[data-id-address]');
+            const parsed = form ? parseInt(form.getAttribute('data-id-address') || '0', 10) : 0;
+            return parsed > 0 ? parsed : 0;
+        }
+
         const checkedAddressSelectors = [
             "input[name='id_address_invoice']:checked",
             "input[name='id_address_delivery']:checked"

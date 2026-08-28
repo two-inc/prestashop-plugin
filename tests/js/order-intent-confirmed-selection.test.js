@@ -398,6 +398,11 @@ describe('TwoCompanySearch publishes the selection the intent check reads', () =
                 store.set(selection.company, selection.companyid);
             },
             isTwoPaymentSelected: () => true,
+            // The real manager's own re-check, which is what the search calls.
+            recheckOrderIntentForNewSelection() {
+                this.orderIntent.reset();
+                this.triggerOrderIntentForSelection();
+            },
             triggerOrderIntentForSelection: () => {
                 // Ordering is the whole point: by the time anything can build a
                 // payload, the selection must already be published.

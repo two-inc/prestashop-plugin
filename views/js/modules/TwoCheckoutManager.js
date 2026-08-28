@@ -776,6 +776,33 @@ class TwoCheckoutManager {
             && this.companySearch.isManualEntry());
     }
 
+    /**
+     * Re-run the intent check for a company the buyer has JUST chosen.
+     *
+     * triggerOrderIntentForSelection() reuses `lastResult` whenever it has one,
+     * so a new choice has to invalidate that first or the tile keeps showing the
+     * PREVIOUS company's answer. Every path that changes which entity the buyer
+     * is goes through here (TWO-25503): a search re-selection, a switch into
+     * sole-trader mode that adopts an identity, and "select a different sole
+     * trader".
+     *
+     * @returns {void}
+     */
+    recheckOrderIntentForNewSelection() {
+        if (typeof this.isTwoPaymentSelected !== 'function' || !this.isTwoPaymentSelected()) {
+            return;
+        }
+        // triggerOrderIntentForSelection() dereferences this.orderIntent
+        // unguarded on its last branch. Nothing to invalidate before one exists
+        // anyway, and the periodic selection check picks the buyer's choice up
+        // once the module is built.
+        if (!this.orderIntent || typeof this.orderIntent.reset !== 'function') {
+            return;
+        }
+        this.orderIntent.reset();
+        this.triggerOrderIntentForSelection();
+    }
+
     triggerOrderIntentForSelection() {
         if (this.currentStep !== 'payment' || !this.twoPaymentOption) {
             return;
@@ -1219,7 +1246,10 @@ class TwoCheckoutManager {
         messageContainer.style.display = 'block';
 
         this.clearLoadingState();
-        this.isLoadingUIShown = false;
+        // TWO-25503: clearing only the in-flight FLAG left the overlay and the
+        // template-side loader on screen, covering the message this method has
+        // just rendered - the buyer saw an endless spinner and no explanation.
+        this.hideLoadingOverlay();
     }
 
     /**
@@ -2373,6 +2403,17 @@ class TwoCheckoutManager {
         if (this.orderIntent && typeof this.orderIntent.getCurrentAddressId === 'function') {
             return this.orderIntent.getCurrentAddressId();
         }
+        // TWO-25503: mirror of TwoOrderIntent.getCurrentAddressId() - see there
+        // for why the editable form outranks the saved-address radios.
+        const editableAddressForm = document.querySelector("input[name='saveAddress']");
+        if (editableAddressForm) {
+            const form = (typeof editableAddressForm.closest === 'function'
+                ? editableAddressForm.closest('form[data-id-address]')
+                : null) || document.querySelector('.js-address-form form[data-id-address]');
+            const parsed = form ? parseInt(form.getAttribute('data-id-address') || '0', 10) : 0;
+            return parsed > 0 ? parsed : 0;
+        }
+
         const checkedSelectors = [
             "input[name='id_address_invoice']:checked",
             "input[name='id_address_delivery']:checked"
