@@ -740,8 +740,11 @@ class TwoSoleTrader {
         try {
             const manager = window.TwoCheckoutManager_Instance;
             const search = manager && manager.companySearch;
-            if (search && typeof search.syncSoleTraderEntryVisibility === 'function') {
-                search.syncSoleTraderEntryVisibility();
+            // The whole row, not just the chip: a late answer is what turns a
+            // one-chip panel into a two-chip one, and the row is not rendered
+            // while it offers a single chip (TWO-40 follow-up).
+            if (search && typeof search.syncModeChipVisibility === 'function') {
+                search.syncModeChipVisibility();
             }
         } catch (e) {
             // Presentation-only repaint; never let it cost the answer.
