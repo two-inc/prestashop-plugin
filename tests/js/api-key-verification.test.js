@@ -1,11 +1,6 @@
 /**
  * TWO-25326: the company-search control stands down when the Two API key does
- * not verify.
- *
- * Two things have to happen, and only the first is obvious: no search control
- * is constructed, AND the search-mode placeholder the address-form override
- * applied SERVER-side is taken back off the field - it survives the control
- * never existing, leaving a plain input telling the buyer to search.
+ * not verify - no search control is constructed, on either mount point.
  *
  * The gate is explicit-false-only: an absent `api_key_verified` must read as
  * verified rather than take the search away from a healthy shop.
@@ -16,7 +11,6 @@
 const { loadCompanySearch, loadOrderIntent, loadScript, releaseWidgets, stubAjax, buildAddressForm } = require('./ps-harness');
 
 const CHECKOUT_HOST = 'https://api.example.test';
-const SEARCH_PLACEHOLDER = 'Enter company name to search';
 
 let TwoCheckoutManager;
 let $;
@@ -46,8 +40,6 @@ beforeEach(() => {
 
     window.twopayment = { checkout_host: CHECKOUT_HOST };
     buildAddressForm();
-    // What the address-form override puts there server-side.
-    companyField().setAttribute('placeholder', SEARCH_PLACEHOLDER);
 });
 
 afterEach(() => {
@@ -63,47 +55,12 @@ describe('company search under an unverified API key', () => {
         expect(manager.companySearch).toBeNull();
     });
 
-    test('the search-mode placeholder is removed, so the field reads as a plain input', () => {
-        new TwoCheckoutManager(managerConfig({ apiKeyVerified: false }));
-
-        expect(companyField().getAttribute('placeholder')).toBeNull();
-    });
-
-    test('a translated search placeholder is removed too', () => {
-        const translated = 'Introduce el nombre de la empresa para buscar';
-        window.twopayment.i18n = { company_search_placeholder: translated };
-        companyField().setAttribute('placeholder', translated);
-
-        new TwoCheckoutManager(managerConfig({ apiKeyVerified: false }));
-
-        expect(companyField().getAttribute('placeholder')).toBeNull();
-    });
-
-    test("a placeholder the module did not set is left alone", () => {
+    test("a placeholder the theme set is left alone", () => {
         companyField().setAttribute('placeholder', 'Firmenname (optional)');
 
         new TwoCheckoutManager(managerConfig({ apiKeyVerified: false }));
 
         expect(companyField().getAttribute('placeholder')).toBe('Firmenname (optional)');
-    });
-
-    test('every company field is neutralised, not just the first', () => {
-        // PrestaShop renders a SECOND address form with its own name='company'
-        // once the buyer ticks "billing address differs from shipping".
-        document.body.insertAdjacentHTML(
-            'beforeend',
-            "<div class='js-address-form'><form data-id-address='9'>" +
-                "<input type='text' name='company' value='' placeholder='" + SEARCH_PLACEHOLDER + "' />" +
-                '</form></div>'
-        );
-        const fields = document.querySelectorAll("input[name='company']");
-        expect(fields.length).toBe(2);
-
-        new TwoCheckoutManager(managerConfig({ apiKeyVerified: false }));
-
-        fields.forEach((field) => {
-            expect(field.getAttribute('placeholder')).toBeNull();
-        });
     });
 
     test('the gate also holds in tile mode, where the mount point is in the payment tile', () => {
@@ -131,18 +88,16 @@ describe('company search under an unverified API key', () => {
 });
 
 describe('company search on a healthy shop', () => {
-    test('a verified key mounts the control and keeps the search placeholder', () => {
+    test('a verified key mounts the control', () => {
         const manager = new TwoCheckoutManager(managerConfig({ apiKeyVerified: true }));
 
         expect(manager.companySearch).not.toBeNull();
-        expect(companyField().getAttribute('placeholder')).toBe(SEARCH_PLACEHOLDER);
     });
 
     test('an absent verdict reads as verified, never as broken', () => {
         const manager = new TwoCheckoutManager(managerConfig());
 
         expect(manager.companySearch).not.toBeNull();
-        expect(companyField().getAttribute('placeholder')).toBe(SEARCH_PLACEHOLDER);
     });
 
     test('only an explicit false disables the search', () => {

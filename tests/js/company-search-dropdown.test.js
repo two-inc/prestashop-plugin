@@ -975,12 +975,9 @@ describe('§5 the company number after selection', () => {
 });
 
 describe('the placeholder describes the mode the field is in (TWO-25326 §2)', () => {
-    // Found on the staging shop in a real browser: after switching to manual
-    // entry the field still read "Enter company name to search", instructing
-    // the buyer to do something the field no longer does.
-    test('manual entry swaps the search-mode placeholder', () => {
+    test('manual entry, which the buyer types into, names itself', () => {
         const search = makeInstance();
-        expect(companyField().attr('placeholder')).toBe('Enter company name to search');
+        expect(companyField().attr('placeholder')).toBeUndefined();
 
         openPanel();
         panelParts().notListed.trigger('click');
@@ -988,7 +985,7 @@ describe('the placeholder describes the mode the field is in (TWO-25326 §2)', (
         expect(companyField().attr('placeholder')).toBe('Enter your company name');
     });
 
-    test('returning to search puts the search wording back', () => {
+    test('returning to search empties the slot again', () => {
         const search = makeInstance();
         openPanel();
         panelParts().notListed.trigger('click');
@@ -996,12 +993,10 @@ describe('the placeholder describes the mode the field is in (TWO-25326 §2)', (
 
         search.exitManualEntryMode();
 
-        expect(companyField().attr('placeholder')).toBe('Enter company name to search');
+        expect(companyField().attr('placeholder')).toBeUndefined();
     });
 
     test("a theme's own placeholder is left alone in both modes", () => {
-        // applyEmptyFieldHint() declines to overwrite a placeholder the theme
-        // set; this must not undo that from the other direction.
         companyField().attr('placeholder', 'Firmennavn');
         const search = makeInstance();
 

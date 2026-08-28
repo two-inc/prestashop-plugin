@@ -251,7 +251,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_6c63214370d0302a32c914ebf6f30819'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6cae7c7478f2d404dc69e4e355172166'] = 'Momsbasis för minsta ordervärde';
 $_MODULE['<{twopayment}prestashop>twopayment_6d5cc1a38d6228cd43fb864b6c4d4b75'] = 'Kunde inte bekräfta svaret från betalningsleverantören. Försök genomföra kassan igen.';
 $_MODULE['<{twopayment}prestashop>twopayment_6f3455d187a23443796efdcbe044096b'] = 'Ingen moms';
-$_MODULE['<{twopayment}prestashop>twopayment_6fd95deaadec67e72965ee1c5a8d81cf'] = 'Ange företagsnamn för att söka';
 $_MODULE['<{twopayment}prestashop>twopayment_8effea9a4ab719b4272d74ad33f5b897'] = 'API-nyckeln kunde inte verifieras.';
 $_MODULE['<{twopayment}prestashop>twopayment_ff917d30c610c32938987db6b6693541'] = '%s gav ett oväntat svar vid verifieringen av API-nyckeln (HTTP %d).';
 $_MODULE['<{twopayment}prestashop>twopayment_c98cbec0a99d4afa98e4e976ac205ef5'] = 'Ange din %1$s API-nyckel för att aktivera %1$s.';

@@ -301,24 +301,11 @@ describe('the company-search hints (TWO-25288)', () => {
         });
     });
 
-    describe('the empty-field hint occupies the placeholder', () => {
-        test('setup applies it when the field carries none', () => {
-            expect(liveField().attr('placeholder')).toBeUndefined();
-
+    describe('the empty company field carries no wording of ours', () => {
+        test('setup leaves an empty placeholder slot empty', () => {
             makeInstance();
 
-            expect(liveField().attr('placeholder')).toBe('Enter company name to search');
-        });
-
-        test('it uses the translated wording when one is supplied', () => {
-            const saved = window.twopayment;
-            window.twopayment = { i18n: { company_search_placeholder: 'Introduce el nombre de la empresa para buscar' } };
-            try {
-                makeInstance();
-                expect(liveField().attr('placeholder')).toBe('Introduce el nombre de la empresa para buscar');
-            } finally {
-                window.twopayment = saved;
-            }
+            expect(liveField().attr('placeholder')).toBeUndefined();
         });
 
         test('a placeholder the theme already set is left alone', () => {
@@ -329,15 +316,14 @@ describe('the company-search hints (TWO-25288)', () => {
             expect(liveField().attr('placeholder')).toBe('Theme wording');
         });
 
-        test('it is reapplied to the fresh input after an address-form re-render', () => {
+        test('the fresh input after an address-form re-render gets none either', () => {
             makeInstance();
             replaceAddressForm({ country: 'GB' });
-            expect(liveField().attr('placeholder')).toBeUndefined();
 
-            // PrestaShop swapped the node; the hint has to land on the new one.
+            // PrestaShop swapped the node; setup runs again against the new one.
             bus.emit('updatedAddressForm');
 
-            expect(liveField().attr('placeholder')).toBe('Enter company name to search');
+            expect(liveField().attr('placeholder')).toBeUndefined();
         });
     });
 
@@ -2748,16 +2734,14 @@ describe('the custom fallback used when jQuery UI is absent', () => {
     });
 
     describe('the company-search hints (TWO-25288)', () => {
-        test('the empty-field hint is applied on this path too', () => {
-            expect(liveField().attr('placeholder')).toBeUndefined();
-
+        test('the company field carries no wording on this path either', () => {
             const search = makeInstance();
 
             // Bootstrapped-guard: this must be the fallback path, or the
             // assertion is really re-testing the jQuery UI one.
             expect(searchInput().hasClass('ui-autocomplete-input')).toBe(false);
             expect(search._customAutocomplete).toBeTruthy();
-            expect(liveField().attr('placeholder')).toBe('Enter company name to search');
+            expect(liveField().attr('placeholder')).toBeUndefined();
         });
 
         test('a sub-threshold term renders no row and fires no request (TWO-40 follow-up)', () => {
