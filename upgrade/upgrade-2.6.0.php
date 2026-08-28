@@ -10,7 +10,7 @@
  * either way.
  *
  * Migration safety: merchants who had the toggle enabled were whitelisted
- * server-side, and TWO-24761 (checkout-api whitelist retirement) set
+ * server-side, and TWO-24761 (whitelist retirement) set
  * invoice_distributed_by_merchant=true for all previously-whitelisted
  * merchants - so deleting the toggle does not remove the feature from any
  * merchant that legitimately had it.
