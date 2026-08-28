@@ -5644,6 +5644,7 @@ require __DIR__ . '/OverrideMigrationSpec.php';
 require __DIR__ . '/OverrideReinstallSpec.php';
 require __DIR__ . '/EnvironmentUpgradeMigrationSpec.php';
 require __DIR__ . '/TranslationCatalogueSpec.php';
+require __DIR__ . '/CompanyRefusalMessageSpec.php';
 require __DIR__ . '/AssetCacheBustingSpec.php';
 require __DIR__ . '/ApiKeyVerificationSpec.php';
 require __DIR__ . '/RequiredPhoneFieldSpec.php';
@@ -5699,6 +5700,7 @@ $tests = [
     'OverrideReinstallSpec::runAll' => [OverrideReinstallSpec::class, 'runAll'],
     'EnvironmentUpgradeMigrationSpec::runAll' => [EnvironmentUpgradeMigrationSpec::class, 'runAll'],
     'TranslationCatalogueSpec::runAll' => [TranslationCatalogueSpec::class, 'runAll'],
+    'CompanyRefusalMessageSpec::runAll' => [CompanyRefusalMessageSpec::class, 'runAll'],
     'AssetCacheBustingSpec::runAll' => [AssetCacheBustingSpec::class, 'runAll'],
     'ApiKeyVerificationSpec::runAll' => [ApiKeyVerificationSpec::class, 'runAll'],
     'RequiredPhoneFieldSpec::runAll' => [RequiredPhoneFieldSpec::class, 'runAll'],

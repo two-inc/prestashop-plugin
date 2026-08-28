@@ -176,7 +176,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_371c6879002f6a2c9c0ce14144a06265'] 
 $_MODULE['<{twopayment}prestashop>twopayment_3727d6bec90c4328e4aa9f542668fb4a'] = 'Betalingen er ennå ikke verifisert. Prøv igjen eller kontakt kundestøtte.';
 $_MODULE['<{twopayment}prestashop>twopayment_37be07209f53a5d636d5c904ca9ae64c'] = 'Prosent';
 $_MODULE['<{twopayment}prestashop>twopayment_38a6e828dd4bebef688a29f62bae8ceb'] = 'Ordre kansellert → Kansellert';
-$_MODULE['<{twopayment}prestashop>twopayment_91ac09ff976d2914f339731dc74b40d8'] = 'For å betale med %s må du velge firmaet ditt, slik at vi kan verifisere virksomheten og tilby fakturavilkår.';
+$_MODULE['<{twopayment}prestashop>twopayment_c6379ce2b59119f7ace353f293a2ddeb'] = 'Velg firmaet ditt før du betaler med %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_3bf8936760cd37d3c7688403fd05c6ce'] = 'Betaling godkjent';
 $_MODULE['<{twopayment}prestashop>twopayment_3c8437f18f50552a8624846ce272e57f'] = 'Noe gikk galt, kontakt butikkeieren.';
 $_MODULE['<{twopayment}prestashop>twopayment_66c12ee256d5b468a43062e3ab9d643f'] = 'Fakturaen din hos %s blir sannsynligvis godkjent, med forbehold om ytterligere kontroller.';
