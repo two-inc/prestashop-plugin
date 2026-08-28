@@ -86,6 +86,19 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             return;
         }
 
+        // Buyer-country gate (TWO-40). The hook withholds the tile, but a buyer
+        // holding a page rendered before the merchant record changed can still
+        // post here, where the submission would otherwise fail deeper in as an
+        // opaque decline.
+        if (!$this->module->isTwoBuyerCountrySupported($cart)) {
+            $this->failCheckout(
+                $this->module->l('This payment method is not available.'),
+                'TwoPayment: Payment attempt from an unsupported buyer country - cart ' . (int) $cart->id,
+                2
+            );
+            return;
+        }
+
         $authorized = false;
         foreach (Module::getPaymentModules() as $module) {
             if ($module['name'] == 'twopayment') {
