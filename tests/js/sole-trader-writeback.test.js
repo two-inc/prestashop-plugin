@@ -25,6 +25,7 @@ const {
 
 const CHECKOUT_HOST = 'https://api.example.test';
 const MARKER = 'data-two-autofilled-value';
+const TILE_FLAG_SENTINEL = 'set-via-markTileCompanySelected';
 
 const ES_OPTION = DNI_COUNTRY_ID; // '6' - a country whose address format carries `dni`
 const FR_OPTION = '8';
@@ -1360,9 +1361,11 @@ describe('applyBuyer(): a completed enrolment populates the FORM, end to end', (
         window.TwoCheckoutManager_Instance = {
             companySearch: search,
             setConfirmedCompanySelection: selection => publishes.push(selection),
-            markTileCompanySelected() {
-                this._tileCompanySelected = true;
-            }
+            // Sentinel, not `true`: a direct `manager._tileCompanySelected = true`
+            // in production must not be able to masquerade as this call.
+            markTileCompanySelected: jest.fn(function () {
+                this._tileCompanySelected = TILE_FLAG_SENTINEL;
+            })
         };
         const soleTrader = new TwoSoleTrader({
             checkoutHost: CHECKOUT_HOST,
@@ -1415,7 +1418,8 @@ describe('applyBuyer(): a completed enrolment populates the FORM, end to end', (
         soleTrader.applyBuyer(BUYER_REAL_NUMBER, soleTrader._enrollGeneration);
         await flushPromises();
 
-        expect(window.TwoCheckoutManager_Instance._tileCompanySelected).toBe(true);
+        expect(window.TwoCheckoutManager_Instance.markTileCompanySelected).toHaveBeenCalledTimes(1);
+        expect(window.TwoCheckoutManager_Instance._tileCompanySelected).toBe(TILE_FLAG_SENTINEL);
     });
 
     test('the write survives the very next input event in the company field', async () => {

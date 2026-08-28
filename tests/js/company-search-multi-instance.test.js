@@ -9,11 +9,11 @@
  * modules reached for on `window`, a CSS custom property on
  * `document.documentElement`, and the country select, the hidden `companyid`
  * input and the current address id all resolved document-wide. A second control
- * inherited all of it. Eighteen of the twenty-three tests below fail against
- * that shape, so they are what stops it coming back. The remaining five pass
- * either way: they pin state that was already per-instance (the request
- * counter, the event namespace, the panel and query field, the manual-entry
- * flag, the no-config fallback) and are regression pins on it, not leak proofs.
+ * inherited all of it. Most of the tests below fail against that shape, so they
+ * are what stops it coming back. A handful pass either way: they pin state that
+ * was already per-instance (the request counter, the event namespace, the panel
+ * and query field, the manual-entry flag, the no-config fallback) and are
+ * regression pins on it, not leak proofs.
  *
  * The shipped module mounts ONE control per page - the address-area field or the
  * payment tile, in mutually exclusive branches of
@@ -32,12 +32,19 @@
 
 const {
     loadCompanySearch,
+    buildAddressesStep,
     stubAjax,
     releaseWidgets,
     loadScript
 } = require('./ps-harness');
 
 const CHECKOUT_HOST = 'https://api.example.test';
+// The step form's id and the block form's id, kept apart so an assertion can
+// name which one answered; the block's is dropped by the parser.
+const STEP_ADDRESS_ID = '5';
+const BLOCK_ADDRESS_ID = '12';
+// The saved address on the non-editable side of core's step fixture.
+const SAVED_ADDRESS_ID = 7;
 
 let TwoCompanySearch;
 let $;
@@ -46,6 +53,12 @@ let ajax;
 /**
  * Two address blocks, each a complete editable form with its own company input
  * and its own country select.
+ *
+ * Not a shape core serves: it renders one editable form per step (see
+ * mountOnCoreStep() below). It is the shape the class must survive before a
+ * second mount can be added, and the only one in which a per-block leak is
+ * observable at all - so the leak proofs live here and the core-markup
+ * properties are asserted separately, against core's own fixture.
  *
  * Two countries on purpose: it is the one page fact that provably differs per
  * control, so a control answering with the other's country is visible rather
@@ -404,71 +417,109 @@ describe('two live controls do not share their DOM', () => {
 });
 
 /**
- * PrestaShop's real addresses step, which the fixture above deliberately is
- * not: core wraps BOTH address blocks in one step-wide `.js-address-form`, and
- * the address form's own inner `<form>` tag is dropped by the parser (a `<form>`
- * inside a `<form>` is invalid), so there is no per-block form element to scope
- * to at all. The fixture above nests `.js-address-form` inside each block - the
- * opposite arrangement - so it cannot see this class of bug.
+ * The same properties against the markup PrestaShop actually renders, via the
+ * shared `buildAddressesStep()` fixture rather than a local approximation.
+ *
+ * Core renders exactly ONE editable address form per step - every branch of
+ * `CheckoutAddressesStep` sets `show_delivery_address_form` or
+ * `show_invoice_address_form`, never both - so there is no two-control shape to
+ * assert here, and the other side of the step is a saved-address selector. That
+ * is why the two-control leak proofs above run on their own fixture.
+ *
+ * Two parse-level facts drive every expectation below, and neither is visible in
+ * a hand-built approximation:
+ *
+ *  - a `<form>` inside a `<form>` is invalid, so the address form's own `<form>`
+ *    tag is dropped and the block's `.js-address-form` div - not a form - is the
+ *    innermost usable scope;
+ *  - consequently the STEP form is the only surviving `form[data-id-address]`,
+ *    so the address id is a step-level fact that no per-block scope can narrow.
+ *
+ * @param {string} editing 'delivery' or 'invoice' - the side core made editable
+ * @returns {Object} a control mounted on that side's company field
  */
-function buildCoreAddressesStep(options) {
-    const settings = options || {};
-    const block = function (id, company, countryId, iso) {
-        return [
-            '<div id="' + id + '">',
-            '  <input type="text" name="company" id="' + company + '" value="" />',
-            "  <input type='text' name='address1' value='' />",
-            '  <select name="id_country">',
-            '    <option value="' + countryId + '" data-iso-code="' + iso + '" selected>' + iso + '</option>',
-            '  </select>',
-            '</div>'
-        ].join('\n');
-    };
-    document.body.innerHTML = [
-        '<div class="js-address-form">',
-        settings.dropBlockIds ? '<div>' : '',
-        block(settings.dropBlockIds ? 'first-block' : 'delivery-address', 'company-a', '17', 'GB'),
-        block(settings.dropBlockIds ? 'second-block' : 'invoice-address', 'company-b', '10', 'NO'),
-        settings.dropBlockIds
-            ? "<input type='radio' name='id_address_invoice' value='9' checked>"
-            : '',
-        settings.dropBlockIds ? '</div>' : '',
-        '  <input type="hidden" name="saveAddress" value="delivery">',
-        '</div>'
-    ].join('\n');
+function mountOnCoreStep(editing) {
+    buildAddressesStep({
+        editing: editing,
+        countryIsoAttrs: true,
+        // Distinct so an assertion can say WHICH form answered.
+        stepAddressId: STEP_ADDRESS_ID,
+        addressId: BLOCK_ADDRESS_ID
+    });
+
+    return new TwoCompanySearch({
+        checkoutHost: CHECKOUT_HOST,
+        companyFieldSelector: '#field-company'
+    });
 }
 
 describe('addressScope() on PrestaShop core markup', () => {
-    test('resolves to the control own address block, not the step-wide wrapper', () => {
-        // Given core's markup: one `.js-address-form` around both blocks
-        buildCoreAddressesStep();
-        const first = makeFirst();
-        const second = makeSecond();
+    test.each([
+        ['delivery', 'id_address_invoice'],
+        ['invoice', 'id_address_delivery']
+    ])('editing the %s address scopes to that block own .js-address-form', (editing, otherRadio) => {
+        // Given core's own addresses step with that side editable
+        const control = mountOnCoreStep(editing);
+        const block = document.getElementById(editing + '-address');
 
-        // Then neither scope is the wrapper that spans both
-        expect(first.addressScope()).toBe(document.getElementById('delivery-address'));
-        expect(second.addressScope()).toBe(document.getElementById('invoice-address'));
+        // Then the scope is the wrapper INSIDE the block id, not the block div
+        // and not the step-wide wrapper that spans both sides
+        expect(control.addressScope()).toBe(block.querySelector('.js-address-form'));
+        expect(control.addressScope()).not.toBe(block);
+        expect(control.addressScope()).not.toBe(document);
+
+        // And it reaches nothing belonging to the other address
+        expect(control.addressScope().querySelector("input[name='" + otherRadio + "']")).toBeNull();
     });
 
-    test('so the two controls still own separate companyid inputs', () => {
-        // Given core's markup
-        buildCoreAddressesStep();
-        const first = makeFirst();
-        const second = makeSecond();
+    test('the companyid input is created inside that scope, not adopted', () => {
+        const control = mountOnCoreStep('invoice');
+        control.init();
 
-        // Then the second has not adopted the first's hidden input
-        expect(first.organizationField.get(0)).not.toBe(second.organizationField.get(0));
-        expect($.contains(document.getElementById('invoice-address'),
-            second.organizationField.get(0))).toBe(true);
+        expect($.contains(control.addressScope(), control.organizationField.get(0))).toBe(true);
     });
 
-    test('fails closed to the document when the only candidate spans both blocks', () => {
-        // Given a theme that keeps core's structure but drops its block ids, so
-        // the nearest candidate contains the other address's radio
-        buildCoreAddressesStep({ dropBlockIds: true });
-        const first = makeFirst();
+    /**
+     * The step form is the ONLY `form[data-id-address]` left after parsing, so
+     * this is the narrowest true answer available - the per-block scope cannot
+     * improve on it, and the block's own `data-id-address` is not in the DOM at
+     * all. What the scope DOES buy is the negative below: the other side's saved
+     * address never answers.
+     */
+    test('the address id is the step form, never the other side saved address', () => {
+        const control = mountOnCoreStep('invoice');
 
-        // Then no scope is claimed, rather than one spanning both addresses
-        expect(first.addressScope()).toBe(document);
+        expect(document.querySelectorAll('form[data-id-address]').length).toBe(1);
+        expect(control.getCurrentAddressId()).toBe(Number(STEP_ADDRESS_ID));
+        expect(control.getCurrentAddressId()).not.toBe(SAVED_ADDRESS_ID);
+    });
+
+    test('fails closed to no scope when the only candidate spans both blocks', () => {
+        // Given a theme that flattens core's per-block wrappers and ids, so the
+        // nearest candidate is the step form, which holds the other side too
+        buildAddressesStep({
+            editing: 'invoice',
+            blockContainers: false,
+            blockIds: false,
+            stepAddressId: STEP_ADDRESS_ID
+        });
+        const control = new TwoCompanySearch({
+            checkoutHost: CHECKOUT_HOST,
+            companyFieldSelector: '#field-company'
+        });
+
+        // Then NO scope is claimed. `document` here would be the widest possible
+        // scope - the cross-address write this scoping exists to prevent.
+        expect(control.addressScope()).toBeNull();
+    });
+
+    test('a detached scope is no scope, as core replaceWith() leaves it', () => {
+        const control = mountOnCoreStep('invoice');
+        const scope = control.addressScope();
+
+        // When core's own country-change handler swaps that root out
+        scope.remove();
+
+        expect(control.addressScope()).toBeNull();
     });
 });

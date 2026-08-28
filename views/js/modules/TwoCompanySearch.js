@@ -282,18 +282,17 @@ class TwoCompanySearch {
     /**
      * The root this instance's address-form reads and writes are scoped to.
      *
-     * `document` for the tile mount: `#two_tile_company` is not inside the
-     * address form, and the address id the order intent needs is genuinely
-     * page-level there. The mount's own form otherwise, so a control in one
-     * address block cannot answer for the other.
+     * The mount's own address block; `document` only when the field is in no
+     * address block at all, which is the tile mount.
      *
-     * FAILS CLOSED the way visibleAddressFormRoot() does: a candidate containing
-     * another address block is the STEP, and yields `document` rather than being
-     * used. Core wraps both blocks in one `.js-address-form` and the inner
-     * `<form>` tag is dropped by the parser, so without this the address-area
-     * control scopes to a root spanning both.
+     * FAILS CLOSED like visibleAddressFormRoot(): a block that resolves but is
+     * detached, or spans another address block, yields null. `document` there
+     * would be the widest possible scope - core's `address.js` does
+     * `closest('.js-address-form').replaceWith(...)` on country change,
+     * detaching this very node, and a control that then widened would adopt the
+     * other block's `companyid` input.
      *
-     * @returns {Document|Element}
+     * @returns {?(Document|Element)}
      */
     addressScope() {
         if (this.config.addressScope) {
@@ -306,14 +305,28 @@ class TwoCompanySearch {
         const candidate = field.closest(
             '#invoice-address, #delivery-address, .js-invoice-address, form[data-id-address], .js-address-form'
         );
-        // A root PrestaShop has already swapped out resolves nothing live, so a
-        // detached subtree is no scope either.
-        const usable = candidate
-            && document.contains(candidate)
+        if (!candidate) {
+            return document;
+        }
+        const usable = document.contains(candidate)
             && typeof candidate.querySelector === 'function'
             && !candidate.querySelector(TwoCompanySearch.ADDRESS_BLOCK_SELECTOR);
 
-        return usable ? candidate : document;
+        return usable ? candidate : null;
+    }
+
+    /**
+     * `querySelector` inside this instance's scope. Answers null when there is
+     * no trusted scope, so a failed-closed scope finds no field rather than
+     * throwing - see addressScope().
+     *
+     * @param {string} selectors
+     * @returns {?Element}
+     */
+    scopedQuery(selectors) {
+        const scope = this.addressScope();
+
+        return scope ? scope.querySelector(selectors) : null;
     }
 
     init() {
@@ -5008,7 +5021,7 @@ class TwoCompanySearch {
         // the LIVE value off the real select - so the sole-trader chip and the
         // company search could silently disagree on country on exactly the
         // theme shape this ticket's fix targets.
-        const countryField = this.addressScope().querySelector("select[name='id_country'], select[name='country']");
+        const countryField = this.scopedQuery("select[name='id_country'], select[name='country']");
         if (countryField && countryField.selectedOptions.length > 0) {
             const selectedOption = countryField.selectedOptions[0];
 
@@ -5488,10 +5501,9 @@ class TwoCompanySearch {
             "select.country"
         ];
         
-        const scope = this.addressScope();
         let countryField = null;
         for (const selector of possibleSelectors) {
-            countryField = scope.querySelector(selector);
+            countryField = this.scopedQuery(selector);
             if (countryField) {
                 
                 break;
@@ -5625,7 +5637,7 @@ class TwoCompanySearch {
             this._abortPendingCompanySearch();
 
             // Remove country change listener
-            const countryField = this.addressScope().querySelector("select[name='id_country']");
+            const countryField = this.scopedQuery("select[name='id_country']");
             // Stop the pending retry before anything else: it would otherwise
             // fire up to 3s from now, resolve the country select against the
             // LIVE document and bind this dying instance's listener to it.
@@ -6457,11 +6469,14 @@ class TwoCompanySearch {
         // TWO-25503: mirror of TwoOrderIntent.getCurrentAddressId() - see there
         // for why the editable form outranks the saved-address radios.
         //
-        // This control's own block first, so a control in the invoice block
-        // cannot answer with the delivery block's id. The tile mount's scope is
-        // `document`, where the id is genuinely page-level, and falls through.
+        // This control's own block first. On core's markup that lands on the
+        // step form either way - the address form's own `<form>` tag is dropped
+        // by the parser, leaving one id for the step - so what this buys there
+        // is only that the OTHER side's saved-address radio cannot answer. It
+        // narrows to a real per-block id on a theme whose block forms survive.
+        // The tile mount's scope is `document` and falls through.
         const scope = this.addressScope();
-        if (scope !== document && scope.querySelector("input[name='saveAddress']")) {
+        if (scope && scope !== document && scope.querySelector("input[name='saveAddress']")) {
             const scopedForm = typeof scope.closest === 'function'
                 ? scope.closest('form[data-id-address]')
                 : null;
