@@ -176,7 +176,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_371c6879002f6a2c9c0ce14144a06265'] 
 $_MODULE['<{twopayment}prestashop>twopayment_3727d6bec90c4328e4aa9f542668fb4a'] = 'De betaling is nog niet geverifieerd. Probeer het opnieuw of neem contact op met support.';
 $_MODULE['<{twopayment}prestashop>twopayment_37be07209f53a5d636d5c904ca9ae64c'] = 'Percentage';
 $_MODULE['<{twopayment}prestashop>twopayment_38a6e828dd4bebef688a29f62bae8ceb'] = 'Bestelling geannuleerd → Geannuleerd';
-$_MODULE['<{twopayment}prestashop>twopayment_91ac09ff976d2914f339731dc74b40d8'] = 'Wil je met %s betalen? Selecteer dan je bedrijf, zodat we je onderneming kunnen verifiëren en betaaltermijnen op factuur kunnen aanbieden.';
+$_MODULE['<{twopayment}prestashop>twopayment_c6379ce2b59119f7ace353f293a2ddeb'] = 'Selecteer je bedrijf voordat je met %s betaalt.';
 $_MODULE['<{twopayment}prestashop>twopayment_3bf8936760cd37d3c7688403fd05c6ce'] = 'Betaling goedgekeurd';
 $_MODULE['<{twopayment}prestashop>twopayment_3c8437f18f50552a8624846ce272e57f'] = 'Er is iets misgegaan; neem contact op met de winkeleigenaar.';
 $_MODULE['<{twopayment}prestashop>twopayment_66c12ee256d5b468a43062e3ab9d643f'] = 'Je factuur bij %s wordt waarschijnlijk geaccepteerd, onder voorbehoud van aanvullende controles.';
