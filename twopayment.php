@@ -60,12 +60,8 @@ class Twopayment extends PaymentModule
     // when the API declares no minimum - the no-minimum outcome is cached too,
     // so the common case costs no refetch per checkout render.
     const CONFIG_PLATFORM_MIN_ORDER = 'PS_TWO_PLATFORM_MIN_ORDER';
-    // Cached GET /v1/merchant buyer-country allowlist (TWO-40): the ISO-3166-1
-    // alpha-2 codes the merchant may transact with. Populated by the SAME fetch
-    // as CONFIG_MERCHANT_AVAILABLE_TERMS and gated by the shared
-    // CONFIG_MERCHANT_AVAILABLE_TERMS_TS. A JSON list, or '' meaning
-    // UNRESTRICTED - what an absent or empty list means, and the day-one state
-    // of every merchant.
+    // Cached buyer-country allowlist (TWO-40), on the same fetch and TTL as
+    // CONFIG_MERCHANT_AVAILABLE_TERMS. JSON alpha-2 list, or '' = unrestricted.
     const CONFIG_MERCHANT_BUYER_COUNTRIES = 'PS_TWO_MERCHANT_BUYER_COUNTRIES';
     // The merchant's own optional minimum order value (admin config field,
     // interpreted in the shop default currency). Stacks ON TOP of the platform
@@ -4851,12 +4847,8 @@ class Twopayment extends PaymentModule
             return [];
         }
 
-        // Buyer-country gate (TWO-40). Distinct from the native per-module
-        // allowlist above and opposite on empty: this list comes from the
-        // merchant record, where empty means no restriction.
+        // Buyer-country gate (TWO-40).
         if (!$this->isTwoBuyerCountrySupported($cart)) {
-            // Once per request, as the gate above: a country restriction is a
-            // standing setting, so every excluded buyer trips it every render.
             if (!$this->twoBuyerCountryWithholdLogged) {
                 $this->twoBuyerCountryWithholdLogged = true;
                 $iso = $this->resolveTwoGateBuyerCountryIso($cart);
@@ -10649,10 +10641,8 @@ class Twopayment extends PaymentModule
                             self::CONFIG_PLATFORM_MIN_ORDER,
                             $platform_minimum ? json_encode($platform_minimum) : ''
                         );
-                        // Fifth cache fed by the same fetch: the buyer-country
-                        // allowlist (TWO-40). An absent or empty list IS the
-                        // answer "unrestricted", so overwrite rather than serve
-                        // stale - a lifted restriction must actually lift.
+                        // Overwrite rather than serve stale (TWO-40): a lifted
+                        // restriction must actually lift.
                         $buyer_countries = $this->normaliseMerchantBuyerCountries(
                             isset($response['supported_buyer_countries']) ? $response['supported_buyer_countries'] : null
                         );
@@ -10713,11 +10703,9 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Normalise a raw buyer-country list into unique, sorted, uppercase
-     * ISO-3166-1 alpha-2 codes.
-     *
-     * Only a real array is accepted: a bare string would cast to a one-element
-     * list, turning malformed data into a restriction.
+     * Normalise a raw buyer-country list into unique, sorted, uppercase alpha-2
+     * codes. Only a real array is accepted: casting a bare string would turn
+     * malformed data into a restriction.
      *
      * @param mixed $countries
      * @return string[]
@@ -10744,14 +10732,10 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The buyer countries the merchant may transact with - the server-supplied
-     * `supported_buyer_countries` list from the cached GET /v1/merchant record
-     * (TWO-40). Empty means UNRESTRICTED, never "no country allowed".
+     * The buyer countries the merchant may transact with (TWO-40). Cache-only;
+     * never fetches.
      *
-     * Cache-only (never fetches): refreshed by the same TTL-gated fetch as the
-     * available-terms cache.
-     *
-     * @return string[] Uppercase ISO-3166-1 alpha-2 codes; empty = unrestricted.
+     * @return string[] Uppercase alpha-2 codes; empty = unrestricted.
      */
     public function getMerchantBuyerCountries()
     {
@@ -10768,13 +10752,8 @@ class Twopayment extends PaymentModule
 
     /**
      * Whether this cart's buyer country is one the merchant may transact with
-     * (TWO-40). The single gate behind both enforcement points - the payment
-     * options hook and the payment front controller.
-     *
-     * Empty is checked FIRST and means unrestricted, unlike the module's other
-     * allowlists (module_country, the currency ISO list) which withhold on
-     * empty: the server owns this field and defines empty as "no restriction".
-     * That also makes fail-open structural - an unresolved cache is empty.
+     * (TWO-40). An empty allowlist means unrestricted, unlike the module's other
+     * allowlists, which withhold on empty.
      *
      * @param Cart $cart
      * @return bool
@@ -10788,8 +10767,6 @@ class Twopayment extends PaymentModule
 
         $iso = $this->resolveTwoGateBuyerCountryIso($cart);
         if ($iso === '') {
-            // Restricted merchant: a country that does not resolve cannot be
-            // shown to be in the list.
             return false;
         }
 
@@ -10797,15 +10774,9 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The cart's buyer country for the allowlist gate: the BILLING country,
-     * falling back to the SHIPPING country when the billing address carries
-     * none. That resolution order matches the country the order ultimately
-     * submits as the buyer's company registration country, which is what the
-     * backend enforces this allowlist against (TWO-40).
-     *
-     * A separate resolver rather than a fallback added to
-     * resolveTwoBuyerCountryIso() itself: that one also feeds the surcharge fee
-     * quotes, where silently switching to a different country changes money.
+     * The cart's buyer country for the allowlist gate (TWO-40): billing,
+     * falling back to shipping. Separate from resolveTwoBuyerCountryIso(),
+     * which must stay billing-only because it also prices surcharge quotes.
      *
      * @param Cart $cart
      * @return string Uppercase alpha-2, or '' when nothing resolves.
@@ -10849,9 +10820,6 @@ class Twopayment extends PaymentModule
         // an identity change must never leave the OLD merchant's upload
         // entitlement in force for the new one (TWO-25111). Fail closed.
         Configuration::updateValue(self::CONFIG_MERCHANT_INVOICE_DISTRIBUTED, 0);
-        // Same record, so an identity change must drop this too. '' means
-        // unrestricted: the new merchant must not inherit the old merchant's
-        // country restriction, and the API enforces the real one anyway.
         Configuration::updateValue(self::CONFIG_MERCHANT_BUYER_COUNTRIES, '');
         Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, 0);
     }
