@@ -62,6 +62,35 @@ final class CustomerAddressFormatterOverrideSpec
         self::testCompanyFieldCarriesNoPlaceholder();
     }
 
+    private static function testOverrideConstructorInitializesCoreTranslatorState(): void
+    {
+        $overridePath = dirname(__DIR__) . '/override/classes/form/CustomerAddressFormatter.php';
+        if (!class_exists('CustomerAddressFormatter', false)) {
+            require_once $overridePath;
+        }
+
+        $translator = new class {
+            public function trans($message, array $params = [], $domain = null): string
+            {
+                return (string) $message;
+            }
+        };
+
+        $formatter = new CustomerAddressFormatter(new Country(), $translator, []);
+
+        try {
+            $format = $formatter->getFormat();
+        } catch (Throwable $exception) {
+            throw new RuntimeException(
+                'CustomerAddressFormatter override must keep core formatter translator initialized. Failure: '
+                . $exception->getMessage()
+            );
+        }
+
+        TinyAssert::true(isset($format['alias']) && $format['alias'] instanceof FormField, 'Expected alias field in formatter output');
+        TinyAssert::same('Alias', $format['alias']->getLabel(), 'Expected alias label translation from core formatter');
+    }
+
     private static function testCountryFieldIsPositionedBeforeCompany(): void
     {
         $overridePath = dirname(__DIR__) . '/override/classes/form/CustomerAddressFormatter.php';
