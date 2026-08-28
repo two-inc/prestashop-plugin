@@ -21,7 +21,7 @@ fail=0
 
 # The workflows invoke these scripts directly, not via `bash`, so a lost exec bit
 # is a red job. Editing the repo from a Windows-side tool strips it silently.
-for script in "${script_dir}"/*.sh; do
+for script in "${script_dir}"/*.sh "${script_dir}/../../dev/ci"/*.sh; do
     if [ -x "$script" ]; then
         pass=$((pass + 1))
     else

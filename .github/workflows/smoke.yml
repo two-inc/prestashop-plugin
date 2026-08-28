@@ -74,13 +74,32 @@ jobs:
   # file replacement a real module upgrade performs), run the PS module
   # upgrade (executes upgrade/upgrade-*.php scripts between the two
   # versions), and assert no broken state and that config survives.
+  #
+  # Matrixed over PrestaShop majors because this is the ONLY job that runs
+  # upgrade/upgrade-*.php at all: install-smoke and the PS 9 jobs in the other
+  # workflows are fresh installs, which never reach a migration. A PS-9-only
+  # fatal in an upgrade script therefore shipped green through twenty checks
+  # once already (TWO-25265): the class index moved off Tools::generateIndex()
+  # in 8.1 and 9 deleted it, so the migration deleted a stale override and then
+  # died before writing it back, leaving the shop running none at all.
   upgrade-smoke:
-    name: Upgrade smoke (latest release → HEAD)
+    name: Upgrade smoke (latest release → HEAD, PS ${{ matrix.ps }})
     needs: self-test
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      # Both legs always report: one major failing must not hide the other's
+      # result, which is the whole reason for testing more than one.
+      fail-fast: false
+      matrix:
+        include:
+          - ps: "8"
+            image: prestashop/prestashop:8-apache
+          - ps: "9"
+            image: prestashop/prestashop:9-apache
     env:
-      SFX: upgrade-${{ github.run_id }}
+      # Per-leg, or the two legs collide on container and network names.
+      SFX: upgrade-${{ github.run_id }}-ps${{ matrix.ps }}
     steps:
       - uses: actions/checkout@v4
 
@@ -112,7 +131,7 @@ jobs:
         # merchant runs them. Debug-mode-only strictness (e.g. hook-method
         # validation) reds on old released tags we cannot change — the
         # install-smoke job keeps that strictness for HEAD instead.
-        run: PS_DEV_MODE=0 dev/ci/boot-prestashop.sh
+        run: PS_IMAGE='${{ matrix.image }}' PS_DEV_MODE=0 dev/ci/boot-prestashop.sh
 
       - name: Install latest release + seed config
         env:
@@ -229,6 +248,28 @@ jobs:
             echo "::error::deployed main file does not match HEAD"
             exit 1
           fi
+          # The SHOP-LEVEL override, which is the only thing that actually runs
+          # (TWO-25265). Asserted on the shop tree rather than the module tree,
+          # because the module tree was always correct while the shop ran
+          # nothing; and on the stamps rather than on the exit code, because a
+          # migration that leaves the shop empty can still exit 0 — the scripts
+          # from 2.7.3 on catch Throwable precisely so a failed tidy-up cannot
+          # fail an upgrade.
+          override=/var/www/html/override/classes/form/CustomerAddressFormatter.php
+          if ! docker exec "ps-$SFX" test -f "$override"; then
+            echo "::error::shop-level override missing after upgrade — the migration deleted it and did not write it back (TWO-25265)"
+            exit 1
+          fi
+          # EVERY stamp, deduplicated: one member left behind on the old version
+          # is a half-migrated file, not a migrated one.
+          stamps=$(docker exec "ps-$SFX" sed -n \
+            's/^[[:space:]]*\*[[:space:]]*version:[[:space:]]*\([0-9][0-9.]*\)[[:space:]]*$/\1/p' \
+            "$override" | sort -u | tr '\n' ' ' | sed 's/ $//')
+          if [ "$stamps" != "$HEAD_VER" ]; then
+            echo "::error::shop-level override is stamped '$stamps', expected only '$HEAD_VER' — the migration did not rewrite it"
+            exit 1
+          fi
+          echo "shop-level override present and stamped $HEAD_VER"
           # Config seeded on the prior version survives the upgrade.
           val=$(docker exec "psdb-$SFX" mysql -uroot -padmin -N -B prestashop \
             -e "SELECT value FROM ps_configuration WHERE name='PS_TWO_MERCHANT_API_KEY' ORDER BY id_configuration DESC LIMIT 1")
