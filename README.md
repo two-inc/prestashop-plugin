@@ -668,7 +668,7 @@ The module builds order payloads that exactly match PrestaShop invoices:
 - **Symptom**: Invoices not uploading to Two
 - **Solutions**:
   - Verify the merchant record has `invoice_distributed_by_merchant` set (contact Two support);
-    checkout-api returns 403 for upload attempts when it is false
+    the API returns 403 for upload attempts when it is false
   - Check PrestaShop logs for upload errors
   - Verify PDF generation works (test invoice download)
   - Check file size limits (max 2MB)
