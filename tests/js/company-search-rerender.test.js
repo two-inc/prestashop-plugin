@@ -280,19 +280,22 @@ describe('the company-search hints (TWO-25288)', () => {
 
         test('the query field placeholder states the number the guard actually enforces (TWO-40 follow-up)', () => {
             const threshold = TwoCompanySearch.MIN_SEARCH_LENGTH;
+            const search = makeInstance();
 
             // The msgid's own `%d` must be gone, replaced by the constant.
-            expect(TwoCompanySearch.getQueryPlaceholderText()).toBe(
+            expect(search.getQueryPlaceholderText()).toBe(
                 'Enter ' + threshold + ' or more characters'
             );
-            expect(TwoCompanySearch.getQueryPlaceholderText()).not.toContain('%d');
+            expect(search.getQueryPlaceholderText()).not.toContain('%d');
         });
 
         test('the number comes from the constant, not from the translation', () => {
             const saved = window.twopayment;
             window.twopayment = { i18n: { company_search_query_placeholder: 'Introduce %d o más caracteres' } };
             try {
-                expect(TwoCompanySearch.getQueryPlaceholderText()).toBe(
+                // Constructed AFTER the config is in place: the instance reads
+                // the page config once, at construction.
+                expect(makeInstance().getQueryPlaceholderText()).toBe(
                     'Introduce ' + TwoCompanySearch.MIN_SEARCH_LENGTH + ' o más caracteres'
                 );
             } finally {
@@ -329,7 +332,7 @@ describe('the company-search hints (TWO-25288)', () => {
 
     describe('the min-chars gate on the jQuery UI path (TWO-40 follow-up: no row rendered any more)', () => {
         test('a sub-threshold term renders no row and fires no request', () => {
-            makeInstance();
+            const instance = makeInstance();
             const short = 'a'.repeat(TwoCompanySearch.MIN_SEARCH_LENGTH - 1);
 
             search(short);
@@ -338,7 +341,7 @@ describe('the company-search hints (TWO-25288)', () => {
             // query field's placeholder (getQueryPlaceholderText()) instead of a
             // dropdown row.
             expect(rows()).toHaveLength(0);
-            expect(searchInput().attr('placeholder')).toBe(TwoCompanySearch.getQueryPlaceholderText());
+            expect(searchInput().attr('placeholder')).toBe(instance.getQueryPlaceholderText());
             // Before TWO-25288 the widget swallowed this term and showed nothing,
             // which is indistinguishable from a search that found no match -
             // that gate (no request escapes it) is what survives here.
@@ -2753,7 +2756,7 @@ describe('the custom fallback used when jQuery UI is absent', () => {
             // buildTooShortItem() is gone: the length requirement lives in the
             // query field's placeholder instead of a dropdown row.
             expect(listRows()).toHaveLength(0);
-            expect(searchInput().attr('placeholder')).toBe(TwoCompanySearch.getQueryPlaceholderText());
+            expect(searchInput().attr('placeholder')).toBe(search.getQueryPlaceholderText());
             expect(shown(panel())).toBe(true);
             expect(ajax.calls).toHaveLength(0);
             // Nothing was requested, so nothing may leave a spinner running.

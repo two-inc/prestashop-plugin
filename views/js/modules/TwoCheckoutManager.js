@@ -60,6 +60,12 @@ class TwoCheckoutManager {
         // rebuild stripped the marker off. See
         // TwoCompanySearch.mirrorConfirmedCompanyToInvoiceAddress().
         this._invoiceMirrorMemory = {};
+        // Per-mount, page-lifetime scratch for the company search's dropdown
+        // reopen deadline, injected for the same reason as _invoiceMirrorMemory:
+        // one `updatedAddressForm` tears that control down twice, so the deadline
+        // cannot live on the instance. Keyed by mount so a control in the tile
+        // cannot reopen a control in the address area.
+        this._companySearchReopenMemory = { address: {}, tile: {} };
         // TWO-40: and where the server has one for this cart, start from it. Must
         // run before init(), which is what constructs the modules that read the
         // selection back out.
@@ -774,6 +780,19 @@ class TwoCheckoutManager {
         return !!(this.companySearch
             && typeof this.companySearch.isManualEntry === 'function'
             && this.companySearch.isManualEntry());
+    }
+
+    /**
+     * The buyer has picked a company in the payment tile.
+     *
+     * The one way in: `_tileCompanySelected` is this class's own gate state, and
+     * a collaborator reaching into it directly cannot be found by a reader of
+     * canAutoTriggerOrderIntent().
+     *
+     * @returns {void}
+     */
+    markTileCompanySelected() {
+        this._tileCompanySelected = true;
     }
 
     /**
@@ -2194,7 +2213,9 @@ class TwoCheckoutManager {
                 // buyer is not even looking at.
                 addressLookupEnabled: false,
                 companySearchInAddressArea: false,
-                companyFieldSelector: '#two_tile_company'
+                companyFieldSelector: '#two_tile_company',
+                reopenMemory: this._companySearchReopenMemory.tile,
+                getManager: () => this
             });
             return;
         }
@@ -2213,7 +2234,9 @@ class TwoCheckoutManager {
             // of the search: it is what stops the mirror re-populating a field the
             // buyer cleared, and what lets it re-mark its own writes after core
             // rebuilds the address form.
-            mirrorMemory: this._invoiceMirrorMemory
+            mirrorMemory: this._invoiceMirrorMemory,
+            reopenMemory: this._companySearchReopenMemory.address,
+            getManager: () => this
         });
     }
 

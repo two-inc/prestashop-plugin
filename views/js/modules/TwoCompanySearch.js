@@ -43,20 +43,18 @@ class TwoCompanySearch {
     static _resultCache = new Map();
 
     /**
-     * Deadline (epoch ms) up to which a freshly built panel should reopen
-     * itself, because the panel it replaces was open when PrestaShop
-     * re-rendered the address form out from under the buyer.
-     *
-     * On the CLASS because a single `updatedAddressForm` tears the control down
-     * TWICE: this module's own handler rebuilds the panel on the SAME instance,
-     * then TwoCheckoutManager destroy()s that instance and constructs a
-     * replacement. Instance state cannot cross the second of those.
-     *
-     * A deadline rather than a boolean because it fails safe: if the rebuild
-     * never comes it simply expires, where a boolean left set would reopen an
-     * unrelated panel the next time one was built.
+     * Monotonic allocator for `_instanceNs`. Class-scoped BECAUSE it is what
+     * makes each instance's namespace unique - per-instance it would hand every
+     * instance the same suffix and defeat its own purpose.
      */
-    static _reopenPanelUntil = 0;
+    static _instanceSeq = 0;
+
+    /**
+     * The single in-flight company-record write, page-wide. Class-scoped
+     * deliberately - see trackCompanyCookieWrite() for why this one is a
+     * page-level mutex rather than instance state.
+     */
+    static _companyCookieWrite = null;
 
     static _REOPEN_WINDOW_MS = 1500;
     // A company registered mid-session stays absent from an already-searched
@@ -127,9 +125,40 @@ class TwoCompanySearch {
             // mirroring the server-side resolver. Read by
             // syncNotListedVisibility().
             companySearchInAddressArea: true,
+            // Page-lifetime, per-mount scratch for the dropdown reopen deadline
+            // (see reopenDeadline()). Injected by TwoCheckoutManager; a private
+            // object when standalone, which loses only the reopen across a
+            // rebuild.
+            reopenMemory: null,
+            // Sibling modules, injected rather than reached for on `window`, so
+            // a second control on the page can be given its own collaborators
+            // and so the coupling is visible in the construction. Each falls
+            // back to the page singleton the shipped page publishes.
+            getManager: null,
+            getSoleTrader: null,
+            // Where this instance's address-form reads and writes are scoped.
+            // `document` for the tile mount, whose company field is not in the
+            // address form at all; the mount's own form otherwise.
+            addressScope: null,
             ...config
         };
-        
+
+        // The page config, read ONCE. Every value here is written by the server
+        // into the page and never changes afterwards, so a live read per call
+        // site only creates a way for one control to observe another's writes.
+        // `mirror_writes` is deliberately NOT snapshotted - see
+        // persistedMirrorWrites(); nor `client`/`client_version`, read by the
+        // static withTwoClientParams() that three modules share verbatim.
+        const page = (typeof window !== 'undefined' && window.twopayment) || {};
+        this._page = {
+            i18n: page.i18n || {},
+            countries: page.countries || null,
+            billingCountry: page.billing_country || '',
+            orderIntentUrl: page.order_intent_url || '',
+            ajaxToken: page.ajax_token || ''
+        };
+        this._reopenMemory = this.config.reopenMemory || {};
+
         this.companyField = null;
         this.organizationField = null;
         this.isInitialized = false;
@@ -184,12 +213,113 @@ class TwoCompanySearch {
         // bound on `document` (a drag can end anywhere), and `document` is a
         // page-wide singleton - so unbinding by the shared `.twoDropdown`
         // namespace alone would tear off another live instance's handler too.
-        TwoCompanySearch._instanceSeq = (TwoCompanySearch._instanceSeq || 0) + 1;
+        TwoCompanySearch._instanceSeq += 1;
         this._instanceNs = 'i' + TwoCompanySearch._instanceSeq;
 
         this.init();
     }
-    
+
+    /**
+     * A translated string from the page config snapshot.
+     *
+     * @param {string} key key under `twopayment.i18n`
+     * @param {string} fallback English source string
+     * @returns {string}
+     */
+    text(key, fallback) {
+        return this._page.i18n[key] || fallback;
+    }
+
+    /**
+     * Deadline (epoch ms) up to which a freshly built panel should reopen
+     * itself, because the panel it replaces was open when PrestaShop
+     * re-rendered the address form out from under the buyer.
+     *
+     * Held in the injected `reopenMemory` rather than on `this`, because a
+     * single `updatedAddressForm` tears the control down TWICE: this module's
+     * own handler rebuilds the panel on the SAME instance, then
+     * TwoCheckoutManager destroy()s that instance and constructs a replacement.
+     * Instance fields cannot cross the second of those, and a class static
+     * would let a control mounted elsewhere on the page reopen this one.
+     *
+     * A deadline rather than a boolean because it fails safe: if the rebuild
+     * never comes it simply expires, where a boolean left set would reopen an
+     * unrelated panel the next time one was built.
+     *
+     * @returns {number}
+     */
+    reopenDeadline() {
+        return this._reopenMemory.until || 0;
+    }
+
+    /**
+     * @param {number} deadline epoch ms; 0 disarms
+     * @returns {void}
+     */
+    armReopen(deadline) {
+        this._reopenMemory.until = deadline;
+    }
+
+    /**
+     * @returns {?Object} TwoCheckoutManager, or null when there is none
+     */
+    manager() {
+        if (typeof this.config.getManager === 'function') {
+            return this.config.getManager() || null;
+        }
+
+        return (typeof window !== 'undefined' && window.TwoCheckoutManager_Instance) || null;
+    }
+
+    /**
+     * @returns {?Object} TwoSoleTrader, or null when there is none
+     */
+    soleTrader() {
+        if (typeof this.config.getSoleTrader === 'function') {
+            return this.config.getSoleTrader() || null;
+        }
+
+        return (typeof window !== 'undefined' && window.TwoSoleTrader_Instance) || null;
+    }
+
+    /**
+     * The company-number display helper. twopayment.php loads it ahead of every
+     * module that renders a number, so a missing one is a broken page rather
+     * than a case to degrade around.
+     *
+     * @returns {Object}
+     */
+    companyNumber() {
+        return window.TwoCompanyNumber;
+    }
+
+    /**
+     * The root this instance's address-form reads and writes are scoped to.
+     *
+     * `document` for the tile mount: `#two_tile_company` is not inside the
+     * address form, and the address id the order intent needs is genuinely
+     * page-level there. The mount's own form otherwise, so a control in one
+     * address block cannot answer for the other.
+     *
+     * @returns {Document|Element}
+     */
+    addressScope() {
+        if (this.config.addressScope) {
+            return this.config.addressScope;
+        }
+        const field = this.companyField && this.companyField.get ? this.companyField.get(0) : null;
+        const form = field && typeof field.closest === 'function'
+            ? field.closest('.js-address-form, form[data-id-address]')
+            : null;
+        // A root PrestaShop has already swapped out resolves nothing live, so
+        // fall back to the document rather than reading a detached subtree.
+        if (form && document.contains(form)) {
+            return form;
+        }
+
+        return document;
+    }
+
     init() {
         this.companyField = $(this.config.companyFieldSelector);
         
@@ -225,35 +355,39 @@ class TwoCompanySearch {
      * Publish the company field's current width as a CSS custom property
      * (TWO-30.x.10 element 1).
      *
-     * Set on `document.documentElement`, not on the field or its wrapper:
-     * jQuery UI appends its menu to `<body>`, so only an ancestor common to
-     * both can be inherited from. Reached through `element.style.setProperty()`
-     * rather than jQuery's `.css()`, whose property-name normalisation is not
-     * guaranteed to pass a custom property through unmangled.
+     * Set on THIS instance's own panel, which is the only element the variable
+     * can be read from: since TWO-25326 the menu renders inside the panel, so
+     * every reader of it is a panel descendant. On `document.documentElement`
+     * it was a page-wide singleton, and one control's width clamped another's
+     * dropdown. Reached through `element.style.setProperty()` rather than
+     * jQuery's `.css()`, whose property-name normalisation is not guaranteed to
+     * pass a custom property through unmangled.
      *
-     * VESTIGIAL as of TWO-25326, kept because it is cheap: the menu now renders
-     * inside a panel already pinned to the field's width, and the stylesheet
-     * sets `max-width: none !important` on it.
+     * VESTIGIAL, kept because it is cheap: the stylesheet sets
+     * `max-width: none !important` on a menu inside the panel.
      *
-     * The variable is a page-wide singleton, so it is cleared on a falsy width
-     * and in destroy() - a stale value left by a field that has gone hidden or
-     * been torn down must not keep clamping whatever field reads it next.
+     * Cleared on a falsy width, so a field that has gone hidden leaves no stale
+     * clamp on a panel that outlives the measurement.
      */
     constrainAutocompleteMenuWidth() {
-        if (!this.companyField || !this.companyField.length) {
+        const panel = this._dropdown && this._dropdown.length ? this._dropdown.get(0) : null;
+        if (!panel || !this.companyField || !this.companyField.length) {
             return;
         }
         const width = this.companyField.outerWidth();
         if (width) {
-            document.documentElement.style.setProperty('--two-company-search-width', width + 'px');
+            panel.style.setProperty('--two-company-search-width', width + 'px');
         } else {
-            document.documentElement.style.removeProperty('--two-company-search-width');
+            panel.style.removeProperty('--two-company-search-width');
         }
     }
 
     createOrganizationField() {
-        let orgField = $("input[name='companyid']");
-        
+        // Scoped: document-wide, a second control adopts the first's hidden
+        // input and the two then write one node.
+        let orgField = $(this.addressScope()).find("input[name='companyid']");
+
+
         if (orgField.length === 0) {
             orgField = $('<input type="hidden" name="companyid" value="">');
             this.companyField.after(orgField);
@@ -400,7 +534,7 @@ class TwoCompanySearch {
             // identifier and is never shown - forDisplay() answers '' for it,
             // which the empty-string handling below already treats as "no label
             // at all", so the suppressed case needs no branch of its own.
-            const text = window.TwoCompanyNumber.forDisplay(value);
+            const text = this.companyNumber().forDisplay(value);
             this.companyIdHintField.text(text);
             // TWO-25326 §5/§7: the label is in normal flow, so an EMPTY one
             // still occupies a line box and adds height to an address form that
@@ -416,8 +550,7 @@ class TwoCompanySearch {
      *   acts as the trigger that opens the search panel (TWO-25326 §1).
      */
     getEditCompanyText() {
-        return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_edit)
-            || 'Search for a different company';
+        return this.text('company_search_edit', 'Search for a different company');
     }
 
     /**
@@ -513,9 +646,9 @@ class TwoCompanySearch {
         //
         // The stylesheet clips the placeholder, so `title` keeps the full hint.
         const query = $('<input type="text" class="two-company-dropdown__query" autocomplete="off" />')
-            .attr('placeholder', TwoCompanySearch.getQueryPlaceholderText())
-            .attr('title', TwoCompanySearch.getQueryPlaceholderText())
-            .attr('aria-label', TwoCompanySearch.getQueryAriaLabelText())
+            .attr('placeholder', this.getQueryPlaceholderText())
+            .attr('title', this.getQueryPlaceholderText())
+            .attr('aria-label', this.getQueryAriaLabelText())
             // Combobox semantics, so the `aria-activedescendant` the fallback
             // engine sets while arrowing through results means something.
             .attr('role', 'combobox')
@@ -754,8 +887,8 @@ class TwoCompanySearch {
                     this.triggerSelectDifferentSoleTrader();
                     return;
                 }
-                if (window.TwoSoleTrader_Instance
-                    && typeof window.TwoSoleTrader_Instance.startEnrollment === 'function') {
+                const soleTrader = this.soleTrader();
+                if (soleTrader && typeof soleTrader.startEnrollment === 'function') {
                     // Keep the panel OPEN and show the company-name field's
                     // spinner for the actual duration of this click's autofill
                     // round trip (Doug, TWO-40 round 4). See
@@ -766,7 +899,7 @@ class TwoCompanySearch {
                         // startEnrollment() is foreign-module code: a
                         // synchronous throw would leave the spinner open with
                         // nothing left to ever settle it (TWO-40 round 5).
-                        window.TwoSoleTrader_Instance.startEnrollment();
+                        soleTrader.startEnrollment();
                     } catch (e) {
                         this.endSoleTraderLoading();
                         this.closeDropdown(true);
@@ -1054,9 +1187,9 @@ class TwoCompanySearch {
      * itself on any `focusin` back into the panel.
      */
     closeSoleTraderSignupPopup() {
-        if (window.TwoSoleTrader_Instance
-            && typeof window.TwoSoleTrader_Instance.closeSignupPopup === 'function') {
-            window.TwoSoleTrader_Instance.closeSignupPopup();
+        const soleTrader = this.soleTrader();
+        if (soleTrader && typeof soleTrader.closeSignupPopup === 'function') {
+            soleTrader.closeSignupPopup();
         }
     }
 
@@ -1075,9 +1208,9 @@ class TwoCompanySearch {
      * this pair, not part of it.
      */
     abandonSoleTraderFlow() {
-        if (window.TwoSoleTrader_Instance
-            && typeof window.TwoSoleTrader_Instance.abandonEnrollment === 'function') {
-            window.TwoSoleTrader_Instance.abandonEnrollment();
+        const soleTrader = this.soleTrader();
+        if (soleTrader && typeof soleTrader.abandonEnrollment === 'function') {
+            soleTrader.abandonEnrollment();
         }
     }
 
@@ -1089,9 +1222,11 @@ class TwoCompanySearch {
      *   go back to.
      */
     focusSoleTraderSignupPopup() {
-        return !!(window.TwoSoleTrader_Instance
-            && typeof window.TwoSoleTrader_Instance.focusSignupPopup === 'function'
-            && window.TwoSoleTrader_Instance.focusSignupPopup());
+        const soleTrader = this.soleTrader();
+
+        return !!(soleTrader
+            && typeof soleTrader.focusSignupPopup === 'function'
+            && soleTrader.focusSignupPopup());
     }
 
     /**
@@ -1206,7 +1341,7 @@ class TwoCompanySearch {
         // rebuild is allowed to reopen; every other close - Escape, a
         // selection, focus leaving the panel, entering manual entry - is the
         // buyer's own and outranks a deadline an earlier re-render set.
-        TwoCompanySearch._reopenPanelUntil = 0;
+        this.armReopen(0);
         // DEFENSIVE ONLY, and deliberately untested: the flag is only read by
         // scheduleDropdownClose(), which runs solely while the panel is open,
         // and every route back to open clears it. The genuinely reachable
@@ -1305,7 +1440,7 @@ class TwoCompanySearch {
         if (!this._soleTraderButton || !this._soleTraderButton.length) {
             return;
         }
-        const instance = window.TwoSoleTrader_Instance;
+        const instance = this.soleTrader();
         const available = !!(instance && typeof instance.isAvailableForCurrentCountry === 'function'
             && instance.isAvailableForCurrentCountry());
         const show = available && this._dropdownOpen;
@@ -1542,7 +1677,7 @@ class TwoCompanySearch {
         if (!this.companyField || !this.companyField.length) {
             return;
         }
-        const manualText = TwoCompanySearch.getManualEntryPlaceholderText();
+        const manualText = this.getManualEntryPlaceholderText();
         const current = String(this.companyField.attr('placeholder') || '');
         if (current !== '' && current !== manualText) {
             return;
@@ -1554,10 +1689,8 @@ class TwoCompanySearch {
         }
     }
 
-    static getManualEntryPlaceholderText() {
-        return (window.twopayment && window.twopayment.i18n
-            && window.twopayment.i18n.company_manual_placeholder)
-            || 'Enter your company name';
+    getManualEntryPlaceholderText() {
+        return this.text('company_manual_placeholder', 'Enter your company name');
     }
 
     /**
@@ -1848,10 +1981,10 @@ class TwoCompanySearch {
         //     It is the buyer's own fiscal number (NIF/CIF), not a slot for our
         //     identifier - which is why leaving it alone blocks nobody.
         //
-        // `window.TwoCompanyNumber` is dereferenced UNGUARDED, matching every other
-        // use of it in this file. A feature-test would fail OPEN - writing the `TWO:`
+        // companyNumber() is dereferenced UNGUARDED, matching every other use of
+        // it in this file. A feature-test would fail OPEN - writing the `TWO:`
         // value into `dni` on the very load where the helper failed to arrive.
-        if (window.TwoCompanyNumber.isInternal(value)) {
+        if (this.companyNumber().isInternal(value)) {
             // `false`, not a bare `return`. The invoice mirror takes `wroteNumber`
             // from this answer; recording a write that did not happen makes the next
             // render read the empty field as buyer tampering and pin the whole
@@ -2206,8 +2339,8 @@ class TwoCompanySearch {
             if (attrIso) {
                 return String(attrIso).toUpperCase();
             }
-            const mapped = (window.twopayment && window.twopayment.countries)
-                ? window.twopayment.countries[option.value]
+            const mapped = this._page.countries
+                ? this._page.countries[option.value]
                 : null;
             if (mapped) {
                 return String(mapped).toUpperCase();
@@ -2438,16 +2571,16 @@ class TwoCompanySearch {
         }
 
         try {
-            if (!window.twopayment || !window.twopayment.order_intent_url || !window.twopayment.ajax_token) {
+            if (!this._page.orderIntentUrl || !this._page.ajaxToken) {
                 return false;
             }
             TwoCompanySearch.queueAfterCompanyCookieWrite({
-                url: window.twopayment.order_intent_url,
+                url: this._page.orderIntentUrl,
                 method: 'POST',
                 data: Object.assign({
                     ajax: 1,
                     action: 'saveMirrorWrites',
-                    token: window.twopayment.ajax_token
+                    token: this._page.ajaxToken
                 }, written),
                 timeout: 10000
             });
@@ -3182,8 +3315,8 @@ class TwoCompanySearch {
             if (attrIso && String(attrIso).toUpperCase() === iso) {
                 return option.value;
             }
-            const mapped = (window.twopayment && window.twopayment.countries)
-                ? window.twopayment.countries[option.value]
+            const mapped = this._page.countries
+                ? this._page.countries[option.value]
                 : null;
             if (mapped && String(mapped).toUpperCase() === iso) {
                 return option.value;
@@ -3669,7 +3802,7 @@ class TwoCompanySearch {
      * until whichever engine this build uses has been wired up.
      *
      * Deliberately narrow. It restores only what the buyer already had, only
-     * while a re-render is plausibly responsible (see _reopenPanelUntil), and
+     * while a re-render is plausibly responsible (see reopenDeadline()), and
      * never in manual-entry mode, where an open search panel would contradict
      * the mode the buyer chose.
      */
@@ -3677,7 +3810,7 @@ class TwoCompanySearch {
         if (this._destroyed || this._manualEntry) {
             return;
         }
-        if (Date.now() >= TwoCompanySearch._reopenPanelUntil) {
+        if (Date.now() >= this.reopenDeadline()) {
             return;
         }
         if (!this._dropdown || !this._dropdown.length
@@ -3691,14 +3824,14 @@ class TwoCompanySearch {
         // at. Consuming the deadline here would restore the throwaway and
         // leave the real one closed. The deadline expires on its own, and any
         // close clears it.
-        const deadline = TwoCompanySearch._reopenPanelUntil;
+        const deadline = this.reopenDeadline();
         // NOT buyer-initiated, which is what keeps this path's hands off an
         // open signup popup and the enrolment behind it (see openDropdown()).
-        // Stated as an argument rather than inferred from `_reopenPanelUntil`
+        // Stated as an argument rather than inferred from the deadline
         // being armed: that deadline is armed by the buyer's OWN click too, so
         // it says a re-render is plausible, never that this open is one.
         this.openDropdown(false);
-        TwoCompanySearch._reopenPanelUntil = deadline;
+        this.armReopen(deadline);
     }
 
     /**
@@ -3727,8 +3860,7 @@ class TwoCompanySearch {
      *   "No results found" is a different string and does not satisfy it.
      */
     getNoMatchesText() {
-        return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_no_matches)
-            || 'No matches found';
+        return this.text('company_search_no_matches', 'No matches found');
     }
 
     /**
@@ -3755,8 +3887,7 @@ class TwoCompanySearch {
      *   the list", before this)
      */
     getManualEntryText() {
-        return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_manual_entry)
-            || 'Enter manually';
+        return this.text('company_search_manual_entry', 'Enter manually');
     }
 
     /**
@@ -3765,24 +3896,21 @@ class TwoCompanySearch {
      *   company search
      */
     getRegisteredEntryText() {
-        return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_registered_entry)
-            || 'Registered company';
+        return this.text('company_search_registered_entry', 'Registered company');
     }
 
     /**
      * @returns {string} label for the "Sole Trader" mode chip (TWO-40)
      */
     getSoleTraderEntryText() {
-        return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_sole_trader_entry)
-            || 'Sole trader';
+        return this.text('company_search_sole_trader_entry', 'Sole trader');
     }
 
     /**
      * @returns {string} wording for the link back out of manual entry
      */
     getBackToSearchText() {
-        return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_back_to_search)
-            || 'Search for company';
+        return this.text('company_search_back_to_search', 'Search for company');
     }
 
     /**
@@ -3862,16 +3990,16 @@ class TwoCompanySearch {
      */
     clearPersistedCompany() {
         try {
-            if (!window.twopayment || !window.twopayment.order_intent_url || !window.twopayment.ajax_token) {
+            if (!this._page.orderIntentUrl || !this._page.ajaxToken) {
                 return;
             }
             TwoCompanySearch.trackCompanyCookieWrite($.ajax({
-                url: window.twopayment.order_intent_url,
+                url: this._page.orderIntentUrl,
                 method: 'POST',
                 data: {
                     ajax: 1,
                     action: 'clearCompany',
-                    token: window.twopayment.ajax_token
+                    token: this._page.ajaxToken
                 },
                 timeout: 10000
             }));
@@ -4036,9 +4164,7 @@ class TwoCompanySearch {
      * @returns {string} caption for renderSelectDifferentSoleTraderLink()
      */
     getSelectDifferentSoleTraderText() {
-        return (window.twopayment && window.twopayment.i18n
-                && window.twopayment.i18n.company_search_select_different_sole_trader)
-            || 'Select a different sole trader';
+        return this.text('company_search_select_different_sole_trader', 'Select a different sole trader');
     }
 
     /**
@@ -4070,9 +4196,9 @@ class TwoCompanySearch {
             return;
         }
         try {
-            if (window.TwoSoleTrader_Instance
-                && typeof window.TwoSoleTrader_Instance.startReplacement === 'function') {
-                window.TwoSoleTrader_Instance.startReplacement();
+            const soleTrader = this.soleTrader();
+            if (soleTrader && typeof soleTrader.startReplacement === 'function') {
+                soleTrader.startReplacement();
             } else {
                 // Nothing is going to fire the settle event for this click,
                 // so release the guard here rather than leaving it stuck and
@@ -4187,9 +4313,8 @@ class TwoCompanySearch {
      *
      * @returns {string}
      */
-    static getQueryPlaceholderText() {
-        const template = (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_query_placeholder)
-            || 'Enter %d or more characters';
+    getQueryPlaceholderText() {
+        const template = this.text('company_search_query_placeholder', 'Enter %d or more characters');
         return String(template).replace('%d', String(MIN_SEARCH_LENGTH));
     }
 
@@ -4199,9 +4324,8 @@ class TwoCompanySearch {
      *   NOT the same string as the placeholder. See the comment in
      *   buildDropdown() where this is applied for why the two must differ.
      */
-    static getQueryAriaLabelText() {
-        return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_query_label)
-            || 'Search for a company';
+    getQueryAriaLabelText() {
+        return this.text('company_search_query_label', 'Search for a company');
     }
 
     /**
@@ -4282,8 +4406,7 @@ class TwoCompanySearch {
      * @returns {string}
      */
     getSearchUnavailableText() {
-        return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_unavailable)
-            || 'Company search is temporarily unavailable. Please try again.';
+        return this.text('company_search_unavailable', 'Company search is temporarily unavailable. Please try again.');
     }
 
     /**
@@ -4317,8 +4440,7 @@ class TwoCompanySearch {
      * @returns {string}
      */
     getSelectCountryText() {
-        return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_select_country)
-            || 'Select your country above to search for your company.';
+        return this.text('company_search_select_country', 'Select your country above to search for your company.');
     }
 
     /**
@@ -4774,7 +4896,7 @@ class TwoCompanySearch {
                     // cannot render `Company Name ()`. `organization_number`
                     // below still carries the REAL value: it is what gets
                     // selected, persisted and credit-checked.
-                    const displayLabel = window.TwoCompanyNumber.labelFor(company.name, orgNumber);
+                    const displayLabel = this.companyNumber().labelFor(company.name, orgNumber);
                     return {
                         label: displayLabel,
                         value: company.name,
@@ -4891,7 +5013,7 @@ class TwoCompanySearch {
         // the LIVE value off the real select - so the sole-trader chip and the
         // company search could silently disagree on country on exactly the
         // theme shape this ticket's fix targets.
-        const countryField = document.querySelector("select[name='id_country'], select[name='country']");
+        const countryField = this.addressScope().querySelector("select[name='id_country'], select[name='country']");
         if (countryField && countryField.selectedOptions.length > 0) {
             const selectedOption = countryField.selectedOptions[0];
 
@@ -4905,8 +5027,8 @@ class TwoCompanySearch {
             // 2. The server-built id -> ISO map for THIS shop's country table.
             // Values are lower-cased by twopayment.php; the API wants upper.
             const countryId = selectedOption.value;
-            const isoFromConfig = (window.twopayment && window.twopayment.countries)
-                ? window.twopayment.countries[countryId]
+            const isoFromConfig = this._page.countries
+                ? this._page.countries[countryId]
                 : null;
             if (isoFromConfig) {
                 return String(isoFromConfig).toUpperCase();
@@ -4927,8 +5049,8 @@ class TwoCompanySearch {
         // rather than trusted: anything that is not exactly two letters is
         // treated as absent, so a malformed payload cannot put junk on the
         // wire as a `country` parameter.
-        const billingCountry = (window.twopayment && window.twopayment.billing_country)
-            ? String(window.twopayment.billing_country).trim().toUpperCase()
+        const billingCountry = this._page.billingCountry
+            ? String(this._page.billingCountry).trim().toUpperCase()
             : '';
         if (/^[A-Z]{2}$/.test(billingCountry)) {
             return billingCountry;
@@ -5017,8 +5139,9 @@ class TwoCompanySearch {
         // false forever for a name-only company, which would wedge this gate
         // shut for a buyer who really did select something.
         try {
-            if (window.TwoCheckoutManager_Instance) {
-                window.TwoCheckoutManager_Instance._tileCompanySelected = true;
+            const manager = this.manager();
+            if (manager && typeof manager.markTileCompanySelected === 'function') {
+                manager.markTileCompanySelected();
             }
         } catch (e) {
             // noop
@@ -5026,7 +5149,7 @@ class TwoCompanySearch {
 
         const triggerOrderIntentRecheck = () => {
             try {
-                const manager = window.TwoCheckoutManager_Instance;
+                const manager = this.manager();
                 if (manager && typeof manager.recheckOrderIntentForNewSelection === 'function') {
                     manager.recheckOrderIntentForNewSelection();
                 }
@@ -5370,9 +5493,10 @@ class TwoCompanySearch {
             "select.country"
         ];
         
+        const scope = this.addressScope();
         let countryField = null;
         for (const selector of possibleSelectors) {
-            countryField = document.querySelector(selector);
+            countryField = scope.querySelector(selector);
             if (countryField) {
                 
                 break;
@@ -5483,15 +5607,14 @@ class TwoCompanySearch {
                 // event for ordinary things - and, as seen in a real browser,
                 // it can land tens of milliseconds AFTER the click that opened
                 // the panel, so the buyer's open was being silently discarded
-                // and the control looked simply dead. See _reopenPanelUntil.
+                // and the control looked simply dead. See reopenDeadline().
                 const wasOpen = this._dropdownOpen;
                 this.closeDropdown(false);
                 // AFTER the close, which clears the deadline itself so that a
                 // close the buyer did ask for cannot be undone by a later
                 // rebuild.
                 if (wasOpen) {
-                    TwoCompanySearch._reopenPanelUntil
-                        = Date.now() + TwoCompanySearch._REOPEN_WINDOW_MS;
+                    this.armReopen(Date.now() + TwoCompanySearch._REOPEN_WINDOW_MS);
                 }
                 // Address form was re-rendered; re-bind country listener and autocomplete
                 this.setupCountryChangeListener(0);
@@ -5507,7 +5630,7 @@ class TwoCompanySearch {
             this._abortPendingCompanySearch();
 
             // Remove country change listener
-            const countryField = document.querySelector("select[name='id_country']");
+            const countryField = this.addressScope().querySelector("select[name='id_country']");
             // Stop the pending retry before anything else: it would otherwise
             // fire up to 3s from now, resolve the country select against the
             // LIVE document and bind this dying instance's listener to it.
@@ -5603,9 +5726,9 @@ class TwoCompanySearch {
         // find it, and the next Sole trader click opening a SECOND window over
         // it. Disowning the write does not require disowning the window.
         try {
-            if (window.TwoSoleTrader_Instance
-                && typeof window.TwoSoleTrader_Instance.cancelEnrollment === 'function') {
-                window.TwoSoleTrader_Instance.cancelEnrollment(true);
+            const soleTrader = this.soleTrader();
+            if (soleTrader && typeof soleTrader.cancelEnrollment === 'function') {
+                soleTrader.cancelEnrollment(true);
             }
         } catch (e) {
             // no-op
@@ -5619,9 +5742,9 @@ class TwoCompanySearch {
             // no-op
         }
         // Its own try for the same reason again: a live `window` listener
-        // outliving this instance, plus a page-wide CSS variable (TWO-30.x.10
-        // review finding) that must not keep clamping some LATER field's
-        // dropdown to a width this, now-dead, field last held.
+        // outliving this instance. The width CSS variable needs no clearing -
+        // it lives on this instance's own panel, which removeDropdown() above
+        // has just taken out of the document.
         try {
             // By reference, not by namespace alone (round-2 review finding,
             // Vader) - `window` is a genuine page-wide singleton, so a
@@ -5633,7 +5756,6 @@ class TwoCompanySearch {
             }
             clearTimeout(this._widthRefreshTimeoutId);
             this._widthRefreshTimeoutId = null;
-            document.documentElement.style.removeProperty('--two-company-search-width');
         } catch (e) {
             // no-op
         }
@@ -5671,7 +5793,7 @@ class TwoCompanySearch {
      */
     publishConfirmedSelection(company, companyid) {
         try {
-            const manager = window.TwoCheckoutManager_Instance;
+            const manager = this.manager();
             if (!manager || typeof manager.setConfirmedCompanySelection !== 'function') {
                 return;
             }
@@ -6247,15 +6369,15 @@ class TwoCompanySearch {
 
     persistCompanyToCookie(data) {
         try {
-            if (!window.twopayment || !window.twopayment.order_intent_url || !window.twopayment.ajax_token) return;
+            if (!this._page.orderIntentUrl || !this._page.ajaxToken) return;
             TwoCompanySearch.trackCompanyCookieWrite($.ajax({
-                url: window.twopayment.order_intent_url,
+                url: this._page.orderIntentUrl,
                 type: 'POST',
                 dataType: 'json',
                 data: {
                     ajax: 1,
                     action: 'saveCompany',
-                    token: window.twopayment.ajax_token,
+                    token: this._page.ajaxToken,
                     company: data.company,
                     companyid: data.companyid,
                     // Deliberately relayed even when unresolved. '' makes the
@@ -6339,6 +6461,23 @@ class TwoCompanySearch {
     getCurrentAddressId() {
         // TWO-25503: mirror of TwoOrderIntent.getCurrentAddressId() - see there
         // for why the editable form outranks the saved-address radios.
+        //
+        // This control's own block first, so a control in the invoice block
+        // cannot answer with the delivery block's id. The tile mount's scope is
+        // `document`, where the id is genuinely page-level, and falls through.
+        const scope = this.addressScope();
+        if (scope !== document && scope.querySelector("input[name='saveAddress']")) {
+            const scopedForm = typeof scope.closest === 'function'
+                ? scope.closest('form[data-id-address]')
+                : null;
+            const scopedId = scopedForm
+                ? parseInt(scopedForm.getAttribute('data-id-address') || '0', 10)
+                : 0;
+            if (scopedId > 0) {
+                return scopedId;
+            }
+        }
+
         const editableAddressForm = document.querySelector("input[name='saveAddress']");
         if (editableAddressForm) {
             const form = (typeof editableAddressForm.closest === 'function'
