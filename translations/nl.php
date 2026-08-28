@@ -251,7 +251,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_6c63214370d0302a32c914ebf6f30819'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6cae7c7478f2d404dc69e4e355172166'] = 'Belastinggrondslag minimale orderwaarde';
 $_MODULE['<{twopayment}prestashop>twopayment_6d5cc1a38d6228cd43fb864b6c4d4b75'] = 'Deze betaalcallback kan niet worden gevalideerd. Probeer het afrekenen opnieuw.';
 $_MODULE['<{twopayment}prestashop>twopayment_6f3455d187a23443796efdcbe044096b'] = 'Geen btw';
-$_MODULE['<{twopayment}prestashop>twopayment_6fd95deaadec67e72965ee1c5a8d81cf'] = 'Voer bedrijfsnaam in om te zoeken';
 $_MODULE['<{twopayment}prestashop>twopayment_8effea9a4ab719b4272d74ad33f5b897'] = 'De API-sleutel kon niet worden geverifieerd.';
 $_MODULE['<{twopayment}prestashop>twopayment_ff917d30c610c32938987db6b6693541'] = '%s gaf een onverwacht antwoord bij het verifiëren van de API-sleutel (HTTP %d).';
 $_MODULE['<{twopayment}prestashop>twopayment_c98cbec0a99d4afa98e4e976ac205ef5'] = 'Voer je %1$s API-sleutel in om %1$s te activeren.';

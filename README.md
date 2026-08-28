@@ -238,7 +238,6 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 ### Checkout Flow
 
 #### 1. Address Step (Business Accounts)
-- The empty `Company` field carries the hint `Enter company name to search`
 - Customer types at least 3 characters in the `Company` field; below that the dropdown says `Please enter 3 or more characters` rather than staying shut. The threshold is a single constant in `views/js/modules/TwoCompanySearch.js` and is interpolated into that message, so the number shown always matches the number enforced
 - Module searches Two's Company API v2 (frontend call)
 - Customer selects a company from search results

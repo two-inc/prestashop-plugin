@@ -2137,11 +2137,8 @@ class TwoCheckoutManager {
         // Not because the search would break: that endpoint is called
         // unauthenticated (see buildPublicApiBeforeSend in TwoCompanySearch) and
         // works regardless of the key. Leave the company field as the plain text
-        // input the theme rendered, and strip the search-mode placeholder the
-        // address-form override put on it, so it does not tell the buyer to
-        // search a field that no longer does.
+        // input the theme rendered.
         if (this.config.apiKeyVerified === false) {
-            this.neutralizeCompanySearchAffordance();
             return;
         }
         // TWO-25326 §7.1: in tile mode, PrestaShop can replace the whole
@@ -2217,34 +2214,6 @@ class TwoCheckoutManager {
             // buyer cleared, and what lets it re-mark its own writes after core
             // rebuilds the address form.
             mirrorMemory: this._invoiceMirrorMemory
-        });
-    }
-
-    /**
-     * Undo the address form's search-mode affordance when no search will run
-     * (TWO-25326). The placeholder is applied SERVER-side by the address-form
-     * override, so unlike the dropdown and the results list it survives the
-     * search control never being constructed - the buyer would be told to
-     * "enter company name to search" on a field that is now just a text box.
-     *
-     * Only ever clears the module's OWN search wording, matched against the
-     * translated string and its English source. A placeholder the theme (or
-     * anything else) supplied is left exactly as it is.
-     */
-    neutralizeCompanySearchAffordance() {
-        const ours = [
-            this.t('company_search_placeholder', 'Enter company name to search'),
-            'Enter company name to search'
-        ];
-        // Queries ALL matches, though PrestaShop only ever renders one (TWO-40,
-        // verified against core: delivery/invoice form flags are mutually
-        // exclusive, so the other side is always a radio selector over saved
-        // addresses, never a second `name='company'` form). Costs nothing either way.
-        document.querySelectorAll("input[name='company']").forEach(function (field) {
-            const current = field.getAttribute('placeholder');
-            if (current && ours.indexOf(current) !== -1) {
-                field.removeAttribute('placeholder');
-            }
         });
     }
 

@@ -606,8 +606,7 @@ block the search ran in into the billing block — is **not implementable**: whe
 the delivery form is on screen there are no invoice inputs to write into. The
 mirror has to be a **cross-page-load** operation, seeding the invoice form when it
 later becomes the editable one. As a corollary, Doug's "no silent population of a
-hidden block" is satisfied for free: there is no hidden block. The comment on
-`TwoCheckoutManager.neutralizeCompanySearchAffordance()` claiming a second
+hidden block" is satisfied for free: there is no hidden block. A module comment claiming a second
 `name='company'` input appears once the buyer states the addresses differ was
 wrong, and is the premise this document inherited; it has been corrected in place.
 
