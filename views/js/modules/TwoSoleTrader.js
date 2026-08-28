@@ -1800,9 +1800,9 @@ class TwoSoleTrader {
      * must feed the same store or the intent check can be built for the entity
      * the buyer is NOT.
      *
-     * Also calls the manager's markTileCompanySelected() (TWO-40 follow-up,
-     * live bug reported by Doug 2026-08-12: an order-intent check fired off
-     * this completion before the buyer had reached the payment step).
+     * Also calls the manager's markTileCompanySelected() (TWO-40 follow-up: an
+     * order-intent check fired off this completion before the buyer had
+     * reached the payment step).
      * TwoCompanySearch's onCompanySelected() calls it the instant a search
      * RESULT is picked, and TwoCheckoutManager.canAutoTriggerOrderIntent()
      * reads the flag it sets as "the buyer has made their choice" before

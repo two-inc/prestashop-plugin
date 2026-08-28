@@ -216,19 +216,12 @@ class TwoCompanySearch {
 
     /**
      * Deadline (epoch ms) up to which a freshly built panel should reopen
-     * itself, because the panel it replaces was open when PrestaShop
-     * re-rendered the address form out from under the buyer.
+     * itself, after PrestaShop re-rendered the address form under the buyer.
      *
-     * Held in the injected `reopenMemory` rather than on `this`, because a
-     * single `updatedAddressForm` tears the control down TWICE: this module's
-     * own handler rebuilds the panel on the SAME instance, then
-     * TwoCheckoutManager destroy()s that instance and constructs a replacement.
-     * Instance fields cannot cross the second of those, and a class static
-     * would let a control mounted elsewhere on the page reopen this one.
-     *
-     * A deadline rather than a boolean because it fails safe: if the rebuild
-     * never comes it simply expires, where a boolean left set would reopen an
-     * unrelated panel the next time one was built.
+     * In the injected `reopenMemory` because one `updatedAddressForm` tears the
+     * control down twice, and the second teardown replaces the instance, so an
+     * instance field cannot cross it. A deadline rather than a boolean so an
+     * unclaimed arm expires instead of reopening the next panel built.
      *
      * @returns {number}
      */
@@ -353,22 +346,13 @@ class TwoCompanySearch {
     static AUTOCOMPLETE_MENU_CLASS = 'two-company-autocomplete-menu';
 
     /**
-     * Publish the company field's current width as a CSS custom property
-     * (TWO-30.x.10 element 1).
-     *
-     * Set on THIS instance's own panel, which is the only element the variable
-     * can be read from: since TWO-25326 the menu renders inside the panel, so
-     * every reader of it is a panel descendant. On `document.documentElement`
-     * it was a page-wide singleton, and one control's width clamped another's
-     * dropdown. Reached through `element.style.setProperty()` rather than
-     * jQuery's `.css()`, whose property-name normalisation is not guaranteed to
-     * pass a custom property through unmangled.
-     *
-     * VESTIGIAL, kept because it is cheap: the stylesheet sets
-     * `max-width: none !important` on a menu inside the panel.
-     *
-     * Cleared on a falsy width, so a field that has gone hidden leaves no stale
-     * clamp on a panel that outlives the measurement.
+     * Publish the company field's width as a CSS custom property on THIS
+     * instance's own panel (TWO-30.x.10 element 1) - on
+     * `document.documentElement` one control's width clamped another's
+     * dropdown. `element.style.setProperty()` rather than jQuery's `.css()`,
+     * whose property-name normalisation may mangle a custom property. Cleared
+     * on a falsy width so a hidden field leaves no stale clamp. Vestigial
+     * anyway: the stylesheet unclamps any menu inside the panel.
      */
     constrainAutocompleteMenuWidth() {
         const panel = this._dropdown && this._dropdown.length ? this._dropdown.get(0) : null;
@@ -6463,13 +6447,15 @@ class TwoCompanySearch {
         // TWO-25503: mirror of TwoOrderIntent.getCurrentAddressId() - see there
         // for why the editable form outranks the saved-address radios.
         //
-        // This control's own block first. Unreachable on core's markup: the
-        // block's own `<form>` tag is dropped by the parser, so no per-block
-        // `data-id-address` exists and the step form below answers. It is here
-        // for markup where the block forms DO survive - the two-block fixture,
-        // or a theme that does not nest them - where the document-wide lookup
-        // would otherwise answer with the first block's id, not this one's.
-        // The tile mount's scope is `document` and falls through.
+        // This control's own block first. On core's markup this branch runs and
+        // answers, it just answers the same id the fallback would: the block's
+        // own `<form>` tag is dropped by the parser, so the nearest
+        // `form[data-id-address]` above the scope IS the step form the fallback
+        // finds. It changes the answer only where per-block forms survive - the
+        // two-block fixture, or a theme that does not nest them - and the
+        // document-wide lookup would otherwise answer with the first block's id
+        // rather than this one's. The tile mount's scope is `document` and
+        // falls through.
         const scope = this.addressScope();
         if (scope && scope !== document && scope.querySelector("input[name='saveAddress']")) {
             const scopedForm = typeof scope.closest === 'function'
