@@ -63,7 +63,6 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
         return $format;
     }
 
-
     private function moveFieldBefore(array $format, $fieldKey, $beforeKey)
     {
         if (!array_key_exists($fieldKey, $format) || !array_key_exists($beforeKey, $format) || $fieldKey === $beforeKey) {
