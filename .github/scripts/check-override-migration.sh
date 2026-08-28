@@ -68,7 +68,7 @@
 #   7. SMARTY TEMPLATES. `.tpl` changes have their own staleness problem
 #      (compiled templates are not regenerated when `PS_SMARTY_FORCE_COMPILE` is
 #      0) but that is a shop-configuration fix, not a migration, and is handled
-#      chart-side in `two-inc/platform-tools`. Out of scope here.
+#      in the deployment chart. Out of scope here.
 #
 # Usage:  check-override-migration.sh [<base-ref>] [<head-ref>]
 #         defaults: origin/staging HEAD
