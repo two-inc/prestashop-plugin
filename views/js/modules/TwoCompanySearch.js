@@ -1153,9 +1153,7 @@ class TwoCompanySearch {
         // show that chip selected.
         this._chipMode = this.isSoleTraderAdopted() ? 'sole_trader' : 'registered';
         this.renderChipSelection();
-        this.syncNotListedVisibility();
-        this.syncSoleTraderEntryVisibility();
-        this.syncRegisteredEntryVisibility();
+        this.syncModeChipVisibility();
         this.focusPanelEntry();
         // Render the current state immediately - for an empty query that is the
         // "type N more characters" hint (§1), not an empty or absent panel.
@@ -1315,6 +1313,36 @@ class TwoCompanySearch {
             this._soleTraderButton.show();
         } else {
             this._soleTraderButton.hide();
+        }
+    }
+
+    /**
+     * Gate all three mode chips, then the row that holds them (TWO-40 follow-up).
+     *
+     * A row offering a single chip offers no choice - the one survivor is
+     * always the mode the buyer is already in - so it is not rendered at all.
+     *
+     * The row is HIDDEN, never removed: `.two-company-dropdown` is contracted to
+     * hold search row, results host and chip row as its three children in that
+     * order, and other plugins are built against that shape.
+     */
+    syncModeChipVisibility() {
+        this.syncNotListedVisibility();
+        this.syncSoleTraderEntryVisibility();
+        this.syncRegisteredEntryVisibility();
+        if (!this._dropdown || !this._dropdown.length) {
+            return;
+        }
+        const row = this._dropdown.children('.two-company-mode-chips').first();
+        if (!row.length) {
+            return;
+        }
+        const offered = [this._registeredButton, this._soleTraderButton, this._notListedButton]
+            .filter((chip) => chip && chip.length && chip.css('display') !== 'none');
+        if (offered.length > 1) {
+            row.removeAttr('hidden').show();
+        } else {
+            row.hide().attr('hidden', 'hidden');
         }
     }
 
@@ -1694,9 +1722,7 @@ class TwoCompanySearch {
             this.clearStaleOrganizationSelection();
             // A cleared tag changes the answer to hasConfirmedSelection(),
             // which is what §2 gates the "not on the list" button on.
-            this.syncNotListedVisibility();
-            this.syncSoleTraderEntryVisibility();
-            this.syncRegisteredEntryVisibility();
+            this.syncModeChipVisibility();
         });
     }
 
@@ -3311,9 +3337,7 @@ class TwoCompanySearch {
 
         this.setCompanyFieldSearchMode(!this._manualEntry);
         this.setupCompanyFieldOpeners();
-        this.syncNotListedVisibility();
-        this.syncSoleTraderEntryVisibility();
-        this.syncRegisteredEntryVisibility();
+        this.syncModeChipVisibility();
 
         // Use jQuery UI autocomplete if available; otherwise fallback to custom.
         // `$.fn.autocomplete` alone is not proof of jQuery UI - the older
@@ -3898,9 +3922,7 @@ class TwoCompanySearch {
         // that field would work by accident today and break the moment the
         // close path changes.
         this.closeDropdown(false);
-        this.syncNotListedVisibility();
-        this.syncSoleTraderEntryVisibility();
-        this.syncRegisteredEntryVisibility();
+        this.syncModeChipVisibility();
 
         // The company-name field stops being a search trigger and becomes the
         // plain text input the buyer types their company into (§2/§5:
@@ -5124,9 +5146,7 @@ class TwoCompanySearch {
         // by this point on every branch above (immediate org number, or none
         // at all, in which case the deferred GB path re-syncs from
         // autoFillAddressIfNeeded() below).
-        this.syncNotListedVisibility();
-        this.syncSoleTraderEntryVisibility();
-        this.syncRegisteredEntryVisibility();
+        this.syncModeChipVisibility();
 
         return true;
     }
@@ -5210,9 +5230,7 @@ class TwoCompanySearch {
                     // becomes true once the tag written two lines up exists -
                     // so on the GB path this, not onCompanySelected(), is
                     // where the "not on the list" button finally hides.
-                    this.syncNotListedVisibility();
-                    this.syncSoleTraderEntryVisibility();
-                    this.syncRegisteredEntryVisibility();
+                    this.syncModeChipVisibility();
                 }
             }
             // Find addresses list in various shapes. Gated by the SAME
@@ -5983,9 +6001,7 @@ class TwoCompanySearch {
         // the three reads it any more (they gate on the dropdown being open and on
         // country availability), and a comment claiming otherwise would send the
         // next reader looking for a dependency that is not there.
-        this.syncNotListedVisibility();
-        this.syncSoleTraderEntryVisibility();
-        this.syncRegisteredEntryVisibility();
+        this.syncModeChipVisibility();
 
         // "Select a different sole trader" (TWO-40 follow-up): only once a
         // NAMED identity actually landed in the company field above - the
