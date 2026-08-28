@@ -53,7 +53,7 @@ class Twopayment extends PaymentModule
     const CONFIG_MERCHANT_INVOICE_DISTRIBUTED = 'PS_TWO_MERCHANT_INVOICE_DISTRIBUTED';
     // Cached GET /v1/merchant minimum-order tuple (min_order_amount /
     // min_order_currency / min_order_basis - the funding-partner default with
-    // any merchant override, resolved server-side, the same value checkout-api
+    // any merchant override, resolved server-side, the same value the API
     // enforces at order create/intent; TWO-24775). Populated by the SAME fetch
     // as CONFIG_MERCHANT_AVAILABLE_TERMS and gated by the shared
     // CONFIG_MERCHANT_AVAILABLE_TERMS_TS. JSON {amount,currency,basis}, or ''
@@ -72,7 +72,7 @@ class Twopayment extends PaymentModule
     // EUR}}. Replaces PrestaShop core's own conversion rates for every
     // Two-side conversion (minimum-order gate, decline hint, admin floor,
     // fixed-surcharge/cap re-denomination) so the plugin converts with the
-    // SAME rates checkout-api enforces server-side. Refreshed TTL-gated (6h)
+    // SAME rates the API enforces server-side. Refreshed TTL-gated (6h)
     // from the checkout media hook and on-demand on a cache miss; a fetch
     // failure serves the last-known-good table (gate conversions fail closed
     // ONLY when no table was ever fetched - ticket fail semantics).
@@ -6476,8 +6476,7 @@ class Twopayment extends PaymentModule
                 $discount_amount = round($expected_total - $net_amount_prestashop, 2);
 
                 // A negative discount means quantity * unit_price < net total - a data
-                // inconsistency we must surface, not silently correct. The checkout-api
-                // validates order amounts and rejects bad payloads with a clear error.
+                // inconsistency we must surface, not silently correct.
                 if ($discount_amount < 0) {
                     PrestaShopLogger::addLog('TwoPayment: Negative discount calculated for product ' . $line_item['id_product'] . ' (quantity ' . $quantity . ' x unit price ' . $unit_price_net_prestashop . ' = ' . $expected_total . ' < net total ' . $net_amount_prestashop . ')', 3);
                     throw new Exception('Negative discount calculated for product ' . $line_item['id_product']);
@@ -8083,7 +8082,7 @@ class Twopayment extends PaymentModule
      * through the shared group resolver, and is never computed from amounts.
      *
      * Deriving the rate from tax/net was rejected on rounding grounds: at 2dp a
-     * clean 21% and 20.98% are indistinguishable, and checkout-api asserts the
+     * clean 21% and 20.98% are indistinguishable, and the API asserts the
      * relayed rate against the amounts again during invoice validation, so a
      * derived rate surfaces later as a bad invoice rather than a loud failure
      * here.
@@ -9791,8 +9790,7 @@ class Twopayment extends PaymentModule
     /**
      * Returns an env-var-supplied URL when PrestaShop is in dev mode (_PS_MODE_DEV_),
      * or null otherwise. Lets internal devs route the plugin at staging / a local
-     * mock without exposing a staging mode in the merchant admin UI. Mirrors the
-     * convention used by magento-plugin (Model/Config/Repository::getCheckoutApiUrl).
+     * mock without exposing a staging mode in the merchant admin UI.
      *
      * @param string $name Env var name (e.g. TWO_API_BASE_URL)
      * @return string|null
@@ -10712,7 +10710,7 @@ class Twopayment extends PaymentModule
      * record. This is the ONLY gate for the plugin-side invoice upload
      * (TwoInvoiceUploadService): the manual PS_TWO_USE_OWN_INVOICES admin
      * toggle is retired (TWO-25111 / TWO-25106 Option A) and any leftover
-     * value of it in the configuration table has zero effect. checkout-api
+     * value of it in the configuration table has zero effect. The API
      * enforces the same flag server-side (403 when false, TWO-24761), so this
      * plugin-side gate only avoids doomed upload attempts; it is not a
      * security boundary.
@@ -10763,7 +10761,7 @@ class Twopayment extends PaymentModule
     /**
      * The platform's minimum order value for this merchant (funding-partner
      * default with any merchant override, resolved server-side on
-     * GET /v1/merchant/{id} - the same value checkout-api enforces at order
+     * GET /v1/merchant/{id} - the same value the API enforces at order
      * create/intent), as ['amount','currency','basis'] or null when none is
      * configured or the record is not yet resolved (TWO-24775).
      *
@@ -10842,7 +10840,7 @@ class Twopayment extends PaymentModule
      * Convert an amount between two currencies via Two's own FX spot rates
      * (GET /refdata/v1/fx-rates, TWO-25105) - NOT PrestaShop core's
      * conversion rates, so the plugin reasons with the same rates
-     * checkout-api enforces server-side. Returns null when no rate table has
+     * the API enforces server-side. Returns null when no rate table has
      * ever been fetched or either currency is absent from it - the CALLER
      * decides the failure posture, and since TWO-25269 every path that
      * decides an amount the buyer is CHARGED fails closed: the

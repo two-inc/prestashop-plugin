@@ -467,7 +467,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `Your invoice with Two is likely to be accepted for %s` becomes `Your invoice with Two is likely to be accepted for %s, subject to additional checks.`, and the no-company variant gains the same trailing caveat
   - This lands all four plugins on one canonical pair of strings; the other platforms already carried the caveat. Declined copy is unchanged. Translators see the two changed source strings as new
 - **Invoice upload is now gated on the merchant record, not an admin toggle** (TWO-25111, per decision TWO-25106 Option A)
-  - The plugin-side invoice upload (own-invoice merchants) now triggers only when the `invoice_distributed_by_merchant` flag on the Two merchant record (`GET /v1/merchant`) is true - the same signal checkout-api itself enforces (TWO-24761), and the same gating model Magento (TWO-24758) and WooCommerce (TWO-24757) use
+  - The plugin-side invoice upload (own-invoice merchants) now triggers only when the `invoice_distributed_by_merchant` flag on the Two merchant record (`GET /v1/merchant`) is true - the same signal the API itself enforces (TWO-24761), and the same gating model Magento (TWO-24758) and WooCommerce (TWO-24757) use
   - The flag is cached by the existing TTL-gated merchant-record fetch (shared with `available_terms`/`due_in_days`); absent-from-response is treated as false, a failed fetch serves the last known value, and a merchant identity change fails closed
   - Module version bumped to `2.6.0`
 
@@ -515,7 +515,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Whenever the fallback is actually used, the shop log carries a warning naming the group, its id and the resolved rate, so a merchant on the fallback path is distinguishable from one resolving normally
   - Module version bumped to `2.6.8`
 - **Real FX layer on Two's own spot rates** (TWO-25105)
-  - Every Two-side currency conversion (platform/merchant minimum-order gate, minimum-order decline hint, admin floor display and save validation, fixed-surcharge/cap re-denomination) now uses the rates from `GET /refdata/v1/fx-rates` - the same EUR-pivot table checkout-api enforces server-side - instead of PrestaShop core's own conversion rates
+  - Every Two-side currency conversion (platform/merchant minimum-order gate, minimum-order decline hint, admin floor display and save validation, fixed-surcharge/cap re-denomination) now uses the rates from `GET /refdata/v1/fx-rates` - the same EUR-pivot table the API enforces server-side - instead of PrestaShop core's own conversion rates
   - The full rate table is fetched server-side with the merchant API key (never from browser JS), cached in module configuration with a 6h TTL refreshed from the checkout media hook, and fetched on demand when a not-yet-cached currency reaches a conversion; the response's `as_of` staleness floor is retained alongside the rates
   - Failure posture: a failed refresh serves the last-known-good table and retries after a short backoff; gate conversions fail closed only when no table was ever fetched, display conversions fail soft
   - Fixed surcharge amounts and caps (configured in the shop default currency) are converted into the quote currency before the pricing call, replacing the previous single-currency pinning; an unconvertible figure omits the fee quote instead of sending a wrong-currency amount
