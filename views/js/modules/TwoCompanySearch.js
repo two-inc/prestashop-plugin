@@ -505,16 +505,17 @@ class TwoCompanySearch {
         panel = $('<div class="two-company-dropdown" hidden></div>');
 
         const searchRow = $('<div class="two-company-dropdown__search"></div>');
-        // `placeholder` carries the LENGTH REQUIREMENT (TWO-40 follow-up), not
-        // the watermark wording the company field already showed to get here.
+        // `aria-label` deliberately does NOT mirror the placeholder:
+        // `aria-label` is the field's accessible NAME, set once and never
+        // re-synced, while `placeholder` is a transient hint. Naming the field
+        // after the hint left a screen-reader user tabbing back in after a full
+        // query still hearing "Enter 3 or more characters" as what the field IS.
         //
-        // `aria-label` deliberately does NOT mirror it: `aria-label` is the
-        // field's accessible NAME, set once and never re-synced, while
-        // `placeholder` is a transient hint. Naming the field after the hint
-        // left a screen-reader user tabbing back in after a full query still
-        // hearing "Enter 3 or more characters" as what the field IS.
+        // `title` repeats the placeholder because the stylesheet clips it to the
+        // field width: the full hint has to stay reachable on hover.
         const query = $('<input type="text" class="two-company-dropdown__query" autocomplete="off" />')
             .attr('placeholder', TwoCompanySearch.getQueryPlaceholderText())
+            .attr('title', TwoCompanySearch.getQueryPlaceholderText())
             .attr('aria-label', TwoCompanySearch.getQueryAriaLabelText())
             // Combobox semantics, so the `aria-activedescendant` the fallback
             // engine sets while arrowing through results means something.
@@ -1530,11 +1531,11 @@ class TwoCompanySearch {
     }
 
     /**
-     * Keep the placeholder describing the mode the field is actually in.
+     * Keep the placeholder describing the mode the field is actually in: manual
+     * entry has wording of its own, search mode has none.
      *
-     * Only ever swaps a placeholder THIS class put there: applyEmptyFieldHint()
-     * declines to touch a placeholder a merchant theme or an address-form
-     * override already set, so a theme's own wording is left in both modes.
+     * A slot holding anything but the manual wording belongs to a merchant theme
+     * or an address-form override, and is left alone.
      *
      * @param {boolean} searchMode
      */
@@ -1542,16 +1543,15 @@ class TwoCompanySearch {
         if (!this.companyField || !this.companyField.length) {
             return;
         }
-        const searchText = TwoCompanySearch.getEmptyFieldHintText();
         const manualText = TwoCompanySearch.getManualEntryPlaceholderText();
         const current = String(this.companyField.attr('placeholder') || '');
-        const wanted = searchMode ? searchText : manualText;
-        const ours = current === searchText || current === manualText;
-        if (!ours) {
+        if (current !== '' && current !== manualText) {
             return;
         }
-        if (current !== wanted) {
-            this.companyField.attr('placeholder', wanted);
+        if (searchMode) {
+            this.companyField.removeAttr('placeholder');
+        } else if (current !== manualText) {
+            this.companyField.attr('placeholder', manualText);
         }
     }
 
@@ -3293,13 +3293,6 @@ class TwoCompanySearch {
         this.setupWidthRefreshListener();
 
 
-        // Empty-field hint. Set here rather than only in the address-form
-        // override so it survives PrestaShop replacing the input on
-        // `updatedAddressForm`, and so it reaches themes that supply their own
-        // address form and never run that override. Before the path branch, so
-        // both render paths get it.
-        this.applyEmptyFieldHint();
-
         // The anchored panel and its query field (TWO-25326 §1). Same re-run
         // reasoning as the hint above: this method is the one that runs
         // against whatever field PrestaShop just put on the page, so the panel
@@ -4015,9 +4008,9 @@ class TwoCompanySearch {
     /**
      * Remove the reverse link and unbind it.
      *
-     * The class-wide sweep is deliberate: this instance's own reference does not
-     * cover a link left behind by a previous instance whose field PrestaShop has
-     * since replaced, and two of these on one form is worse than none.
+     * The sweep covers the current field's parent, not the document: a link a
+     * previous instance left on this field still has to go, a second widget's
+     * link on another field must not.
      */
     removeBackToSearchLink() {
         if (this._backToSearchLink) {
@@ -4025,7 +4018,19 @@ class TwoCompanySearch {
             this._backToSearchLink.remove();
             this._backToSearchLink = null;
         }
-        $('.two-company-search-back').off('.twoManualEntry').remove();
+        this.ownLinks('two-company-search-back').off('.twoManualEntry').remove();
+    }
+
+    /**
+     * @param {string} className
+     * @returns {Object} the links of that class under this instance's own field
+     */
+    ownLinks(className) {
+        if (!this.companyField || this.companyField.length === 0) {
+            return $();
+        }
+
+        return this.companyField.parent().find('.' + className);
     }
 
     /**
@@ -4128,7 +4133,7 @@ class TwoCompanySearch {
 
     /**
      * Remove the "Select a different sole trader" link and unbind it. Same
-     * class-wide-sweep reasoning as removeBackToSearchLink().
+     * instance-keyed sweep as removeBackToSearchLink().
      */
     removeSelectDifferentSoleTraderLink() {
         if (this._selectDifferentSoleTraderLink) {
@@ -4136,7 +4141,8 @@ class TwoCompanySearch {
             this._selectDifferentSoleTraderLink.remove();
             this._selectDifferentSoleTraderLink = null;
         }
-        $('.two-company-select-different-sole-trader').off('.twoSoleTraderReplace').remove();
+        this.ownLinks('two-company-select-different-sole-trader')
+            .off('.twoSoleTraderReplace').remove();
         // Deliberately does NOT release the in-flight guard/spinner. This
         // method runs mid-flight on the success path - adoptSoleTraderBuyer()
         // renders the link, and renderSelectDifferentSoleTraderLink() removes
@@ -4175,55 +4181,10 @@ class TwoCompanySearch {
     }
 
     /**
-     * Hint shown in the empty company field (TWO-25288).
-     *
-     * Occupies the placeholder slot, which is why the previous wording there was
-     * replaced rather than joined: two hints cannot share one slot, and a
-     * separate second row under an empty field would be noise on a field the
-     * buyer has not touched yet.
-     *
-     * Applied only when the field carries no placeholder, so a merchant theme or
-     * a shop-level override of the address form still wins. In the standard flow
-     * the address-form override has already put the same wording there.
-     *
-     * @returns {void}
-     */
-    applyEmptyFieldHint() {
-        const field = this.companyField;
-        if (!field || field.length === 0) {
-            return;
-        }
-        const existing = field.attr('placeholder');
-        if (existing !== undefined && String(existing).trim() !== '') {
-            return;
-        }
-        field.attr('placeholder', TwoCompanySearch.getEmptyFieldHintText());
-    }
-
-    /**
-     * @returns {string} wording for the empty-field hint
-     */
-    static getEmptyFieldHintText() {
-        return (window.twopayment && window.twopayment.i18n && window.twopayment.i18n.company_search_placeholder)
-            || 'Enter company name to search';
-    }
-
-    /**
-     * @returns {string} wording for the query field's placeholder (TWO-40
-     *   follow-up).
-     *
-     * Below MIN_SEARCH_LENGTH, PrestaShop used to show a "Please enter %d or
-     * more characters" row inside the dropdown - a second on-screen hint,
-     * separate from (and, at first paint, sitting right underneath) the query
-     * field's own placeholder, which at the time read the same as the
-     * unclicked company field's watermark ("Enter company name to search").
-     * Folded into one: the query field's placeholder now carries the length
-     * requirement directly, and no separate row is rendered for it any more
-     * (see the `source`/fallback-engine call sites this replaced). `%d` is
-     * interpolated from MIN_SEARCH_LENGTH, same reasoning as the removed
-     * `company_search_too_short` key had - the number the buyer reads must be
-     * the number the guard enforces, not a second constant that can drift
-     * from it.
+     * The length requirement, carried by the query field's placeholder rather
+     * than a dropdown row of its own (TWO-40 follow-up). `%d` is interpolated
+     * from MIN_SEARCH_LENGTH, so the number the buyer reads cannot drift from
+     * the number the guard enforces.
      *
      * @returns {string}
      */

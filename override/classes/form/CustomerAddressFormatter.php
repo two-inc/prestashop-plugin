@@ -7,12 +7,9 @@
 
 class CustomerAddressFormatter extends CustomerAddressFormatterCore
 {
-    private $translator;
-
     public function __construct(Country $country, $translator, array $availableCountries)
     {
         parent::__construct($country, $translator, $availableCountries);
-        $this->translator = $translator;
     }
 
     public function setCountry(Country $country)
@@ -45,35 +42,6 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
         // enrolled; matches the Magento and WooCommerce plugins (the
         // third-account_type-option approach previously here has been
         // dropped, see TWO-24755).
-        //
-        // The placeholder is the empty-field hint (TWO-25288). Its wording was
-        // replaced rather than joined by a second hint: there is exactly one
-        // slot in an empty field, and a message row hanging under a field the
-        // buyer has not touched yet is noise. The browser JS applies the same
-        // wording when this slot is empty, which covers a theme rendering its
-        // own address form.
-        //
-        // Not applied while the shop's API key is KNOWN not to verify (TWO-25326):
-        // Two is withheld from checkout entirely in that state, so nothing
-        // consumes a captured company and the module mounts no search control -
-        // leaving the field a plain text input that this hint would be telling
-        // the buyer to search. Same predicate the checkout JS gate is
-        // handed, so the two halves of the affordance cannot disagree; an
-        // as-yet-unknown verdict leaves the form untouched, since a cold cache is
-        // not evidence of a broken shop and this render may not go to the network
-        // to find out.
-        // The browser strips the wording too, but not as a second line of defence
-        // against this render: both halves read the same verdict in the same
-        // request, so a render that applied the hint also told the browser the
-        // affordance was warranted. The strip is for a shop running a STALE
-        // shop-level copy of this file, which applies the hint unconditionally -
-        // and this server-side half is in turn what covers the cases the strip
-        // cannot reach: a back-office translation of the core string, which the
-        // browser will not recognise as ours, and my-account address forms, where
-        // the module's JS is not loaded at all.
-        if (isset($format['company']) && $format['company'] instanceof FormField && $this->twoCompanySearchAvailable()) {
-            $format['company']->addAvailableValue('placeholder', $this->translator->trans('Enter company name to search', [], 'Shop.Forms.Labels'));
-        }
 
         if (isset($format['phone']) && $format['phone'] instanceof FormField) {
             $format['phone']->setType('tel');
@@ -95,44 +63,6 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
         return $format;
     }
 
-    /**
-     * Whether the search-mode hint on the company field is warranted right now
-     * (TWO-25326) - which is to say, whether the module is in a state where a
-     * captured company is still good for anything.
-     *
-     * Asked THROUGH the module rather than by testing categories here, so the
-     * server-rendered hint and the browser-side control - two halves of ONE
-     * affordance - cannot end up on different policies (review round 4). That
-     * method is cache-only by contract, which is what keeps an address-form
-     * render (this also runs on my-account pages) off the network, and it treats
-     * "nothing known yet" as warranted rather than as broken.
-     *
-     * Best-effort and fail-OPEN: an override that cannot get an answer at all
-     * must keep rendering the address form it has always rendered, never take a
-     * hint away from a shop that is fine. Throwable, not Exception: a TypeError
-     * or an Error out of the module's own construction would otherwise escape
-     * into every address form on the shop and break the address step outright.
-     *
-     * @return bool
-     */
-    private function twoCompanySearchAvailable()
-    {
-        try {
-            $module = Module::getInstanceByName('twopayment');
-            if (is_object($module)) {
-                // No method_exists() guard: an instance too old to answer raises
-                // an Error, which the catch below turns into the same fail-open
-                // as any other failure to get an answer. The guard was a second
-                // spelling of one behaviour, and an unpinnable one - removing it
-                // changed nothing any test could see (round 6).
-                return (bool) $module->isTwoCompanySearchAffordanceWarranted();
-            }
-        } catch (Throwable $e) {
-            // Fall through to fail-open below.
-        }
-
-        return true;
-    }
 
     private function moveFieldBefore(array $format, $fieldKey, $beforeKey)
     {
