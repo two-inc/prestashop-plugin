@@ -561,13 +561,15 @@ describe('reopening search cancels a pending enrolment (TWO-40)', () => {
      */
     test('a re-render restore leaves an in-flight enrolment and its popup alone', () => {
         const soleTrader = stubSoleTrader(true);
-        makeInstance();
+        const instance = makeInstance();
         openPanel();
         panelParts().soleTrader.trigger('click');
         soleTrader.focusSignupPopup.mockReturnValue(true);
         soleTrader.abandonEnrollment.mockClear();
         soleTrader.closeSignupPopup.mockClear();
         soleTrader.cancelEnrollment.mockClear();
+        const panelNode = panelParts().panel.get(0);
+        const closeDropdown = jest.spyOn(instance, 'closeDropdown');
 
         // Core's own event, not a direct call: it is what tears the panel down
         // and arms the deadline the restore then runs inside.
@@ -577,6 +579,13 @@ describe('reopening search cancels a pending enrolment (TWO-40)', () => {
         expect(soleTrader.closeSignupPopup).not.toHaveBeenCalled();
         expect(soleTrader.cancelEnrollment).not.toHaveBeenCalled();
         expect(shown(panelParts().panel)).toBe(true);
+        // The restore has to hand back the panel the buyer already had: a
+        // rebuilt node loses the enrolment's spinner/settle state with it, and
+        // `shown()` cannot tell the two apart.
+        expect(panelParts().panel.get(0)).toBe(panelNode);
+        // A listener that did nothing at all would satisfy the assertions
+        // above; this one closes on the buyer's behalf and restores.
+        expect(closeDropdown.mock.calls).toEqual([[false]]);
         soleTrader.focusSignupPopup.mockClear();
         panelParts().soleTrader.trigger('click');
         expect(soleTrader.focusSignupPopup).toHaveBeenCalledTimes(1);

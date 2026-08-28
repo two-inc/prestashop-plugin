@@ -355,15 +355,37 @@ final class CompanySearchCountrySourcingSpec
      * invisible at runtime - the JS simply resolves no country and stops
      * searching, which reads as a broken search rather than as a broken
      * contract. Same class of silent failure as the i18n-key check below.
+     *
+     * Three assertions, because the read is a snapshot rather than a live
+     * lookup: the payload is taken off `window.twopayment` once at construction,
+     * the server's `billing_country` key is what is taken from it, and the
+     * snapshot field is what the country resolver consults. The local variable
+     * holding the payload is not assumed - it is captured from the binding and
+     * matched back to its own assignment, so renaming it is not a failure while
+     * losing any of the three links is.
      */
     private static function testJsReadsTheInjectedBillingCountry(): void
     {
         $js = implode("\n", self::codeLines(self::searchJsSource()));
 
+        $binding = array();
         TinyAssert::true(
-            strpos($js, 'window.twopayment.billing_country') !== false,
-            'TwoCompanySearch no longer reads window.twopayment.billing_country, so the '
+            preg_match('#billingCountry:\s*([A-Za-z_$][\w$]*)\.billing_country\b#', $js, $binding) === 1,
+            'TwoCompanySearch no longer reads the server-injected billing_country key, so the '
             . 'payment-tile search has no country source at all'
+        );
+
+        $payload = $binding[1];
+        TinyAssert::true(
+            preg_match('#\b' . preg_quote($payload, '#') . '\s*=[^;]*window\.twopayment\b#', $js) === 1,
+            'The payload `' . $payload . '` that billing_country is read from is no longer the '
+            . 'window.twopayment payload the media hook injects'
+        );
+
+        TinyAssert::true(
+            strpos($js, 'this._page.billingCountry') !== false,
+            'The snapshotted billing country is no longer consulted, so the payment-tile '
+            . 'search resolves no country and stops searching'
         );
     }
 
@@ -389,13 +411,37 @@ final class CompanySearchCountrySourcingSpec
             'company_search_back_to_search' => 'the back-to-search link',
         ];
 
+        $js = implode("\n", self::codeLines(self::searchJsSource()));
+
+        // The JS asks for each key through one accessor rather than reaching for
+        // the payload at each call site, so the seam is asserted once - that the
+        // accessor resolves from the injected `i18n` payload - and then each key
+        // is asserted to be a key it is actually asked for.
+        $binding = array();
+        TinyAssert::true(
+            preg_match('#i18n:\s*([A-Za-z_$][\w$]*)\.i18n\b#', $js, $binding) === 1,
+            'The search JS no longer takes the injected i18n payload, so every dropdown row '
+            . 'falls back to its English literal for good'
+        );
+        $payload = $binding[1];
+        TinyAssert::true(
+            preg_match('#\b' . preg_quote($payload, '#') . '\s*=[^;]*window\.twopayment\b#', $js) === 1,
+            'The payload `' . $payload . '` the i18n copy is read from is no longer the '
+            . 'window.twopayment payload the media hook injects'
+        );
+        TinyAssert::true(
+            preg_match('#\btext\s*\(\s*key\s*,[^)]*\)\s*\{[^}]*_page\.i18n\[\s*key\s*\]#s', $js) === 1
+            || preg_match('#return\s+this\._page\.i18n\[\s*key\s*\]#', $js) === 1,
+            'The copy accessor no longer resolves keys against the injected i18n payload'
+        );
+
         foreach ($keys as $key => $description) {
             TinyAssert::true(
                 strpos(self::moduleSource(), "'" . $key . "' => \$this->l(") !== false,
                 'Missing translatable copy for ' . $description . ': ' . $key
             );
             TinyAssert::true(
-                strpos(self::searchJsSource(), 'window.twopayment.i18n.' . $key) !== false,
+                preg_match('#\.text\(\s*[\'"]' . preg_quote($key, '#') . '[\'"]#', $js) === 1,
                 'The search JS no longer reads ' . $key . ' (' . $description
                 . '); the PHP copy is dead and the row is permanently untranslated'
             );
@@ -488,9 +534,22 @@ final class CompanySearchCountrySourcingSpec
             'The country select\'s own ISO code is no longer read in ' . $path
             . ' - getCurrentCountry() has lost its first-choice resolution source'
         );
+        // The map is snapshotted off the payload at construction; that seam is
+        // asserted in testJsReadsTheInjectedBillingCountry(). What matters here
+        // is that getCurrentCountry() still SUBSCRIPTS it by country id, which is
+        // the resolution itself rather than a mention of the payload.
+        $countries = array();
         TinyAssert::true(
-            strpos($code, 'window.twopayment.countries[') !== false,
-            'The server-injected id_country -> ISO map is no longer read in ' . $path
+            preg_match('#countries:\s*([A-Za-z_$][\w$]*)\.countries\b#', $code, $countries) === 1,
+            'The server-injected id_country -> ISO map is no longer taken from the payload in '
+            . $path . ' - getCurrentCountry() has lost its authoritative resolution source'
+        );
+        // Anchored on the resolution getCurrentCountry() names, not on a bare
+        // subscript: two OTHER methods subscript the same map, so a bare one
+        // stays satisfied while this resolver loses it.
+        TinyAssert::true(
+            preg_match('#isoFromConfig\s*=[^;]*_page\.countries\[#s', $code) === 1,
+            'The id_country -> ISO map is no longer subscripted by country id in ' . $path
             . ' - getCurrentCountry() has lost its authoritative resolution source'
         );
     }

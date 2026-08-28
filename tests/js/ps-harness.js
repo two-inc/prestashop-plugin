@@ -253,6 +253,12 @@ function buildAddressForm(options) {
  * @param {boolean} [options.blockIds] whether the address blocks carry
  *        core's ids (default true). false, combined with
  *        blockContainers:false, defeats an id-based scope guard.
+ * @param {string} [options.stepAddressId] `data-id-address` on the STEP form
+ *        (default '0'). Distinct from addressId only to tell the two apart in a
+ *        test: with one editable form the step's is the only one that survives
+ *        parsing.
+ * @param {string} [options.addressId] `data-id-address` on the editable address
+ *        form's own `<form>` (default '0')
  * @param {string} [options.dni] initial value of the identification input
  * @param {boolean} [options.formGroups] wrap each field in core's
  *        `.form-group` + `<label>` pair (default false, the flat shape most
@@ -275,6 +281,8 @@ function buildAddressesStep(options) {
     const blockIds = opts.blockIds !== false;
     const dni = opts.dni || '';
     const formGroups = opts.formGroups === true;
+    const stepAddressId = 'stepAddressId' in opts ? opts.stepAddressId : '0';
+    const addressId = 'addressId' in opts ? opts.addressId : '0';
 
     /**
      * One rendered address field, optionally in core's own `.form-group` + label
@@ -317,7 +325,7 @@ function buildAddressesStep(options) {
             );
         }
         lines.push(
-            '        <form method="POST" data-id-address="0">',
+            '        <form method="POST" data-id-address="' + addressId + '">',
             fieldGroup('Company', '<input type="text" name="company" id="field-company" value="' + company + '">')
         );
         if (DNI_COUNTRY_IDS.indexOf(String(countryId)) !== -1) {
@@ -376,7 +384,10 @@ function buildAddressesStep(options) {
         ].join('\n');
     };
 
-    const html = ['<div class="js-address-form">', '  <form method="POST" data-id-address="0">'];
+    const html = [
+        '<div class="js-address-form">',
+        '  <form method="POST" data-id-address="' + stepAddressId + '">'
+    ];
     html.push(editing === 'delivery' ? addressForm('delivery') : addressSelector('delivery'));
     if (invoiceBlock) {
         html.push(editing === 'invoice' ? addressForm('invoice') : addressSelector('invoice'));
