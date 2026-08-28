@@ -145,7 +145,7 @@ deliberately refuses to touch co-owned or unstamped files.
 Related but **not** the same problem: `.tpl` changes also go stale on a shop,
 because a compiled Smarty template is never regenerated while
 `PS_SMARTY_FORCE_COMPILE` is `0`. That is shop configuration, not a migration, and
-is fixed chart-side in `two-inc/platform-tools` — nothing in this repo can address
+is fixed in the deployment chart — nothing in this repo can address
 it.
 
 ## Common Failure Patterns to Avoid
