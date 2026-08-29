@@ -54,6 +54,7 @@ final class BuyerCountryGateSpec
         self::testTheFetchCachesTheAllowlist();
         self::testTheGateVerdict();
         self::testBothEnforcementPointsAgreeWithTheGate();
+        self::testThePaymentOptionIsWithheldWhenNoIsoCountryResolves();
         self::testAFetchThatNeverSucceededLeavesTheGateUnrestricted();
         self::testAFailedRefetchDoesNotBlankAnEstablishedAllowlist();
         self::testAMerchantIdentityChangeDropsTheAllowlist();
@@ -347,6 +348,49 @@ final class BuyerCountryGateSpec
                 'submission point: ' . $description
             );
         }
+    }
+
+    /**
+     * A separate question from the allowlist above: not "is this country
+     * permitted" but "is there a country at all".
+     *
+     * With company search mounted in the payment tile
+     * (PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS off) the only company register the
+     * control can search is the one resolved by this same billing-then-shipping
+     * chain and injected as `twopayment.billing_country`. An unresolved country
+     * would render a tile whose search declines on every keystroke, so the
+     * option is withheld instead.
+     *
+     * The fixture is an address whose country id the shop's country table does
+     * not answer for - a deleted country row. That is what reaches this gate:
+     * an address carrying NO country id is already refused by TWO-25387's
+     * module_country check several lines earlier, and an allowlisted merchant
+     * is already refused by the gate above. The merchant here is unrestricted
+     * and the country ids pass module_country, so nothing else can refuse.
+     */
+    private static function testThePaymentOptionIsWithheldWhenNoIsoCountryResolves(): void
+    {
+        $module = self::offerableModule('GB', 'GB');
+        self::cacheAllowlist(null);
+        StubStore::$addresses[self::ID_BILLING]['id_country'] = 4242;
+        StubStore::$addresses[self::ID_SHIPPING]['id_country'] = 4243;
+
+        TinyAssert::count(
+            0,
+            $module->hookPaymentOptions([]),
+            'the tile was offered with no company register for its search to query'
+        );
+
+        // The shipping address alone is enough to keep it offered.
+        $module = self::offerableModule('GB', 'NO');
+        self::cacheAllowlist(null);
+        StubStore::$addresses[self::ID_BILLING]['id_country'] = 4242;
+
+        TinyAssert::count(
+            1,
+            $module->hookPaymentOptions([]),
+            'a resolvable shipping country did not keep the payment option offered'
+        );
     }
 
     /* ===================================================================

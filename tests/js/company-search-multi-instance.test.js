@@ -552,15 +552,52 @@ describe('addressScope() on PrestaShop core markup', () => {
         expect(control.scopedQuery("select[name='id_country']")).toBeNull();
     });
 
-    test('a failed-closed scope reads no country, not the untrusted one on the page', () => {
+    test('a failed-closed scope reads no country at all, page value included', () => {
         // Given a country select the control must not trust, and a page value
         window.twopayment = { billing_country: 'NO' };
         const control = mountWithNoScope();
 
-        // Then the read falls through to the page value rather than the DOM's
+        // Then neither is taken: the page value is the CART's billing country,
+        // and this control cannot say which address block it is in
         expect(document.querySelector("select[name='id_country']").selectedOptions[0]
             .getAttribute('data-iso-code')).toBe('DE');
-        expect(control.getCurrentCountry()).toBe('NO');
+        expect(control.getCurrentCountry()).toBe('');
+    });
+
+    test('a failed-closed scope withdraws the search and leaves manual entry', () => {
+        window.twopayment = { billing_country: 'NO' };
+        const control = mountWithNoScope();
+
+        expect(control.searchUnavailable()).toBe(true);
+        expect(control.isManualEntry()).toBe(true);
+
+        // No panel was built, so there is nothing to open and no chip row
+        expect(document.querySelector('.two-company-dropdown')).toBeNull();
+        control.openDropdown();
+        expect(document.querySelector('.two-company-dropdown')).toBeNull();
+
+        // The company field is the plain editable input the buyer types into
+        const field = document.getElementById('field-company');
+        expect(field.hasAttribute('readonly')).toBe(false);
+
+        // And no route back into search, from any path
+        control.renderBackToSearchLink();
+        control.exitManualEntryMode();
+        expect(document.querySelector('.two-company-search-back')).toBeNull();
+        expect(control.isManualEntry()).toBe(true);
+    });
+
+    test('the tile mount is never withdrawn - it is in no address block by design', () => {
+        // Given the payment-tile mount, whose scope is `document`, not a block
+        document.body.innerHTML = "<input type='text' id='two_tile_company' />";
+        const control = new TwoCompanySearch({
+            checkoutHost: CHECKOUT_HOST,
+            companySearchInAddressArea: false,
+            companyFieldSelector: '#two_tile_company'
+        });
+
+        expect(control.addressScope()).toBe(document);
+        expect(control.searchUnavailable()).toBe(false);
     });
 
     test('scopedQuery() answers from inside the scope when there is one', () => {
