@@ -49,7 +49,6 @@ afterEach(() => {
     releaseWidgets($);
     ajax.restore();
     document.body.innerHTML = '';
-    document.documentElement.style.removeProperty('--two-company-search-width');
     jest.useRealTimers();
 });
 

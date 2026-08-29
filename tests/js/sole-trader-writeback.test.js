@@ -332,7 +332,7 @@ describe('an internal (`TWO:`) identifier: uniform everywhere except the visible
 
 describe('the address-lookup toggle', () => {
     /**
-     * TWO-40 follow-up (live bug reported by Doug 2026-08-12): the
+     * TWO-40 follow-up (live bug, 2026-08-12): the
      * address-lookup switch (PS_TWO_ADDRESS_LOOKUP) governs whether an
      * ORDINARY company-SEARCH selection writes into the address step, and
      * `Twopayment::getAddressLookupEnabled()` forces it to '0' outright once
@@ -667,7 +667,7 @@ describe('soleTraderPairReport(): three outcomes for the identification field, n
     });
 
     /**
-     * TWO-40 follow-up (live bug reported by Doug 2026-08-12): the
+     * TWO-40 follow-up (live bug, 2026-08-12): the
      * address-lookup switch does not gate the sole-trader completion (see
      * the identical note on the "the address-lookup toggle" describe block
      * above) - so a real register number reaches `dni` and is reported
@@ -690,7 +690,7 @@ describe('soleTraderPairReport(): three outcomes for the identification field, n
     });
 
     /**
-     * TWO-40 follow-up (live bug reported by Doug 2026-08-12): with the gate
+     * TWO-40 follow-up (live bug, 2026-08-12): with the gate
      * bypassed, `writeOrganizationToAddressIdentifiers(number, false, ...)` is
      * reached with `onlyIfEmpty` false - an existing value in the buyer's own
      * identification field is a signup completion overwriting it
@@ -982,7 +982,7 @@ describe('region routing: the state select where there is one, the city where th
     });
 
     /**
-     * TWO-40 follow-up (live bug reported by Doug 2026-08-12): see the
+     * TWO-40 follow-up (live bug, 2026-08-12): see the
      * identical note on the "the address-lookup toggle" describe block above
      * - the switch does not gate a signup completion, region included.
      */
@@ -1397,7 +1397,7 @@ describe('applyBuyer(): a completed enrolment populates the FORM, end to end', (
     });
 
     /**
-     * TWO-40 follow-up (live bug reported by Doug 2026-08-12): an order-intent
+     * TWO-40 follow-up (live bug, 2026-08-12): an order-intent
      * check fired off a completed sole-trader enrolment before the buyer had
      * reached the payment step. TwoCompanySearch.onCompanySelected() calls the
      * manager's markTileCompanySelected() the instant a search RESULT is
