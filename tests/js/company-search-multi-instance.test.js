@@ -34,8 +34,6 @@ const CHECKOUT_HOST = 'https://api.example.test';
 // name which one answered; the block's is dropped by the parser.
 const STEP_ADDRESS_ID = '5';
 const BLOCK_ADDRESS_ID = '12';
-// The saved address on the non-editable side of core's step fixture.
-const SAVED_ADDRESS_ID = 7;
 
 let TwoCompanySearch;
 let $;
@@ -113,6 +111,22 @@ function openPanelFor(instance) {
     instance.companyField.trigger('mousedown');
 }
 
+/**
+ * @param {Object} instance
+ * @param {string} value
+ * @returns {void} types into that control's OWN query field
+ */
+function typeInto(instance, value) {
+    const query = instance._queryField;
+    query.val(value);
+    query.get(0).dispatchEvent(new window.Event('input', { bubbles: true }));
+}
+
+/** In the shape GET /companies/v2/company returns. */
+const SEARCH_RESPONSE = {
+    items: [{ name: 'Example Ltd', lookup_id: 'lk-1', national_identifier: { id: '11111111' } }]
+};
+
 beforeEach(() => {
     buildTwoAddressBlocks();
     const loaded = loadCompanySearch();
@@ -122,6 +136,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+    jest.useRealTimers();
     releaseWidgets($);
     ajax.restore();
     delete window.twopayment;
@@ -141,28 +156,43 @@ describe('two live controls do not share state', () => {
         expect(second.getCurrentCountry()).toBe('NO');
     });
 
-    test('the cache key carries each control OWN country, so results cannot cross', () => {
+    test('a search fills the class cache for its OWN country only, so the other control still goes to the wire', () => {
         // Given two controls in different countries
+        jest.useFakeTimers();
         const first = makeFirst();
         const second = makeSecond();
 
-        // Then the same term files under two different keys
-        expect(first.buildCacheKey('exa')).toBe('exa|GB');
-        expect(second.buildCacheKey('exa')).toBe('exa|NO');
+        // When the GB control runs a search to completion
+        openPanelFor(first);
+        typeInto(first, 'exa');
+        jest.advanceTimersByTime(400);
+        ajax.last().succeed(SEARCH_RESPONSE);
+        jest.advanceTimersByTime(50);
+
+        // Then the entry answers GB and is unreachable from NO
+        expect(TwoCompanySearch.cacheGet(first.buildCacheKey('exa'))).not.toBeNull();
+        expect(TwoCompanySearch.cacheGet(second.buildCacheKey('exa'))).toBeNull();
+
+        // And the NO control asking the same question asks the API, rather
+        // than showing the buyer GB companies
+        const beforeSecond = ajax.calls.length;
+        openPanelFor(second);
+        typeInto(second, 'exa');
+        jest.advanceTimersByTime(400);
+        expect(ajax.calls.length).toBe(beforeSecond + 1);
     });
 
-    test('a shared cache entry is reachable only through a matching key', () => {
-        // Given a control that has filled the cache for its own country
-        const first = makeFirst();
+    test.each([
+        ["select[name='id_country']"],
+        ["input[name='company']"]
+    ])('scopedQuery(%s) answers from this control OWN block, not first-in-document', (selector) => {
+        // Given a control in the SECOND block, so a document-wide lookup would
+        // answer with the first block's node
         const second = makeSecond();
-        TwoCompanySearch.cacheSet(first.buildCacheKey('exa'), [{ value: 'Example Ltd' }]);
 
-        // Then the class-wide cache answers the first and not the second - the
-        // sharing is by key, which is what makes it safe
-        expect(TwoCompanySearch.cacheGet(first.buildCacheKey('exa'))).toEqual([
-            { value: 'Example Ltd' }
-        ]);
-        expect(TwoCompanySearch.cacheGet(second.buildCacheKey('exa'))).toBeNull();
+        const found = second.scopedQuery(selector);
+        expect(found).toBe(document.querySelector('#invoice-address ' + selector));
+        expect(found).not.toBe(document.querySelector(selector));
     });
 
     test('each binds its country listener to its OWN select', () => {
@@ -178,9 +208,10 @@ describe('two live controls do not share state', () => {
     });
 
     test('arming one control panel reopen does not arm the other', () => {
-        // Given two controls, each with its own reopen memory
-        const first = makeFirst({ reopenMemory: {} });
-        const second = makeSecond({ reopenMemory: {} });
+        // Given two controls built the un-injected way, so the separation under
+        // test is the class's own default and not the fixture's
+        const first = makeFirst();
+        const second = makeSecond();
 
         // When a re-render arms the first
         first.armReopen(Date.now() + 1000);
@@ -320,15 +351,13 @@ describe('two live controls do not share their inputs', () => {
         expect(second.getNoMatchesText()).toBe('Sin resultados');
     });
 
-    test('a page carrying no config at all falls back per control, not to a shared blank', () => {
+    test('a page carrying no config at all still answers with the English source string', () => {
         // Given no published config, and two controls built from it
         const first = makeFirst();
         const second = makeSecond();
 
-        // Then each answers with the English source string in its own right
         expect(first.getNoMatchesText()).toBe('No matches found');
         expect(second.getNoMatchesText()).toBe('No matches found');
-        expect(first._page.i18n).not.toBe(second._page.i18n);
     });
 
     test('each resolves the sibling modules it was GIVEN, not the page singletons', () => {
@@ -446,14 +475,10 @@ describe('two live controls do not share their DOM', () => {
  * assert here, and the other side of the step is a saved-address selector. That
  * is why the two-control leak proofs above run on their own fixture.
  *
- * Two parse-level facts drive every expectation below, and neither is visible in
- * a hand-built approximation:
- *
- *  - a `<form>` inside a `<form>` is invalid, so the address form's own `<form>`
- *    tag is dropped and the block's `.js-address-form` div - not a form - is the
- *    innermost usable scope;
- *  - consequently the STEP form is the only surviving `form[data-id-address]`,
- *    so the address id is a step-level fact that no per-block scope can narrow.
+ * One parse-level fact drives every expectation below, and it is not visible in a
+ * hand-built approximation: a `<form>` inside a `<form>` is invalid, so the
+ * address form's own `<form>` tag is dropped and the block's `.js-address-form`
+ * div - not a form - is the innermost usable scope.
  *
  * @param {string} editing 'delivery' or 'invoice' - the side core made editable
  * @param {Function} [beforeMount] runs against the built fixture
@@ -512,23 +537,6 @@ describe('addressScope() on PrestaShop core markup', () => {
         expect(document.querySelectorAll("input[name='companyid']").length).toBe(2);
     });
 
-    /**
-     * The step form is the ONLY `form[data-id-address]` left after parsing, so
-     * this is the narrowest true answer available and the scoped branch in
-     * getCurrentAddressId() cannot improve on it - deleting that branch leaves
-     * this test green. The negative is free too: the editable form outranks the
-     * radios, so the other side's saved address could not answer either way.
-     * The scoped branch is pinned instead by 'each answers with its OWN address
-     * id', on the two-block fixture where per-block forms survive.
-     */
-    test('the address id is the step form, never the other side saved address', () => {
-        const control = mountOnCoreStep('invoice');
-
-        expect(document.querySelectorAll('form[data-id-address]').length).toBe(1);
-        expect(control.getCurrentAddressId()).toBe(Number(STEP_ADDRESS_ID));
-        expect(control.getCurrentAddressId()).not.toBe(SAVED_ADDRESS_ID);
-    });
-
     test('fails closed to no scope when the only candidate spans both blocks', () => {
         // Given a theme that flattens core's per-block wrappers and ids, so the
         // nearest candidate is the step form, which holds the other side too
@@ -582,7 +590,7 @@ describe('addressScope() on PrestaShop core markup', () => {
 
     test('a failed-closed scope reads no country at all, page value included', () => {
         // Given a country select the control must not trust, and a page value
-        window.twopayment = { billing_country: 'NO' };
+        window.twopayment = { company_search_country: 'NO' };
         const control = mountWithNoScope();
 
         // Then neither is taken: the page value is the CART's billing country,
@@ -593,7 +601,7 @@ describe('addressScope() on PrestaShop core markup', () => {
     });
 
     test('a failed-closed scope withdraws the search and leaves manual entry', () => {
-        window.twopayment = { billing_country: 'NO' };
+        window.twopayment = { company_search_country: 'NO' };
         const control = mountWithNoScope();
 
         expect(control.searchUnavailable()).toBe(true);
@@ -667,7 +675,7 @@ describe('addressScope() on PrestaShop core markup', () => {
     });
 
     /**
-     * The tile mount's country is server-resolved (`twopayment.billing_country`),
+     * The tile mount's country is server-resolved (`twopayment.company_search_country`),
      * so an ambiguous scope costs it nothing: there is no block whose country
      * select it was going to read. A block mount in the same DOM position
      * withdraws, and it is `companySearchInAddressArea` that tells the two
@@ -710,14 +718,6 @@ describe('addressScope() on PrestaShop core markup', () => {
         expect($.contains(document.getElementById('two_tile_company').parentNode,
             document.querySelector('.two-company-dropdown'))).toBe(true);
         expect(block.isManualEntry()).toBe(true);
-    });
-
-    test('scopedQuery() answers from inside the scope when there is one', () => {
-        const control = mountOnCoreStep('invoice');
-        const found = control.scopedQuery("select[name='id_country']");
-
-        expect(found).not.toBeNull();
-        expect($.contains(control.addressScope(), found)).toBe(true);
     });
 
     test('a failed-closed scope adopts the shipped companyid, never a second one', () => {

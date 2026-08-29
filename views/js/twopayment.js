@@ -159,8 +159,9 @@
                     // TWO-25326 bug 9: availability is about the cart's billing
                     // country, not the visitor/shop country. The payment step
                     // renders no country select, so it has to come from the
-                    // payload.
-                    billingCountry: twopayment.billing_country,
+                    // payload - under its own key, since the search's
+                    // `company_search_country` falls back to the shipping address.
+                    billingCountry: twopayment.sole_trader_country,
                     shopCountry: twopayment.shop_country,
                     statusLabel: twopayment.i18n && twopayment.i18n.sole_trader_status_label
                 });

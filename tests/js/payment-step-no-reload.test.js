@@ -228,7 +228,7 @@ beforeEach(() => {
         order_intent_url: ORDER_INTENT_URL,
         ajax_token: 'test-token',
         checkout_host: CHECKOUT_HOST,
-        billing_country: 'GB',
+        company_search_country: 'GB',
         surcharge_cart_line: true
     };
 

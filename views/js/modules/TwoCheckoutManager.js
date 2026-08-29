@@ -61,7 +61,7 @@ class TwoCheckoutManager {
         // TwoCompanySearch.mirrorConfirmedCompanyToInvoiceAddress().
         this._invoiceMirrorMemory = {};
         // Page-lifetime because one `updatedAddressForm` tears the search down
-        // twice; keyed by mount selector.
+        // twice, so the deadline has to outlive the instance holding it.
         this._companySearchReopenMemory = {};
         // TWO-40: and where the server has one for this cart, start from it. Must
         // run before init(), which is what constructs the modules that read the
@@ -2203,7 +2203,7 @@ class TwoCheckoutManager {
                 addressLookupEnabled: false,
                 companySearchInAddressArea: false,
                 companyFieldSelector: tileSelector,
-                reopenMemory: this.companySearchReopenMemory(tileSelector),
+                reopenMemory: this._companySearchReopenMemory,
                 getManager: () => this
             });
             return;
@@ -2225,24 +2225,9 @@ class TwoCheckoutManager {
             // buyer cleared, and what lets it re-mark its own writes after core
             // rebuilds the address form.
             mirrorMemory: this._invoiceMirrorMemory,
-            reopenMemory: this.companySearchReopenMemory(addressCompanySelector),
+            reopenMemory: this._companySearchReopenMemory,
             getManager: () => this
         });
-    }
-
-    /**
-     * The reopen scratch for one mount selector, so a rebuild of that mount
-     * finds its own deadline.
-     *
-     * @param {string} selector that mount's `companyFieldSelector`
-     * @returns {Object}
-     */
-    companySearchReopenMemory(selector) {
-        if (!this._companySearchReopenMemory[selector]) {
-            this._companySearchReopenMemory[selector] = {};
-        }
-
-        return this._companySearchReopenMemory[selector];
     }
 
     initializeOrderIntent() {

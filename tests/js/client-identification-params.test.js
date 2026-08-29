@@ -73,7 +73,7 @@ function publishConfig(extra) {
         client: CLIENT,
         client_version: CLIENT_VERSION,
         checkout_host: CHECKOUT_HOST,
-        billing_country: 'GB',
+        company_search_country: 'GB',
         i18n: {}
     }, extra || {});
 }

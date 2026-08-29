@@ -577,7 +577,7 @@ describe('class-static result cache', () => {
         // `select[name='country']`. This method used to check `id_country`
         // only, so a theme rendering the field under that name made this
         // method fall straight through to the page-load-time
-        // `window.twopayment.billing_country` while TwoSoleTrader.js resolved
+        // `window.twopayment.company_search_country` while TwoSoleTrader.js resolved
         // the live value off the real select - the two silently disagreeing
         // on country.
         document.body.innerHTML = '';
