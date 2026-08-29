@@ -357,7 +357,7 @@ final class BuyerCountryGateSpec
      * TILE MOUNT ONLY (PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS off), which is the
      * one configuration where the control has no country select to read: the
      * only register it can search is the one resolved by this same
-     * billing-then-shipping chain and injected as `twopayment.billing_country`.
+     * billing-then-shipping chain and injected as `twopayment.company_search_country`.
      * An unresolved country would render a tile whose search declines on every
      * keystroke, so the option is withheld instead. With the search in the
      * address area the control reads the form's own select and the payment

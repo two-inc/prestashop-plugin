@@ -136,7 +136,7 @@ class TwoCompanySearch {
         this._page = {
             i18n: page.i18n || {},
             countries: page.countries || null,
-            billingCountry: page.billing_country || '',
+            searchCountry: page.company_search_country || '',
             orderIntentUrl: page.order_intent_url || '',
             ajaxToken: page.ajax_token || ''
         };
@@ -304,7 +304,15 @@ class TwoCompanySearch {
      * @returns {boolean}
      */
     searchUnavailable() {
-        return this.config.companySearchInAddressArea !== false && this.addressScope() === null;
+        const withheld = this.config.companySearchInAddressArea !== false && this.addressScope() === null;
+
+        // Once per instance: this gate re-runs on every re-render.
+        if (withheld && !this._withholdLogged) {
+            this._withholdLogged = true;
+            console.warn('Two Payment: company search withheld - this theme\'s markup gives the field no identifiable address block; manual entry only.');
+        }
+
+        return withheld;
     }
 
     init() {
@@ -4990,7 +4998,7 @@ class TwoCompanySearch {
      *
      * A FOURTH strategy sits after all three, and it is the only one that can
      * resolve anything when there is no country select on the page at all:
-     * `window.twopayment.billing_country`, resolved server-side by
+     * `window.twopayment.company_search_country`, resolved server-side by
      * twopayment.php's getCheckoutSearchCountryIso() - see there for what the
      * chain is and why the payment step has no select to read. Reached ONLY by
      * the payment-tile mount; a block mount that cannot identify its own block
@@ -5017,7 +5025,7 @@ class TwoCompanySearch {
         // billingCountry() and TwoOrderIntent.js's getCurrentAddressCountryISO()
         // both already fell back to `select[name='country']` too. On a theme
         // that renders the field under that name, this method fell straight
-        // through to `window.twopayment.billing_country` (a page-load-time
+        // through to `window.twopayment.company_search_country` (a page-load-time
         // value, never reassigned client-side) while TwoSoleTrader.js resolved
         // the LIVE value off the real select - so the sole-trader chip and the
         // company search could silently disagree on country on exactly the
@@ -5055,11 +5063,11 @@ class TwoCompanySearch {
         // 4. Server-resolved; see the docblock. Shape-checked rather than
         // trusted, so a malformed payload cannot put junk on the wire as a
         // `country` parameter.
-        const billingCountry = this._page.billingCountry
-            ? String(this._page.billingCountry).trim().toUpperCase()
+        const searchCountry = this._page.searchCountry
+            ? String(this._page.searchCountry).trim().toUpperCase()
             : '';
-        if (/^[A-Z]{2}$/.test(billingCountry)) {
-            return billingCountry;
+        if (/^[A-Z]{2}$/.test(searchCountry)) {
+            return searchCountry;
         }
 
         // Unresolvable. searchCompanies() declines to search rather than

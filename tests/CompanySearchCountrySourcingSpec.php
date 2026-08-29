@@ -52,11 +52,11 @@ final class CompanySearchCountrySourcingSpec
     public static function runAll(): void
     {
         self::testCountryIsoMapIsInjectedByTheMediaHook();
-        self::testBillingCountryIsInjectedByTheMediaHook();
+        self::testSearchCountryIsInjectedByTheMediaHook();
         self::testBillingCountryResolvesFromTheCartsInvoiceAddress();
         self::testBillingCountryIsNeverTheDeliveryAddress();
         self::testCheckoutSearchCountryFallsBackToTheDeliveryAddress();
-        self::testJsReadsTheInjectedBillingCountry();
+        self::testJsReadsTheInjectedSearchCountry();
         self::testDropdownCopyKeysMatchTheKeysTheJsReads();
         self::testClearCompanyActionSeam();
         self::testJsNoLongerGuessesTheCountry();
@@ -246,7 +246,7 @@ final class CompanySearchCountrySourcingSpec
      * tile-mounted search silently stops searching on every keystroke, which
      * is exactly the state Doug found live.
      */
-    private static function testBillingCountryIsInjectedByTheMediaHook(): void
+    private static function testSearchCountryIsInjectedByTheMediaHook(): void
     {
         $hook = 'hookActionFrontControllerSetMedia';
         $body = self::functionBody(
@@ -257,8 +257,8 @@ final class CompanySearchCountrySourcingSpec
         $body_text = implode("\n", $body);
 
         TinyAssert::true(
-            strpos($body_text, "'billing_country' => \$this->getCheckoutSearchCountryIso()") !== false,
-            'The billing-address country is no longer injected by ' . $hook
+            strpos($body_text, "'company_search_country' => \$this->getCheckoutSearchCountryIso()") !== false,
+            'The company-search country is no longer injected by ' . $hook
             . '() - the payment-tile company search has no country to search with'
         );
     }
@@ -416,30 +416,30 @@ final class CompanySearchCountrySourcingSpec
      * contract. Same class of silent failure as the i18n-key check below.
      *
      * The read is a snapshot, so all three links are pinned: payload off
-     * `window.twopayment`, `billing_country` off the payload, snapshot field
+     * `window.twopayment`, `company_search_country` off the payload, snapshot field
      * read by the country resolver.
      */
-    private static function testJsReadsTheInjectedBillingCountry(): void
+    private static function testJsReadsTheInjectedSearchCountry(): void
     {
         $js = implode("\n", self::codeLines(self::searchJsSource()));
 
         $binding = array();
         TinyAssert::true(
-            preg_match('#billingCountry:\s*([A-Za-z_$][\w$]*)\.billing_country\b#', $js, $binding) === 1,
-            'TwoCompanySearch must read the server-injected billing_country key - it is the '
+            preg_match('#searchCountry:\s*([A-Za-z_$][\w$]*).company_search_country\b#', $js, $binding) === 1,
+            'TwoCompanySearch must read the server-injected company_search_country key - it is the '
             . 'payment-tile search\'s only country source'
         );
 
         $payload = $binding[1];
         TinyAssert::true(
             preg_match('#\b' . preg_quote($payload, '#') . '\s*=[^;]*window\.twopayment\b#', $js) === 1,
-            'billing_country must be read from `' . $payload . '`, the window.twopayment payload '
+            'company_search_country must be read from `' . $payload . '`, the window.twopayment payload '
             . 'the media hook injects'
         );
 
         TinyAssert::true(
-            strpos($js, 'this._page.billingCountry') !== false,
-            'getCurrentCountry() must consult the snapshotted billing country, or the '
+            strpos($js, 'this._page.searchCountry') !== false,
+            'getCurrentCountry() must consult the snapshotted search country, or the '
             . 'payment-tile search resolves none and stops searching'
         );
     }
@@ -590,7 +590,7 @@ final class CompanySearchCountrySourcingSpec
             . ' - getCurrentCountry() has lost its first-choice resolution source'
         );
         // The map is snapshotted off the payload at construction; that seam is
-        // asserted in testJsReadsTheInjectedBillingCountry(). What matters here
+        // asserted in testJsReadsTheInjectedSearchCountry(). What matters here
         // is that getCurrentCountry() still SUBSCRIPTS it by country id, which is
         // the resolution itself rather than a mention of the payload.
         $countries = array();

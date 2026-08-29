@@ -2640,7 +2640,9 @@ class Twopayment extends PaymentModule
      * selection's country against the cart's own (getTwoBrowserCompanySelection)
      * and the sole-trader availability check depend on that: a shipping country
      * standing in would validate a company against an address the order is not
-     * billed to. The checkout JS gets the wider chain instead - see
+     * billed to. Published to the checkout JS as `sole_trader_country`, so the
+     * browser's own availability and token minting answer for the same country
+     * this does. The company SEARCH gets the wider chain instead - see
      * getCheckoutSearchCountryIso().
      *
      * Resolves or returns empty, like the browser-side chain it feeds:
@@ -4568,11 +4570,15 @@ class Twopayment extends PaymentModule
                 // already-dead keys would just have grown the dead set.
                 'enable_order_intent' => $this->enable_order_intent,
                 'shop_country' => (string) Context::getContext()->country->iso_code,
-                // The tile-mounted search's only country source; read under this
-                // key by three JS modules. See getCheckoutSearchCountryIso().
+                // The tile-mounted search's only country source. See
+                // getCheckoutSearchCountryIso().
                 // Not a substitute for the select: getCurrentCountry() still
                 // prefers a live one, which a buyer mid-edit may have changed.
-                'billing_country' => $this->getCheckoutSearchCountryIso(),
+                'company_search_country' => $this->getCheckoutSearchCountryIso(),
+                // Separate from the search's country because an enrolment
+                // captured outside the billing country is withheld by
+                // getTwoBrowserCompanySelection() (TWO-40).
+                'sole_trader_country' => $this->getCheckoutBillingCountryIso(),
                 // The company the buyer already confirmed for THIS cart, or null
                 // (TWO-40). The browser's own record of a selection dies with the
                 // page, and the address step is a sequence of real document
@@ -4875,7 +4881,7 @@ class Twopayment extends PaymentModule
         }
 
         // Tile-mount gate only. With the search in the payment tile, its one
-        // country source is `twopayment.billing_country` (see
+        // country source is `twopayment.company_search_country` (see
         // getCheckoutSearchCountryIso()); an empty answer would render a tile
         // whose search declines on every keystroke, so the tile does not render
         // at all. In address-area mode the control reads the form's own country
