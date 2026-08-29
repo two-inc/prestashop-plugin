@@ -426,21 +426,21 @@ final class CompanySearchCountrySourcingSpec
         $binding = array();
         TinyAssert::true(
             preg_match('#billingCountry:\s*([A-Za-z_$][\w$]*)\.billing_country\b#', $js, $binding) === 1,
-            'TwoCompanySearch no longer reads the server-injected billing_country key, so the '
-            . 'payment-tile search has no country source at all'
+            'TwoCompanySearch must read the server-injected billing_country key - it is the '
+            . 'payment-tile search\'s only country source'
         );
 
         $payload = $binding[1];
         TinyAssert::true(
             preg_match('#\b' . preg_quote($payload, '#') . '\s*=[^;]*window\.twopayment\b#', $js) === 1,
-            'The payload `' . $payload . '` that billing_country is read from is no longer the '
-            . 'window.twopayment payload the media hook injects'
+            'billing_country must be read from `' . $payload . '`, the window.twopayment payload '
+            . 'the media hook injects'
         );
 
         TinyAssert::true(
             strpos($js, 'this._page.billingCountry') !== false,
-            'The snapshotted billing country is no longer consulted, so the payment-tile '
-            . 'search resolves no country and stops searching'
+            'getCurrentCountry() must consult the snapshotted billing country, or the '
+            . 'payment-tile search resolves none and stops searching'
         );
     }
 
@@ -475,19 +475,19 @@ final class CompanySearchCountrySourcingSpec
         $binding = array();
         TinyAssert::true(
             preg_match('#i18n:\s*([A-Za-z_$][\w$]*)\.i18n\b#', $js, $binding) === 1,
-            'The search JS no longer takes the injected i18n payload, so every dropdown row '
-            . 'falls back to its English literal for good'
+            'The search JS must take the injected i18n payload, or every dropdown row falls '
+            . 'back to its English literal for good'
         );
         $payload = $binding[1];
         TinyAssert::true(
             preg_match('#\b' . preg_quote($payload, '#') . '\s*=[^;]*window\.twopayment\b#', $js) === 1,
-            'The payload `' . $payload . '` the i18n copy is read from is no longer the '
-            . 'window.twopayment payload the media hook injects'
+            'The i18n copy must be read from `' . $payload . '`, the window.twopayment payload '
+            . 'the media hook injects'
         );
         TinyAssert::true(
             preg_match('#\btext\s*\(\s*key\s*,[^)]*\)\s*\{[^}]*_page\.i18n\[\s*key\s*\]#s', $js) === 1
             || preg_match('#return\s+this\._page\.i18n\[\s*key\s*\]#', $js) === 1,
-            'The copy accessor no longer resolves keys against the injected i18n payload'
+            'The copy accessor must resolve keys against the injected i18n payload'
         );
 
         foreach ($keys as $key => $description) {
@@ -596,16 +596,16 @@ final class CompanySearchCountrySourcingSpec
         $countries = array();
         TinyAssert::true(
             preg_match('#countries:\s*([A-Za-z_$][\w$]*)\.countries\b#', $code, $countries) === 1,
-            'The server-injected id_country -> ISO map is no longer taken from the payload in '
-            . $path . ' - getCurrentCountry() has lost its authoritative resolution source'
+            'The id_country -> ISO map must be taken from the injected payload in ' . $path
+            . ' - it is getCurrentCountry()\'s authoritative resolution source'
         );
         // Anchored on the resolution getCurrentCountry() names, not on a bare
         // subscript: two OTHER methods subscript the same map, so a bare one
         // stays satisfied while this resolver loses it.
         TinyAssert::true(
             preg_match('#isoFromConfig\s*=[^;]*_page\.countries\[#s', $code) === 1,
-            'The id_country -> ISO map is no longer subscripted by country id in ' . $path
-            . ' - getCurrentCountry() has lost its authoritative resolution source'
+            'getCurrentCountry() must subscript the id_country -> ISO map by country id in '
+            . $path . ' - it is its authoritative resolution source'
         );
     }
 }

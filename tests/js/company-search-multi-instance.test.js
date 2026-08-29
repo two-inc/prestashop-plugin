@@ -10,8 +10,7 @@
  * before a second mount can be added.
  *
  * A handful of the tests below are regression pins rather than leak proofs -
- * the request counter, the event namespace, the panel and query field, the
- * manual-entry flag, the no-config fallback.
+ * the event namespace, the panel and query field, the manual-entry flag.
  *
  * Deliberately NOT covered, because the sharing is the design and not a leak:
  * the result cache (keyed by term and country, so both controls asking the same
@@ -206,18 +205,41 @@ describe('two live controls do not share state', () => {
         expect(rebuilt.reopenDeadline()).toBeGreaterThan(0);
     });
 
-    test('each holds its own request state', () => {
-        // Given two controls
+    test('aborting one control in-flight search leaves the other request alive', () => {
+        // Given two controls each holding a request
+        const first = makeFirst();
+        const second = makeSecond();
+        const firstXhr = { abort: jest.fn() };
+        const secondXhr = { abort: jest.fn() };
+        first._companySearchXhr = firstXhr;
+        second._companySearchXhr = secondXhr;
+
+        // When one abandons its search, as a country change does
+        first._abortPendingCompanySearch();
+
+        // Then only its own request was aborted, and only its own handle
+        // released - a shared one would have taken both
+        expect(firstXhr.abort).toHaveBeenCalled();
+        expect(secondXhr.abort).not.toHaveBeenCalled();
+        expect(first._companySearchXhr).toBeNull();
+        expect(second._companySearchXhr).toBe(secondXhr);
+    });
+
+    test('each paints its org-number hint under its OWN field', () => {
+        // Given two controls, one of which has a company selected
         const first = makeFirst();
         const second = makeSecond();
 
-        // When one is put mid-flight
-        first._companySearchSeq = 7;
-        first._companySearchXhr = { abort: jest.fn() };
+        first.setCompanyIdHint('918273645');
 
-        // Then the other is untouched
-        expect(second._companySearchSeq).toBe(0);
-        expect(second._companySearchXhr).toBeNull();
+        // Then the number sits in the first block and the second block's hint
+        // is blank - document-wide, it painted under whichever field came first
+        const hintIn = (id) => document.getElementById(id)
+            .querySelector('.two-company-id-hint').textContent;
+        expect(hintIn('delivery-address')).toBe('918273645');
+        expect(hintIn('invoice-address')).toBe('');
+        expect(second.companyIdHintField.get(0))
+            .not.toBe(first.companyIdHintField.get(0));
     });
 
     test('each gets its own event namespace, so one teardown cannot unbind the other', () => {
@@ -299,11 +321,14 @@ describe('two live controls do not share their inputs', () => {
     });
 
     test('a page carrying no config at all falls back per control, not to a shared blank', () => {
-        // Given no published config
+        // Given no published config, and two controls built from it
         const first = makeFirst();
+        const second = makeSecond();
 
-        // Then the English source string answers
+        // Then each answers with the English source string in its own right
         expect(first.getNoMatchesText()).toBe('No matches found');
+        expect(second.getNoMatchesText()).toBe('No matches found');
+        expect(first._page.i18n).not.toBe(second._page.i18n);
     });
 
     test('each resolves the sibling modules it was GIVEN, not the page singletons', () => {
@@ -337,18 +362,21 @@ describe('two live controls do not share their inputs', () => {
 });
 
 describe('the tile-selected gate is set through the manager own method', () => {
-    test('TwoCheckoutManager exposes markTileCompanySelected(), so no collaborator writes the field', () => {
-        // Given the real manager class
+    test('marking a tile selection is what opens the auto-trigger gate', () => {
+        // Given the real manager in tile mode, with no selection made and a
+        // search still in its searching (not manual-entry) state
         loadScript('views/js/modules/TwoCheckoutManager.js');
-        const TwoCheckoutManager = window.TwoCheckoutManager;
-        const manager = Object.create(TwoCheckoutManager.prototype);
+        const manager = Object.create(window.TwoCheckoutManager.prototype);
+        manager.config = { companySearchInAddressArea: false };
         manager._tileCompanySelected = false;
+        manager.companySearch = { isManualEntry: () => false };
+        expect(manager.canAutoTriggerOrderIntent()).toBe(false);
 
         // When the company search reports a tile selection
         manager.markTileCompanySelected();
 
-        // Then the gate is open
-        expect(manager._tileCompanySelected).toBe(true);
+        // Then a generic mounted/re-rendered signal may fire the intent check
+        expect(manager.canAutoTriggerOrderIntent()).toBe(true);
     });
 
     test('a real selection reports to the injected manager, and not to the page singleton', () => {
@@ -587,8 +615,46 @@ describe('addressScope() on PrestaShop core markup', () => {
         expect(control.isManualEntry()).toBe(true);
     });
 
-    test('the tile mount is never withdrawn - it is in no address block by design', () => {
-        // Given the payment-tile mount, whose scope is `document`, not a block
+    test('a withheld search offers no sole-trader route back either', () => {
+        // Given a control with no trusted scope, and a completed sole-trader
+        // enrolment - the one path that renders a route back without going
+        // through the panel
+        const control = mountWithNoScope();
+        control.adoptSoleTraderBuyer({
+            organization_number: '918273645',
+            company_name: 'Ola Nordmann'
+        });
+
+        // Then the button that relaunches the sole-trader flow is not offered
+        expect(document.querySelector('.two-company-select-different-sole-trader')).toBeNull();
+    });
+
+    test('a scope lost under a live control sweeps the sole-trader route away', () => {
+        // Given a scoped control showing the link after an enrolment
+        const control = mountOnCoreStep('invoice');
+        control.adoptSoleTraderBuyer({
+            organization_number: '918273645',
+            company_name: 'Ola Nordmann'
+        });
+        expect(document.querySelector('.two-company-select-different-sole-trader')).not.toBeNull();
+        control.setCompanyIdHint('918273645');
+
+        // When a re-render leaves the other side's selector inside this
+        // control's only candidate, so the candidate spans both addresses
+        control.addressScope().appendChild(document.getElementById('delivery-addresses'));
+        expect(control.searchUnavailable()).toBe(true);
+        control.setupAutocomplete();
+
+        // Then the withdrawal takes the links with it, and the org number the
+        // control can no longer stand behind
+        expect(document.querySelector('.two-company-select-different-sole-trader')).toBeNull();
+        expect(document.querySelector('.two-company-search-back')).toBeNull();
+        expect(document.querySelector('.two-company-id-hint').textContent).toBe('');
+        expect(control.companyField.hasClass('two-company-search-input')).toBe(false);
+    });
+
+    test('the tile mount is in no address block, so its scope is the document', () => {
+        // Given the payment-tile mount as core's own payment step renders it
         document.body.innerHTML = "<input type='text' id='two_tile_company' />";
         const control = new TwoCompanySearch({
             checkoutHost: CHECKOUT_HOST,
@@ -598,6 +664,52 @@ describe('addressScope() on PrestaShop core markup', () => {
 
         expect(control.addressScope()).toBe(document);
         expect(control.searchUnavailable()).toBe(false);
+    });
+
+    /**
+     * The tile mount's country is server-resolved (`twopayment.billing_country`),
+     * so an ambiguous scope costs it nothing: there is no block whose country
+     * select it was going to read. A block mount in the same DOM position
+     * withdraws, and it is `companySearchInAddressArea` that tells the two
+     * apart - the scope is identical.
+     */
+    test('an ambiguous scope withdraws a block mount and leaves the tile mount searching', () => {
+        // Given a one-page theme that keeps the payment step inside the address
+        // step's own form, so the tile's nearest candidate spans the address
+        // SELECTOR the payment step renders
+        document.body.innerHTML = [
+            '<div class="js-address-form">',
+            '  <div id="delivery-addresses" class="js-address-selector">',
+            '    <article class="js-address-item"><input type="radio" name="id_address_delivery" value="7" checked></article>',
+            '  </div>',
+            '  <div class="two-payment-option">',
+            '    <input type="text" id="two_tile_company" value="" />',
+            '    <input type="text" name="company" id="field-company" value="" />',
+            '  </div>',
+            '</div>'
+        ].join('\n');
+
+        const tile = new TwoCompanySearch({
+            checkoutHost: CHECKOUT_HOST,
+            companySearchInAddressArea: false,
+            companyFieldSelector: '#two_tile_company'
+        });
+        const block = new TwoCompanySearch({
+            checkoutHost: CHECKOUT_HOST,
+            companyFieldSelector: '#field-company'
+        });
+
+        // Then both fail closed on scope, and only the block mount is withdrawn
+        expect(tile.addressScope()).toBeNull();
+        expect(block.addressScope()).toBeNull();
+        expect(tile.searchUnavailable()).toBe(false);
+        expect(block.searchUnavailable()).toBe(true);
+
+        // And the tile still has the panel the block mount was denied
+        expect(tile.isManualEntry()).toBe(false);
+        expect($.contains(document.getElementById('two_tile_company').parentNode,
+            document.querySelector('.two-company-dropdown'))).toBe(true);
+        expect(block.isManualEntry()).toBe(true);
     });
 
     test('scopedQuery() answers from inside the scope when there is one', () => {

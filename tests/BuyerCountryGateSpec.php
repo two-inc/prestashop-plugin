@@ -354,12 +354,14 @@ final class BuyerCountryGateSpec
      * A separate question from the allowlist above: not "is this country
      * permitted" but "is there a country at all".
      *
-     * With company search mounted in the payment tile
-     * (PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS off) the only company register the
-     * control can search is the one resolved by this same billing-then-shipping
-     * chain and injected as `twopayment.billing_country`. An unresolved country
-     * would render a tile whose search declines on every keystroke, so the
-     * option is withheld instead.
+     * TILE MOUNT ONLY (PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS off), which is the
+     * one configuration where the control has no country select to read: the
+     * only register it can search is the one resolved by this same
+     * billing-then-shipping chain and injected as `twopayment.billing_country`.
+     * An unresolved country would render a tile whose search declines on every
+     * keystroke, so the option is withheld instead. With the search in the
+     * address area the control reads the form's own select and the payment
+     * option is not the merchant's to lose.
      *
      * The fixture is an address whose country id the shop's country table does
      * not answer for - a deleted country row. That is what reaches this gate:
@@ -372,6 +374,7 @@ final class BuyerCountryGateSpec
     {
         $module = self::offerableModule('GB', 'GB');
         self::cacheAllowlist(null);
+        Configuration::updateValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS', 0);
         StubStore::$addresses[self::ID_BILLING]['id_country'] = 4242;
         StubStore::$addresses[self::ID_SHIPPING]['id_country'] = 4243;
 
@@ -381,9 +384,24 @@ final class BuyerCountryGateSpec
             'the tile was offered with no company register for its search to query'
         );
 
-        // The shipping address alone is enough to keep it offered.
+        // Same unresolvable cart, search back in the address area: the gate is
+        // scoped to the tile mount and must not reach this configuration.
+        $module = self::offerableModule('GB', 'GB');
+        self::cacheAllowlist(null);
+        Configuration::updateValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS', 1);
+        StubStore::$addresses[self::ID_BILLING]['id_country'] = 4242;
+        StubStore::$addresses[self::ID_SHIPPING]['id_country'] = 4243;
+
+        TinyAssert::count(
+            1,
+            $module->hookPaymentOptions([]),
+            'the address-area mount lost the payment option to a tile-only gate'
+        );
+
+        // The shipping address alone is enough to keep the tile offered.
         $module = self::offerableModule('GB', 'NO');
         self::cacheAllowlist(null);
+        Configuration::updateValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS', 0);
         StubStore::$addresses[self::ID_BILLING]['id_country'] = 4242;
 
         TinyAssert::count(

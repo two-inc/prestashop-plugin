@@ -1800,19 +1800,10 @@ class TwoSoleTrader {
      * must feed the same store or the intent check can be built for the entity
      * the buyer is NOT.
      *
-     * Also calls the manager's markTileCompanySelected() (TWO-40 follow-up: an
-     * order-intent check fired off this completion before the buyer had
-     * reached the payment step).
-     * TwoCompanySearch's onCompanySelected() calls it the instant a search
-     * RESULT is picked, and TwoCheckoutManager.canAutoTriggerOrderIntent()
-     * reads the flag it sets as "the buyer has made their choice" before
-     * letting a generic
-     * mounted/re-rendered/periodic signal auto-fire a check in TILE mode -
-     * without it, a completed sole-trader enrolment was the one confirmed
-     * identity that never told that gate a real choice had actually been
-     * made. Harmless where the flag is not consulted (address mode; see
-     * canAutoTriggerOrderIntent()'s own doc on why address mode does not
-     * gate on it) and required where it is (tile mode).
+     * Also calls markTileCompanySelected(), as onCompanySelected() does on a
+     * search result: in TILE mode canAutoTriggerOrderIntent() reads that flag as
+     * "the buyer has chosen", and a sole-trader enrolment is otherwise the one
+     * confirmed identity that never sets it (TWO-40 follow-up).
      *
      * @param {string} company
      * @param {string} companyid

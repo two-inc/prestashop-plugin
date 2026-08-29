@@ -8,9 +8,8 @@ class TwoOrderIntent {
             // TWO-25326 §7.1: gates whether collectFormData() may trust the
             // address form's `company`/`companyid` DOM fields at all.
             companySearchInAddressArea: true,
-            // Injected getter for the company-search instance whose block this
-            // module's address-id reads must agree with - see
-            // getCurrentAddressId().
+            // The control whose block this module's address-id reads must agree
+            // with - see getCurrentAddressId().
             getCompanySearch: null,
             ...config
         };
@@ -515,9 +514,9 @@ class TwoOrderIntent {
     }
 
     getCurrentAddressId() {
-        // Answered by the company search when there is one: its read is scoped
-        // to its own block, and the two must agree or the stamp it compares
-        // against is discarded as an address switch.
+        // The company search answers when there is one: its read is scoped to
+        // its own block, and the two must agree or the stamp it compares against
+        // is discarded as an address switch.
         const search = typeof this.config.getCompanySearch === 'function'
             ? this.config.getCompanySearch()
             : null;

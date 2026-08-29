@@ -46,9 +46,8 @@ class TwoCompanySearch {
     static _instanceSeq = 0;
 
     /**
-     * The single in-flight company-record write, page-wide. Class-scoped
-     * deliberately - see trackCompanyCookieWrite() for why this one is a
-     * page-level mutex rather than instance state.
+     * The single in-flight company-record write, page-wide. Class-scoped: a
+     * mutex over one session cookie - see trackCompanyCookieWrite().
      */
     static _companyCookieWrite = null;
 
@@ -121,20 +120,17 @@ class TwoCompanySearch {
             // mirroring the server-side resolver. Read by
             // syncNotListedVisibility().
             companySearchInAddressArea: true,
-            // Scratch for the dropdown reopen deadline - see reopenDeadline().
-            // Own object when un-injected, so an uninjected control remembers
-            // only its own panel rather than sharing one with every other.
+            // Own object when un-injected, so one control's reopen deadline is
+            // not every control's - see reopenDeadline().
             reopenMemory: {},
-            // Sibling modules, injected so a second control on the page can be
-            // given its own; each falls back to the page singleton.
+            // Sibling modules; each falls back to the page singleton.
             getManager: null,
             getSoleTrader: null,
             ...config
         };
 
-        // Read ONCE: these are server-written and never change, so a live read
-        // per call site only lets one control observe another's writes.
-        // `mirror_writes` is deliberately NOT snapshotted - see
+        // Read ONCE: a live read per call site only lets one control observe
+        // another's writes. `mirror_writes` is NOT snapshotted - see
         // persistedMirrorWrites().
         const page = (typeof window !== 'undefined' && window.twopayment) || {};
         this._page = {
@@ -196,9 +192,8 @@ class TwoCompanySearch {
         // re-entrancy guard that keeps them to one hosted popup between them
         // (TWO-40 follow-up).
         this._soleTraderLoading = false;
-        // Per-instance suffix: the `mouseup` guard binds on `document`, so
-        // unbinding by the shared `.twoDropdown` namespace alone would tear off
-        // another live instance's handler too.
+        // Per-instance suffix: the `mouseup` guard binds on `document`, where
+        // the shared `.twoDropdown` namespace unbinds every instance's.
         TwoCompanySearch._instanceSeq += 1;
         this._instanceNs = 'i' + TwoCompanySearch._instanceSeq;
 
@@ -216,12 +211,9 @@ class TwoCompanySearch {
 
     /**
      * Deadline (epoch ms) up to which a freshly built panel should reopen
-     * itself, after PrestaShop re-rendered the address form under the buyer.
-     *
-     * In the injected `reopenMemory` because one `updatedAddressForm` tears the
-     * control down twice, and the second teardown replaces the instance, so an
-     * instance field cannot cross it. A deadline rather than a boolean so an
-     * unclaimed arm expires instead of reopening the next panel built.
+     * itself, after PrestaShop re-rendered the address form under the buyer. In
+     * the injected `reopenMemory` because one `updatedAddressForm` replaces the
+     * instance; a deadline, not a boolean, so an unclaimed arm expires.
      *
      * @returns {number}
      */
@@ -234,9 +226,7 @@ class TwoCompanySearch {
         this._reopenMemory.until = deadline;
     }
 
-    /**
-     * @returns {?Object} TwoCheckoutManager, or null when there is none
-     */
+    /** @returns {?Object} TwoCheckoutManager, or null when there is none */
     manager() {
         if (typeof this.config.getManager === 'function') {
             return this.config.getManager() || null;
@@ -245,9 +235,7 @@ class TwoCompanySearch {
         return (typeof window !== 'undefined' && window.TwoCheckoutManager_Instance) || null;
     }
 
-    /**
-     * @returns {?Object} TwoSoleTrader, or null when there is none
-     */
+    /** @returns {?Object} TwoSoleTrader, or null when there is none */
     soleTrader() {
         if (typeof this.config.getSoleTrader === 'function') {
             return this.config.getSoleTrader() || null;
@@ -257,9 +245,9 @@ class TwoCompanySearch {
     }
 
     /**
-     * The company-number display helper. twopayment.php loads it ahead of every
-     * module that renders a number, so a missing one is a broken page rather
-     * than a case to degrade around.
+     * The company-number display helper, loaded ahead of every module that
+     * renders a number - a missing one is a broken page, not a case to degrade
+     * around.
      *
      * @returns {Object}
      */
@@ -268,17 +256,12 @@ class TwoCompanySearch {
     }
 
     /**
-     * The root this instance's address-form reads and writes are scoped to.
+     * The root this instance's address-form reads and writes are scoped to: its
+     * own address block, or `document` when the field is in no block at all.
      *
-     * The mount's own address block; `document` only when the field is in no
-     * address block at all, which is the tile mount.
-     *
-     * FAILS CLOSED like visibleAddressFormRoot(): a block that resolves but is
-     * detached, or spans another address block, yields null. `document` there
-     * would be the widest possible scope - core's `address.js` does
-     * `closest('.js-address-form').replaceWith(...)` on country change,
-     * detaching this very node, and a control that then widened would adopt the
-     * other block's `companyid` input.
+     * FAILS CLOSED like visibleAddressFormRoot(): a detached candidate, or one
+     * spanning another address block, yields null rather than `document`, whose
+     * reads would reach the other block's `companyid`.
      *
      * @returns {?(Document|Element)}
      */
@@ -301,9 +284,8 @@ class TwoCompanySearch {
     }
 
     /**
-     * `querySelector` inside this instance's scope. Answers null when there is
-     * no trusted scope, so a failed-closed scope finds no field rather than
-     * throwing - see addressScope().
+     * `querySelector` inside this instance's scope, answering null when there is
+     * no trusted one - see addressScope().
      *
      * @param {string} selectors
      * @returns {?Element}
@@ -315,24 +297,9 @@ class TwoCompanySearch {
     }
 
     /**
-     * Whether the company search must be withheld from this control entirely.
-     *
-     * ADDRESS-BLOCK MOUNTS ONLY. Two mounts exist and they are not the same
-     * code path: `companySearchInAddressArea` true is the control inside an
-     * address block (`input[name='company']`), false is the payment-tile
-     * control (`#two_tile_company`), which is in no address block by design and
-     * whose scope is therefore `document`, never null.
-     *
-     * For an address-block mount, a null scope means the control cannot tell
-     * WHICH of the page's up-to-two address blocks it belongs to. There is no
-     * country it may fall back to there - not the page-load billing snapshot,
-     * not a document-wide select - because every one of them can name a
-     * different country from the block the buyer is typing in, and the register
-     * searched is never stated on screen. So the feature is withdrawn for this
-     * instance and the buyer types the company name themselves.
-     *
-     * Live, not snapshotted: core's `address.js` replaces address blocks under
-     * the control, so a scope can be lost or regained after construction.
+     * Withheld when an address-block mount cannot say WHICH block it is in: no
+     * country it could fall back to is knowably that block's. The tile mount
+     * searches the server-resolved country, so it is never withheld.
      *
      * @returns {boolean}
      */
@@ -374,11 +341,9 @@ class TwoCompanySearch {
     /**
      * Publish the company field's width as a CSS custom property on THIS
      * instance's own panel (TWO-30.x.10 element 1) - on
-     * `document.documentElement` one control's width clamped another's
-     * dropdown. `element.style.setProperty()` rather than jQuery's `.css()`,
-     * whose property-name normalisation may mangle a custom property. Cleared
-     * on a falsy width so a hidden field leaves no stale clamp. Vestigial
-     * anyway: the stylesheet unclamps any menu inside the panel.
+     * `document.documentElement` one control's width clamps another's dropdown.
+     * `setProperty()` rather than jQuery's `.css()`, which may mangle a custom
+     * property. No consumer left: the stylesheet unclamps menus in the panel.
      */
     constrainAutocompleteMenuWidth() {
         const panel = this._dropdown && this._dropdown.length ? this._dropdown.get(0) : null;
@@ -395,9 +360,8 @@ class TwoCompanySearch {
 
     createOrganizationField() {
         // Scoped: document-wide, a second control adopts the first's hidden
-        // input and the two then write one node. A failed-closed (null) scope
-        // still adopts document-wide, because injecting a second same-named
-        // input submits both and lets the last one win.
+        // input and the two write one node. A null scope still adopts
+        // document-wide - a second same-named input submits both.
         let orgField = $(this.addressScope() || document).find("input[name='companyid']");
 
         if (orgField.length === 0) {
@@ -521,7 +485,9 @@ class TwoCompanySearch {
      * only - never a form field, never submitted.
      */
     createCompanyIdHintField() {
-        let hintField = $('.two-company-id-hint');
+        // Scoped for the same reason createOrganizationField() is: document-wide,
+        // a second control paints its selection under the first control's field.
+        let hintField = $(this.addressScope() || document).find('.two-company-id-hint');
 
         if (hintField.length === 0) {
             hintField = $('<span class="two-company-id-hint"></span>');
@@ -3436,17 +3402,20 @@ class TwoCompanySearch {
         this.ensureFieldWrapper();
         this.setupWidthRefreshListener();
 
-        // Search withheld for this instance - no panel is built at all, and the
-        // company-name field stays the plain editable input it was before
-        // TWO-25288. Same end state as the no-panel fail-back below, minus the
-        // route back to search: nothing the buyer can do re-establishes the
-        // scope. See searchUnavailable().
+        // Withheld: no panel, an editable field carrying the manual-entry
+        // placeholder, and no route back - nothing the buyer can do
+        // re-establishes the scope. See searchUnavailable().
         if (this.searchUnavailable()) {
             this.removeDropdown();
             this._manualEntry = true;
             this.setCompanyFieldSearchMode(false);
             this.companyField.off('.twoCompanyOpen');
+            this.companyField.removeClass('two-company-search-input');
             this.removeBackToSearchLink();
+            this.removeSelectDifferentSoleTraderLink();
+            // A hint painted before the scope went ambiguous names a company
+            // this control can no longer stand behind.
+            this.setCompanyIdHint('');
             return;
         }
 
@@ -4260,6 +4229,13 @@ class TwoCompanySearch {
         if (!this.companyField || this.companyField.length === 0) {
             return;
         }
+        // Gated like renderBackToSearchLink(): this button relaunches the
+        // sole-trader flow, which ends in the search panel, so a withheld search
+        // must not be able to offer it from any call site.
+        if (this.searchUnavailable()) {
+            this.removeSelectDifferentSoleTraderLink();
+            return;
+        }
         this.removeSelectDifferentSoleTraderLink();
 
         const link = $('<button type="button"></button>')
@@ -5014,18 +4990,11 @@ class TwoCompanySearch {
      *
      * A FOURTH strategy sits after all three, and it is the only one that can
      * resolve anything when there is no country select on the page at all:
-     * `window.twopayment.billing_country`, the ISO code of the cart's billing
-     * address or, failing that, its shipping address, resolved server-side.
-     * It is reached ONLY by the payment-tile mount; an address-block mount that
-     * cannot identify its own block withdraws the search rather than reaching
-     * it (see searchUnavailable()). That case is not an edge - it is
-     * the payment step, where PrestaShop shows an address SELECTOR rather than
-     * the address FORM (checkout/_partials/steps/addresses.tpl only renders
-     * address-form.tpl behind `$show_delivery_address_form`), so
-     * `select[name='id_country']` does not exist. Without it the control
-     * TWO-25326 §7.1 relocated INTO the payment tile could never resolve a
-     * country and declined to search on every keystroke - the search looked
-     * simply dead.
+     * `window.twopayment.billing_country`, resolved server-side by
+     * twopayment.php's getCheckoutSearchCountryIso() - see there for what the
+     * chain is and why the payment step has no select to read. Reached ONLY by
+     * the payment-tile mount; a block mount that cannot identify its own block
+     * withdraws the search instead (see searchUnavailable()).
      *
      * It is deliberately LAST, not first: a buyer who is mid-edit on the
      * address step has a country selected in the form that is not saved on any
@@ -5037,11 +5006,8 @@ class TwoCompanySearch {
      * @returns {string} uppercase ISO code, or '' when unresolvable
      */
     getCurrentCountry() {
-        // An address-block mount with no trusted scope resolves nothing at all -
-        // strategy 4 below is a page-load snapshot of the CART's billing
-        // country, and handing it to a control that cannot say which address
-        // block it is in is the guess this whole method exists to refuse. The
-        // search is withdrawn for that instance anyway (see searchUnavailable()).
+        // A block mount that cannot say which block it is in resolves nothing:
+        // strategy 4 answers for the CART, which is not knowably this block.
         if (this.searchUnavailable()) {
             return '';
         }
@@ -5086,15 +5052,9 @@ class TwoCompanySearch {
             }
         }
 
-        // 4. The cart's buyer country - billing address, else shipping -
-        // resolved server-side by getCheckoutSearchCountryIso(). The only
-        // source available on a page with no country select - i.e. the payment
-        // step, where the tile-mounted control lives, and where the payment
-        // option is withheld entirely if neither address yields one.
-        // Shape-checked
-        // rather than trusted: anything that is not exactly two letters is
-        // treated as absent, so a malformed payload cannot put junk on the
-        // wire as a `country` parameter.
+        // 4. Server-resolved; see the docblock. Shape-checked rather than
+        // trusted, so a malformed payload cannot put junk on the wire as a
+        // `country` parameter.
         const billingCountry = this._page.billingCountry
             ? String(this._page.billingCountry).trim().toUpperCase()
             : '';
@@ -5787,9 +5747,8 @@ class TwoCompanySearch {
             // no-op
         }
         // Its own try for the same reason again: a live `window` listener
-        // outliving this instance. The width CSS variable needs no clearing -
-        // it lives on this instance's own panel, which removeDropdown() above
-        // has just taken out of the document.
+        // outliving this instance. The width CSS variable lives on this
+        // instance's own panel, already removed above, so it needs no clearing.
         try {
             // By reference, not by namespace alone (round-2 review finding,
             // Vader) - `window` is a genuine page-wide singleton, so a
@@ -6507,15 +6466,9 @@ class TwoCompanySearch {
         // TWO-25503: mirror of TwoOrderIntent.getCurrentAddressId() - see there
         // for why the editable form outranks the saved-address radios.
         //
-        // This control's own block first. On core's markup this branch runs and
-        // answers, it just answers the same id the fallback would: the block's
-        // own `<form>` tag is dropped by the parser, so the nearest
-        // `form[data-id-address]` above the scope IS the step form the fallback
-        // finds. It changes the answer only where per-block forms survive - the
-        // two-block fixture, or a theme that does not nest them - and the
-        // document-wide lookup would otherwise answer with the first block's id
-        // rather than this one's. The tile mount's scope is `document` and
-        // falls through.
+        // This control's own block first: where per-block `form[data-id-address]`
+        // tags survive parsing, the document-wide fallback below answers with the
+        // FIRST block's id. Tile mount falls through.
         const scope = this.addressScope();
         if (scope && scope !== document && scope.querySelector("input[name='saveAddress']")) {
             const scopedForm = typeof scope.closest === 'function'
