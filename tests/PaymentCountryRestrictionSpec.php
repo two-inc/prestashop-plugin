@@ -93,6 +93,11 @@ final class PaymentCountryRestrictionSpec
         // warning on every call, which is noise the next real one hides in.
         $module->_path = '/modules/twopayment/';
 
+        // ISO codes for the fixture ids: the hook also withholds the option
+        // when no ISO country resolves from either address, which would refuse
+        // every case here for a reason this spec is not about.
+        StubStore::$countries = [self::GB => 'gb', self::NO => 'no', self::ES => 'es'];
+
         StubStore::$addresses[904] = [
             'id_country' => $idCountry,
             'company' => 'Example Trading Ltd',

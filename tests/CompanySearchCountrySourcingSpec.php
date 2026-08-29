@@ -55,6 +55,7 @@ final class CompanySearchCountrySourcingSpec
         self::testBillingCountryIsInjectedByTheMediaHook();
         self::testBillingCountryResolvesFromTheCartsInvoiceAddress();
         self::testBillingCountryIsNeverTheDeliveryAddress();
+        self::testCheckoutSearchCountryFallsBackToTheDeliveryAddress();
         self::testJsReadsTheInjectedBillingCountry();
         self::testDropdownCopyKeysMatchTheKeysTheJsReads();
         self::testClearCompanyActionSeam();
@@ -256,7 +257,7 @@ final class CompanySearchCountrySourcingSpec
         $body_text = implode("\n", $body);
 
         TinyAssert::true(
-            strpos($body_text, "'billing_country' => \$this->getCheckoutBillingCountryIso()") !== false,
+            strpos($body_text, "'billing_country' => \$this->getCheckoutSearchCountryIso()") !== false,
             'The billing-address country is no longer injected by ' . $hook
             . '() - the payment-tile company search has no country to search with'
         );
@@ -305,15 +306,17 @@ final class CompanySearchCountrySourcingSpec
     /**
      * The INVOICE address, and never the delivery one (TWO-40 #13).
      *
-     * This is the load-bearing fact behind the whole disabled-mode read side,
-     * and nothing guarded it before: `window.twopayment.billing_country` is the
-     * terminal fallback for every country resolver in the checkout JS, reached
-     * on exactly the page where no country select exists, and what those
-     * resolvers need there is the country of the address the order will be
-     * BILLED to. A shop where the buyer ships and bills to different countries
-     * is the only one that can tell the two sourcings apart, and it would tell
-     * them apart by searching the wrong company register with nothing on screen
-     * saying so.
+     * This resolver is the billing-only one, and its callers depend on that:
+     * getTwoBrowserCompanySelection() invalidates a stored company selection by
+     * comparing its country against this, and the sole-trader entry point asks
+     * it whether enrolment is offered at all. Both are questions about the
+     * address the order will be BILLED to, so a delivery-address fallback here
+     * would validate a company against an address it is not billed to. The
+     * wider chain the checkout JS gets is a separate method - see
+     * testCheckoutSearchCountryFallsBackToTheDeliveryAddress().
+     *
+     * A shop where the buyer ships and bills to different countries is the only
+     * one that can tell the two sourcings apart.
      *
      * Asserted with both addresses set to DIFFERENT countries, so the answer
      * identifies which field was read, and then with only a delivery address, so
@@ -347,6 +350,62 @@ final class CompanySearchCountrySourcingSpec
             '',
             $method->invoke($module),
             'the delivery address answered as a fallback for the billing country'
+        );
+    }
+
+    /**
+     * The resolver actually injected for the checkout JS: the billing address,
+     * then the shipping address, then nothing.
+     *
+     * The tile-mounted search has no other country source - the payment step
+     * renders an address selector, not the address form - so a cart whose
+     * billing address resolves to no ISO code would leave the search declining
+     * on every keystroke. The shipping address is a country the buyer supplied,
+     * which is what makes it an answer rather than the guess this whole chain
+     * exists to refuse; when neither answers, the payment option is withheld
+     * outright (BuyerCountryGateSpec pins that half).
+     *
+     * The unresolvable-billing fixture is an address carrying a country id the
+     * shop's country table does not answer for - a deleted country row - which
+     * is the state that reaches the fallback: an address with NO country id at
+     * all is refused several gates earlier, by TWO-25387's module_country check.
+     */
+    private static function testCheckoutSearchCountryFallsBackToTheDeliveryAddress(): void
+    {
+        StubStore::reset();
+        Tools::resetTestValues();
+        $module = new TwopaymentTestHarness();
+        $method = new ReflectionMethod(Twopayment::class, 'getCheckoutSearchCountryIso');
+
+        StubStore::$countries[44] = 'gb';
+        StubStore::$countries[45] = 'fr';
+        StubStore::$addresses[8821] = ['id_country' => 44];
+        StubStore::$addresses[8822] = ['id_country' => 45];
+        // Exists, carries a country id, and that id resolves to no ISO code.
+        StubStore::$addresses[8823] = ['id_country' => 4242];
+
+        $cart = Context::getContext()->cart;
+
+        $cart->id_address_invoice = 8821;
+        $cart->id_address_delivery = 8822;
+        TinyAssert::same(
+            'GB',
+            $method->invoke($module),
+            'the shipping address answered while the billing address had a country'
+        );
+
+        $cart->id_address_invoice = 8823;
+        TinyAssert::same(
+            'FR',
+            $method->invoke($module),
+            'an unresolvable billing country did not fall back to the shipping address'
+        );
+
+        $cart->id_address_delivery = 8823;
+        TinyAssert::same(
+            '',
+            $method->invoke($module),
+            'a country was invented when neither address could answer'
         );
     }
 

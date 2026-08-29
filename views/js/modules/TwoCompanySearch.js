@@ -314,6 +314,32 @@ class TwoCompanySearch {
         return scope ? scope.querySelector(selectors) : null;
     }
 
+    /**
+     * Whether the company search must be withheld from this control entirely.
+     *
+     * ADDRESS-BLOCK MOUNTS ONLY. Two mounts exist and they are not the same
+     * code path: `companySearchInAddressArea` true is the control inside an
+     * address block (`input[name='company']`), false is the payment-tile
+     * control (`#two_tile_company`), which is in no address block by design and
+     * whose scope is therefore `document`, never null.
+     *
+     * For an address-block mount, a null scope means the control cannot tell
+     * WHICH of the page's up-to-two address blocks it belongs to. There is no
+     * country it may fall back to there - not the page-load billing snapshot,
+     * not a document-wide select - because every one of them can name a
+     * different country from the block the buyer is typing in, and the register
+     * searched is never stated on screen. So the feature is withdrawn for this
+     * instance and the buyer types the company name themselves.
+     *
+     * Live, not snapshotted: core's `address.js` replaces address blocks under
+     * the control, so a scope can be lost or regained after construction.
+     *
+     * @returns {boolean}
+     */
+    searchUnavailable() {
+        return this.config.companySearchInAddressArea !== false && this.addressScope() === null;
+    }
+
     init() {
         this.companyField = $(this.config.companyFieldSelector);
         
@@ -3410,6 +3436,19 @@ class TwoCompanySearch {
         this.ensureFieldWrapper();
         this.setupWidthRefreshListener();
 
+        // Search withheld for this instance - no panel is built at all, and the
+        // company-name field stays the plain editable input it was before
+        // TWO-25288. Same end state as the no-panel fail-back below, minus the
+        // route back to search: nothing the buyer can do re-establishes the
+        // scope. See searchUnavailable().
+        if (this.searchUnavailable()) {
+            this.removeDropdown();
+            this._manualEntry = true;
+            this.setCompanyFieldSearchMode(false);
+            this.companyField.off('.twoCompanyOpen');
+            this.removeBackToSearchLink();
+            return;
+        }
 
         // The anchored panel and its query field (TWO-25326 §1). Same re-run
         // reasoning as the hint above: this method is the one that runs
@@ -4049,7 +4088,7 @@ class TwoCompanySearch {
      * the buyer sees the dropdown again without having to retype.
      */
     exitManualEntryMode() {
-        if (this._destroyed) {
+        if (this._destroyed || this.searchUnavailable()) {
             return;
         }
         this._manualEntry = false;
@@ -4080,6 +4119,12 @@ class TwoCompanySearch {
      */
     renderBackToSearchLink() {
         if (!this.companyField || this.companyField.length === 0) {
+            return;
+        }
+        // Gated here rather than only at the call sites: this is the single
+        // route back into search mode, so a withheld search must not be able to
+        // offer it from any of them.
+        if (this.searchUnavailable()) {
             return;
         }
         this.removeBackToSearchLink();
@@ -4969,8 +5014,11 @@ class TwoCompanySearch {
      *
      * A FOURTH strategy sits after all three, and it is the only one that can
      * resolve anything when there is no country select on the page at all:
-     * `window.twopayment.billing_country`, the ISO code of the cart's own
-     * billing address, resolved server-side. That case is not an edge - it is
+     * `window.twopayment.billing_country`, the ISO code of the cart's billing
+     * address or, failing that, its shipping address, resolved server-side.
+     * It is reached ONLY by the payment-tile mount; an address-block mount that
+     * cannot identify its own block withdraws the search rather than reaching
+     * it (see searchUnavailable()). That case is not an edge - it is
      * the payment step, where PrestaShop shows an address SELECTOR rather than
      * the address FORM (checkout/_partials/steps/addresses.tpl only renders
      * address-form.tpl behind `$show_delivery_address_form`), so
@@ -4989,6 +5037,15 @@ class TwoCompanySearch {
      * @returns {string} uppercase ISO code, or '' when unresolvable
      */
     getCurrentCountry() {
+        // An address-block mount with no trusted scope resolves nothing at all -
+        // strategy 4 below is a page-load snapshot of the CART's billing
+        // country, and handing it to a control that cannot say which address
+        // block it is in is the guess this whole method exists to refuse. The
+        // search is withdrawn for that instance anyway (see searchUnavailable()).
+        if (this.searchUnavailable()) {
+            return '';
+        }
+
         // Both selectors (TWO-40 follow-up, adversarial review finding): this
         // used to check `id_country` only, while TwoSoleTrader.js's
         // billingCountry() and TwoOrderIntent.js's getCurrentAddressCountryISO()
@@ -5029,9 +5086,12 @@ class TwoCompanySearch {
             }
         }
 
-        // 4. The cart's billing-address country, resolved server-side. The
-        // only source available on a page with no country select - i.e. the
-        // payment step, where the tile-mounted control lives. Shape-checked
+        // 4. The cart's buyer country - billing address, else shipping -
+        // resolved server-side by getCheckoutSearchCountryIso(). The only
+        // source available on a page with no country select - i.e. the payment
+        // step, where the tile-mounted control lives, and where the payment
+        // option is withheld entirely if neither address yields one.
+        // Shape-checked
         // rather than trusted: anything that is not exactly two letters is
         // treated as absent, so a malformed payload cannot put junk on the
         // wire as a `country` parameter.
