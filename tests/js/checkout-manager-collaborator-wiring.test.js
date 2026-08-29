@@ -2,12 +2,10 @@
  * The collaborator wiring `TwoCheckoutManager` injects into the instances it
  * builds - `reopenMemory`, `getManager`, `getCompanySearch`.
  *
- * This is what replaced class-static sharing when the control became
- * instantiable, and it is only observable at the manager level: every one of
- * these has a fallback (a fresh scratch object, the `window` singletons, a
- * document-wide address read) that answers plausibly when the injection is
- * absent. So each test below is built so the fallback's answer is a DIFFERENT
- * value from the injected one.
+ * Only observable at the manager level: every one of these has a fallback (a
+ * fresh scratch object, the `window` singletons, a document-wide address read)
+ * that answers plausibly when the injection is absent. So each test below is
+ * built so the fallback's answer is a DIFFERENT value from the injected one.
  */
 
 'use strict';

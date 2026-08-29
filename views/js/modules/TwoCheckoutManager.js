@@ -61,8 +61,7 @@ class TwoCheckoutManager {
         // TwoCompanySearch.mirrorConfirmedCompanyToInvoiceAddress().
         this._invoiceMirrorMemory = {};
         // Page-lifetime because one `updatedAddressForm` tears the search down
-        // twice; keyed by mount selector, so two mounts sharing one selector
-        // share a deadline.
+        // twice; keyed by mount selector.
         this._companySearchReopenMemory = {};
         // TWO-40: and where the server has one for this cart, start from it. Must
         // run before init(), which is what constructs the modules that read the
@@ -2233,7 +2232,7 @@ class TwoCheckoutManager {
 
     /**
      * The reopen scratch for one mount selector, so a rebuild of that mount
-     * finds its own deadline. Two mounts sharing a selector share the scratch.
+     * finds its own deadline.
      *
      * @param {string} selector that mount's `companyFieldSelector`
      * @returns {Object}
@@ -2269,9 +2268,8 @@ class TwoCheckoutManager {
                 // instance is built once, on the first Two selection, and long
                 // outlives any individual company choice.
                 getConfirmedCompany: () => this.getConfirmedCompanySelection(),
-                // Through a getter, not by value: the search instance is
-                // destroyed and rebuilt on every address-form re-render, where
-                // this one is built once.
+                // A getter, not a value: the search instance is rebuilt on every
+                // address-form re-render, where this one is built once.
                 getCompanySearch: () => this.companySearch
             });
         }

@@ -4568,27 +4568,10 @@ class Twopayment extends PaymentModule
                 // already-dead keys would just have grown the dead set.
                 'enable_order_intent' => $this->enable_order_intent,
                 'shop_country' => (string) Context::getContext()->country->iso_code,
-                // The cart's own buyer country - billing address, else
-                // shipping - resolved server-side (TWO-25326 §7.1
-                // follow-up); see getCheckoutSearchCountryIso(). Read under
-                // this key by three JS modules. This is what makes
-                // the company search work at all once the control has moved
-                // into the payment tile: PrestaShop only renders the address
-                // FORM - and therefore `select[name='id_country']`, the only
-                // thing TwoCompanySearch.getCurrentCountry() could read -
-                // while the buyer is actually editing an address
-                // (checkout/_partials/steps/addresses.tpl renders
-                // address-form.tpl behind `$show_delivery_address_form`).
-                // On the payment step that form is gone and the step shows an
-                // address SELECTOR instead, so the tile-mounted control could
-                // never resolve a country and declined to search on every
-                // keystroke.
-                //
-                // Not a guess and not a substitute for the select: both
-                // addresses in the chain are ones the buyer supplied, and
-                // getCurrentCountry() still prefers the live select whenever
-                // one is on the page (a buyer mid-edit may have picked a
-                // country that is not saved yet).
+                // The tile-mounted search's only country source; read under this
+                // key by three JS modules. See getCheckoutSearchCountryIso().
+                // Not a substitute for the select: getCurrentCountry() still
+                // prefers a live one, which a buyer mid-edit may have changed.
                 'billing_country' => $this->getCheckoutSearchCountryIso(),
                 // The company the buyer already confirmed for THIS cart, or null
                 // (TWO-40). The browser's own record of a selection dies with the
@@ -4891,18 +4874,17 @@ class Twopayment extends PaymentModule
             return [];
         }
 
-        // Checkout-country gate. The payment tile carries the company search
-        // whenever PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS is off, and that control
-        // has no country select to read - the payment step renders an address
-        // SELECTOR, not the address form - so the only country it can search a
-        // company register against is the one resolved here and injected as
-        // `twopayment.billing_country`. An empty answer would leave the tile
-        // rendered with a search that declines on every keystroke, so the tile
-        // does not render at all. Distinct from the allowlist gates above: those
-        // ask whether a resolved country is permitted, this asks whether one
-        // exists. Reached when an address carries an id_country whose country
-        // row no longer resolves to an ISO code.
-        if ($this->resolveTwoGateBuyerCountryIso($cart) === '') {
+        // Tile-mount gate only. With the search in the payment tile, its one
+        // country source is `twopayment.billing_country` (see
+        // getCheckoutSearchCountryIso()); an empty answer would render a tile
+        // whose search declines on every keystroke, so the tile does not render
+        // at all. In address-area mode the control reads the form's own country
+        // select and this cannot apply. Distinct from the allowlist gates above:
+        // those ask whether a resolved country is permitted, this whether one
+        // exists.
+        if ($this->isCompanySearchInAddressArea() === '0'
+            && $this->resolveTwoGateBuyerCountryIso($cart) === ''
+        ) {
             if (!$this->twoSearchCountryWithholdLogged) {
                 $this->twoSearchCountryWithholdLogged = true;
                 PrestaShopLogger::addLog(
