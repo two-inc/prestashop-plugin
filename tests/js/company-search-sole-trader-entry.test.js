@@ -30,9 +30,16 @@ const CHECKOUT_HOST = 'https://api.example.test';
 
 let TwoCompanySearch;
 let $;
+let bus;
+// Shared across every instance a test builds, so an arm survives the destroy +
+// reconstruct a real re-render performs.
+let reopenMemory;
 
 function makeInstance(config) {
-    return new TwoCompanySearch(Object.assign({ checkoutHost: CHECKOUT_HOST }, config || {}));
+    return new TwoCompanySearch(Object.assign(
+        { checkoutHost: CHECKOUT_HOST, reopenMemory: reopenMemory },
+        config || {}
+    ));
 }
 
 /** Install a stub TwoSoleTrader_Instance, as twopayment.js's global would be. */
@@ -59,11 +66,13 @@ function stubSoleTrader(available) {
 
 beforeEach(() => {
     jest.useFakeTimers();
+    reopenMemory = {};
     document.body.innerHTML = '';
     document.head.innerHTML = '';
     const loaded = loadCompanySearch();
     TwoCompanySearch = loaded.TwoCompanySearch;
     $ = loaded.$;
+    bus = loaded.bus;
     buildAddressForm();
     installStylesheet('views/css/two.css');
     stubAjax($);
@@ -559,16 +568,24 @@ describe('reopening search cancels a pending enrolment (TWO-40)', () => {
         soleTrader.abandonEnrollment.mockClear();
         soleTrader.closeSignupPopup.mockClear();
         soleTrader.cancelEnrollment.mockClear();
+        const panelNode = panelParts().panel.get(0);
+        const closeDropdown = jest.spyOn(instance, 'closeDropdown');
 
-        // Arm the window the re-render restore runs inside, as the
-        // `updatedAddressForm` handler does for a panel that was open.
-        TwoCompanySearch._reopenPanelUntil = Date.now() + 1000;
-        instance.restorePanelAfterRerender();
+        // Core's own event, not a direct call: it is what tears the panel down
+        // and arms the deadline the restore then runs inside.
+        bus.emit('updatedAddressForm');
 
         expect(soleTrader.abandonEnrollment).not.toHaveBeenCalled();
         expect(soleTrader.closeSignupPopup).not.toHaveBeenCalled();
         expect(soleTrader.cancelEnrollment).not.toHaveBeenCalled();
         expect(shown(panelParts().panel)).toBe(true);
+        // The restore has to hand back the panel the buyer already had: a
+        // rebuilt node loses the enrolment's spinner/settle state with it, and
+        // `shown()` cannot tell the two apart.
+        expect(panelParts().panel.get(0)).toBe(panelNode);
+        // A listener that did nothing at all would satisfy the assertions
+        // above; this one closes on the buyer's behalf and restores.
+        expect(closeDropdown.mock.calls).toEqual([[false]]);
         soleTrader.focusSignupPopup.mockClear();
         panelParts().soleTrader.trigger('click');
         expect(soleTrader.focusSignupPopup).toHaveBeenCalledTimes(1);
@@ -593,15 +610,19 @@ describe('reopening search cancels a pending enrolment (TWO-40)', () => {
         soleTrader.abandonEnrollment.mockClear();
         soleTrader.closeSignupPopup.mockClear();
 
+        // Core's event first: it arms the deadline in the shared reopen memory,
+        // which is the only thing that survives the destroy below.
+        bus.emit('updatedAddressForm');
         instance.destroy();
 
         expect(soleTrader.cancelEnrollment.mock.calls).toEqual([[true]]);
         expect(soleTrader.abandonEnrollment).not.toHaveBeenCalled();
         expect(soleTrader.closeSignupPopup).not.toHaveBeenCalled();
+        expect(shown(panelParts().panel)).toBe(false);
 
         const replacement = makeInstance();
-        TwoCompanySearch._reopenPanelUntil = Date.now() + 1000;
         replacement.restorePanelAfterRerender();
+        expect(shown(panelParts().panel)).toBe(true);
         soleTrader.focusSignupPopup.mockClear();
 
         panelParts().soleTrader.trigger('click');
@@ -612,19 +633,19 @@ describe('reopening search cancels a pending enrolment (TWO-40)', () => {
     });
 
     /**
-     * `_reopenPanelUntil` is armed by the buyer's OWN click too
+     * The reopen deadline is armed by the buyer's OWN click too
      * (setupAddressFormListener()), so a re-render landing in the same tick
      * as a genuine click cannot make one look like the other.
      */
     test('a buyer-initiated open inside the re-render window still abandons', () => {
         const soleTrader = stubSoleTrader(true);
-        makeInstance();
+        const instance = makeInstance();
         openPanel();
         panelParts().soleTrader.trigger('click');
         soleTrader.focusSignupPopup.mockReturnValue(true);
         soleTrader.abandonEnrollment.mockClear();
 
-        TwoCompanySearch._reopenPanelUntil = Date.now() + 1000;
+        instance.armReopen(Date.now() + 1000);
         openPanel();
 
         expect(soleTrader.abandonEnrollment).toHaveBeenCalledTimes(1);

@@ -60,6 +60,9 @@ class TwoCheckoutManager {
         // rebuild stripped the marker off. See
         // TwoCompanySearch.mirrorConfirmedCompanyToInvoiceAddress().
         this._invoiceMirrorMemory = {};
+        // Page-lifetime because one `updatedAddressForm` tears the search down
+        // twice, so the deadline has to outlive the instance holding it.
+        this._companySearchReopenMemory = {};
         // TWO-40: and where the server has one for this cart, start from it. Must
         // run before init(), which is what constructs the modules that read the
         // selection back out.
@@ -774,6 +777,11 @@ class TwoCheckoutManager {
         return !!(this.companySearch
             && typeof this.companySearch.isManualEntry === 'function'
             && this.companySearch.isManualEntry());
+    }
+
+    /** The one way in, so every writer of `_tileCompanySelected` is greppable. */
+    markTileCompanySelected() {
+        this._tileCompanySelected = true;
     }
 
     /**
@@ -2174,8 +2182,8 @@ class TwoCheckoutManager {
             // address-area field. initializeModules() calls this again on
             // every subsequent re-init edge (see its own comment) until this
             // succeeds.
-            const tileField = document.getElementById('two_tile_company');
-            if (!tileField) {
+            const tileSelector = '#two_tile_company';
+            if (!document.querySelector(tileSelector)) {
                 return;
             }
             this.companySearch = new TwoCompanySearch({
@@ -2194,15 +2202,18 @@ class TwoCheckoutManager {
                 // buyer is not even looking at.
                 addressLookupEnabled: false,
                 companySearchInAddressArea: false,
-                companyFieldSelector: '#two_tile_company'
+                companyFieldSelector: tileSelector,
+                reopenMemory: this._companySearchReopenMemory,
+                getManager: () => this
             });
             return;
         }
+        const addressCompanySelector = "input[name='company']";
         this.companySearch = new TwoCompanySearch({
             checkoutHost: this.config.checkoutHost,
             addressLookupEnabled: this.config.addressLookupEnabled !== false,
             companySearchInAddressArea: true,
-            companyFieldSelector: "input[name='company']",
+            companyFieldSelector: addressCompanySelector,
             // TWO-40: read through a getter, and injected rather than reached for
             // on `window`. This instance is constructed from inside the manager's
             // own constructor, so `window.TwoCheckoutManager_Instance` is not
@@ -2213,7 +2224,9 @@ class TwoCheckoutManager {
             // of the search: it is what stops the mirror re-populating a field the
             // buyer cleared, and what lets it re-mark its own writes after core
             // rebuilds the address form.
-            mirrorMemory: this._invoiceMirrorMemory
+            mirrorMemory: this._invoiceMirrorMemory,
+            reopenMemory: this._companySearchReopenMemory,
+            getManager: () => this
         });
     }
 
@@ -2239,7 +2252,10 @@ class TwoCheckoutManager {
                 // value, so the module always sees the CURRENT selection - this
                 // instance is built once, on the first Two selection, and long
                 // outlives any individual company choice.
-                getConfirmedCompany: () => this.getConfirmedCompanySelection()
+                getConfirmedCompany: () => this.getConfirmedCompanySelection(),
+                // A getter, not a value: the search instance is rebuilt on every
+                // address-form re-render, where this one is built once.
+                getCompanySearch: () => this.companySearch
             });
         }
     }

@@ -210,9 +210,10 @@ function buildAddressForm(options) {
  * The checkout addresses step, in PrestaShop's OWN markup (TWO-40).
  *
  * Reproduced from core's `checkout/_partials/steps/addresses.tpl` and related
- * partials (byte-identical across the 8 and 9 images), not invented, since
- * the module's whole job is to read and write that exact markup. Structural
- * facts it reproduces:
+ * partials, read out of a PrestaShop 8 image, not invented, since the module's
+ * whole job is to read and write that exact markup. Fidelity against a
+ * PrestaShop 9 image is unverified, though the e2e specs run there too.
+ * Structural facts it reproduces:
  *
  *  - exactly ONE editable address form at a time; the other side is a saved-
  *    address selector or absent;
@@ -253,6 +254,12 @@ function buildAddressForm(options) {
  * @param {boolean} [options.blockIds] whether the address blocks carry
  *        core's ids (default true). false, combined with
  *        blockContainers:false, defeats an id-based scope guard.
+ * @param {string} [options.stepAddressId] `data-id-address` on the STEP form
+ *        (default '0'). Distinct from addressId only to tell the two apart in a
+ *        test: with one editable form the step's is the only one that survives
+ *        parsing.
+ * @param {string} [options.addressId] `data-id-address` on the editable address
+ *        form's own `<form>` (default '0')
  * @param {string} [options.dni] initial value of the identification input
  * @param {boolean} [options.formGroups] wrap each field in core's
  *        `.form-group` + `<label>` pair (default false, the flat shape most
@@ -275,6 +282,8 @@ function buildAddressesStep(options) {
     const blockIds = opts.blockIds !== false;
     const dni = opts.dni || '';
     const formGroups = opts.formGroups === true;
+    const stepAddressId = 'stepAddressId' in opts ? opts.stepAddressId : '0';
+    const addressId = 'addressId' in opts ? opts.addressId : '0';
 
     /**
      * One rendered address field, optionally in core's own `.form-group` + label
@@ -282,16 +291,17 @@ function buildAddressesStep(options) {
      *
      * @param {string} label the visible label text
      * @param {string} control the input/select markup
+     * @param {string} id the control's id, which core's label points at
      * @returns {string}
      */
-    const fieldGroup = function (label, control) {
+    const fieldGroup = function (label, control, id) {
         if (!formGroups) {
             return '        ' + control;
         }
 
         return [
             '        <div class="form-group row">',
-            '          <label class="col-md-3 form-control-label">' + label + '</label>',
+            '          <label class="col-md-3 form-control-label" for="' + id + '">' + label + '</label>',
             '          <div class="col-md-6">',
             '            ' + control,
             '          </div>',
@@ -317,21 +327,38 @@ function buildAddressesStep(options) {
             );
         }
         lines.push(
-            '        <form method="POST" data-id-address="0">',
-            fieldGroup('Company', '<input type="text" name="company" id="field-company" value="' + company + '">')
+            '        <form method="POST" data-id-address="' + addressId + '">',
+            fieldGroup(
+                'Company',
+                '<input type="text" name="company" id="field-company" value="' + company + '">',
+                'field-company'
+            )
         );
         if (DNI_COUNTRY_IDS.indexOf(String(countryId)) !== -1) {
             lines.push(fieldGroup(
                 'Identification number',
-                '<input type="text" name="dni" id="field-dni" value="' + dni + '" required>'
+                '<input type="text" name="dni" id="field-dni" value="' + dni + '" required>',
+                'field-dni'
             ));
         }
         lines.push(
-            fieldGroup('VAT number', '<input type="text" name="vat_number" id="field-vat_number" value="">'),
-            fieldGroup('Address', '<input type="text" name="address1" id="field-address1" value="' + address1 + '">'),
-            fieldGroup('Zip/Postal code', '<input type="text" name="postcode" id="field-postcode" value="' + postcode + '">'),
-            fieldGroup('City', '<input type="text" name="city" id="field-city" value="' + city + '">'),
-            fieldGroup('Phone', '<input type="tel" name="phone" id="field-phone" value="' + phone + '">'),
+            fieldGroup(
+                'VAT number',
+                '<input type="text" name="vat_number" id="field-vat_number" value="">',
+                'field-vat_number'
+            ),
+            fieldGroup(
+                'Address',
+                '<input type="text" name="address1" id="field-address1" value="' + address1 + '">',
+                'field-address1'
+            ),
+            fieldGroup(
+                'Zip/Postal code',
+                '<input type="text" name="postcode" id="field-postcode" value="' + postcode + '">',
+                'field-postcode'
+            ),
+            fieldGroup('City', '<input type="text" name="city" id="field-city" value="' + city + '">', 'field-city'),
+            fieldGroup('Phone', '<input type="tel" name="phone" id="field-phone" value="' + phone + '">', 'field-phone'),
             '        <select id="field-id_country" class="form-control form-control-select js-country" name="id_country" required>',
             // `selected` unconditionally, as core emits it - see this function's
             // docblock. The real country option below carries it too.
@@ -376,7 +403,10 @@ function buildAddressesStep(options) {
         ].join('\n');
     };
 
-    const html = ['<div class="js-address-form">', '  <form method="POST" data-id-address="0">'];
+    const html = [
+        '<div class="js-address-form">',
+        '  <form method="POST" data-id-address="' + stepAddressId + '">'
+    ];
     html.push(editing === 'delivery' ? addressForm('delivery') : addressSelector('delivery'));
     if (invoiceBlock) {
         html.push(editing === 'invoice' ? addressForm('invoice') : addressSelector('invoice'));

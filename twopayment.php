@@ -2636,13 +2636,16 @@ class Twopayment extends PaymentModule
      * ISO 3166-1 alpha-2 country of the cart's billing address, or '' when
      * there is no usable one yet.
      *
-     * Handed to the checkout JS so the company search can establish which
-     * company register to query when the address form - and with it the
-     * country select the browser side reads - is not on the page. That is the
-     * normal state of the payment step, and therefore the normal state of the
-     * payment-tile-mounted search control (TWO-25326 §7.1).
+     * The billing address and nothing else. Callers that compare a stored
+     * selection's country against the cart's own (getTwoBrowserCompanySelection)
+     * and the sole-trader availability check depend on that: a shipping country
+     * standing in would validate a company against an address the order is not
+     * billed to. Published to the checkout JS as `sole_trader_country`, so the
+     * browser's own availability and token minting answer for the same country
+     * this does. The company SEARCH gets the wider chain instead - see
+     * getCheckoutSearchCountryIso().
      *
-     * Resolves or returns empty, exactly like the browser-side chain it feeds:
+     * Resolves or returns empty, like the browser-side chain it feeds:
      * no shop-country fallback, no geolocation. A wrong register is worse than
      * no register, because the buyer is shown companies from a country their
      * company is not registered in with nothing on screen saying so.
@@ -2664,6 +2667,30 @@ class Twopayment extends PaymentModule
         $iso = Country::getIsoById((int) $address->id_country);
 
         return is_string($iso) ? Tools::strtoupper($iso) : '';
+    }
+
+    /**
+     * ISO 3166-1 alpha-2 country the checkout JS searches company registers
+     * against: the billing/invoice address, falling back to the shipping/
+     * delivery address when the billing one resolves to no ISO code.
+     *
+     * The payment step renders an address SELECTOR rather than the address form
+     * (checkout/_partials/steps/addresses.tpl gates address-form.tpl behind
+     * $show_delivery_address_form), so the tile-mounted search control
+     * (TWO-25326 §7.1) has no country select to read and this is its only
+     * source. The shipping address is a country the buyer supplied, not a
+     * guess, which is why it is allowed to stand in here at all.
+     *
+     * Never empty in a rendered tile: hookPaymentOptions() withholds the
+     * payment option outright when this chain resolves to nothing.
+     *
+     * @return string uppercase ISO code, or '' when unresolvable
+     */
+    protected function getCheckoutSearchCountryIso()
+    {
+        $cart = isset($this->context->cart) ? $this->context->cart : null;
+
+        return $this->resolveTwoGateBuyerCountryIso($cart);
     }
 
     /**
@@ -4543,26 +4570,15 @@ class Twopayment extends PaymentModule
                 // already-dead keys would just have grown the dead set.
                 'enable_order_intent' => $this->enable_order_intent,
                 'shop_country' => (string) Context::getContext()->country->iso_code,
-                // The country of the cart's OWN billing address, resolved
-                // server-side (TWO-25326 §7.1 follow-up). This is what makes
-                // the company search work at all once the control has moved
-                // into the payment tile: PrestaShop only renders the address
-                // FORM - and therefore `select[name='id_country']`, the only
-                // thing TwoCompanySearch.getCurrentCountry() could read -
-                // while the buyer is actually editing an address
-                // (checkout/_partials/steps/addresses.tpl renders
-                // address-form.tpl behind `$show_delivery_address_form`).
-                // On the payment step that form is gone and the step shows an
-                // address SELECTOR instead, so the tile-mounted control could
-                // never resolve a country and declined to search on every
-                // keystroke.
-                //
-                // Not a guess and not a substitute for the select: it is the
-                // country of the address the order will actually be billed
-                // to, and getCurrentCountry() still prefers the live select
-                // whenever one is on the page (a buyer mid-edit may have
-                // picked a country that is not saved yet).
-                'billing_country' => $this->getCheckoutBillingCountryIso(),
+                // The tile-mounted search's only country source. See
+                // getCheckoutSearchCountryIso().
+                // Not a substitute for the select: getCurrentCountry() still
+                // prefers a live one, which a buyer mid-edit may have changed.
+                'company_search_country' => $this->getCheckoutSearchCountryIso(),
+                // Separate from the search's country because an enrolment
+                // captured outside the billing country is withheld by
+                // getTwoBrowserCompanySelection() (TWO-40).
+                'sole_trader_country' => $this->getCheckoutBillingCountryIso(),
                 // The company the buyer already confirmed for THIS cart, or null
                 // (TWO-40). The browser's own record of a selection dies with the
                 // page, and the address step is a sequence of real document
@@ -4858,6 +4874,28 @@ class Twopayment extends PaymentModule
                         ? 'buyer country ' . $iso . ' is not a supported buyer country for this merchant'
                         : 'buyer country could not be resolved from the billing or shipping address')
                     . ', cart ' . (int)$cart->id,
+                    2
+                );
+            }
+            return [];
+        }
+
+        // Tile-mount gate only. With the search in the payment tile, its one
+        // country source is `twopayment.company_search_country` (see
+        // getCheckoutSearchCountryIso()); an empty answer would render a tile
+        // whose search declines on every keystroke, so the tile does not render
+        // at all. In address-area mode the control reads the form's own country
+        // select and this cannot apply. Distinct from the allowlist gates above:
+        // those ask whether a resolved country is permitted, this whether one
+        // exists.
+        if ($this->isCompanySearchInAddressArea() === '0'
+            && $this->resolveTwoGateBuyerCountryIso($cart) === ''
+        ) {
+            if (!$this->twoSearchCountryWithholdLogged) {
+                $this->twoSearchCountryWithholdLogged = true;
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Payment option hidden - no ISO country resolves from the billing or '
+                    . 'shipping address, cart ' . (int)$cart->id,
                     2
                 );
             }
@@ -11550,6 +11588,9 @@ class Twopayment extends PaymentModule
 
     /** @var bool Logged the buyer-country withhold reason yet (TWO-40)? */
     protected $twoBuyerCountryWithholdLogged = false;
+
+    /** @var bool Logged the unresolvable-checkout-country withhold reason yet? */
+    protected $twoSearchCountryWithholdLogged = false;
 
     /**
      * Whether this instance has already reported that the country allowlist
