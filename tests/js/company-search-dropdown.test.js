@@ -246,7 +246,7 @@ describe('§1 the dropdown is a real control, not an in-field autocomplete', () 
         // screen-reader user, tabbing back into the field after a completed
         // search, still hearing "Enter 3 or more characters" as the field's
         // permanent name.
-        makeInstance();
+        const instance = makeInstance();
         openPanel();
 
         const placeholder = panelParts().query.attr('placeholder');
@@ -255,7 +255,7 @@ describe('§1 the dropdown is a real control, not an in-field autocomplete', () 
         expect(placeholder).toContain(String(TwoCompanySearch.MIN_SEARCH_LENGTH));
         expect(ariaLabel).not.toContain(String(TwoCompanySearch.MIN_SEARCH_LENGTH));
         expect(ariaLabel).not.toBe(placeholder);
-        expect(ariaLabel).toBe(TwoCompanySearch.getQueryAriaLabelText());
+        expect(ariaLabel).toBe(instance.getQueryAriaLabelText());
     });
 
     test('a zero-result query says exactly "No matches found"', () => {

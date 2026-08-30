@@ -114,7 +114,7 @@ describe('Bug 3: the tile-mounted control actually searches', () => {
      * "above" where there is no country control at all.
      */
     test('typing puts a request on the wire for the billing address country', () => {
-        window.twopayment = { billing_country: 'GB' };
+        window.twopayment = { company_search_country: 'GB' };
         mountOnTile();
         openTilePanel();
 
@@ -128,7 +128,7 @@ describe('Bug 3: the tile-mounted control actually searches', () => {
     });
 
     test('the results the API returns are rendered in the tile panel', () => {
-        window.twopayment = { billing_country: 'GB' };
+        window.twopayment = { company_search_country: 'GB' };
         mountOnTile();
         openTilePanel();
 
@@ -155,9 +155,9 @@ describe('Bug 3: the tile-mounted control actually searches', () => {
     /** A malformed payload must read as "no country", not go on the wire -
      * junk in `country` is a silently wrong register, not a visible error. */
     test.each([['', 'empty'], ['GBR', 'three letters'], ['1', 'a digit'], ['  ', 'whitespace']])(
-        'a billing_country of %p (%s) is treated as absent',
+        'a company_search_country of %p (%s) is treated as absent',
         (value) => {
-            window.twopayment = { billing_country: value };
+            window.twopayment = { company_search_country: value };
             mountOnTile();
             openTilePanel();
 
@@ -171,7 +171,7 @@ describe('Bug 3: the tile-mounted control actually searches', () => {
     /** A buyer mid-edit has a country selected that no address carries yet -
      * a live select must outrank the server-resolved billing country. */
     test('a live country select still outranks the server-resolved billing country', () => {
-        window.twopayment = { billing_country: 'GB' };
+        window.twopayment = { company_search_country: 'GB' };
         document.body.insertAdjacentHTML(
             'afterbegin',
             "<select name='id_country'><option value='9' data-iso-code='NO' selected>Norway</option></select>"

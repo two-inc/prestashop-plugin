@@ -52,10 +52,12 @@ final class CompanySearchCountrySourcingSpec
     public static function runAll(): void
     {
         self::testCountryIsoMapIsInjectedByTheMediaHook();
-        self::testBillingCountryIsInjectedByTheMediaHook();
+        self::testSearchCountryIsInjectedByTheMediaHook();
+        self::testSoleTraderCountryIsPinnedToTheBillingSource();
         self::testBillingCountryResolvesFromTheCartsInvoiceAddress();
         self::testBillingCountryIsNeverTheDeliveryAddress();
-        self::testJsReadsTheInjectedBillingCountry();
+        self::testCheckoutSearchCountryFallsBackToTheDeliveryAddress();
+        self::testJsReadsTheInjectedSearchCountry();
         self::testDropdownCopyKeysMatchTheKeysTheJsReads();
         self::testClearCompanyActionSeam();
         self::testJsNoLongerGuessesTheCountry();
@@ -245,7 +247,7 @@ final class CompanySearchCountrySourcingSpec
      * tile-mounted search silently stops searching on every keystroke, which
      * is exactly the state Doug found live.
      */
-    private static function testBillingCountryIsInjectedByTheMediaHook(): void
+    private static function testSearchCountryIsInjectedByTheMediaHook(): void
     {
         $hook = 'hookActionFrontControllerSetMedia';
         $body = self::functionBody(
@@ -256,9 +258,40 @@ final class CompanySearchCountrySourcingSpec
         $body_text = implode("\n", $body);
 
         TinyAssert::true(
-            strpos($body_text, "'billing_country' => \$this->getCheckoutBillingCountryIso()") !== false,
-            'The billing-address country is no longer injected by ' . $hook
+            strpos($body_text, "'company_search_country' => \$this->getCheckoutSearchCountryIso()") !== false,
+            'The company-search country is no longer injected by ' . $hook
             . '() - the payment-tile company search has no country to search with'
+        );
+    }
+
+    /**
+     * `sole_trader_country` is published from the BILLING country alone, never
+     * from the search's wider billing-then-shipping chain - TWO-40.
+     *
+     * The two keys are separate for this one reason. An enrolment offered for a
+     * shipping country produces a selection that
+     * getTwoBrowserCompanySelection() then withholds, so the buyer enrols and
+     * the choice silently never arrives.
+     */
+    private static function testSoleTraderCountryIsPinnedToTheBillingSource(): void
+    {
+        $hook = 'hookActionFrontControllerSetMedia';
+        $body_text = implode("\n", self::functionBody(
+            self::codeLines(self::moduleSource()),
+            'public function ' . $hook . '()',
+            'twopayment.php'
+        ));
+
+        TinyAssert::true(
+            strpos($body_text, "'sole_trader_country' => \$this->getCheckoutBillingCountryIso()") !== false,
+            'The sole-trader country injected by ' . $hook
+            . '() no longer comes from the billing address alone'
+        );
+        TinyAssert::true(
+            strpos($body_text, "'sole_trader_country' => \$this->getCheckoutSearchCountryIso()") === false,
+            'The sole-trader country injected by ' . $hook
+            . '() has been collapsed onto the search chain, which offers enrolment '
+            . 'for a shipping country the confirmed selection is then withheld for'
         );
     }
 
@@ -305,15 +338,17 @@ final class CompanySearchCountrySourcingSpec
     /**
      * The INVOICE address, and never the delivery one (TWO-40 #13).
      *
-     * This is the load-bearing fact behind the whole disabled-mode read side,
-     * and nothing guarded it before: `window.twopayment.billing_country` is the
-     * terminal fallback for every country resolver in the checkout JS, reached
-     * on exactly the page where no country select exists, and what those
-     * resolvers need there is the country of the address the order will be
-     * BILLED to. A shop where the buyer ships and bills to different countries
-     * is the only one that can tell the two sourcings apart, and it would tell
-     * them apart by searching the wrong company register with nothing on screen
-     * saying so.
+     * This resolver is the billing-only one, and its callers depend on that:
+     * getTwoBrowserCompanySelection() invalidates a stored company selection by
+     * comparing its country against this, and the sole-trader entry point asks
+     * it whether enrolment is offered at all. Both are questions about the
+     * address the order will be BILLED to, so a delivery-address fallback here
+     * would validate a company against an address it is not billed to. The
+     * wider chain the checkout JS gets is a separate method - see
+     * testCheckoutSearchCountryFallsBackToTheDeliveryAddress().
+     *
+     * A shop where the buyer ships and bills to different countries is the only
+     * one that can tell the two sourcings apart.
      *
      * Asserted with both addresses set to DIFFERENT countries, so the answer
      * identifies which field was read, and then with only a delivery address, so
@@ -351,19 +386,93 @@ final class CompanySearchCountrySourcingSpec
     }
 
     /**
+     * The resolver actually injected for the checkout JS: the billing address,
+     * then the shipping address, then nothing.
+     *
+     * The tile-mounted search has no other country source - the payment step
+     * renders an address selector, not the address form - so a cart whose
+     * billing address resolves to no ISO code would leave the search declining
+     * on every keystroke. The shipping address is a country the buyer supplied,
+     * which is what makes it an answer rather than the guess this whole chain
+     * exists to refuse; when neither answers, the payment option is withheld
+     * outright (BuyerCountryGateSpec pins that half).
+     *
+     * The unresolvable-billing fixture is an address carrying a country id the
+     * shop's country table does not answer for - a deleted country row - which
+     * is the state that reaches the fallback: an address with NO country id at
+     * all is refused several gates earlier, by TWO-25387's module_country check.
+     */
+    private static function testCheckoutSearchCountryFallsBackToTheDeliveryAddress(): void
+    {
+        StubStore::reset();
+        Tools::resetTestValues();
+        $module = new TwopaymentTestHarness();
+        $method = new ReflectionMethod(Twopayment::class, 'getCheckoutSearchCountryIso');
+
+        StubStore::$countries[44] = 'gb';
+        StubStore::$countries[45] = 'fr';
+        StubStore::$addresses[8821] = ['id_country' => 44];
+        StubStore::$addresses[8822] = ['id_country' => 45];
+        // Exists, carries a country id, and that id resolves to no ISO code.
+        StubStore::$addresses[8823] = ['id_country' => 4242];
+
+        $cart = Context::getContext()->cart;
+
+        $cart->id_address_invoice = 8821;
+        $cart->id_address_delivery = 8822;
+        TinyAssert::same(
+            'GB',
+            $method->invoke($module),
+            'the shipping address answered while the billing address had a country'
+        );
+
+        $cart->id_address_invoice = 8823;
+        TinyAssert::same(
+            'FR',
+            $method->invoke($module),
+            'an unresolvable billing country did not fall back to the shipping address'
+        );
+
+        $cart->id_address_delivery = 8823;
+        TinyAssert::same(
+            '',
+            $method->invoke($module),
+            'a country was invented when neither address could answer'
+        );
+    }
+
+    /**
      * And the browser side reads that exact key. A rename on either side is
      * invisible at runtime - the JS simply resolves no country and stops
      * searching, which reads as a broken search rather than as a broken
      * contract. Same class of silent failure as the i18n-key check below.
+     *
+     * The read is a snapshot, so all three links are pinned: payload off
+     * `window.twopayment`, `company_search_country` off the payload, snapshot field
+     * read by the country resolver.
      */
-    private static function testJsReadsTheInjectedBillingCountry(): void
+    private static function testJsReadsTheInjectedSearchCountry(): void
     {
         $js = implode("\n", self::codeLines(self::searchJsSource()));
 
+        $binding = array();
         TinyAssert::true(
-            strpos($js, 'window.twopayment.billing_country') !== false,
-            'TwoCompanySearch no longer reads window.twopayment.billing_country, so the '
-            . 'payment-tile search has no country source at all'
+            preg_match('#searchCountry:\s*([A-Za-z_$][\w$]*).company_search_country\b#', $js, $binding) === 1,
+            'TwoCompanySearch must read the server-injected company_search_country key - it is the '
+            . 'payment-tile search\'s only country source'
+        );
+
+        $payload = $binding[1];
+        TinyAssert::true(
+            preg_match('#\b' . preg_quote($payload, '#') . '\s*=[^;]*window\.twopayment\b#', $js) === 1,
+            'company_search_country must be read from `' . $payload . '`, the window.twopayment payload '
+            . 'the media hook injects'
+        );
+
+        TinyAssert::true(
+            strpos($js, 'this._page.searchCountry') !== false,
+            'getCurrentCountry() must consult the snapshotted search country, or the '
+            . 'payment-tile search resolves none and stops searching'
         );
     }
 
@@ -389,13 +498,37 @@ final class CompanySearchCountrySourcingSpec
             'company_search_back_to_search' => 'the back-to-search link',
         ];
 
+        $js = implode("\n", self::codeLines(self::searchJsSource()));
+
+        // The JS asks for each key through one accessor rather than reaching for
+        // the payload at each call site, so the seam is asserted once - that the
+        // accessor resolves from the injected `i18n` payload - and then each key
+        // is asserted to be a key it is actually asked for.
+        $binding = array();
+        TinyAssert::true(
+            preg_match('#i18n:\s*([A-Za-z_$][\w$]*)\.i18n\b#', $js, $binding) === 1,
+            'The search JS must take the injected i18n payload, or every dropdown row falls '
+            . 'back to its English literal for good'
+        );
+        $payload = $binding[1];
+        TinyAssert::true(
+            preg_match('#\b' . preg_quote($payload, '#') . '\s*=[^;]*window\.twopayment\b#', $js) === 1,
+            'The i18n copy must be read from `' . $payload . '`, the window.twopayment payload '
+            . 'the media hook injects'
+        );
+        TinyAssert::true(
+            preg_match('#\btext\s*\(\s*key\s*,[^)]*\)\s*\{[^}]*_page\.i18n\[\s*key\s*\]#s', $js) === 1
+            || preg_match('#return\s+this\._page\.i18n\[\s*key\s*\]#', $js) === 1,
+            'The copy accessor must resolve keys against the injected i18n payload'
+        );
+
         foreach ($keys as $key => $description) {
             TinyAssert::true(
                 strpos(self::moduleSource(), "'" . $key . "' => \$this->l(") !== false,
                 'Missing translatable copy for ' . $description . ': ' . $key
             );
             TinyAssert::true(
-                strpos(self::searchJsSource(), 'window.twopayment.i18n.' . $key) !== false,
+                preg_match('#\.text\(\s*[\'"]' . preg_quote($key, '#') . '[\'"]#', $js) === 1,
                 'The search JS no longer reads ' . $key . ' (' . $description
                 . '); the PHP copy is dead and the row is permanently untranslated'
             );
@@ -488,10 +621,23 @@ final class CompanySearchCountrySourcingSpec
             'The country select\'s own ISO code is no longer read in ' . $path
             . ' - getCurrentCountry() has lost its first-choice resolution source'
         );
+        // The map is snapshotted off the payload at construction; that seam is
+        // asserted in testJsReadsTheInjectedSearchCountry(). What matters here
+        // is that getCurrentCountry() still SUBSCRIPTS it by country id, which is
+        // the resolution itself rather than a mention of the payload.
+        $countries = array();
         TinyAssert::true(
-            strpos($code, 'window.twopayment.countries[') !== false,
-            'The server-injected id_country -> ISO map is no longer read in ' . $path
-            . ' - getCurrentCountry() has lost its authoritative resolution source'
+            preg_match('#countries:\s*([A-Za-z_$][\w$]*)\.countries\b#', $code, $countries) === 1,
+            'The id_country -> ISO map must be taken from the injected payload in ' . $path
+            . ' - it is getCurrentCountry()\'s authoritative resolution source'
+        );
+        // Anchored on the resolution getCurrentCountry() names, not on a bare
+        // subscript: two OTHER methods subscript the same map, so a bare one
+        // stays satisfied while this resolver loses it.
+        TinyAssert::true(
+            preg_match('#isoFromConfig\s*=[^;]*_page\.countries\[#s', $code) === 1,
+            'getCurrentCountry() must subscript the id_country -> ISO map by country id in '
+            . $path . ' - it is its authoritative resolution source'
         );
     }
 }
