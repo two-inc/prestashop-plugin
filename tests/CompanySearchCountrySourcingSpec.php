@@ -53,6 +53,7 @@ final class CompanySearchCountrySourcingSpec
     {
         self::testCountryIsoMapIsInjectedByTheMediaHook();
         self::testSearchCountryIsInjectedByTheMediaHook();
+        self::testSoleTraderCountryIsPinnedToTheBillingSource();
         self::testBillingCountryResolvesFromTheCartsInvoiceAddress();
         self::testBillingCountryIsNeverTheDeliveryAddress();
         self::testCheckoutSearchCountryFallsBackToTheDeliveryAddress();
@@ -260,6 +261,37 @@ final class CompanySearchCountrySourcingSpec
             strpos($body_text, "'company_search_country' => \$this->getCheckoutSearchCountryIso()") !== false,
             'The company-search country is no longer injected by ' . $hook
             . '() - the payment-tile company search has no country to search with'
+        );
+    }
+
+    /**
+     * `sole_trader_country` is published from the BILLING country alone, never
+     * from the search's wider billing-then-shipping chain - TWO-40.
+     *
+     * The two keys are separate for this one reason. An enrolment offered for a
+     * shipping country produces a selection that
+     * getTwoBrowserCompanySelection() then withholds, so the buyer enrols and
+     * the choice silently never arrives.
+     */
+    private static function testSoleTraderCountryIsPinnedToTheBillingSource(): void
+    {
+        $hook = 'hookActionFrontControllerSetMedia';
+        $body_text = implode("\n", self::functionBody(
+            self::codeLines(self::moduleSource()),
+            'public function ' . $hook . '()',
+            'twopayment.php'
+        ));
+
+        TinyAssert::true(
+            strpos($body_text, "'sole_trader_country' => \$this->getCheckoutBillingCountryIso()") !== false,
+            'The sole-trader country injected by ' . $hook
+            . '() no longer comes from the billing address alone'
+        );
+        TinyAssert::true(
+            strpos($body_text, "'sole_trader_country' => \$this->getCheckoutSearchCountryIso()") === false,
+            'The sole-trader country injected by ' . $hook
+            . '() has been collapsed onto the search chain, which offers enrolment '
+            . 'for a shipping country the confirmed selection is then withheld for'
         );
     }
 

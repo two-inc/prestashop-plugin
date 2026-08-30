@@ -25,6 +25,8 @@ const ORDER_INTENT_URL = 'https://shop.example.test/module/twopayment/orderinten
 // The block the control mounts in, and the one a document-wide read lands on.
 const MOUNTED_BLOCK_ADDRESS_ID = 9;
 const DOCUMENT_FIRST_ADDRESS_ID = 7;
+// The id the mounted block carries after core re-renders the address form.
+const REBUILT_BLOCK_ADDRESS_ID = 11;
 
 let TwoCheckoutManager;
 let TwoOrderIntent;
@@ -109,9 +111,11 @@ describe('the company-search accessor the manager injects', () => {
      * the editable-form marker but no company input, so the control mounts in the
      * second.
      *
+     * @param {number} [mountedAddressId] id on the block the control mounts in
      * @returns {void}
      */
-    function buildBlocksWhereScopeDisagreesWithDocument() {
+    function buildBlocksWhereScopeDisagreesWithDocument(mountedAddressId) {
+        const mountedId = mountedAddressId || MOUNTED_BLOCK_ADDRESS_ID;
         document.body.innerHTML = [
             '<div id="delivery-address">',
             '  <div class="js-address-form">',
@@ -122,7 +126,7 @@ describe('the company-search accessor the manager injects', () => {
             '</div>',
             '<div id="invoice-address">',
             '  <div class="js-address-form">',
-            '    <form data-id-address="' + MOUNTED_BLOCK_ADDRESS_ID + '">',
+            '    <form data-id-address="' + mountedId + '">',
             "      <input type='text' name='company' value='' />",
             "      <input type='text' name='address1' value='' />",
             "      <input type='text' name='postcode' value='' />",
@@ -157,11 +161,15 @@ describe('the company-search accessor the manager injects', () => {
         manager.initializeOrderIntent();
         const before = manager.companySearch;
 
-        // When `updatedAddressForm` rebuilds the control
+        // When core re-renders the address form under a new id and
+        // `updatedAddressForm` rebuilds the control against it
+        buildBlocksWhereScopeDisagreesWithDocument(REBUILT_BLOCK_ADDRESS_ID);
         manager.handleAddressFormUpdate();
 
-        // Then the intent is answering through the replacement
+        // Then the intent is answering through the replacement - the destroyed
+        // control has lost its scope and falls back to the document-wide read
         expect(manager.companySearch).not.toBe(before);
-        expect(manager.orderIntent.getCurrentAddressId()).toBe(MOUNTED_BLOCK_ADDRESS_ID);
+        expect(before.getCurrentAddressId()).toBe(DOCUMENT_FIRST_ADDRESS_ID);
+        expect(manager.orderIntent.getCurrentAddressId()).toBe(REBUILT_BLOCK_ADDRESS_ID);
     });
 });
