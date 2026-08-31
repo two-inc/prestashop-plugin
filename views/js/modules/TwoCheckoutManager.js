@@ -63,6 +63,11 @@ class TwoCheckoutManager {
         // Page-lifetime because one `updatedAddressForm` tears the search down
         // twice, so the deadline has to outlive the instance holding it.
         this._companySearchReopenMemory = {};
+        // Page-lifetime for the same reason: manual-entry mode must survive
+        // the same rebuild the reopen deadline does, or a buyer typing a
+        // company by hand drops back into search mode on the next address
+        // re-render (TWO-40 follow-up). See TwoCompanySearch's `_manualEntry`.
+        this._companySearchManualEntryMemory = {};
         // TWO-40: and where the server has one for this cart, start from it. Must
         // run before init(), which is what constructs the modules that read the
         // selection back out.
@@ -2204,6 +2209,7 @@ class TwoCheckoutManager {
                 companySearchInAddressArea: false,
                 companyFieldSelector: tileSelector,
                 reopenMemory: this._companySearchReopenMemory,
+                manualEntryMemory: this._companySearchManualEntryMemory,
                 getManager: () => this
             });
             return;
@@ -2226,6 +2232,7 @@ class TwoCheckoutManager {
             // rebuilds the address form.
             mirrorMemory: this._invoiceMirrorMemory,
             reopenMemory: this._companySearchReopenMemory,
+            manualEntryMemory: this._companySearchManualEntryMemory,
             getManager: () => this
         });
     }
