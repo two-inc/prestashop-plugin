@@ -236,6 +236,34 @@ describe('two live controls do not share state', () => {
         expect(rebuilt.reopenDeadline()).toBeGreaterThan(0);
     });
 
+    test('manual-entry mode on one control does not put the other into it', () => {
+        // Given two controls built the un-injected way
+        const first = makeFirst();
+        const second = makeSecond();
+
+        // When the first enters manual entry
+        first._manualEntry = true;
+
+        // Then the second is unaffected
+        expect(first._manualEntry).toBe(true);
+        expect(second._manualEntry).toBe(false);
+    });
+
+    test('manual-entry mode survives the control OWN rebuild, via the injected memory', () => {
+        // Given a page-lifetime memory for one mount, matching reopenMemory
+        const memory = {};
+        const first = makeFirst({ manualEntryMemory: memory });
+
+        // When the buyer switches to manual entry and the control is then
+        // destroyed and rebuilt, as `updatedAddressForm` does
+        first._manualEntry = true;
+        first.destroy();
+        const rebuilt = makeFirst({ manualEntryMemory: memory });
+
+        // Then the replacement still knows it is in manual-entry mode
+        expect(rebuilt._manualEntry).toBe(true);
+    });
+
     test('aborting one control in-flight search leaves the other request alive', () => {
         // Given two controls each holding a request
         const first = makeFirst();
@@ -621,6 +649,49 @@ describe('addressScope() on PrestaShop core markup', () => {
         control.exitManualEntryMode();
         expect(document.querySelector('.two-company-search-back')).toBeNull();
         expect(control.isManualEntry()).toBe(true);
+    });
+
+    test('a withheld scope does not permanently lock the page into manual entry', () => {
+        // Given a mount whose scope is withheld, sharing a page-lifetime
+        // memory the way the manager injects it
+        const memory = {};
+        window.twopayment = { company_search_country: 'NO' };
+        buildAddressesStep({
+            editing: 'invoice',
+            blockContainers: false,
+            blockIds: false,
+            countryIsoAttrs: true,
+            stepAddressId: STEP_ADDRESS_ID
+        });
+        const withheld = new TwoCompanySearch({
+            checkoutHost: CHECKOUT_HOST,
+            companyFieldSelector: '#field-company',
+            manualEntryMemory: memory
+        });
+        expect(withheld.isManualEntry()).toBe(true);
+        withheld.destroy();
+
+        // When the theme's markup is fixed (a real address block now exists)
+        // and the mount rebuilds against the SAME memory, as `updatedAddressForm`
+        // does
+        buildAddressesStep({
+            editing: 'invoice',
+            blockContainers: true,
+            blockIds: true,
+            countryIsoAttrs: true,
+            stepAddressId: STEP_ADDRESS_ID
+        });
+        const rebuilt = new TwoCompanySearch({
+            checkoutHost: CHECKOUT_HOST,
+            companyFieldSelector: '#field-company',
+            manualEntryMemory: memory
+        });
+
+        // Then the withholding does not outlive the render that caused it - a
+        // resolvable scope means a real search, not a page permanently stuck
+        // in manual entry from one earlier bad render
+        expect(rebuilt.searchUnavailable()).toBe(false);
+        expect(rebuilt.isManualEntry()).toBe(false);
     });
 
     test('a withheld search offers no sole-trader route back either', () => {
