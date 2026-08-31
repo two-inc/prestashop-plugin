@@ -170,8 +170,17 @@ class TwoCompanySearch {
         // same class of bug the reopen deadline had before `_reopenMemory`.
         // The accessor keeps every existing `this._manualEntry` read/write
         // below unchanged.
+        //
+        // `_manualEntryForced` is deliberately NOT part of that persisted
+        // memory: searchUnavailable() sets it when this mount's address scope
+        // cannot be resolved, which is a fact about the CURRENT DOM, not a
+        // buyer choice - it must be re-derived on every rebuild, not carried
+        // forward once true. Routing it through the persisted setter would
+        // have one withheld render permanently lock every future rebuild into
+        // manual entry, on a page whose scope had since resolved fine.
+        this._manualEntryForced = false;
         Object.defineProperty(this, '_manualEntry', {
-            get: () => !!this._manualEntryMemory.active,
+            get: () => this._manualEntryForced || !!this._manualEntryMemory.active,
             set: (value) => { this._manualEntryMemory.active = value; }
         });
         this._backToSearchLink = null;
@@ -3431,7 +3440,11 @@ class TwoCompanySearch {
         // re-establishes the scope. See searchUnavailable().
         if (this.searchUnavailable()) {
             this.removeDropdown();
-            this._manualEntry = true;
+            // Forced, not chosen - see `_manualEntryForced` at the top of the
+            // constructor. Writing `this._manualEntry = true` here would
+            // persist a DOM-scope fact as though the buyer had picked manual
+            // entry, outliving the render that made it true.
+            this._manualEntryForced = true;
             this.setCompanyFieldSearchMode(false);
             this.companyField.off('.twoCompanyOpen');
             this.companyField.removeClass('two-company-search-input');
@@ -3780,20 +3793,15 @@ class TwoCompanySearch {
             this.setupCustomAutocomplete();
         }
 
-        // Manual entry survives a COUNTRY CHANGE, which is the one path that
-        // re-enters this method on a live instance: its listener re-runs setup
-        // against a field it has just cleared, which takes the old link with it,
-        // so the link has to be put back or the buyer is stranded in manual mode
-        // with no way out.
-        //
-        // It deliberately does NOT survive an address-form update, despite that
-        // path also calling this method. The checkout manager destroys this
-        // instance and builds a fresh one on `updatedAddressForm`, the surviving
-        // instance's own handler stands down on the `_destroyed` check, and the
-        // replacement starts in search mode - so the branch below is unreachable
-        // on that path and manual mode resets. That is the intended behaviour, not
-        // an oversight: the form has been re-rendered from the server and the
-        // buyer is starting that step again.
+        // Manual entry survives BOTH a COUNTRY CHANGE, which re-enters this
+        // method on the same live instance, and an address-form rebuild
+        // (`updatedAddressForm`), which destroys this instance and builds a
+        // fresh one - `_manualEntry` is backed by the manager's injected
+        // page-lifetime memory (TWO-40 follow-up), not a plain field, so the
+        // replacement inherits the mode rather than resetting to search. This
+        // branch renders the link back in on either path: the country-change
+        // listener's own re-setup cleared the field taking the old link with
+        // it, and a rebuilt instance has never had one at all.
         //
         // After the path branch, because the fallback path anchors the link below
         // its dropdown container, which only exists once that branch has run.
