@@ -2188,6 +2188,7 @@ class TwoCheckoutManager {
             }
             this.companySearch = new TwoCompanySearch({
                 checkoutHost: this.config.checkoutHost,
+                firewallToken: this.config.firewallToken,
                 // ALWAYS false in the payment tile, never inherited from the
                 // merchant's general auto-fill toggle (core principle,
                 // TWO-40: the control behaves identically wherever it is
@@ -2211,6 +2212,7 @@ class TwoCheckoutManager {
         const addressCompanySelector = "input[name='company']";
         this.companySearch = new TwoCompanySearch({
             checkoutHost: this.config.checkoutHost,
+            firewallToken: this.config.firewallToken,
             addressLookupEnabled: this.config.addressLookupEnabled !== false,
             companySearchInAddressArea: true,
             companyFieldSelector: addressCompanySelector,
