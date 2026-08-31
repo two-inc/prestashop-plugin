@@ -350,7 +350,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.7.11';
+        $this->version = '2.7.12';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -410,15 +410,15 @@ class Twopayment extends PaymentModule
 
     /**
      * Effective value of the "skip confirm-order token check" debug toggle
-     * (TWO-25386 #4, PS_TWO_SKIP_CONFIRM_NONCE_CHECK). Default OFF - see
+     * (TWO-25386 #4, PS_TWO_SKIP_CONFIRM_TOKEN_CHECK). Default OFF - see
      * isTwoOrderIntentPreviewEnabled() for why this is a method rather than a
      * direct property read.
      *
      * @return bool
      */
-    public function isTwoSkipConfirmNonceCheckEnabled()
+    public function isTwoSkipConfirmTokenCheckEnabled()
     {
-        return ((int) Configuration::get('PS_TWO_SKIP_CONFIRM_NONCE_CHECK')) === 1;
+        return ((int) Configuration::get('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK')) === 1;
     }
 
     /**
@@ -958,7 +958,7 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS');
         Configuration::deleteByName('PS_TWO_DEFAULT_PAYMENT_TERM');
         Configuration::deleteByName('PS_TWO_CHECKOUT_SORT_ORDER');
-        Configuration::deleteByName('PS_TWO_SKIP_CONFIRM_NONCE_CHECK');
+        Configuration::deleteByName('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK');
         Configuration::deleteByName('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION');
         return true;
     }
@@ -2425,7 +2425,7 @@ class Twopayment extends PaymentModule
 
     /**
      * Section F - Diagnostics (TWO-25386 Part 1): debug/API logging, skip
-     * confirm nonce, clear on deactivation and the error log link -
+     * confirm token, clear on deactivation and the error log link -
      * relocated here from the former "General Settings"/"Advanced
      * Settings" panels. The version/plugin-info panel and the install
      * health checklist (renderTwoPluginInfo/renderTwoPluginHealthChecklist)
@@ -2486,7 +2486,7 @@ class Twopayment extends PaymentModule
                             ),
                         ),
                     ),
-                    // Skip confirm-order nonce/token check (TWO-25386 #4,
+                    // Skip confirm-order token check (TWO-25386 #4,
                     // ported from woocommerce-plugin's `skip_confirm_auth`).
                     // DEBUG ONLY - gates the CSRF-style token check
                     // (validateAjaxToken()) on the order-intent front
@@ -2494,13 +2494,13 @@ class Twopayment extends PaymentModule
                     array(
                         'type' => 'switch',
                         'label' => $this->l('Skip confirm-order token check (debug only)'),
-                        'name' => 'PS_TWO_SKIP_CONFIRM_NONCE_CHECK',
+                        'name' => 'PS_TWO_SKIP_CONFIRM_TOKEN_CHECK',
                         'is_bool' => true,
                         'desc' => $this->l('WARNING: FOR DEBUGGING ONLY. When YES, the order-intent controller\'s CSRF-style token check is skipped. Never enable this on a live production shop.'),
                         'required' => true,
                         'values' => array(
-                            array('id' => 'PS_TWO_SKIP_CONFIRM_NONCE_CHECK_ON', 'value' => 1, 'label' => $this->l('Yes (Not Recommended)')),
-                            array('id' => 'PS_TWO_SKIP_CONFIRM_NONCE_CHECK_OFF', 'value' => 0, 'label' => $this->l('No (Secure)')),
+                            array('id' => 'PS_TWO_SKIP_CONFIRM_TOKEN_CHECK_ON', 'value' => 1, 'label' => $this->l('Yes (Not Recommended)')),
+                            array('id' => 'PS_TWO_SKIP_CONFIRM_TOKEN_CHECK_OFF', 'value' => 0, 'label' => $this->l('No (Secure)')),
                         ),
                     ),
                     // Clear settings on deactivation (TWO-25386 #5, ported
@@ -2868,7 +2868,7 @@ class Twopayment extends PaymentModule
         $fields_values = array();
         $fields_values['PS_TWO_DEBUG_MODE'] = Tools::getValue('PS_TWO_DEBUG_MODE', Configuration::get('PS_TWO_DEBUG_MODE'));
         $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
-        $fields_values['PS_TWO_SKIP_CONFIRM_NONCE_CHECK'] = Tools::getValue('PS_TWO_SKIP_CONFIRM_NONCE_CHECK', Configuration::get('PS_TWO_SKIP_CONFIRM_NONCE_CHECK'));
+        $fields_values['PS_TWO_SKIP_CONFIRM_TOKEN_CHECK'] = Tools::getValue('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK', Configuration::get('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK'));
         $fields_values['PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION'] = Tools::getValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', $this->isTwoBooleanConfigEnabledByDefault('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION'));
         return $fields_values;
     }
@@ -2882,7 +2882,7 @@ class Twopayment extends PaymentModule
     {
         Configuration::updateValue('PS_TWO_DEBUG_MODE', Tools::getValue('PS_TWO_DEBUG_MODE'));
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
-        Configuration::updateValue('PS_TWO_SKIP_CONFIRM_NONCE_CHECK', (int) Tools::getValue('PS_TWO_SKIP_CONFIRM_NONCE_CHECK', 0));
+        Configuration::updateValue('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK', (int) Tools::getValue('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK', 0));
         Configuration::updateValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', (int) Tools::getValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', 1));
 
         $this->output .= $this->displayConfirmation($this->l('Diagnostics settings are updated.'));
