@@ -236,6 +236,34 @@ describe('two live controls do not share state', () => {
         expect(rebuilt.reopenDeadline()).toBeGreaterThan(0);
     });
 
+    test('manual-entry mode on one control does not put the other into it', () => {
+        // Given two controls built the un-injected way
+        const first = makeFirst();
+        const second = makeSecond();
+
+        // When the first enters manual entry
+        first._manualEntry = true;
+
+        // Then the second is unaffected
+        expect(first._manualEntry).toBe(true);
+        expect(second._manualEntry).toBe(false);
+    });
+
+    test('manual-entry mode survives the control OWN rebuild, via the injected memory', () => {
+        // Given a page-lifetime memory for one mount, matching reopenMemory
+        const memory = {};
+        const first = makeFirst({ manualEntryMemory: memory });
+
+        // When the buyer switches to manual entry and the control is then
+        // destroyed and rebuilt, as `updatedAddressForm` does
+        first._manualEntry = true;
+        first.destroy();
+        const rebuilt = makeFirst({ manualEntryMemory: memory });
+
+        // Then the replacement still knows it is in manual-entry mode
+        expect(rebuilt._manualEntry).toBe(true);
+    });
+
     test('aborting one control in-flight search leaves the other request alive', () => {
         // Given two controls each holding a request
         const first = makeFirst();

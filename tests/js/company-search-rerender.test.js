@@ -829,6 +829,28 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
         expect($('.two-company-search-back')).toHaveLength(1);
     });
 
+    test('the country SELECT firing change does not wipe a hand-typed company in manual entry', () => {
+        // Doug's ruling (TWO-40 follow-up): "the ONLY time that a country
+        // change should not wipe company details is if the control is in
+        // manual entry mode." Before this, the listener wiped
+        // unconditionally - a hand-typed name and its dni went with it.
+        const instance = makeInstance();
+
+        search(AT_THRESHOLD);
+        ajax.last().succeed(SEARCH_RESPONSE);
+        chooseManualEntry();
+
+        liveField().val('My Own Trading Name');
+        $("input[name='dni']").val('12345678');
+
+        document.querySelector("select[name='id_country']")
+            .dispatchEvent(new window.Event('change'));
+
+        expect(liveField().val()).toBe('My Own Trading Name');
+        expect($("input[name='dni']").val()).toBe('12345678');
+        expect(instance._manualEntry).toBe(true);
+    });
+
     test('both strings come from the translation dictionary when one is supplied', () => {
         const saved = window.twopayment;
         window.twopayment = {
