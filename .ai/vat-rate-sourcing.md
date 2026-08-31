@@ -69,14 +69,9 @@ shop is on the fallback" is a log grep, not an inference. When a default is conf
 refusal log drops from severity 3 to 2, because the refusal is then internal control flow
 rather than a failure.
 
-The admin field is **hidden unless the install opts in** with
-`define('_TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_', true);` in
-`config/defines_custom.inc.php` — core's sanctioned per-install override, `include_once`d
-by `config/config.inc.php` (**not** by `defines.inc.php`, and before it) on every front,
-back-office and CLI request, before any module loads. The constant gates **field
-visibility only**: a stored value keeps working if the constant disappears, and the save
-path never writes the key while the field is hidden. See the README's "Default shipping tax
-code (hidden setting)" section for the merchant-facing instructions.
+The admin field renders on Order Management like every other setting on that tab —
+no build-time flag, no runtime gate. See the README's "Default shipping tax code" section
+for the merchant-facing instructions.
 
 ## Divergence handling
 

@@ -54,6 +54,12 @@ final class ApiKeyVerificationSpec
         self::testASlotWithoutAVerdictClockIsStillCarryable();
         self::testSwitchingEnvironmentAloneNeverPublishesAVerdict();
         self::testChangedKeyNeverInheritsThePreviousVerdict();
+
+        // Inline live check (TWO-25386 #4).
+        self::testLiveCheckReportsOkForAVerifiedKey();
+        self::testLiveCheckReportsTheFailureMessageForARejectedKey();
+        self::testLiveCheckNeverTouchesConfigurationBeforeSave();
+        self::testLiveCheckDoesNotCallOutForAnEmptyKeyOrEnvironment();
     }
 
     /* ===================================================================
@@ -145,6 +151,12 @@ final class ApiKeyVerificationSpec
             public function verifiedPanelFlagForTest(): int
             {
                 return (int) $this->isTwoApiKeyVerified();
+            }
+
+            /** @return array{status:string,ok:bool,message:string} */
+            public function liveCheckForTest($apiKey, $environment): array
+            {
+                return $this->buildApiKeyLiveVerificationResult($apiKey, $environment);
             }
 
             protected function getTwoPaymentOption()
@@ -1439,5 +1451,66 @@ final class ApiKeyVerificationSpec
 
         TinyAssert::same(Twopayment::API_KEY_STATUS_OK, $status['status'], 'a different key must be verified afresh');
         TinyAssert::same(1, $module->verifyCalls);
+    }
+
+    /* ===================================================================
+     * Inline live check (TWO-25386 #4) - General tab's blur/keystroke
+     * verification, never touching Configuration.
+     * =================================================================== */
+
+    private static function testLiveCheckReportsOkForAVerifiedKey(): void
+    {
+        $module = self::module(self::okOutcome());
+        $result = $module->liveCheckForTest('a-fresh-key', 'staging');
+
+        TinyAssert::true($result['ok']);
+        TinyAssert::same(Twopayment::API_KEY_STATUS_OK, $result['status']);
+        TinyAssert::same('', $result['message']);
+    }
+
+    private static function testLiveCheckReportsTheFailureMessageForARejectedKey(): void
+    {
+        $module = self::module(self::httpOutcome(401));
+        $result = $module->liveCheckForTest('a-bad-key', 'staging');
+
+        TinyAssert::false($result['ok']);
+        TinyAssert::same(Twopayment::API_KEY_STATUS_INVALID, $result['status']);
+        TinyAssert::true($result['message'] !== '', 'a failed check must carry a merchant-facing message');
+    }
+
+    private static function testLiveCheckNeverTouchesConfigurationBeforeSave(): void
+    {
+        $module = self::module(self::okOutcome());
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'stored-key');
+        Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 0);
+
+        $module->liveCheckForTest('a-different-key-being-tried', 'staging');
+
+        TinyAssert::same(
+            'stored-key',
+            (string) Configuration::get('PS_TWO_MERCHANT_API_KEY'),
+            'trying a key inline must never publish it as stored'
+        );
+        TinyAssert::same(
+            0,
+            (int) Configuration::get('PS_TWO_API_KEY_VERIFIED'),
+            'trying a key inline must never flip the published verified flag'
+        );
+        TinyAssert::same(1, $module->verifyCalls, 'sanity: the check did run');
+    }
+
+    private static function testLiveCheckDoesNotCallOutForAnEmptyKeyOrEnvironment(): void
+    {
+        $module = self::module(self::okOutcome());
+
+        $result = $module->liveCheckForTest('', 'staging');
+        TinyAssert::false($result['ok']);
+        TinyAssert::same(Twopayment::API_KEY_STATUS_NOT_CONFIGURED, $result['status']);
+
+        $result = $module->liveCheckForTest('a-key', '');
+        TinyAssert::false($result['ok']);
+        TinyAssert::same(Twopayment::API_KEY_STATUS_NOT_CONFIGURED, $result['status']);
+
+        TinyAssert::same(0, $module->verifyCalls, 'an incomplete request must never reach the wire');
     }
 }

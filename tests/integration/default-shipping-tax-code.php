@@ -298,20 +298,6 @@ function probeRunScenario($name)
 
         return 2;
     }
-    // A stored declaration is honoured WITHOUT the activation constant - the
-    // constant gates the admin field's VISIBILITY only, so that losing it (host
-    // migration, restored config directory) cannot silently start declining a
-    // configured merchant's orders. CI runs with the constant absent, which is
-    // the stronger of the two states, and every scenario below therefore also
-    // proves that invariant. Not a hard failure when it IS defined: a local dev
-    // shop set up through `make carrierless-shop` has it, and refusing to run
-    // there would make the probe useless exactly where it is most convenient to
-    // run. Announced instead, so a CI run that quietly acquired it is visible.
-    if (defined('_TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_')) {
-        echo '  NOTE _TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_ is defined on this shop; the'
-            . ' constant-absent invariant is not being exercised.' . PHP_EOL;
-    }
-
     $customer = new Customer((int) $cart->id_customer);
     $address = new Address((int) $cart->id_address_invoice);
     $currency = new Currency((int) $cart->id_currency);

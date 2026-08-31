@@ -22,7 +22,7 @@ This folder contains deterministic tests for order-building and payload safety l
 - Buyer company resolution across the intent, create and update payloads: the invoice address wins, the shipping address is the fallback, and the name and organisation number always come from the same address
 - Tracking number sourcing (order_carrier vs legacy shipping_number) and the admin tracking-update hook
 - Partial refunds via credit slips: amount+currency payload, slip-ID idempotency key, remaining-balance guard, and duplicate-refund suppression
-- Default shipping tax code: hidden-unless-activated admin field, no-default-value refusal parity, save-while-hidden never wiping the stored selection, carrier-wins resolution order, and the README/code drift guard on the activation constant
+- Default shipping tax code: no-default-value refusal parity, an omitted-field save never wiping the stored selection, and the carrier-wins resolution order
 
 - Dev-mode service URL overrides (`TWO_API_BASE_URL`, `TWO_PORTAL_BASE_URL`,
   `TWO_CHECKOUT_BASE_URL`): each resolves independently of the other two, and every
@@ -32,10 +32,6 @@ This folder contains deterministic tests for order-building and payload safety l
 (`tests/fixtures/dev-mode-url-probe.php`, invoked with `PROBE_PS_MODE_DEV=1|0|unset`):
 `_PS_MODE_DEV_` is a constant, so one process cannot exercise both sides of the gate,
 and the offline suite itself runs with the constant undefined.
-
-`DefaultShippingTaxCodeSpec` **must stay last** in `run.php`: it `define()`s
-`_TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_` partway through its own run and a PHP
-constant cannot be undefined again.
 
 ## Why this matters
 
