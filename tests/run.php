@@ -5657,11 +5657,6 @@ require __DIR__ . '/BuyerCompanyFallbackSpec.php';
 require __DIR__ . '/BuyerCountryGateSpec.php';
 require __DIR__ . '/TwoRateLimiterSpec.php';
 require __DIR__ . '/AdminFirewallRateLimitFieldsSpec.php';
-// LAST, deliberately: DefaultShippingTaxCodeSpec defines
-// _TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_ partway through its own run, and a
-// PHP constant cannot be undefined again. ShippingCostSourcingSpec asserts the
-// unconditional carrier-less refusal and must not observe it. Keep this entry
-// at the bottom of both the require list and $tests.
 require __DIR__ . '/DefaultShippingTaxCodeSpec.php';
 
 $tests = [
@@ -5717,7 +5712,6 @@ $tests = [
     'BuyerCountryGateSpec::runAll' => [BuyerCountryGateSpec::class, 'runAll'],
     'TwoRateLimiterSpec::runAll' => [TwoRateLimiterSpec::class, 'runAll'],
     'AdminFirewallRateLimitFieldsSpec::runAll' => [AdminFirewallRateLimitFieldsSpec::class, 'runAll'],
-    // Keep last - see the require above.
     'DefaultShippingTaxCodeSpec::runAll' => [DefaultShippingTaxCodeSpec::class, 'runAll'],
 ];
 

@@ -3,31 +3,25 @@
 declare(strict_types=1);
 
 /**
- * TWO-25200 - the optional "Default shipping tax code".
+ * TWO-25200 - the "Default shipping tax code" setting.
  *
  * PrestaShop declares shipping VAT on the carrier row
  * (`carrier_tax_rules_group_shop`) and nowhere else. A merchant pricing
- * shipping outside the carrier table - custom logistics, `id_carrier = 0` -
- * has nowhere in core to declare it, and core discards the whole
- * delivery-option list on that sentinel, so TWO-25161's carrier lookup has
- * nothing to read and the order is refused.
+ * shipping outside the carrier table - third-party carrier modules,
+ * click-and-collect, marketplace shipping, `id_carrier = 0` - has nowhere in
+ * core to declare it, and core discards the whole delivery-option list on
+ * that sentinel, so TWO-25161's carrier lookup has nothing to read and the
+ * order is refused.
  *
- * This spec covers the module-level declaration that closes that hole, and
- * the two things about it that are easy to get wrong:
+ * The field is always visible in Order Management, like every other setting
+ * on that tab - no build-time flag, no runtime "hide until configured" gate.
+ * This spec covers the two things about it that are easy to get wrong:
  *
  *   1. UNSET must be byte-for-byte the pre-TWO-25200 loud refusal. There is
  *      no default value and nothing seeds one.
- *   2. The admin field is HIDDEN unless the install defines
- *      `_TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_`, and a save while it is
- *      hidden must not wipe a stored selection.
- *
- * ORDERING IS LOAD-BEARING. A PHP constant cannot be undefined once set, so
- * every flag-OFF assertion runs first and `define()` happens in the middle of
- * runAll(). That is also why this spec is registered LAST in tests/run.php:
- * ShippingCostSourcingSpec asserts the unconditional refusal and must not
- * observe the constant. (Even if it did, a defined-but-unset install refuses
- * exactly as before - which is the point of assertion 1 - so the coupling is
- * belt-and-braces rather than the only thing holding it up.)
+ *   2. Resolution order: the carrier's own declared group always wins over
+ *      the default, and a selection pointing at a deleted group is treated
+ *      as unset rather than silently relayed at 0%.
  */
 final class DefaultShippingTaxCodeSpec
 {
@@ -39,36 +33,23 @@ final class DefaultShippingTaxCodeSpec
 
     public static function runAll(): void
     {
-        // ---- The constant is NOT defined yet: shipped behaviour. ----
-        self::testConstantIsNotDefinedByDefault();
-        self::testFieldIsHiddenFromAdvancedSettingsWhenFlagOff();
-        self::testHiddenFieldSaveNeverWipesAStoredSelection();
-        self::testHiddenFieldSaveIgnoresASubmittedValue();
-        self::testUnsetDefaultStillRefusesCarrierlessCartLoudly();
-        self::testStoredSelectionIsHonouredEvenWhileFieldIsHidden();
-
-        // ---- Switch the install on, exactly as a merchant's developer does
-        // ---- in config/defines_custom.inc.php. ----
-        self::activateFlag();
-
-        self::testFieldIsRenderedWhenFlagOn();
+        self::testFieldIsAlwaysRendered();
         self::testFieldPreSelectsNothingWhenUnset();
         self::testFieldPreSelectsTheStoredGroup();
         self::testInactiveStoredGroupStaysInTheOptionList();
         self::testSaveStoresAnExplicitSelection();
         self::testSaveStoresNoTaxOnlyWhenSubmitted();
         self::testSaveClearsTheSelectionWhenSubmittedBlank();
+        self::testSaveOmittingTheFieldNeverWipesAStoredSelection();
         self::testValidationRejectsGarbageAndUnknownGroups();
         self::testValidationAcceptsBlankAndNoTax();
 
+        self::testUnsetDefaultStillRefusesCarrierlessCartLoudly();
         self::testCarrierlessCartRelaysTheDefaultShippingTaxCode();
         self::testNoTaxDefaultRelaysAnExplicitZeroRate();
         self::testCarrierDeclaredGroupWinsOverTheDefault();
         self::testDeletedDefaultGroupRefusesRatherThanRelayZero();
         self::testRefusalLogDropsToWarningWhenADefaultIsConfigured();
-
-        // ---- Doc/code drift guard. ----
-        self::testReadmeDocumentsTheExactActivationLine();
     }
 
     // -----------------------------------------------------------------
@@ -105,15 +86,8 @@ final class DefaultShippingTaxCodeSpec
         return -1;
     }
 
-    private static function activateFlag(): void
-    {
-        if (!defined(Twopayment::FLAG_DEFAULT_SHIPPING_TAX_CODE)) {
-            define(Twopayment::FLAG_DEFAULT_SHIPPING_TAX_CODE, true);
-        }
-    }
-
-    /** Every input name the Advanced Settings form renders. */
-    private static function advancedFieldNames(DefaultShippingTaxCodeHarness $module): array
+    /** Every input name the Order Management form renders. */
+    private static function orderManagementFieldNames(DefaultShippingTaxCodeHarness $module): array
     {
         $names = [];
         foreach ($module->exposeOrderManagementForm()['form']['input'] as $input) {
@@ -123,7 +97,7 @@ final class DefaultShippingTaxCodeSpec
         return $names;
     }
 
-    /** The rendered default-shipping-tax-code input, or null when hidden. */
+    /** The rendered default-shipping-tax-code input. */
     private static function shippingTaxInput(DefaultShippingTaxCodeHarness $module): ?array
     {
         foreach ($module->exposeOrderManagementForm()['form']['input'] as $input) {
@@ -249,178 +223,24 @@ final class DefaultShippingTaxCodeSpec
     }
 
     // -----------------------------------------------------------------
-    // Flag OFF - the shipped state of every ordinary install
+    // Field presence and admin form behaviour
     // -----------------------------------------------------------------
 
-    /**
-     * The guard the whole flag-OFF half of this spec rests on: nothing in the
-     * module, the bootstrap or an earlier spec may define the constant.
-     */
-    private static function testConstantIsNotDefinedByDefault(): void
-    {
-        TinyAssert::false(
-            defined(Twopayment::FLAG_DEFAULT_SHIPPING_TAX_CODE),
-            'The activation constant must never be defined by the module itself - only by the shop'
-        );
-        TinyAssert::false(
-            (new DefaultShippingTaxCodeHarness())->exposeFieldEnabled(),
-            'The field must report itself disabled on an install that has not opted in'
-        );
-    }
-
-    /**
-     * Ordinary shops declare shipping VAT on their carriers. They must not be
-     * offered a second, contradictory place to do it - the field is not in the
-     * form at all, not merely disabled.
-     */
-    private static function testFieldIsHiddenFromAdvancedSettingsWhenFlagOff(): void
+    private static function testFieldIsAlwaysRendered(): void
     {
         self::reset();
-        $module = new DefaultShippingTaxCodeHarness();
+        StubStore::$taxRulesGroups[4210] = ['name' => 'IVA 21%', 'active' => 1];
+        StubStore::$taxRulesGroups[4100] = ['name' => 'IVA 10%', 'active' => 1];
 
-        $names = self::advancedFieldNames($module);
-        TinyAssert::false(
-            in_array(self::CONFIG_KEY, $names, true),
-            'The default-shipping-tax-code field must not be rendered while the flag is off'
-        );
+        $module = new DefaultShippingTaxCodeHarness();
+        $names = self::orderManagementFieldNames($module);
+        TinyAssert::true(in_array(self::CONFIG_KEY, $names, true), 'The field must always render on Order Management');
         // The rest of Order Management is untouched.
         TinyAssert::true(in_array('PS_TWO_FINALIZE_PURCHASE', $names, true));
         TinyAssert::true(in_array('PS_TWO_ENABLE_TAX_SUBTOTALS', $names, true));
 
-        TinyAssert::false(
-            array_key_exists(self::CONFIG_KEY, $module->exposeOrderManagementFormValues()),
-            'A hidden field must not contribute a form value either'
-        );
-    }
-
-    /**
-     * THE BUG THIS FIELD INVITES. HelperForm posts nothing for a field it
-     * never rendered, so a save path that reads Tools::getValue(key, '') and
-     * writes it back would zero the merchant's stored declaration on the next
-     * unrelated Advanced Settings save - the same class of bug the payment-term
-     * checkbox loop was fixed for under TWO-24813.
-     */
-    private static function testHiddenFieldSaveNeverWipesAStoredSelection(): void
-    {
-        self::reset();
-        StubStore::$taxRulesGroups[4210] = ['name' => 'IVA 21%', 'active' => 1];
-        Configuration::updateValue(self::CONFIG_KEY, '4210');
-
-        $module = new DefaultShippingTaxCodeHarness();
-        // A perfectly ordinary Advanced Settings save: the other switches are
-        // submitted, this field is not in the form at all.
-        Tools::setTestValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS', 1);
-        Tools::setTestValue('PS_TWO_FINALIZE_PURCHASE', 1);
-        $module->exposeSaveOrderManagementFormValues();
-
-        TinyAssert::same(
-            '4210',
-            (string) Configuration::get(self::CONFIG_KEY),
-            'Saving Advanced Settings while the field is hidden must leave the stored selection alone'
-        );
-    }
-
-    /**
-     * Belt-and-braces on the same path: even a value that somehow arrives in
-     * the POST (hand-crafted request, stale form) is ignored while the field
-     * is switched off. The gate is the flag, not the presence of input.
-     */
-    private static function testHiddenFieldSaveIgnoresASubmittedValue(): void
-    {
-        self::reset();
-        StubStore::$taxRulesGroups[4210] = ['name' => 'IVA 21%', 'active' => 1];
-        StubStore::$taxRulesGroups[4100] = ['name' => 'IVA 10%', 'active' => 1];
-        Configuration::updateValue(self::CONFIG_KEY, '4210');
-
-        $module = new DefaultShippingTaxCodeHarness();
-        Tools::setTestValue(self::CONFIG_KEY, '4100');
-        $module->exposeSaveOrderManagementFormValues();
-
-        TinyAssert::same(
-            '4210',
-            (string) Configuration::get(self::CONFIG_KEY),
-            'A submitted value must not be stored while the field is switched off'
-        );
-    }
-
-    /**
-     * Requirement 1, on the real builder: with no default configured, a
-     * cart is refused exactly as it was before this feature existed - same
-     * message, same error severity.
-     */
-    private static function testUnsetDefaultStillRefusesCarrierlessCartLoudly(): void
-    {
-        self::reset();
-        $module = new TwopaymentTestHarness();
-        $cart = self::seedCarrierlessCart(9301, 9311, 9321);
-        self::seedTotalsFor21PercentShipping(9301);
-
-        TinyAssert::throws(
-            static function () use ($module, $cart): void {
-                $module->getTwoNewOrderData('merchant-attempt-9301', $cart, self::merchantUrls());
-            },
-            'No deliverable carrier for the cart shipping cost'
-        );
-
-        TinyAssert::false(
-            self::loggedContains(self::FALLBACK_LOG),
-            'Nothing may be assumed when no default is configured'
-        );
-        TinyAssert::same(
-            3,
-            self::loggedSeverity('No deliverable carrier for the cart shipping cost'),
-            'With no default configured the refusal stays an error-severity log'
-        );
-        TinyAssert::true(
-            self::loggedContains('Configure a carrier that covers this delivery address'),
-            'The refusal must keep telling the merchant what to fix'
-        );
-    }
-
-    /**
-     * DELIBERATE SEMANTICS, pinned so nobody "tidies" it away: the constant
-     * gates the admin FIELD, not the merchant's declaration. If the constant
-     * disappears (host migration, restored config directory) a merchant who
-     * already made a selection keeps their orders working - a server move must
-     * not silently start declining them. Only UNSET restores the refusal.
-     */
-    private static function testStoredSelectionIsHonouredEvenWhileFieldIsHidden(): void
-    {
-        self::reset();
-        StubStore::$taxRulesGroups[4210] = ['name' => 'IVA 21%', 'active' => 1];
-        StubStore::$taxRuleRates[4210] = 21.0;
-        Configuration::updateValue(self::CONFIG_KEY, '4210');
-
-        $module = new TwopaymentTestHarness();
-        $cart = self::seedCarrierlessCart(9302, 9312, 9322);
-        self::seedTotalsFor21PercentShipping(9302);
-
-        $payload = $module->getTwoNewOrderData('merchant-attempt-9302', $cart, self::merchantUrls());
-        $shipping = self::shippingLines($payload);
-
-        TinyAssert::count(1, $shipping);
-        TinyAssert::same('0.21', (string) $shipping[0]['tax_rate']);
-        TinyAssert::true(
-            self::loggedContains(self::FALLBACK_LOG),
-            'A stored declaration must still be honoured (and logged) with the field hidden'
-        );
-    }
-
-    // -----------------------------------------------------------------
-    // Flag ON - an install that has opted in
-    // -----------------------------------------------------------------
-
-    private static function testFieldIsRenderedWhenFlagOn(): void
-    {
-        self::reset();
-        StubStore::$taxRulesGroups[4210] = ['name' => 'IVA 21%', 'active' => 1];
-        StubStore::$taxRulesGroups[4100] = ['name' => 'IVA 10%', 'active' => 1];
-
-        $module = new DefaultShippingTaxCodeHarness();
-        TinyAssert::true($module->exposeFieldEnabled());
-
         $input = self::shippingTaxInput($module);
-        TinyAssert::true($input !== null, 'The field must be rendered once the install opts in');
+        TinyAssert::true($input !== null);
         TinyAssert::same('select', (string) $input['type']);
         TinyAssert::same('Default shipping tax code', (string) $input['label']);
         // The help text has to carry the semantics - this is the only place a
@@ -531,6 +351,30 @@ final class DefaultShippingTaxCodeSpec
         TinyAssert::same('', (string) Configuration::get(self::CONFIG_KEY));
     }
 
+    /**
+     * THE BUG THIS GUARD PREVENTS. A raw request that omits the field
+     * entirely (a stale form, a hand-crafted POST) must not wipe the stored
+     * declaration - same class of bug the payment-term checkbox loop was
+     * fixed for under TWO-24813.
+     */
+    private static function testSaveOmittingTheFieldNeverWipesAStoredSelection(): void
+    {
+        self::reset();
+        StubStore::$taxRulesGroups[4210] = ['name' => 'IVA 21%', 'active' => 1];
+        Configuration::updateValue(self::CONFIG_KEY, '4210');
+
+        $module = new DefaultShippingTaxCodeHarness();
+        // A save request that never mentions this key at all.
+        Tools::setTestValue('PS_TWO_FINALIZE_PURCHASE', 1);
+        $module->exposeSaveOrderManagementFormValues();
+
+        TinyAssert::same(
+            '4210',
+            (string) Configuration::get(self::CONFIG_KEY),
+            'A save that never posted this field must leave the stored selection alone'
+        );
+    }
+
     private static function testValidationRejectsGarbageAndUnknownGroups(): void
     {
         self::reset();
@@ -568,6 +412,40 @@ final class DefaultShippingTaxCodeSpec
     // -----------------------------------------------------------------
     // Resolution order, on the real payload builder
     // -----------------------------------------------------------------
+
+    /**
+     * Requirement 1, on the real builder: with no default configured, a
+     * cart is refused exactly as it was before this feature existed - same
+     * message, same error severity.
+     */
+    private static function testUnsetDefaultStillRefusesCarrierlessCartLoudly(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+        $cart = self::seedCarrierlessCart(9301, 9311, 9321);
+        self::seedTotalsFor21PercentShipping(9301);
+
+        TinyAssert::throws(
+            static function () use ($module, $cart): void {
+                $module->getTwoNewOrderData('merchant-attempt-9301', $cart, self::merchantUrls());
+            },
+            'No deliverable carrier for the cart shipping cost'
+        );
+
+        TinyAssert::false(
+            self::loggedContains(self::FALLBACK_LOG),
+            'Nothing may be assumed when no default is configured'
+        );
+        TinyAssert::same(
+            3,
+            self::loggedSeverity('No deliverable carrier for the cart shipping cost'),
+            'With no default configured the refusal stays an error-severity log'
+        );
+        TinyAssert::true(
+            self::loggedContains('Configure a carrier that covers this delivery address'),
+            'The refusal must keep telling the merchant what to fix'
+        );
+    }
 
     /**
      * The custom-logistics case end to end: no carrier, a real 29.00 shipping charge, and a
@@ -780,57 +658,14 @@ final class DefaultShippingTaxCodeSpec
             'Do not tell a merchant to fix carriers when their configured default handled it'
         );
     }
-
-    // -----------------------------------------------------------------
-    // Doc/code drift
-    // -----------------------------------------------------------------
-
-    /**
-     * The activation route is a hand-edited line in a file we never ship, so
-     * the ONLY thing keeping it honest is that the documented constant is the
-     * constant the code reads. A hidden flag whose documented activation route
-     * silently does nothing is exactly how the equivalent Magento setting was
-     * shipped broken - this test is the guard against repeating it.
-     */
-    private static function testReadmeDocumentsTheExactActivationLine(): void
-    {
-        $constant = Twopayment::FLAG_DEFAULT_SHIPPING_TAX_CODE;
-        TinyAssert::same(
-            '_TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_',
-            $constant,
-            'Renaming the activation constant is a documented, breaking change for the shops using it'
-        );
-
-        $readme = (string) file_get_contents(__DIR__ . '/../README.md');
-        TinyAssert::true($readme !== '', 'README.md must be readable');
-
-        $line = "define('" . $constant . "', true);";
-        TinyAssert::true(
-            strpos($readme, $line) !== false,
-            'README.md must carry the exact activation line: ' . $line
-        );
-        TinyAssert::true(
-            strpos($readme, 'config/defines_custom.inc.php') !== false,
-            'README.md must name the file the line goes in'
-        );
-        TinyAssert::true(
-            strpos($readme, 'Default shipping tax code') !== false,
-            'README.md must name the field the constant reveals'
-        );
-    }
 }
 
 /**
- * Exposes the Advanced Settings form hooks, which are protected on the module
+ * Exposes the Order Management form hooks, which are protected on the module
  * because PrestaShop calls them from getContent().
  */
 final class DefaultShippingTaxCodeHarness extends TwopaymentTestHarness
 {
-    public function exposeFieldEnabled(): bool
-    {
-        return $this->isTwoDefaultShippingTaxCodeFieldEnabled();
-    }
-
     public function exposeOrderManagementForm(): array
     {
         return $this->getTwoOrderManagementForm();
