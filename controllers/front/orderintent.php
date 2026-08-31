@@ -729,13 +729,13 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
      * Helper method to validate AJAX token.
      *
      * DEBUG ESCAPE HATCH (TWO-25386 #4, ported from woocommerce-plugin's
-     * `skip_confirm_auth`): PS_TWO_SKIP_CONFIRM_NONCE_CHECK, when enabled,
+     * `skip_confirm_auth`): PS_TWO_SKIP_CONFIRM_TOKEN_CHECK, when enabled,
      * skips this token check entirely on every action on this controller.
      * Default OFF - matches the pre-existing always-checked behaviour.
      */
     public function validateAjaxToken()
     {
-        if ($this->module->isTwoSkipConfirmNonceCheckEnabled()) {
+        if ($this->module->isTwoSkipConfirmTokenCheckEnabled()) {
             return true;
         }
 

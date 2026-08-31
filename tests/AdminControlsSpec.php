@@ -46,8 +46,8 @@ final class AdminControlsSpec
         self::testCheckOrderIntentControllerSkipsCallWhenDisabled();
         self::testCheckOrderIntentControllerProceedsWhenEnabled();
 
-        self::testSkipConfirmNonceCheckBypassesTokenValidation();
-        self::testConfirmNonceCheckEnforcedByDefault();
+        self::testSkipConfirmTokenCheckBypassesTokenValidation();
+        self::testConfirmTokenCheckEnforcedByDefault();
 
         self::testClearSettingsOnDeactivationDefaultsToTrue();
         self::testClearSettingsOnDeactivationHonoursExplicitOff();
@@ -303,12 +303,12 @@ final class AdminControlsSpec
         TinyAssert::false(array_key_exists('status', $controller->emitted[0]) && $controller->emitted[0]['status'] === 'order_intent_disabled');
     }
 
-    // ---- #4 skip confirm-order nonce check ---------------------------------
+    // ---- #4 skip confirm-order token check ---------------------------------
 
-    private static function testSkipConfirmNonceCheckBypassesTokenValidation(): void
+    private static function testSkipConfirmTokenCheckBypassesTokenValidation(): void
     {
         self::reset();
-        Configuration::updateValue('PS_TWO_SKIP_CONFIRM_NONCE_CHECK', 1);
+        Configuration::updateValue('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK', 1);
         $module = new TwopaymentTestHarness();
         $controller = self::makeOrderIntentController($module);
         // Deliberately NO token set - would fail validation otherwise.
@@ -316,7 +316,7 @@ final class AdminControlsSpec
         TinyAssert::true($controller->validateAjaxToken());
     }
 
-    private static function testConfirmNonceCheckEnforcedByDefault(): void
+    private static function testConfirmTokenCheckEnforcedByDefault(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
