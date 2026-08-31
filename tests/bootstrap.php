@@ -290,6 +290,8 @@ namespace {
         public static array $dbLocks = [];
         /** @var array<int,int> Last-applied surcharge sync seq by cart id */
         public static array $surchargeSyncSeqs = [];
+        /** @var array<string,array{window_start:int,hit_count:int}> TwoRateLimiter's twopayment_rate_limit rows, by rate_key */
+        public static array $rateLimitRows = [];
         /** @var array<int,array{id_order:int,product_id:int}> order_detail rows */
         public static array $orderDetails = [];
         /** @var string[] Every SQL string passed to Db::execute() */
@@ -399,6 +401,7 @@ namespace {
             self::$taxRules = [];
             self::$dbLocks = [];
             self::$surchargeSyncSeqs = [];
+            self::$rateLimitRows = [];
             self::$orderDetails = [];
             self::$orderStates = [];
             self::$dbExecuted = [];
@@ -1884,6 +1887,14 @@ namespace {
             if (preg_match('/REPLACE INTO `ps_twopayment_surcharge_sync` \(`id_cart`, `seq`, `updated_at`\) VALUES \((\d+), (\d+)/', $sql, $m)) {
                 StubStore::$surchargeSyncSeqs[(int) $m[1]] = (int) $m[2];
             }
+            if (preg_match(
+                '/REPLACE INTO `ps_twopayment_rate_limit` \(`rate_key`, `window_start`, `hit_count`\) VALUES'
+                . ' \("([^"]+)", (\d+), (\d+)\)/',
+                $sql,
+                $m
+            )) {
+                StubStore::$rateLimitRows[$m[1]] = ['window_start' => (int) $m[2], 'hit_count' => (int) $m[3]];
+            }
             // Trigger bookkeeping so specs can assert the DB-enforcement DDL
             // is issued. The stub CANNOT evaluate trigger semantics (no SQL
             // engine); rejection behaviour is live-container verified only.
@@ -2050,6 +2061,14 @@ namespace {
                 $m
             )) {
                 return StubStore::$twoPaymentRows[(int) $m[1]] ?? false;
+            }
+
+            if (preg_match(
+                '/SELECT `window_start`, `hit_count` FROM `ps_twopayment_rate_limit` WHERE `rate_key` = "([^"]+)"/',
+                $sql,
+                $m
+            )) {
+                return StubStore::$rateLimitRows[$m[1]] ?? false;
             }
 
             return false;

@@ -107,6 +107,7 @@ class TwoCompanySearch {
         this.config = {
             companyFieldSelector: "input[name='company']",
             checkoutHost: '',
+            firewallToken: '',
             saveCompanyUrl: '',
             // Page size for GET /companies/v2/company. Without it the API's
             // own default decides how many rows come back, so a common name in
@@ -1777,6 +1778,10 @@ class TwoCompanySearch {
     }
 
     buildPublicApiBeforeSend() {
+        // Off by default (TWO-25386): a published token is readable by
+        // anyone, so it is only ever attached when the merchant's own
+        // browser-token toggle set a non-empty value in config.
+        const firewallToken = this.config.firewallToken;
         return function (xhr) {
             const blockedHeaders = {
                 'authorization': true,
@@ -1794,6 +1799,9 @@ class TwoCompanySearch {
                 }
                 originalSetRequestHeader(name, value);
             };
+            if (firewallToken) {
+                originalSetRequestHeader('X-WAF-TOKEN', firewallToken);
+            }
         };
     }
 

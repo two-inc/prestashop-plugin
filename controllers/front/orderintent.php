@@ -38,7 +38,14 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
     public function displayAjax()
     {
         $action = Tools::getValue('action');
-        
+
+        if (!TwoRateLimiter::check($action)) {
+            header('Retry-After: 60');
+            http_response_code(429);
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => 'Too many requests']));
+            return;
+        }
+
         switch ($action) {
             case 'buildPayload':
                 $this->ajaxProcessBuildPayload();
