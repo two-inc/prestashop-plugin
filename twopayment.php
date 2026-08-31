@@ -14,6 +14,7 @@ if (!defined('_PS_VERSION_')) {
 require_once dirname(__FILE__) . '/classes/TwoSurchargeCalculator.php';
 require_once dirname(__FILE__) . '/classes/TwoSoleTrader.php';
 require_once dirname(__FILE__) . '/classes/TwoCheckoutAmountException.php';
+require_once dirname(__FILE__) . '/classes/TwoRateLimiter.php';
 
 class Twopayment extends PaymentModule
 {
@@ -350,7 +351,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.7.12';
+        $this->version = '2.7.13';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -614,6 +615,12 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_ENVIRONMENT', 'staging');
         Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', '');
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', '');
+        Configuration::updateValue('PS_TWO_FIREWALL_TOKEN', '');
+        Configuration::updateValue('PS_TWO_FIREWALL_TOKEN_BROWSER', 0);
+        Configuration::updateValue('PS_TWO_TRUSTED_PROXIES', '');
+        // Rate limiting is ON by default (TWO-25386), matching
+        // woocommerce-plugin and magento-plugin.
+        Configuration::updateValue('PS_TWO_DISABLE_RATE_LIMIT', 0);
         Configuration::updateValue('PS_TWO_MERCHANT_ID', '');
         Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 0);
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', 0); // Default: SSL verification enabled (secure)
@@ -821,6 +828,15 @@ class Twopayment extends PaymentModule
         // Note: invoice_details (payment info) is NOT stored in DB - fetched from Two API when needed
         // This ensures payment details are always current and avoids stale data issues
 
+        // Checkout rate limit (TWO-25386): one row per (route, caller),
+        // overwritten in place each window - see TwoRateLimiter.
+        $sql[] = 'CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'twopayment_rate_limit` (
+            `rate_key` VARCHAR(64) NOT NULL,
+            `window_start` INT(11) UNSIGNED NOT NULL,
+            `hit_count` INT(11) UNSIGNED NOT NULL,
+            PRIMARY KEY (`rate_key`)
+        ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8;';
+
         foreach ($sql as $query) {
             if (Db::getInstance()->execute($query) == false) {
                 return false;
@@ -890,6 +906,10 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_SUB_TITLE');
         Configuration::deleteByName('PS_TWO_MERCHANT_SHORT_NAME');
         Configuration::deleteByName('PS_TWO_MERCHANT_API_KEY');
+        Configuration::deleteByName('PS_TWO_FIREWALL_TOKEN');
+        Configuration::deleteByName('PS_TWO_FIREWALL_TOKEN_BROWSER');
+        Configuration::deleteByName('PS_TWO_TRUSTED_PROXIES');
+        Configuration::deleteByName('PS_TWO_DISABLE_RATE_LIMIT');
         Configuration::deleteByName('PS_TWO_MERCHANT_ID');
         Configuration::deleteByName(self::CONFIG_PLATFORM_MIN_ORDER);
         Configuration::deleteByName(self::CONFIG_MERCHANT_MIN_ORDER);
@@ -988,6 +1008,7 @@ class Twopayment extends PaymentModule
         $this->dropTwoOrderDetailFeeGuardTrigger();
         $sql = array();
         $sql[] = 'DROP TABLE IF EXISTS `' . _DB_PREFIX_ . 'twopayment_surcharge_sync`';
+        $sql[] = 'DROP TABLE IF EXISTS `' . _DB_PREFIX_ . 'twopayment_rate_limit`';
         foreach ($sql as $query) {
             if (Db::getInstance()->execute($query) == false) {
                 return false;
@@ -1197,6 +1218,16 @@ class Twopayment extends PaymentModule
                         'required' => false,
                         'desc' => sprintf($this->l('If this store represents one of several vendor sites sharing the same %1$s merchant account, enter a name here to identify this specific site/vendor on each order sent to %1$s - leave blank if you only run a single site.'), $this->getTwoBrandConfig('product_name')),
                     ),
+                    // Plain text, not obscure: a coarse network-egress gate
+                    // the merchant's IT administrator hands out, not a
+                    // credential (TWO-25386).
+                    array(
+                        'type' => 'text',
+                        'label' => $this->l('Firewall token'),
+                        'name' => 'PS_TWO_FIREWALL_TOKEN',
+                        'required' => false,
+                        'desc' => sprintf($this->l("If your IT administrator asks you to add a firewall token, place it in this field. It will then be transmitted as header X-WAF-TOKEN on all calls this store makes to the %s API."), $this->getTwoBrandConfig('product_name')),
+                    ),
                     array(
                         'type' => 'select',
                         'label' => $this->l('Environment'),
@@ -1270,6 +1301,7 @@ class Twopayment extends PaymentModule
         $fields_values = array();
         $fields_values['PS_TWO_MERCHANT_SHORT_NAME'] = Tools::getValue('PS_TWO_MERCHANT_SHORT_NAME', Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'));
         $fields_values['PS_TWO_MERCHANT_API_KEY'] = Tools::getValue('PS_TWO_MERCHANT_API_KEY', Configuration::get('PS_TWO_MERCHANT_API_KEY'));
+        $fields_values['PS_TWO_FIREWALL_TOKEN'] = Tools::getValue('PS_TWO_FIREWALL_TOKEN', Configuration::get('PS_TWO_FIREWALL_TOKEN'));
         $fields_values['PS_TWO_VENDOR_NAME'] = Tools::getValue('PS_TWO_VENDOR_NAME', Configuration::get('PS_TWO_VENDOR_NAME'));
         $fields_values['PS_TWO_ENVIRONMENT'] = Tools::getValue('PS_TWO_ENVIRONMENT', Configuration::get('PS_TWO_ENVIRONMENT'));
         return $fields_values;
@@ -1336,6 +1368,7 @@ class Twopayment extends PaymentModule
         $shortNameToSave = $this->verifiedMerchantShortName ? $this->verifiedMerchantShortName : trim(Tools::getValue('PS_TWO_MERCHANT_SHORT_NAME'));
         Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', $shortNameToSave);
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY')));
+        Configuration::updateValue('PS_TWO_FIREWALL_TOKEN', trim((string) Tools::getValue('PS_TWO_FIREWALL_TOKEN')));
         Configuration::updateValue('PS_TWO_VENDOR_NAME', trim((string) Tools::getValue('PS_TWO_VENDOR_NAME')));
         Configuration::updateValue('PS_TWO_ENVIRONMENT', Tools::getValue('PS_TWO_ENVIRONMENT'));
         // The verdict from the live check the validation above just made, now
@@ -2503,6 +2536,45 @@ class Twopayment extends PaymentModule
                             array('id' => 'PS_TWO_SKIP_CONFIRM_TOKEN_CHECK_OFF', 'value' => 0, 'label' => $this->l('No (Secure)')),
                         ),
                     ),
+                    // Trusted proxies (TWO-25386), ported from
+                    // woocommerce-plugin/magento-plugin: exempts the
+                    // merchant's own reverse proxy/CDN egress addresses from
+                    // TwoRateLimiter's per-caller ceiling, so every buyer
+                    // behind it isn't collapsed into one bucket.
+                    array(
+                        'type' => 'textarea',
+                        'label' => $this->l('Trusted proxies'),
+                        'name' => 'PS_TWO_TRUSTED_PROXIES',
+                        'required' => false,
+                        'desc' => $this->l('Addresses of your own reverse proxies, load balancers or CDN egress, as IPs or CIDR ranges, separated by commas or new lines. These IP addresses will be exempt from rate limiting.'),
+                    ),
+                    array(
+                        'type' => 'switch',
+                        'label' => $this->l('Add firewall token to browser-originated traffic'),
+                        'name' => 'PS_TWO_FIREWALL_TOKEN_BROWSER',
+                        'is_bool' => true,
+                        'desc' => $this->l("Only switch this on if your IT administrator requires the firewall token for calls from the user's browser as well as those from your server. Your firewall token will be published to the buyer's brower and may be read by anyone."),
+                        'required' => true,
+                        'values' => array(
+                            array('id' => 'PS_TWO_FIREWALL_TOKEN_BROWSER_ON', 'value' => 1, 'label' => $this->l('Yes')),
+                            array('id' => 'PS_TWO_FIREWALL_TOKEN_BROWSER_OFF', 'value' => 0, 'label' => $this->l('No')),
+                        ),
+                    ),
+                    // Rate limiting is ON by default (TWO-25386) - this is the
+                    // stopgap escape hatch, matching
+                    // woocommerce-plugin/magento-plugin's equivalent toggle.
+                    array(
+                        'type' => 'switch',
+                        'label' => $this->l('Disable checkout rate limiting'),
+                        'name' => 'PS_TWO_DISABLE_RATE_LIMIT',
+                        'is_bool' => true,
+                        'desc' => $this->l('Removes the per-caller ceiling on the checkout AJAX endpoints. The ceiling is on by default. If this store sits behind a CDN, load balancer or reverse proxy and Trusted proxies above is empty, every buyer arrives as that one address and shares a single ceiling - buyers are then refused mid-checkout with a too-many-requests message. The fix is to fill in Trusted proxies, which lets the ceiling tell buyers apart; switch this On only as a stopgap while you get that list, and back Off afterwards.'),
+                        'required' => true,
+                        'values' => array(
+                            array('id' => 'PS_TWO_DISABLE_RATE_LIMIT_ON', 'value' => 1, 'label' => $this->l('Yes')),
+                            array('id' => 'PS_TWO_DISABLE_RATE_LIMIT_OFF', 'value' => 0, 'label' => $this->l('No')),
+                        ),
+                    ),
                     // Clear settings on deactivation (TWO-25386 #5, ported
                     // from woocommerce-plugin's `clear_options_on_deactivation`).
                     // Default ON - preserves uninstall()'s pre-existing
@@ -2869,13 +2941,27 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_DEBUG_MODE'] = Tools::getValue('PS_TWO_DEBUG_MODE', Configuration::get('PS_TWO_DEBUG_MODE'));
         $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
         $fields_values['PS_TWO_SKIP_CONFIRM_TOKEN_CHECK'] = Tools::getValue('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK', Configuration::get('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK'));
+        $fields_values['PS_TWO_TRUSTED_PROXIES'] = Tools::getValue('PS_TWO_TRUSTED_PROXIES', Configuration::get('PS_TWO_TRUSTED_PROXIES'));
+        $fields_values['PS_TWO_FIREWALL_TOKEN_BROWSER'] = Tools::getValue('PS_TWO_FIREWALL_TOKEN_BROWSER', Configuration::get('PS_TWO_FIREWALL_TOKEN_BROWSER'));
+        $fields_values['PS_TWO_DISABLE_RATE_LIMIT'] = Tools::getValue('PS_TWO_DISABLE_RATE_LIMIT', Configuration::get('PS_TWO_DISABLE_RATE_LIMIT'));
         $fields_values['PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION'] = Tools::getValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', $this->isTwoBooleanConfigEnabledByDefault('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION'));
         return $fields_values;
     }
 
     protected function validTwoDiagnosticsFormValues()
     {
-        // Nothing to validate: all fields are booleans / an html link.
+        // A malformed entry is refused rather than stored, because
+        // TwoRateLimiter reads anything unparseable as "does not match" and
+        // a typo would silently retire the proxy it was meant to name.
+        $entries = preg_split('/[\s,]+/', (string) Tools::getValue('PS_TWO_TRUSTED_PROXIES')) ?: array();
+        foreach ($entries as $entry) {
+            if ($entry === '') {
+                continue;
+            }
+            if (!TwoRateLimiter::isValidProxyEntry($entry)) {
+                $this->errors[] = sprintf($this->l('Trusted proxies: "%s" is not a valid IP address or CIDR range.'), $entry);
+            }
+        }
     }
 
     protected function saveTwoDiagnosticsFormValues()
@@ -2883,6 +2969,9 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_DEBUG_MODE', Tools::getValue('PS_TWO_DEBUG_MODE'));
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
         Configuration::updateValue('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK', (int) Tools::getValue('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK', 0));
+        Configuration::updateValue('PS_TWO_TRUSTED_PROXIES', trim((string) Tools::getValue('PS_TWO_TRUSTED_PROXIES')));
+        Configuration::updateValue('PS_TWO_FIREWALL_TOKEN_BROWSER', (int) Tools::getValue('PS_TWO_FIREWALL_TOKEN_BROWSER', 0));
+        Configuration::updateValue('PS_TWO_DISABLE_RATE_LIMIT', (int) Tools::getValue('PS_TWO_DISABLE_RATE_LIMIT', 0));
         Configuration::updateValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', (int) Tools::getValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', 1));
 
         $this->output .= $this->displayConfirmation($this->l('Diagnostics settings are updated.'));
@@ -4507,6 +4596,11 @@ class Twopayment extends PaymentModule
         Media::addJsDef(array('twopayment' => array(
                 'search_empty_text' => $this->l('No result found'),
                 'checkout_host' => $this->getTwoCheckoutHostUrl(),
+                // Off by default (TWO-25386): the browser-side company search
+                // calls Two directly, so a published token is readable by
+                // anyone. Empty string when the toggle is off, so the JS
+                // fetch omits the header rather than sending a blank one.
+                'firewall_token' => Configuration::get('PS_TWO_FIREWALL_TOKEN_BROWSER') ? self::getTwoFirewallToken() : '',
                 // TWO-25326 §7.1 (2026-08-03 ruling): this used to gate the
                 // search widget's existence (on/off). It now decides WHERE
                 // the one control renders instead: '1' = address area
@@ -9974,6 +10068,10 @@ class Twopayment extends PaymentModule
             'Content-Type: application/json; charset=utf-8',
             'X-API-Key:' . $apiKey,
         ];
+        $firewallToken = self::getTwoFirewallToken();
+        if ($firewallToken !== '') {
+            $headers[] = 'X-WAF-TOKEN:' . $firewallToken;
+        }
         PrestaShopLogger::addLog('TwoPayment: Verifying API key against ' . $base, 1);
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $url);
@@ -14783,6 +14881,14 @@ class Twopayment extends PaymentModule
         return array('client' => 'PS', 'client_v' => $this->getTwoClientVersion());
     }
 
+    /**
+     * @return string
+     */
+    public static function getTwoFirewallToken()
+    {
+        return trim((string) Configuration::get('PS_TWO_FIREWALL_TOKEN'));
+    }
+
     public function getTwoRequestHeaders($endpoint, $additional_headers = [])
     {
         $headers = [
@@ -14792,6 +14898,13 @@ class Twopayment extends PaymentModule
         $includeApiKey = $this->shouldAttachTwoApiKey($endpoint);
         if ($includeApiKey && !Tools::isEmpty($this->api_key)) {
             $headers[] = 'X-API-Key:' . $this->api_key;
+        }
+
+        // Not gated on $includeApiKey: the unauthenticated order-intent path
+        // still reaches Two, so it still has to clear the firewall (TWO-25386).
+        $firewallToken = self::getTwoFirewallToken();
+        if ($firewallToken !== '') {
+            $headers[] = 'X-WAF-TOKEN:' . $firewallToken;
         }
 
         // Multi-site vendor/site name (TWO-25386, ported from
