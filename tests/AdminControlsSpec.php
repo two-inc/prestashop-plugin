@@ -49,10 +49,10 @@ final class AdminControlsSpec
         self::testSkipConfirmTokenCheckBypassesTokenValidation();
         self::testConfirmTokenCheckEnforcedByDefault();
 
-        self::testClearSettingsOnDeactivationDefaultsToTrue();
-        self::testClearSettingsOnDeactivationHonoursExplicitOff();
-        self::testUninstallSkipsSettingsWipeWhenToggleOff();
-        self::testUninstallWipesSettingsWhenToggleOnByDefault();
+        self::testClearSettingsOnDeactivationDefaultsToFalse();
+        self::testClearSettingsOnDeactivationHonoursExplicitOn();
+        self::testUninstallSkipsSettingsWipeByDefault();
+        self::testUninstallWipesSettingsWhenToggleOn();
 
         self::testVendorNameHeaderIncludedWhenConfigured();
         self::testVendorNameHeaderOmittedWhenBlank();
@@ -330,24 +330,24 @@ final class AdminControlsSpec
 
     // ---- #5 clear settings on deactivation --------------------------------
 
-    private static function testClearSettingsOnDeactivationDefaultsToTrue(): void
+    private static function testClearSettingsOnDeactivationDefaultsToFalse(): void
     {
         self::reset();
         TinyAssert::false(Configuration::hasKey('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION'));
         $module = new TwopaymentTestHarness();
 
         $method = new ReflectionMethod(Twopayment::class, 'shouldClearTwoSettingsOnUninstall');
-        TinyAssert::true($method->invoke($module));
+        TinyAssert::false($method->invoke($module), 'Default is OFF, matching magento-plugin/woocommerce-plugin');
     }
 
-    private static function testClearSettingsOnDeactivationHonoursExplicitOff(): void
+    private static function testClearSettingsOnDeactivationHonoursExplicitOn(): void
     {
         self::reset();
-        Configuration::updateValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', 0);
+        Configuration::updateValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', 1);
         $module = new TwopaymentTestHarness();
 
         $method = new ReflectionMethod(Twopayment::class, 'shouldClearTwoSettingsOnUninstall');
-        TinyAssert::false($method->invoke($module));
+        TinyAssert::true($method->invoke($module));
     }
 
     /**
@@ -389,10 +389,11 @@ final class AdminControlsSpec
         };
     }
 
-    private static function testUninstallSkipsSettingsWipeWhenToggleOff(): void
+    private static function testUninstallSkipsSettingsWipeByDefault(): void
     {
         self::reset();
-        Configuration::updateValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', 0);
+        // No explicit row: default-off preserves settings on uninstall,
+        // matching magento-plugin/woocommerce-plugin.
         $module = self::moduleCountingSettingsWipe();
 
         $module->uninstall();
@@ -400,11 +401,10 @@ final class AdminControlsSpec
         TinyAssert::same(0, $module->wipeCount);
     }
 
-    private static function testUninstallWipesSettingsWhenToggleOnByDefault(): void
+    private static function testUninstallWipesSettingsWhenToggleOn(): void
     {
         self::reset();
-        // No explicit row: default-on preserves the pre-existing always-clear
-        // behaviour for every install that has not touched this new switch.
+        Configuration::updateValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', 1);
         $module = self::moduleCountingSettingsWipe();
 
         $module->uninstall();

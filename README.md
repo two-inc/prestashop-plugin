@@ -101,7 +101,7 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 | Auto Fulfill Orders | Automatically fulfill orders with Two when status changes | Enabled |
 | SSL Verification | Verify SSL certificates | Enabled |
 | Debug Mode | Enable detailed diagnostic logging | Disabled |
-| Default shipping tax code | Tax rules group assumed for shipping when the carrier's rate cannot be resolved. Hidden unless activated — see below | Not set |
+| Default shipping tax code | Tax rules group assumed for shipping when the carrier's rate cannot be resolved — see below | Not set |
 
 ### Optional buyer reference fields
 
@@ -148,13 +148,13 @@ too — read from the request, an admin order edit would blank the note on Two's
 side. Core stores the comment htmlentities-encoded (`Tools::safeOutput`), so the
 relay decodes it back to plain text.
 
-### Default shipping tax code (hidden setting)
+### Default shipping tax code
 
-**Who needs this:** only shops that price shipping outside PrestaShop's carrier table.
+**Who needs this:** shops that price shipping outside PrestaShop's carrier table — third-party carrier modules, click-and-collect, marketplace shipping, or any custom logistics setup that never registers a tax rules group.
 
-PrestaShop declares shipping VAT per carrier, in `carrier_tax_rules_group_shop`, and nowhere else — there is no shop-level shipping tax rules group. The module relays that declaration; it never derives a VAT rate from the amounts. A shop whose shipping is priced by custom logistics leaves `id_carrier = 0`, PrestaShop then hands the module an empty delivery-option list, and with no carrier there is no declared rate to relay — so the order is refused rather than shipped with a guessed rate.
+PrestaShop declares shipping VAT per carrier, in `carrier_tax_rules_group_shop`, and nowhere else — there is no shop-level shipping tax rules group. The module relays that declaration; it never derives a VAT rate from the amounts. A shop whose shipping is priced outside the carrier table leaves `id_carrier = 0`, PrestaShop then hands the module an empty delivery-option list, and with no carrier there is no declared rate to relay — so the order is refused rather than shipped with a guessed rate.
 
-The **Default shipping tax code** setting lets such a merchant make that declaration on the module instead. It is assumed **for shipping only, and only when the carrier's tax rate cannot be resolved for the order**. When a carrier does declare a tax rules group, the carrier always wins.
+The **Default shipping tax code** setting, in **Module Configuration → Order Management**, lets such a merchant make that declaration on the module instead. It is assumed **for shipping only, and only when the carrier's tax rate cannot be resolved for the order**. When a carrier does declare a tax rules group, the carrier always wins.
 
 Resolution order:
 
@@ -164,24 +164,8 @@ Resolution order:
 
 The setting has **no default value**. An install that never sets it behaves exactly as it did before the setting existed.
 
-**Activating the field.** The field is hidden on every install unless the shop opts in. Add this single line to `config/defines_custom.inc.php` (create the file if it does not exist — PrestaShop's `config/config.inc.php` includes it automatically on every request, and it is preserved across PrestaShop upgrades):
-
-```php
-define('_TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_', true);
-```
-
-A complete minimal file:
-
-```php
-<?php
-define('_TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_', true);
-```
-
-Then go to **Module Configuration → Order Management**, pick a tax rules group in **Default shipping tax code**, and save.
-
 Notes:
 
-- The constant controls **visibility of the field only**. A value already saved keeps being honoured if the constant is later removed (a server migration must not silently start declining orders), and saving Order Management settings while the field is hidden never overwrites the stored selection.
 - Selecting a group that is later deleted is treated as "not set" — the order is refused, not relayed at 0%.
 - Every order that actually uses the fallback writes a warning to the shop log naming the group, its id and the resolved rate, e.g. `assuming the configured Default shipping tax code "IVA 21%" (tax_rules_group=12, rate=21%)`. If you never see that line, the fallback is not being used.
 
