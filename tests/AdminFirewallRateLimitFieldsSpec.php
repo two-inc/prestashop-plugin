@@ -90,7 +90,7 @@ final class AdminFirewallRateLimitFieldsSpec
             (new ReflectionMethod(Twopayment::class, 'getTwoGeneralForm'))->invoke($module)
         );
 
-        TinyAssert::same('Firewall token', $generalInputs['PS_TWO_FIREWALL_TOKEN']['label']);
+        TinyAssert::same('Firewall token (optional)', $generalInputs['PS_TWO_FIREWALL_TOKEN']['label']);
         TinyAssert::same('Trusted proxies', $diagInputs['PS_TWO_TRUSTED_PROXIES']['label']);
         TinyAssert::same('Add firewall token to browser-originated traffic', $diagInputs['PS_TWO_FIREWALL_TOKEN_BROWSER']['label']);
         TinyAssert::same('Disable checkout rate limiting', $diagInputs['PS_TWO_DISABLE_RATE_LIMIT']['label']);

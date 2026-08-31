@@ -255,20 +255,6 @@ class Twopayment extends PaymentModule
     // refusal; '0' is core's first-class "No tax" sentinel and is only ever
     // stored when the merchant selected it.
     const CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP = 'PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP';
-    // Per-install activation constant for the field above. Set in
-    // `config/defines_custom.inc.php` - PrestaShop core's sanctioned override
-    // file, include_once'd by `config/config.inc.php` on every request (front,
-    // back office and CLI) before any module loads, preserved across core
-    // upgrades, and editable over plain FTP on shared hosting:
-    //
-    //     define('_TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_', true);
-    //
-    // It gates VISIBILITY of the admin field only. A value already stored by
-    // a merchant keeps working if the constant later disappears (a host
-    // migration must not silently start declining that merchant's orders),
-    // and the save path never writes the key while the field is hidden, so
-    // the stored selection survives the field being switched off and on.
-    const FLAG_DEFAULT_SHIPPING_TAX_CODE = '_TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_';
 
     // Constants for delivery dates
     const DEFAULT_DELIVERY_DAYS_OFFSET = 7; // Default expected delivery date offset
@@ -882,21 +868,16 @@ class Twopayment extends PaymentModule
 
     /**
      * Effective value of the "clear settings on deactivation" toggle
-     * (TWO-25386 #5, PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION, ported from
-     * woocommerce-plugin's `clear_options_on_deactivation`). An absent/empty
-     * row - every install predating this toggle - reads as ENABLED, so
-     * uninstall's pre-existing always-clear behaviour is unchanged for every
-     * shop that has not touched this new switch.
+     * (PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION, ported from woocommerce-plugin's
+     * `clear_options_on_deactivation`). An absent/empty row reads as
+     * DISABLED - settings are preserved on uninstall, matching
+     * magento-plugin/woocommerce-plugin's default.
      *
      * @return bool
      */
     protected function shouldClearTwoSettingsOnUninstall()
     {
-        $value = Configuration::get('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION');
-        if ($value === false || $value === null || $value === '') {
-            return true;
-        }
-        return ((int) $value) === 1;
+        return ((int) Configuration::get('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION')) === 1;
     }
 
     protected function uninstallTwoSettings()
@@ -1019,12 +1000,12 @@ class Twopayment extends PaymentModule
 
     public function getContent()
     {
-        // Six-section admin scheme (TWO-25386 Part 1): A. General,
-        // B. Checkout Fields, C. Company Lookup, D. Payment Terms,
-        // E. Order Management, F. Diagnostics - same names/order as
-        // magento-plugin and woocommerce-plugin. This is a pure
-        // reorganisation of WHICH PANEL each existing field renders under;
-        // no Configuration key, validation rule or save behaviour changed.
+        // Five-section admin scheme: A. General, B. Checkout Fields
+        // (company lookup folded in as its own form at the end of this
+        // tab), C. Payment Terms, D. Order Management, E. Diagnostics.
+        // This is a pure reorganisation of WHICH PANEL each existing field
+        // renders under; no Configuration key, validation rule or save
+        // behaviour changed.
         if (((bool) Tools::isSubmit('submitTwoGeneralForm')) == true) {
             Configuration::updateValue('PS_TWO_TAB_VALUE', 1);
             $this->validTwoGeneralFormValues();
@@ -1050,7 +1031,7 @@ class Twopayment extends PaymentModule
         }
 
         if (((bool) Tools::isSubmit('submitTwoCompanyLookupForm')) == true) {
-            Configuration::updateValue('PS_TWO_TAB_VALUE', 3);
+            Configuration::updateValue('PS_TWO_TAB_VALUE', 2);
             $this->validTwoCompanyLookupFormValues();
             if (!count($this->errors)) {
                 $this->saveTwoCompanyLookupFormValues();
@@ -1160,6 +1141,14 @@ class Twopayment extends PaymentModule
                     . '&configure=' . $this->name
                     . '&token=' . Tools::getAdminTokenLite('AdminModules')
                     . '&ajax=1&action=FetchMerchantFeeRates',
+                // Module admin AJAX endpoint for the General tab's inline
+                // API-key check, fired on blur and on a debounced keystroke
+                // (TWO-25386 #4). Dispatched by AdminController::postProcess()
+                // to ajaxProcessVerifyApiKeyLive() on this module.
+                'two_verify_api_key_url' => $this->context->link->getAdminLink('AdminModules', false)
+                    . '&configure=' . $this->name
+                    . '&token=' . Tools::getAdminTokenLite('AdminModules')
+                    . '&ajax=1&action=VerifyApiKeyLive',
             )
         );
 
@@ -1198,11 +1187,36 @@ class Twopayment extends PaymentModule
                 ),
                 'input' => array(
                     array(
+                        'type' => 'select',
+                        'label' => $this->l('Environment'),
+                        'name' => 'PS_TWO_ENVIRONMENT',
+                        'desc' => sprintf($this->l('Select the %s API environment to use. Production for live transactions, Staging for testing.'), $this->getTwoBrandConfig('product_name')),
+                        'required' => true,
+                        'options' => array(
+                            'query' => array(
+                                array('id_option' => 'staging', 'name' => $this->l('Staging')),
+                                array('id_option' => 'production', 'name' => $this->l('Production')),
+                            ),
+                            'id' => 'id_option',
+                            'name' => 'name'
+                        )
+                    ),
+                    array(
                         'type' => 'password',
-                        'label' => $this->l('Api key'),
+                        'label' => $this->l('API key'),
                         'name' => 'PS_TWO_MERCHANT_API_KEY',
                         'required' => true,
                         'desc' => sprintf($this->l('Enter your api key which is provided by %s.'), $this->getTwoBrandConfig('product_name')),
+                    ),
+                    // Plain text, not obscure: a coarse network-egress gate
+                    // the merchant's IT administrator hands out, not a
+                    // credential (TWO-25386).
+                    array(
+                        'type' => 'text',
+                        'label' => $this->l('Firewall token (optional)'),
+                        'name' => 'PS_TWO_FIREWALL_TOKEN',
+                        'required' => false,
+                        'desc' => sprintf($this->l("If your IT administrator asks you to add a firewall token, place it in this field. It will then be transmitted as header X-WAF-TOKEN on all calls this store makes to the %s API."), $this->getTwoBrandConfig('product_name')),
                     ),
                     // Multi-site vendor/site name (TWO-25386, ported from
                     // woocommerce-plugin's `vendor_name` field). Free text, no
@@ -1217,31 +1231,6 @@ class Twopayment extends PaymentModule
                         'name' => 'PS_TWO_VENDOR_NAME',
                         'required' => false,
                         'desc' => sprintf($this->l('If this store represents one of several vendor sites sharing the same %1$s merchant account, enter a name here to identify this specific site/vendor on each order sent to %1$s - leave blank if you only run a single site.'), $this->getTwoBrandConfig('product_name')),
-                    ),
-                    // Plain text, not obscure: a coarse network-egress gate
-                    // the merchant's IT administrator hands out, not a
-                    // credential (TWO-25386).
-                    array(
-                        'type' => 'text',
-                        'label' => $this->l('Firewall token'),
-                        'name' => 'PS_TWO_FIREWALL_TOKEN',
-                        'required' => false,
-                        'desc' => sprintf($this->l("If your IT administrator asks you to add a firewall token, place it in this field. It will then be transmitted as header X-WAF-TOKEN on all calls this store makes to the %s API."), $this->getTwoBrandConfig('product_name')),
-                    ),
-                    array(
-                        'type' => 'select',
-                        'label' => $this->l('Environment'),
-                        'name' => 'PS_TWO_ENVIRONMENT',
-                        'desc' => sprintf($this->l('Select the %s API environment to use. Production for live transactions, Staging for testing.'), $this->getTwoBrandConfig('product_name')),
-                        'required' => true,
-                        'options' => array(
-                            'query' => array(
-                                array('id_option' => 'staging', 'name' => $this->l('Staging')),
-                                array('id_option' => 'production', 'name' => $this->l('Production')),
-                            ),
-                            'id' => 'id_option',
-                            'name' => 'name'
-                        )
                     ),
                 ),
                 'submit' => array(
@@ -1458,7 +1447,7 @@ class Twopayment extends PaymentModule
             ),
             array(
                 'type' => 'text',
-                'label' => $this->l('Sub title'),
+                'label' => $this->l('Subtitle'),
                 'desc' => $this->l('Enter a sub title which is appear on checkout page as payment method sub title.'),
                 'name' => 'PS_TWO_SUB_TITLE',
                 'required' => true,
@@ -1477,7 +1466,7 @@ class Twopayment extends PaymentModule
             // applied.
             array(
                 'type' => 'text',
-                'label' => $this->l('Checkout sort order'),
+                'label' => $this->l('Sort order'),
                 'name' => 'PS_TWO_CHECKOUT_SORT_ORDER',
                 'required' => false,
                 'desc' => sprintf($this->l('Optional. A lower number shows %s earlier among the payment methods offered at checkout. Leave empty to use PrestaShop\'s own Payment > Preferences ordering.'), $this->getTwoBrandConfig('product_name')),
@@ -1493,14 +1482,14 @@ class Twopayment extends PaymentModule
         $inputs[] = array(
             'type' => 'text',
             'label' => $default_currency_iso !== ''
-                ? sprintf($this->l('Minimum Order Value, %s'), $default_currency_iso)
-                : $this->l('Minimum Order Value'),
+                ? sprintf($this->l('Minimum order value, %s'), $default_currency_iso)
+                : $this->l('Minimum order value'),
             'name' => 'PS_TWO_MERCHANT_MIN_ORDER',
             'desc' => $this->getTwoMerchantMinimumOrderDescription(),
         );
         $inputs[] = array(
             'type' => 'select',
-            'label' => $this->l('Minimum Order Value Tax Basis'),
+            'label' => $this->l('Minimum order value tax basis'),
             'name' => 'PS_TWO_MERCHANT_MIN_ORDER_BASIS',
             'desc' => $this->l('Whether the basket is compared against the minimum including or excluding tax.'),
             'options' => array(
@@ -1591,7 +1580,7 @@ class Twopayment extends PaymentModule
         // comment) and has no admin field to relocate.
         $inputs[] = array(
             'type' => 'switch',
-            'label' => $this->l('Show Invoice email field'),
+            'label' => $this->l('Show invoice email field'),
             'name' => 'PS_TWO_ENABLE_INVOICE_EMAIL',
             'is_bool' => true,
             'desc' => sprintf($this->l('If you choose YES then customers will see an invoice email field in the %s payment section at checkout. It sits with the payment method rather than the address so the buyer is prompted to consider a dedicated invoicing address even when their billing and shipping addresses match.'), $this->getTwoBrandConfig('product_name')),
@@ -1612,7 +1601,7 @@ class Twopayment extends PaymentModule
 
         $inputs[] = array(
             'type' => 'switch',
-            'label' => $this->l('Show PO Number field'),
+            'label' => $this->l('Show PO number field'),
             'name' => 'PS_TWO_ENABLE_PO_NUMBER',
             'is_bool' => true,
             'desc' => sprintf($this->l('If you choose YES then customers will see a PO Number field in the %s payment section at checkout.'), $this->getTwoBrandConfig('product_name')),
@@ -1632,7 +1621,7 @@ class Twopayment extends PaymentModule
         );
         $inputs[] = array(
             'type' => 'switch',
-            'label' => $this->l('Show Project field'),
+            'label' => $this->l('Show project field'),
             'name' => 'PS_TWO_ENABLE_PROJECT',
             'is_bool' => true,
             'desc' => sprintf($this->l('If you choose YES then customers will see a project field in the %s payment section at checkout.'), $this->getTwoBrandConfig('product_name')),
@@ -1652,7 +1641,7 @@ class Twopayment extends PaymentModule
         );
         $inputs[] = array(
             'type' => 'switch',
-            'label' => $this->l('Show Department field'),
+            'label' => $this->l('Show department field'),
             'name' => 'PS_TWO_ENABLE_DEPARTMENT',
             'is_bool' => true,
             'desc' => sprintf($this->l('If you choose YES then customers will see a department field in the %s payment section at checkout.'), $this->getTwoBrandConfig('product_name')),
@@ -1719,7 +1708,7 @@ class Twopayment extends PaymentModule
         $inputs = array(
             array(
                 'type' => 'radio',
-                'label' => $this->l('Payment Term Type'),
+                'label' => $this->l('Payment terms type'),
                 'name' => 'PS_TWO_PAYMENT_TERM_TYPE',
                 'desc' => $this->l('Choose how payment terms are calculated:') . '<br><br><strong>' . $this->l('Standard Terms:') . '</strong> ' . $this->l('Payment due X days from fulfillment date. Example: If you fulfill an order on January 15th with 30-day terms, payment is due February 14th.') . '<br><br><strong>' . $this->l('End-of-Month (EOM) Terms:') . '</strong> ' . $this->l('Payment due at the end of the current month plus X days from fulfillment date. Example: If you fulfill an order on January 15th with EOM+30 terms, payment is due February 28th (end of January + 30 days). This is common for B2B invoicing.'),
                 'is_bool' => false,
@@ -1738,7 +1727,7 @@ class Twopayment extends PaymentModule
             ),
             array(
                 'type' => 'checkbox',
-                'label' => $this->l('Available Payment Terms'),
+                'label' => $this->l('Payment terms'),
                 'name' => 'PS_TWO_PAYMENT_TERMS',
                 'desc' => '<span id="two-payment-terms-desc-standard" style="display: none;">' . $this->l('Select which payment terms you want to offer. Standard terms are calculated from the fulfillment date.') . '</span><span id="two-payment-terms-desc-eom" style="display: none;">' . $this->l('Select which payment terms you want to offer. EOM (End-of-Month) terms are calculated from the end of the month at fulfillment, plus the selected days. Only 30, 45, and 60 day terms are available for EOM.') . '</span>',
                 'values' => array(
@@ -1759,7 +1748,7 @@ class Twopayment extends PaymentModule
             // EOM/STANDARD checkbox split, never the backend restriction.
             array(
                 'type' => 'text',
-                'label' => $this->l('Custom payment term (days)'),
+                'label' => $this->l('Custom payment terms (days)'),
                 'name' => 'PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS',
                 'required' => false,
                 'desc' => sprintf($this->l('Optional. Offer an additional payment term (in days) not covered by the presets above. Leave empty to only offer the terms selected above. %s must still permit this term length for your account - an unsupported value is silently ignored.'), $this->getTwoBrandConfig('product_name')),
@@ -1775,7 +1764,7 @@ class Twopayment extends PaymentModule
             // the surcharge calc respect the merchant's chosen default.
             array(
                 'type' => 'select',
-                'label' => $this->l('Default pre-selected term'),
+                'label' => $this->l('Default payment terms'),
                 'name' => 'PS_TWO_DEFAULT_PAYMENT_TERM',
                 'desc' => $this->l('Which offered term is pre-selected at checkout by default. Leave unset to keep the automatic choice (the merchant\'s own default term when offered, else 30 days, else the shortest offered term).'),
                 'options' => array(
@@ -1830,7 +1819,7 @@ class Twopayment extends PaymentModule
         // call were both previously unconditional).
         $fields_values['PS_TWO_ENABLE_ORDER_INTENT'] = Tools::getValue('PS_TWO_ENABLE_ORDER_INTENT', $this->isTwoBooleanConfigEnabledByDefault('PS_TWO_ENABLE_ORDER_INTENT'));
         $fields_values['PS_TWO_SHOW_ABOUT_LINK'] = Tools::getValue('PS_TWO_SHOW_ABOUT_LINK', $this->isTwoBooleanConfigEnabledByDefault('PS_TWO_SHOW_ABOUT_LINK'));
-        $fields_values['PS_TWO_DISPLAY_TOOLTIPS'] = Tools::getValue('PS_TWO_DISPLAY_TOOLTIPS', Configuration::get('PS_TWO_DISPLAY_TOOLTIPS'));
+        $fields_values['PS_TWO_DISPLAY_TOOLTIPS'] = Tools::getValue('PS_TWO_DISPLAY_TOOLTIPS', $this->isTwoBooleanConfigEnabledByDefault('PS_TWO_DISPLAY_TOOLTIPS'));
 
         // Optional buyer inputs. Standard field order, same as the form
         // inputs and the checkout tile (TWO-25263).
@@ -1926,7 +1915,7 @@ class Twopayment extends PaymentModule
 
         Configuration::updateValue('PS_TWO_ENABLE_ORDER_INTENT', (int) Tools::getValue('PS_TWO_ENABLE_ORDER_INTENT', 1));
         Configuration::updateValue('PS_TWO_SHOW_ABOUT_LINK', (int) Tools::getValue('PS_TWO_SHOW_ABOUT_LINK', 1));
-        Configuration::updateValue('PS_TWO_DISPLAY_TOOLTIPS', (int) Tools::getValue('PS_TWO_DISPLAY_TOOLTIPS', 0));
+        Configuration::updateValue('PS_TWO_DISPLAY_TOOLTIPS', (int) Tools::getValue('PS_TWO_DISPLAY_TOOLTIPS', 1));
 
         // Optional buyer inputs (moved from the former "Payment Settings" tab).
         // Standard field order, same as the form inputs and the checkout tile.
@@ -2240,16 +2229,16 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Section C - Company Lookup (TWO-25386 Part 1): company search
-     * placement and address auto-complete - relocated here from the former
-     * "Advanced Settings" panel.
+     * Company lookup: company search placement and address auto-complete.
+     * Rendered as its own form at the end of the Checkout Fields tab
+     * (folded in from the former standalone "Company Lookup" tab).
      */
     protected function getTwoCompanyLookupForm()
     {
         $fields_form = array(
             'form' => array(
                 'legend' => array(
-                    'title' => $this->l('Company Lookup'),
+                    'title' => $this->l('Company lookup'),
                     'icon' => 'icon-building',
                 ),
                 'input' => array(
@@ -2414,23 +2403,22 @@ class Twopayment extends PaymentModule
             ),
         );
 
-        // Hidden unless the install opts in (TWO-25200). Ordinary shops
-        // declare shipping VAT on their carriers and must not be offered a
-        // second place to do it; the field exists for merchants who price
-        // shipping outside the carrier table entirely.
-        if ($this->isTwoDefaultShippingTaxCodeFieldEnabled()) {
-            $fields_form['form']['input'][] = array(
-                'type' => 'select',
-                'label' => $this->l('Default shipping tax code'),
-                'name' => self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP,
-                'desc' => $this->l('Tax rules group ASSUMED FOR SHIPPING ONLY when the carrier\'s tax rate cannot be resolved for the order - for example when shipping is priced outside PrestaShop\'s carrier table, so no carrier declares a tax rules group. It is never used when a carrier does declare one: the carrier\'s own group always wins. Leave unset to keep refusing such orders rather than assuming a rate.'),
-                'options' => array(
-                    'query' => $this->getTwoDefaultShippingTaxRulesGroupOptions(),
-                    'id' => 'id',
-                    'name' => 'name',
-                ),
-            );
-        }
+        // Real need: shipping priced outside PrestaShop's carrier table
+        // entirely (third-party carrier modules, click-and-collect,
+        // marketplace shipping) never registers a tax rules group, so this
+        // is the merchant's only way to declare a rate for it. Always
+        // visible, like every other setting on this page.
+        $fields_form['form']['input'][] = array(
+            'type' => 'select',
+            'label' => $this->l('Default shipping tax code'),
+            'name' => self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP,
+            'desc' => $this->l('Tax rules group ASSUMED FOR SHIPPING ONLY when the carrier\'s tax rate cannot be resolved for the order - for example when shipping is priced outside PrestaShop\'s carrier table, so no carrier declares a tax rules group. It is never used when a carrier does declare one: the carrier\'s own group always wins. Leave unset to keep refusing such orders rather than assuming a rate.'),
+            'options' => array(
+                'query' => $this->getTwoDefaultShippingTaxRulesGroupOptions(),
+                'id' => 'id',
+                'name' => 'name',
+            ),
+        );
 
         return $fields_form;
     }
@@ -2478,7 +2466,7 @@ class Twopayment extends PaymentModule
                     // controls).
                     array(
                         'type' => 'switch',
-                        'label' => $this->l('Enable Debug Mode'),
+                        'label' => $this->l('Enable debug logging'),
                         'name' => 'PS_TWO_DEBUG_MODE',
                         'is_bool' => true,
                         'desc' => sprintf($this->l('Enable detailed logging for troubleshooting. Logs tax calculations and other diagnostic data. Only enable when requested by %s support.'), $this->getTwoBrandConfig('product_name')),
@@ -2501,7 +2489,7 @@ class Twopayment extends PaymentModule
                     // debug/diagnostic-only controls).
                     array(
                         'type' => 'switch',
-                        'label' => $this->l('Disable SSL Verification (Corporate Networks Only)'),
+                        'label' => $this->l('Disable SSL verification'),
                         'name' => 'PS_TWO_DISABLE_SSL_VERIFY',
                         'is_bool' => true,
                         'desc' => $this->l('WARNING: Only enable this if you are behind a corporate proxy with custom SSL certificates. This disables SSL certificate verification and is a SECURITY RISK. NOT RECOMMENDED for production.'),
@@ -2526,7 +2514,7 @@ class Twopayment extends PaymentModule
                     // controller's confirm/save-result actions. Default OFF.
                     array(
                         'type' => 'switch',
-                        'label' => $this->l('Skip confirm-order token check (debug only)'),
+                        'label' => $this->l('Skip user validation at order confirmation'),
                         'name' => 'PS_TWO_SKIP_CONFIRM_TOKEN_CHECK',
                         'is_bool' => true,
                         'desc' => $this->l('WARNING: FOR DEBUGGING ONLY. When YES, the order-intent controller\'s CSRF-style token check is skipped. Never enable this on a live production shop.'),
@@ -2575,10 +2563,10 @@ class Twopayment extends PaymentModule
                             array('id' => 'PS_TWO_DISABLE_RATE_LIMIT_OFF', 'value' => 0, 'label' => $this->l('No')),
                         ),
                     ),
-                    // Clear settings on deactivation (TWO-25386 #5, ported
-                    // from woocommerce-plugin's `clear_options_on_deactivation`).
-                    // Default ON - preserves uninstall()'s pre-existing
-                    // always-clear behaviour (see shouldClearTwoSettingsOnUninstall()).
+                    // Clear settings on deactivation, ported from
+                    // woocommerce-plugin's `clear_options_on_deactivation`.
+                    // Default OFF, matching magento-plugin/woocommerce-plugin
+                    // (see shouldClearTwoSettingsOnUninstall()).
                     array(
                         'type' => 'switch',
                         'label' => $this->l('Clear settings on uninstall'),
@@ -2874,22 +2862,17 @@ class Twopayment extends PaymentModule
         $fields_values = array();
         $fields_values['PS_TWO_FINALIZE_PURCHASE'] = Tools::getValue('PS_TWO_FINALIZE_PURCHASE', Configuration::get('PS_TWO_FINALIZE_PURCHASE'));
         $fields_values['PS_TWO_ENABLE_TAX_SUBTOTALS'] = Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
-        if ($this->isTwoDefaultShippingTaxCodeFieldEnabled()) {
-            // Kept a STRING: an (int) cast would turn the unselected state
-            // into 0 and silently pre-select "No tax".
-            $fields_values[self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP] = (string) Tools::getValue(
-                self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP,
-                $this->getTwoDefaultShippingTaxRulesGroupFormDefault()
-            );
-        }
+        // Kept a STRING: an (int) cast would turn the unselected state
+        // into 0 and silently pre-select "No tax".
+        $fields_values[self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP] = (string) Tools::getValue(
+            self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP,
+            $this->getTwoDefaultShippingTaxRulesGroupFormDefault()
+        );
         return $fields_values;
     }
 
     protected function validTwoOrderManagementFormValues()
     {
-        if (!$this->isTwoDefaultShippingTaxCodeFieldEnabled()) {
-            return;
-        }
         $raw = Tools::getValue(self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP, false);
         if ($raw === false) {
             return;
@@ -2911,25 +2894,21 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', Tools::getValue('PS_TWO_FINALIZE_PURCHASE'));
         Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', (int) Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
 
-        // Write the default shipping tax code ONLY when the field was
-        // actually rendered AND actually submitted. A form that never showed
-        // the field posts nothing for it, and blindly writing Tools::getValue
-        // with a '' default there would wipe a stored declaration on the next
-        // unrelated order-management save - exactly the failure mode the
+        // Write the default shipping tax code ONLY when actually submitted.
+        // A blank '' default here would wipe a stored declaration on the
+        // next unrelated order-management save - the same failure mode the
         // payment-terms checkbox loop was fixed for under TWO-24813.
-        if ($this->isTwoDefaultShippingTaxCodeFieldEnabled()) {
-            $raw = Tools::getValue(self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP, false);
-            if ($raw !== false) {
-                $trimmed = is_string($raw) ? trim($raw) : '';
-                $value = '';
-                if ($trimmed !== '' && ctype_digit($trimmed)) {
-                    $group_id = (int) $trimmed;
-                    if ($group_id === 0 || Validate::isLoadedObject(new TaxRulesGroup($group_id))) {
-                        $value = (string) $group_id;
-                    }
+        $raw = Tools::getValue(self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP, false);
+        if ($raw !== false) {
+            $trimmed = is_string($raw) ? trim($raw) : '';
+            $value = '';
+            if ($trimmed !== '' && ctype_digit($trimmed)) {
+                $group_id = (int) $trimmed;
+                if ($group_id === 0 || Validate::isLoadedObject(new TaxRulesGroup($group_id))) {
+                    $value = (string) $group_id;
                 }
-                Configuration::updateValue(self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP, $value);
             }
+            Configuration::updateValue(self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP, $value);
         }
 
         $this->output .= $this->displayConfirmation($this->l('Order management settings are updated.'));
@@ -2944,7 +2923,7 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_TRUSTED_PROXIES'] = Tools::getValue('PS_TWO_TRUSTED_PROXIES', Configuration::get('PS_TWO_TRUSTED_PROXIES'));
         $fields_values['PS_TWO_FIREWALL_TOKEN_BROWSER'] = Tools::getValue('PS_TWO_FIREWALL_TOKEN_BROWSER', Configuration::get('PS_TWO_FIREWALL_TOKEN_BROWSER'));
         $fields_values['PS_TWO_DISABLE_RATE_LIMIT'] = Tools::getValue('PS_TWO_DISABLE_RATE_LIMIT', Configuration::get('PS_TWO_DISABLE_RATE_LIMIT'));
-        $fields_values['PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION'] = Tools::getValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', $this->isTwoBooleanConfigEnabledByDefault('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION'));
+        $fields_values['PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION'] = Tools::getValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', (int) $this->shouldClearTwoSettingsOnUninstall());
         return $fields_values;
     }
 
@@ -2972,7 +2951,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_TRUSTED_PROXIES', trim((string) Tools::getValue('PS_TWO_TRUSTED_PROXIES')));
         Configuration::updateValue('PS_TWO_FIREWALL_TOKEN_BROWSER', (int) Tools::getValue('PS_TWO_FIREWALL_TOKEN_BROWSER', 0));
         Configuration::updateValue('PS_TWO_DISABLE_RATE_LIMIT', (int) Tools::getValue('PS_TWO_DISABLE_RATE_LIMIT', 0));
-        Configuration::updateValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', (int) Tools::getValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', 1));
+        Configuration::updateValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', (int) Tools::getValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', 0));
 
         $this->output .= $this->displayConfirmation($this->l('Diagnostics settings are updated.'));
     }
@@ -5113,7 +5092,7 @@ class Twopayment extends PaymentModule
             // matching the tile's pre-existing always-on tooltip and the
             // optional fields' pre-existing no-tooltip rendering.
             'show_about_link' => $this->isTwoBooleanConfigEnabledByDefault('PS_TWO_SHOW_ABOUT_LINK') === '1',
-            'display_tooltips' => ((int) Configuration::get('PS_TWO_DISPLAY_TOOLTIPS')) === 1,
+            'display_tooltips' => $this->isTwoBooleanConfigEnabledByDefault('PS_TWO_DISPLAY_TOOLTIPS') === '1',
             'payment_enable' => true, // Always enable, frontend will handle approval
             'message' => '',
             'module_dir' => $this->_path, // Module directory path for assets
@@ -8345,12 +8324,6 @@ class Twopayment extends PaymentModule
     /**
      * The merchant's stored default shipping tax rules group.
      *
-     * NOT gated on FLAG_DEFAULT_SHIPPING_TAX_CODE: the constant controls
-     * whether the admin field is rendered, not whether a declaration the
-     * merchant already made is honoured. Losing the constant (host migration,
-     * restored config directory) must not silently start declining that
-     * merchant's carrier-less orders.
-     *
      * @return int|null Group id (0 = "No tax"), or null when unset/invalid -
      *                  null being the shipped state and the loud-refusal path
      */
@@ -8381,18 +8354,6 @@ class Twopayment extends PaymentModule
         }
 
         return $group_id;
-    }
-
-    /**
-     * Is the Default shipping tax code admin field switched on for this
-     * install? See FLAG_DEFAULT_SHIPPING_TAX_CODE for the activation line.
-     *
-     * @return bool
-     */
-    protected function isTwoDefaultShippingTaxCodeFieldEnabled()
-    {
-        return defined(self::FLAG_DEFAULT_SHIPPING_TAX_CODE)
-            && (bool) constant(self::FLAG_DEFAULT_SHIPPING_TAX_CODE);
     }
 
     /**
@@ -11590,6 +11551,41 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Live API-key verification for the General tab's inline check
+     * (TWO-25386 #4). Never touches Configuration - a merchant trying a key
+     * before saving must not have it published as the stored verdict just by
+     * typing. Mirrors validTwoGeneralFormValues()'s own live check, minus the
+     * publish-on-match step, which only makes sense at actual Save time.
+     *
+     * @return array{status:string,ok:bool,message:string}
+     */
+    protected function buildApiKeyLiveVerificationResult($apiKey, $environment)
+    {
+        $apiKey = trim((string) $apiKey);
+        if ($apiKey === '' || !in_array($environment, array('production', 'staging'), true)) {
+            return array('status' => self::API_KEY_STATUS_NOT_CONFIGURED, 'ok' => false, 'message' => '');
+        }
+        $verify = $this->verifyTwoApiKey($apiKey, $environment);
+        $ok = $verify['status'] === self::API_KEY_STATUS_OK;
+
+        return array(
+            'status' => $verify['status'],
+            'ok' => $ok,
+            'message' => $ok ? '' : $this->getTwoApiKeyFailureMessage($verify['status'], $verify['code']),
+        );
+    }
+
+    public function ajaxProcessVerifyApiKeyLive()
+    {
+        $result = $this->buildApiKeyLiveVerificationResult(
+            Tools::getValue('api_key', ''),
+            Tools::getValue('environment', '')
+        );
+        header('Content-Type: application/json');
+        die(json_encode($result));
+    }
+
+    /**
      * The offerable term source set (before the admin narrows it): the backend's
      * `available_terms` when resolved, else the hardcoded option list. Admin
      * screens only - hookPaymentOptions withholds Two at checkout outright
@@ -13861,7 +13857,7 @@ class Twopayment extends PaymentModule
         $inputs = array();
         $inputs[] = array(
             'type' => 'select',
-            'label' => $this->l('Buyer Surcharge Method'),
+            'label' => $this->l('Surcharge method'),
             'name' => 'PS_TWO_SURCHARGE_TYPE',
             'desc' => sprintf($this->l('Add an offset pricing fee to the buyer for the selected payment term. The fee amount is computed by %s; the plugin only sends the configuration.'), $this->getTwoBrandConfig('product_name')),
             'options' => array(

@@ -8,8 +8,7 @@
     <div id="two-tabs" class="col-lg-2 col-md-3">
         <div class="list-group">
             <a class="list-group-item {if $twotabvalue == 1}active{/if}" href="#general-settings" aria-controls="general-settings" role="tab" data-toggle="tab">{l s='General' mod='twopayment'}</a>
-            <a class="list-group-item {if $twotabvalue == 2}active{/if}" href="#checkout-fields-settings" aria-controls="checkout-fields-settings" role="tab" data-toggle="tab">{l s='Checkout Fields' mod='twopayment'}</a>
-            <a class="list-group-item {if $twotabvalue == 3}active{/if}" href="#company-lookup-settings" aria-controls="company-lookup-settings" role="tab" data-toggle="tab">{l s='Company Lookup' mod='twopayment'}</a>
+            <a class="list-group-item {if $twotabvalue == 2 || $twotabvalue == 3}active{/if}" href="#checkout-fields-settings" aria-controls="checkout-fields-settings" role="tab" data-toggle="tab">{l s='Checkout Fields' mod='twopayment'}</a>
             <a class="list-group-item {if $twotabvalue == 4}active{/if}" href="#payment-terms-settings" aria-controls="payment-terms-settings" role="tab" data-toggle="tab">{l s='Payment Terms' mod='twopayment'}</a>
             <a class="list-group-item {if $twotabvalue == 5}active{/if}" href="#order-management-settings" aria-controls="order-management-settings" role="tab" data-toggle="tab">{l s='Order Management' mod='twopayment'}</a>
             <a class="list-group-item {if $twotabvalue == 6}active{/if}" href="#diagnostics-settings" aria-controls="diagnostics-settings" role="tab" data-toggle="tab">{l s='Diagnostics' mod='twopayment'}</a>
@@ -44,10 +43,8 @@
                 {/if}
                 {$renderTwoGeneralForm nofilter}
             </div>
-            <div id="checkout-fields-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 2}active{/if}">
+            <div id="checkout-fields-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 2 || $twotabvalue == 3}active{/if}">
                 {$renderTwoCheckoutFieldsForm nofilter}
-            </div>
-            <div id="company-lookup-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 3}active{/if}">
                 {$renderTwoCompanyLookupForm nofilter}
             </div>
             <div id="payment-terms-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 4}active{/if}">
@@ -68,6 +65,10 @@
 <script type="text/javascript">
     // Assigned outside the literal block so Smarty expands the URL.
     var twoMerchantFeeRatesUrl = '{$two_fee_rates_url|escape:'javascript':'UTF-8'}';
+    var twoVerifyApiKeyUrl = '{$two_verify_api_key_url|escape:'javascript':'UTF-8'}';
+    var twoApiKeyCheckingText = '{l s='Checking API key…' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoApiKeyVerifiedText = '{l s='API key verified' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoApiKeyFailedText = '{l s='API key could not be verified' mod='twopayment'|escape:'javascript':'UTF-8'}';
 </script>
 {literal}
     <script type="text/javascript">
@@ -298,6 +299,63 @@
 
             $('input[name^="PS_TWO_PAYMENT_TERMS_"]').on('change', loadTwoMerchantFees);
             loadTwoMerchantFees();
+
+            // Inline API-key live check (TWO-25386 #4): fires on blur AND on
+            // a debounced keystroke, so a merchant sees the verdict before
+            // ever reaching Save. Never touches Configuration - see
+            // ajaxProcessVerifyApiKeyLive().
+            var $twoApiKeyInput = $('input[name="PS_TWO_MERCHANT_API_KEY"]');
+            var twoApiKeyDebounce = null;
+            var twoApiKeyRequestSeq = 0;
+
+            function twoApiKeyStatusEl() {
+                var $existing = $twoApiKeyInput.siblings('.two-api-key-live-status');
+                if ($existing.length) {
+                    return $existing;
+                }
+                var $el = $('<div class="two-api-key-live-status help-block"></div>');
+                $twoApiKeyInput.after($el);
+                return $el;
+            }
+
+            function runTwoApiKeyLiveCheck() {
+                var apiKey = $.trim($twoApiKeyInput.val() || '');
+                var environment = $('select[name="PS_TWO_ENVIRONMENT"]').val();
+                var $status = twoApiKeyStatusEl();
+                if (!apiKey || !environment || typeof twoVerifyApiKeyUrl === 'undefined' || !twoVerifyApiKeyUrl) {
+                    $status.text('');
+                    return;
+                }
+                var seq = ++twoApiKeyRequestSeq;
+                $status.removeClass('text-success text-danger').text(twoApiKeyCheckingText);
+                $.ajax({
+                    url: twoVerifyApiKeyUrl,
+                    type: 'POST',
+                    dataType: 'json',
+                    data: { api_key: apiKey, environment: environment }
+                }).done(function (response) {
+                    if (seq !== twoApiKeyRequestSeq) {
+                        return; // superseded by a later keystroke/blur
+                    }
+                    if (response && response.ok) {
+                        $status.removeClass('text-danger').addClass('text-success').text(twoApiKeyVerifiedText);
+                    } else {
+                        var message = (response && response.message) || twoApiKeyFailedText;
+                        $status.removeClass('text-success').addClass('text-danger').text(message);
+                    }
+                }).fail(function () {
+                    if (seq !== twoApiKeyRequestSeq) {
+                        return;
+                    }
+                    $status.removeClass('text-success').addClass('text-danger').text(twoApiKeyFailedText);
+                });
+            }
+
+            $twoApiKeyInput.on('blur', runTwoApiKeyLiveCheck);
+            $twoApiKeyInput.on('keyup', function () {
+                clearTimeout(twoApiKeyDebounce);
+                twoApiKeyDebounce = setTimeout(runTwoApiKeyLiveCheck, 600);
+            });
         });
     </script>
 {/literal}
