@@ -19,6 +19,13 @@ declare(strict_types=1);
  *    including the ensureCustomStatesExist() runtime recovery path which used to
  *    write a bare status ID;
  *  - the 2.6.2 upgrade normalises a legacy bare-ID value already in a database.
+ *
+ * Also covers the removal of the PS_TWO_FINALIZE_PURCHASE master switch
+ * (TWO-24769 follow-up): PS_TWO_OS_FULFILLED_MAP is now the sole trigger -
+ * an explicit empty selection must persist as "never fulfils" rather than
+ * falling back to Shipped, and isFulfillmentTriggerStatus() must collapse
+ * the old switch-on/off distinction into non-empty-list/empty-list. The
+ * upgrade-2.7.14 migration protects shops that had the switch off.
  */
 final class FulfilledStatusMappingSpec
 {
@@ -31,6 +38,11 @@ final class FulfilledStatusMappingSpec
         self::testCustomStateRecoveryWritesJsonArrayFormat();
         self::testUpgrade262NormalisesLegacyBareIdValue();
         self::testUpgrade262LeavesCanonicalValueUntouched();
+        self::testExplicitEmptySelectionPersistsAsNeverFulfils();
+        self::testIsFulfillmentTriggerStatusCollapsedLogic();
+        self::testUpgrade2714ClearsMapWhenSwitchWasOff();
+        self::testUpgrade2714LeavesMapUntouchedWhenSwitchWasOn();
+        self::testUpgrade2714SecondRunIsNoOpRegardlessOfPostUpgradeConfig();
     }
 
     private static function reset(): void
@@ -152,5 +164,106 @@ final class FulfilledStatusMappingSpec
         TinyAssert::true(upgrade_module_2_6_2(new TwopaymentTestHarness()));
         TinyAssert::same('[3,4]', Configuration::get('PS_TWO_OS_FULFILLED_MAP'));
         TinyAssert::count(0, PrestaShopLogger::$logs);
+    }
+
+    private static function testExplicitEmptySelectionPersistsAsNeverFulfils(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        // A pre-existing selection, then a save that posts no statuses at all
+        // (every checkbox/option deselected) - must clear, not fall back.
+        Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', json_encode([4]));
+        self::save($module, []);
+
+        TinyAssert::same('[]', Configuration::get('PS_TWO_OS_FULFILLED_MAP'));
+    }
+
+    /**
+     * @param string $mapJson    stored PS_TWO_OS_FULFILLED_MAP value
+     * @param int    $statusId   status ID under test
+     * @param bool   $expected   expected isFulfillmentTriggerStatus() result
+     * @param string $why        assertion message
+     */
+    private static function assertTriggerStatus(string $mapJson, int $statusId, bool $expected, string $why): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', $mapJson);
+        $module = new TwopaymentTestHarness();
+
+        $method = new ReflectionMethod(Twopayment::class, 'isFulfillmentTriggerStatus');
+        TinyAssert::same($expected, $method->invoke($module, $statusId), $why);
+    }
+
+    private static function testIsFulfillmentTriggerStatusCollapsedLogic(): void
+    {
+        $cases = [
+            ['[]', 4, false, 'empty selection (switch-off equivalent): never triggers'],
+            ['[]', 3, false, 'empty selection: no status triggers, not even Shipped'],
+            ['[4]', 4, true, 'non-empty selection (switch-on equivalent): listed status triggers'],
+            ['[4]', 3, false, 'non-empty selection: unlisted status does not trigger'],
+            ['[3,4]', 3, true, 'multi-status selection: either listed status triggers'],
+            ['[3,4]', 4, true, 'multi-status selection: either listed status triggers'],
+        ];
+
+        foreach ($cases as [$mapJson, $statusId, $expected, $why]) {
+            self::assertTriggerStatus($mapJson, $statusId, $expected, $why);
+        }
+    }
+
+    private static function testUpgrade2714ClearsMapWhenSwitchWasOff(): void
+    {
+        self::reset();
+        require_once dirname(__DIR__) . '/upgrade/upgrade-2.7.14.php';
+
+        Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', 0);
+        Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', json_encode([4]));
+
+        TinyAssert::true(upgrade_module_2_7_14(new TwopaymentTestHarness()));
+
+        TinyAssert::same('[]', Configuration::get('PS_TWO_OS_FULFILLED_MAP'), 'switch off must clear the mapping to empty');
+        TinyAssert::false(Configuration::hasKey('PS_TWO_FINALIZE_PURCHASE'), 'the retired switch row must be deleted');
+    }
+
+    private static function testUpgrade2714LeavesMapUntouchedWhenSwitchWasOn(): void
+    {
+        self::reset();
+        require_once dirname(__DIR__) . '/upgrade/upgrade-2.7.14.php';
+
+        Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', 1);
+        Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', json_encode([4]));
+
+        TinyAssert::true(upgrade_module_2_7_14(new TwopaymentTestHarness()));
+
+        TinyAssert::same('[4]', Configuration::get('PS_TWO_OS_FULFILLED_MAP'), 'switch on: existing mapping already reflects intended behaviour, must not change');
+        TinyAssert::false(Configuration::hasKey('PS_TWO_FINALIZE_PURCHASE'), 'the retired switch row must be deleted');
+    }
+
+    /**
+     * A reinstall or a rollback+re-bump can re-run this upgrade after the
+     * switch row is already gone. The second run must be a no-op regardless
+     * of what the merchant has configured since the first run - it must
+     * never re-read the missing key as "switch was off" and re-clear.
+     */
+    private static function testUpgrade2714SecondRunIsNoOpRegardlessOfPostUpgradeConfig(): void
+    {
+        self::reset();
+        require_once dirname(__DIR__) . '/upgrade/upgrade-2.7.14.php';
+
+        Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', 0);
+        Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', json_encode([4]));
+        TinyAssert::true(upgrade_module_2_7_14(new TwopaymentTestHarness()));
+        TinyAssert::same('[]', Configuration::get('PS_TWO_OS_FULFILLED_MAP'));
+
+        // Merchant configures a Fulfilled-status selection after the first upgrade.
+        Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', json_encode([3, 4]));
+
+        TinyAssert::true(upgrade_module_2_7_14(new TwopaymentTestHarness()));
+
+        TinyAssert::same(
+            '[3,4]',
+            Configuration::get('PS_TWO_OS_FULFILLED_MAP'),
+            'a second run must not touch a mapping the merchant configured after the first run'
+        );
     }
 }

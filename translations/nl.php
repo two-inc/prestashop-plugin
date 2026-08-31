@@ -123,7 +123,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_104d9898c04874d0fbac36e125fa1369'] 
 $_MODULE['<{twopayment}prestashop>twopayment_11503989a3f470d727d38a6054896940'] = 'De valuta voor deze betaalpoging kan niet worden geladen.';
 $_MODULE['<{twopayment}prestashop>twopayment_3d114d4ced72fd97d0f0abf4e4117777'] = 'Het bedrijf heeft mogelijk zijn kredietlimiet bereikt of de kredietcheck van %s niet doorstaan';
 $_MODULE['<{twopayment}prestashop>twopayment_1243daf593fa297e07ab03bf06d925af'] = 'Zoeken...';
-$_MODULE['<{twopayment}prestashop>twopayment_c61307f453474392eaa64a081f62924a'] = 'Bestellingen automatisch uitleveren bij %s';
 $_MODULE['<{twopayment}prestashop>twopayment_128ce19a81ca82c86adfed35ed88578a'] = 'Het maximum geldt voor de hele vergoeding: het percentage en het vaste bedrag samen, niet alleen het percentage. Laat leeg voor geen maximum.';
 $_MODULE['<{twopayment}prestashop>twopayment_12a62151fbf8218ddf2165d1f23821cd'] = 'Vul een titel in.';
 $_MODULE['<{twopayment}prestashop>twopayment_12dbe8e446cc6067de4c47a0f3f6d78d'] = 'Bestelreferentie van de provider ontbreekt voor deze poging.';
@@ -468,7 +467,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_c3bcb4d75d3af37fe613c8077e38441d'] 
 $_MODULE['<{twopayment}prestashop>twopayment_23c8711f45541e10da6c1eb134fddeb2'] = 'Instellingen voor betalingsvoorwaarden zijn bijgewerkt.';
 $_MODULE['<{twopayment}prestashop>twopayment_c4dcb7da043e8feef88ce236dd7ab5bd'] = 'Orderbeheer';
 $_MODULE['<{twopayment}prestashop>configuration_c4dcb7da043e8feef88ce236dd7ab5bd'] = 'Orderbeheer';
-$_MODULE['<{twopayment}prestashop>twopayment_c4307c1e4c26b9a0d038f51db2cd4300'] = 'Als dit is ingeschakeld, worden bestellingen automatisch in %1$s als uitgeleverd gemarkeerd zodra hun status verandert naar een van de door jou ingestelde triggerstatussen (zie Uitleverstatussen hieronder). Hiermee worden de betaaltermijnen van de koper geactiveerd en start de uitbetalingscyclus. Als dit is uitgeschakeld, moet je bestellingen handmatig uitleveren in de Merchant Portal van %1$s.';
 $_MODULE['<{twopayment}prestashop>twopayment_36b64aad8a26246fe3ad4116a2b6f289'] = 'Diagnostiek';
 $_MODULE['<{twopayment}prestashop>configuration_36b64aad8a26246fe3ad4116a2b6f289'] = 'Diagnostiek';
 $_MODULE['<{twopayment}prestashop>twopayment_8178fa55db5e6276b9d2120ca523c26c'] = 'Instellingen voor bedrijfszoekopdracht zijn bijgewerkt.';

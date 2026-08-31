@@ -123,7 +123,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_104d9898c04874d0fbac36e125fa1369'] 
 $_MODULE['<{twopayment}prestashop>twopayment_11503989a3f470d727d38a6054896940'] = 'Kunne ikke laste valutaen for dette betalingsforsøket.';
 $_MODULE['<{twopayment}prestashop>twopayment_3d114d4ced72fd97d0f0abf4e4117777'] = 'Firmaet kan ha nådd kredittgrensen sin eller ikke bestått %ss kredittvurdering';
 $_MODULE['<{twopayment}prestashop>twopayment_1243daf593fa297e07ab03bf06d925af'] = 'Søker ...';
-$_MODULE['<{twopayment}prestashop>twopayment_c61307f453474392eaa64a081f62924a'] = 'Oppfyll ordrer automatisk med %s';
 $_MODULE['<{twopayment}prestashop>twopayment_128ce19a81ca82c86adfed35ed88578a'] = 'Maksbeløpet gjelder hele gebyret: prosentsatsen og det faste beløpet til sammen, ikke bare prosentsatsen. La feltet stå tomt for ingen grense.';
 $_MODULE['<{twopayment}prestashop>twopayment_12a62151fbf8218ddf2165d1f23821cd'] = 'Skriv inn en tittel.';
 $_MODULE['<{twopayment}prestashop>twopayment_12dbe8e446cc6067de4c47a0f3f6d78d'] = 'Ordrereferansen fra betalingsleverandøren mangler for dette forsøket.';
@@ -468,7 +467,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_c3bcb4d75d3af37fe613c8077e38441d'] 
 $_MODULE['<{twopayment}prestashop>twopayment_23c8711f45541e10da6c1eb134fddeb2'] = 'Innstillingene for betalingsvilkår er oppdatert.';
 $_MODULE['<{twopayment}prestashop>twopayment_c4dcb7da043e8feef88ce236dd7ab5bd'] = 'Ordrehåndtering';
 $_MODULE['<{twopayment}prestashop>configuration_c4dcb7da043e8feef88ce236dd7ab5bd'] = 'Ordrehåndtering';
-$_MODULE['<{twopayment}prestashop>twopayment_c4307c1e4c26b9a0d038f51db2cd4300'] = 'Når dette er aktivert, blir ordrer automatisk markert som oppfylt hos %1$s når statusen endres til en av statusene du har satt opp som utløsere for oppfyllelse (se Oppfyllelsesstatuser nedenfor). Dette aktiverer kjøperens betalingsvilkår og starter utbetalingssyklusen. Hvis det er deaktivert, må du oppfylle ordrer manuelt i %1$ss selgerportal.';
 $_MODULE['<{twopayment}prestashop>twopayment_36b64aad8a26246fe3ad4116a2b6f289'] = 'Diagnostikk';
 $_MODULE['<{twopayment}prestashop>configuration_36b64aad8a26246fe3ad4116a2b6f289'] = 'Diagnostikk';
 $_MODULE['<{twopayment}prestashop>twopayment_8178fa55db5e6276b9d2120ca523c26c'] = 'Innstillingene for bedriftssøk er oppdatert.';
