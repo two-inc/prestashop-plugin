@@ -61,7 +61,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_4aa052845b004b77c0a8d9b8a263096b'] 
 $_MODULE['<{twopayment}prestashop>twopayment_282bb78cd8f05b54c0956e22373be528'] = 'Si seleccionas SÍ, los clientes verán el campo de Departamento en el proceso de compra.';
 $_MODULE['<{twopayment}prestashop>twopayment_7db91adda48aa117ef0380400860e251'] = 'Mostrar campo de Proyecto';
 $_MODULE['<{twopayment}prestashop>twopayment_e175af11a33d489ee241fc5c4931d4d4'] = 'Si seleccionas SÍ, los clientes verán el campo de Proyecto en el proceso de compra.';
-$_MODULE['<{twopayment}prestashop>twopayment_db2fdeb65390d0a1c2b077c52624a66e'] = 'Cuando está habilitado, los pedidos se marcan automáticamente como cumplidos en %1$s cuando su estado cambia a uno de los estados de activación de cumplimiento que hayas configurado (consulta la asignación de estados de pedido). Esto activa los términos de pago del comprador y comienza el ciclo de pagos. Si está deshabilitado, debes cumplir los pedidos manualmente desde el Portal de Comerciantes de %1$s.';
 $_MODULE['<{twopayment}prestashop>twopayment_fe23d34260c5dd03950bf17958f4d6ae'] = 'Subir facturas propias a Two';
 $_MODULE['<{twopayment}prestashop>twopayment_87cd64c3a71c8823d9093ce0484f99c9'] = 'Activa esto SOLO si usas tus propias facturas en lugar de las facturas generadas por Two. Debe coordinarse con Two antes de activarlo.';
 $_MODULE['<{twopayment}prestashop>twopayment_6646bb7bbf12bbc7c53b4deb1f197e98'] = 'Cuando está habilitado:';
