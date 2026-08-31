@@ -651,6 +651,49 @@ describe('addressScope() on PrestaShop core markup', () => {
         expect(control.isManualEntry()).toBe(true);
     });
 
+    test('a withheld scope does not permanently lock the page into manual entry', () => {
+        // Given a mount whose scope is withheld, sharing a page-lifetime
+        // memory the way the manager injects it
+        const memory = {};
+        window.twopayment = { company_search_country: 'NO' };
+        buildAddressesStep({
+            editing: 'invoice',
+            blockContainers: false,
+            blockIds: false,
+            countryIsoAttrs: true,
+            stepAddressId: STEP_ADDRESS_ID
+        });
+        const withheld = new TwoCompanySearch({
+            checkoutHost: CHECKOUT_HOST,
+            companyFieldSelector: '#field-company',
+            manualEntryMemory: memory
+        });
+        expect(withheld.isManualEntry()).toBe(true);
+        withheld.destroy();
+
+        // When the theme's markup is fixed (a real address block now exists)
+        // and the mount rebuilds against the SAME memory, as `updatedAddressForm`
+        // does
+        buildAddressesStep({
+            editing: 'invoice',
+            blockContainers: true,
+            blockIds: true,
+            countryIsoAttrs: true,
+            stepAddressId: STEP_ADDRESS_ID
+        });
+        const rebuilt = new TwoCompanySearch({
+            checkoutHost: CHECKOUT_HOST,
+            companyFieldSelector: '#field-company',
+            manualEntryMemory: memory
+        });
+
+        // Then the withholding does not outlive the render that caused it - a
+        // resolvable scope means a real search, not a page permanently stuck
+        // in manual entry from one earlier bad render
+        expect(rebuilt.searchUnavailable()).toBe(false);
+        expect(rebuilt.isManualEntry()).toBe(false);
+    });
+
     test('a withheld search offers no sole-trader route back either', () => {
         // Given a control with no trusted scope, and a completed sole-trader
         // enrolment - the one path that renders a route back without going
