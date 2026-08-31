@@ -330,14 +330,12 @@ class Twopayment extends PaymentModule
     public $enable_project;
     /** @var int */
     public $enable_order_intent;
-    /** @var string|false */
-    public $finalize_purchase_shipping;
 
     public function __construct()
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.7.13';
+        $this->version = '2.7.14';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -363,8 +361,7 @@ class Twopayment extends PaymentModule
         // actual payment submission (checkTwoOrderIntentApprovalAtPayment) is
         // untouched by this setting and always runs.
         $this->enable_order_intent = $this->isTwoOrderIntentPreviewEnabled() ? 1 : 0;
-        $this->finalize_purchase_shipping = Configuration::get('PS_TWO_FINALIZE_PURCHASE');
-        
+
         // Ensure custom Two states exist (for existing installations)
         $this->ensureCustomStatesExist();
         $this->ensureRequiredHooksRegistered();
@@ -623,7 +620,6 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_ENABLE_PO_NUMBER', 1);
         Configuration::updateValue('PS_TWO_ENABLE_INVOICE_EMAIL', 1);
         Configuration::updateValue('PS_TWO_ADDRESS_LOOKUP', 1); // Default: address lookup fills the address step, matching every other plugin
-        Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', 1);
         Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', 'STANDARD'); // Default: Standard payment terms (not EOM)
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1); // Default: 30 days enabled
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_60', 1); // Default: 60 days enabled
@@ -2358,26 +2354,6 @@ class Twopayment extends PaymentModule
                 'input' => array(
                     array(
                         'type' => 'switch',
-                        'label' => sprintf($this->l('Automatically fulfill orders with %s'), $this->getTwoBrandConfig('product_name')),
-                        'name' => 'PS_TWO_FINALIZE_PURCHASE',
-                        'is_bool' => true,
-                        'desc' => sprintf($this->l('When enabled, orders are automatically marked as fulfilled in %1$s when their status changes to one of your configured fulfillment trigger statuses (see Fulfilment Statuses below). This activates buyer payment terms and begins the payout cycle. If disabled, you must fulfill orders manually in %1$s\'s Merchant Portal.'), $this->getTwoBrandConfig('product_name')),
-                        'required' => true,
-                        'values' => array(
-                            array(
-                                'id' => 'PS_TWO_FINALIZE_PURCHASE_ON',
-                                'value' => 1,
-                                'label' => $this->l('Yes')
-                            ),
-                            array(
-                                'id' => 'PS_TWO_FINALIZE_PURCHASE_OFF',
-                                'value' => 0,
-                                'label' => $this->l('No')
-                            ),
-                        ),
-                    ),
-                    array(
-                        'type' => 'switch',
                         'label' => $this->l('Validate tax subtotals'),
                         'name' => 'PS_TWO_ENABLE_TAX_SUBTOTALS',
                         'is_bool' => true,
@@ -2860,7 +2836,6 @@ class Twopayment extends PaymentModule
     protected function getTwoOrderManagementFormValues()
     {
         $fields_values = array();
-        $fields_values['PS_TWO_FINALIZE_PURCHASE'] = Tools::getValue('PS_TWO_FINALIZE_PURCHASE', Configuration::get('PS_TWO_FINALIZE_PURCHASE'));
         $fields_values['PS_TWO_ENABLE_TAX_SUBTOTALS'] = Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
         // Kept a STRING: an (int) cast would turn the unselected state
         // into 0 and silently pre-select "No tax".
@@ -2891,7 +2866,6 @@ class Twopayment extends PaymentModule
 
     protected function saveTwoOrderManagementFormValues()
     {
-        Configuration::updateValue('PS_TWO_FINALIZE_PURCHASE', Tools::getValue('PS_TWO_FINALIZE_PURCHASE'));
         Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', (int) Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
 
         // Write the default shipping tax code ONLY when actually submitted.
@@ -3361,7 +3335,12 @@ class Twopayment extends PaymentModule
                         'name' => 'PS_TWO_OS_FULFILLED_MAP',
                         'label' => sprintf($this->l('%s: Order Fulfilled - Trigger Statuses'), $this->getTwoBrandConfig('product_name')),
                         'desc' => $this->buildFulfillmentStatusDescription(),
-                        'required' => true,
+                        // Not required - an empty selection is the legitimate
+                        // "never auto-fulfils" state, replacing the removed
+                        // PS_TWO_FINALIZE_PURCHASE switch. A required
+                        // multi-select blocks HTML5 form submission with
+                        // nothing selected.
+                        'required' => false,
                         'multiple' => true,
                         'size' => 8,
                         'options' => array(
@@ -3458,14 +3437,15 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', Tools::getValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP'));
         Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', Tools::getValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'));
         
-        // Handle multi-select for fulfillment statuses - store as JSON array
+        // Handle multi-select for fulfillment statuses - store as JSON array.
+        // An empty selection is a legitimate, intentional state (never
+        // auto-fulfils) since the removal of PS_TWO_FINALIZE_PURCHASE - it
+        // must be stored as-is, not defaulted back to Shipped.
         $fulfilled_statuses = Tools::getValue('PS_TWO_OS_FULFILLED_MAP');
-        if (is_array($fulfilled_statuses) && !empty($fulfilled_statuses)) {
-            // Store as JSON array for multiple selections
+        if (is_array($fulfilled_statuses)) {
             Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', json_encode(array_map('intval', $fulfilled_statuses)));
         } else {
-            // Fallback to default Shipped status if nothing selected
-            Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', json_encode(array((int)Configuration::get('PS_OS_SHIPPING'))));
+            Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', json_encode(array()));
         }
         
         Configuration::updateValue('PS_TWO_OS_PAYMENT_ERROR_MAP', Tools::getValue('PS_TWO_OS_PAYMENT_ERROR_MAP'));
@@ -3504,26 +3484,26 @@ class Twopayment extends PaymentModule
     {
         $base_desc = sprintf($this->l('Select one or more order statuses that should trigger %1$s fulfillment. When any of these statuses are set, the order will be marked as fulfilled with %1$s. Buyer payment terms become active and payout cycle begins. You can select multiple statuses (Hold Ctrl/Cmd to select multiple. Default: Shipped'), $this->getTwoBrandConfig('product_name'));
         
-        // Get currently selected statuses
+        // Get currently selected statuses. An empty map is the legitimate
+        // "never auto-fulfils" state - it must not be shown as Shipped.
         $fulfilled_map = Configuration::get('PS_TWO_OS_FULFILLED_MAP');
         $fulfilled_ids = json_decode($fulfilled_map, true);
         if (!is_array($fulfilled_ids)) {
-            if (!empty($fulfilled_map)) {
-                $fulfilled_ids = array($fulfilled_map);
-            } else {
-                $fulfilled_ids = array(Configuration::get('PS_OS_SHIPPING'));
-            }
+            $fulfilled_ids = !empty($fulfilled_map) ? array($fulfilled_map) : array();
         }
-        
+
         $status_names = $this->getOrderStatusNames($fulfilled_ids);
-        
+
         if (!empty($status_names)) {
             $base_desc .= '<br><br><strong style="color: #28a745;">' . $this->l('Currently active:') . '</strong> ';
             $base_desc .= '<span style="color: #28a745; font-weight: bold;">' . implode(', ', array_map(function($name) {
                 return htmlspecialchars($name, ENT_QUOTES, 'UTF-8');
             }, $status_names)) . '</span>';
+        } else {
+            $base_desc .= '<br><br><strong style="color: #dc3545;">' . $this->l('Currently active:') . '</strong> ';
+            $base_desc .= '<span style="color: #dc3545;">' . $this->l('None selected') . '</span>';
         }
-        
+
         return $base_desc;
     }
     
@@ -3563,20 +3543,21 @@ class Twopayment extends PaymentModule
     protected function isFulfillmentTriggerStatus($status_id)
     {
         $fulfilled_map = Configuration::get('PS_TWO_OS_FULFILLED_MAP');
-        
+
+        // Empty selection means auto-fulfilment never fires - the sole
+        // replacement for the removed PS_TWO_FINALIZE_PURCHASE switch.
         if (empty($fulfilled_map)) {
-            // Default to standard Shipped status
-            return ($status_id == Configuration::get('PS_OS_SHIPPING'));
+            return false;
         }
-        
+
         // Try to decode as JSON array (new multi-select format)
         $fulfilled_ids = json_decode($fulfilled_map, true);
-        
+
         if (is_array($fulfilled_ids)) {
             // Multi-select format - check if status is in array
             return in_array((int)$status_id, array_map('intval', $fulfilled_ids));
         }
-        
+
         // Backward compatibility: single status ID (old format)
         return ($status_id == $fulfilled_map);
     }
@@ -3746,7 +3727,7 @@ class Twopayment extends PaymentModule
                         );
                         $this->setTwoOrderPaymentData($id_order, $payment_data);
                     }
-                } else if ($this->isFulfillmentTriggerStatus($new_order_status->id) && $this->finalize_purchase_shipping) {
+                } else if ($this->isFulfillmentTriggerStatus($new_order_status->id)) {
                     // Complete fulfillment using the new fulfillments endpoint - wrapped in try-catch for safety
                     try {
                         PrestaShopLogger::addLog('TwoPayment: Initiating complete fulfillment for Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Triggered by status: ' . $new_order_status->name . ' (ID: ' . $new_order_status->id . ')', 1);
