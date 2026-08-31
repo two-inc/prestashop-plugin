@@ -26,7 +26,12 @@ if (!defined('_PS_VERSION_')) {
 
 function upgrade_module_2_7_14($module)
 {
-    $switch_was_off = ((int) Configuration::get('PS_TWO_FINALIZE_PURCHASE')) === 0;
+    // hasKey() first: the switch's own row is deleted at the end of this
+    // function, so a second run (reinstall, rollback+re-bump) must not read
+    // the now-missing key as "was off" and re-clear a mapping the merchant
+    // has since configured.
+    $switch_was_off = Configuration::hasKey('PS_TWO_FINALIZE_PURCHASE')
+        && ((int) Configuration::get('PS_TWO_FINALIZE_PURCHASE')) === 0;
 
     if ($switch_was_off) {
         Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', json_encode(array()));
