@@ -5631,6 +5631,7 @@ require __DIR__ . '/AddressLookupGatingSpec.php';
 require __DIR__ . '/ValidateTaxSubtotalsSpec.php';
 require __DIR__ . '/CompanySearchLocationConfigSpec.php';
 require __DIR__ . '/CompanySearchLocationKeyMigrationSpec.php';
+require __DIR__ . '/SkipConfirmTokenKeyMigrationSpec.php';
 require __DIR__ . '/OrgNumberPreVerificationSpec.php';
 require __DIR__ . '/IntentApprovedNoticeSpec.php';
 require __DIR__ . '/BrandTokenSpec.php';
@@ -5688,6 +5689,7 @@ $tests = [
     'ValidateTaxSubtotalsSpec::runAll' => [ValidateTaxSubtotalsSpec::class, 'runAll'],
     'CompanySearchLocationConfigSpec::runAll' => [CompanySearchLocationConfigSpec::class, 'runAll'],
     'CompanySearchLocationKeyMigrationSpec::runAll' => [CompanySearchLocationKeyMigrationSpec::class, 'runAll'],
+    'SkipConfirmTokenKeyMigrationSpec::runAll' => [SkipConfirmTokenKeyMigrationSpec::class, 'runAll'],
     'OrgNumberPreVerificationSpec::runAll' => [OrgNumberPreVerificationSpec::class, 'runAll'],
     'IntentApprovedNoticeSpec::runAll' => [IntentApprovedNoticeSpec::class, 'runAll'],
     'BrandTokenSpec::runAll' => [BrandTokenSpec::class, 'runAll'],
