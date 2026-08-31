@@ -98,7 +98,6 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 | Department Field | Show department field in the Two payment section | Enabled |
 | Order Intent | Enable Order Intent check | Enabled |
 | Account Type | Show account type selector | Enabled |
-| Auto Fulfill Orders | Automatically fulfill orders with Two when status changes | Enabled |
 | SSL Verification | Verify SSL certificates | Enabled |
 | Debug Mode | Enable detailed diagnostic logging | Disabled |
 | Default shipping tax code | Tax rules group assumed for shipping when the carrier's rate cannot be resolved — see below | Not set |
@@ -265,9 +264,8 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 - Configure fulfillment trigger statuses in module settings: **Two → Configuration → Order Management → Fulfillment Statuses**
 - You can select multiple statuses (hold Ctrl/Cmd to select multiple)
 - Default: "Shipped" status triggers fulfillment
-- The form field shows currently active statuses in green text for easy reference
+- The form field shows currently active statuses in green text for easy reference (red "None selected" if the selection is empty, which means fulfilment never fires)
 - After saving, a confirmation message displays all active fulfillment trigger statuses
-- Ensure "Automatically fulfill orders with Two" option is enabled (default: enabled)
 
 **⚠️ CRITICAL: Complete Fulfillment Only**
 - **The Two PrestaShop plugin only supports complete fulfillment of the entire PrestaShop order**
@@ -299,7 +297,6 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 - Check PrestaShop logs for fulfillment errors (search for "TwoPayment: Fulfillment")
 - Verify order is in `CONFIRMED` state before fulfillment (not `VERIFIED`)
 - If order is `VERIFIED`, it must be confirmed first (either manually in Two Merchant Portal or via Two's confirmation flow)
-- Ensure "Automatically fulfill orders with Two" is enabled in module settings
 - Verify fulfillment status is correctly mapped in module configuration
 - Check the Order Status Mapping form to see which statuses are currently active (shown in green)
 

@@ -236,7 +236,6 @@ final class DefaultShippingTaxCodeSpec
         $names = self::orderManagementFieldNames($module);
         TinyAssert::true(in_array(self::CONFIG_KEY, $names, true), 'The field must always render on Order Management');
         // The rest of Order Management is untouched.
-        TinyAssert::true(in_array('PS_TWO_FINALIZE_PURCHASE', $names, true));
         TinyAssert::true(in_array('PS_TWO_ENABLE_TAX_SUBTOTALS', $names, true));
 
         $input = self::shippingTaxInput($module);
@@ -365,7 +364,7 @@ final class DefaultShippingTaxCodeSpec
 
         $module = new DefaultShippingTaxCodeHarness();
         // A save request that never mentions this key at all.
-        Tools::setTestValue('PS_TWO_FINALIZE_PURCHASE', 1);
+        Tools::setTestValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1);
         $module->exposeSaveOrderManagementFormValues();
 
         TinyAssert::same(
