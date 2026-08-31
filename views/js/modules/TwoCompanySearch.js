@@ -3455,6 +3455,11 @@ class TwoCompanySearch {
             this.setCompanyIdHint('');
             return;
         }
+        // Scope resolves on this render, so the withheld branch above did not
+        // just run - drop any forced entry an earlier render on this SAME
+        // instance left set, or it would stay stuck true for the rest of this
+        // instance's life with nothing left to clear it (round 2 review).
+        this._manualEntryForced = false;
 
         // The anchored panel and its query field (TWO-25326 §1). Same re-run
         // reasoning as the hint above: this method is the one that runs
