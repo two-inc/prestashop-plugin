@@ -529,6 +529,22 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             return;
         }
 
+        // Buyer-country gate (TWO-40): no point building an intent payload for
+        // an order the payment submit will refuse on the same cart.
+        if (!$this->module->isTwoBuyerCountrySupported($cart)) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Order intent refused - unsupported buyer country ('
+                . $this->module->describeTwoBuyerCountryRefusal($cart) . ')',
+                2
+            );
+            $this->sendJsonResponse(json_encode([
+                'success' => false,
+                'status' => 'buyer_country_not_supported',
+                'error' => $this->module->l('This payment method is not available.')
+            ]));
+            return;
+        }
+
         $companyData = $this->getCompanyDataWithFallbacks();
         $companyName = $companyData['company'];
         $companyId = $companyData['companyid'];
