@@ -9,21 +9,27 @@ require_once __DIR__ . '/../controllers/front/payment.php';
  * plugin, at both the display and the submission point.
  *
  * GET /v1/merchant carries `supported_buyer_countries`: ISO-3166-1 alpha-2
- * codes the merchant may transact with. An ABSENT, null or EMPTY list means no
- * restriction - the day-one state of every existing merchant - and anything
- * else allows only those codes.
+ * codes the merchant may transact with. The gate is TRI-STATE, and the state
+ * that matters is whether the merchant record carried the FIELD, not whether it
+ * carried any codes:
  *
- * That empty-means-unrestricted rule is the opposite of the module's other two
- * allowlists. `module_country` withholds on empty (core would refuse the
- * submission too) and the currency ISO list withholds on a non-match. Here the
- * server defines the semantics of its own field, so this gate diverges
- * deliberately, and the divergence is pinned below rather than left to be
- * "corrected" into line with its neighbours later.
+ *  - Field ABSENT from the response body => unrestricted. This is the only
+ *    fail-open state, and it means one thing: the backend serving this shop
+ *    does not publish the field yet, so there is no restriction to enforce.
+ *  - Field PRESENT and null, or an empty list => nothing is allowed. The
+ *    backend has answered, and its answer permits no buyer country.
+ *  - Field PRESENT with codes => only those codes are allowed.
+ *  - Field PRESENT but not a list at all => nothing is allowed, and the state
+ *    is logged as malformed so the two cases are told apart in the shop log.
+ *
+ * Absent and present-but-empty are therefore opposite verdicts, which is why
+ * the cache encoding distinguishes them (see CACHE_* below) instead of
+ * collapsing both to "no codes".
  *
  * Contract pinned here:
  *
- *  - Absent / null / empty / malformed field => unrestricted. Never withheld.
- *  - Codes are compared case-insensitively; the cache holds them uppercased.
+ *  - Codes are compared case-insensitively and trimmed; the cache holds them
+ *    uppercased.
  *  - The BILLING country decides, falling back to the SHIPPING country when the
  *    billing address carries none. That resolution order is the country the
  *    order ultimately submits as the buyer's registration country, which is
@@ -31,12 +37,14 @@ require_once __DIR__ . '/../controllers/front/payment.php';
  *  - A fetch that never succeeded leaves the gate unrestricted (fail OPEN): an
  *    API fault is not a country verdict, and hiding Two over one would take the
  *    payment method off every shop at once.
- *  - Once the list IS restrictive, a cart with no resolvable country is
- *    withheld - it cannot be shown to be in the list.
- *  - BOTH enforcement points agree: the payment-options hook withholds the
- *    tile, and controllers/front/payment.php refuses a POST that bypassed it.
- *    A gate on only one of them is either a dead end at the last click or an
- *    open door for a stale page.
+ *  - Once the field IS present, a cart with no resolvable country is withheld -
+ *    it cannot be shown to be in the list.
+ *  - EVERY enforcement point agrees: the payment-options hook withholds the
+ *    tile, controllers/front/payment.php refuses a POST that bypassed it, and
+ *    both order-intent paths refuse too. A gate on only one of them is either a
+ *    dead end at the last click or an open door for a stale page.
+ *  - Every refusal of an order or an intent is logged at warning severity,
+ *    naming the merchant, the buyer country and which state refused.
  */
 final class BuyerCountryGateSpec
 {
@@ -49,10 +57,19 @@ final class BuyerCountryGateSpec
     /** Address fixture meaning "this address exists but carries no country". */
     private const NO_COUNTRY = '';
 
+    /** Cache values for the three non-allowlist states. */
+    private const CACHE_UNFETCHED = '';
+    private const CACHE_ABSENT = 'null';
+    private const CACHE_EMPTY = '[]';
+    private const CACHE_MALFORMED = 'false';
+
     public static function runAll(): void
     {
         self::testTheFetchCachesTheAllowlist();
+        self::testTheCacheRoundTripPreservesTheState();
+        self::testPresenceIsDetectedWithoutTheRawBody();
         self::testTheGateVerdict();
+        self::testARefusedSubmissionLogsAWarning();
         self::testBothEnforcementPointsAgreeWithTheGate();
         self::testThePaymentOptionIsWithheldWhenNoIsoCountryResolves();
         self::testAFetchThatNeverSucceededLeavesTheGateUnrestricted();
@@ -84,12 +101,15 @@ final class BuyerCountryGateSpec
     }
 
     /** Write the cache the gate reads, bypassing the wire. */
-    private static function cacheAllowlist(?array $isos): void
+    private static function cacheRaw(string $json): void
     {
-        Configuration::updateValue(
-            Twopayment::CONFIG_MERCHANT_BUYER_COUNTRIES,
-            $isos ? json_encode($isos) : ''
-        );
+        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_BUYER_COUNTRIES, $json);
+    }
+
+    /** The shape setTwoPaymentRequest() returns: raw body, flattened onto the root. */
+    private static function merchantResponse(array $body, int $status = 200): array
+    {
+        return array_merge(['http_status' => $status, 'data' => $body], $body);
     }
 
     /**
@@ -171,9 +191,7 @@ final class BuyerCountryGateSpec
     {
         $lines = 0;
         foreach (PrestaShopLogger::$logs as $entry) {
-            if (strpos($entry['message'], 'supported buyer country') !== false
-                || strpos($entry['message'], 'buyer country could not be resolved') !== false
-            ) {
+            if (strpos($entry['message'], 'not a supported buyer country') !== false) {
                 ++$lines;
             }
         }
@@ -216,26 +234,31 @@ final class BuyerCountryGateSpec
      * =================================================================== */
 
     /**
-     * What the shared merchant fetch caches for each shape of the field. The
-     * malformed rows matter as much as the good ones: every one of them must
-     * land on "unrestricted", because the alternative - reading garbage as a
-     * restriction - silently removes Two for real buyers.
+     * What the shared merchant fetch caches for each shape of the field, as the
+     * accessor's tri-state value, the state token that drives the log line, and
+     * the raw cache string. The raw string is asserted because it is what has to
+     * survive a Configuration round trip for absent and present-empty to stay
+     * distinguishable on the next request.
      */
+    private static function fetchCases(): array
+    {
+        return [
+            [['available_terms' => [30]], null, 'absent', self::CACHE_ABSENT, 'an absent field is unrestricted'],
+            [['supported_buyer_countries' => null], [], 'empty', self::CACHE_EMPTY, 'a present null field permits no country'],
+            [['supported_buyer_countries' => []], [], 'empty', self::CACHE_EMPTY, 'a present empty list permits no country'],
+            [['supported_buyer_countries' => 'GB'], [], 'malformed', self::CACHE_MALFORMED, 'a bare string permits no country rather than becoming a one-country allowlist'],
+            [['supported_buyer_countries' => ['GBR', 'X']], [], 'empty', self::CACHE_EMPTY, 'a list holding no usable code permits no country'],
+            [['supported_buyer_countries' => ['GB']], ['GB'], 'allowlist', '["GB"]', 'a single code is cached'],
+            [['supported_buyer_countries' => ['no', 'gb']], ['GB', 'NO'], 'allowlist', '["GB","NO"]', 'codes are uppercased and sorted'],
+            [['supported_buyer_countries' => [' gb ', 'GB']], ['GB'], 'allowlist', '["GB"]', 'codes are trimmed and de-duplicated'],
+            [['supported_buyer_countries' => ['GB', 'GBR', '', 'X', 42, null, ['NO']]], ['GB'], 'allowlist', '["GB"]', 'only alpha-2 string codes survive'],
+        ];
+    }
+
     private static function testTheFetchCachesTheAllowlist(): void
     {
-        $cases = [
-            [['http_status' => 200, 'available_terms' => [30]], [], 'an absent field is unrestricted'],
-            [['http_status' => 200, 'supported_buyer_countries' => null], [], 'a null field is unrestricted'],
-            [['http_status' => 200, 'supported_buyer_countries' => []], [], 'an empty list is unrestricted'],
-            [['http_status' => 200, 'supported_buyer_countries' => 'GB'], [], 'a bare string is not a one-country allowlist'],
-            [['http_status' => 200, 'supported_buyer_countries' => ['GB']], ['GB'], 'a single code is cached'],
-            [['http_status' => 200, 'supported_buyer_countries' => ['no', 'gb']], ['GB', 'NO'], 'codes are uppercased and sorted'],
-            [['http_status' => 200, 'supported_buyer_countries' => [' gb ', 'GB']], ['GB'], 'codes are trimmed and de-duplicated'],
-            [['http_status' => 200, 'supported_buyer_countries' => ['GB', 'GBR', '', 'X', 42, null, ['NO']]], ['GB'], 'only alpha-2 string codes survive'],
-        ];
-
-        foreach ($cases as [$response, $expected, $description]) {
-            $module = self::moduleWithMerchantResponse($response);
+        foreach (self::fetchCases() as [$body, $expected, $state, $raw, $description]) {
+            $module = self::moduleWithMerchantResponse(self::merchantResponse($body));
             $module->getMerchantAvailableTerms(true);
 
             TinyAssert::same(
@@ -243,7 +266,57 @@ final class BuyerCountryGateSpec
                 $module->getMerchantBuyerCountries(),
                 'fetch caching: ' . $description
             );
+            TinyAssert::same(
+                $state,
+                $module->getTwoBuyerCountryRestrictionState(),
+                'fetch state: ' . $description
+            );
         }
+    }
+
+    /**
+     * The same table read back through Configuration by a SECOND instance: the
+     * gate runs on a later request than the fetch, so a state that does not
+     * survive the store is a state the gate never sees.
+     */
+    private static function testTheCacheRoundTripPreservesTheState(): void
+    {
+        foreach (self::fetchCases() as [$body, $expected, $state, $raw, $description]) {
+            $module = self::moduleWithMerchantResponse(self::merchantResponse($body));
+            $module->getMerchantAvailableTerms(true);
+
+            TinyAssert::same(
+                $raw,
+                Configuration::get(Twopayment::CONFIG_MERCHANT_BUYER_COUNTRIES),
+                'cache encoding: ' . $description
+            );
+
+            $later = new TwopaymentTestHarness();
+            TinyAssert::same(
+                $expected,
+                $later->getMerchantBuyerCountries(),
+                'cache round trip: ' . $description
+            );
+            TinyAssert::same(
+                $state,
+                $later->getTwoBuyerCountryRestrictionState(),
+                'cache round trip state: ' . $description
+            );
+        }
+    }
+
+    /**
+     * Presence is read from the raw body under `data`. A response carrying only
+     * the flattened root - the shape older callers and stubs pass around - must
+     * still be read for the field rather than treated as absent wholesale.
+     */
+    private static function testPresenceIsDetectedWithoutTheRawBody(): void
+    {
+        $module = self::moduleWithMerchantResponse(['http_status' => 200, 'supported_buyer_countries' => []]);
+        $module->getMerchantAvailableTerms(true);
+
+        TinyAssert::same('empty', $module->getTwoBuyerCountryRestrictionState());
+        TinyAssert::same([], $module->getMerchantBuyerCountries());
     }
 
     /* ===================================================================
@@ -251,44 +324,50 @@ final class BuyerCountryGateSpec
      * =================================================================== */
 
     /**
-     * The gate's verdict for each (allowlist, billing, shipping) combination.
-     * Read as: with this list cached, and these two addresses on the cart, is
-     * Two allowed?
+     * The gate's verdict for each (cache value, billing, shipping) combination.
+     * Read as: with this cached, and these two addresses on the cart, is Two
+     * allowed?
      */
     private static function verdictCases(): array
     {
         return [
             // Unrestricted: no country is ever consulted, including one that no
             // address could resolve at all.
-            [null, 'GB', 'GB', true, 'no cached list allows any country'],
-            [[], 'GB', 'GB', true, 'an empty cached list allows any country'],
-            [null, self::NO_COUNTRY, null, true, 'an unrestricted merchant is not gated on a resolvable country'],
+            [self::CACHE_UNFETCHED, 'GB', 'GB', true, 'a cache no fetch has populated allows any country'],
+            [self::CACHE_ABSENT, 'GB', 'GB', true, 'an absent field allows any country'],
+            [self::CACHE_ABSENT, self::NO_COUNTRY, null, true, 'an unrestricted merchant is not gated on a resolvable country'],
 
-            // Restricted.
-            [['GB', 'NO'], 'GB', 'GB', true, 'a billing country in the list is allowed'],
-            [['GB', 'NO'], 'DE', 'DE', false, 'a billing country outside the list is refused'],
-            [['GB'], 'ES', 'GB', false, 'an allowlisted SHIPPING country does not rescue a refused billing country'],
+            // Present, and permitting nothing.
+            [self::CACHE_EMPTY, 'GB', 'GB', false, 'a present empty list refuses a country no list could contain'],
+            [self::CACHE_EMPTY, self::NO_COUNTRY, self::NO_COUNTRY, false, 'a present empty list refuses an unresolvable country too'],
+            [self::CACHE_MALFORMED, 'GB', 'GB', false, 'a present non-list field refuses every country'],
 
-            // Case handling, both directions.
-            [['gb'], 'GB', 'GB', true, 'a lowercase cached code still matches'],
-            [['GB'], 'GB', 'GB', true, 'an uppercase cached code matches'],
+            // Allowlist.
+            ['["GB","NO"]', 'GB', 'GB', true, 'a billing country in the list is allowed'],
+            ['["GB","NO"]', 'DE', 'DE', false, 'a billing country outside the list is refused'],
+            ['["GB"]', 'ES', 'GB', false, 'an allowlisted SHIPPING country does not rescue a refused billing country'],
+
+            // Case and padding, on the cached side.
+            ['["gb"]', 'GB', 'GB', true, 'a lowercase cached code still matches'],
+            ['[" gb "]', 'GB', 'GB', true, 'a padded cached code still matches'],
+            ['["GB"]', 'GB', 'GB', true, 'an uppercase cached code matches'],
 
             // Billing -> shipping fallback.
-            [['NO'], self::NO_COUNTRY, 'NO', true, 'a billing address with no country falls back to shipping'],
-            [['NO'], null, 'NO', true, 'no billing address at all falls back to shipping'],
-            [['NO'], self::NO_COUNTRY, 'DE', false, 'the fallback is still matched against the list'],
+            ['["NO"]', self::NO_COUNTRY, 'NO', true, 'a billing address with no country falls back to shipping'],
+            ['["NO"]', null, 'NO', true, 'no billing address at all falls back to shipping'],
+            ['["NO"]', self::NO_COUNTRY, 'DE', false, 'the fallback is still matched against the list'],
 
-            // Nothing resolvable, and the list IS restrictive.
-            [['NO'], self::NO_COUNTRY, self::NO_COUNTRY, false, 'neither address carrying a country is refused'],
-            [['NO'], null, null, false, 'no addresses at all is refused'],
+            // Nothing resolvable, and the field IS present.
+            ['["NO"]', self::NO_COUNTRY, self::NO_COUNTRY, false, 'neither address carrying a country is refused'],
+            ['["NO"]', null, null, false, 'no addresses at all is refused'],
         ];
     }
 
     private static function testTheGateVerdict(): void
     {
-        foreach (self::verdictCases() as [$allowlist, $billing, $shipping, $expected, $description]) {
+        foreach (self::verdictCases() as [$cached, $billing, $shipping, $expected, $description]) {
             $module = self::offerableModule($billing, $shipping);
-            self::cacheAllowlist($allowlist);
+            self::cacheRaw($cached);
 
             TinyAssert::same(
                 $expected,
@@ -323,11 +402,11 @@ final class BuyerCountryGateSpec
      */
     private static function testBothEnforcementPointsAgreeWithTheGate(): void
     {
-        foreach (self::verdictCases() as [$allowlist, $billing, $shipping, $expected, $description]) {
+        foreach (self::verdictCases() as [$cached, $billing, $shipping, $expected, $description]) {
             $billingResolves = $billing !== null && $billing !== self::NO_COUNTRY;
 
             $module = self::offerableModule($billing, $shipping);
-            self::cacheAllowlist($allowlist);
+            self::cacheRaw($cached);
 
             TinyAssert::same(
                 ($expected && $billingResolves) ? 1 : 0,
@@ -340,7 +419,7 @@ final class BuyerCountryGateSpec
             }
 
             $module = self::offerableModule($billing, $shipping);
-            self::cacheAllowlist($allowlist);
+            self::cacheRaw($cached);
 
             TinyAssert::same(
                 !$expected,
@@ -373,7 +452,7 @@ final class BuyerCountryGateSpec
     private static function testThePaymentOptionIsWithheldWhenNoIsoCountryResolves(): void
     {
         $module = self::offerableModule('GB', 'GB');
-        self::cacheAllowlist(null);
+        self::cacheRaw(self::CACHE_ABSENT);
         Configuration::updateValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS', 0);
         StubStore::$addresses[self::ID_BILLING]['id_country'] = 4242;
         StubStore::$addresses[self::ID_SHIPPING]['id_country'] = 4243;
@@ -387,7 +466,7 @@ final class BuyerCountryGateSpec
         // Same unresolvable cart, search back in the address area: the gate is
         // scoped to the tile mount and must not reach this configuration.
         $module = self::offerableModule('GB', 'GB');
-        self::cacheAllowlist(null);
+        self::cacheRaw(self::CACHE_ABSENT);
         Configuration::updateValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS', 1);
         StubStore::$addresses[self::ID_BILLING]['id_country'] = 4242;
         StubStore::$addresses[self::ID_SHIPPING]['id_country'] = 4243;
@@ -400,7 +479,7 @@ final class BuyerCountryGateSpec
 
         // The shipping address alone is enough to keep the tile offered.
         $module = self::offerableModule('GB', 'NO');
-        self::cacheAllowlist(null);
+        self::cacheRaw(self::CACHE_ABSENT);
         Configuration::updateValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS', 0);
         StubStore::$addresses[self::ID_BILLING]['id_country'] = 4242;
 
@@ -437,7 +516,7 @@ final class BuyerCountryGateSpec
             TinyAssert::same(1, $module->fetchCount, 'the fetch must actually have been attempted: ' . $description);
 
             TinyAssert::same(
-                [],
+                null,
                 $module->getMerchantBuyerCountries(),
                 'fail open: ' . $description . ' must leave the allowlist unresolved'
             );
@@ -515,7 +594,7 @@ final class BuyerCountryGateSpec
 
         $module->invalidateMerchantAvailableTerms();
 
-        TinyAssert::same([], $module->getMerchantBuyerCountries(), 'an identity change must drop the allowlist');
+        TinyAssert::same(null, $module->getMerchantBuyerCountries(), 'an identity change must drop the allowlist');
         TinyAssert::same(
             true,
             $module->isTwoBuyerCountrySupported(self::offerableModule('DE', 'DE')->context->cart),
@@ -532,7 +611,7 @@ final class BuyerCountryGateSpec
     private static function testTheWithholdReasonIsLoggedOncePerRequest(): void
     {
         $module = self::offerableModule('DE', 'DE');
-        self::cacheAllowlist(['GB']);
+        self::cacheRaw('["GB"]');
         PrestaShopLogger::reset();
 
         $module->hookPaymentOptions([]);
@@ -551,5 +630,62 @@ final class BuyerCountryGateSpec
             strpos($logged, 'DE') !== false,
             'the log must name the country that was refused, or it cannot be diagnosed: ' . $logged
         );
+    }
+
+    /**
+     * Every refusal of a real submission is diagnosable: severity 2, with the
+     * buyer country and the state that refused both named. Unlike the display
+     * gate there is no once-per-request latch - a refused submission is one
+     * event per attempt, not one per render.
+     */
+    private static function testARefusedSubmissionLogsAWarning(): void
+    {
+        $cases = [
+            ['["GB"]', 'allowlist', 'a country outside the allowlist'],
+            [self::CACHE_EMPTY, 'empty', 'a present but empty list'],
+            [self::CACHE_MALFORMED, 'malformed', 'a present but non-list field'],
+        ];
+
+        foreach ($cases as [$cached, $state, $description]) {
+            $module = self::offerableModule('DE', 'DE');
+            self::cacheRaw($cached);
+            TinyAssert::true(self::submissionWasRefused($module), 'order submit refused: ' . $description);
+            self::assertWarningNames('Order submission refused', $state, 'order submit: ' . $description);
+
+            $module = self::offerableModule('DE', 'DE');
+            self::cacheRaw($cached);
+            PrestaShopLogger::reset();
+            $result = $module->checkTwoOrderIntentApprovalAtPayment(
+                $module->context->cart,
+                new Customer(),
+                new Currency(),
+                new Address()
+            );
+
+            TinyAssert::same(false, $result['approved'], 'order intent refused: ' . $description);
+            TinyAssert::same('buyer_country_not_supported', $result['status'], 'order intent status: ' . $description);
+            self::assertWarningNames('Order intent refused', $state, 'order intent: ' . $description);
+        }
+    }
+
+    /** Asserts one severity-2 line carrying $needle, the buyer country and $state. */
+    private static function assertWarningNames(string $needle, string $state, string $context): void
+    {
+        foreach (PrestaShopLogger::$logs as $entry) {
+            if (strpos($entry['message'], $needle) === false) {
+                continue;
+            }
+
+            TinyAssert::same(2, $entry['severity'], $context . ': must be logged at warning severity');
+            TinyAssert::true(
+                strpos($entry['message'], 'buyer country DE') !== false
+                && strpos($entry['message'], 'list ' . $state) !== false,
+                $context . ': the log must name the buyer country and the refusing state: ' . $entry['message']
+            );
+
+            return;
+        }
+
+        throw new RuntimeException($context . ': no "' . $needle . '" line was logged');
     }
 }
