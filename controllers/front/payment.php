@@ -90,7 +90,8 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
         if (!$this->module->isTwoBuyerCountrySupported($cart)) {
             $this->failCheckout(
                 $this->module->l('This payment method is not available.'),
-                'TwoPayment: Payment attempt from an unsupported buyer country - cart ' . (int) $cart->id,
+                'TwoPayment: Order submission refused - payment attempt from an unsupported buyer country ('
+                . $this->module->describeTwoBuyerCountryRefusal($cart) . '), cart ' . (int) $cart->id,
                 2
             );
             return;
