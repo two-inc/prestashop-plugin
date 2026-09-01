@@ -62,8 +62,16 @@ class Twopayment extends PaymentModule
     // so the common case costs no refetch per checkout render.
     const CONFIG_PLATFORM_MIN_ORDER = 'PS_TWO_PLATFORM_MIN_ORDER';
     // Cached buyer-country allowlist (TWO-40), on the same fetch and TTL as
-    // CONFIG_MERCHANT_AVAILABLE_TERMS. JSON alpha-2 list, or '' = unrestricted.
+    // CONFIG_MERCHANT_AVAILABLE_TERMS. The JSON encoding is what keeps the four
+    // states apart: '' or 'null' = field absent from the merchant record, '[]' =
+    // present but empty, 'false' = present but not a list, an array of alpha-2
+    // codes = allowlist.
     const CONFIG_MERCHANT_BUYER_COUNTRIES = 'PS_TWO_MERCHANT_BUYER_COUNTRIES';
+    // Only ABSENT is unrestricted; the other three permit no buyer country.
+    const BUYER_COUNTRIES_ABSENT = 'absent';
+    const BUYER_COUNTRIES_EMPTY = 'empty';
+    const BUYER_COUNTRIES_MALFORMED = 'malformed';
+    const BUYER_COUNTRIES_ALLOWLIST = 'allowlist';
     // The merchant's own optional minimum order value (admin config field,
     // interpreted in the shop default currency). Stacks ON TOP of the platform
     // minimum: it may only raise the effective bar, never lower it below the
@@ -4921,13 +4929,10 @@ class Twopayment extends PaymentModule
         if (!$this->isTwoBuyerCountrySupported($cart)) {
             if (!$this->twoBuyerCountryWithholdLogged) {
                 $this->twoBuyerCountryWithholdLogged = true;
-                $iso = $this->resolveTwoGateBuyerCountryIso($cart);
                 PrestaShopLogger::addLog(
-                    'TwoPayment: Payment option hidden - '
-                    . ($iso !== ''
-                        ? 'buyer country ' . $iso . ' is not a supported buyer country for this merchant'
-                        : 'buyer country could not be resolved from the billing or shipping address')
-                    . ', cart ' . (int)$cart->id,
+                    'TwoPayment: Payment option hidden - not a supported buyer country for this merchant ('
+                    . $this->describeTwoBuyerCountryRefusal($cart)
+                    . '), cart ' . (int)$cart->id,
                     2
                 );
             }
@@ -5907,6 +5912,18 @@ class Twopayment extends PaymentModule
             'timestamp' => time(),
             'http_status' => 0,
         );
+
+        // Buyer-country gate (TWO-40): this method is the authoritative intent
+        // check, so it gates rather than trusting its caller to have gated.
+        if (!$this->isTwoBuyerCountrySupported($cart)) {
+            $result['status'] = 'buyer_country_not_supported';
+            PrestaShopLogger::addLog(
+                'TwoPayment: Order intent refused - unsupported buyer country ('
+                . $this->describeTwoBuyerCountryRefusal($cart) . ')',
+                2
+            );
+            return $result;
+        }
 
         try {
             if ($this->shouldRunStrictOrderIntentParityAtPayment()) {
@@ -10721,12 +10738,9 @@ class Twopayment extends PaymentModule
                         );
                         // Overwrite rather than serve stale (TWO-40): a lifted
                         // restriction must actually lift.
-                        $buyer_countries = $this->normaliseMerchantBuyerCountries(
-                            isset($response['supported_buyer_countries']) ? $response['supported_buyer_countries'] : null
-                        );
                         Configuration::updateValue(
                             self::CONFIG_MERCHANT_BUYER_COUNTRIES,
-                            $buyer_countries ? json_encode($buyer_countries) : ''
+                            $this->encodeMerchantBuyerCountries($response)
                         );
                         // Success: keep the full-TTL clock set above.
                     } else {
@@ -10782,8 +10796,7 @@ class Twopayment extends PaymentModule
 
     /**
      * Normalise a raw buyer-country list into unique, sorted, uppercase alpha-2
-     * codes. Only a real array is accepted: casting a bare string would turn
-     * malformed data into a restriction.
+     * codes.
      *
      * @param mixed $countries
      * @return string[]
@@ -10810,37 +10823,104 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The buyer countries the merchant may transact with (TWO-40). Cache-only;
-     * never fetches.
+     * Encode `supported_buyer_countries` for the cache, keeping an ABSENT field
+     * distinguishable from a present one that permits nothing (TWO-40).
      *
-     * @return string[] Uppercase alpha-2 codes; empty = unrestricted.
+     * Presence is read from the raw body, not the flattened root, which carries
+     * transport keys of its own; a body that is not an array reads as absent.
+     *
+     * @param array $response setTwoPaymentRequest() return
+     * @return string JSON for CONFIG_MERCHANT_BUYER_COUNTRIES
      */
-    public function getMerchantBuyerCountries()
+    private function encodeMerchantBuyerCountries($response)
+    {
+        $body = (isset($response['data']) && is_array($response['data'])) ? $response['data'] : $response;
+        if (!is_array($body) || !array_key_exists('supported_buyer_countries', $body)) {
+            return json_encode(null);
+        }
+
+        $raw = $body['supported_buyer_countries'];
+        if ($raw === null) {
+            return json_encode(array());
+        }
+        if (!is_array($raw)) {
+            return json_encode(false);
+        }
+
+        return json_encode($this->normaliseMerchantBuyerCountries($raw));
+    }
+
+    /**
+     * Decode the cached allowlist into its state and its codes.
+     *
+     * @return array{state:string, allowed:string[]}
+     */
+    private function decodeMerchantBuyerCountries()
     {
         $cached = Configuration::get(self::CONFIG_MERCHANT_BUYER_COUNTRIES);
         if (Tools::isEmpty($cached)) {
-            return array();
+            return array('state' => self::BUYER_COUNTRIES_ABSENT, 'allowed' => array());
         }
+
         $decoded = json_decode($cached, true);
-        if (!is_array($decoded)) {
-            return array();
+        if ($decoded === null) {
+            return array('state' => self::BUYER_COUNTRIES_ABSENT, 'allowed' => array());
         }
-        return $this->normaliseMerchantBuyerCountries($decoded);
+        if (!is_array($decoded)) {
+            return array('state' => self::BUYER_COUNTRIES_MALFORMED, 'allowed' => array());
+        }
+
+        $allowed = $this->normaliseMerchantBuyerCountries($decoded);
+
+        return array(
+            'state' => empty($allowed) ? self::BUYER_COUNTRIES_EMPTY : self::BUYER_COUNTRIES_ALLOWLIST,
+            'allowed' => $allowed,
+        );
+    }
+
+    /**
+     * The buyer countries the merchant may transact with (TWO-40). Cache-only;
+     * never fetches.
+     *
+     * @return string[]|null Uppercase alpha-2 codes, an empty array when the
+     *   merchant record permits none, or null when the record carries no such
+     *   field at all (unrestricted).
+     */
+    public function getMerchantBuyerCountries()
+    {
+        $decoded = $this->decodeMerchantBuyerCountries();
+
+        return $decoded['state'] === self::BUYER_COUNTRIES_ABSENT ? null : $decoded['allowed'];
+    }
+
+    /**
+     * Which of the four BUYER_COUNTRIES_* states the cache holds (TWO-40).
+     *
+     * @return string
+     */
+    public function getTwoBuyerCountryRestrictionState()
+    {
+        $decoded = $this->decodeMerchantBuyerCountries();
+
+        return $decoded['state'];
     }
 
     /**
      * Whether this cart's buyer country is one the merchant may transact with
-     * (TWO-40). An empty allowlist means unrestricted, unlike the module's other
-     * allowlists, which withhold on empty.
+     * (TWO-40). Only an ABSENT field is unrestricted - a field the merchant
+     * record does carry, but which names no country, permits none.
      *
      * @param Cart $cart
      * @return bool
      */
     public function isTwoBuyerCountrySupported($cart)
     {
-        $allowed = $this->getMerchantBuyerCountries();
-        if (empty($allowed)) {
+        $decoded = $this->decodeMerchantBuyerCountries();
+        if ($decoded['state'] === self::BUYER_COUNTRIES_ABSENT) {
             return true;
+        }
+        if (empty($decoded['allowed'])) {
+            return false;
         }
 
         $iso = $this->resolveTwoGateBuyerCountryIso($cart);
@@ -10848,7 +10928,23 @@ class Twopayment extends PaymentModule
             return false;
         }
 
-        return in_array($iso, $allowed, true);
+        return in_array($iso, $decoded['allowed'], true);
+    }
+
+    /**
+     * One description of a buyer-country refusal, shared by every gate so a
+     * single log search finds them all (TWO-40).
+     *
+     * @param Cart $cart
+     * @return string
+     */
+    public function describeTwoBuyerCountryRefusal($cart)
+    {
+        $iso = $this->resolveTwoGateBuyerCountryIso($cart);
+
+        return 'merchant ' . (string) Configuration::get('PS_TWO_MERCHANT_ID')
+            . ', buyer country ' . ($iso !== '' ? $iso : 'unresolved')
+            . ', supported buyer country list ' . $this->getTwoBuyerCountryRestrictionState();
     }
 
     /**
