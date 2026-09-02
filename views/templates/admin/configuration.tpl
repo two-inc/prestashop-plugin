@@ -8,9 +8,9 @@
     <div id="two-tabs" class="col-lg-2 col-md-3">
         <div class="list-group">
             <a class="list-group-item {if $twotabvalue == 1}active{/if}" href="#general-settings" aria-controls="general-settings" role="tab" data-toggle="tab">{l s='General' mod='twopayment'}</a>
-            <a class="list-group-item {if $twotabvalue == 2 || $twotabvalue == 3}active{/if}" href="#checkout-fields-settings" aria-controls="checkout-fields-settings" role="tab" data-toggle="tab">{l s='Checkout Fields' mod='twopayment'}</a>
-            <a class="list-group-item {if $twotabvalue == 4}active{/if}" href="#payment-terms-settings" aria-controls="payment-terms-settings" role="tab" data-toggle="tab">{l s='Payment Terms' mod='twopayment'}</a>
-            <a class="list-group-item {if $twotabvalue == 5}active{/if}" href="#order-management-settings" aria-controls="order-management-settings" role="tab" data-toggle="tab">{l s='Order Management' mod='twopayment'}</a>
+            <a class="list-group-item {if $twotabvalue == 2 || $twotabvalue == 3}active{/if}" href="#checkout-fields-settings" aria-controls="checkout-fields-settings" role="tab" data-toggle="tab">{l s='Checkout fields' mod='twopayment'}</a>
+            <a class="list-group-item {if $twotabvalue == 4}active{/if}" href="#payment-terms-settings" aria-controls="payment-terms-settings" role="tab" data-toggle="tab">{l s='Payment terms' mod='twopayment'}</a>
+            <a class="list-group-item {if $twotabvalue == 5}active{/if}" href="#order-management-settings" aria-controls="order-management-settings" role="tab" data-toggle="tab">{l s='Order management' mod='twopayment'}</a>
             <a class="list-group-item {if $twotabvalue == 6}active{/if}" href="#diagnostics-settings" aria-controls="diagnostics-settings" role="tab" data-toggle="tab">{l s='Diagnostics' mod='twopayment'}</a>
         </div>
     </div>

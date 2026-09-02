@@ -974,7 +974,7 @@ final class SurchargeSpec
         // The log must name the field the merchant will actually see
         // (TWO-25279 renamed it), or the instruction sends them looking for a
         // setting that no longer exists under that name.
-        TinyAssert::true(strpos(PrestaShopLogger::$logs[0]['message'], 'Surcharge Tax Treatment') !== false, 'log names the field by its current admin label');
+        TinyAssert::true(strpos(PrestaShopLogger::$logs[0]['message'], 'Surcharge tax treatment') !== false, 'log names the field by its current admin label');
 
         // Group already selected -> no flag, no log.
         self::reset();

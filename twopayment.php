@@ -1667,7 +1667,7 @@ class Twopayment extends PaymentModule
         return array(
             'form' => array(
                 'legend' => array(
-                    'title' => $this->l('Checkout Fields'),
+                    'title' => $this->l('Checkout fields'),
                     'icon' => 'icon-list-alt',
                 ),
                 'input' => $inputs,
@@ -1714,18 +1714,18 @@ class Twopayment extends PaymentModule
                 'type' => 'radio',
                 'label' => $this->l('Payment terms type'),
                 'name' => 'PS_TWO_PAYMENT_TERM_TYPE',
-                'desc' => $this->l('Choose how payment terms are calculated:') . '<br><br><strong>' . $this->l('Standard Terms:') . '</strong> ' . $this->l('Payment due X days from fulfillment date. Example: If you fulfill an order on January 15th with 30-day terms, payment is due February 14th.') . '<br><br><strong>' . $this->l('End-of-Month (EOM) Terms:') . '</strong> ' . $this->l('Payment due at the end of the current month plus X days from fulfillment date. Example: If you fulfill an order on January 15th with EOM+30 terms, payment is due February 28th (end of January + 30 days). This is common for B2B invoicing.'),
+                'desc' => $this->l('Choose how payment terms are calculated:') . '<br><br><strong>' . $this->l('Standard terms:') . '</strong> ' . $this->l('Payment due X days from fulfillment date. Example: If you fulfill an order on January 15th with 30-day terms, payment is due February 14th.') . '<br><br><strong>' . $this->l('End-of-month (EOM) terms:') . '</strong> ' . $this->l('Payment due at the end of the current month plus X days from fulfillment date. Example: If you fulfill an order on January 15th with EOM+30 terms, payment is due February 28th (end of January + 30 days). This is common for B2B invoicing.'),
                 'is_bool' => false,
                 'values' => array(
                     array(
                         'id' => 'term_type_standard',
                         'value' => 'STANDARD',
-                        'label' => $this->l('Standard Terms (e.g., 30 days from fulfillment)')
+                        'label' => $this->l('Standard terms (e.g., 30 days from fulfillment)')
                     ),
                     array(
                         'id' => 'term_type_eom',
                         'value' => 'EOM',
-                        'label' => $this->l('End-of-Month Terms (e.g., EOM + 30 days)')
+                        'label' => $this->l('End-of-month terms (e.g., EOM + 30 days)')
                     ),
                 ),
             ),
@@ -1787,7 +1787,7 @@ class Twopayment extends PaymentModule
         return array(
             'form' => array(
                 'legend' => array(
-                    'title' => $this->l('Payment Terms'),
+                    'title' => $this->l('Payment terms'),
                     'icon' => 'icon-money',
                 ),
                 'input' => $inputs,
@@ -1857,7 +1857,7 @@ class Twopayment extends PaymentModule
         if ($raw_minimum !== '') {
             $normalised = str_replace(',', '.', $raw_minimum);
             if (!is_numeric($normalised) || (float) $normalised < 0) {
-                $this->errors[] = $this->l('Minimum Order Value must be a non-negative number.');
+                $this->errors[] = $this->l('Minimum order value must be a non-negative number.');
             } elseif ((float) $normalised > 0) {
                 $platform_minimum = $this->getPlatformMinimumOrder();
                 if ($platform_minimum) {
@@ -1868,7 +1868,7 @@ class Twopayment extends PaymentModule
                     );
                     if ($floor !== null && (float) $normalised < $floor) {
                         $this->errors[] = sprintf(
-                            $this->l('Minimum Order Value must be at least the platform minimum of %1$s, %2$s tax.'),
+                            $this->l('Minimum order value must be at least the platform minimum of %1$s, %2$s tax.'),
                             $floor . ' ' . $this->getTwoShopDefaultCurrencyIso()
                                 . ($this->getTwoShopDefaultCurrencyIso() !== $platform_minimum['currency']
                                     ? ' (' . $platform_minimum['amount'] . ' ' . $platform_minimum['currency'] . ')'
@@ -1881,7 +1881,7 @@ class Twopayment extends PaymentModule
         }
         $basis = (string) Tools::getValue('PS_TWO_MERCHANT_MIN_ORDER_BASIS');
         if ($basis !== '' && !in_array($basis, array('net', 'gross'), true)) {
-            $this->errors[] = $this->l('Minimum Order Value Tax Basis must be either including or excluding tax.');
+            $this->errors[] = $this->l('Minimum order value tax basis must be either including or excluding tax.');
         }
     }
 
@@ -2356,7 +2356,7 @@ class Twopayment extends PaymentModule
         $fields_form = array(
             'form' => array(
                 'legend' => array(
-                    'title' => $this->l('Order Management'),
+                    'title' => $this->l('Order management'),
                     'icon' => 'icon-truck',
                 ),
                 'input' => array(
@@ -2482,12 +2482,12 @@ class Twopayment extends PaymentModule
                             array(
                                 'id' => 'PS_TWO_DISABLE_SSL_VERIFY_ON',
                                 'value' => 1,
-                                'label' => $this->l('Yes (Not Recommended)')
+                                'label' => $this->l('Yes (not recommended)')
                             ),
                             array(
                                 'id' => 'PS_TWO_DISABLE_SSL_VERIFY_OFF',
                                 'value' => 0,
-                                'label' => $this->l('No (Secure)')
+                                'label' => $this->l('No (secure)')
                             ),
                         ),
                     ),
@@ -2504,8 +2504,8 @@ class Twopayment extends PaymentModule
                         'desc' => $this->l('WARNING: FOR DEBUGGING ONLY. When YES, the order-intent controller\'s CSRF-style token check is skipped. Never enable this on a live production shop.'),
                         'required' => true,
                         'values' => array(
-                            array('id' => 'PS_TWO_SKIP_CONFIRM_TOKEN_CHECK_ON', 'value' => 1, 'label' => $this->l('Yes (Not Recommended)')),
-                            array('id' => 'PS_TWO_SKIP_CONFIRM_TOKEN_CHECK_OFF', 'value' => 0, 'label' => $this->l('No (Secure)')),
+                            array('id' => 'PS_TWO_SKIP_CONFIRM_TOKEN_CHECK_ON', 'value' => 1, 'label' => $this->l('Yes (not recommended)')),
+                            array('id' => 'PS_TWO_SKIP_CONFIRM_TOKEN_CHECK_OFF', 'value' => 0, 'label' => $this->l('No (secure)')),
                         ),
                     ),
                     // Trusted proxies (TWO-25386), ported from
@@ -2969,7 +2969,7 @@ class Twopayment extends PaymentModule
     {
         $commit_hash = $this->getTwoDeployedCommitHash();
         $deployed_at = $this->getTwoDeployedAtLabel();
-        $version_line = $this->l('Plugin Version:') . ' ' . $this->version . ' | ' . $this->l('PrestaShop:') . ' ' . _PS_VERSION_;
+        $version_line = $this->l('Plugin version:') . ' ' . $this->version . ' | ' . $this->l('PrestaShop:') . ' ' . _PS_VERSION_;
         if ($commit_hash !== null) {
             $version_line .= ' | ' . $this->l('Commit:') . ' ' . htmlspecialchars($commit_hash, ENT_QUOTES, 'UTF-8');
         }
@@ -2980,7 +2980,7 @@ class Twopayment extends PaymentModule
         $html = '
         <div class="panel">
             <div class="panel-heading">
-                <i class="icon-info-circle"></i> ' . $this->l('What This Plugin Does') . '
+                <i class="icon-info-circle"></i> ' . $this->l('What this plugin does') . '
             </div>
             <div class="panel-body">
                 <div class="alert alert-info">
@@ -2995,7 +2995,7 @@ class Twopayment extends PaymentModule
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Company search and validation at checkout (auto-complete)') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Real-time buyer eligibility check (Order Intent) before purchase') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Automatic order fulfillment when order status changes (configurable)') . '</li>
-                    <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Support for Standard and End-of-Month (EOM) payment terms') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Support for standard and end-of-month (EOM) payment terms') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Configurable payment terms (7, 15, 20, 30, 45, 60, 90 days)') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Handle full refunds through PrestaShop admin') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . sprintf($this->l('Display %s order information in admin order view'), $this->getTwoBrandConfig('product_name')) . '</li>
@@ -3004,7 +3004,7 @@ class Twopayment extends PaymentModule
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Works with PrestaShop 1.7.6 through 9.x') . '</li>
                 </ul>
                 
-                <h4 style="color:#f0ad4e;margin-top:25px;"><i class="icon-warning"></i> ' . $this->l('Important Requirements') . '</h4>
+                <h4 style="color:#f0ad4e;margin-top:25px;"><i class="icon-warning"></i> ' . $this->l('Important requirements') . '</h4>
                 <ul class="list-unstyled" style="margin-left:20px;">
                     <li style="margin-bottom:8px;"><i class="icon-exclamation-triangle text-warning"></i> ' . $this->l('Customers must have a valid company/organization number') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-exclamation-triangle text-warning"></i> ' . $this->l('Customers must enter their company name in the billing address') . '</li>
@@ -3025,7 +3025,7 @@ class Twopayment extends PaymentModule
                     <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . $this->l('Change payment terms after an order is placed') . '</li>
                 </ul>
                 
-                <h4 style="color:#5bc0de;margin-top:25px;"><i class="icon-lightbulb-o"></i> ' . $this->l('Troubleshooting Tips') . '</h4>
+                <h4 style="color:#5bc0de;margin-top:25px;"><i class="icon-lightbulb-o"></i> ' . $this->l('Troubleshooting tips') . '</h4>
                 <ul class="list-unstyled" style="margin-left:20px;">
                     <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Tax shows 0%?') . '</strong> ' . $this->l('Check that tax rules are configured for your country in International > Taxes > Tax Rules') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-info-circle text-info"></i> <strong>' . $this->l('Buyer rejected?') . '</strong> ' . sprintf($this->l('The company may have reached their credit limit or failed %s\'s credit check'), $this->getTwoBrandConfig('product_name')) . '</li>
@@ -3038,7 +3038,7 @@ class Twopayment extends PaymentModule
         
         <div class="panel">
             <div class="panel-heading">
-                <i class="icon-life-ring"></i> ' . $this->l('Need Help?') . '
+                <i class="icon-life-ring"></i> ' . $this->l('Need help?') . '
             </div>
             <div class="panel-body">
                 <p>' . $this->l('For technical support or questions about this plugin:') . '</p>
@@ -3226,7 +3226,7 @@ class Twopayment extends PaymentModule
         );
 
         $html = '<div class="panel" style="margin-top:15px;">';
-        $html .= '<div class="panel-heading"><i class="icon-dashboard"></i> ' . $this->l('Current Configuration Health') . '</div>';
+        $html .= '<div class="panel-heading"><i class="icon-dashboard"></i> ' . $this->l('Current configuration health') . '</div>';
         $html .= '<div class="panel-body">';
         $html .= '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 16px;">';
 
@@ -3303,10 +3303,10 @@ class Twopayment extends PaymentModule
         $fields_form = array(
             'form' => array(
                 'legend' => array(
-                    'title' => sprintf($this->l('%s Order Status Mapping'), $this->getTwoBrandConfig('product_name')),
+                    'title' => sprintf($this->l('%s order status mapping'), $this->getTwoBrandConfig('product_name')),
                     'icon' => 'icon-cogs',
                 ),
-                'description' => sprintf($this->l('Map %1$s payment states to PrestaShop order states for workflow integration. %1$s creates its own branded order states automatically, but you can map them to existing PrestaShop states if needed.'), $this->getTwoBrandConfig('product_name')) . '<br><br><strong>' . $this->l('Default Mappings:') . '</strong><br>' . 
+                'description' => sprintf($this->l('Map %1$s payment states to PrestaShop order states for workflow integration. %1$s creates its own branded order states automatically, but you can map them to existing PrestaShop states if needed.'), $this->getTwoBrandConfig('product_name')) . '<br><br><strong>' . $this->l('Default mappings:') . '</strong><br>' . 
                     '• ' . sprintf($this->l('Awaiting Buyer Verification → %s: Awaiting Buyer Verification'), $this->getTwoBrandConfig('product_name')) . '<br>' .
                     '• ' . sprintf($this->l('Verified - Ready for Fulfillment → %s: Verified - Ready for Fulfillment'), $this->getTwoBrandConfig('product_name')) . '<br>' .
                     '• ' . $this->l('Order Fulfilled → Shipped') . '<br>' .
@@ -12464,7 +12464,7 @@ class Twopayment extends PaymentModule
             return '';
         }
 
-        return $this->l('Surcharge tax needs re-selection: this shop previously used a flat surcharge tax rate, which has been replaced by a tax rules group. Until you select and save a "Surcharge Tax Treatment" under Payment settings, the surcharge is NOT taxed.');
+        return $this->l('Surcharge tax needs re-selection: this shop previously used a flat surcharge tax rate, which has been replaced by a tax rules group. Until you select and save a "Surcharge tax treatment" under Payment settings, the surcharge is NOT taxed.');
     }
 
     /**
@@ -13950,7 +13950,7 @@ class Twopayment extends PaymentModule
         );
         $inputs[] = array(
             'type' => 'select',
-            'label' => $this->l('Surcharge Calculation Basis'),
+            'label' => $this->l('Surcharge calculation basis'),
             'name' => 'PS_TWO_SURCHARGE_DIFFERENTIAL',
             'desc' => $this->l('Total fee charges the configured surcharge for the chosen term. Fee difference charges only the difference versus the default payment term.'),
             // Presented as a dropdown to match Magento's Surcharge Calculation
@@ -13969,13 +13969,13 @@ class Twopayment extends PaymentModule
         );
         $inputs[] = array(
             'type' => 'text',
-            'label' => $this->l('Surcharge Line Description'),
+            'label' => $this->l('Surcharge line description'),
             'name' => 'PS_TWO_SURCHARGE_LINE_DESC',
             'desc' => $this->l('Buyer-facing label for the surcharge line. Use %s for the term length in days. Leave blank to use the brand default.'),
         );
         $inputs[] = array(
             'type' => 'select',
-            'label' => $this->l('Surcharge Rounding'),
+            'label' => $this->l('Surcharge rounding'),
             'name' => 'PS_TWO_SURCHARGE_ROUNDING_BASIS',
             'desc' => $this->l('Snap the buyer surcharge line to a clean increment. Select None for standard two-decimal amounts.'),
             'options' => array(
@@ -13995,7 +13995,7 @@ class Twopayment extends PaymentModule
         }
         $inputs[] = array(
             'type' => 'select',
-            'label' => $this->l('Rounding Step'),
+            'label' => $this->l('Rounding step'),
             'name' => 'PS_TWO_SURCHARGE_ROUNDING_STEP',
             'desc' => $this->l('Increment the surcharge is rounded to (e.g. 1 = whole units, 0.50 = nearest half). Applies only when a rounding direction is selected.'),
             'options' => array('query' => $stepQuery, 'id' => 'id', 'name' => 'name'),
@@ -14006,7 +14006,7 @@ class Twopayment extends PaymentModule
             // (TWO-25279) - the field is the merchant's tax treatment
             // decision, and the fact that PrestaShop expresses it as a tax
             // rules group is an implementation detail of this platform.
-            'label' => $this->l('Surcharge Tax Treatment'),
+            'label' => $this->l('Surcharge tax treatment'),
             'name' => self::CONFIG_SURCHARGE_TAX_RULES_GROUP,
             'desc' => $this->l('Tax rules group applied to the payment terms fee - the same tax rules groups you assign to products. Country and state rules, combined rates and zero-rating apply exactly as they do for any product. To leave the fee untaxed, create a tax rules group with a 0% rate and select it here. A selection is required while surcharges are enabled.'),
             'options' => array(

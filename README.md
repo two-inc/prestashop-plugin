@@ -63,7 +63,7 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
    - The module validates the API key on save
    - A key that does not verify is reported by category, so a rejected key, a Two service error and a shop that cannot reach Two at all read differently. The HTTP status is shown; the response body is only ever logged
    - While a stored key does not verify, Two is withheld from checkout entirely (payment option and company search alike) and the config page says so. The verdict is re-checked automatically - about once a minute while it is failing - so a fixed key or a resolved outage takes effect without a re-save
-4. **Payment Terms**: Configure payment term type and available terms
+4. **Payment terms**: Configure payment term type and available terms
    - **Term Type**: Choose Standard or End-of-Month (EOM) terms
      - **Standard**: Payment due X days from fulfillment date (all durations available)
      - **EOM**: Payment due at end of current month + X days (30/45/60 only)
@@ -88,7 +88,7 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 | Environment | Staging or Production | Staging |
 | API Key | Two merchant API key | Required |
 | Payment Term Type | Standard or End-of-Month (EOM) | Standard |
-| Payment Terms | Available terms based on type | 30 days enabled |
+| Payment terms | Available terms based on type | 30 days enabled |
 | Default Payment Term | Default term when multiple available | 30 days |
 | Company Name | Require company name field | Enabled |
 | Organization Number | Require organization number | Enabled |
@@ -153,7 +153,7 @@ relay decodes it back to plain text.
 
 PrestaShop declares shipping VAT per carrier, in `carrier_tax_rules_group_shop`, and nowhere else — there is no shop-level shipping tax rules group. The module relays that declaration; it never derives a VAT rate from the amounts. A shop whose shipping is priced outside the carrier table leaves `id_carrier = 0`, PrestaShop then hands the module an empty delivery-option list, and with no carrier there is no declared rate to relay — so the order is refused rather than shipped with a guessed rate.
 
-The **Default shipping tax code** setting, in **Module Configuration → Order Management**, lets such a merchant make that declaration on the module instead. It is assumed **for shipping only, and only when the carrier's tax rate cannot be resolved for the order**. When a carrier does declare a tax rules group, the carrier always wins.
+The **Default shipping tax code** setting, in **Module Configuration → Order management**, lets such a merchant make that declaration on the module instead. It is assumed **for shipping only, and only when the carrier's tax rate cannot be resolved for the order**. When a carrier does declare a tax rules group, the carrier always wins.
 
 Resolution order:
 
@@ -261,7 +261,7 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 - Order state changes from `CONFIRMED` to `FULFILLED` in Two
 
 **Configuration:**
-- Configure fulfillment trigger statuses in module settings: **Two → Configuration → Order Management → Fulfillment Statuses**
+- Configure fulfillment trigger statuses in module settings: **Two → Configuration → Order management → Fulfillment Statuses**
 - You can select multiple statuses (hold Ctrl/Cmd to select multiple)
 - Default: "Shipped" status triggers fulfillment
 - The form field shows currently active statuses in green text for easy reference (red "None selected" if the selection is empty, which means fulfilment never fires)
@@ -312,7 +312,7 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
   - Idempotency keys prevent duplicate refund calls (race condition protection)
 
 **Configuration:**
-- Configure refund trigger status in module settings: **Two → Configuration → Order Management → Two: Order Refunded**
+- Configure refund trigger status in module settings: **Two → Configuration → Order management → Two: Order Refunded**
 - Default: "Refunded" status triggers full refund
 - The module checks if order is already refunded to prevent duplicate refunds
 
