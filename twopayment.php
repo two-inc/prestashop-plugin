@@ -4564,11 +4564,10 @@ class Twopayment extends PaymentModule
         Media::addJsDef(array('twopayment' => array(
                 'search_empty_text' => $this->l('No result found'),
                 'checkout_host' => $this->getTwoCheckoutHostUrl(),
-                // Off by default (TWO-25386): the browser-side company search
-                // calls Two directly, so a published token is readable by
-                // anyone. Empty string when the toggle is off, so the JS
-                // fetch omits the header rather than sending a blank one.
-                'firewall_token' => Configuration::get('PS_TWO_FIREWALL_TOKEN_BROWSER') ? self::getTwoFirewallToken() : '',
+                // Only the buyer-scoped autofill fetch still calls Two from the
+                // browser (its session cookie cannot be replayed server-side),
+                // so that one request needs the key client-side.
+                'firewall_token' => self::getTwoFirewallToken(),
                 // TWO-25326 §7.1 (2026-08-03 ruling): this used to gate the
                 // search widget's existence (on/off). It now decides WHERE
                 // the one control renders instead: '1' = address area
@@ -14815,7 +14814,7 @@ class Twopayment extends PaymentModule
         $request_timeout = $timeout !== null ? max(1, (int)$timeout) : self::API_TIMEOUT_LONG;
         if ($method == "POST" || $method == "PUT") {
             $url = sprintf('%s%s', $this->getTwoCheckoutHostUrl(), $endpoint);
-            $url = $url . '?' . http_build_query($this->getTwoClientParams());
+            $url .= (strpos($url, '?') === false ? '?' : '&') . http_build_query($this->getTwoClientParams());
             $params = empty($payload) ? '' : json_encode($payload);
             $headers = $this->getTwoRequestHeaders($endpoint, $additional_headers);
             
@@ -14865,7 +14864,7 @@ class Twopayment extends PaymentModule
             ], is_array($response_data) ? $response_data : []);
         } else {
             $url = sprintf('%s%s', $this->getTwoCheckoutHostUrl(), $endpoint);
-            $url = $url . '?' . http_build_query($this->getTwoClientParams());
+            $url .= (strpos($url, '?') === false ? '?' : '&') . http_build_query($this->getTwoClientParams());
             $headers = $this->getTwoRequestHeaders($endpoint, $additional_headers);
             $ch = curl_init();
             curl_setopt($ch, CURLOPT_URL, $url);
