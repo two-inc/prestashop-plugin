@@ -42,6 +42,9 @@ final class SurchargeCartLineSpec
         self::testFirstFeeOrderDetailRowFromOrderCreationIsAllowed();
         self::testFeeGuardTriggerDdlInstalledIdempotentlyAndDropped();
         self::testFeeGuardTriggerEnsuredLazilyOnCartSync();
+        self::testActionPresentCartMovesSurchargeToOwnRowBeforeShipping();
+        self::testActionPresentCartNoOpsWhenSurchargeNotSelected();
+        self::testActionPresentCartNoOpsWhenRowAbsentFromPresentedProducts();
     }
 
     /* ---- fixtures ---- */
@@ -846,5 +849,119 @@ final class SurchargeCartLineSpec
         $recreated = $module->getTwoSurchargeCartProductId(true);
         TinyAssert::notSame(9401, $recreated);
         TinyAssert::true($recreated > 0);
+    }
+
+    /* ---- actionPresentCart: surcharge as its own totals row ---- */
+
+    /**
+     * Real PS8 core rows are ProductListingLazyArray OBJECTS (ArrayAccess),
+     * never plain arrays - PresentedProductRowStub mirrors that shape.
+     */
+    private static function presentedProductsFixture(int $surchargeProductId): array
+    {
+        return [
+            new PresentedProductRowStub(['id_product' => 9401, 'reference' => 'PLAIN-ITEM-REF', 'name' => 'Plain item', 'quantity' => 1]),
+            new PresentedProductRowStub(['id_product' => $surchargeProductId, 'reference' => Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE, 'name' => 'Payment terms fee', 'quantity' => 1]),
+        ];
+    }
+
+    private static function presentedSubtotalsFixture(Cart $cart, bool $includeTaxes, bool $withTaxRow): array
+    {
+        // Fixture cart carries no shipping cost, so Cart::BOTH === products-only here.
+        $productsAmount = round((float) $cart->getOrderTotal($includeTaxes, Cart::BOTH), 2);
+        $subtotals = [
+            'products' => ['type' => 'products', 'label' => 'Subtotal', 'amount' => $productsAmount, 'value' => Tools::displayPrice($productsAmount)],
+            'discounts' => null,
+            'shipping' => ['type' => 'shipping', 'label' => 'Shipping', 'amount' => 0.0, 'value' => 'Free'],
+        ];
+        if ($withTaxRow) {
+            $subtotals['tax'] = ['type' => 'tax', 'label' => 'Taxes', 'amount' => 1.23, 'value' => Tools::displayPrice(1.23)];
+        }
+
+        return $subtotals;
+    }
+
+    /**
+     * The surcharge is a real hidden cart product; CartPresenter would
+     * otherwise render it as an ordinary line item. Table covers both
+     * price-display modes (PR #211) crossed with whether the shop's own
+     * tax-breakdown subtotal row is present, since insertion must still
+     * land immediately before 'shipping' either way.
+     */
+    private static function testActionPresentCartMovesSurchargeToOwnRowBeforeShipping(): void
+    {
+        $cases = [
+            ['includeTaxes' => false, 'withTaxRow' => false, 'expectedAmount' => 5.00, 'why' => 'tax-excluded display, no tax row'],
+            ['includeTaxes' => true, 'withTaxRow' => false, 'expectedAmount' => 6.25, 'why' => 'tax-included display, no tax row'],
+            ['includeTaxes' => false, 'withTaxRow' => true, 'expectedAmount' => 5.00, 'why' => 'tax-excluded display, with tax row'],
+            ['includeTaxes' => true, 'withTaxRow' => true, 'expectedAmount' => 6.25, 'why' => 'tax-included display, with tax row'],
+        ];
+
+        foreach ($cases as $case) {
+            $module = self::makeModule();
+            $cart = self::makeCart();
+            StubStore::$groupPriceDisplayMethods = [1 => $case['includeTaxes'] ? 0 : 1];
+            Context::getContext()->cookie->two_payment_term = 30;
+            $module->syncTwoSurchargeCartLine($cart, true);
+            $surchargeProductId = $module->getTwoSurchargeCartProductId(false);
+
+            $productsBefore = self::presentedProductsFixture($surchargeProductId);
+            $subtotalsBefore = self::presentedSubtotalsFixture($cart, $case['includeTaxes'], $case['withTaxRow']);
+            $presented = new CartLazyArrayStub($cart, ['products' => $productsBefore, 'subtotals' => $subtotalsBefore]);
+
+            $module->hookActionPresentCart(['presentedCart' => $presented]);
+            $data = $presented->getData();
+
+            $remainingProducts = array_values(array_filter($data['products'], static fn (PresentedProductRowStub $row): bool => (string) $row['reference'] === Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE));
+            TinyAssert::count(0, $remainingProducts, 'surcharge row removed from products: ' . $case['why']);
+            TinyAssert::count(1, $data['products'], 'plain item row untouched: ' . $case['why']);
+
+            $keys = array_keys($data['subtotals']);
+            $feeIndex = array_search('two_surcharge_fee', $keys, true);
+            $shippingIndex = array_search('shipping', $keys, true);
+            TinyAssert::same($shippingIndex - 1, $feeIndex, 'surcharge subtotal sits immediately before shipping: ' . $case['why']);
+
+            $expectedProductsAmount = round($subtotalsBefore['products']['amount'] - $case['expectedAmount'], 2);
+            TinyAssert::same($expectedProductsAmount, $data['subtotals']['products']['amount'], 'Subtotal reduced by exactly the surcharge amount: ' . $case['why']);
+            TinyAssert::same(Tools::displayPrice($expectedProductsAmount), $data['subtotals']['products']['value'], 'Subtotal display value recomputed: ' . $case['why']);
+
+            TinyAssert::same($case['expectedAmount'], $data['subtotals']['two_surcharge_fee']['amount'], 'surcharge row amount carries PR #211\'s display value through: ' . $case['why']);
+            TinyAssert::same($module->getTwoSurchargeLineLabel(30), $data['subtotals']['two_surcharge_fee']['label'], 'surcharge row label: ' . $case['why']);
+
+            if ($case['withTaxRow']) {
+                TinyAssert::same(1.23, $data['subtotals']['tax']['amount'], 'untouched sibling subtotal: ' . $case['why']);
+            }
+            TinyAssert::same(null, $data['subtotals']['discounts'], 'untouched sibling subtotal: ' . $case['why']);
+        }
+    }
+
+    private static function testActionPresentCartNoOpsWhenSurchargeNotSelected(): void
+    {
+        $module = self::makeModule();
+        $cart = self::makeCart();
+        // Two never selected: no cart line exists to move.
+        $subtotals = self::presentedSubtotalsFixture($cart, false, false);
+        $products = [new PresentedProductRowStub(['id_product' => 9401, 'reference' => 'PLAIN-ITEM-REF', 'name' => 'Plain item', 'quantity' => 1])];
+        $presented = new CartLazyArrayStub($cart, ['products' => $products, 'subtotals' => $subtotals]);
+
+        $module->hookActionPresentCart(['presentedCart' => $presented]);
+
+        TinyAssert::same(['products' => $products, 'subtotals' => $subtotals], $presented->getData());
+    }
+
+    private static function testActionPresentCartNoOpsWhenRowAbsentFromPresentedProducts(): void
+    {
+        $module = self::makeModule();
+        $cart = self::makeCart();
+        $module->syncTwoSurchargeCartLine($cart, true);
+        // Selected in the cart, but the presented list handed to the hook
+        // never carried the row (e.g. a stale cache read) - nothing to move.
+        $subtotals = self::presentedSubtotalsFixture($cart, false, false);
+        $products = [new PresentedProductRowStub(['id_product' => 9401, 'reference' => 'PLAIN-ITEM-REF', 'name' => 'Plain item', 'quantity' => 1])];
+        $presented = new CartLazyArrayStub($cart, ['products' => $products, 'subtotals' => $subtotals]);
+
+        $module->hookActionPresentCart(['presentedCart' => $presented]);
+
+        TinyAssert::same(['products' => $products, 'subtotals' => $subtotals], $presented->getData());
     }
 }
