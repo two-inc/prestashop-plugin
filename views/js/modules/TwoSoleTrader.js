@@ -1458,12 +1458,13 @@ class TwoSoleTrader {
         try {
             // The one Two call that cannot be relayed server-side: it is
             // resolved from the buyer's own Two session cookie, which exists
-            // only in this browser. So the firewall token has to travel with it.
+            // only in this browser. So the merchant's browser-flagged headers
+            // have to travel with it.
             const autofillHeaders = { 'two-delegated-authority-token': this.tokens.autofill_token };
-            const firewallToken = window.twopayment && window.twopayment.firewall_token;
-            if (firewallToken) {
-                autofillHeaders['X-WAF-TOKEN'] = firewallToken;
-            }
+            const customHeaders = (window.twopayment && window.twopayment.custom_headers) || {};
+            Object.keys(customHeaders).forEach(function (name) {
+                autofillHeaders[name] = customHeaders[name];
+            });
             request = fetch(TwoSoleTrader.withTwoClientParams(this.config.checkoutHost + '/autofill/v1/buyer/current'), {
                 credentials: 'include',
                 headers: autofillHeaders

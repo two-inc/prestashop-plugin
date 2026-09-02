@@ -5657,6 +5657,7 @@ require __DIR__ . '/BuyerCompanyFallbackSpec.php';
 require __DIR__ . '/BuyerCountryGateSpec.php';
 require __DIR__ . '/TwoRateLimiterSpec.php';
 require __DIR__ . '/AdminFirewallRateLimitFieldsSpec.php';
+require __DIR__ . '/CustomHeaderMigrationSpec.php';
 require __DIR__ . '/DefaultShippingTaxCodeSpec.php';
 
 $tests = [
@@ -5712,6 +5713,7 @@ $tests = [
     'BuyerCountryGateSpec::runAll' => [BuyerCountryGateSpec::class, 'runAll'],
     'TwoRateLimiterSpec::runAll' => [TwoRateLimiterSpec::class, 'runAll'],
     'AdminFirewallRateLimitFieldsSpec::runAll' => [AdminFirewallRateLimitFieldsSpec::class, 'runAll'],
+    'CustomHeaderMigrationSpec::runAll' => [CustomHeaderMigrationSpec::class, 'runAll'],
     'DefaultShippingTaxCodeSpec::runAll' => [DefaultShippingTaxCodeSpec::class, 'runAll'],
 ];
 
