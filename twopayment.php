@@ -270,9 +270,7 @@ class Twopayment extends PaymentModule
     // stored when the merchant selected it.
     const CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP = 'PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP';
 
-    // JSON array of {name, value, send_from_browser} - the arbitrarily-named
-    // headers the merchant's IT administrator requires on traffic to Two
-    // (ABN-490, superseding the single X-WAF-TOKEN field).
+    // JSON array of {name, value, send_from_browser} (ABN-490).
     const CONFIG_CUSTOM_HEADERS = 'PS_TWO_CUSTOM_HEADERS';
 
     // Constants for delivery dates
@@ -2519,12 +2517,8 @@ class Twopayment extends PaymentModule
                         'required' => false,
                         'desc' => $this->l('Addresses of your own reverse proxies, load balancers or CDN egress, as IPs or CIDR ranges, separated by commas or new lines. These IP addresses will be exempt from rate limiting.'),
                     ),
-                    // Arbitrarily-named request headers (ABN-490), replacing the
-                    // single firewall-token field. HelperForm has no
-                    // repeatable-row field type, so this follows the module's
-                    // own precedent for a tabular control: type 'html', values
-                    // read and escaped here, rows added/removed by the admin JS
-                    // in configuration.tpl.
+                    // HelperForm has no repeatable-row field type, so the header
+                    // table is 'html' with add/remove in configuration.tpl (ABN-490).
                     array(
                         'type' => 'html',
                         'label' => $this->l('Custom request headers'),
@@ -4578,11 +4572,8 @@ class Twopayment extends PaymentModule
         Media::addJsDef(array('twopayment' => array(
                 'search_empty_text' => $this->l('No result found'),
                 'checkout_host' => $this->getTwoCheckoutHostUrl(),
-                // Only the rows ticked "also send from browser" (ABN-490): the
-                // buyer-scoped autofill fetch is the only call still made from
-                // the browser (its session cookie cannot be replayed
-                // server-side) - company search/details and order-intent are
-                // relayed through this module's own controller instead.
+                // Ticked rows only (ABN-490) - published to the buyer, so
+                // everything else stays server-side.
                 'custom_headers' => self::getTwoBrowserCustomHeaders(),
                 // TWO-25326 §7.1 (2026-08-03 ruling): this used to gate the
                 // search widget's existence (on/off). It now decides WHERE
@@ -15214,9 +15205,8 @@ class Twopayment extends PaymentModule
      */
     protected static function readTwoCustomHeaderRowsFromPost()
     {
-        // A marker input rather than the name array: removing the last row
-        // leaves no header inputs at all, and "no inputs" must save as an
-        // empty list, not as "field absent, keep what is stored".
+        // A marker, not the name array: removing the last row leaves no header
+        // inputs at all, which must save as an empty list rather than as absent.
         if (!Tools::getValue('two_custom_headers_submitted')) {
             return null;
         }
@@ -15291,9 +15281,7 @@ class Twopayment extends PaymentModule
                 'UTF-8'
             )
             . '</p>';
-        // Cloned by the admin JS for a new row, so the markup exists in one
-        // place; `data-index` is rewritten to keep the three inputs of a row
-        // on the same array index.
+        // Cloned by the admin JS for a new row, which rewrites the index.
         $html .= '<template id="two-custom-headers-template">'
             . $this->getTwoCustomHeaderRowHtml(0, '', '', false)
             . '</template>';
