@@ -2147,10 +2147,11 @@ class TwoCheckoutManager {
         // selected company to be used FOR - and a "search and verify your
         // company" journey that leads nowhere is worse than a plain field.
         //
-        // Not because the search would break: that endpoint is called
-        // unauthenticated (see buildPublicApiBeforeSend in TwoCompanySearch) and
-        // works regardless of the key. Leave the company field as the plain text
-        // input the theme rendered.
+        // Not because the search would break: it is relayed through this
+        // module's own controller (TwoCompanySearch.searchCompanies()), which
+        // spends the merchant's API key server-side regardless of whether it
+        // verifies. Leave the company field as the plain text input the theme
+        // rendered.
         if (this.config.apiKeyVerified === false) {
             return;
         }
@@ -2193,7 +2194,6 @@ class TwoCheckoutManager {
             }
             this.companySearch = new TwoCompanySearch({
                 checkoutHost: this.config.checkoutHost,
-                firewallToken: this.config.firewallToken,
                 // ALWAYS false in the payment tile, never inherited from the
                 // merchant's general auto-fill toggle (core principle,
                 // TWO-40: the control behaves identically wherever it is
@@ -2218,7 +2218,6 @@ class TwoCheckoutManager {
         const addressCompanySelector = "input[name='company']";
         this.companySearch = new TwoCompanySearch({
             checkoutHost: this.config.checkoutHost,
-            firewallToken: this.config.firewallToken,
             addressLookupEnabled: this.config.addressLookupEnabled !== false,
             companySearchInAddressArea: true,
             companyFieldSelector: addressCompanySelector,

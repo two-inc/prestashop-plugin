@@ -120,55 +120,6 @@ class TwoOrderIntent {
         return result;
     }
 
-    /**
-     * Query params rather than a body field, even though the order-intent call
-     * is a POST with a JSON body: that is the convention the module's own
-     * server-side calls already use for this pair (getTwoClientParams() /
-     * setTwoPaymentRequest() in twopayment.php). Putting them in the body would
-     * also change a payload the server builds and Two validates.
-     *
-     * Either param is dropped when the config does not carry it, so a page that
-     * somehow runs without the config sends a correct URL rather than a literal
-     * `client=undefined`.
-     */
-    static withTwoClientParams(url) {
-        const config = (typeof window !== 'undefined' && window.twopayment) || {};
-        const params = new URLSearchParams();
-        if (config.client) {
-            params.set('client', config.client);
-        }
-        if (config.client_version) {
-            params.set('client_v', config.client_version);
-        }
-        const query = params.toString();
-        if (!query) {
-            return url;
-        }
-
-        return url + (url.indexOf('?') === -1 ? '?' : '&') + query;
-    }
-
-    buildPublicApiBeforeSend() {
-        return function (xhr) {
-            const blockedHeaders = {
-                'authorization': true,
-                'proxy-authorization': true,
-                'x-api-key': true
-            };
-            const originalSetRequestHeader = xhr && xhr.setRequestHeader ? xhr.setRequestHeader.bind(xhr) : null;
-            if (!originalSetRequestHeader) {
-                return;
-            }
-            xhr.setRequestHeader = function (name, value) {
-                const normalized = String(name || '').toLowerCase();
-                if (blockedHeaders[normalized]) {
-                    return;
-                }
-                originalSetRequestHeader(name, value);
-            };
-        };
-    }
-    
     shouldRunOrderIntent() {
         if (!this.config.enabled) return false;
         if (!this.config.orderIntentUrl || !this.config.ajaxToken) return false;
