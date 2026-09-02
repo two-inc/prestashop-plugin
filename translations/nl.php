@@ -275,7 +275,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_824a2909a2223ded92a4be1b1f856741'] 
 $_MODULE['<{twopayment}prestashop>twopayment_82ab2bbfea5681899d51358644b7e5b0'] = 'Bestelkorting';
 $_MODULE['<{twopayment}prestashop>twopayment_840f2065329da7eae70528b0c61905a0'] = 'Geen toeslag';
 $_MODULE['<{twopayment}prestashop>twopayment_85925e31c13734f285ce48920c8120b9'] = 'Algemene instellingen zijn bijgewerkt.';
-$_MODULE['<{twopayment}prestashop>twopayment_86287396d86b43131b0404dd10c52d30'] = 'De btw voor de toeslag moet opnieuw worden gekozen: deze winkel gebruikte eerder een vast btw-tarief voor de toeslag, dat is vervangen door een belastingregelgroep. Totdat je onder Betaalinstellingen een "Btw-behandeling toeslag" selecteert en opslaat, wordt de toeslag NIET belast.';
+$_MODULE['<{twopayment}prestashop>twopayment_d16f46d8f28d29b23ce69a87b82dc0c8'] = 'De btw voor de toeslag moet opnieuw worden gekozen: deze winkel gebruikte eerder een vast btw-tarief voor de toeslag, dat is vervangen door een belastingregelgroep. Totdat je onder Betaalinstellingen een "Btw-behandeling toeslag" selecteert en opslaat, wordt de toeslag NIET belast.';
 $_MODULE['<{twopayment}prestashop>twopayment_8647c528dd8493997122a86c89fa8eea'] = 'Betaaltermijnen wijzigen nadat een bestelling is geplaatst';
 $_MODULE['<{twopayment}prestashop>twopayment_2e29bad3ad27b4347773750a8b8d8b09'] = 'Zoek en selecteer een geldig bedrijf om verder te gaan met %s-betaling.';
 $_MODULE['<{twopayment}prestashop>twopayment_86ff4218cccb683ac8b1ba2ba3a6c2ca'] = 'Actie vereist';

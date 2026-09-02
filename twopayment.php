@@ -12464,7 +12464,7 @@ class Twopayment extends PaymentModule
             return '';
         }
 
-        return $this->l('Surcharge tax needs re-selection: this shop previously used a flat surcharge tax rate, which has been replaced by a tax rules group. Until you select and save a "Surcharge Tax Treatment" under Payment settings, the surcharge is NOT taxed.');
+        return $this->l('Surcharge tax needs re-selection: this shop previously used a flat surcharge tax rate, which has been replaced by a tax rules group. Until you select and save a "Surcharge tax treatment" under Payment settings, the surcharge is NOT taxed.');
     }
 
     /**

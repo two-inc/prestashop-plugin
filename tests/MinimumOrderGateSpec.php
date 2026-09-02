@@ -377,7 +377,7 @@ final class MinimumOrderGateSpec
     private static function minimumOrderErrors(array $errors): array
     {
         return array_values(array_filter($errors, static function ($error) {
-            return strpos($error, 'Minimum Order Value') !== false;
+            return strpos($error, 'Minimum order value') !== false;
         }));
     }
 

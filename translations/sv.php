@@ -275,7 +275,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_824a2909a2223ded92a4be1b1f856741'] 
 $_MODULE['<{twopayment}prestashop>twopayment_82ab2bbfea5681899d51358644b7e5b0'] = 'Orderrabatt';
 $_MODULE['<{twopayment}prestashop>twopayment_840f2065329da7eae70528b0c61905a0'] = 'Ingen tilläggsavgift appliceras';
 $_MODULE['<{twopayment}prestashop>twopayment_85925e31c13734f285ce48920c8120b9'] = 'De allmänna inställningarna är uppdaterade.';
-$_MODULE['<{twopayment}prestashop>twopayment_86287396d86b43131b0404dd10c52d30'] = 'Momsen för tilläggsavgift behöver väljas om: denna butik använde tidigare en fast momssats för tilläggsavgiften, vilken har ersatts av en momsregelgrupp. Till dess att du väljer och sparar en "Momshantering för tilläggsavgift" under Betalningsinställningar beskattas tilläggsavgiften INTE.';
+$_MODULE['<{twopayment}prestashop>twopayment_d16f46d8f28d29b23ce69a87b82dc0c8'] = 'Momsen för tilläggsavgift behöver väljas om: denna butik använde tidigare en fast momssats för tilläggsavgiften, vilken har ersatts av en momsregelgrupp. Till dess att du väljer och sparar en "Momshantering för tilläggsavgift" under Betalningsinställningar beskattas tilläggsavgiften INTE.';
 $_MODULE['<{twopayment}prestashop>twopayment_8647c528dd8493997122a86c89fa8eea'] = 'Ändra betalningsvillkor efter att en order har lagts';
 $_MODULE['<{twopayment}prestashop>twopayment_2e29bad3ad27b4347773750a8b8d8b09'] = 'Sök och välj ett giltigt företag för att fortsätta med %s-betalning.';
 $_MODULE['<{twopayment}prestashop>twopayment_86ff4218cccb683ac8b1ba2ba3a6c2ca'] = 'Åtgärd krävs';
