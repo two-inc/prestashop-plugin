@@ -41,7 +41,14 @@ beforeEach(() => {
     $ = loaded.$;
     TwoCompanySearch = loaded.TwoCompanySearch;
     TwoCompanyNumber = global.window.TwoCompanyNumber;
-    global.window.twopayment = { i18n: {}, checkout_host: 'https://api.example.test' };
+    // Search/detail are relayed through the module's own controller
+    // (TWO-25386 follow-up); every real page publishes both keys.
+    global.window.twopayment = {
+        i18n: {},
+        checkout_host: 'https://api.example.test',
+        order_intent_url: 'https://shop.example.test/module/twopayment/orderintent',
+        ajax_token: 'test-token'
+    };
     TwoOrderIntent = loadOrderIntent();
     ajax = stubAjax($);
 });
@@ -154,7 +161,7 @@ describe('site (b): the search-results list', () => {
             typeQuery('sole');
             jest.advanceTimersByTime(400);
 
-            const request = ajax.calls.find((record) => String(record.url).includes('companies'));
+            const request = ajax.calls.find((record) => record.settings.data && record.settings.data.action === 'companySearch');
             // With no request there are no rows, and the loop below would pass vacuously.
             expect(request).toBeDefined();
             request.succeed({ items: [{ name: 'Sole Trader AS', lookup_id: 'l1', national_identifier: { id: 'TWO:ST777' } }] });

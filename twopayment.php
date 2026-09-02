@@ -4564,10 +4564,12 @@ class Twopayment extends PaymentModule
         Media::addJsDef(array('twopayment' => array(
                 'search_empty_text' => $this->l('No result found'),
                 'checkout_host' => $this->getTwoCheckoutHostUrl(),
-                // Off by default (TWO-25386): the browser-side company search
-                // calls Two directly, so a published token is readable by
-                // anyone. Empty string when the toggle is off, so the JS
-                // fetch omits the header rather than sending a blank one.
+                // Off by default (TWO-25386): the buyer-scoped autofill fetch is
+                // the only call still made from the browser (its session cookie
+                // cannot be replayed server-side) - company search/details and
+                // order-intent are relayed through this module's own controller
+                // instead. Empty string when the toggle is off, so the JS fetch
+                // omits the header rather than sending a blank one.
                 'firewall_token' => Configuration::get('PS_TWO_FIREWALL_TOKEN_BROWSER') ? self::getTwoFirewallToken() : '',
                 // TWO-25326 §7.1 (2026-08-03 ruling): this used to gate the
                 // search widget's existence (on/off). It now decides WHERE
@@ -4590,10 +4592,10 @@ class Twopayment extends PaymentModule
                 // already gone with the payment option, and the ADDRESS-step
                 // control would otherwise stay behind on its own.
                 //
-                // NOT because the search needs the key: that endpoint is called
-                // unauthenticated (TwoCompanySearch.buildPublicApiBeforeSend()
-                // strips the auth headers deliberately), so it would keep
-                // working. Round-6 review corrected the reasoning here - the
+                // NOT because the search needs the key: it is relayed through
+                // this module's own controller (ajaxProcessCompanySearch()),
+                // which spends the merchant's key server-side regardless, so
+                // it would keep working. Round-6 review corrected the reasoning here - the
                 // behaviour matches the sibling plugins either way, and the
                 // cost of the gate is a search + address auto-fill a buyer
                 // could otherwise still have used.
@@ -14815,7 +14817,7 @@ class Twopayment extends PaymentModule
         $request_timeout = $timeout !== null ? max(1, (int)$timeout) : self::API_TIMEOUT_LONG;
         if ($method == "POST" || $method == "PUT") {
             $url = sprintf('%s%s', $this->getTwoCheckoutHostUrl(), $endpoint);
-            $url = $url . '?' . http_build_query($this->getTwoClientParams());
+            $url .= (strpos($url, '?') === false ? '?' : '&') . http_build_query($this->getTwoClientParams());
             $params = empty($payload) ? '' : json_encode($payload);
             $headers = $this->getTwoRequestHeaders($endpoint, $additional_headers);
             
@@ -14865,7 +14867,7 @@ class Twopayment extends PaymentModule
             ], is_array($response_data) ? $response_data : []);
         } else {
             $url = sprintf('%s%s', $this->getTwoCheckoutHostUrl(), $endpoint);
-            $url = $url . '?' . http_build_query($this->getTwoClientParams());
+            $url .= (strpos($url, '?') === false ? '?' : '&') . http_build_query($this->getTwoClientParams());
             $headers = $this->getTwoRequestHeaders($endpoint, $additional_headers);
             $ch = curl_init();
             curl_setopt($ch, CURLOPT_URL, $url);

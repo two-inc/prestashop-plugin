@@ -27,6 +27,7 @@ const {
 } = require('./ps-harness');
 
 const CHECKOUT_HOST = 'https://api.example.test';
+const OI_URL = 'https://shop.example.test/module/twopayment/orderintent';
 
 const SEARCH_RESPONSE = {
     items: [
@@ -114,7 +115,7 @@ describe('Bug 3: the tile-mounted control actually searches', () => {
      * "above" where there is no country control at all.
      */
     test('typing puts a request on the wire for the billing address country', () => {
-        window.twopayment = { company_search_country: 'GB' };
+        window.twopayment = { company_search_country: 'GB', order_intent_url: OI_URL, ajax_token: 'test-token' };
         mountOnTile();
         openTilePanel();
 
@@ -122,13 +123,13 @@ describe('Bug 3: the tile-mounted control actually searches', () => {
         jest.advanceTimersByTime(400);
 
         expect(ajax.calls).toHaveLength(1);
-        expect(ajax.last().url).toContain('/companies/v2/company?');
-        expect(ajax.last().url).toContain('country=GB');
-        expect(ajax.last().url).toContain('q=Example+Trading');
+        // Relayed through the module's own controller, not called directly.
+        expect(ajax.last().url).toBe(OI_URL);
+        expect(ajax.last().settings.data).toMatchObject({ action: 'companySearch', country: 'GB', q: 'Example Trading' });
     });
 
     test('the results the API returns are rendered in the tile panel', () => {
-        window.twopayment = { company_search_country: 'GB' };
+        window.twopayment = { company_search_country: 'GB', order_intent_url: OI_URL, ajax_token: 'test-token' };
         mountOnTile();
         openTilePanel();
 
@@ -157,7 +158,7 @@ describe('Bug 3: the tile-mounted control actually searches', () => {
     test.each([['', 'empty'], ['GBR', 'three letters'], ['1', 'a digit'], ['  ', 'whitespace']])(
         'a company_search_country of %p (%s) is treated as absent',
         (value) => {
-            window.twopayment = { company_search_country: value };
+            window.twopayment = { company_search_country: value, order_intent_url: OI_URL, ajax_token: 'test-token' };
             mountOnTile();
             openTilePanel();
 
@@ -171,7 +172,7 @@ describe('Bug 3: the tile-mounted control actually searches', () => {
     /** A buyer mid-edit has a country selected that no address carries yet -
      * a live select must outrank the server-resolved billing country. */
     test('a live country select still outranks the server-resolved billing country', () => {
-        window.twopayment = { company_search_country: 'GB' };
+        window.twopayment = { company_search_country: 'GB', order_intent_url: OI_URL, ajax_token: 'test-token' };
         document.body.insertAdjacentHTML(
             'afterbegin',
             "<select name='id_country'><option value='9' data-iso-code='NO' selected>Norway</option></select>"
@@ -183,8 +184,7 @@ describe('Bug 3: the tile-mounted control actually searches', () => {
         jest.advanceTimersByTime(400);
 
         expect(ajax.calls).toHaveLength(1);
-        expect(ajax.last().url).toContain('country=NO');
-        expect(ajax.last().url).not.toContain('country=GB');
+        expect(ajax.last().settings.data.country).toBe('NO');
     });
 });
 

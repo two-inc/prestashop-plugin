@@ -86,6 +86,15 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             case 'soleTraderTokens':
                 $this->ajaxProcessSoleTraderTokens();
                 break;
+            case 'companySearch':
+                $this->ajaxProcessCompanySearch();
+                break;
+            case 'companyDetails':
+                $this->ajaxProcessCompanyDetails();
+                break;
+            case 'orderIntent':
+                $this->ajaxProcessOrderIntent();
+                break;
             default:
                 $this->sendJsonResponse(json_encode([
                     'success' => false,
@@ -756,6 +765,107 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
      * skips this token check entirely on every action on this controller.
      * Default OFF - matches the pre-existing always-checked behaviour.
      */
+    /**
+     * Company-name search, relayed server-side so the firewall token stays out
+     * of the browser. Two's status and body are passed through untouched:
+     * callers read `error_code`/`error_message` off the failing response.
+     */
+    public function ajaxProcessCompanySearch()
+    {
+        if (!$this->validateAjaxToken()) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Invalid token')]));
+            return;
+        }
+
+        $query = array(
+            'q' => (string) Tools::getValue('q'),
+            'limit' => (int) Tools::getValue('limit'),
+            'offset' => (int) Tools::getValue('offset'),
+            'country' => (string) Tools::getValue('country'),
+        );
+        if ($query['q'] === '' || $query['country'] === '') {
+            $this->relayTwoApiResponse(array('http_status' => 400, 'data' => array(
+                'error_code' => 'INVALID_REQUEST',
+            )));
+            return;
+        }
+        if ($query['limit'] < 1) {
+            unset($query['limit']);
+        }
+
+        $this->relayTwoApiResponse($this->module->setTwoPaymentRequest(
+            '/companies/v2/company?' . http_build_query($query),
+            array(),
+            'GET'
+        ));
+    }
+
+    /**
+     * Company detail lookup, relayed server-side. See ajaxProcessCompanySearch().
+     */
+    public function ajaxProcessCompanyDetails()
+    {
+        if (!$this->validateAjaxToken()) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Invalid token')]));
+            return;
+        }
+
+        $lookupId = trim((string) Tools::getValue('lookup_id'));
+        // Path segment, so anything outside the registry id charset is refused
+        // rather than escaped into the URL.
+        if ($lookupId === '' || !preg_match('/^[A-Za-z0-9._:-]+$/', $lookupId)) {
+            $this->relayTwoApiResponse(array('http_status' => 400, 'data' => array(
+                'error_code' => 'INVALID_REQUEST',
+            )));
+            return;
+        }
+
+        $this->relayTwoApiResponse($this->module->setTwoPaymentRequest(
+            '/companies/v2/company/' . rawurlencode($lookupId),
+            array(),
+            'GET'
+        ));
+    }
+
+    /**
+     * Order-intent decision, relayed server-side. See ajaxProcessCompanySearch().
+     */
+    public function ajaxProcessOrderIntent()
+    {
+        if (!$this->validateAjaxToken()) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Invalid token')]));
+            return;
+        }
+
+        $payload = json_decode((string) Tools::getValue('payload'), true);
+        if (!is_array($payload)) {
+            $this->relayTwoApiResponse(array('http_status' => 400, 'data' => array(
+                'error_code' => 'INVALID_REQUEST',
+            )));
+            return;
+        }
+
+        $this->relayTwoApiResponse($this->module->setTwoPaymentRequest('/v1/order_intent', $payload, 'POST'));
+    }
+
+    /**
+     * Pass a setTwoPaymentRequest() result back to the browser with Two's own
+     * status code, so existing client-side success/error branches still apply.
+     */
+    private function relayTwoApiResponse($result)
+    {
+        $status = is_array($result) && isset($result['http_status']) ? (int) $result['http_status'] : 0;
+        // A transport failure has no HTTP status of its own; 502 keeps it on
+        // the client's error branch instead of looking like an empty success.
+        if ($status < 100) {
+            $status = 502;
+        }
+        $body = is_array($result) && isset($result['data']) && is_array($result['data']) ? $result['data'] : array();
+
+        http_response_code($status);
+        $this->sendJsonResponse(json_encode($body));
+    }
+
     public function validateAjaxToken()
     {
         if ($this->module->isTwoSkipConfirmTokenCheckEnabled()) {

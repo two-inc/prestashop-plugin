@@ -41,18 +41,24 @@ let TwoCompanySearch;
 let $;
 let ajax;
 
+const ORDER_INTENT_URL = 'https://shop.example.test/module/twopayment/orderintent';
+
 beforeEach(() => {
     buildAddressForm({ country: 'GB' });
     const loaded = loadCompanySearch();
     TwoCompanySearch = loaded.TwoCompanySearch;
     $ = loaded.$;
     ajax = stubAjax($);
+    // Search is relayed through the module's own controller (TWO-25386
+    // follow-up); every real page publishes both keys.
+    window.twopayment = { order_intent_url: ORDER_INTENT_URL, ajax_token: 'test-token' };
 });
 
 afterEach(() => {
     releaseWidgets($);
     ajax.restore();
     document.body.innerHTML = '';
+    delete window.twopayment;
 });
 
 /** A live, initialised instance bound to the form built in beforeEach. */
@@ -251,23 +257,28 @@ describe('request envelope', () => {
         expect(ajax.last().settings.timeout).toBe(30000);
     });
 
-    test('the search is bounded to one page and carries the country', () => {
+    test('the search is bounded to one page, carries the country, and is relayed through the module controller', () => {
         const search = makeInstance();
         search.searchCompanies('exa', callbackRecorder().fn);
 
-        const url = new URL(ajax.last().url);
-        expect(url.pathname).toBe('/companies/v2/company');
-        expect(url.searchParams.get('q')).toBe('exa');
-        expect(url.searchParams.get('limit')).toBe('50');
-        expect(url.searchParams.get('offset')).toBe('0');
-        expect(url.searchParams.get('country')).toBe('GB');
+        // Relayed through the module's own controller (TWO-25386 follow-up),
+        // never straight to Two - the firewall token that call may require
+        // stays server-side.
+        expect(ajax.last().url).toBe(window.twopayment.order_intent_url);
+        expect(ajax.last().settings.data).toMatchObject({
+            action: 'companySearch',
+            q: 'exa',
+            limit: 50,
+            offset: 0,
+            country: 'GB'
+        });
     });
 
     test('a configured search limit overrides the default', () => {
         const search = makeInstance({ companySearchLimit: 10 });
         search.searchCompanies('exa', callbackRecorder().fn);
 
-        expect(new URL(ajax.last().url).searchParams.get('limit')).toBe('10');
+        expect(ajax.last().settings.data.limit).toBe(10);
     });
 
     test('a junk search limit falls back to the default rather than to none', () => {
@@ -275,18 +286,7 @@ describe('request envelope', () => {
         search.searchCompanies('exa', callbackRecorder().fn);
 
         // An unbounded response is the failure mode the limit exists to stop.
-        expect(new URL(ajax.last().url).searchParams.get('limit')).toBe('50');
-    });
-
-    test('the request carries no credentials', () => {
-        const search = makeInstance();
-        search.searchCompanies('exa', callbackRecorder().fn);
-
-        // This is a cross-origin call to the public company API from a shop
-        // page. `withCredentials: true` would attach the buyer's cookies for
-        // that origin to every keystroke's search.
-        expect(ajax.last().settings.crossDomain).toBe(true);
-        expect(ajax.last().settings.xhrFields).toEqual({ withCredentials: false });
+        expect(ajax.last().settings.data.limit).toBe(50);
     });
 
     test('the country code is normalised to upper case', () => {
@@ -297,7 +297,7 @@ describe('request envelope', () => {
 
         // Themes do emit lower-case iso codes. Un-normalised, that puts
         // `country=gb` on the wire and forks the cache key from `GB`.
-        expect(new URL(ajax.last().url).searchParams.get('country')).toBe('GB');
+        expect(ajax.last().settings.data.country).toBe('GB');
         expect(search.buildCacheKey('exa')).toBe('exa|GB');
     });
 
@@ -312,24 +312,6 @@ describe('request envelope', () => {
         // already finished — harmless with real jQuery, but it is the half of
         // the race fix that is easiest to drop by accident.
         expect(search._companySearchXhr).toBeNull();
-    });
-
-    test('credential headers cannot be attached to the public API call', () => {
-        const search = makeInstance();
-        search.searchCompanies('exa', callbackRecorder().fn);
-
-        const set = [];
-        const xhr = {
-            setRequestHeader: function (name, value) {
-                set.push([name, value]);
-            }
-        };
-        ajax.last().settings.beforeSend(xhr);
-        xhr.setRequestHeader('Authorization', 'Bearer nope');
-        xhr.setRequestHeader('X-API-Key', 'nope');
-        xhr.setRequestHeader('Accept', 'application/json');
-
-        expect(set).toEqual([['Accept', 'application/json']]);
     });
 });
 
@@ -457,7 +439,7 @@ describe('class-static result cache', () => {
         // wire, or one country's results get served for another's search.
         expect(no.buildCacheKey('exa')).toBe('exa|NO');
         no.searchCompanies('exa', callbackRecorder().fn);
-        expect(new URL(ajax.last().url).searchParams.get('country')).toBe('NO');
+        expect(ajax.last().settings.data.country).toBe('NO');
     });
 
     test('with nothing selected there is no key to answer from, and no search', () => {
@@ -502,14 +484,14 @@ describe('class-static result cache', () => {
         // here. Lower-cased there, upper-cased on the wire.
         document.body.innerHTML = '';
         buildAddressForm({ country: null, countryId: '44', countryText: 'Nederland' });
-        window.twopayment = { countries: { 44: 'nl' } };
+        window.twopayment = { countries: { 44: 'nl' }, order_intent_url: ORDER_INTENT_URL, ajax_token: 'test-token' };
         try {
             const search = makeInstance();
 
             expect(search.getCurrentCountry()).toBe('NL');
             expect(search.buildCacheKey('exa')).toBe('exa|NL');
             search.searchCompanies('exa', callbackRecorder().fn);
-            expect(new URL(ajax.last().url).searchParams.get('country')).toBe('NL');
+            expect(ajax.last().settings.data.country).toBe('NL');
         } finally {
             delete window.twopayment;
         }
@@ -665,7 +647,7 @@ describe('class-static result cache', () => {
             const search = makeInstance();
             search.searchCompanies('exa', callbackRecorder().fn);
 
-            const onTheWire = new URL(ajax.last().url).searchParams.get('country');
+            const onTheWire = ajax.last().settings.data.country;
             expect(onTheWire).toBe(expected);
             expect(search.buildCacheKey('exa')).toBe('exa|' + onTheWire);
         });
@@ -679,7 +661,7 @@ describe('class-static result cache', () => {
         // resolved in the same synchronous tick before the request goes out.
         const search = makeInstance();
         widget().search('exa');
-        expect(new URL(ajax.last().url).searchParams.get('country')).toBe('GB');
+        expect(ajax.last().settings.data.country).toBe('GB');
 
         const inFlight = ajax.last();
         document.querySelector("select[name='id_country']").innerHTML =

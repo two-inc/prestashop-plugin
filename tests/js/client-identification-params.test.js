@@ -2,22 +2,30 @@
  * Every call the module makes to Two's API identifies the client that made it,
  * with `client` (the platform) and `client_v` (the module version). The PHP
  * side has always done this - getTwoClientParams() in twopayment.php, attached
- * by setTwoPaymentRequest() - but the four calls the BROWSER makes directly to
- * Two sent neither, so anything counting clients or versions saw a PrestaShop
- * shop's traffic as partly unattributed.
+ * by setTwoPaymentRequest() - and so does the one call the BROWSER still makes
+ * directly to Two (sole-trader autofill). Company search, company detail and
+ * order-intent are relayed through this module's own controller instead
+ * (TWO-25386 follow-up: the firewall token those calls used to need in the
+ * browser now stays server-side, alongside the client-identification pair
+ * that setTwoPaymentRequest() already attaches on that side).
  *
- * These tests pin all four browser call sites, plus the two properties that
- * make the pair trustworthy:
+ * These tests pin:
  *
- *  - The values come from the server-published config
- *    (`window.twopayment.client` / `.client_version`), never from a literal in
- *    the JS. A version bump must be a PHP-only change; a hardcoded 'PS' or
+ *  - The one remaining direct call (sole-trader autofill) still carries the
+ *    pair, from the server-published config
+ *    (`window.twopayment.client` / `.client_version`), never a literal in the
+ *    JS. A version bump must be a PHP-only change; a hardcoded 'PS' or
  *    '2.7.8' here is the defect these tests exist to catch.
  *
- *  - They are QUERY params, not body fields, on the POST as well as the GETs.
- *    That is not a choice made for the browser: setTwoPaymentRequest()'s
- *    POST/PUT branch appends them to the URL too, and the two clients reporting
- *    the same fact in different places is what this pins against.
+ *  - The three relayed calls (company search, company detail, order intent)
+ *    go to the module's own controller with the right action/token/params,
+ *    and do NOT carry the client-identification pair themselves - that would
+ *    be redundant with (and could drift from) what the server-side call
+ *    already attaches.
+ *
+ *  - The sole-trader autofill call attaches X-WAF-TOKEN only when the
+ *    merchant's browser-token toggle published a non-empty value - the one
+ *    place a firewall token still reaches the browser.
  *
  * The version deliberately carries a `+<sha7>` suffix throughout, because that
  * is what getTwoClientVersion() produces on a deployed build and it is the part
@@ -79,20 +87,16 @@ function publishConfig(extra) {
 }
 
 // ---------------------------------------------------------------------------
-// The shared helper, once per class that owns a copy of it.
+// withTwoClientParams: only TwoSoleTrader still owns a copy - the other two
+// classes no longer build a direct-to-Two URL at all.
 // ---------------------------------------------------------------------------
 
-describe('withTwoClientParams', () => {
-    let classes;
+describe('withTwoClientParams (TwoSoleTrader)', () => {
+    let TwoSoleTrader;
 
     beforeEach(() => {
         buildAddressForm({ country: 'GB' });
-        const loaded = loadCompanySearch();
-        classes = {
-            TwoCompanySearch: loaded.TwoCompanySearch,
-            TwoOrderIntent: loadOrderIntent(),
-            TwoSoleTrader: loadSoleTrader()
-        };
+        TwoSoleTrader = loadSoleTrader();
         publishConfig();
     });
 
@@ -101,98 +105,89 @@ describe('withTwoClientParams', () => {
         document.body.innerHTML = '';
     });
 
-    // Each module is registered as its own standalone script with no shared
-    // util file, so each carries its own copy of the helper. Parameterised so
-    // one copy drifting from the others fails here by name rather than showing
-    // up as a missing param on whichever call site happens to be tested.
-    const owners = [
-        ['TwoCompanySearch', 'company search + company detail'],
-        ['TwoOrderIntent', 'order intent'],
-        ['TwoSoleTrader', 'sole-trader autofill']
-    ];
+    test('appends the pair to a URL with no query string', () => {
+        const url = TwoSoleTrader.withTwoClientParams('https://api.example.test/v1/thing');
 
-    describe.each(owners)('%s', (className, description) => {
-        test(`appends the pair to a URL with no query string (${description})`, () => {
-            const url = classes[className].withTwoClientParams('https://api.example.test/v1/thing');
-
-            expect(url).toBe(
-                'https://api.example.test/v1/thing?client=' + CLIENT + '&client_v=' + CLIENT_VERSION_ENCODED
-            );
-        });
-
-        test(`appends with & to a URL that already has a query string (${description})`, () => {
-            const url = classes[className].withTwoClientParams('https://api.example.test/v1/thing?q=exa');
-
-            expect(url).toBe(
-                'https://api.example.test/v1/thing?q=exa&client=' + CLIENT + '&client_v=' + CLIENT_VERSION_ENCODED
-            );
-            // The existing query must survive intact, not be replaced.
-            expect(new URL(url).searchParams.get('q')).toBe('exa');
-        });
-
-        test(`percent-encodes the sha suffix rather than emitting a literal + (${description})`, () => {
-            const url = classes[className].withTwoClientParams('https://api.example.test/v1/thing');
-
-            // A literal `+` here would decode to a space and report the version
-            // as "2.7.8 abc1234".
-            expect(url).not.toContain('2.7.8+abc1234');
-            expect(new URL(url).searchParams.get('client_v')).toBe(CLIENT_VERSION);
-        });
-
-        test(`reads the version from config rather than a literal (${description})`, () => {
-            // The whole point of the config indirection: a version bump is a
-            // PHP-only change. If the version were baked into the JS, this
-            // would still report the old one.
-            global.window.twopayment.client_version = '9.9.9+deadbee';
-
-            expect(classes[className].withTwoClientParams('https://api.example.test/v1/thing'))
-                .toBe('https://api.example.test/v1/thing?client=PS&client_v=9.9.9%2Bdeadbee');
-        });
-
-        // A page without the config is not a page that should send
-        // `client=undefined` - an unparseable version is worse to anything
-        // aggregating these than an absent one. Each case states the exact URL
-        // it expects, so a helper that emitted a stray `?`, dropped the param it
-        // DOES have, or passed `undefined` through fails on the value rather
-        // than on a "contains no undefined" check that a broken helper could
-        // also satisfy.
-        const partialConfigCases = [
-            ['no config at all', undefined, 'https://api.example.test/v1/thing'],
-            ['config carrying neither key', {}, 'https://api.example.test/v1/thing'],
-            ['client only, no version', { client: CLIENT }, 'https://api.example.test/v1/thing?client=PS'],
-            [
-                'version only, no client',
-                { client_version: CLIENT_VERSION },
-                'https://api.example.test/v1/thing?client_v=' + CLIENT_VERSION_ENCODED
-            ]
-        ];
-
-        test.each(partialConfigCases)(
-            'sends only what config carries, never a literal undefined (%s)',
-            (caseLabel, config, expectedUrl) => {
-                if (config === undefined) {
-                    delete global.window.twopayment;
-                } else {
-                    global.window.twopayment = config;
-                }
-
-                const url = classes[className].withTwoClientParams('https://api.example.test/v1/thing');
-
-                expect(url).toBe(expectedUrl);
-                expect(url).not.toContain('undefined');
-            }
+        expect(url).toBe(
+            'https://api.example.test/v1/thing?client=' + CLIENT + '&client_v=' + CLIENT_VERSION_ENCODED
         );
     });
+
+    test('appends with & to a URL that already has a query string', () => {
+        const url = TwoSoleTrader.withTwoClientParams('https://api.example.test/v1/thing?q=exa');
+
+        expect(url).toBe(
+            'https://api.example.test/v1/thing?q=exa&client=' + CLIENT + '&client_v=' + CLIENT_VERSION_ENCODED
+        );
+        // The existing query must survive intact, not be replaced.
+        expect(new URL(url).searchParams.get('q')).toBe('exa');
+    });
+
+    test('percent-encodes the sha suffix rather than emitting a literal +', () => {
+        const url = TwoSoleTrader.withTwoClientParams('https://api.example.test/v1/thing');
+
+        // A literal `+` here would decode to a space and report the version
+        // as "2.7.8 abc1234".
+        expect(url).not.toContain('2.7.8+abc1234');
+        expect(new URL(url).searchParams.get('client_v')).toBe(CLIENT_VERSION);
+    });
+
+    test('reads the version from config rather than a literal', () => {
+        // The whole point of the config indirection: a version bump is a
+        // PHP-only change. If the version were baked into the JS, this
+        // would still report the old one.
+        global.window.twopayment.client_version = '9.9.9+deadbee';
+
+        expect(TwoSoleTrader.withTwoClientParams('https://api.example.test/v1/thing'))
+            .toBe('https://api.example.test/v1/thing?client=PS&client_v=9.9.9%2Bdeadbee');
+    });
+
+    // A page without the config is not a page that should send
+    // `client=undefined` - an unparseable version is worse to anything
+    // aggregating these than an absent one. Each case states the exact URL
+    // it expects, so a helper that emitted a stray `?`, dropped the param it
+    // DOES have, or passed `undefined` through fails on the value rather
+    // than on a "contains no undefined" check that a broken helper could
+    // also satisfy.
+    const partialConfigCases = [
+        ['no config at all', undefined, 'https://api.example.test/v1/thing'],
+        ['config carrying neither key', {}, 'https://api.example.test/v1/thing'],
+        ['client only, no version', { client: CLIENT }, 'https://api.example.test/v1/thing?client=PS'],
+        [
+            'version only, no client',
+            { client_version: CLIENT_VERSION },
+            'https://api.example.test/v1/thing?client_v=' + CLIENT_VERSION_ENCODED
+        ]
+    ];
+
+    test.each(partialConfigCases)(
+        'sends only what config carries, never a literal undefined (%s)',
+        (caseLabel, config, expectedUrl) => {
+            if (config === undefined) {
+                delete global.window.twopayment;
+            } else {
+                global.window.twopayment = config;
+            }
+
+            const url = TwoSoleTrader.withTwoClientParams('https://api.example.test/v1/thing');
+
+            expect(url).toBe(expectedUrl);
+            expect(url).not.toContain('undefined');
+        }
+    );
 });
 
 // ---------------------------------------------------------------------------
-// Call site 1 + 2: company search and company detail (GET, TwoCompanySearch).
+// Call sites 1 + 2: company search and company detail, relayed through the
+// module's own controller (TwoCompanySearch).
 // ---------------------------------------------------------------------------
 
-describe('company search calls carry the client identification', () => {
+describe('company search calls are relayed through the module controller', () => {
     let TwoCompanySearch;
     let $;
     let ajax;
+
+    const ORDER_INTENT_URL = 'https://shop.example.test/module/twopayment/orderintent';
 
     beforeEach(() => {
         buildAddressForm({ country: 'GB' });
@@ -200,7 +195,7 @@ describe('company search calls carry the client identification', () => {
         TwoCompanySearch = loaded.TwoCompanySearch;
         $ = loaded.$;
         ajax = stubAjax($);
-        publishConfig();
+        publishConfig({ order_intent_url: ORDER_INTENT_URL, ajax_token: 'test-token' });
     });
 
     afterEach(() => {
@@ -214,46 +209,50 @@ describe('company search calls carry the client identification', () => {
         return new TwoCompanySearch({ checkoutHost: CHECKOUT_HOST });
     }
 
-    test('GET /companies/v2/company (search) carries client and client_v', () => {
+    test('search relays action=companySearch with the ajax token and query, never to Two directly', () => {
         const search = makeInstance();
         search.searchCompanies('exa', callbackRecorder().fn);
 
-        const url = ajax.last().url;
-        expectClientParams(url);
-        // The search's own params are untouched by the addition.
-        const parsed = new URL(url);
-        expect(parsed.pathname).toBe('/companies/v2/company');
-        expect(parsed.searchParams.get('q')).toBe('exa');
-        expect(parsed.searchParams.get('country')).toBe('GB');
+        const call = ajax.last();
+        expect(call.url).toBe(ORDER_INTENT_URL);
+        expect(call.settings.data).toMatchObject({
+            action: 'companySearch',
+            token: 'test-token',
+            q: 'exa',
+            country: 'GB'
+        });
+        // Never the client-identification pair here - that is attached
+        // server-side, on the request setTwoPaymentRequest() makes to Two.
+        expect(call.url).not.toContain('client=');
     });
 
-    test('GET /companies/v2/company/{lookupId} (detail) carries client and client_v', async () => {
+    test('detail lookup relays action=companyDetails with the lookup id', async () => {
         const search = makeInstance();
-
-        // fetchCompanyDetails() is the boundary under test; driving it directly
-        // keeps this independent of the dropdown-selection plumbing that
-        // company-search-rerender.test.js already covers.
         search.fetchCompanyDetails('lookup-abc-123');
 
-        const url = ajax.last().url;
-        expectClientParams(url);
-        // The detail endpoint had NO query string before this change, so the
-        // pair has to arrive behind a `?` rather than an `&`.
-        const parsed = new URL(url);
-        expect(parsed.pathname).toBe('/companies/v2/company/lookup-abc-123');
-        expect(url).toContain('/companies/v2/company/lookup-abc-123?client=');
+        const call = ajax.last();
+        expect(call.url).toBe(ORDER_INTENT_URL);
+        expect(call.settings.data).toMatchObject({
+            action: 'companyDetails',
+            token: 'test-token',
+            lookup_id: 'lookup-abc-123'
+        });
+        expect(call.url).not.toContain('client=');
         await flushPromises();
     });
 });
 
 // ---------------------------------------------------------------------------
-// Call site 3: order intent (POST with a JSON body, TwoOrderIntent).
+// Call site 3: order intent, relayed through the module's own controller
+// (TwoOrderIntent).
 // ---------------------------------------------------------------------------
 
-describe('order intent POST carries the client identification', () => {
+describe('order intent is relayed through the module controller', () => {
     let TwoOrderIntent;
     let $;
     let ajax;
+
+    const ORDER_INTENT_URL = 'https://shop.example.test/module/twopayment/orderintent';
 
     beforeEach(() => {
         buildAddressForm({ country: 'GB' });
@@ -262,7 +261,7 @@ describe('order intent POST carries the client identification', () => {
         TwoOrderIntent = loadOrderIntent();
         ajax = stubAjax($);
         publishConfig({
-            order_intent_url: 'https://shop.example.test/module/twopayment/orderintent',
+            order_intent_url: ORDER_INTENT_URL,
             ajax_token: 'test-token'
         });
     });
@@ -274,38 +273,29 @@ describe('order intent POST carries the client identification', () => {
         document.body.innerHTML = '';
     });
 
-    test('POST /v1/order_intent carries client and client_v as QUERY params', () => {
+    test('relays action=orderIntent with the JSON payload as a string field, never straight to Two', () => {
         const intent = new TwoOrderIntent({ checkoutHost: CHECKOUT_HOST });
         intent.callTwoOrderIntent({ gross_amount: '100.00' });
 
         const call = ajax.last();
-        expectClientParams(call.url);
-        expect(new URL(call.url).pathname).toBe('/v1/order_intent');
+        expect(call.url).toBe(ORDER_INTENT_URL);
         expect(call.settings.type).toBe('POST');
-    });
-
-    test('the JSON body is NOT given client fields, matching the PHP convention', () => {
-        const intent = new TwoOrderIntent({ checkoutHost: CHECKOUT_HOST });
-        intent.callTwoOrderIntent({ gross_amount: '100.00' });
-
-        // setTwoPaymentRequest()'s POST/PUT branch puts these on the URL and
-        // leaves the payload alone. Two clients disagreeing about where the
-        // pair lives is the thing this asserts against - and the payload here
-        // is one the server built and Two validates, so adding to it is a
-        // contract change rather than a metadata addition.
-        const body = JSON.parse(ajax.last().settings.data);
-        expect(body).toEqual({ gross_amount: '100.00' });
-        expect(body.client).toBeUndefined();
-        expect(body.client_v).toBeUndefined();
-        expect(body.client_version).toBeUndefined();
+        expect(call.settings.data.action).toBe('orderIntent');
+        expect(call.settings.data.token).toBe('test-token');
+        expect(JSON.parse(call.settings.data.payload)).toEqual({ gross_amount: '100.00' });
+        // Never the client-identification pair here - see the company-search
+        // describe block above for why.
+        expect(call.url).not.toContain('client=');
     });
 });
 
 // ---------------------------------------------------------------------------
-// Call site 4: sole-trader autofill (fetch, TwoSoleTrader).
+// Call site 4: sole-trader autofill (fetch, TwoSoleTrader) - the one call
+// still made directly to Two, and the one place X-WAF-TOKEN still reaches
+// the browser.
 // ---------------------------------------------------------------------------
 
-describe('sole-trader autofill carries the client identification', () => {
+describe('sole-trader autofill carries the client identification and firewall token', () => {
     let TwoSoleTrader;
 
     beforeEach(() => {
@@ -325,10 +315,9 @@ describe('sole-trader autofill carries the client identification', () => {
         global.window.localStorage.clear();
     });
 
-    test('GET /autofill/v1/buyer/current carries client and client_v', async () => {
-        const urls = [];
-        global.window.fetch = (url) => {
-            urls.push(String(url));
+    function stubFetchCapturing(calls) {
+        global.window.fetch = (url, options) => {
+            calls.push({ url: String(url), options: options || {} });
             if (String(url).includes('soleTraderAvailability')) {
                 return Promise.resolve({
                     json: () => Promise.resolve({ success: true, available: true })
@@ -341,13 +330,22 @@ describe('sole-trader autofill carries the client identification', () => {
             });
         };
         global.fetch = global.window.fetch;
+    }
 
-        const instance = new TwoSoleTrader({
+    function makeInstance() {
+        return new TwoSoleTrader({
             checkoutHost: CHECKOUT_HOST,
             orderIntentUrl: 'https://shop.example.test/module/twopayment/orderintent',
             ajaxToken: 'test-token',
             billingCountry: 'GB'
         });
+    }
+
+    test('GET /autofill/v1/buyer/current carries client and client_v', async () => {
+        const calls = [];
+        stubFetchCapturing(calls);
+
+        const instance = makeInstance();
         // getCurrentBuyer() reads this.tokens.autofill_token, which a real
         // enrolment mints first; seeding it goes straight to the call under
         // test without replaying the whole popup flow.
@@ -355,10 +353,40 @@ describe('sole-trader autofill carries the client identification', () => {
         instance.getCurrentBuyer();
         await flushPromises();
 
-        const autofillUrl = urls.find((url) => url.includes('/autofill/v1/buyer/current'));
-        expect(autofillUrl).toBeDefined();
-        expectClientParams(autofillUrl);
-        expect(new URL(autofillUrl).pathname).toBe('/autofill/v1/buyer/current');
+        const autofillCall = calls.find((call) => call.url.includes('/autofill/v1/buyer/current'));
+        expect(autofillCall).toBeDefined();
+        expectClientParams(autofillCall.url);
+        expect(new URL(autofillCall.url).pathname).toBe('/autofill/v1/buyer/current');
+    });
+
+    test('attaches X-WAF-TOKEN when the browser-token toggle published a value', async () => {
+        global.window.twopayment.firewall_token = 'waf-token-1';
+        const calls = [];
+        stubFetchCapturing(calls);
+
+        const instance = makeInstance();
+        instance.tokens = { autofill_token: 'af-token' };
+        instance.getCurrentBuyer();
+        await flushPromises();
+
+        const autofillCall = calls.find((call) => call.url.includes('/autofill/v1/buyer/current'));
+        expect(autofillCall.options.headers['X-WAF-TOKEN']).toBe('waf-token-1');
+        // The delegated-authority token must still travel alongside it.
+        expect(autofillCall.options.headers['two-delegated-authority-token']).toBe('af-token');
+    });
+
+    test('omits X-WAF-TOKEN when the toggle is off (empty published value)', async () => {
+        global.window.twopayment.firewall_token = '';
+        const calls = [];
+        stubFetchCapturing(calls);
+
+        const instance = makeInstance();
+        instance.tokens = { autofill_token: 'af-token' };
+        instance.getCurrentBuyer();
+        await flushPromises();
+
+        const autofillCall = calls.find((call) => call.url.includes('/autofill/v1/buyer/current'));
+        expect(autofillCall.options.headers['X-WAF-TOKEN']).toBeUndefined();
     });
 
     test('the shop-internal module URLs do NOT carry the pair', () => {
@@ -369,12 +397,7 @@ describe('sole-trader autofill carries the client identification', () => {
         });
         global.fetch = global.window.fetch;
 
-        const instance = new TwoSoleTrader({
-            checkoutHost: CHECKOUT_HOST,
-            orderIntentUrl: 'https://shop.example.test/module/twopayment/orderintent',
-            ajaxToken: 'test-token',
-            billingCountry: 'GB'
-        });
+        const instance = makeInstance();
 
         // These go to the shop's own front controller, not to Two. Sending
         // Two's identification pair there is noise at best, and it would read
