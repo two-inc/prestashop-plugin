@@ -23,9 +23,9 @@
  *    be redundant with (and could drift from) what the server-side call
  *    already attaches.
  *
- *  - The sole-trader autofill call attaches X-WAF-TOKEN only when the
- *    merchant's browser-token toggle published a non-empty value - the one
- *    place a firewall token still reaches the browser.
+ *  - The sole-trader autofill call attaches exactly the custom headers the
+ *    merchant ticked for browser traffic, and nothing when none were - the
+ *    one place a merchant-configured header still reaches the browser.
  *
  * The version deliberately carries a `+<sha7>` suffix throughout, because that
  * is what getTwoClientVersion() produces on a deployed build and it is the part
@@ -291,11 +291,11 @@ describe('order intent is relayed through the module controller', () => {
 
 // ---------------------------------------------------------------------------
 // Call site 4: sole-trader autofill (fetch, TwoSoleTrader) - the one call
-// still made directly to Two, and the one place X-WAF-TOKEN still reaches
-// the browser.
+// still made directly to Two, and the one place a merchant-configured header
+// still reaches the browser.
 // ---------------------------------------------------------------------------
 
-describe('sole-trader autofill carries the client identification and firewall token', () => {
+describe('sole-trader autofill carries the client identification and the browser-flagged headers', () => {
     let TwoSoleTrader;
 
     beforeEach(() => {
@@ -359,8 +359,7 @@ describe('sole-trader autofill carries the client identification and firewall to
         expect(new URL(autofillCall.url).pathname).toBe('/autofill/v1/buyer/current');
     });
 
-    test('attaches X-WAF-TOKEN when the browser-token toggle published a value', async () => {
-        global.window.twopayment.firewall_token = 'waf-token-1';
+    async function headersFromAutofillCall() {
         const calls = [];
         stubFetchCapturing(calls);
 
@@ -369,24 +368,30 @@ describe('sole-trader autofill carries the client identification and firewall to
         instance.getCurrentBuyer();
         await flushPromises();
 
-        const autofillCall = calls.find((call) => call.url.includes('/autofill/v1/buyer/current'));
-        expect(autofillCall.options.headers['X-WAF-TOKEN']).toBe('waf-token-1');
-        // The delegated-authority token must still travel alongside it.
-        expect(autofillCall.options.headers['two-delegated-authority-token']).toBe('af-token');
+        return calls.find((call) => call.url.includes('/autofill/v1/buyer/current')).options.headers;
+    }
+
+    test('attaches every header the module published for the browser', async () => {
+        global.window.twopayment.custom_headers = { 'X-WAF-TOKEN': 'waf-token-1', 'X-Corp-Gate': 'gate-2' };
+
+        const headers = await headersFromAutofillCall();
+
+        expect(headers['X-WAF-TOKEN']).toBe('waf-token-1');
+        expect(headers['X-Corp-Gate']).toBe('gate-2');
+        // The delegated-authority token must still travel alongside them.
+        expect(headers['two-delegated-authority-token']).toBe('af-token');
     });
 
-    test('omits X-WAF-TOKEN when the toggle is off (empty published value)', async () => {
-        global.window.twopayment.firewall_token = '';
-        const calls = [];
-        stubFetchCapturing(calls);
+    test('attaches nothing extra when no row was ticked for the browser', async () => {
+        global.window.twopayment.custom_headers = {};
 
-        const instance = makeInstance();
-        instance.tokens = { autofill_token: 'af-token' };
-        instance.getCurrentBuyer();
-        await flushPromises();
+        expect(Object.keys(await headersFromAutofillCall())).toEqual(['two-delegated-authority-token']);
+    });
 
-        const autofillCall = calls.find((call) => call.url.includes('/autofill/v1/buyer/current'));
-        expect(autofillCall.options.headers['X-WAF-TOKEN']).toBeUndefined();
+    test('attaches nothing extra when the module published no header map at all', async () => {
+        delete global.window.twopayment.custom_headers;
+
+        expect(Object.keys(await headersFromAutofillCall())).toEqual(['two-delegated-authority-token']);
     });
 
     test('the shop-internal module URLs do NOT carry the pair', () => {

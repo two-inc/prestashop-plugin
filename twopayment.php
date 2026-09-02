@@ -270,6 +270,11 @@ class Twopayment extends PaymentModule
     // stored when the merchant selected it.
     const CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP = 'PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP';
 
+    // JSON array of {name, value, send_from_browser} - the arbitrarily-named
+    // headers the merchant's IT administrator requires on traffic to Two
+    // (ABN-490, superseding the single X-WAF-TOKEN field).
+    const CONFIG_CUSTOM_HEADERS = 'PS_TWO_CUSTOM_HEADERS';
+
     // Constants for delivery dates
     const DEFAULT_DELIVERY_DAYS_OFFSET = 7; // Default expected delivery date offset
     
@@ -349,7 +354,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.7.14';
+        $this->version = '2.7.15';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -613,8 +618,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_ENVIRONMENT', 'staging');
         Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', '');
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', '');
-        Configuration::updateValue('PS_TWO_FIREWALL_TOKEN', '');
-        Configuration::updateValue('PS_TWO_FIREWALL_TOKEN_BROWSER', 0);
+        Configuration::updateValue(self::CONFIG_CUSTOM_HEADERS, json_encode(array()));
         Configuration::updateValue('PS_TWO_TRUSTED_PROXIES', '');
         // Rate limiting is ON by default (TWO-25386), matching
         // woocommerce-plugin and magento-plugin.
@@ -899,8 +903,7 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_SUB_TITLE');
         Configuration::deleteByName('PS_TWO_MERCHANT_SHORT_NAME');
         Configuration::deleteByName('PS_TWO_MERCHANT_API_KEY');
-        Configuration::deleteByName('PS_TWO_FIREWALL_TOKEN');
-        Configuration::deleteByName('PS_TWO_FIREWALL_TOKEN_BROWSER');
+        Configuration::deleteByName(self::CONFIG_CUSTOM_HEADERS);
         Configuration::deleteByName('PS_TWO_TRUSTED_PROXIES');
         Configuration::deleteByName('PS_TWO_DISABLE_RATE_LIMIT');
         Configuration::deleteByName('PS_TWO_MERCHANT_ID');
@@ -1220,16 +1223,6 @@ class Twopayment extends PaymentModule
                         'required' => true,
                         'desc' => sprintf($this->l('Enter your api key which is provided by %s.'), $this->getTwoBrandConfig('product_name')),
                     ),
-                    // Plain text, not obscure: a coarse network-egress gate
-                    // the merchant's IT administrator hands out, not a
-                    // credential (TWO-25386).
-                    array(
-                        'type' => 'text',
-                        'label' => $this->l('Firewall token (optional)'),
-                        'name' => 'PS_TWO_FIREWALL_TOKEN',
-                        'required' => false,
-                        'desc' => sprintf($this->l("If your IT administrator asks you to add a firewall token, place it in this field. It will then be transmitted as header X-WAF-TOKEN on all calls this store makes to the %s API."), $this->getTwoBrandConfig('product_name')),
-                    ),
                     // Multi-site vendor/site name (TWO-25386, ported from
                     // woocommerce-plugin's `vendor_name` field). Free text, no
                     // validation - only meaningful for merchants running Two
@@ -1302,7 +1295,6 @@ class Twopayment extends PaymentModule
         $fields_values = array();
         $fields_values['PS_TWO_MERCHANT_SHORT_NAME'] = Tools::getValue('PS_TWO_MERCHANT_SHORT_NAME', Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'));
         $fields_values['PS_TWO_MERCHANT_API_KEY'] = Tools::getValue('PS_TWO_MERCHANT_API_KEY', Configuration::get('PS_TWO_MERCHANT_API_KEY'));
-        $fields_values['PS_TWO_FIREWALL_TOKEN'] = Tools::getValue('PS_TWO_FIREWALL_TOKEN', Configuration::get('PS_TWO_FIREWALL_TOKEN'));
         $fields_values['PS_TWO_VENDOR_NAME'] = Tools::getValue('PS_TWO_VENDOR_NAME', Configuration::get('PS_TWO_VENDOR_NAME'));
         $fields_values['PS_TWO_ENVIRONMENT'] = Tools::getValue('PS_TWO_ENVIRONMENT', Configuration::get('PS_TWO_ENVIRONMENT'));
         return $fields_values;
@@ -1369,7 +1361,6 @@ class Twopayment extends PaymentModule
         $shortNameToSave = $this->verifiedMerchantShortName ? $this->verifiedMerchantShortName : trim(Tools::getValue('PS_TWO_MERCHANT_SHORT_NAME'));
         Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', $shortNameToSave);
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY')));
-        Configuration::updateValue('PS_TWO_FIREWALL_TOKEN', trim((string) Tools::getValue('PS_TWO_FIREWALL_TOKEN')));
         Configuration::updateValue('PS_TWO_VENDOR_NAME', trim((string) Tools::getValue('PS_TWO_VENDOR_NAME')));
         Configuration::updateValue('PS_TWO_ENVIRONMENT', Tools::getValue('PS_TWO_ENVIRONMENT'));
         // The verdict from the live check the validation above just made, now
@@ -2528,17 +2519,17 @@ class Twopayment extends PaymentModule
                         'required' => false,
                         'desc' => $this->l('Addresses of your own reverse proxies, load balancers or CDN egress, as IPs or CIDR ranges, separated by commas or new lines. These IP addresses will be exempt from rate limiting.'),
                     ),
+                    // Arbitrarily-named request headers (ABN-490), replacing the
+                    // single firewall-token field. HelperForm has no
+                    // repeatable-row field type, so this follows the module's
+                    // own precedent for a tabular control: type 'html', values
+                    // read and escaped here, rows added/removed by the admin JS
+                    // in configuration.tpl.
                     array(
-                        'type' => 'switch',
-                        'label' => $this->l('Add firewall token to browser-originated traffic'),
-                        'name' => 'PS_TWO_FIREWALL_TOKEN_BROWSER',
-                        'is_bool' => true,
-                        'desc' => $this->l("Only switch this on if your IT administrator requires the firewall token for calls from the user's browser as well as those from your server. Your firewall token will be published to the buyer's brower and may be read by anyone."),
-                        'required' => true,
-                        'values' => array(
-                            array('id' => 'PS_TWO_FIREWALL_TOKEN_BROWSER_ON', 'value' => 1, 'label' => $this->l('Yes')),
-                            array('id' => 'PS_TWO_FIREWALL_TOKEN_BROWSER_OFF', 'value' => 0, 'label' => $this->l('No')),
-                        ),
+                        'type' => 'html',
+                        'label' => $this->l('Custom request headers'),
+                        'name' => self::CONFIG_CUSTOM_HEADERS,
+                        'html_content' => $this->getTwoCustomHeadersTableHtml(),
                     ),
                     // Rate limiting is ON by default (TWO-25386) - this is the
                     // stopgap escape hatch, matching
@@ -2911,7 +2902,6 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
         $fields_values['PS_TWO_SKIP_CONFIRM_TOKEN_CHECK'] = Tools::getValue('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK', Configuration::get('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK'));
         $fields_values['PS_TWO_TRUSTED_PROXIES'] = Tools::getValue('PS_TWO_TRUSTED_PROXIES', Configuration::get('PS_TWO_TRUSTED_PROXIES'));
-        $fields_values['PS_TWO_FIREWALL_TOKEN_BROWSER'] = Tools::getValue('PS_TWO_FIREWALL_TOKEN_BROWSER', Configuration::get('PS_TWO_FIREWALL_TOKEN_BROWSER'));
         $fields_values['PS_TWO_DISABLE_RATE_LIMIT'] = Tools::getValue('PS_TWO_DISABLE_RATE_LIMIT', Configuration::get('PS_TWO_DISABLE_RATE_LIMIT'));
         $fields_values['PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION'] = Tools::getValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', (int) $this->shouldClearTwoSettingsOnUninstall());
         return $fields_values;
@@ -2931,6 +2921,19 @@ class Twopayment extends PaymentModule
                 $this->errors[] = sprintf($this->l('Trusted proxies: "%s" is not a valid IP address or CIDR range.'), $entry);
             }
         }
+
+        foreach ((array) self::readTwoCustomHeaderRowsFromPost() as $row) {
+            if (!self::isValidTwoHeaderName($row['name'])) {
+                $this->errors[] = sprintf($this->l('Custom request headers: "%s" is not a valid header name.'), $row['name']);
+            } elseif ($row['value'] === '') {
+                // Refused rather than stored: a named row with no value would
+                // be silently dropped from the header list, so the merchant
+                // would see it saved and still not sent.
+                $this->errors[] = sprintf($this->l('Custom request headers: enter a value for header "%s", or remove the row.'), $row['name']);
+            } elseif (!self::isValidTwoHeaderValue($row['value'])) {
+                $this->errors[] = sprintf($this->l('Custom request headers: the value for header "%s" must not contain line breaks.'), $row['name']);
+            }
+        }
     }
 
     protected function saveTwoDiagnosticsFormValues()
@@ -2939,8 +2942,11 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
         Configuration::updateValue('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK', (int) Tools::getValue('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK', 0));
         Configuration::updateValue('PS_TWO_TRUSTED_PROXIES', trim((string) Tools::getValue('PS_TWO_TRUSTED_PROXIES')));
-        Configuration::updateValue('PS_TWO_FIREWALL_TOKEN_BROWSER', (int) Tools::getValue('PS_TWO_FIREWALL_TOKEN_BROWSER', 0));
         Configuration::updateValue('PS_TWO_DISABLE_RATE_LIMIT', (int) Tools::getValue('PS_TWO_DISABLE_RATE_LIMIT', 0));
+        $header_rows = self::readTwoCustomHeaderRowsFromPost();
+        if ($header_rows !== null) {
+            Configuration::updateValue(self::CONFIG_CUSTOM_HEADERS, json_encode($header_rows));
+        }
         Configuration::updateValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', (int) Tools::getValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', 0));
 
         $this->output .= $this->displayConfirmation($this->l('Diagnostics settings are updated.'));
@@ -4572,13 +4578,12 @@ class Twopayment extends PaymentModule
         Media::addJsDef(array('twopayment' => array(
                 'search_empty_text' => $this->l('No result found'),
                 'checkout_host' => $this->getTwoCheckoutHostUrl(),
-                // Off by default (TWO-25386): the buyer-scoped autofill fetch is
-                // the only call still made from the browser (its session cookie
-                // cannot be replayed server-side) - company search/details and
-                // order-intent are relayed through this module's own controller
-                // instead. Empty string when the toggle is off, so the JS fetch
-                // omits the header rather than sending a blank one.
-                'firewall_token' => Configuration::get('PS_TWO_FIREWALL_TOKEN_BROWSER') ? self::getTwoFirewallToken() : '',
+                // Only the rows ticked "also send from browser" (ABN-490): the
+                // buyer-scoped autofill fetch is the only call still made from
+                // the browser (its session cookie cannot be replayed
+                // server-side) - company search/details and order-intent are
+                // relayed through this module's own controller instead.
+                'custom_headers' => self::getTwoBrowserCustomHeaders(),
                 // TWO-25326 §7.1 (2026-08-03 ruling): this used to gate the
                 // search widget's existence (on/off). It now decides WHERE
                 // the one control renders instead: '1' = address area
@@ -10044,10 +10049,7 @@ class Twopayment extends PaymentModule
             'Content-Type: application/json; charset=utf-8',
             'X-API-Key:' . $apiKey,
         ];
-        $firewallToken = self::getTwoFirewallToken();
-        if ($firewallToken !== '') {
-            $headers[] = 'X-WAF-TOKEN:' . $firewallToken;
-        }
+        $headers = array_merge($headers, self::getTwoCustomHeaderLines());
         PrestaShopLogger::addLog('TwoPayment: Verifying API key against ' . $base, 1);
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $url);
@@ -15115,11 +15117,213 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * RFC 7230 field-name token. Anything outside it (a space, a colon, a
+     * newline) would either be rejected by curl or split the request.
+     *
+     * @param string $name
+     *
+     * @return bool
+     */
+    public static function isValidTwoHeaderName($name)
+    {
+        return (bool) preg_match('/^[A-Za-z0-9!#$%&\'*+.^_`|~-]+$/', (string) $name);
+    }
+
+    /**
+     * @param string $value
+     *
+     * @return bool
+     */
+    public static function isValidTwoHeaderValue($value)
+    {
+        return strpbrk((string) $value, "\r\n\0") === false;
+    }
+
+    /**
+     * The merchant-configured custom headers, dropping any row that could not
+     * be sent as a header at all.
+     *
+     * @return array<int, array{name: string, value: string, send_from_browser: bool}>
+     */
+    public static function getTwoCustomHeaders()
+    {
+        $decoded = json_decode((string) Configuration::get(self::CONFIG_CUSTOM_HEADERS), true);
+        if (!is_array($decoded)) {
+            return array();
+        }
+
+        $rows = array();
+        foreach ($decoded as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $name = isset($row['name']) ? trim((string) $row['name']) : '';
+            $value = isset($row['value']) ? trim((string) $row['value']) : '';
+            if ($value === '' || !self::isValidTwoHeaderName($name) || !self::isValidTwoHeaderValue($value)) {
+                continue;
+            }
+            $rows[] = array(
+                'name' => $name,
+                'value' => $value,
+                'send_from_browser' => !empty($row['send_from_browser']),
+            );
+        }
+
+        return $rows;
+    }
+
+    /**
+     * The same headers as `Name:value` lines for curl's CURLOPT_HTTPHEADER.
+     *
+     * @return array<int, string>
+     */
+    public static function getTwoCustomHeaderLines()
+    {
+        $lines = array();
+        foreach (self::getTwoCustomHeaders() as $row) {
+            $lines[] = $row['name'] . ':' . $row['value'];
+        }
+
+        return $lines;
+    }
+
+    /**
+     * Only the rows the merchant ticked for browser-originated traffic, as a
+     * name => value map for the checkout JS.
+     *
+     * @return array<string, string>
+     */
+    public static function getTwoBrowserCustomHeaders()
+    {
+        $map = array();
+        foreach (self::getTwoCustomHeaders() as $row) {
+            if ($row['send_from_browser']) {
+                $map[$row['name']] = $row['value'];
+            }
+        }
+
+        return $map;
+    }
+
+    /**
+     * The submitted header rows, or null when this POST is not the Diagnostics
+     * form. Entirely blank rows are dropped, so an emptied table saves as an
+     * empty list rather than as a row of nothing.
+     *
+     * @return array<int, array{name: string, value: string, send_from_browser: bool}>|null
+     */
+    protected static function readTwoCustomHeaderRowsFromPost()
+    {
+        // A marker input rather than the name array: removing the last row
+        // leaves no header inputs at all, and "no inputs" must save as an
+        // empty list, not as "field absent, keep what is stored".
+        if (!Tools::getValue('two_custom_headers_submitted')) {
+            return null;
+        }
+
+        $names = Tools::getValue('two_custom_header_name');
+        $names = is_array($names) ? $names : array();
+        $values = Tools::getValue('two_custom_header_value');
+        $values = is_array($values) ? $values : array();
+        $browser = Tools::getValue('two_custom_header_browser');
+        $browser = is_array($browser) ? $browser : array();
+
+        $rows = array();
+        foreach ($names as $index => $name) {
+            $name = trim((string) $name);
+            $value = isset($values[$index]) ? trim((string) $values[$index]) : '';
+            if ($name === '' && $value === '') {
+                continue;
+            }
+            $rows[] = array(
+                'name' => $name,
+                'value' => $value,
+                'send_from_browser' => !empty($browser[$index]),
+            );
+        }
+
+        return $rows;
+    }
+
+    /**
+     * The Diagnostics custom-header table. HelperForm does not populate
+     * type=>'html' fields, so each row's current value is read here (POSTed
+     * value, falling back to what is stored) and escaped into the markup.
+     *
      * @return string
      */
-    public static function getTwoFirewallToken()
+    protected function getTwoCustomHeadersTableHtml()
     {
-        return trim((string) Configuration::get('PS_TWO_FIREWALL_TOKEN'));
+        $rows = self::readTwoCustomHeaderRowsFromPost();
+        if ($rows === null) {
+            $rows = self::getTwoCustomHeaders();
+        }
+
+        $html = '<input type="hidden" name="two_custom_headers_submitted" value="1">';
+        $html .= '<table id="two-custom-headers" class="table" style="width:auto;margin-bottom:8px;">';
+        $html .= '<thead><tr>'
+            . '<th>' . htmlspecialchars($this->l('Header name'), ENT_QUOTES, 'UTF-8') . '</th>'
+            . '<th>' . htmlspecialchars($this->l('Value'), ENT_QUOTES, 'UTF-8') . '</th>'
+            . '<th>' . htmlspecialchars($this->l('Also send from browser'), ENT_QUOTES, 'UTF-8') . '</th>'
+            . '<th></th>'
+            . '</tr></thead><tbody>';
+
+        foreach ($rows as $index => $row) {
+            $html .= $this->getTwoCustomHeaderRowHtml((int) $index, $row['name'], $row['value'], $row['send_from_browser']);
+        }
+
+        $html .= '</tbody></table>';
+        $html .= '<button type="button" id="two-custom-headers-add" class="btn btn-default">'
+            . htmlspecialchars($this->l('Add header'), ENT_QUOTES, 'UTF-8') . '</button>';
+        $html .= '<p class="help-block" style="margin-top:8px;">'
+            . htmlspecialchars(
+                sprintf(
+                    $this->l('Headers your IT administrator asks you to add. Each one is sent on every call this store makes to the %s API from your server.'),
+                    $this->getTwoBrandConfig('product_name')
+                ),
+                ENT_QUOTES,
+                'UTF-8'
+            )
+            . ' '
+            . htmlspecialchars(
+                $this->l("Tick \"Also send from browser\" only where your IT administrator requires the header on calls from the buyer's browser as well: that header's value will be published to the buyer's brower and may be read by anyone."),
+                ENT_QUOTES,
+                'UTF-8'
+            )
+            . '</p>';
+        // Cloned by the admin JS for a new row, so the markup exists in one
+        // place; `data-index` is rewritten to keep the three inputs of a row
+        // on the same array index.
+        $html .= '<template id="two-custom-headers-template">'
+            . $this->getTwoCustomHeaderRowHtml(0, '', '', false)
+            . '</template>';
+
+        return $html;
+    }
+
+    /**
+     * @param int    $index
+     * @param string $name
+     * @param string $value
+     * @param bool   $send_from_browser
+     *
+     * @return string
+     */
+    protected function getTwoCustomHeaderRowHtml($index, $name, $value, $send_from_browser)
+    {
+        $escaped_name = htmlspecialchars((string) $name, ENT_QUOTES, 'UTF-8');
+        $escaped_value = htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
+
+        return '<tr class="two-custom-header-row" data-index="' . (int) $index . '">'
+            . '<td><input type="text" class="form-control" style="width:220px;"'
+            . ' name="two_custom_header_name[' . (int) $index . ']" value="' . $escaped_name . '"></td>'
+            . '<td><input type="text" class="form-control" style="width:320px;"'
+            . ' name="two_custom_header_value[' . (int) $index . ']" value="' . $escaped_value . '"></td>'
+            . '<td style="text-align:center;vertical-align:middle;"><input type="checkbox" value="1"'
+            . ' name="two_custom_header_browser[' . (int) $index . ']"' . ($send_from_browser ? ' checked' : '') . '></td>'
+            . '<td style="vertical-align:middle;"><button type="button" class="btn btn-default two-custom-header-remove">'
+            . htmlspecialchars($this->l('Remove'), ENT_QUOTES, 'UTF-8') . '</button></td>'
+            . '</tr>';
     }
 
     public function getTwoRequestHeaders($endpoint, $additional_headers = [])
@@ -15135,10 +15339,7 @@ class Twopayment extends PaymentModule
 
         // Not gated on $includeApiKey: the unauthenticated order-intent path
         // still reaches Two, so it still has to clear the firewall (TWO-25386).
-        $firewallToken = self::getTwoFirewallToken();
-        if ($firewallToken !== '') {
-            $headers[] = 'X-WAF-TOKEN:' . $firewallToken;
-        }
+        $headers = array_merge($headers, self::getTwoCustomHeaderLines());
 
         // Multi-site vendor/site name (TWO-25386, ported from
         // woocommerce-plugin's `vendor_name` request field). Sent as a header
