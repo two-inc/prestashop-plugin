@@ -275,7 +275,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_824a2909a2223ded92a4be1b1f856741'] 
 $_MODULE['<{twopayment}prestashop>twopayment_82ab2bbfea5681899d51358644b7e5b0'] = 'Ordrerabatt';
 $_MODULE['<{twopayment}prestashop>twopayment_840f2065329da7eae70528b0c61905a0'] = 'Ingen tillegg';
 $_MODULE['<{twopayment}prestashop>twopayment_85925e31c13734f285ce48920c8120b9'] = 'De generelle innstillingene er oppdatert.';
-$_MODULE['<{twopayment}prestashop>twopayment_86287396d86b43131b0404dd10c52d30'] = 'Avgiften for tillegg må velges på nytt: denne butikken brukte tidligere en flat avgiftssats for tillegget, som er erstattet av en avgiftsregelgruppe. Til du velger og lagrer «Avgiftsbehandling for tillegg» under Betalingsinnstillinger, blir tillegget IKKE avgiftsbelagt.';
+$_MODULE['<{twopayment}prestashop>twopayment_d16f46d8f28d29b23ce69a87b82dc0c8'] = 'Avgiften for tillegg må velges på nytt: denne butikken brukte tidligere en flat avgiftssats for tillegget, som er erstattet av en avgiftsregelgruppe. Til du velger og lagrer «Avgiftsbehandling for tillegg» under Betalingsinnstillinger, blir tillegget IKKE avgiftsbelagt.';
 $_MODULE['<{twopayment}prestashop>twopayment_8647c528dd8493997122a86c89fa8eea'] = 'Endre betalingsvilkår etter at en ordre er lagt inn';
 $_MODULE['<{twopayment}prestashop>twopayment_2e29bad3ad27b4347773750a8b8d8b09'] = 'Søk opp og velg et gyldig firma for å fortsette med %s-betaling.';
 $_MODULE['<{twopayment}prestashop>twopayment_86ff4218cccb683ac8b1ba2ba3a6c2ca'] = 'Handling påkrevd';
