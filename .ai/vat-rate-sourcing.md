@@ -69,7 +69,7 @@ shop is on the fallback" is a log grep, not an inference. When a default is conf
 refusal log drops from severity 3 to 2, because the refusal is then internal control flow
 rather than a failure.
 
-The admin field renders on Order Management like every other setting on that tab —
+The admin field renders on Order management like every other setting on that tab —
 no build-time flag, no runtime gate. See the README's "Default shipping tax code" section
 for the merchant-facing instructions.
 
