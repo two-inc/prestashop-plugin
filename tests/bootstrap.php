@@ -180,6 +180,17 @@ namespace {
          */
         public static array $taxRuleRates = [];
         /**
+         * `price_display_method` by customer group id, as core's
+         * Group::getPriceDisplayMethod() answers it: 0 = PS_TAX_INC,
+         * 1 = PS_TAX_EXC. A group with no row resolves 0, like core's
+         * `(int) Db::getValue(...)` on a missing group.
+         *
+         * @var array<int,int>
+         */
+        public static array $groupPriceDisplayMethods = [];
+        /** Group::getCurrent()->id - the visitor group for a guest cart. */
+        public static int $currentGroupId = 1;
+        /**
          * Config key names whose NEXT Configuration::updateValue() must answer
          * `false` WITHOUT throwing, and without writing. That is how core
          * behaves on a Validate failure or a failed Db::execute - it returns an
@@ -384,6 +395,8 @@ namespace {
             self::$productCategories = [];
             self::$images = [];
             self::$taxRuleRates = [];
+            self::$groupPriceDisplayMethods = [];
+            self::$currentGroupId = 1;
             self::$configurationUpdateFailsOnce = [];
             self::$configurationUpdateThrowsOnce = [];
             self::$configurationDeleteFailsOnce = [];
@@ -1537,10 +1550,29 @@ namespace {
         }
     }
 
+    class Group
+    {
+        public int $id = 0;
+
+        public static function getCurrent(): Group
+        {
+            $group = new Group();
+            $group->id = StubStore::$currentGroupId;
+
+            return $group;
+        }
+
+        public static function getPriceDisplayMethod($idGroup): int
+        {
+            return (int) (StubStore::$groupPriceDisplayMethods[(int) $idGroup] ?? 0);
+        }
+    }
+
     class Customer
     {
         public bool $loaded = false;
         public int $id = 0;
+        public int $id_default_group = 0;
         public string $email = '';
         public string $firstname = '';
         public string $lastname = '';
