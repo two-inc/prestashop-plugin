@@ -263,6 +263,13 @@ class TwoCheckoutManager {
     }
     
     setupPrestaShopEventListeners() {
+        // Server-rendered label for whichever term is currently selected
+        // (TwoCheckoutManager instantiates after the initial page render, so
+        // this fixes the summary the buyer sees before any AJAX sync runs).
+        // Kept current from here on by syncSurchargeCartLine's response.
+        this._surchargeLabel = (window.twopayment && window.twopayment.surcharge_line_label) || null;
+        this.fixSurchargeLineDisplay();
+
         if (typeof prestashop !== 'undefined') {
             prestashop.on('updatedAddressForm', () => {
                 this.handleAddressFormUpdate();
@@ -296,6 +303,13 @@ class TwoCheckoutManager {
             // reprices authoritatively and the server-side parity gate fails
             // closed, so the buyer can never be CHARGED off a stale rate.
             prestashop.on('updatedCart', () => {
+                // Core has just replaced the whole summary fragment (see
+                // comment above) with a freshly server-rendered one - which
+                // still carries core's own product-page link around the
+                // surcharge line's name. Re-apply immediately with the
+                // last-known label; the sync below (when Two is selected)
+                // refreshes it again if the term/amount changed underneath.
+                this.fixSurchargeLineDisplay();
                 if (this.isTwoPaymentSelected()) {
                     this.syncSurchargeCartLine(true);
                 }
@@ -474,6 +488,9 @@ class TwoCheckoutManager {
                     // A newer selection superseded this sync; let it drive the UI.
                     return response;
                 }
+                if (response && response.label) {
+                    this._surchargeLabel = response.label;
+                }
                 if (response && response.success && response.changed) {
                     this.refreshCartSummaryInPlace();
                 } else if (!response || !response.success) {
@@ -606,6 +623,47 @@ class TwoCheckoutManager {
                 console.warn('Two Payment: ' + selector + ' matched ' + target.length + ' elements; refreshing the first only.');
             }
             target.first().replaceWith(html);
+        });
+
+        // The 'cart_summary_products' partial just went back in verbatim from
+        // core, carrying core's product-page link around the surcharge line's
+        // name again.
+        this.fixSurchargeLineDisplay();
+    }
+
+    /**
+     * Order-summary display fix for the hidden surcharge product line:
+     * core renders every cart-summary product as a link to its product
+     * page, which for this fee line goes nowhere buyer-useful (the product
+     * is hidden, `visibility: 'none'`) - so it is unwrapped to plain text.
+     * The catalog product's own name can't carry the selected term's day
+     * count (one shared row, concurrent carts can hold different terms -
+     * see createTwoSurchargeCartProduct's docblock), so the correct
+     * "Payment terms fee - N days" wording is applied here instead, from
+     * `this._surchargeLabel` (seeded from `window.twopayment.surcharge_line_label`
+     * at page load, kept current by syncSurchargeCartLine's response).
+     *
+     * Matched by a stable slug in the anchor's href
+     * (`window.twopayment.surcharge_line_link_slug`) rather than by theme
+     * markup structure, so it holds across cart-summary variants. A no-op
+     * when the line isn't in the DOM (surcharge off, Two not selected) or
+     * the label isn't known yet.
+     *
+     * @returns {void}
+     */
+    fixSurchargeLineDisplay() {
+        const slug = window.twopayment && window.twopayment.surcharge_line_link_slug;
+        if (!slug || !this._surchargeLabel) {
+            return;
+        }
+        document.querySelectorAll('a[href*="' + slug + '"]').forEach((anchor) => {
+            const span = document.createElement('span');
+            span.className = anchor.className;
+            if (anchor.title) {
+                span.title = this._surchargeLabel;
+            }
+            span.textContent = this._surchargeLabel;
+            anchor.replaceWith(span);
         });
     }
 
