@@ -300,6 +300,39 @@
             $('input[name^="PS_TWO_PAYMENT_TERMS_"]').on('change', loadTwoMerchantFees);
             loadTwoMerchantFees();
 
+            // Custom request headers (ABN-490): add/remove rows in the
+            // Diagnostics table. Each row's three inputs share one array
+            // index, so a new row takes an index past every existing one -
+            // reusing an index would merge two rows on save.
+            function twoNextCustomHeaderIndex() {
+                var next = 0;
+                $('#two-custom-headers tbody tr.two-custom-header-row').each(function () {
+                    next = Math.max(next, parseInt($(this).data('index'), 10) + 1 || 0);
+                });
+                return next;
+            }
+
+            $('#two-custom-headers-add').on('click', function () {
+                var template = document.getElementById('two-custom-headers-template');
+                if (!template) {
+                    return;
+                }
+                var index = twoNextCustomHeaderIndex();
+                var $row = $(template.innerHTML).filter('tr').first();
+                if (!$row.length) {
+                    return;
+                }
+                $row.attr('data-index', index).data('index', index);
+                $row.find('input[name]').each(function () {
+                    $(this).attr('name', String($(this).attr('name')).replace(/\[\d+\]$/, '[' + index + ']'));
+                });
+                $('#two-custom-headers tbody').append($row);
+            });
+
+            $('#two-custom-headers').on('click', '.two-custom-header-remove', function () {
+                $(this).closest('tr.two-custom-header-row').remove();
+            });
+
             // Inline API-key live check (TWO-25386 #4): fires on blur AND on
             // a debounced keystroke, so a merchant sees the verdict before
             // ever reaching Save. Never touches Configuration - see
