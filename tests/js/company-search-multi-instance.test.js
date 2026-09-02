@@ -133,6 +133,9 @@ beforeEach(() => {
     TwoCompanySearch = loaded.TwoCompanySearch;
     $ = loaded.$;
     ajax = stubAjax($);
+    // Search is relayed through the module's own controller (TWO-25386
+    // follow-up); every real page publishes both keys.
+    window.twopayment = { order_intent_url: 'https://shop.example.test/module/twopayment/orderintent', ajax_token: 'test-token' };
 });
 
 afterEach(() => {
@@ -365,16 +368,16 @@ describe('two live controls do not share state', () => {
 describe('two live controls do not share their inputs', () => {
     test('each snapshots the page config at construction, so a later write reaches neither', () => {
         // Given a control built while one translation is published
-        window.twopayment = { i18n: { company_search_no_matches: 'Ingen treff' } };
+        window.twopayment = { i18n: { company_search_no_matches: 'Ingen treff' }, order_intent_url: window.twopayment.order_intent_url, ajax_token: window.twopayment.ajax_token };
         const first = makeFirst();
 
         // When the page config is replaced and a second control is built
-        window.twopayment = { i18n: { company_search_no_matches: 'Sin resultados' } };
+        window.twopayment = { i18n: { company_search_no_matches: 'Sin resultados' }, order_intent_url: window.twopayment.order_intent_url, ajax_token: window.twopayment.ajax_token };
         const second = makeSecond();
 
         // Then each keeps the config it was constructed with, and a third write
         // reaches neither
-        window.twopayment = { i18n: { company_search_no_matches: 'Nessun risultato' } };
+        window.twopayment = { i18n: { company_search_no_matches: 'Nessun risultato' }, order_intent_url: window.twopayment.order_intent_url, ajax_token: window.twopayment.ajax_token };
         expect(first.getNoMatchesText()).toBe('Ingen treff');
         expect(second.getNoMatchesText()).toBe('Sin resultados');
     });
@@ -618,7 +621,7 @@ describe('addressScope() on PrestaShop core markup', () => {
 
     test('a failed-closed scope reads no country at all, page value included', () => {
         // Given a country select the control must not trust, and a page value
-        window.twopayment = { company_search_country: 'NO' };
+        window.twopayment = { company_search_country: 'NO', order_intent_url: window.twopayment.order_intent_url, ajax_token: window.twopayment.ajax_token };
         const control = mountWithNoScope();
 
         // Then neither is taken: the page value is the CART's billing country,
@@ -629,7 +632,7 @@ describe('addressScope() on PrestaShop core markup', () => {
     });
 
     test('a failed-closed scope withdraws the search and leaves manual entry', () => {
-        window.twopayment = { company_search_country: 'NO' };
+        window.twopayment = { company_search_country: 'NO', order_intent_url: window.twopayment.order_intent_url, ajax_token: window.twopayment.ajax_token };
         const control = mountWithNoScope();
 
         expect(control.searchUnavailable()).toBe(true);
@@ -655,7 +658,7 @@ describe('addressScope() on PrestaShop core markup', () => {
         // Given a mount whose scope is withheld, sharing a page-lifetime
         // memory the way the manager injects it
         const memory = {};
-        window.twopayment = { company_search_country: 'NO' };
+        window.twopayment = { company_search_country: 'NO', order_intent_url: window.twopayment.order_intent_url, ajax_token: window.twopayment.ajax_token };
         buildAddressesStep({
             editing: 'invoice',
             blockContainers: false,

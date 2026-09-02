@@ -106,11 +106,15 @@ beforeEach(() => {
     buildAddressForm();
     installStylesheet('views/css/two.css');
     ajax = stubAjax($);
+    // Search/detail are relayed through the module's own controller
+    // (TWO-25386 follow-up); every real page publishes both keys.
+    window.twopayment = { order_intent_url: 'https://shop.example.test/module/twopayment/orderintent', ajax_token: 'test-token' };
 });
 
 afterEach(() => {
     releaseWidgets($);
     jest.useRealTimers();
+    delete window.twopayment;
 });
 
 describe('§1 the dropdown is a real control, not an in-field autocomplete', () => {

@@ -37,9 +37,6 @@
             // TwoCheckoutManager.seedConfirmedCompanySelectionFromServer().
             confirmedCompany: config.confirmed_company || null,
             checkoutHost: config.checkout_host,
-            // Empty when the browser-token toggle is off (TWO-25386) - the
-            // company-search fetch omits X-WAF-TOKEN rather than sending a blank one.
-            firewallToken: config.firewall_token || '',
             orderIntentUrl: config.order_intent_url,
             ajaxToken: config.ajax_token,
             available_payment_terms: config.available_payment_terms || [30],
