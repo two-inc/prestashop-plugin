@@ -12531,6 +12531,31 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Whether this cart's prices are displayed tax-included, resolved the way
+     * core's Cart::setTaxCalculationMethod does it: the customer's default
+     * group, falling back to the visitor's current group.
+     *
+     * @param Cart $cart
+     * @return bool
+     */
+    private function isTwoTaxInclusiveDisplayForCart($cart)
+    {
+        $groupId = 0;
+        if (Validate::isLoadedObject($cart) && (int) $cart->id_customer > 0) {
+            $customer = new Customer((int) $cart->id_customer);
+            if (Validate::isLoadedObject($customer)) {
+                $groupId = (int) $customer->id_default_group;
+            }
+        }
+        if ($groupId <= 0) {
+            $current = Group::getCurrent();
+            $groupId = is_object($current) ? (int) $current->id : 0;
+        }
+
+        return (int) Group::getPriceDisplayMethod($groupId) === 0; // PS_TAX_INC
+    }
+
+    /**
      * @param Cart $cart
      * @return string
      */
@@ -12645,8 +12670,11 @@ class Twopayment extends PaymentModule
 
     /**
      * Live per-term buyer surcharge amounts for the checkout term chips: the
-     * REAL quoted fee (buyer_fee_share net, via POST /v1/pricing/order/fee per
-     * offered term through fetchTwoTermFee) for the CURRENT cart, replacing
+     * REAL quoted fee (buyer_fee_share, via POST /v1/pricing/order/fee per
+     * offered term through fetchTwoTermFee, presented tax-included or
+     * tax-excluded to match the shop's price-display method for the cart's
+     * group — the same way PS renders its own surcharge cart line) for the
+     * CURRENT cart, replacing
      * each chip's loading indicator when it resolves (the buyer is never
      * shown the configured rate). Mirrors magento-plugin's
      * Model/Webapi/Surcharges.php: basis
@@ -12714,6 +12742,13 @@ class Twopayment extends PaymentModule
             }
             $buyerCountry = $this->resolveTwoBuyerCountryIso($cart);
 
+            // The chip must read like PS's own surcharge cart line, which the
+            // shop displays per the group's price-display method.
+            $taxMultiplier = 1.0;
+            if ($this->isTwoTaxInclusiveDisplayForCart($cart)) {
+                $taxMultiplier += $this->getTwoSurchargeTaxRateForCart($cart);
+            }
+
             $amounts = array();
             foreach ($terms as $days) {
                 $days = (int) $days;
@@ -12721,7 +12756,7 @@ class Twopayment extends PaymentModule
                 // Per-term degrade: a failed quote zeroes THAT chip's fee
                 // (the JS hides a zero fee) without failing the whole map.
                 $amounts[$days] = ($fee !== null && isset($fee['buyer_fee_share']))
-                    ? round((float) $fee['buyer_fee_share'], 2)
+                    ? round((float) $fee['buyer_fee_share'] * $taxMultiplier, 2)
                     : 0.0;
             }
 

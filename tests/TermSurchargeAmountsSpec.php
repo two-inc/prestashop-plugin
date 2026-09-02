@@ -9,7 +9,9 @@ declare(strict_types=1);
  *
  *  - Basis from the LIVE cart (getOrderTotal(true, Cart::BOTH)); one
  *    POST /v1/pricing/order/fee per offered term via fetchTwoTermFee.
- *  - {success: true, currency, amounts: {days: net-rounded-2dp}}.
+ *  - {success: true, currency, amounts: {days: rounded-2dp}}, each amount
+ *    tax-included or tax-excluded per the price-display method of the cart's
+ *    group - matching PS's own surcharge cart line.
  *  - Per-term degrade: a single term's quote failure zeroes THAT term only;
  *    even EVERY term failing on a nonzero basis still returns success:true
  *    with all-zero amounts (the JS hides zero fees per chip).
@@ -27,6 +29,7 @@ final class TermSurchargeAmountsSpec
         self::testMissingOrUnloadedCartFailsWithoutWireCall();
         self::testZeroCartBasisFailsWithoutWireCall();
         self::testTotalApiFailureWithNonzeroBasisStillSucceedsAllZero();
+        self::testChipAmountFollowsThePriceDisplayMethod();
     }
 
     /**
@@ -185,5 +188,69 @@ final class TermSurchargeAmountsSpec
         TinyAssert::same('EUR', $result['currency']);
         TinyAssert::same([30 => 0.0, 60 => 0.0], $result['amounts']);
         TinyAssert::same(2, $module->fetchCount, 'every term must still be attempted');
+    }
+
+    /**
+     * The chip must read like PS's own surcharge cart line, which is
+     * rendered per the group's price-display method at the surcharge tax
+     * rules group's rate for this cart's destination. The QUOTE is unaffected:
+     * the wire basis stays the cart gross and the net is what is grossed up.
+     */
+    private static function testChipAmountFollowsThePriceDisplayMethod(): void
+    {
+        // display: price_display_method by group id (0 = incl, 1 = excl).
+        $cases = [
+            [
+                'display' => [1 => 1],
+                'rate' => [34 => 21.0],
+                'customer' => null,
+                'expected' => [30 => 5.0, 60 => 7.51],
+                'why' => 'tax-excluded display shows the quoted net verbatim',
+            ],
+            [
+                'display' => [1 => 0],
+                'rate' => [34 => 21.0],
+                'customer' => null,
+                'expected' => [30 => 6.05, 60 => 9.08],
+                'why' => 'tax-included display grosses the net up at the destination rate',
+            ],
+            [
+                'display' => [1 => 0],
+                'rate' => [34 => 0.0],
+                'customer' => null,
+                'expected' => [30 => 5.0, 60 => 7.51],
+                'why' => 'tax-included display with a zero-rated destination leaves the net alone',
+            ],
+            [
+                // Core resolves a logged-in cart against the customer's
+                // default group, not the visitor group.
+                'display' => [1 => 0, 5 => 1],
+                'rate' => [34 => 21.0],
+                'customer' => ['id' => 88, 'group' => 5],
+                'expected' => [30 => 5.0, 60 => 7.51],
+                'why' => "the customer's default group decides, not the visitor group",
+            ],
+        ];
+
+        foreach ($cases as $case) {
+            self::reset();
+            StubStore::$groupPriceDisplayMethods = $case['display'];
+            StubStore::$taxRuleRates[400] = $case['rate'];
+            Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+            if ($case['customer'] !== null) {
+                StubStore::$customers[$case['customer']['id']] = ['id_default_group' => $case['customer']['group']];
+                Context::getContext()->cart->id_customer = (int) $case['customer']['id'];
+            }
+            $module = self::moduleWithPerTermResponses([
+                30 => self::okQuote('5.00'),
+                60 => self::okQuote('7.505'),
+            ]);
+
+            $result = $module->getTwoOfferedTermSurchargeAmounts();
+
+            TinyAssert::true($result['success'], $case['why']);
+            TinyAssert::same($case['expected'], $result['amounts'], $case['why']);
+            TinyAssert::same('250.00', (string) $module->payloads[0]['gross_amount'], 'the quote basis stays the cart gross: ' . $case['why']);
+        }
     }
 }
