@@ -590,6 +590,7 @@ class Twopayment extends PaymentModule
             $this->registerHook('actionCustomerAddressSave') &&
             $this->registerHook('actionFrontControllerInitAfter') &&
             $this->registerHook('actionObjectOrderDetailAddBefore') &&
+            $this->registerHook('actionPresentCart') &&
             $this->installTwoInvoiceAdminTab() &&
             $this->installTwoErrorLogAdminTab() &&
             $this->installTwoSettings() &&
@@ -870,6 +871,7 @@ class Twopayment extends PaymentModule
             $this->unregisterHook('actionCustomerAddressSave') &&
             $this->unregisterHook('actionFrontControllerInitAfter') &&
             $this->unregisterHook('actionObjectOrderDetailAddBefore') &&
+            $this->unregisterHook('actionPresentCart') &&
             $this->uninstallTwoInvoiceAdminTab() &&
             $this->uninstallTwoErrorLogAdminTab() &&
             ($clearSettings ? $this->uninstallTwoSettings() : true) &&
@@ -13354,6 +13356,114 @@ class Twopayment extends PaymentModule
         }
 
         return null;
+    }
+
+    /**
+     * The presented cart's underlying Cart. CartLazyArray (PS8 core) carries
+     * it as a private, unexposed property - verified against core: no
+     * @arrayAccess getter surfaces it. Reflection is the only way to recover
+     * it, and the only correct one for the order-confirmation context, where
+     * the presented cart is NOT $this->context->cart (OrderLazyArray
+     * re-presents `new Cart($order->id_cart)`).
+     *
+     * @param object $presentedCart
+     * @return Cart|null
+     */
+    protected function getTwoCartFromPresentedCart($presentedCart)
+    {
+        try {
+            $reflection = new ReflectionProperty($presentedCart, 'cart');
+            $reflection->setAccessible(true);
+            $cart = $reflection->getValue($presentedCart);
+
+            return $cart instanceof Cart ? $cart : null;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    /**
+     * Move the buyer surcharge out of the presented cart's product-rows list
+     * into its own totals row, positioned right before Shipping. The
+     * surcharge is a genuine hidden cart product (the only way core carries
+     * its price through Cart::getOrderTotal()/order creation), so it would
+     * otherwise render as an ordinary line item everywhere
+     * CartPresenter::present() runs: cart page, checkout, mini-cart, and
+     * order confirmation. Display-layer only: never touches Cart, tax
+     * rules, or the underlying totals - it rewrites the already-computed
+     * 'products' and 'subtotals' entries, both core-marked @isRewritable.
+     *
+     * @param array $params ['presentedCart' => CartLazyArray]
+     */
+    public function hookActionPresentCart($params)
+    {
+        $presentedCart = isset($params['presentedCart']) ? $params['presentedCart'] : null;
+        if (!is_object($presentedCart)) {
+            return;
+        }
+
+        $cart = $this->getTwoCartFromPresentedCart($presentedCart);
+        if (!Validate::isLoadedObject($cart)) {
+            return;
+        }
+
+        $surchargeLine = $this->getTwoSurchargeCartLine($cart);
+        if ($surchargeLine === null) {
+            return;
+        }
+
+        $products = (array) $presentedCart['products'];
+        $filteredProducts = array();
+        foreach ($products as $row) {
+            // Presented rows are ProductListingLazyArray objects (ArrayAccess),
+            // not plain arrays - isset()/[] work on both via the same syntax.
+            $reference = (is_array($row) || $row instanceof ArrayAccess) && isset($row['reference']) ? $row['reference'] : null;
+            if ($reference !== null && (string) $reference === self::TWO_SURCHARGE_PRODUCT_REFERENCE) {
+                continue;
+            }
+            $filteredProducts[] = $row;
+        }
+        if (count($filteredProducts) === count($products)) {
+            // The surcharge product isn't in the presented list (row not
+            // synced yet, or a duplicate hook run already moved it) -
+            // nothing to move, and subtotals.products still excludes it.
+            return;
+        }
+        $presentedCart->offsetSet('products', $filteredProducts);
+
+        // Same value the removed products-row entry was showing - PR #211's
+        // resolution, not a recomputation.
+        $includeTaxes = $this->isTwoTaxInclusiveDisplayForCart($cart);
+        $amount = $includeTaxes ? $surchargeLine['gross'] : $surchargeLine['net'];
+        $label = $this->getTwoSurchargeLineLabel($this->getSelectedPaymentTerm());
+
+        $subtotals = (array) $presentedCart['subtotals'];
+        $rebuilt = array();
+        foreach ($subtotals as $key => $value) {
+            if ($key === 'products' && is_array($value) && isset($value['amount'])) {
+                $value['amount'] = round((float) $value['amount'] - $amount, 2);
+                $value['value'] = Tools::displayPrice($value['amount']);
+            }
+            if ($key === 'shipping') {
+                $rebuilt['two_surcharge_fee'] = array(
+                    'type' => 'two_surcharge_fee',
+                    'label' => $label,
+                    'amount' => $amount,
+                    'value' => Tools::displayPrice($amount),
+                );
+            }
+            $rebuilt[$key] = $value;
+        }
+        if (!array_key_exists('two_surcharge_fee', $rebuilt)) {
+            // Defensive only - core always sets 'shipping' unconditionally.
+            $rebuilt['two_surcharge_fee'] = array(
+                'type' => 'two_surcharge_fee',
+                'label' => $label,
+                'amount' => $amount,
+                'value' => Tools::displayPrice($amount),
+            );
+        }
+        $presentedCart->offsetSet('subtotals', $rebuilt);
     }
 
     /**

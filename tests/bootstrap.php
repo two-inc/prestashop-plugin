@@ -1871,6 +1871,91 @@ namespace {
         }
     }
 
+    /**
+     * Minimal stand-in for core's CartLazyArray (PS8:
+     * src/Adapter/Presenter/Cart/CartLazyArray.php) - an ArrayAccess wrapping
+     * 'products'/'subtotals' plus the Cart that built them, carried as a
+     * private, unexposed property exactly like core's, so a spec exercises
+     * the SAME reflection path hookActionPresentCart uses in production.
+     */
+    class CartLazyArrayStub implements \ArrayAccess
+    {
+        private Cart $cart;
+        private array $data;
+
+        public function __construct(Cart $cart, array $data)
+        {
+            $this->cart = $cart;
+            $this->data = $data;
+        }
+
+        public function offsetExists($offset): bool
+        {
+            return array_key_exists($offset, $this->data);
+        }
+
+        public function offsetGet($offset): mixed
+        {
+            return $this->data[$offset] ?? null;
+        }
+
+        public function offsetSet($offset, $value): void
+        {
+            $this->data[$offset] = $value;
+        }
+
+        public function offsetUnset($offset): void
+        {
+            unset($this->data[$offset]);
+        }
+
+        public function getData(): array
+        {
+            return $this->data;
+        }
+    }
+
+    /**
+     * Core's presented product rows are ProductListingLazyArray OBJECTS
+     * (ArrayAccess), never plain arrays - this stub exists so a spec catches
+     * code that does `is_array($row)` on a presented row (real PS8 core:
+     * CartLazyArray::presentProduct() returns a ProductListingLazyArray).
+     */
+    class PresentedProductRowStub implements \ArrayAccess
+    {
+        private array $data;
+
+        public function __construct(array $data)
+        {
+            $this->data = $data;
+        }
+
+        public function offsetExists($offset): bool
+        {
+            return array_key_exists($offset, $this->data);
+        }
+
+        public function offsetGet($offset): mixed
+        {
+            return $this->data[$offset] ?? null;
+        }
+
+        public function offsetSet($offset, $value): void
+        {
+            $this->data[$offset] = $value;
+        }
+
+        public function offsetUnset($offset): void
+        {
+            unset($this->data[$offset]);
+        }
+
+        public function toArray(): array
+        {
+            return $this->data;
+        }
+    }
+
     class Language
     {
         public static function getLanguages($active = false): array
