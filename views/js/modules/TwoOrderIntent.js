@@ -614,17 +614,23 @@ class TwoOrderIntent {
 
     callTwoOrderIntent(payload) {
         return new Promise((resolve, reject) => {
+            if (!window.twopayment || !window.twopayment.order_intent_url || !window.twopayment.ajax_token) {
+                reject(new Error('Two order intent failed: module endpoint unavailable'));
+                return;
+            }
+
+            // Relayed through the module's own controller so the firewall token
+            // that Two may require stays server-side.
             $.ajax({
-                url: TwoOrderIntent.withTwoClientParams(
-                    (window.twopayment && window.twopayment.checkout_host ? window.twopayment.checkout_host : '') + '/v1/order_intent'
-                ),
+                url: window.twopayment.order_intent_url,
                 type: 'POST',
-                crossDomain: true,
                 dataType: 'json',
-                contentType: 'application/json',
-                data: JSON.stringify(payload),
-                xhrFields: { withCredentials: false },
-                beforeSend: this.buildPublicApiBeforeSend(),
+                data: {
+                    ajax: 1,
+                    action: 'orderIntent',
+                    token: window.twopayment.ajax_token,
+                    payload: JSON.stringify(payload)
+                },
                 timeout: 15000,
                 success: (response) => {
                     if (response && typeof response === 'object') {

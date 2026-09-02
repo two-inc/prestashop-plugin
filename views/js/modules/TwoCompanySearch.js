@@ -4892,22 +4892,31 @@ class TwoCompanySearch {
         // platforms.
         const limit = Number(this.config.companySearchLimit)
             || TwoCompanySearch.DEFAULT_COMPANY_SEARCH_LIMIT;
-        const params = new URLSearchParams({ q: term, limit: limit, offset: 0, country: country });
-        // Direct Two API call from frontend as required
-        const searchUrl = TwoCompanySearch.withTwoClientParams(
-            `${this.config.checkoutHost}/companies/v2/company?${params}`
-        );
+        if (!window.twopayment || !window.twopayment.order_intent_url || !window.twopayment.ajax_token) {
+            this._companySearchSeq += 1;
+            this._abortPendingCompanySearch();
+            responseCallback([], { unavailable: true });
+            return;
+        }
 
         const seq = (this._companySearchSeq += 1);
         this._abortPendingCompanySearch();
 
+        // Relayed through the module's own controller, not called directly:
+        // the firewall token that Two may require stays server-side.
         this._companySearchXhr = $.ajax({
-            url: searchUrl,
+            url: window.twopayment.order_intent_url,
             method: 'GET',
-            crossDomain: true,
             dataType: 'json',
-            xhrFields: { withCredentials: false },
-            beforeSend: this.buildPublicApiBeforeSend(),
+            data: {
+                ajax: 1,
+                action: 'companySearch',
+                token: window.twopayment.ajax_token,
+                q: term,
+                limit: limit,
+                offset: 0,
+                country: country
+            },
             // 30s, not 10s. The server's own retry envelope is stop_after_delay(10),
             // so a 10s client timeout gave up at the exact instant a successful
             // response would have arrived - the buyer saw a failure for a search
@@ -5289,19 +5298,23 @@ class TwoCompanySearch {
      * Fetch detailed company information
      */
     fetchCompanyDetails(lookupId) {
-        // Direct Two API call from frontend as required
-        const detailUrl = TwoCompanySearch.withTwoClientParams(
-            `${this.config.checkoutHost}/companies/v2/company/${lookupId}`
-        );
-        
         return new Promise((resolve, reject) => {
+            if (!window.twopayment || !window.twopayment.order_intent_url || !window.twopayment.ajax_token) {
+                reject(new Error('Company details fetch failed: module endpoint unavailable'));
+                return;
+            }
+
+            // Relayed through the module's own controller - see searchCompanies().
             $.ajax({
-                url: detailUrl,
+                url: window.twopayment.order_intent_url,
                 method: 'GET',
-                crossDomain: true,
                 dataType: 'json',
-                xhrFields: { withCredentials: false },
-                beforeSend: this.buildPublicApiBeforeSend(),
+                data: {
+                    ajax: 1,
+                    action: 'companyDetails',
+                    token: window.twopayment.ajax_token,
+                    lookup_id: lookupId
+                },
                 timeout: 10000,
                 success: resolve,
                 error: (xhr, status, error) => {

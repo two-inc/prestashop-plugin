@@ -357,6 +357,15 @@ class TwoSoleTrader
         $url = $module->getTwoCheckoutHostUrl() . $endpoint;
         $responseHeaders = array();
 
+        $requestHeaders = array(
+            'Content-Type: application/json',
+            'X-API-Key: ' . Configuration::get('PS_TWO_MERCHANT_API_KEY'),
+        );
+        $firewallToken = Twopayment::getTwoFirewallToken();
+        if ($firewallToken !== '') {
+            $requestHeaders[] = 'X-WAF-TOKEN: ' . $firewallToken;
+        }
+
         $ch = curl_init();
         curl_setopt_array($ch, array(
             CURLOPT_URL => $url,
@@ -364,10 +373,7 @@ class TwoSoleTrader
             CURLOPT_POSTFIELDS => json_encode($payload),
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => 10,
-            CURLOPT_HTTPHEADER => array(
-                'Content-Type: application/json',
-                'X-API-Key: ' . Configuration::get('PS_TWO_MERCHANT_API_KEY'),
-            ),
+            CURLOPT_HTTPHEADER => $requestHeaders,
             CURLOPT_HEADERFUNCTION => function ($ch, $header) use (&$responseHeaders) {
                 $parts = explode(':', $header, 2);
                 if (count($parts) === 2) {
