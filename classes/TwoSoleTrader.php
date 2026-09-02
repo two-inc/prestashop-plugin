@@ -361,10 +361,7 @@ class TwoSoleTrader
             'Content-Type: application/json',
             'X-API-Key: ' . Configuration::get('PS_TWO_MERCHANT_API_KEY'),
         );
-        $firewallToken = Twopayment::getTwoFirewallToken();
-        if ($firewallToken !== '') {
-            $requestHeaders[] = 'X-WAF-TOKEN: ' . $firewallToken;
-        }
+        $requestHeaders = array_merge($requestHeaders, Twopayment::getTwoCustomHeaderLines());
 
         $ch = curl_init();
         curl_setopt_array($ch, array(
