@@ -461,7 +461,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_0db377921f4ce762c62526131097968f'] 
 $_MODULE['<{twopayment}prestashop>configuration_0db377921f4ce762c62526131097968f'] = 'Algemeen';
 $_MODULE['<{twopayment}prestashop>twopayment_86c80b3438aaf080deed28e95023241c'] = 'Afrekenvelden';
 $_MODULE['<{twopayment}prestashop>configuration_86c80b3438aaf080deed28e95023241c'] = 'Afrekenvelden';
-$_MODULE['<{twopayment}prestashop>configuration_d510626d757fd594c73232574fd56d64'] = 'Betalingsvoorwaarden';
+$_MODULE['<{twopayment}prestashop>configuration_d510626d757fd594c73232574fd56d64'] = 'Betaaltermijnen';
 $_MODULE['<{twopayment}prestashop>twopayment_c3bcb4d75d3af37fe613c8077e38441d'] = 'Instellingen voor afrekenvelden zijn bijgewerkt.';
 $_MODULE['<{twopayment}prestashop>twopayment_23c8711f45541e10da6c1eb134fddeb2'] = 'Instellingen voor betalingsvoorwaarden zijn bijgewerkt.';
 $_MODULE['<{twopayment}prestashop>twopayment_d4404362aa07bc22fd82bcfcfc7563d9'] = 'Orderbeheer';
@@ -494,7 +494,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_7bed29e48ca0f829b25c6a9979e922b1'] 
 $_MODULE['<{twopayment}prestashop>twopayment_8379c21558cc484944e1a0844e193dce'] = 'Veld Project weergeven';
 $_MODULE['<{twopayment}prestashop>twopayment_e9312a5b0af374addead11392ef44b79'] = 'Veld Afdeling weergeven';
 $_MODULE['<{twopayment}prestashop>twopayment_480bb62721b9024348770e929e218895'] = 'Type betalingstermijnen';
-$_MODULE['<{twopayment}prestashop>twopayment_d510626d757fd594c73232574fd56d64'] = 'Betalingstermijnen';
+$_MODULE['<{twopayment}prestashop>twopayment_d510626d757fd594c73232574fd56d64'] = 'Betaaltermijnen';
 $_MODULE['<{twopayment}prestashop>twopayment_86d403c47ad333133e4b63ee6a32995d'] = 'Aangepaste betalingstermijnen (dagen)';
 $_MODULE['<{twopayment}prestashop>twopayment_b71c1fc70853defd937483989b0193e4'] = 'Standaard betalingstermijnen';
 $_MODULE['<{twopayment}prestashop>twopayment_1209b4672407cabf760e430e4def42aa'] = 'Bedrijfszoekopdracht';
