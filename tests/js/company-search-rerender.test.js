@@ -61,12 +61,16 @@ beforeEach(() => {
     $ = loaded.$;
     bus = loaded.bus;
     ajax = stubAjax($);
+    // Search/detail are relayed through the module's own controller
+    // (TWO-25386 follow-up); every real page publishes both keys.
+    window.twopayment = { order_intent_url: '/module/twopayment/orderintent', ajax_token: 'tok' };
 });
 
 afterEach(() => {
     releaseWidgets($);
     ajax.restore();
     document.body.innerHTML = '';
+    delete window.twopayment;
 });
 
 function makeInstance(extraConfig) {
@@ -857,7 +861,9 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
             i18n: {
                 company_search_manual_entry: 'Mi empresa no está en la lista',
                 company_search_back_to_search: 'Buscar empresa'
-            }
+            },
+            order_intent_url: '/module/twopayment/orderintent',
+            ajax_token: 'tok'
         };
         try {
             makeInstance();
@@ -1111,8 +1117,10 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
             window.twopayment = undefined;
             try {
                 const instance = makeInstance();
+                // With no endpoint published, search is relayed nowhere - it
+                // declines rather than throwing (see searchCompanies()'s own
+                // `unavailable` guard), so there is no request to settle here.
                 search(AT_THRESHOLD);
-                ajax.last().succeed(SEARCH_RESPONSE);
                 instance.organizationField.val('12345678');
 
                 instance.enterManualEntryMode();
@@ -1457,8 +1465,13 @@ describe('selecting a company through the real widget', () => {
 
         // Some registries (GB among them) return the organisation number only on
         // the detail endpoint, so the number has to arrive by that second call.
-        expect(ajax.calls).toHaveLength(2);
-        expect(ajax.last().url).toContain('/companies/v2/company/lookup-abc-123');
+        // (A selection also fires an unrelated session-company write, so this
+        // counts the two relevant actions rather than every call on the wire.)
+        const relevant = ajax.calls.filter(
+            (call) => ['companySearch', 'companyDetails'].includes(call.settings.data && call.settings.data.action)
+        );
+        expect(relevant).toHaveLength(2);
+        expect(ajax.last().settings.data).toMatchObject({ action: 'companyDetails', lookup_id: 'lookup-abc-123' });
         ajax.last().succeed({
             national_identifier: { id: '87654321' },
             addresses: [
@@ -1878,16 +1891,15 @@ describe('the company-detail fill', () => {
         expect($("input[name='dni']").val()).toBe('buyer-typed');
     });
 
-    test('the detail request carries no credentials either', async () => {
+    test('the detail request is relayed through the module controller, same-origin', async () => {
         const search = makeInstance();
         search.onCompanySelected(null, {
             item: { value: 'Example Trading Ltd', lookup_id: 'lookup-abc-123' }
         });
 
-        // A second cross-origin call with its own settings block — the search
-        // endpoint's twin being right says nothing about this one.
-        expect(ajax.last().settings.crossDomain).toBe(true);
-        expect(ajax.last().settings.xhrFields).toEqual({ withCredentials: false });
+        // Relayed through the module's own controller (TWO-25386 follow-up),
+        // never straight to Two - no cross-origin settings to carry any more.
+        expect(ajax.last().settings.data.action).toBe('companyDetails');
         expect(ajax.last().settings.timeout).toBe(10000);
         ajax.last().succeed({});
         await flushPromises();
@@ -3111,7 +3123,9 @@ describe('the custom fallback used when jQuery UI is absent', () => {
                 i18n: {
                     company_search_manual_entry: 'Mi empresa no está en la lista',
                     company_search_back_to_search: 'Buscar empresa'
-                }
+                },
+                order_intent_url: '/module/twopayment/orderintent',
+                ajax_token: 'tok'
             };
             try {
                 makeInstance();

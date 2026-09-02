@@ -107,7 +107,6 @@ class TwoCompanySearch {
         this.config = {
             companyFieldSelector: "input[name='company']",
             checkoutHost: '',
-            firewallToken: '',
             saveCompanyUrl: '',
             // Page size for GET /companies/v2/company. Without it the API's
             // own default decides how many rows come back, so a common name in
@@ -1767,67 +1766,6 @@ class TwoCompanySearch {
 
     normalizeCompanyName(value) {
         return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
-    }
-
-    /**
-     * Append the `client`/`client_v` identification params that every call to
-     * Two carries, read from the server-published config, so a version bump
-     * stays a PHP-only change.
-     *
-     * Query params rather than a body field, on the POSTs too: that is the
-     * convention the module's own server-side calls already use for this pair
-     * (getTwoClientParams() / setTwoPaymentRequest() in twopayment.php).
-     *
-     * Either param is dropped when the config does not carry it, so a page
-     * running without the config sends a correct URL rather than a literal
-     * `client=undefined`.
-     *
-     * @param {string} url
-     * @returns {string} url with the params appended
-     */
-    static withTwoClientParams(url) {
-        const config = (typeof window !== 'undefined' && window.twopayment) || {};
-        const params = new URLSearchParams();
-        if (config.client) {
-            params.set('client', config.client);
-        }
-        if (config.client_version) {
-            params.set('client_v', config.client_version);
-        }
-        const query = params.toString();
-        if (!query) {
-            return url;
-        }
-
-        return url + (url.indexOf('?') === -1 ? '?' : '&') + query;
-    }
-
-    buildPublicApiBeforeSend() {
-        // Off by default (TWO-25386): a published token is readable by
-        // anyone, so it is only ever attached when the merchant's own
-        // browser-token toggle set a non-empty value in config.
-        const firewallToken = this.config.firewallToken;
-        return function (xhr) {
-            const blockedHeaders = {
-                'authorization': true,
-                'proxy-authorization': true,
-                'x-api-key': true
-            };
-            const originalSetRequestHeader = xhr && xhr.setRequestHeader ? xhr.setRequestHeader.bind(xhr) : null;
-            if (!originalSetRequestHeader) {
-                return;
-            }
-            xhr.setRequestHeader = function (name, value) {
-                const normalized = String(name || '').toLowerCase();
-                if (blockedHeaders[normalized]) {
-                    return;
-                }
-                originalSetRequestHeader(name, value);
-            };
-            if (firewallToken) {
-                originalSetRequestHeader('X-WAF-TOKEN', firewallToken);
-            }
-        };
     }
 
     clearStaleOrganizationSelection() {
