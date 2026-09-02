@@ -298,6 +298,11 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $seqRaw = Tools::getValue('seq');
         $syncSeq = (is_numeric($seqRaw) && (float) $seqRaw > 0) ? (int) $seqRaw : null;
         $result = $this->module->syncTwoSurchargeCartLine($this->context->cart, $selected, $syncSeq);
+        // Buyer-facing label for the term this sync just applied - display
+        // only, no bearing on the amount/parity logic above. The checkout JS
+        // uses it to keep the order-summary line's wording current after a
+        // term change (fixSurchargeLineDisplay in TwoCheckoutManager.js).
+        $result['label'] = $this->module->getTwoSurchargeLineLabel($this->module->getSelectedPaymentTerm());
         $this->sendJsonResponse(json_encode($result));
     }
 

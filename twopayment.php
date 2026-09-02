@@ -235,6 +235,12 @@ class Twopayment extends PaymentModule
     // order and invoice (not only on the Two-side invoice). Lazily created
     // on first use; identified by Configuration id + reference cross-check.
     const TWO_SURCHARGE_PRODUCT_REFERENCE = 'TWO-SURCHARGE-FEE';
+    // Stable, checkout-JS-visible marker: the order-summary anchor that
+    // wraps this hidden product's name (a real Product page link core
+    // renders for every cart line) is identified by this slug and unwrapped
+    // to plain text client-side - see fixSurchargeLineDisplay in
+    // TwoCheckoutManager.js.
+    const TWO_SURCHARGE_PRODUCT_LINK_REWRITE = 'two-payment-terms-fee';
     const CONFIG_SURCHARGE_PRODUCT_ID = 'PS_TWO_SURCHARGE_PRODUCT_ID';
     // Merchant-selected TaxRulesGroup applied to the hidden surcharge
     // product - the SAME id_tax_rules_group field every real Product uses,
@@ -4670,6 +4676,13 @@ class Twopayment extends PaymentModule
                 // Enables the checkout JS to mirror the buyer surcharge as a
                 // real PrestaShop cart line on payment-option selection.
                 'surcharge_cart_line' => !empty($this->getTwoSurchargeSettings()['enabled']),
+                // Buyer-facing surcharge label for the CURRENTLY selected
+                // term, for the initial page render (before any AJAX sync
+                // has run) - see fixSurchargeLineDisplay in
+                // TwoCheckoutManager.js, which the syncSurchargeLine
+                // response's own 'label' keeps in sync after that.
+                'surcharge_line_label' => $this->getTwoSurchargeLineLabel($this->getSelectedPaymentTerm()),
+                'surcharge_line_link_slug' => self::TWO_SURCHARGE_PRODUCT_LINK_REWRITE,
                 'payment_term_type' => Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'),
                 // Per-brand order-intent APPROVED notice, TWO-25218. TWO KEYS,
                 // deliberately separate: one boolean decides on/off, one string
@@ -12903,7 +12916,7 @@ class Twopayment extends PaymentModule
         $product->link_rewrite = array();
         foreach ($languageIds as $idLang) {
             $product->name[$idLang] = $label;
-            $product->link_rewrite[$idLang] = 'two-payment-terms-fee';
+            $product->link_rewrite[$idLang] = self::TWO_SURCHARGE_PRODUCT_LINK_REWRITE;
         }
         $product->reference = self::TWO_SURCHARGE_PRODUCT_REFERENCE;
         $product->price = 0;
