@@ -81,16 +81,15 @@ class TwoSoleTrader {
         // moved - see cancelEnrollment().
         this._enrollGeneration = 0;
         // The `_enrollGeneration` value that was current when `this.tokens` was
-        // last minted or explicitly resumed. `cancelEnrollment()` deliberately
-        // does NOT invalidate `tokens` or close the signup popup - the flow is
-        // meant to be resumable - so the popup-completion listener has to be
-        // able to tell tokens belonging to the CURRENT attempt from tokens of an
-        // attempt the buyer has walked away from while the popup happens to
-        // still be open. Stamped in fetchTokens()/startEnrollment(), checked in
-        // bindPopupMessageListener().
+        // last minted FOR A CLICK, or explicitly resumed. `cancelEnrollment()`
+        // deliberately does NOT invalidate `tokens` or close the signup popup -
+        // the flow is meant to be resumable - so the popup-completion listener
+        // has to be able to tell tokens belonging to the CURRENT attempt from
+        // tokens of an attempt the buyer has walked away from while the popup
+        // happens to still be open. Stamped in fetchTokens()/startEnrollment(),
+        // checked in bindPopupMessageListener().
         this._tokensGeneration = 0;
         this.tokens = null;
-        this.flowStarted = false;
         // The handle returned by window.open() for the currently-open signup
         // popup, and the setInterval id polling it - held so
         // notifyEnrollmentSettled() can hold off until the popup actually
@@ -794,6 +793,9 @@ class TwoSoleTrader {
         if (!country || this._eagerMintCountry === country) {
             return;
         }
+        if (this.tokensAreForCurrentCountry()) {
+            return;
+        }
         if (!this.isAvailableForCurrentCountry()) {
             return;
         }
@@ -802,9 +804,27 @@ class TwoSoleTrader {
         if (this._popup && !this._popup.closed) {
             return;
         }
-        this._eagerMintCountry = country;
         this.startTokenRefreshInterval();
-        this.fetchTokens();
+        // Marked as attempted only once a request is genuinely out - stamping a
+        // mint fetchTokens() declined would leave this country with no tokens
+        // and nothing left to ever ask again.
+        if (this.fetchTokens(true)) {
+            this._eagerMintCountry = country;
+        }
+    }
+
+    /**
+     * @returns {boolean} whether `this.tokens` holds delegated authority for
+     *   the country the chip is being shown for. An enrolment must never be
+     *   authorised against a country the buyer has left, so to every entry
+     *   point another country's tokens are as good as absent.
+     */
+    tokensAreForCurrentCountry() {
+        if (!this.tokens) {
+            return false;
+        }
+        // A payload echoing no country back cannot be judged, so it is trusted.
+        return !this.tokens.country || this.tokens.country === this.billingCountry();
     }
 
     /**
@@ -814,9 +834,9 @@ class TwoSoleTrader {
      */
     startEnrollment() {
         this.enrolling = true;
-        if (!this.flowStarted || !this.tokens) {
+        if (!this.tokensAreForCurrentCountry()) {
             this.fetchTokens();
-        } else if (this.tokens) {
+        } else {
             // Re-stamp the existing tokens as CURRENT: this is an explicit,
             // deliberate resume - the buyer clicked "Sole Trader" again - so
             // whatever generation was active when these tokens were originally
@@ -849,7 +869,7 @@ class TwoSoleTrader {
     startReplacement() {
         this.enrolling = true;
         this._skipAutofillCheck = true;
-        if (!this.flowStarted || !this.tokens) {
+        if (!this.tokensAreForCurrentCountry()) {
             this.fetchTokens();
         } else {
             // Same "explicit resume" re-stamp as startEnrollment()'s own resume
@@ -927,6 +947,9 @@ class TwoSoleTrader {
             return;
         }
         this.enrolling = false;
+        // The abandoned click is no longer waiting on the mint in flight; a
+        // re-click re-establishes the waiter through fetchTokens().
+        this._mintHasWaiter = false;
         this.hidePrompt();
         // TWO-40: a genuine cancellation - `enrolling` really was true - is
         // itself a terminal state for whichever click started the flight being
@@ -1001,20 +1024,27 @@ class TwoSoleTrader {
      * click.
      *
      * Whether the tokens are ACTED on, and whether a failure reaches the
-     * buyer, is decided by `_mintHasWaiter` rather than by `enrolling`: a
-     * startEagerTokenMint() mint has nobody waiting on it, and neither does
-     * one overlapping a click already served by existing tokens - acting on
-     * either would open a popup, or re-run a lookup, unasked. A click reaches
-     * this method only with no tokens to be served by (see startEnrollment()),
-     * which is what makes that the whole test.
+     * buyer, is decided by `_mintHasWaiter`, not by `enrolling`: `enrolling`
+     * stays true after a failed click and is cleared for a click that IS still
+     * riding a mint, and acting without a waiter opens a popup, or re-runs a
+     * lookup, the buyer never asked for.
+     *
+     * @param {boolean} [isEager] called by startEagerTokenMint(), not by a
+     *   click: never becomes a waiter itself, but must not clear one either -
+     *   a click can be riding the mint it is about to start.
+     * @returns {boolean} whether a mint request was actually issued
      */
-    fetchTokens() {
-        this._mintHasWaiter = this._mintHasWaiter || (this.enrolling && !this.tokens);
+    fetchTokens(isEager) {
+        if (!isEager) {
+            // Every other caller is a click, and reached here only because it
+            // had no usable tokens - see startEnrollment()/startReplacement().
+            this._mintHasWaiter = true;
+        }
         if (this.isFetchingTokens) {
             // A request IS already out - this click is riding it, and its
             // own resolution (the `_mintHasWaiter` resume branches below) is
             // what settles this click, not this return.
-            return;
+            return false;
         }
         if (Date.now() < this.nextRetryAt) {
             // Unlike the isFetchingTokens branch above, NOTHING is in flight to
@@ -1025,10 +1055,9 @@ class TwoSoleTrader {
                 this._mintHasWaiter = false;
                 this.showError();
             }
-            return;
+            return false;
         }
         this.isFetchingTokens = true;
-        this.flowStarted = true;
         const self = this;
         // Captured BEFORE the request starts (round 3 adversarial review
         // finding) - a mint still outstanding when the buyer reopens search
@@ -1057,7 +1086,7 @@ class TwoSoleTrader {
             this.isFetchingTokens = false;
             this.noteMintFailure();
             this._mintHasWaiter = false;
-            return;
+            return false;
         }
         request
             .then(function (response) { return response.json(); })
@@ -1095,23 +1124,28 @@ class TwoSoleTrader {
                         // guard (isFetchingTokens, above) means the SECOND
                         // click's startEnrollment() call rode along on this
                         // exact request rather than firing a new one - there
-                        // is only ever one mint in flight at a time. With a
-                        // waiter, a later click IS still waiting on exactly
-                        // these tokens; silently dropping
-                        // them here (the previous behaviour) left that
-                        // click's spinner and open panel with nothing left
+                        // is only ever one mint in flight at a time. A waiter
+                        // that outlived the cancel is therefore a LATER click
+                        // still riding this request (cancelEnrollment() clears
+                        // the abandoned one's); silently dropping these tokens
+                        // left that click's spinner and open panel with nothing
                         // to ever settle it. Stamp and resume for whichever
                         // generation is CURRENT, not the stale one that
                         // requested the mint - mirrors startEnrollment()'s
                         // own "resume" branch below for the same tokens.
                         self._tokensGeneration = self._enrollGeneration;
                         self.afterTokensReady();
+                    } else {
+                        // Nobody waiting - an eager mint, or an attempt
+                        // abandoned while it was out (cancelEnrollment() has
+                        // already settled the click that started it). The
+                        // tokens are kept for the next explicit click, stamped
+                        // stale so a popup completing on its own cannot pass
+                        // bindPopupMessageListener()'s check against a pair no
+                        // click ever asked for. -1 because `_enrollGeneration`
+                        // counts up from 0 and can never match it.
+                        self._tokensGeneration = -1;
                     }
-                    // Else: nobody waiting - an eager mint, or an attempt
-                    // genuinely abandoned (cancelEnrollment() already notified
-                    // whichever click started this mint that its wait is
-                    // over). Either way the tokens are kept, ready for the
-                    // next explicit click.
                 } else {
                     self.tokens = null;
                     self.noteMintFailure();
@@ -1127,6 +1161,8 @@ class TwoSoleTrader {
                 // if it had one, has been served or told it failed.
                 self._mintHasWaiter = false;
             });
+
+        return true;
     }
 
     /**
@@ -2174,12 +2210,14 @@ class TwoSoleTrader {
             // stale the tokens actually are - silently overwriting the real
             // selection the buyer made in between - and a stale failure would
             // put an error in front of a buyer who has already moved on.
-            // `_tokensGeneration` is only re-stamped as current by an EXPLICIT
-            // resume - fetchTokens()'s success handler,
-            // startEnrollment()/startReplacement() calling back
-            // into an existing token set, or focusSignupPopup() raising a popup
-            // the buyer asked for by name - never by this listener itself, so a
-            // stale popup finishing on its own has no way to pass this check.
+            // `_tokensGeneration` is only ever stamped as current for a click:
+            // fetchTokens()'s success handler when one is waiting on that mint,
+            // startEnrollment()/startReplacement() calling back into an
+            // existing token set, or focusSignupPopup() raising a popup the
+            // buyer asked for by name - never by this listener itself, and
+            // never for startEagerTokenMint()'s mint. So neither a stale popup
+            // finishing on its own nor a message arriving against tokens no
+            // click has asked for can pass this check.
             if (self._enrollGeneration !== self._tokensGeneration) {
                 return;
             }

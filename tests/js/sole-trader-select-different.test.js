@@ -293,9 +293,8 @@ describe('popup URL (c)', () => {
         global.window.open = openSpy;
 
         const instance = buildTrader();
-        // Simulate an already-completed ordinary enrolment: tokens minted,
-        // flow started, buyer lookup already resolved once.
-        instance.flowStarted = true;
+        // Simulate an already-completed ordinary enrolment: tokens minted for
+        // the current country, buyer lookup already resolved once.
         instance.tokens = {
             success: true,
             autofill_token: 'af-token',
