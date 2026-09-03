@@ -336,13 +336,11 @@ test('a tick is skipped while a signup popup opened against the current tokens i
 });
 
 /**
- * Adversarial review round 1 BUG (Vader): fetchTokens()'s own mint keeps the
- * posted country and the eligibility-check country in agreement "by
- * construction" (see its own comment) - a background refresh minting for a
- * DIFFERENT country than the one `this.tokens` currently belongs to would
- * silently break that agreement.
+ * The delegated auth token is not country-specific: a billing country change
+ * since the tokens were minted must not skip the tick - the 30-minute
+ * refresh runs on its own schedule regardless of country.
  */
-test('a tick is skipped if the billing country has diverged from the country the current tokens were minted for', async () => {
+test('a tick still runs if the billing country has diverged from the country the current tokens were minted for', async () => {
     jest.useFakeTimers();
     try {
         let mintCalls = 0;
@@ -366,8 +364,8 @@ test('a tick is skipped if the billing country has diverged from the country the
         jest.advanceTimersByTime(30 * 60 * 1000);
         await flushPromises();
 
-        expect(mintCalls).toBe(1);
-        expect(instance.tokens.autofill_token).toBe('af-token-1');
+        expect(mintCalls).toBe(2);
+        expect(instance.tokens.autofill_token).toBe('af-token-2');
 
         instance.destroy();
     } finally {

@@ -822,10 +822,12 @@ class TwoSoleTrader {
      *
      * Gated on isAvailableForCurrentCountry(), the same answer that decides
      * whether the chip is offered at all: a buyer who cannot use the flow
-     * costs no upstream mint. One attempt per country, so a failure is not
-     * re-issued on every later availability resolution, and a country change
-     * DOES re-mint - the country these tokens are authorised against must not
-     * drift from the country the chip is shown for.
+     * costs no upstream mint. One attempt per country while no tokens are
+     * held yet, so a failure is not re-issued on every later availability
+     * resolution. The token is NOT country-specific: once held, it is
+     * reused across a country change, and only replaced on its own 30-min
+     * refresh schedule (refreshTokens()) - a country change alone must
+     * never trigger a re-mint.
      */
     startEagerTokenMint() {
         // An availability request outstanding at destroy() still resolves into
@@ -852,9 +854,10 @@ class TwoSoleTrader {
         if (this.isFetchingBuyer) {
             return;
         }
-        // Tokens already in hand for this country: the pair the click needs is
-        // there, so what is left to do ahead of it is the autofill answer.
-        if (this.tokensAreForCurrentCountry()) {
+        // Tokens already held - not country-specific, so a country change
+        // does not invalidate them: the pair the click needs is there, and
+        // what is left to do ahead of it is the autofill answer.
+        if (this.tokens) {
             this.prefetchBuyer();
             return;
         }
@@ -1017,10 +1020,12 @@ class TwoSoleTrader {
     }
 
     /**
-     * @returns {boolean} whether `this.tokens` holds delegated authority for
-     *   the country the chip is being shown for. An enrolment must never be
-     *   authorised against a country the buyer has left, so to every entry
-     *   point another country's tokens are as good as absent.
+     * @returns {boolean} whether the autofill/buyer-lookup answer minted
+     *   alongside `this.tokens` can be trusted for the country the chip is
+     *   being shown for now. Gates ONLY prefetchBuyer()/heldBuyerResult() -
+     *   the tokens themselves are not country-specific and are never
+     *   re-minted on a country change (see startEagerTokenMint()); this is
+     *   the held BUYER answer's own, separate country scoping.
      */
     tokensAreForCurrentCountry() {
         if (!this.tokens) {
@@ -1038,7 +1043,9 @@ class TwoSoleTrader {
      */
     startEnrollment() {
         this.enrolling = true;
-        if (!this.tokensAreForCurrentCountry()) {
+        // Tokens are not country-specific - only their absence, not a
+        // country change since they were minted, calls for a fresh mint.
+        if (!this.tokens) {
             this.fetchTokens();
         } else {
             // Re-stamp the existing tokens as CURRENT: this is an explicit,
@@ -1067,7 +1074,8 @@ class TwoSoleTrader {
     startReplacement() {
         this.enrolling = true;
         this._skipAutofillCheck = true;
-        if (!this.tokensAreForCurrentCountry()) {
+        // Tokens are not country-specific - see startEnrollment().
+        if (!this.tokens) {
             this.fetchTokens();
         } else {
             // Same "explicit resume" re-stamp as startEnrollment()'s own resume
@@ -1310,8 +1318,9 @@ class TwoSoleTrader {
                     self.tokens = json;
                     // The single place the refresh cadence is armed, for every
                     // mint that lands: normally startEagerTokenMint()'s, at
-                    // mount, long before any click. Idempotent - a country
-                    // change re-mints and must not arm a second interval.
+                    // mount, long before any click. Idempotent - only the
+                    // 30-min tick re-mints, so there is only ever one interval
+                    // to arm.
                     self.startTokenRefreshInterval();
                     // Stamp with the CAPTURED generation, not the current
                     // one - see the comment above. If cancelEnrollment() ran
@@ -1321,17 +1330,12 @@ class TwoSoleTrader {
                     // check (and a resumed startEnrollment()'s own re-stamp)
                     // are what bring it current again, never this callback.
                     self.bindPopupMessageListener();
+                    // Tokens are not country-specific, so a buyer who changed
+                    // country while this mint was out is still served by it -
+                    // only `_enrollGeneration` (cancelEnrollment()) decides
+                    // whether a waiting click still gets acted on below.
                     const waiting = self._mintHasWaiter && self.enrolling;
-                    if (waiting && !self.tokensAreForCurrentCountry()) {
-                        // The buyer left this country while the mint was out.
-                        // Acting would authorise their enrolment against a
-                        // country they are no longer in - the invariant every
-                        // other entry point enforces. Settle the click and let
-                        // the `.finally()`'s eager mint re-mint for where they
-                        // are now; their next click is served by that pair.
-                        self._tokensGeneration = -1;
-                        self.notifyEnrollmentSettled(true);
-                    } else if (waiting && self._enrollGeneration === generation) {
+                    if (waiting && self._enrollGeneration === generation) {
                         // Ordinary case: nothing has cancelled since this
                         // mint was requested. Stamp with the CAPTURED
                         // generation, not the current one - if cancelEnrollment()
@@ -1419,8 +1423,10 @@ class TwoSoleTrader {
      * tokens' server-side lifetime, breaking autofill and the sole-trader
      * flow entirely). Armed from fetchTokens()'s success branch, which for the
      * ordinary flow is startEagerTokenMint()'s mint at mount - so the cadence
-     * is already running by the time the buyer clicks. Idempotent: a country
-     * change re-mints and must not arm a second, duplicate interval.
+     * is already running by the time the buyer clicks. Idempotent: tokens
+     * are held across country changes (no re-mint), so the only mint that
+     * ever lands again is this interval's own tick, and there is only ever
+     * one to arm.
      *
      * A single setInterval, not a recursive setTimeout chain: refreshTokens()
      * has no per-tick backoff to carry between calls, so there is nothing a
@@ -1465,10 +1471,10 @@ class TwoSoleTrader {
      * refreshing them, so there is nothing here for a generation check to
      * protect.
      *
-     * IS gated on the open-popup and country checks below (adversarial
-     * review, round 1 - Han/Vader/Yoda independently) - both protect an
-     * invariant that has nothing to do with `_enrollGeneration` but that this
-     * call can still break silently.
+     * IS gated on the open-popup check below (adversarial review, round 1 -
+     * Han/Vader/Yoda independently) - it protects an invariant that has
+     * nothing to do with `_enrollGeneration` but that this call can still
+     * break silently.
      *
      * Known residual gap (round 2/3 adversarial review, Vader finding,
      * accepted): while a popup stays open, EVERY tick is skipped, so tokens
@@ -1514,18 +1520,9 @@ class TwoSoleTrader {
         if (this._popup && !this._popup.closed) {
             return;
         }
-        // The buyer may have changed billing country since these tokens were
-        // minted without the country becoming ineligible (which would have
-        // routed through cancelEnrollment() instead). fetchTokens()'s own
-        // mint deliberately keeps the posted country and the eligibility
-        // country in agreement "by construction" (see its own comment) -
-        // re-minting here for a country that no longer matches
-        // `this.tokens.country` would mint fresh tokens for a country the
-        // buyer's on-screen enrolment no longer belongs to. Skip the tick
-        // rather than silently disagree with it.
-        if (this.tokens.country && this.billingCountry() !== this.tokens.country) {
-            return;
-        }
+        // Tokens are not country-specific, so a billing country the buyer has
+        // since changed does not disqualify this tick - the mint keeps
+        // running on its own 30-min schedule regardless of country.
         this.isFetchingTokens = true;
         const self = this;
         let request;

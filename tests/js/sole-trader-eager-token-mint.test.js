@@ -518,17 +518,12 @@ describe('a buyer who cannot use the flow costs no mint', () => {
     });
 });
 
-describe('the minted tokens track the country the chip is shown for', () => {
-    test('a change to a different eligible country mints again, for the new country', async () => {
+describe('the minted tokens are held across a country change - not country-specific', () => {
+    test('a change to a different eligible country does not mint again', async () => {
         buildPaymentTileWithSoleTraderAnswer('1', 'GB');
         TwoSoleTrader = loadSoleTrader();
-        let mintCalls = 0;
-        const calls = stubFetch(() => {
-            mintCalls += 1;
-            return Promise.resolve({
-                json: () => Promise.resolve(tokenPayload(String(mintCalls), mintCalls === 1 ? 'GB' : 'SE'))
-            });
-        });
+        const state = { calls: 0 };
+        const calls = stubFetch(mintsSucceed(state));
 
         const instance = build();
         await flushPromises();
@@ -542,9 +537,8 @@ describe('the minted tokens track the country the chip is shown for', () => {
         instance.apply('SE', true);
         await flushPromises();
 
-        expect(calls.mints).toHaveLength(2);
-        expect(calls.mints[1]).toContain('country=SE');
-        expect(instance.tokens.country).toBe('SE');
+        expect(calls.mints).toHaveLength(1);
+        expect(instance.tokens.country).toBe('GB');
 
         instance.destroy();
     });
@@ -637,33 +631,26 @@ describe('the minted tokens track the country the chip is shown for', () => {
         instance.destroy();
     });
 
-    test('a click uses no tokens minted for a country the buyer has left', async () => {
+    test('a click reuses tokens minted before a country change - no re-mint', async () => {
         buildPaymentTileWithSoleTraderAnswer('1', 'GB');
         TwoSoleTrader = loadSoleTrader();
-        let mintCalls = 0;
-        const calls = stubFetch(() => {
-            mintCalls += 1;
-            return Promise.resolve({
-                json: () => Promise.resolve(tokenPayload(String(mintCalls), mintCalls === 1 ? 'GB' : 'SE'))
-            });
-        });
+        const state = { calls: 0 };
+        const calls = stubFetch(mintsSucceed(state));
 
         const instance = build();
         await flushPromises();
         expect(instance.tokens.country).toBe('GB');
 
         // The buyer changes country and clicks the chip before availability
-        // has re-resolved, so no eager mint has run for the new country yet.
+        // has re-resolved.
         instance.config.billingCountry = 'SE';
         instance.availabilityByCountry.SE = true;
         instance.startEnrollment();
         await flushPromises();
 
-        // The click must have minted fresh SE authority, not enrolled against
-        // the GB tokens still sitting on the instance.
-        expect(calls.mints).toHaveLength(2);
-        expect(calls.mints[1]).toContain('country=SE');
-        expect(instance.tokens.country).toBe('SE');
+        // The click is served by the GB tokens already held - not re-minted.
+        expect(calls.mints).toHaveLength(1);
+        expect(instance.tokens.country).toBe('GB');
     });
 
     test('an availability answer for a country a click already minted for does not re-mint', async () => {
@@ -693,59 +680,53 @@ describe('the minted tokens track the country the chip is shown for', () => {
         expect(calls.mints).toHaveLength(1);
     });
 
-    test('a stale popup cannot act on tokens replaced by a later background mint', async () => {
-        buildPaymentTileWithSoleTraderAnswer('1', 'GB');
-        TwoSoleTrader = loadSoleTrader();
-        let mintCalls = 0;
-        const calls = stubFetch(() => {
-            mintCalls += 1;
-            return Promise.resolve({
-                json: () => Promise.resolve(tokenPayload(String(mintCalls), mintCalls === 1 ? 'GB' : 'SE'))
-            });
-        });
-
-        const instance = build();
-        await flushPromises();
-
-        // A real click stamps the tokens it is served as the current attempt;
-        // it is served by the mount's tokens AND the mount's held autofill
-        // answer, so it costs neither a mint nor a lookup of its own.
-        instance.startEnrollment();
-        await flushPromises();
-        expect(calls.buyerLookups).toBe(1);
-        expect(calls.mints).toHaveLength(1);
-
-        // A country change re-mints with nobody waiting, replacing those
-        // tokens - so the click's stamp must not carry over to them.
-        instance.config.billingCountry = 'SE';
-        instance.availabilityByCountry.SE = true;
-        instance.apply('SE', true);
-        await flushPromises();
-        expect(instance.tokens.country).toBe('SE');
-        const lookupsBeforeMessage = calls.buyerLookups;
-
-        window.dispatchEvent(new window.MessageEvent('message', {
-            data: 'ACCEPTED',
-            origin: 'https://signup.example.test'
-        }));
-        await flushPromises();
-        await flushPromises();
-
-        expect(calls.buyerLookups).toBe(lookupsBeforeMessage);
-    });
-
-    test('a country change does not re-mint under a signup popup opened against the current tokens', async () => {
+    test('a stale popup cannot act on tokens an abandoned click left behind, once a later background refresh replaces them', async () => {
         jest.useFakeTimers();
         try {
             buildPaymentTileWithSoleTraderAnswer('1', 'GB');
             TwoSoleTrader = loadSoleTrader();
-            let mintCalls = 0;
-            const calls = stubFetch(() => {
-                mintCalls += 1;
-                return Promise.resolve({
-                    json: () => Promise.resolve(tokenPayload(String(mintCalls), mintCalls === 1 ? 'GB' : 'SE'))
-                });
-            });
+            const state = { calls: 0 };
+            const calls = stubFetch(mintsSucceed(state));
+
+            const instance = build();
+            await flushPromises();
+
+            // A real click stamps the tokens it is served as the current attempt,
+            // then the buyer abandons it - bumping `_enrollGeneration` past the
+            // stamp, but keeping `tokens` (cancelEnrollment() is resumable).
+            instance.startEnrollment();
+            await flushPromises();
+            instance.cancelEnrollment();
+            expect(calls.buyerLookups).toBe(1);
+            expect(calls.mints).toHaveLength(1);
+
+            // The 30-min refresh silently replaces the tokens with nobody
+            // waiting - it never re-stamps `_tokensGeneration`.
+            jest.advanceTimersByTime(30 * 60 * 1000);
+            await flushPromises();
+            expect(calls.mints).toHaveLength(2);
+            const lookupsBeforeMessage = calls.buyerLookups;
+
+            window.dispatchEvent(new window.MessageEvent('message', {
+                data: 'ACCEPTED',
+                origin: 'https://signup.example.test'
+            }));
+            await flushPromises();
+            await flushPromises();
+
+            expect(calls.buyerLookups).toBe(lookupsBeforeMessage);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    test('a country change never re-mints while a signup popup is open, or once it closes', async () => {
+        jest.useFakeTimers();
+        try {
+            buildPaymentTileWithSoleTraderAnswer('1', 'GB');
+            TwoSoleTrader = loadSoleTrader();
+            const state = { calls: 0 };
+            const calls = stubFetch(mintsSucceed(state));
             const popup = { closed: false };
             global.window.open = jest.fn(() => popup);
 
@@ -761,8 +742,8 @@ describe('the minted tokens track the country the chip is shown for', () => {
                 .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
             expect(instance._popup).toBe(popup);
 
-            // A country change now must not swap the tokens that popup is
-            // signing against.
+            // A country change while the popup is open does not touch the
+            // tokens it is signing against.
             instance.config.billingCountry = 'SE';
             instance.availabilityByCountry.SE = true;
             instance.apply('SE', true);
@@ -771,7 +752,8 @@ describe('the minted tokens track the country the chip is shown for', () => {
             expect(calls.mints).toHaveLength(1);
             expect(instance.tokens.country).toBe('GB');
 
-            // Once it closes, the new country does get its own tokens.
+            // Once it closes, the tokens are still held - not country-specific,
+            // so the new country gets no mint of its own either.
             popup.closed = true;
             jest.advanceTimersByTime(500);
             await flushPromises();
@@ -780,25 +762,20 @@ describe('the minted tokens track the country the chip is shown for', () => {
             instance.apply('SE', true);
             await flushPromises();
 
-            expect(calls.mints).toHaveLength(2);
-            expect(instance.tokens.country).toBe('SE');
+            expect(calls.mints).toHaveLength(1);
+            expect(instance.tokens.country).toBe('GB');
         } finally {
             jest.useRealTimers();
         }
     });
 
-    test('a real billing-country change drives the eager mint, not just apply()', async () => {
+    test('a real billing-country change re-resolves availability but holds the tokens - via apply(), not just a direct call', async () => {
         jest.useFakeTimers();
         try {
             buildPaymentTileWithSoleTraderAnswer('1', 'GB');
             TwoSoleTrader = loadSoleTrader();
-            let mintCalls = 0;
-            const calls = stubFetch(() => {
-                mintCalls += 1;
-                return Promise.resolve({
-                    json: () => Promise.resolve(tokenPayload(String(mintCalls), mintCalls === 1 ? 'GB' : 'SE'))
-                });
-            });
+            const state = { calls: 0 };
+            const calls = stubFetch(mintsSucceed(state));
             const select = buildCountrySelect('GB');
 
             const instance = build();
@@ -813,15 +790,14 @@ describe('the minted tokens track the country the chip is shown for', () => {
             await flushPromises();
             await flushPromises();
 
-            expect(calls.mints).toHaveLength(2);
-            expect(calls.mints[1]).toContain('country=SE');
-            expect(instance.tokens.country).toBe('SE');
+            expect(calls.mints).toHaveLength(1);
+            expect(instance.tokens.country).toBe('GB');
         } finally {
             jest.useRealTimers();
         }
     });
 
-    test('a click riding an in-flight background refresh tick is still served', async () => {
+    test('a click after a country change reuses the held tokens for its own lookup, unblocked by an in-flight refresh tick', async () => {
         jest.useFakeTimers();
         try {
             buildPaymentTileWithSoleTraderAnswer('1', 'GB');
@@ -833,9 +809,7 @@ describe('the minted tokens track the country the chip is shown for', () => {
                 if (mintCalls === 2) {
                     return new Promise((resolve) => { resolveTick = resolve; });
                 }
-                return Promise.resolve({
-                    json: () => Promise.resolve(tokenPayload(String(mintCalls), mintCalls === 1 ? 'GB' : 'SE'))
-                });
+                return Promise.resolve({ json: () => Promise.resolve(tokenPayload(String(mintCalls), 'GB')) });
             });
             const settled = jest.fn();
             document.addEventListener('two:sole-trader-flight-settled', settled);
@@ -849,26 +823,22 @@ describe('the minted tokens track the country the chip is shown for', () => {
             expect(mintCalls).toBe(2);
             expect(instance.isFetchingTokens).toBe(true);
 
-            // The buyer changes country and clicks while that tick is in
-            // flight, so the click rides a request with no resume branches.
+            // The buyer changes country and clicks: the mount's held answer
+            // was fetched for GB, so the click runs its own lookup off the
+            // GB tokens already held - not blocked by the tick in flight,
+            // and minting nothing of its own.
             instance.config.billingCountry = 'SE';
             instance.availabilityByCountry.SE = true;
             instance.startEnrollment();
+            await flushPromises();
+
             expect(mintCalls).toBe(2);
-            // Nothing has resolved yet, so the click is genuinely still open.
-            expect(settled).not.toHaveBeenCalled();
+            expect(calls.buyerLookups).toBe(2);
+            expect(settled).toHaveBeenCalledTimes(1);
+            expect(instance.tokens.country).toBe('GB');
 
             resolveTick({ json: () => Promise.resolve(tokenPayload('2', 'GB')) });
             await flushPromises();
-            await flushPromises();
-
-            // The click must not dead-end: a mint for the country it actually
-            // needs was issued, and its flight reached a terminal state.
-            expect(mintCalls).toBe(3);
-            expect(calls.mints[2]).toContain('country=SE');
-            expect(instance.tokens.country).toBe('SE');
-            expect(settled).toHaveBeenCalledTimes(1);
-            expect(instance._mintHasWaiter).toBe(false);
 
             document.removeEventListener('two:sole-trader-flight-settled', settled);
         } finally {
@@ -877,29 +847,28 @@ describe('the minted tokens track the country the chip is shown for', () => {
     });
 
     test('a mint landing after its enrolment already completed is not acted on', async () => {
-        buildPaymentTileWithSoleTraderAnswer('1', 'GB');
+        // Server-rendered "business only", so no eager mint runs at mount and
+        // the click's own mint is the only one in flight - unrelated to
+        // country, which stays GB throughout.
+        buildPaymentTileWithSoleTraderAnswer('0', 'GB');
         TwoSoleTrader = loadSoleTrader();
         let mintCalls = 0;
         let resolveClickMint;
         const calls = stubFetch(() => {
             mintCalls += 1;
-            if (mintCalls === 2) {
-                return new Promise((resolve) => { resolveClickMint = resolve; });
-            }
-            return Promise.resolve({ json: () => Promise.resolve(tokenPayload(String(mintCalls), 'GB')) });
+            return new Promise((resolve) => { resolveClickMint = resolve; });
         });
         const openSpy = jest.fn(() => ({ closed: false }));
         global.window.open = openSpy;
 
         const instance = build();
         await flushPromises();
-        expect(calls.mints).toHaveLength(1);
+        expect(calls.mints).toHaveLength(0);
 
-        // A click on a country the mount's tokens do not cover mints afresh.
-        instance.config.billingCountry = 'SE';
-        instance.availabilityByCountry.SE = true;
+        instance.availabilityByCountry.GB = true;
+        instance.apply('GB', true);
         instance.startEnrollment();
-        expect(mintCalls).toBe(2);
+        expect(mintCalls).toBe(1);
 
         // An enrolment COMPLETES while that mint is still out - what
         // applyBuyer() does on a successful adoption, leaving the waiting
@@ -907,14 +876,14 @@ describe('the minted tokens track the country the chip is shown for', () => {
         instance.enrolling = false;
         const lookupsBeforeMint = calls.buyerLookups;
 
-        resolveClickMint({ json: () => Promise.resolve(tokenPayload('2', 'SE')) });
+        resolveClickMint({ json: () => Promise.resolve(tokenPayload('1', 'GB')) });
         await flushPromises();
         await flushPromises();
 
         // The prefetch off the tokens that just landed, and nothing else: the
         // completed enrolment's click is not resumed into a lookup or a popup.
         expect(calls.buyerLookups).toBe(lookupsBeforeMint + 1);
-        expect(instance.heldBuyerResult()).toEqual({ country: 'SE', buyer: null });
+        expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
         expect(openSpy).not.toHaveBeenCalled();
     });
 
@@ -961,63 +930,40 @@ describe('the minted tokens track the country the chip is shown for', () => {
         await flushPromises();
     });
 
-    test('a click abandoned while riding a refresh tick is not rescued into a wasted mint', async () => {
-        jest.useFakeTimers();
-        try {
-            buildPaymentTileWithSoleTraderAnswer('1', 'GB');
-            TwoSoleTrader = loadSoleTrader();
-            let mintCalls = 0;
-            let resolveTick;
-            const calls = stubFetch(() => {
-                mintCalls += 1;
-                if (mintCalls === 2) {
-                    return new Promise((resolve) => { resolveTick = resolve; });
-                }
-                return Promise.resolve({ json: () => Promise.resolve(tokenPayload(String(mintCalls), 'GB')) });
-            });
-
-            const instance = build();
-            await flushPromises();
-            expect(calls.mints).toHaveLength(1);
-
-            jest.advanceTimersByTime(30 * 60 * 1000);
-            expect(mintCalls).toBe(2);
-
-            // The buyer changes country and clicks, riding the tick, then goes
-            // back to ordinary company search before it lands.
-            instance.config.billingCountry = 'SE';
-            instance.availabilityByCountry.SE = true;
-            instance.startEnrollment();
-            instance.cancelEnrollment();
-
-            resolveTick({ json: () => Promise.resolve(tokenPayload('2', 'GB')) });
-            await flushPromises();
-            await flushPromises();
-
-            // Nobody is waiting any more, so the tick's rescue must not mint
-            // for the abandoned click. The mint that DOES follow is the eager
-            // one the buyer's new country needs - it takes no waiter, and is
-            // acted on by nothing.
-            expect(mintCalls).toBe(3);
-            expect(calls.mints[calls.mints.length - 1]).toContain('country=SE');
-            expect(instance._mintHasWaiter).toBe(false);
-            expect(instance.enrolling).toBe(false);
-            expect(calls.buyerLookups).toBe(1);
-        } finally {
-            jest.useRealTimers();
-        }
-    });
-
-    test('"select a different sole trader" also re-mints for a country the buyer has moved to', async () => {
+    test('a click abandoned after a country change is not rescued by that click\'s own lookup landing late', async () => {
         buildPaymentTileWithSoleTraderAnswer('1', 'GB');
         TwoSoleTrader = loadSoleTrader();
-        let mintCalls = 0;
-        const calls = stubFetch(() => {
-            mintCalls += 1;
-            return Promise.resolve({
-                json: () => Promise.resolve(tokenPayload(String(mintCalls), mintCalls === 1 ? 'GB' : 'SE'))
-            });
-        });
+        const state = { calls: 0 };
+        const calls = stubFetch(mintsSucceed(state));
+        const openSpy = jest.fn(() => ({ closed: false }));
+        global.window.open = openSpy;
+
+        const instance = build();
+        await flushPromises();
+        expect(calls.mints).toHaveLength(1);
+
+        // The buyer changes country and clicks - the held answer no longer
+        // counts for SE, so the click runs its own lookup off the tokens
+        // already held - then goes back to ordinary company search before
+        // it lands.
+        instance.config.billingCountry = 'SE';
+        instance.availabilityByCountry.SE = true;
+        instance.startEnrollment();
+        instance.cancelEnrollment();
+        await flushPromises();
+
+        // No re-mint at all - tokens are held regardless of country - and
+        // the abandoned click's own lookup is not acted on.
+        expect(calls.mints).toHaveLength(1);
+        expect(instance.enrolling).toBe(false);
+        expect(openSpy).not.toHaveBeenCalled();
+    });
+
+    test('"select a different sole trader" reuses the held tokens across a country change - no re-mint', async () => {
+        buildPaymentTileWithSoleTraderAnswer('1', 'GB');
+        TwoSoleTrader = loadSoleTrader();
+        const state = { calls: 0 };
+        const calls = stubFetch(mintsSucceed(state));
         const openSpy = jest.fn(() => ({ closed: false }));
         global.window.open = openSpy;
 
@@ -1030,76 +976,11 @@ describe('the minted tokens track the country the chip is shown for', () => {
         instance.startReplacement();
         await flushPromises();
 
-        // The replacement popup must be signed against SE authority, not the
-        // GB pair the mount happened to leave on the instance.
-        expect(calls.mints).toHaveLength(2);
-        expect(calls.mints[1]).toContain('country=SE');
+        // The replacement popup is signed against the GB tokens already
+        // held - not re-minted just because the buyer moved to SE.
+        expect(calls.mints).toHaveLength(1);
         expect(openSpy).toHaveBeenCalledTimes(1);
-        expect(String(openSpy.mock.calls[0][0])).toContain('af-token-2');
-    });
-
-    test('the rescue mint is declined while a signup popup is open against the current tokens', async () => {
-        jest.useFakeTimers();
-        try {
-            buildPaymentTileWithSoleTraderAnswer('1', 'GB');
-            TwoSoleTrader = loadSoleTrader();
-            let mintCalls = 0;
-            let resolveTick;
-            const calls = stubFetch(() => {
-                mintCalls += 1;
-                if (mintCalls === 2) {
-                    return new Promise((resolve) => { resolveTick = resolve; });
-                }
-                return Promise.resolve({ json: () => Promise.resolve(tokenPayload(String(mintCalls), 'GB')) });
-            });
-            const popup = { closed: false };
-            global.window.open = jest.fn(() => popup);
-
-            const instance = build();
-            await flushPromises();
-            expect(calls.mints).toHaveLength(1);
-            const mintedTokens = instance.tokens;
-
-            jest.advanceTimersByTime(30 * 60 * 1000);
-            expect(mintCalls).toBe(2);
-
-            // A click rides the tick, and the buyer opens the signup popup
-            // against the tokens currently on the instance before it lands.
-            instance.config.billingCountry = 'SE';
-            instance.availabilityByCountry.SE = true;
-            instance.startEnrollment();
-            instance._popup = popup;
-
-            resolveTick({ json: () => Promise.resolve(tokenPayload('2', 'GB')) });
-            await flushPromises();
-            await flushPromises();
-
-            // No rescue mint, and the popup's pair is untouched.
-            expect(mintCalls).toBe(2);
-            expect(instance.tokens).toBe(mintedTokens);
-            // Declining the mint still ends that click's wait - the popup
-            // closing settles it. The behaviour that stands on: the next eager
-            // mint, once the popup is gone, must land silently rather than
-            // opening a second popup or running a lookup for that dead click.
-            expect(instance._mintHasWaiter).toBe(false);
-
-            popup.closed = true;
-            instance._popup = null;
-            const openSpy = jest.fn(() => ({ closed: false }));
-            global.window.open = openSpy;
-            instance.apply('SE', true);
-            await flushPromises();
-            await flushPromises();
-
-            expect(mintCalls).toBe(3);
-            expect(openSpy).not.toHaveBeenCalled();
-            // The one lookup is that mint's own prefetch, with the enrolment
-            // prompt left down - nothing resumed the dead click.
-            expect(calls.buyerLookups).toBe(1);
-            expect(document.querySelector('.two-sole-trader__prompt').style.display).not.toBe('inline');
-        } finally {
-            jest.useRealTimers();
-        }
+        expect(String(openSpy.mock.calls[0][0])).toContain('af-token-1');
     });
 
     test('a repeated availability resolution for the same country does not re-mint', async () => {
