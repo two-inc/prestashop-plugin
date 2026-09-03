@@ -450,8 +450,9 @@ class Twopayment extends PaymentModule
 
     /**
      * Register newly introduced hooks on existing installations.
+     * Protected (not private) so the test suite can exercise the self-heal path.
      */
-    private function ensureRequiredHooksRegistered()
+    protected function ensureRequiredHooksRegistered()
     {
         if ((int)$this->id <= 0 || !Module::isInstalled($this->name)) {
             return;
@@ -461,6 +462,7 @@ class Twopayment extends PaymentModule
             'actionObjectOrderHistoryAddBefore',
             'actionFrontControllerInitAfter',
             'actionObjectOrderDetailAddBefore',
+            'actionPresentCart',
         );
 
         foreach ($required_hooks as $hook_name) {

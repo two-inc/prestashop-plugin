@@ -656,15 +656,65 @@ class TwoCheckoutManager {
         if (!slug || !this._surchargeLabel) {
             return;
         }
-        document.querySelectorAll('a[href*="' + slug + '"]').forEach((anchor) => {
-            const span = document.createElement('span');
-            span.className = anchor.className;
-            if (anchor.title) {
-                span.title = this._surchargeLabel;
+        const anchors = Array.from(document.querySelectorAll('a[href*="' + slug + '"]'));
+        const lines = [];
+        anchors.forEach((anchor) => {
+            // Per line, because one page can hold several renderings of the
+            // same cart (the header mini-cart beside the checkout summary),
+            // and each decides for itself where its caption belongs.
+            const line = anchor.closest('li, tr, .cart-summary-line, .media');
+            if (lines.indexOf(line || anchor) === -1) {
+                lines.push(line || anchor);
             }
-            span.textContent = this._surchargeLabel;
-            anchor.replaceWith(span);
         });
+
+        lines.forEach((line) => {
+            const lineAnchors = anchors.filter((anchor) => line === anchor || line.contains(anchor));
+            // Core links the product twice per line, image then name, and only
+            // the name link carries the caption. A theme that leaves the name
+            // unlinked, or links it together with the image, has no such link:
+            // core's own name node carries the caption there instead, so the
+            // fee is never named twice in one line. Only inside a real line
+            // container, since a bare anchor's parent may hold another
+            // product's name node too.
+            const isLineContainer = anchors.indexOf(line) === -1;
+            const target = lineAnchors.filter((anchor) => anchor.textContent.trim() !== '' && !anchor.querySelector('img'))[0]
+                || (isLineContainer ? line.querySelector('.product-name') : null)
+                || lineAnchors[0];
+            // Chosen before anything is detached: an unlinked node has no
+            // parent left to be captioned in.
+            lineAnchors.forEach((anchor) => {
+                if (anchor !== target) {
+                    anchor.replaceWith(...anchor.childNodes);
+                }
+            });
+            this.captionSurchargeNode(target);
+        });
+    }
+
+    /**
+     * Recaption one node as the surcharge line, keeping the thumbnail markup
+     * it wraps (a bare img, or a whole picture element) and unlinking it if it
+     * is a link. Anything carrying text goes: that text is the day-less
+     * catalog name this caption replaces, wrapper elements included.
+     *
+     * @param {Element|undefined} node
+     * @returns {void}
+     */
+    captionSurchargeNode(node) {
+        if (!node) {
+            return;
+        }
+        const replacement = document.createElement('span');
+        replacement.className = node.className;
+        if (node.title) {
+            replacement.title = this._surchargeLabel;
+        }
+        Array.from(node.childNodes)
+            .filter((child) => (child.textContent || '').trim() === '')
+            .forEach((child) => replacement.appendChild(child));
+        replacement.appendChild(document.createTextNode(this._surchargeLabel));
+        node.replaceWith(replacement);
     }
 
     /**
