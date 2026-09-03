@@ -153,7 +153,8 @@ class TwoSoleTrader {
         // A notifyEnrollmentSettled() call that isWriteRoundTripOutstanding()
         // held back, to be re-fired once it isn't. See flushDeferredSettle().
         this._settleDeferred = false;
-        // Held so destroy() can clear it. Armed by startEagerTokenMint().
+        // Held so destroy() can clear it. Armed by fetchTokens()'s success
+        // branch, which for the ordinary flow is the eager mint at mount.
         this._tokenRefreshIntervalId = null;
         // The country startEagerTokenMint() has already minted for; see there.
         this._eagerMintCountry = null;
@@ -792,7 +793,8 @@ class TwoSoleTrader {
      */
     startEagerTokenMint() {
         // An availability request outstanding at destroy() still resolves into
-        // apply(), and nothing would clear an interval armed after that.
+        // apply(), so this can be reached on a torn-down instance - which has
+        // no business spending an upstream mint.
         if (this._destroyed) {
             return;
         }
@@ -1372,7 +1374,13 @@ class TwoSoleTrader {
                 // guard. This method has no resume branches, so without this
                 // that click would dead-end with its panel and spinner open -
                 // issue the mint it was actually waiting for.
-                if (self._mintHasWaiter && !self._destroyed) {
+                //
+                // Declined under an open popup, like every other mint site
+                // here: replacing the tokens its URL was built from is the
+                // orphaning this method's own two guards exist to stop, and
+                // watchPopupUntilClosed() settles the click when it closes.
+                const popupOpen = !!(self._popup && !self._popup.closed);
+                if (self._mintHasWaiter && !self._destroyed && !popupOpen) {
                     self._mintHasWaiter = false;
                     self.fetchTokens();
                 }
