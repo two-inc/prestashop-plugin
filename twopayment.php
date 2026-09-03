@@ -2919,13 +2919,21 @@ class Twopayment extends PaymentModule
         foreach ((array) self::readTwoCustomHeaderRowsFromPost() as $row) {
             if (!self::isValidTwoHeaderName($row['name'])) {
                 $this->errors[] = sprintf($this->l('Custom request headers: "%s" is not a valid header name.'), $row['name']);
+            } elseif (self::isReservedTwoHeaderName($row['name'])) {
+                $this->errors[] = sprintf(
+                    $this->l('Custom request headers: "%s" is reserved and cannot be overridden. Choose a different header name.'),
+                    $row['name']
+                );
             } elseif ($row['value'] === '') {
                 // Refused rather than stored: a named row with no value would
                 // be silently dropped from the header list, so the merchant
                 // would see it saved and still not sent.
                 $this->errors[] = sprintf($this->l('Custom request headers: enter a value for header "%s", or remove the row.'), $row['name']);
             } elseif (!self::isValidTwoHeaderValue($row['value'])) {
-                $this->errors[] = sprintf($this->l('Custom request headers: the value for header "%s" must not contain line breaks.'), $row['name']);
+                $this->errors[] = sprintf(
+                    $this->l('Custom request headers: the value for header "%s" may only contain printable ASCII characters - no line breaks, control characters, or non-ASCII text.'),
+                    $row['name']
+                );
             }
         }
     }
@@ -15121,18 +15129,54 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Printable ASCII only: excludes CR/LF (request splitting), NUL and other
+     * control characters (log injection), and non-ASCII bytes (encoding
+     * ambiguity between the store, curl and the firewall).
+     *
      * @param string $value
      *
      * @return bool
      */
     public static function isValidTwoHeaderValue($value)
     {
-        return strpbrk((string) $value, "\r\n\0") === false;
+        return (bool) preg_match('/^[\x20-\x7E]+$/', (string) $value);
+    }
+
+    /**
+     * Header names this plugin sets itself, plus proxy-identity headers a
+     * merchant must not be able to forge: a row named like one of these would
+     * silently override what the store sends to the Two API.
+     *
+     * @return array<int, string>
+     */
+    public static function reservedTwoHeaderNames()
+    {
+        return array(
+            'host',
+            'content-type',
+            'content-length',
+            'accept',
+            'accept-language',
+            'x-api-key',
+            'x-vendor-name',
+            'x-forwarded-for',
+            'x-real-ip',
+        );
+    }
+
+    /**
+     * @param string $name
+     *
+     * @return bool
+     */
+    public static function isReservedTwoHeaderName($name)
+    {
+        return in_array(strtolower(trim((string) $name)), self::reservedTwoHeaderNames(), true);
     }
 
     /**
      * The merchant-configured custom headers, dropping any row that could not
-     * be sent as a header at all.
+     * be sent as a header at all or that names a reserved header.
      *
      * @return array<int, array{name: string, value: string, send_from_browser: bool}>
      */
@@ -15150,7 +15194,13 @@ class Twopayment extends PaymentModule
             }
             $name = isset($row['name']) ? trim((string) $row['name']) : '';
             $value = isset($row['value']) ? trim((string) $row['value']) : '';
-            if ($value === '' || !self::isValidTwoHeaderName($name) || !self::isValidTwoHeaderValue($value)) {
+            // Reserved names are refused at save time; re-checked here so a row
+            // stored before that check existed cannot override what we send.
+            if ($value === ''
+                || !self::isValidTwoHeaderName($name)
+                || self::isReservedTwoHeaderName($name)
+                || !self::isValidTwoHeaderValue($value)
+            ) {
                 continue;
             }
             $rows[] = array(

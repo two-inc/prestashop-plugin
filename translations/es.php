@@ -421,7 +421,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_a652139d5e5b541081aae6be4bc8d520'] 
 $_MODULE['<{twopayment}prestashop>twopayment_00f5837a9f69d5fae46d9e6c54a2ac1b'] = 'Cabeceras de solicitud personalizadas';
 $_MODULE['<{twopayment}prestashop>twopayment_df252b6fab3bf9b874f9a29c0ba717f6'] = 'Cabeceras de solicitud personalizadas: "%s" no es un nombre de cabecera válido.';
 $_MODULE['<{twopayment}prestashop>twopayment_76804f50196af3554b45ffe2b385e035'] = 'Cabeceras de solicitud personalizadas: introduzca un valor para la cabecera "%s", o elimine la fila.';
-$_MODULE['<{twopayment}prestashop>twopayment_ea65aa5021bece9110460101be1b0217'] = 'Cabeceras de solicitud personalizadas: el valor de la cabecera "%s" no puede contener saltos de línea.';
+$_MODULE['<{twopayment}prestashop>twopayment_9ef29a404bb330c3c7f0870326cc4a71'] = 'Cabeceras de solicitud personalizadas: "%s" está reservada y no se puede sobrescribir. Elija otro nombre de cabecera.';
+$_MODULE['<{twopayment}prestashop>twopayment_f0e598c08b6640bf668c46c34f7ac11d'] = 'Cabeceras de solicitud personalizadas: el valor de la cabecera "%s" solo puede contener caracteres ASCII imprimibles - sin saltos de línea, caracteres de control ni texto no ASCII.';
 $_MODULE['<{twopayment}prestashop>twopayment_0f122f13a02644362630f0fc33a3ab4c'] = 'Nombre de la cabecera';
 $_MODULE['<{twopayment}prestashop>twopayment_689202409e48743b914713f96d93947c'] = 'Valor';
 $_MODULE['<{twopayment}prestashop>twopayment_92f6bf9f0c21d0ce58d406b8b2782adf'] = 'Enviar también desde el navegador';
