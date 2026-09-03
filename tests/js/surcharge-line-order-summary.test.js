@@ -201,6 +201,29 @@ test('labels the name link only, so the caption appears once per summary line', 
     expect(document.querySelector('.media-left img')).not.toBeNull();
 });
 
+describe.each([
+    ['image and name share one link', '<a href="' + SURCHARGE_HREF + '"><img class="media-object" src="/img/p/x.jpg" alt=""><span class="product-name">Payment terms fee</span></a>'],
+    ['the name is not linked at all', '<a href="' + SURCHARGE_HREF + '"><img class="media-object" src="/img/p/x.jpg" alt=""></a><span class="product-name">Payment terms fee</span>']
+])('a theme where %s', (scenario, markup) => {
+    test('still captions the line exactly once, image intact', () => {
+        document.body.innerHTML = '<div class="cart-summary-products"><ul class="media-list"><li class="media">' + markup + '</li></ul></div>';
+        window.twopayment = {
+            order_intent_url: ORDER_INTENT_URL,
+            ajax_token: 'test-token',
+            checkout_host: CHECKOUT_HOST,
+            surcharge_cart_line: true,
+            surcharge_line_label: 'Payment terms fee - 30 days',
+            surcharge_line_link_slug: SURCHARGE_SLUG
+        };
+
+        makeManager();
+
+        expect(document.querySelector('li.media').textContent.match(/Payment terms fee - 30 days/g)).toHaveLength(1);
+        expect(document.querySelector('li.media img')).not.toBeNull();
+        expect(document.querySelector('a[href*="' + SURCHARGE_SLUG + '"]')).toBeNull();
+    });
+});
+
 test('an image link carrying screen-reader text is still unwrapped, image intact', () => {
     document.body.innerHTML = [
         '<div class="cart-summary-products"><ul class="media-list"><li class="media">',

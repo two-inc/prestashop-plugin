@@ -45,7 +45,7 @@ final class SurchargeCartLineSpec
         self::testActionPresentCartMovesSurchargeToOwnRowBeforeShipping();
         self::testActionPresentCartNoOpsWhenSurchargeNotSelected();
         self::testActionPresentCartNoOpsWhenRowAbsentFromPresentedProducts();
-        self::testExistingInstallSelfHealsTheTotalsRowHook();
+        self::testActionPresentCartSelfHealsOnExistingInstall();
     }
 
     /* ---- fixtures ---- */
@@ -967,7 +967,7 @@ final class SurchargeCartLineSpec
     }
 
     /** install() runs once, so an existing install gets actionPresentCart only from the self-heal. */
-    private static function testExistingInstallSelfHealsTheTotalsRowHook(): void
+    private static function testActionPresentCartSelfHealsOnExistingInstall(): void
     {
         $cases = [
             [[], 1, 'absent on an existing install - registered'],

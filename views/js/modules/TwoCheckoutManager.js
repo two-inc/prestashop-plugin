@@ -656,9 +656,14 @@ class TwoCheckoutManager {
         if (!slug || !this._surchargeLabel) {
             return;
         }
-        document.querySelectorAll('a[href*="' + slug + '"]').forEach((anchor) => {
-            if (anchor.querySelector('img') || anchor.textContent.trim() === '') {
-                // Core links the product twice per line, image and name, so labelling both duplicates the caption.
+        const anchors = Array.from(document.querySelectorAll('a[href*="' + slug + '"]'));
+        // Core links the product twice per line - its image, then its name -
+        // so only the name link carries the caption and the other is merely
+        // unlinked. A theme that links image and name together has no such
+        // name link, and is captioned itself rather than left uncaptioned.
+        const captionCarriers = anchors.filter((anchor) => anchor.textContent.trim() !== '' && !anchor.querySelector('img'));
+        anchors.forEach((anchor) => {
+            if (captionCarriers.length > 0 && captionCarriers.indexOf(anchor) === -1) {
                 anchor.replaceWith(...anchor.childNodes);
                 return;
             }
@@ -667,7 +672,8 @@ class TwoCheckoutManager {
             if (anchor.title) {
                 span.title = this._surchargeLabel;
             }
-            span.textContent = this._surchargeLabel;
+            anchor.querySelectorAll('img').forEach((img) => span.appendChild(img));
+            span.appendChild(document.createTextNode(this._surchargeLabel));
             anchor.replaceWith(span);
         });
     }
