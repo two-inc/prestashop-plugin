@@ -785,6 +785,33 @@ describe('on the payment step, where the on-page prompt exists', () => {
         }
     });
 
+    test('walking away twice still re-fetches the answer', async () => {
+        const calls = stubFetch(noRegistration);
+        const openSpy = jest.fn(() => ({ closed: false }));
+        global.window.open = openSpy;
+
+        const instance = build();
+        await flushPromises();
+
+        // The buyer abandons the flow, then takes the prompt anyway - so the
+        // popup opens with the enrolment already abandoned.
+        instance.startEnrollment();
+        instance.cancelEnrollment();
+        await flushPromises();
+        const lookupsBeforePopup = calls.buyerLookups;
+        document.querySelector('.two-sole-trader__prompt').click();
+        expect(openSpy).toHaveBeenCalledTimes(1);
+        expect(instance.heldBuyerResult()).toBeNull();
+
+        // Reopening search disowns that popup - and its close poll - from the
+        // already-abandoned path.
+        instance.cancelEnrollment();
+        await flushPromises();
+
+        expect(calls.buyerLookups).toBe(lookupsBeforePopup + 1);
+        expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+    });
+
     test('a popup the buyer completed costs no second lookup when it closes', async () => {
         jest.useFakeTimers();
         try {
