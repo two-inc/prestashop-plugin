@@ -300,7 +300,7 @@
             $('input[name^="PS_TWO_PAYMENT_TERMS_"]').on('change', loadTwoMerchantFees);
             loadTwoMerchantFees();
 
-            // Custom request headers (ABN-490): add/remove rows in the
+            // Custom request headers: add/remove rows in the
             // Diagnostics table. Each row's three inputs share one array
             // index, so a new row takes an index past every existing one -
             // reusing an index would merge two rows on save.
