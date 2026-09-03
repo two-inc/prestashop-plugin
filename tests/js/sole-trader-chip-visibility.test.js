@@ -100,6 +100,9 @@ beforeEach(() => {
     fetchCalls = [];
     respond = () => Promise.resolve({ success: true, available: true });
     global.window.fetch = (url) => {
+        if (url.indexOf('soleTraderAvailability') === -1) {
+            return Promise.resolve({ json: () => Promise.resolve({ success: false }) });
+        }
         fetchCalls.push(url);
         return Promise.resolve({ json: () => respond() });
     };

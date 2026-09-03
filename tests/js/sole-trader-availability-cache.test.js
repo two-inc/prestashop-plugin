@@ -75,6 +75,9 @@ beforeEach(() => {
     fetchCalls = [];
     answer = { available: true, reject: false };
     global.window.fetch = (url) => {
+        if (url.indexOf('soleTraderAvailability') === -1) {
+            return Promise.resolve({ json: () => Promise.resolve({ success: false }) });
+        }
         fetchCalls.push(url);
         if (answer.reject) {
             return Promise.reject(new Error('network'));
@@ -374,6 +377,9 @@ describe('a transport failure is never persisted to the cache', () => {
         // 24h in localStorage on every later load, with nothing that re-asks
         // inside the TTL. Full coverage in sole-trader-chip-visibility.test.js.
         global.window.fetch = (url) => {
+            if (url.indexOf('soleTraderAvailability') === -1) {
+                return Promise.resolve({ json: () => Promise.resolve({ success: false }) });
+            }
             fetchCalls.push(url);
             return Promise.resolve({ json: () => Promise.resolve({ success: false }) });
         };
@@ -493,6 +499,9 @@ describe('a superseded in-flight request is not resurrected by a concurrent cach
         // could resurrect a request that lost the in-memory race.
         let settle;
         global.window.fetch = (url) => {
+            if (url.indexOf('soleTraderAvailability') === -1) {
+                return Promise.resolve({ json: () => Promise.resolve({ success: false }) });
+            }
             fetchCalls.push(url);
             return new Promise((resolve) => { settle = resolve; });
         };

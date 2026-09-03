@@ -1248,8 +1248,8 @@ The tokens minted for the signup popup — and, where one still exists, the sile
 lookup (§11 rule 1) — are short-lived. A buyer who parks on checkout past their expiry
 loses the signup flow entirely, including the post-adoption "select a different sole
 trader" path, which is the one most likely to be used late in a long session. Refresh on
-a 30-minute interval, armed from the first real mint (PrestaShop #172 `458f6bd`,
-WooCommerce #481 `cb63043`).
+a 30-minute interval, armed at the same point the eager mint fires — when an eligible
+billing country resolves (PrestaShop #172 `458f6bd`, WooCommerce #481 `cb63043`).
 
 Everything below was found by adversarial review, not by testing:
 
@@ -1261,8 +1261,10 @@ Everything below was found by adversarial review, not by testing:
   country.** A slow tick's response could land after a newer, correct-country mint and
   overwrite it with the wrong jurisdiction's delegated authority — the same race the
   availability lookup had already been fixed for (`b2e60e4`).
-- **A mint resolving after teardown must not arm a fresh interval on a dead instance**,
-  which leaves an interval nothing can ever clear (`0cae713`).
+- **Nothing resolving after teardown may arm a fresh interval on a dead instance**,
+  which leaves an interval nothing can ever clear (`0cae713`). The availability request
+  is the live case: it resolves into the same apply/settled path the eager mint hangs
+  off, so that path needs its own destroyed check.
 - **`pagehide` must check `event.persisted`** and leave the interval running across a
   bfcache freeze/resume; tearing it down leaves a buyer restored mid-checkout with a
   dead refresh loop (`e159881`). Test it by dispatching a real `pagehide`, not by
