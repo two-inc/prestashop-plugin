@@ -311,11 +311,10 @@ final class TwoSoleTraderSpec
 
     /**
      * The $transport seam above bypasses postCapturingHeaders()'s own URL and
-     * header assembly entirely, so it can't catch a regression there
-     * (TWO-25xxx: the delegation-mint call built its URL with no query
-     * string and hand-rolled its own headers, missing client/client_v and
-     * X-Vendor-Name). Exercise buildTokenMintUrl() and getTwoRequestHeaders()
-     * directly instead.
+     * header assembly entirely, so it can't catch a regression there (the
+     * delegation-mint call used to build its URL with no query string and
+     * hand-roll its own headers, missing client/client_v and X-Vendor-Name).
+     * Exercise buildTokenMintUrl()/buildTokenMintHeaders() directly instead.
      */
     private static function testTokenMintRequestCarriesClientParamsAndVendorHeader(): void
     {
@@ -328,7 +327,9 @@ final class TwoSoleTraderSpec
         $query = [];
         parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
         TinyAssert::same('PS', $query['client'] ?? null, 'delegation-mint URL must carry the shared client param');
-        TinyAssert::same($module->getTwoClientVersion(), $query['client_v'] ?? null, 'delegation-mint URL must carry the shared client_v param');
+        // Literal, not a call to getTwoClientVersion() again - that would just
+        // compare the method against itself and pin nothing.
+        TinyAssert::same('2.4.0', $query['client_v'] ?? null, 'delegation-mint URL must carry the shared client_v param');
 
         $headersMethod = new ReflectionMethod('TwoSoleTrader', 'buildTokenMintHeaders');
         $headersMethod->setAccessible(true);
