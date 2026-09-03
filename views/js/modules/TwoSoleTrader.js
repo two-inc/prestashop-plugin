@@ -1628,10 +1628,14 @@ class TwoSoleTrader {
      *   cycle during the 800ms wait bought the flow ANOTHER retry, contrary
      *   to the "one retry, not a backoff loop" contract documented on
      *   getCurrentBuyer()'s own 404 branch.
+     *
+     * @returns {boolean} whether a resume was actually scheduled. A caller that
+     *   suppresses other work because "the lookup is being re-issued" has to
+     *   know when it is not.
      */
     resumeIfStillEnrolling(trustedIdentity = false, retriedTrustedLookup = false) {
         if (!this.enrolling) {
-            return;
+            return false;
         }
         const self = this;
         setTimeout(function () {
@@ -1646,6 +1650,10 @@ class TwoSoleTrader {
             // second time - on the no-match path, popping an unwanted
             // signup window.
             if (!self.enrolling) {
+                // Nothing will re-issue the lookup now, so recover whatever
+                // eager work its guard declined - settle() left that to this.
+                self.startEagerTokenMint();
+
                 return;
             }
             // Carries the original call's trust level forward (TWO-40 live
@@ -1654,6 +1662,8 @@ class TwoSoleTrader {
             // buyer, not a fresh, unauthenticated heuristic probe.
             self.getCurrentBuyer(trustedIdentity, retriedTrustedLookup);
         }, 0);
+
+        return true;
     }
 
     /**
@@ -1832,6 +1842,9 @@ class TwoSoleTrader {
         //   either - the caller does not need to check it itself).
         const settle = function () {
             self.isFetchingBuyer = false;
+            if (self._destroyed) {
+                return false;
+            }
             // A genuine 'ACCEPTED' that arrived while THIS request (or its
             // retry) was still out set this flag instead of issuing its own
             // call - see bindPopupMessageListener(). Re-issue it now, fresh,
@@ -1883,6 +1896,9 @@ class TwoSoleTrader {
                 throw new Error('autofill/v1/buyer/current failed');
             })
             .then(function (buyer) {
+                if (self._destroyed) {
+                    return;
+                }
                 if (superseded()) {
                     // TWO-40 round 5 follow-up (Han finding, round 2): the
                     // SAME abandon-then-retry shape fetchTokens()'s success
@@ -1899,8 +1915,7 @@ class TwoSoleTrader {
                     // with the stale `buyer`/`generation` closures) - a
                     // buyer lookup, unlike a token mint, must be re-run for
                     // the current identity/generation, not replayed.
-                    reissuePending = true;
-                    self.resumeIfStillEnrolling(trustedIdentity, retriedTrustedLookup);
+                    reissuePending = self.resumeIfStillEnrolling(trustedIdentity, retriedTrustedLookup);
                     return;
                 }
                 if (trustedIdentity && !buyer && !retriedTrustedLookup) {
@@ -1957,11 +1972,18 @@ class TwoSoleTrader {
                             // retry was waiting (success, error, or a genuine
                             // cancel) - mirrors resumeIfStillEnrolling()'s own
                             // re-check (round 9 finding, Han + Vader);
-                            // nothing left to retry for.
+                            // nothing left to retry for. settle() suppressed
+                            // its eager re-attempt for a retry that is now
+                            // not happening, so do it here.
+                            self.startEagerTokenMint();
+
                             return;
                         }
                         if (superseded()) {
-                            self.resumeIfStillEnrolling(trustedIdentity, true);
+                            if (!self.resumeIfStillEnrolling(trustedIdentity, true)) {
+                                self.startEagerTokenMint();
+                            }
+
                             return;
                         }
                         self.getCurrentBuyer(trustedIdentity, true);
@@ -1974,6 +1996,9 @@ class TwoSoleTrader {
                 self.applyOrPrompt(buyer, generation, trustedIdentity);
             })
             .catch(function () {
+                if (self._destroyed) {
+                    return;
+                }
                 if (superseded()) {
                     // Same reasoning as the success branch above (round 5
                     // follow-up, Han finding round 2): a resumed click may
@@ -1984,8 +2009,7 @@ class TwoSoleTrader {
                     // it silently. (The retry itself can fail again, but
                     // that failure will correctly reach showError()/notify
                     // for the then-current generation on its own terms.)
-                    reissuePending = true;
-                    self.resumeIfStillEnrolling(trustedIdentity, retriedTrustedLookup);
+                    reissuePending = self.resumeIfStillEnrolling(trustedIdentity, retriedTrustedLookup);
                     return;
                 }
                 self.showError();

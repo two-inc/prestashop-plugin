@@ -554,6 +554,153 @@ describe('on the payment step, where the on-page prompt exists', () => {
         }
     });
 
+    test('abandoning mid-lookup still re-fetches the answer the popup dropped', async () => {
+        let lookups = 0;
+        let resolveTrusted;
+        const calls = stubFetch(() => {
+            lookups += 1;
+            if (lookups === 2) {
+                return new Promise((resolve) => { resolveTrusted = resolve; });
+            }
+            return noRegistration();
+        });
+        global.window.open = jest.fn(() => ({ closed: false }));
+
+        const instance = build();
+        await flushPromises();
+
+        instance.startEnrollment();
+        document.querySelector('.two-sole-trader__prompt').click();
+        window.dispatchEvent(new window.MessageEvent('message', {
+            data: 'ACCEPTED',
+            origin: 'https://signup.example.test'
+        }));
+        await flushPromises();
+        expect(calls.buyerLookups).toBe(2);
+
+        // Reopening company search while the authenticated lookup is out: its
+        // own re-fetch is declined by that lookup's guard, and the lookup then
+        // lands superseded with nothing to resume.
+        instance.cancelEnrollment();
+        resolveTrusted({ ok: false, status: 404 });
+        await flushPromises();
+        await flushPromises();
+
+        expect(calls.buyerLookups).toBe(3);
+        expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+    });
+
+    test('abandoning inside the read-after-write wait still re-fetches the answer', async () => {
+        jest.useFakeTimers();
+        try {
+            const calls = stubFetch(noRegistration);
+            global.window.open = jest.fn(() => ({ closed: false }));
+
+            const instance = build();
+            await flushPromises();
+
+            instance.startEnrollment();
+            document.querySelector('.two-sole-trader__prompt').click();
+            window.dispatchEvent(new window.MessageEvent('message', {
+                data: 'ACCEPTED',
+                origin: 'https://signup.example.test'
+            }));
+            await flushPromises();
+            expect(calls.buyerLookups).toBe(2);
+
+            // The buyer walks away during the 800ms read-after-write wait, so
+            // the retry that settle() stood aside for never happens.
+            instance.cancelEnrollment();
+            jest.advanceTimersByTime(900);
+            await flushPromises();
+
+            expect(calls.buyerLookups).toBe(3);
+            expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    test('a resume that no longer has a flow to resume re-fetches the answer', async () => {
+        jest.useFakeTimers();
+        try {
+            let lookups = 0;
+            let resolveClickLookup;
+            const calls = stubFetch(() => {
+                lookups += 1;
+                if (lookups === 1) {
+                    return Promise.reject(new Error('autofill unreachable'));
+                }
+                if (lookups === 2) {
+                    return new Promise((resolve) => { resolveClickLookup = resolve; });
+                }
+                return noRegistration();
+            });
+            global.window.open = jest.fn(() => ({ closed: false }));
+
+            const instance = build();
+            await flushPromises();
+            expect(calls.buyerLookups).toBe(1);
+            jest.advanceTimersByTime(instance.retryCooldownMs + 1);
+
+            // Nothing held, so this click runs its own lookup, and is then
+            // abandoned and resumed while it is still out - so the lookup
+            // lands superseded with a resume queued behind it.
+            instance.startEnrollment();
+            await flushPromises();
+            expect(calls.buyerLookups).toBe(2);
+            instance.cancelEnrollment();
+            instance.startEnrollment();
+
+            resolveClickLookup({ ok: false, status: 404 });
+            await flushPromises();
+            expect(calls.buyerLookups).toBe(2);
+
+            // Another lookup settles the flow before that resume runs - what
+            // applyBuyer() does on a successful adoption - so the resume finds
+            // nothing to resume and has to recover the eager work itself.
+            instance.enrolling = false;
+            jest.advanceTimersByTime(1);
+            await flushPromises();
+
+            expect(calls.buyerLookups).toBe(3);
+            expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    test('a lookup outstanding at destroy() acts on nothing', async () => {
+        let resolveLookup;
+        let lookups = 0;
+        const calls = stubFetch(() => {
+            lookups += 1;
+            // The mount's prefetch fails, so the click runs its own lookup.
+            if (lookups === 1) {
+                return Promise.reject(new Error('autofill unreachable'));
+            }
+            return new Promise((resolve) => { resolveLookup = resolve; });
+        });
+        const openSpy = jest.fn(() => ({ closed: false }));
+        global.window.open = openSpy;
+
+        const instance = build();
+        await flushPromises();
+
+        instance.startEnrollment();
+        await flushPromises();
+        expect(instance.isFetchingBuyer).toBe(true);
+
+        instance.destroy();
+        resolveLookup({ ok: false, status: 404 });
+        await flushPromises();
+        await flushPromises();
+
+        expect(openSpy).not.toHaveBeenCalled();
+        expect(calls.saves).toHaveLength(0);
+        expect(instance.heldBuyerResult()).toBeNull();
+    });
+
     test('a popup the buyer completed costs no second lookup when it closes', async () => {
         jest.useFakeTimers();
         try {
