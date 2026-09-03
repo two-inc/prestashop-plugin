@@ -1248,8 +1248,13 @@ The tokens minted for the signup popup — and, where one still exists, the sile
 lookup (§11 rule 1) — are short-lived. A buyer who parks on checkout past their expiry
 loses the signup flow entirely, including the post-adoption "select a different sole
 trader" path, which is the one most likely to be used late in a long session. Refresh on
-a 30-minute interval, armed at the same point the eager mint fires — when an eligible
-billing country resolves (PrestaShop #172 `458f6bd`, WooCommerce #481 `cb63043`).
+a 30-minute interval, armed from the mint's own success handler — which, with the mint
+now eager, means as soon as an eligible billing country resolves rather than on the
+first click (PrestaShop #172 `458f6bd`, WooCommerce #481 `cb63043`). Arm it in ONE
+place: the eager mint is not the only path that can produce a first token pair (a
+payment fragment arriving after the component mounted settles availability without ever
+reaching the eager trigger), and a second arming site is redundant the moment the
+success handler has one.
 
 Everything below was found by adversarial review, not by testing:
 

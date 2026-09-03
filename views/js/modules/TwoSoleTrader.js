@@ -265,6 +265,12 @@ class TwoSoleTrader {
         const container = this.container();
         if (container && container !== this.renderedContainer) {
             this.adoptServerRenderedToggle();
+            // The adoption above SETTLES availability, so refreshAvailability()
+            // returns early and apply() - the eager mint's other trigger -
+            // never runs. A fragment arriving after construction would
+            // otherwise leave the flow with no tokens minted ahead of the
+            // click and no refresh interval at all.
+            this.startEagerTokenMint();
         }
     }
 
@@ -772,9 +778,10 @@ class TwoSoleTrader {
     }
 
     /**
-     * Mint tokens and arm the background refresh as soon as an eligible
-     * billing country resolves, so the buyer's first "I'm a sole trader" click
-     * has only the autofill lookup between it and the signup popup.
+     * Mint tokens as soon as an eligible billing country resolves - which is
+     * also what arms the background refresh (see startTokenRefreshInterval())
+     * - so the buyer's first "I'm a sole trader" click has only the autofill
+     * lookup between it and the signup popup.
      *
      * Gated on isAvailableForCurrentCountry(), the same answer that decides
      * whether the chip is offered at all: a buyer who cannot use the flow
@@ -800,11 +807,16 @@ class TwoSoleTrader {
             return;
         }
         // Re-minting under an open popup would orphan the tokens baked into
-        // its URL - same invariant refreshTokens() protects.
+        // its URL - same invariant refreshTokens() protects. A buyer lookup
+        // still out is the same hazard: applyBuyer() writes the country from
+        // whatever `this.tokens` holds when it lands, which must be the pair
+        // the identity was actually authorised under.
         if (this._popup && !this._popup.closed) {
             return;
         }
-        this.startTokenRefreshInterval();
+        if (this.isFetchingBuyer) {
+            return;
+        }
         // Marked as attempted only once a request is genuinely out - stamping a
         // mint fetchTokens() declined would leave this country with no tokens
         // and nothing left to ever ask again.
@@ -1024,10 +1036,11 @@ class TwoSoleTrader {
      * click.
      *
      * Whether the tokens are ACTED on, and whether a failure reaches the
-     * buyer, is decided by `_mintHasWaiter`, not by `enrolling`: `enrolling`
-     * stays true after a failed click and is cleared for a click that IS still
-     * riding a mint, and acting without a waiter opens a popup, or re-runs a
-     * lookup, the buyer never asked for.
+     * buyer, needs BOTH `_mintHasWaiter` and `enrolling`, and neither alone:
+     * `enrolling` stays true after a failed click and is cleared for a click
+     * that IS still riding a mint, while the waiter outlives an enrolment that
+     * COMPLETED mid-mint (applyBuyer()). Acting without both opens a popup, or
+     * re-runs a lookup, the buyer never asked for.
      *
      * @param {boolean} [isEager] called by startEagerTokenMint(), not by a
      *   click: never becomes a waiter itself, but must not clear one either -
@@ -1041,9 +1054,11 @@ class TwoSoleTrader {
             this._mintHasWaiter = true;
         }
         if (this.isFetchingTokens) {
-            // A request IS already out - this click is riding it, and its
-            // own resolution (the `_mintHasWaiter` resume branches below) is
-            // what settles this click, not this return.
+            // A request IS already out - this click rides it rather than
+            // adding a second, and its resolution is what settles the click,
+            // not this return: the resume branches below when that request is
+            // a mint of this method's, or refreshTokens()'s own `.finally()`
+            // re-issuing one when it is a background tick with no such branches.
             return false;
         }
         if (Date.now() < this.nextRetryAt) {
@@ -1098,6 +1113,11 @@ class TwoSoleTrader {
                 }
                 if (json && json.success && json.autofill_token) {
                     self.tokens = json;
+                    // The single place the refresh cadence is armed, for every
+                    // mint that lands: normally startEagerTokenMint()'s, at
+                    // mount, long before any click. Idempotent - a country
+                    // change re-mints and must not arm a second interval.
+                    self.startTokenRefreshInterval();
                     // Stamp with the CAPTURED generation, not the current
                     // one - see the comment above. If cancelEnrollment() ran
                     // while this request was out, `generation` is already
@@ -1106,7 +1126,7 @@ class TwoSoleTrader {
                     // check (and a resumed startEnrollment()'s own re-stamp)
                     // are what bring it current again, never this callback.
                     self.bindPopupMessageListener();
-                    if (self._mintHasWaiter && self._enrollGeneration === generation) {
+                    if (self._mintHasWaiter && self.enrolling && self._enrollGeneration === generation) {
                         // Ordinary case: nothing has cancelled since this
                         // mint was requested. Stamp with the CAPTURED
                         // generation, not the current one - if cancelEnrollment()
@@ -1114,7 +1134,7 @@ class TwoSoleTrader {
                         // acted on, the stamp must already read as stale.
                         self._tokensGeneration = generation;
                         self.afterTokensReady();
-                    } else if (self._mintHasWaiter) {
+                    } else if (self._mintHasWaiter && self.enrolling) {
                         // TWO-40 round 5 (adversarial review finding, Han +
                         // Yoda independently): THIS mint's own generation is
                         // stale (cancelEnrollment() ran while it was out -
@@ -1184,10 +1204,10 @@ class TwoSoleTrader {
      * Start the 30-minute background re-mint (TWO-40 follow-up, Doug: a
      * buyer who sits on checkout too long can outlast the delegated auth
      * tokens' server-side lifetime, breaking autofill and the sole-trader
-     * flow entirely). Armed by startEagerTokenMint() when an eligible country
-     * resolves, so it is already running by the time the buyer clicks.
-     * Idempotent - a country change re-fires that eager mint and must not arm
-     * a second, duplicate interval.
+     * flow entirely). Armed from fetchTokens()'s success branch, which for the
+     * ordinary flow is startEagerTokenMint()'s mint at mount - so the cadence
+     * is already running by the time the buyer clicks. Idempotent: a country
+     * change re-mints and must not arm a second, duplicate interval.
      *
      * A single setInterval, not a recursive setTimeout chain: refreshTokens()
      * has no per-tick backoff to carry between calls, so there is nothing a
@@ -1347,6 +1367,15 @@ class TwoSoleTrader {
             })
             .finally(function () {
                 self.isFetchingTokens = false;
+                // A click arrived while this background tick held
+                // `isFetchingTokens` and rode it on fetchTokens()'s re-entry
+                // guard. This method has no resume branches, so without this
+                // that click would dead-end with its panel and spinner open -
+                // issue the mint it was actually waiting for.
+                if (self._mintHasWaiter && !self._destroyed) {
+                    self._mintHasWaiter = false;
+                    self.fetchTokens();
+                }
             });
     }
 
