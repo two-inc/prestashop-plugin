@@ -471,6 +471,78 @@ is not persisted here", never to a dropped payment record.
   an email typed mid-mint, and a double click starting two mints. Mint when the option
   becomes available instead, which removes the async branch from the gesture entirely
   (`15de0f8`). See §15 for keeping those tokens alive afterwards.
+  - **On a platform that still HAS a silent-autofill pre-check, its ANSWER must
+    already exist when the chip is clicked too, not just the tokens.** Otherwise the
+    mint moves out of the gesture and the lookup takes its place, and `window.open()`
+    is still behind an async callback. Fire the lookup together with the mint, as soon
+    as the mint's tokens land, and HOLD the answer — a buyer object, or an explicit
+    "none" — so the click is a pure synchronous branch: a held buyer prepopulates with
+    no popup at all; a held "none" opens the popup (or, where the platform has an
+    on-page prompt element, shows that prompt) inside the click's own call stack; and an
+    answer still in flight is treated as "none" and opens synchronously rather than
+    making the click wait on it. Never block the click on the lookup — that is the
+    async gap the whole arrangement exists to remove. Hold the answer keyed to the
+    country whose tokens authorised the lookup, not to whatever the DOM says when it
+    lands: a country change mid-flight re-mints, and an answer must never be read
+    against a pair it was not authorised under. A failed pre-click lookup holds nothing
+    and stays silent — the click then falls back to running its own, exactly as before,
+    which keeps the prefetch a pure optimisation rather than a new failure mode. Where
+    the same lookup can also run for a real click (a post-signup authenticated lookup),
+    give it its own in-flight flag so the pre-click one blocks nothing, and let the
+    click-driven answer win: a pre-click answer landing late must not overwrite one an
+    authenticated lookup has already established.
+    - **Every entry point that can reach the popup has to consult the held answer, not
+      just the chip.** A platform with a two-step payment-step flow (chip click shows an
+      on-page prompt, prompt click opens the popup) has a second gesture, and an answer
+      that was still in flight at the chip click can land in the gap between them — a
+      prompt click that goes straight to `window.open()` then pushes a buyer who IS
+      registered into hosted signup and discards the registration.
+    - **A signup popup falsifies the held answer, so drop it when one opens and fetch a
+      fresh one when the buyer leaves it** - which is two triggers, not one: the popup
+      closing, and the resumable abandon that disowns the popup (reopening company
+      search) without waiting for it to close. Without the re-fetch only the FIRST click
+      of the page is synchronous and every later one is back in the shape this rule
+      exists to remove; without the drop, a buyer who has just registered gets re-prompted from a
+      stale "none". A close that follows a completed signup needs no fetch — the
+      authenticated lookup has already answered — so gate the re-fetch on there being
+      no held answer rather than on the close itself, and skip it wherever the lookup is
+      already being re-issued (a read-after-write retry, a resumed lookup) or the two
+      race for the same answer - but only where that re-issue ACTUALLY happens. A
+      re-issue that declines because the buyer has walked away leaves the re-fetch
+      suppressed and nothing else to trigger it, which is the same regression by a
+      longer route; every bail on those paths owes the re-fetch itself.
+    - **The rule that makes this terminate: recovery belongs wherever a guard is
+      RELEASED, not wherever an event happens.** Every semantic trigger ("the popup
+      closed", "the buyer cancelled") can be pre-empted by a single-flight guard that
+      drops AFTER the event, so the pre-click lookup's own release is the last chance to
+      re-arm and has to take it. It terminates on its own: an answer now held, or the
+      failure cooldown, declines the next attempt. A disowned lookup's failure must arm
+      neither the cooldown nor the attempted-country marker - the state it would
+      penalise is not the state it was asked about.
+    - **A signup completion the flow declines to ACT on still falsifies the held
+      answer.** A platform that gates the hosted popup's completion message on a
+      generation/attempt stamp (so a popup the buyer walked away from cannot overwrite
+      what they picked instead) must still drop and re-fetch the answer on that gated
+      path: the registration now exists whether or not this attempt is the one to use
+      it. Gate that on a popup THIS flow actually opened, and consume the signal, or a
+      repeated message re-asks on loop.
+    - **A failed pre-click lookup needs a retry cooldown, not just a cleared marker.** On
+      a page with no enrolment container the availability answer is re-applied on every
+      DOM mutation burst, so "retry on the next availability resolution" is unbounded
+      against an endpoint that is down. Reuse the mint's own cooldown.
+    - **A mint that comes back for a country the buyer has left must not be acted on even
+      when a click is waiting on it**, which is the one entry point easy to miss: settle
+      that click and let the eager mint re-fire for the country they are now in. Do not
+      re-mint from the waiting path itself — the server resolves the mint against the
+      cart and can echo a country the posted one did not name, so a click that re-mints
+      until the echo agrees never terminates.
+    - **A mint declined by the single-mint guard has to be re-attempted when the mint in
+      flight lands.** A country change during the mount mint (or during a refresh tick)
+      is the live case: the availability answer the eager mint hangs off is already
+      settled for that country, so nothing else will ever trigger it again and that
+      page's clicks chain mint→lookup→popup for the rest of its life. Every guard that
+      can decline eager work needs the same treatment: the buyer-lookup single-flight
+      guard is the other one.
   - **One mint per page, at render, is enough — tokens are country-scoped, not
     email-scoped** (WooCommerce `8e2355f`). Once §11 rule 1's email-driven path is gone
     there is no per-email trigger left to mint from, and none is needed: one set serves
@@ -1248,8 +1320,12 @@ The tokens minted for the signup popup — and, where one still exists, the sile
 lookup (§11 rule 1) — are short-lived. A buyer who parks on checkout past their expiry
 loses the signup flow entirely, including the post-adoption "select a different sole
 trader" path, which is the one most likely to be used late in a long session. Refresh on
-a 30-minute interval, armed from the first real mint (PrestaShop #172 `458f6bd`,
-WooCommerce #481 `cb63043`).
+a 30-minute interval, armed from the mint's own success handler — which, with the mint
+eager, means as soon as an eligible billing country resolves rather than on the first
+click (PrestaShop #172 `458f6bd`, WooCommerce #481 `cb63043`). Arm it in exactly ONE
+place, and let that place be the success handler: it covers every mint that can produce
+a first token pair, including a click-driven one on a page where the eager mint was
+declined, so any second arming site is redundant by construction.
 
 Everything below was found by adversarial review, not by testing:
 
@@ -1261,8 +1337,10 @@ Everything below was found by adversarial review, not by testing:
   country.** A slow tick's response could land after a newer, correct-country mint and
   overwrite it with the wrong jurisdiction's delegated authority — the same race the
   availability lookup had already been fixed for (`b2e60e4`).
-- **A mint resolving after teardown must not arm a fresh interval on a dead instance**,
-  which leaves an interval nothing can ever clear (`0cae713`).
+- **Nothing resolving after teardown may arm a fresh interval on a dead instance**,
+  which leaves an interval nothing can ever clear (`0cae713`). The availability request
+  is the live case: it resolves into the same apply/settled path the eager mint hangs
+  off, so that path needs its own destroyed check.
 - **`pagehide` must check `event.persisted`** and leave the interval running across a
   bfcache freeze/resume; tearing it down leaves a buyer restored mid-checkout with a
   dead refresh loop (`e159881`). Test it by dispatching a real `pagehide`, not by
