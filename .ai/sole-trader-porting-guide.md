@@ -504,11 +504,23 @@ is not persisted here", never to a dropped payment record.
       stale "none". A close that follows a completed signup needs no fetch — the
       authenticated lookup has already answered — so gate the re-fetch on there being
       no held answer rather than on the close itself.
+    - **A failed pre-click lookup needs a retry cooldown, not just a cleared marker.** On
+      a page with no enrolment container the availability answer is re-applied on every
+      DOM mutation burst, so "retry on the next availability resolution" is unbounded
+      against an endpoint that is down. Reuse the mint's own cooldown.
+    - **A mint that comes back for a country the buyer has left must not be acted on even
+      when a click is waiting on it**, which is the one entry point easy to miss: settle
+      that click and let the eager mint re-fire for the country they are now in. Do not
+      re-mint from the waiting path itself — the server resolves the mint against the
+      cart and can echo a country the posted one did not name, so a click that re-mints
+      until the echo agrees never terminates.
     - **A mint declined by the single-mint guard has to be re-attempted when the mint in
       flight lands.** A country change during the mount mint (or during a refresh tick)
       is the live case: the availability answer the eager mint hangs off is already
       settled for that country, so nothing else will ever trigger it again and that
-      page's clicks chain mint→lookup→popup for the rest of its life.
+      page's clicks chain mint→lookup→popup for the rest of its life. Every guard that
+      can decline eager work needs the same treatment: the buyer-lookup single-flight
+      guard is the other one.
   - **One mint per page, at render, is enough — tokens are country-scoped, not
     email-scoped** (WooCommerce `8e2355f`). Once §11 rule 1's email-driven path is gone
     there is no per-email trigger left to mint from, and none is needed: one set serves
