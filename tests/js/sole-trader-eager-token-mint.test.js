@@ -1,0 +1,351 @@
+/**
+ * TWO-40 follow-up, Doug: the delegated auth tokens the sole-trader flow signs
+ * against are minted when the component mounts and an eligible billing country
+ * resolves, not on the buyer's first "I'm a sole trader" click. By the time
+ * that click happens a token pair is already minted and refreshing, so the
+ * click has only the autofill lookup between it and the signup popup.
+ *
+ * The 30-minute refresh cadence itself is covered by
+ * sole-trader-token-refresh.test.js.
+ */
+
+'use strict';
+
+const {
+    loadSoleTrader,
+    buildPaymentTile,
+    buildPaymentTileWithSoleTraderAnswer,
+    flushPromises
+} = require('./ps-harness');
+
+let TwoSoleTrader;
+
+function build(overrides) {
+    return new TwoSoleTrader(Object.assign({
+        checkoutHost: 'https://api.example.test',
+        orderIntentUrl: 'https://shop.example.test/module/twopayment/orderintent',
+        ajaxToken: 'test-token',
+        billingCountry: 'GB'
+    }, overrides || {}));
+}
+
+function tokenPayload(suffix, country) {
+    return {
+        success: true,
+        autofill_token: 'af-token-' + suffix,
+        delegation_token: 'del-token-' + suffix,
+        signup_url: 'https://signup.example.test/',
+        country: country || 'GB'
+    };
+}
+
+/**
+ * Records every mint and buyer lookup, routing mints through `mintHandler` so
+ * a test can hand back a fresh payload, a pending Promise or a failure per
+ * call. `availability.value` is what the network availability answer says, for
+ * the tests that resolve it that way rather than from server-rendered markup.
+ */
+function stubFetch(mintHandler, availability) {
+    const calls = { mints: [], buyerLookups: 0, availability: 0 };
+    global.window.fetch = (url, options) => {
+        const target = String(url);
+        if (target.includes('soleTraderAvailability')) {
+            calls.availability += 1;
+            return Promise.resolve({
+                json: () => Promise.resolve({
+                    success: true,
+                    available: !availability || availability.value !== false
+                })
+            });
+        }
+        if (target.includes('soleTraderTokens')) {
+            calls.mints.push(String((options && options.body) || ''));
+            return mintHandler();
+        }
+        if (target.includes('/autofill/v1/buyer/current')) {
+            calls.buyerLookups += 1;
+            return Promise.resolve({ ok: false, status: 404 });
+        }
+        return Promise.resolve({ json: () => Promise.resolve({ success: true }) });
+    };
+    global.fetch = global.window.fetch;
+
+    return calls;
+}
+
+/** A mint handler that always succeeds, numbering each payload in call order. */
+function mintsSucceed(state) {
+    return () => {
+        state.calls += 1;
+        return Promise.resolve({ json: () => Promise.resolve(tokenPayload(String(state.calls))) });
+    };
+}
+
+function errorShown() {
+    const error = document.querySelector('.two-sole-trader__error');
+
+    return !!error && error.style.display === 'inline';
+}
+
+beforeEach(() => {
+    TwoSoleTrader = null;
+});
+
+afterEach(() => {
+    delete global.fetch;
+    delete global.window.fetch;
+    delete global.window.open;
+    delete global.window.TwoCheckoutManager_Instance;
+    document.body.innerHTML = '';
+    global.window.localStorage.clear();
+});
+
+describe('a server-rendered eligible answer mints on mount', () => {
+    beforeEach(() => {
+        buildPaymentTileWithSoleTraderAnswer('1', 'GB');
+        TwoSoleTrader = loadSoleTrader();
+    });
+
+    test('the mint fires with no click, for the country the answer is about', async () => {
+        const state = { calls: 0 };
+        const calls = stubFetch(mintsSucceed(state));
+
+        const instance = build();
+        await flushPromises();
+
+        expect(calls.mints).toHaveLength(1);
+        expect(calls.mints[0]).toContain('country=GB');
+        expect(instance.tokens.autofill_token).toBe('af-token-1');
+
+        instance.destroy();
+    });
+
+    test('the refresh interval is armed by the same mount, not by a later click', async () => {
+        jest.useFakeTimers();
+        try {
+            const state = { calls: 0 };
+            const calls = stubFetch(mintsSucceed(state));
+
+            const instance = build();
+            await flushPromises();
+            expect(calls.mints).toHaveLength(1);
+            expect(instance._tokenRefreshIntervalId).not.toBeNull();
+
+            // Still no click anywhere in this test - the cadence runs on its
+            // own once mounted.
+            jest.advanceTimersByTime(30 * 60 * 1000);
+            await flushPromises();
+
+            expect(calls.mints).toHaveLength(2);
+            expect(instance.tokens.autofill_token).toBe('af-token-2');
+
+            instance.destroy();
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    test('the tokens are minted but never acted on: no popup, no buyer lookup, no error', async () => {
+        const state = { calls: 0 };
+        const calls = stubFetch(mintsSucceed(state));
+        const openSpy = jest.fn(() => ({ closed: false }));
+        global.window.open = openSpy;
+
+        const instance = build();
+        await flushPromises();
+        await flushPromises();
+
+        expect(calls.mints).toHaveLength(1);
+        expect(openSpy).not.toHaveBeenCalled();
+        expect(calls.buyerLookups).toBe(0);
+        expect(errorShown()).toBe(false);
+        expect(instance.enrolling).toBe(false);
+
+        instance.destroy();
+    });
+
+    test("the buyer's first click spends no mint - it goes straight to the autofill lookup", async () => {
+        const state = { calls: 0 };
+        const calls = stubFetch(mintsSucceed(state));
+
+        const instance = build();
+        await flushPromises();
+        expect(calls.mints).toHaveLength(1);
+
+        instance.startEnrollment();
+        await flushPromises();
+
+        // The click rode the tokens the mount already minted.
+        expect(calls.mints).toHaveLength(1);
+        expect(calls.buyerLookups).toBe(1);
+
+        instance.destroy();
+    });
+
+    test('a click landing while the eager mint is still in flight is served by that mint', async () => {
+        let mintCalls = 0;
+        let resolveMint;
+        const calls = stubFetch(() => {
+            mintCalls += 1;
+            return new Promise((resolve) => { resolveMint = resolve; });
+        });
+        const settled = jest.fn();
+        document.addEventListener('two:sole-trader-flight-settled', settled);
+
+        const instance = build();
+        expect(mintCalls).toBe(1);
+
+        // The buyer clicks before the mount's own mint has come back.
+        instance.startEnrollment();
+        // No second mint - the click rides the one already out.
+        expect(mintCalls).toBe(1);
+
+        resolveMint({ json: () => Promise.resolve(tokenPayload('1')) });
+        await flushPromises();
+        await flushPromises();
+
+        // Served: the lookup this click was waiting on ran, and the click's
+        // spinner was told its round trip reached a terminal state.
+        expect(calls.buyerLookups).toBe(1);
+        expect(settled).toHaveBeenCalled();
+
+        document.removeEventListener('two:sole-trader-flight-settled', settled);
+        instance.destroy();
+    });
+
+    test('a failed eager mint stays silent and leaves the first click free to mint immediately', async () => {
+        let mintCalls = 0;
+        stubFetch(() => {
+            mintCalls += 1;
+            if (mintCalls === 1) {
+                return Promise.reject(new Error('network down'));
+            }
+            return Promise.resolve({ json: () => Promise.resolve(tokenPayload('2')) });
+        });
+
+        const instance = build();
+        await flushPromises();
+
+        expect(mintCalls).toBe(1);
+        expect(instance.tokens).toBeNull();
+        // Nothing the buyer asked for failed, so nothing is on screen and the
+        // retry cooldown a real click would respect was never started.
+        expect(errorShown()).toBe(false);
+        expect(instance.nextRetryAt).toBe(0);
+
+        instance.startEnrollment();
+        await flushPromises();
+
+        expect(mintCalls).toBe(2);
+        expect(instance.tokens.autofill_token).toBe('af-token-2');
+
+        instance.destroy();
+    });
+
+    test('an availability answer landing after destroy() mints nothing and arms nothing', async () => {
+        jest.useFakeTimers();
+        try {
+            const state = { calls: 0 };
+            const calls = stubFetch(mintsSucceed(state));
+
+            // A container-less page, so the answer comes over the network and
+            // can still be in flight when the instance is torn down.
+            document.body.innerHTML = '';
+            const instance = build();
+            instance.destroy();
+            await flushPromises();
+
+            expect(calls.mints).toHaveLength(0);
+            expect(instance._tokenRefreshIntervalId).toBeNull();
+            expect(jest.getTimerCount()).toBe(0);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+});
+
+describe('a buyer who cannot use the flow costs no mint', () => {
+    test('a server-rendered business-only answer mints nothing', async () => {
+        buildPaymentTileWithSoleTraderAnswer('0', 'GB');
+        TwoSoleTrader = loadSoleTrader();
+        const state = { calls: 0 };
+        const calls = stubFetch(mintsSucceed(state));
+
+        const instance = build();
+        await flushPromises();
+
+        expect(instance.isAvailableForCurrentCountry()).toBe(false);
+        expect(calls.mints).toHaveLength(0);
+        expect(instance._tokenRefreshIntervalId).toBeNull();
+
+        instance.destroy();
+    });
+
+    test('a network answer of not-available mints nothing either', async () => {
+        buildPaymentTile();
+        TwoSoleTrader = loadSoleTrader();
+        const state = { calls: 0 };
+        const calls = stubFetch(mintsSucceed(state), { value: false });
+
+        const instance = build();
+        await flushPromises();
+        await flushPromises();
+
+        expect(calls.availability).toBe(1);
+        expect(instance.isAvailableForCurrentCountry()).toBe(false);
+        expect(calls.mints).toHaveLength(0);
+
+        instance.destroy();
+    });
+});
+
+describe('the minted tokens track the country the chip is shown for', () => {
+    test('a change to a different eligible country mints again, for the new country', async () => {
+        buildPaymentTileWithSoleTraderAnswer('1', 'GB');
+        TwoSoleTrader = loadSoleTrader();
+        let mintCalls = 0;
+        const calls = stubFetch(() => {
+            mintCalls += 1;
+            return Promise.resolve({
+                json: () => Promise.resolve(tokenPayload(String(mintCalls), mintCalls === 1 ? 'GB' : 'SE'))
+            });
+        });
+
+        const instance = build();
+        await flushPromises();
+        expect(calls.mints).toHaveLength(1);
+        expect(calls.mints[0]).toContain('country=GB');
+
+        // The config-time fallback cannot move on its own, so the country
+        // change is applied the way a live select would leave it.
+        instance.config.billingCountry = 'SE';
+        instance.availabilityByCountry.SE = true;
+        instance.apply('SE', true);
+        await flushPromises();
+
+        expect(calls.mints).toHaveLength(2);
+        expect(calls.mints[1]).toContain('country=SE');
+        expect(instance.tokens.country).toBe('SE');
+
+        instance.destroy();
+    });
+
+    test('a repeated availability resolution for the same country does not re-mint', async () => {
+        buildPaymentTileWithSoleTraderAnswer('1', 'GB');
+        TwoSoleTrader = loadSoleTrader();
+        const state = { calls: 0 };
+        const calls = stubFetch(mintsSucceed(state));
+
+        const instance = build();
+        await flushPromises();
+        expect(calls.mints).toHaveLength(1);
+
+        instance.apply('GB', true);
+        instance.apply('GB', true);
+        await flushPromises();
+
+        expect(calls.mints).toHaveLength(1);
+
+        instance.destroy();
+    });
+});

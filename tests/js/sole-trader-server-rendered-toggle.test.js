@@ -88,6 +88,9 @@ beforeEach(() => {
     fetchCalls = [];
     answer = { available: true };
     global.window.fetch = (url) => {
+        if (url.indexOf('soleTraderAvailability') === -1) {
+            return Promise.resolve({ json: () => Promise.resolve({ success: false }) });
+        }
         fetchCalls.push(url);
         return Promise.resolve({ json: () => Promise.resolve({ success: true, available: answer.available }) });
     };
@@ -356,6 +359,9 @@ describe('a replaced container is re-adopted from its own markup', () => {
         // result is stale however in-order it looked.
         let settle;
         global.window.fetch = (url) => {
+            if (url.indexOf('soleTraderAvailability') === -1) {
+                return Promise.resolve({ json: () => Promise.resolve({ success: false }) });
+            }
             fetchCalls.push(url);
             return new Promise((resolve) => { settle = resolve; });
         };
@@ -395,6 +401,9 @@ describe('a replaced container is re-adopted from its own markup', () => {
         // still out (pendingCountry was set), so the bail has to re-arm it.
         let settle;
         global.window.fetch = (url) => {
+            if (url.indexOf('soleTraderAvailability') === -1) {
+                return Promise.resolve({ json: () => Promise.resolve({ success: false }) });
+            }
             fetchCalls.push(url);
             return new Promise((resolve) => { settle = resolve; });
         };
@@ -414,6 +423,9 @@ describe('a replaced container is re-adopted from its own markup', () => {
         await flushPromises();
 
         global.window.fetch = (url) => {
+            if (url.indexOf('soleTraderAvailability') === -1) {
+                return Promise.resolve({ json: () => Promise.resolve({ success: false }) });
+            }
             fetchCalls.push(url);
             return Promise.resolve({ json: () => Promise.resolve({ success: true, available: true }) });
         };
@@ -430,6 +442,9 @@ describe('a replaced container is re-adopted from its own markup', () => {
     test('a successful in-flight request is dropped too if an answer was adopted', async () => {
         let settle;
         global.window.fetch = (url) => {
+            if (url.indexOf('soleTraderAvailability') === -1) {
+                return Promise.resolve({ json: () => Promise.resolve({ success: false }) });
+            }
             fetchCalls.push(url);
             return new Promise((resolve) => { settle = resolve; });
         };
