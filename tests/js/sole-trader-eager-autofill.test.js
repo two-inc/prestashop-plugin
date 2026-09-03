@@ -21,6 +21,7 @@ const BUYER_EMAIL = 'sole@trader.test';
 
 let TwoSoleTrader;
 let instances;
+let settleListeners;
 
 function build(overrides) {
     const instance = new TwoSoleTrader(Object.assign({
@@ -119,11 +120,14 @@ function promptShown() {
 beforeEach(() => {
     TwoSoleTrader = null;
     instances = [];
+    settleListeners = [];
 });
 
 afterEach(() => {
     instances.forEach((instance) => instance.destroy());
     instances = [];
+    settleListeners.forEach((handler) => document.removeEventListener('two:sole-trader-flight-settled', handler));
+    settleListeners = [];
     delete global.fetch;
     delete global.window.fetch;
     delete global.window.open;
@@ -356,6 +360,33 @@ describe('on the payment step, where the on-page prompt exists', () => {
         expect(calls.mints).toBe(2);
     });
 
+    test('walking away from an open popup re-fetches the answer it dropped', async () => {
+        const calls = stubFetch(noRegistration);
+        const openSpy = jest.fn(() => ({ closed: false }));
+        global.window.open = openSpy;
+
+        const instance = build();
+        await flushPromises();
+
+        instance.startEnrollment();
+        document.querySelector('.two-sole-trader__prompt').click();
+        expect(openSpy).toHaveBeenCalledTimes(1);
+        expect(instance.heldBuyerResult()).toBeNull();
+
+        // Reopening company search abandons the enrolment and disowns the
+        // popup - taking its close poll, the only other re-fetch trigger.
+        instance.cancelEnrollment();
+        await flushPromises();
+
+        expect(calls.buyerLookups).toBe(2);
+        expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+
+        // So the next click is synchronous again.
+        instance.startEnrollment();
+        expect(promptShown()).toBe(true);
+        expect(calls.buyerLookups).toBe(2);
+    });
+
     test('the next click after a popup closes is synchronous too', async () => {
         // Fake timers from the start: the popup-close poll is a real
         // setInterval, so it has to be armed under them to be advanceable.
@@ -395,6 +426,10 @@ describe('on the payment step, where the on-page prompt exists', () => {
     });
 
     test('a mint landing for a country the buyer has left is not acted on', async () => {
+        let settles = 0;
+        const onSettle = () => { settles += 1; };
+        document.addEventListener('two:sole-trader-flight-settled', onSettle);
+        settleListeners.push(onSettle);
         let mintCalls = 0;
         let resolveSecondMint;
         const calls = { mints: [], buyerLookups: 0, saves: [] };
@@ -455,7 +490,7 @@ describe('on the payment step, where the on-page prompt exists', () => {
         // The SE pair must not carry a GB enrolment - nothing is written, and
         // the click is settled rather than left spinning.
         expect(calls.saves).toHaveLength(0);
-        expect(instance._tokensGeneration).toBe(-1);
+        expect(settles).toBeGreaterThan(0);
     });
 
     test('a held answer is unreadable against a token pair it is not about', async () => {
@@ -473,6 +508,50 @@ describe('on the payment step, where the on-page prompt exists', () => {
         expect(instance._heldBuyer.country).toBe('GB');
         expect(instance.billingCountry()).toBe('GB');
         expect(instance.heldBuyerResult()).toBeNull();
+    });
+
+    test('the read-after-write retry is not shadowed by a second lookup', async () => {
+        jest.useFakeTimers();
+        try {
+            let lookups = 0;
+            const calls = stubFetch(() => {
+                lookups += 1;
+                // The mount's prefetch and the authenticated lookup both see
+                // the registration as not yet visible; the retry finds it.
+                return lookups < 3 ? noRegistration() : buyerFound();
+            });
+            const popup = { closed: false };
+            global.window.open = jest.fn(() => popup);
+
+            const instance = build();
+            await flushPromises();
+
+            instance.startEnrollment();
+            document.querySelector('.two-sole-trader__prompt').click();
+            window.dispatchEvent(new window.MessageEvent('message', {
+                data: 'ACCEPTED',
+                origin: 'https://signup.example.test'
+            }));
+            await flushPromises();
+            expect(calls.buyerLookups).toBe(2);
+
+            // The hosted flow closes its own window the moment it has posted,
+            // so the popup handle is gone before the retry fires - and with it
+            // the guard that would otherwise decline a pre-click lookup.
+            popup.closed = true;
+            jest.advanceTimersByTime(500);
+            await flushPromises();
+            expect(calls.buyerLookups).toBe(2);
+
+            jest.advanceTimersByTime(400);
+            await flushPromises();
+
+            // The retry, and nothing alongside it.
+            expect(calls.buyerLookups).toBe(3);
+            expect(calls.saves).toHaveLength(1);
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     test('a popup the buyer completed costs no second lookup when it closes', async () => {
