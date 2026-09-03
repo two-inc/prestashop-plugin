@@ -945,14 +945,27 @@ describe('on the payment step, where the on-page prompt exists', () => {
         await flushPromises();
         expect(calls.saves).toHaveLength(0);
 
-        // Resuming must not re-prompt a buyer who is now registered: the held
-        // "none" the popup falsified is gone, so this click looks again.
-        instance.startEnrollment();
         await flushPromises();
-        await flushPromises();
+        // Two re-fetches, one per event that falsified the answer: walking
+        // away from the popup, and the completion this attempt did not act on.
+        expect(calls.buyerLookups).toBe(3);
+        expect(instance.heldBuyerResult().buyer).toEqual(registeredBuyer());
 
-        expect(calls.buyerLookups).toBe(2);
+        // A repeated message is not a second completion, so it cannot re-ask
+        // on loop.
+        window.dispatchEvent(new window.MessageEvent('message', {
+            data: 'ACCEPTED',
+            origin: 'https://signup.example.test'
+        }));
+        await flushPromises();
+        expect(calls.buyerLookups).toBe(3);
+
+        // Resuming must not re-prompt a buyer who is now registered - the
+        // answer the click decides from is the post-signup one.
+        instance.startEnrollment();
+
         expect(calls.saves).toHaveLength(1);
+        expect(calls.buyerLookups).toBe(3);
     });
 
     test('"select a different sole trader" pops up regardless of the held answer', async () => {
