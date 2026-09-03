@@ -810,6 +810,8 @@ describe('the minted tokens track the country the chip is shown for', () => {
             instance.availabilityByCountry.SE = true;
             instance.startEnrollment();
             expect(mintCalls).toBe(2);
+            // Nothing has resolved yet, so the click is genuinely still open.
+            expect(settled).not.toHaveBeenCalled();
 
             resolveTick({ json: () => Promise.resolve(tokenPayload('2', 'GB')) });
             await flushPromises();
@@ -820,7 +822,7 @@ describe('the minted tokens track the country the chip is shown for', () => {
             expect(mintCalls).toBe(3);
             expect(calls.mints[2]).toContain('country=SE');
             expect(instance.tokens.country).toBe('SE');
-            expect(settled).toHaveBeenCalled();
+            expect(settled).toHaveBeenCalledTimes(1);
             expect(instance._mintHasWaiter).toBe(false);
 
             document.removeEventListener('two:sole-trader-flight-settled', settled);
@@ -937,6 +939,80 @@ describe('the minted tokens track the country the chip is shown for', () => {
             // an upstream mint on the abandoned click.
             expect(mintCalls).toBe(2);
             expect(instance._mintHasWaiter).toBe(false);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    test('"select a different sole trader" also re-mints for a country the buyer has moved to', async () => {
+        buildPaymentTileWithSoleTraderAnswer('1', 'GB');
+        TwoSoleTrader = loadSoleTrader();
+        let mintCalls = 0;
+        const calls = stubFetch(() => {
+            mintCalls += 1;
+            return Promise.resolve({
+                json: () => Promise.resolve(tokenPayload(String(mintCalls), mintCalls === 1 ? 'GB' : 'SE'))
+            });
+        });
+        const openSpy = jest.fn(() => ({ closed: false }));
+        global.window.open = openSpy;
+
+        const instance = build();
+        await flushPromises();
+        expect(instance.tokens.country).toBe('GB');
+
+        instance.config.billingCountry = 'SE';
+        instance.availabilityByCountry.SE = true;
+        instance.startReplacement();
+        await flushPromises();
+
+        // The replacement popup must be signed against SE authority, not the
+        // GB pair the mount happened to leave on the instance.
+        expect(calls.mints).toHaveLength(2);
+        expect(calls.mints[1]).toContain('country=SE');
+        expect(openSpy).toHaveBeenCalledTimes(1);
+        expect(String(openSpy.mock.calls[0][0])).toContain('af-token-2');
+    });
+
+    test('the rescue mint is declined while a signup popup is open against the current tokens', async () => {
+        jest.useFakeTimers();
+        try {
+            buildPaymentTileWithSoleTraderAnswer('1', 'GB');
+            TwoSoleTrader = loadSoleTrader();
+            let mintCalls = 0;
+            let resolveTick;
+            const calls = stubFetch(() => {
+                mintCalls += 1;
+                if (mintCalls === 2) {
+                    return new Promise((resolve) => { resolveTick = resolve; });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(tokenPayload(String(mintCalls), 'GB')) });
+            });
+            const popup = { closed: false };
+            global.window.open = jest.fn(() => popup);
+
+            const instance = build();
+            await flushPromises();
+            expect(calls.mints).toHaveLength(1);
+            const mintedTokens = instance.tokens;
+
+            jest.advanceTimersByTime(30 * 60 * 1000);
+            expect(mintCalls).toBe(2);
+
+            // A click rides the tick, and the buyer opens the signup popup
+            // against the tokens currently on the instance before it lands.
+            instance.config.billingCountry = 'SE';
+            instance.availabilityByCountry.SE = true;
+            instance.startEnrollment();
+            instance._popup = popup;
+
+            resolveTick({ json: () => Promise.resolve(tokenPayload('2', 'GB')) });
+            await flushPromises();
+            await flushPromises();
+
+            // No rescue mint, and the popup's pair is untouched.
+            expect(mintCalls).toBe(2);
+            expect(instance.tokens).toBe(mintedTokens);
         } finally {
             jest.useRealTimers();
         }
