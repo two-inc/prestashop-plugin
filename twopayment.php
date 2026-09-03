@@ -15146,7 +15146,8 @@ class Twopayment extends PaymentModule
 
     /**
      * Names a merchant row may not take: what the plugin or curl sets itself, the RFC 7230
-     * hop-by-hop headers, and credentials or caller identity that must not be forgeable.
+     * hop-by-hop headers, headers that change how a response or the connection is framed,
+     * and credentials or caller identity that must not be forgeable.
      *
      * @return array<int, string>
      */
@@ -15158,6 +15159,8 @@ class Twopayment extends PaymentModule
             'content-length',
             'accept',
             'accept-language',
+            // No CURLOPT_ENCODING is set, so a compressed response would reach json_decode still encoded.
+            'accept-encoding',
             'x-api-key',
             'x-vendor-name',
             'x-forwarded-for',
@@ -15170,6 +15173,7 @@ class Twopayment extends PaymentModule
             'trailer',
             'transfer-encoding',
             'upgrade',
+            'expect',
             'authorization',
             'cookie',
         );
