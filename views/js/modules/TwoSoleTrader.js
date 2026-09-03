@@ -1134,6 +1134,11 @@ class TwoSoleTrader {
         // the point: nothing was taken away from the buyer, so the popup's own
         // close is what settles.
         this.notifyEnrollmentSettled(true);
+        // The popup this walked away from took the held answer with it, and
+        // its close poll - the only other thing that re-fetches one - has just
+        // been disowned. Without this the buyer's next click is back to
+        // chaining a lookup into window.open().
+        this.startEagerTokenMint();
     }
 
     /**
@@ -1807,6 +1812,11 @@ class TwoSoleTrader {
         // to do, the same moment it would have been released for an
         // ordinary (non-retry) request.
         let retryScheduled = false;
+        // Set wherever this lookup is about to be re-issued - by the 404
+        // read-after-write retry, or by a resume for the current generation.
+        // The re-issued call's own settle() recovers any declined eager work,
+        // so doing it here as well only duplicates the lookup.
+        let reissuePending = false;
         // @returns {boolean} true if a pending resume was consumed and
         //   re-issued - the caller must not ALSO act on its own terms in
         //   that case (round 9 follow-up: the retry's own callback below
@@ -1838,9 +1848,11 @@ class TwoSoleTrader {
             // deferred settle in between would end the spinner in the middle
             // of the very round trip it is waiting on.
             self.flushDeferredSettle();
-            // Same re-attempt as fetchTokens()'s `.finally()`: eager work this
-            // lookup's own guard declined has no other trigger left.
-            self.startEagerTokenMint();
+            if (!reissuePending) {
+                // Same re-attempt as fetchTokens()'s `.finally()`: eager work
+                // this lookup's own guard declined has no other trigger left.
+                self.startEagerTokenMint();
+            }
 
             return false;
         };
@@ -1887,6 +1899,7 @@ class TwoSoleTrader {
                     // with the stale `buyer`/`generation` closures) - a
                     // buyer lookup, unlike a token mint, must be re-run for
                     // the current identity/generation, not replayed.
+                    reissuePending = true;
                     self.resumeIfStillEnrolling(trustedIdentity, retriedTrustedLookup);
                     return;
                 }
@@ -1910,6 +1923,7 @@ class TwoSoleTrader {
                     // mid-wait bought the flow another retry, resetting the
                     // cap to zero every abandon/resume cycle.
                     retryScheduled = true;
+                    reissuePending = true;
                     // Not cleared by destroy() - same accepted risk as
                     // resumeIfStillEnrolling()'s own deferred macrotask (see
                     // its JSDoc): `window.TwoSoleTrader_Instance` is created
@@ -1970,6 +1984,7 @@ class TwoSoleTrader {
                     // it silently. (The retry itself can fail again, but
                     // that failure will correctly reach showError()/notify
                     // for the then-current generation on its own terms.)
+                    reissuePending = true;
                     self.resumeIfStillEnrolling(trustedIdentity, retriedTrustedLookup);
                     return;
                 }

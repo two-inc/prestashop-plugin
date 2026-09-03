@@ -498,12 +498,16 @@ is not persisted here", never to a dropped payment record.
       prompt click that goes straight to `window.open()` then pushes a buyer who IS
       registered into hosted signup and discards the registration.
     - **A signup popup falsifies the held answer, so drop it when one opens and fetch a
-      fresh one when it closes.** Without the re-fetch only the FIRST click of the page
-      is synchronous and every later one is back in the shape this rule exists to
-      remove; without the drop, a buyer who has just registered gets re-prompted from a
+      fresh one when the buyer leaves it** - which is two triggers, not one: the popup
+      closing, and the resumable abandon that disowns the popup (reopening company
+      search) without waiting for it to close. Without the re-fetch only the FIRST click
+      of the page is synchronous and every later one is back in the shape this rule
+      exists to remove; without the drop, a buyer who has just registered gets re-prompted from a
       stale "none". A close that follows a completed signup needs no fetch — the
       authenticated lookup has already answered — so gate the re-fetch on there being
-      no held answer rather than on the close itself.
+      no held answer rather than on the close itself, and skip it wherever the lookup is
+      already being re-issued (a read-after-write retry, a resumed lookup) or the two
+      race for the same answer.
     - **A failed pre-click lookup needs a retry cooldown, not just a cleared marker.** On
       a page with no enrolment container the availability answer is re-applied on every
       DOM mutation burst, so "retry on the next availability resolution" is unbounded
