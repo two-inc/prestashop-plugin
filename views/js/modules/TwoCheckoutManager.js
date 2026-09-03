@@ -657,25 +657,61 @@ class TwoCheckoutManager {
             return;
         }
         const anchors = Array.from(document.querySelectorAll('a[href*="' + slug + '"]'));
-        // Core links the product twice per line - its image, then its name -
-        // so only the name link carries the caption and the other is merely
-        // unlinked. A theme that links image and name together has no such
-        // name link, and is captioned itself rather than left uncaptioned.
-        const captionCarriers = anchors.filter((anchor) => anchor.textContent.trim() !== '' && !anchor.querySelector('img'));
+        const lines = [];
         anchors.forEach((anchor) => {
-            if (captionCarriers.length > 0 && captionCarriers.indexOf(anchor) === -1) {
-                anchor.replaceWith(...anchor.childNodes);
+            // Per line, because one page can hold several renderings of the
+            // same cart (the header mini-cart beside the checkout summary),
+            // and each decides for itself where its caption belongs.
+            const line = anchor.closest('li, tr, .cart-summary-line, .media') || anchor.parentNode || anchor;
+            if (lines.indexOf(line) === -1) {
+                lines.push(line);
+            }
+        });
+
+        lines.forEach((line) => {
+            const lineAnchors = anchors.filter((anchor) => line === anchor || line.contains(anchor));
+            // Core links the product twice per line, image then name, and only
+            // the name link carries the caption.
+            const carrier = lineAnchors.filter((anchor) => anchor.textContent.trim() !== '' && !anchor.querySelector('img'))[0];
+            lineAnchors.forEach((anchor) => {
+                if (anchor !== carrier) {
+                    anchor.replaceWith(...anchor.childNodes);
+                }
+            });
+            if (carrier) {
+                this.captionSurchargeNode(carrier);
                 return;
             }
-            const span = document.createElement('span');
-            span.className = anchor.className;
-            if (anchor.title) {
-                span.title = this._surchargeLabel;
-            }
-            anchor.querySelectorAll('img').forEach((img) => span.appendChild(img));
-            span.appendChild(document.createTextNode(this._surchargeLabel));
-            anchor.replaceWith(span);
+            // A theme that leaves the name unlinked, or links it together with
+            // the image, has no such link to caption - core's own name node
+            // carries it instead, so the fee is never named twice in one line.
+            const nameNode = line.querySelector('.product-name');
+            this.captionSurchargeNode(nameNode || lineAnchors[0]);
         });
+    }
+
+    /**
+     * Recaption one node as the surcharge line, keeping whatever it wraps that
+     * is not its own text (the product thumbnail, and any markup around it),
+     * and unlinking it if it is a link.
+     *
+     * @param {Element|undefined} node
+     * @returns {void}
+     */
+    captionSurchargeNode(node) {
+        if (!node) {
+            return;
+        }
+        const replacement = document.createElement('span');
+        replacement.className = node.className;
+        if (node.title) {
+            replacement.title = this._surchargeLabel;
+        }
+        Array.from(node.childNodes)
+            .filter((child) => child.nodeType !== Node.TEXT_NODE)
+            .forEach((child) => replacement.appendChild(child));
+        replacement.appendChild(document.createTextNode(this._surchargeLabel));
+        node.replaceWith(replacement);
     }
 
     /**

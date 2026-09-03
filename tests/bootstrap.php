@@ -2444,6 +2444,12 @@ namespace {
                 : array('status' => (string) $status, 'code' => $code);
         }
 
+        /** This harness skips the constructor, which is what runs the self-heal in production. */
+        public function exposeEnsureRequiredHooksRegistered(): void
+        {
+            $this->ensureRequiredHooksRegistered();
+        }
+
         /**
          * Sets (or, with an empty array, clears) the cached backend
          * available-terms the term-discovery gate reads.
