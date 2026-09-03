@@ -160,3 +160,200 @@ test('a syncSurchargeLine response label updates the line after a term change, s
     expect(document.querySelector('.cart-summary-products span.label').textContent)
         .toBe('Payment terms fee - 60 days');
 });
+
+// Core's cart-summary line (checkout/_partials/cart-summary-product-line.tpl)
+// links the product twice: its image in .media-left, its name in .media-body.
+test('labels the name link only, so the caption appears once per summary line', () => {
+    document.body.innerHTML = [
+        '<div id="js-checkout-summary">',
+        '  <div class="cart-summary-products"><ul class="media-list">',
+        '    <li class="media">',
+        '      <div class="media-left">',
+        '        <a href="' + SURCHARGE_HREF + '" title="Payment terms fee">',
+        '          <img class="media-object" src="/img/p/en-default-small.jpg" alt="Payment terms fee">',
+        '        </a>',
+        '      </div>',
+        '      <div class="media-body">',
+        '        <span class="product-name"><a href="' + SURCHARGE_HREF + '">Payment terms fee</a></span>',
+        '        <span class="product-price">&euro;5.00</span>',
+        '      </div>',
+        '    </li>',
+        '  </ul></div>',
+        '</div>'
+    ].join('\n');
+    window.twopayment = {
+        order_intent_url: ORDER_INTENT_URL,
+        ajax_token: 'test-token',
+        checkout_host: CHECKOUT_HOST,
+        surcharge_cart_line: true,
+        surcharge_line_label: 'Payment terms fee - 30 days',
+        surcharge_line_link_slug: SURCHARGE_SLUG
+    };
+
+    makeManager();
+
+    const line = document.querySelector('li.media');
+    expect(line.textContent.match(/Payment terms fee - 30 days/g)).toHaveLength(1);
+    expect(document.querySelector('.media-body .product-name > span').textContent).toBe('Payment terms fee - 30 days');
+    expect(document.querySelector('.media-left').textContent.trim()).toBe('');
+    expect(document.querySelector('a[href*="' + SURCHARGE_SLUG + '"]')).toBeNull();
+    // The image survives its unwrapped link.
+    expect(document.querySelector('.media-left img')).not.toBeNull();
+});
+
+describe.each([
+    ['image and name share one link', '<a href="' + SURCHARGE_HREF + '"><img class="media-object" src="/img/p/x.jpg" alt=""><span class="product-name">Payment terms fee</span></a>'],
+    ['the name is not linked at all', '<a href="' + SURCHARGE_HREF + '"><img class="media-object" src="/img/p/x.jpg" alt=""></a><span class="product-name">Payment terms fee</span>']
+])('a theme where %s', (scenario, markup) => {
+    test('still captions the line exactly once, image intact', () => {
+        document.body.innerHTML = '<div class="cart-summary-products"><ul class="media-list"><li class="media">' + markup + '</li></ul></div>';
+        window.twopayment = {
+            order_intent_url: ORDER_INTENT_URL,
+            ajax_token: 'test-token',
+            checkout_host: CHECKOUT_HOST,
+            surcharge_cart_line: true,
+            surcharge_line_label: 'Payment terms fee - 30 days',
+            surcharge_line_link_slug: SURCHARGE_SLUG
+        };
+
+        makeManager();
+
+        // The WHOLE line, so a surviving day-less name would fail here.
+        expect(document.querySelector('li.media').textContent.replace(/\s+/g, ' ').trim())
+            .toBe('Payment terms fee - 30 days');
+        expect(document.querySelector('li.media img')).not.toBeNull();
+        expect(document.querySelector('a[href*="' + SURCHARGE_SLUG + '"]')).toBeNull();
+    });
+});
+
+test('each rendering of the cart on one page is captioned on its own markup', () => {
+    // A combined image+name link in the header mini-cart, beside a
+    // core-shaped summary line: neither may decide the other's caption.
+    document.body.innerHTML = [
+        '<div class="blockcart"><ul><li class="media">',
+        '  <a href="' + SURCHARGE_HREF + '"><img src="/img/p/x.jpg" alt=""><span class="product-name">Payment terms fee</span></a>',
+        '</li></ul></div>',
+        '<div class="cart-summary-products"><ul class="media-list"><li class="media">',
+        '  <div class="media-left"><a href="' + SURCHARGE_HREF + '"><img src="/img/p/x.jpg" alt=""></a></div>',
+        '  <div class="media-body"><span class="product-name"><a href="' + SURCHARGE_HREF + '">Payment terms fee</a></span></div>',
+        '</li></ul></div>'
+    ].join('\n');
+    window.twopayment = {
+        order_intent_url: ORDER_INTENT_URL,
+        ajax_token: 'test-token',
+        checkout_host: CHECKOUT_HOST,
+        surcharge_cart_line: true,
+        surcharge_line_label: 'Payment terms fee - 30 days',
+        surcharge_line_link_slug: SURCHARGE_SLUG
+    };
+
+    const manager = makeManager();
+    // Runs again on every core cart refresh, so it has to be a no-op once applied.
+    manager.fixSurchargeLineDisplay();
+    manager.fixSurchargeLineDisplay();
+
+    document.querySelectorAll('li.media').forEach((line) => {
+        expect(line.textContent.replace(/\s+/g, ' ').trim()).toBe('Payment terms fee - 30 days');
+        expect(line.querySelector('img')).not.toBeNull();
+    });
+    expect(document.querySelector('a[href*="' + SURCHARGE_SLUG + '"]')).toBeNull();
+});
+
+describe.each([
+    ['the name is wrapped in an inline element', '<span class="product-name"><a href="' + SURCHARGE_HREF + '"><span class="h6">Payment terms fee</span></a></span>'],
+    ['the name is wrapped inside a combined link', '<a href="' + SURCHARGE_HREF + '"><img src="/img/p/x.jpg" alt=""><span class="product-name"><bdi>Payment terms fee</bdi></span></a>'],
+    ['there is no name node at all, only an image link', '<div class="media-left"><a href="' + SURCHARGE_HREF + '"><img src="/img/p/x.jpg" alt=""></a></div>']
+])('a theme where %s', (scenario, markup) => {
+    test('leaves the line reading the caption and nothing else', () => {
+        document.body.innerHTML = '<div class="cart-summary-products"><ul class="media-list"><li class="media">' + markup + '</li></ul></div>';
+        window.twopayment = {
+            order_intent_url: ORDER_INTENT_URL,
+            ajax_token: 'test-token',
+            checkout_host: CHECKOUT_HOST,
+            surcharge_cart_line: true,
+            surcharge_line_label: 'Payment terms fee - 30 days',
+            surcharge_line_link_slug: SURCHARGE_SLUG
+        };
+
+        makeManager();
+
+        expect(document.querySelector('li.media').textContent.replace(/\s+/g, ' ').trim())
+            .toBe('Payment terms fee - 30 days');
+        expect(document.querySelector('a[href*="' + SURCHARGE_SLUG + '"]')).toBeNull();
+    });
+});
+
+test('a real product sharing the fee link\'s parent keeps its own name', () => {
+    // No li/tr/.media container to scope by, so the fee line must caption
+    // only its own markup rather than the nearest .product-name it can find.
+    document.body.innerHTML = [
+        '<div class="cart-summary-products">',
+        '  <span class="product-name">Cool Widget</span>',
+        '  <a href="' + SURCHARGE_HREF + '"><img src="/img/p/x.jpg" alt=""></a>',
+        '</div>'
+    ].join('\n');
+    window.twopayment = {
+        order_intent_url: ORDER_INTENT_URL,
+        ajax_token: 'test-token',
+        checkout_host: CHECKOUT_HOST,
+        surcharge_cart_line: true,
+        surcharge_line_label: 'Payment terms fee - 30 days',
+        surcharge_line_link_slug: SURCHARGE_SLUG
+    };
+
+    makeManager();
+
+    expect(document.querySelector('.product-name').textContent).toBe('Cool Widget');
+    expect(document.querySelector('.cart-summary-products').textContent).toContain('Payment terms fee - 30 days');
+    expect(document.querySelector('.cart-summary-products img')).not.toBeNull();
+});
+
+test('an icon-only link beside the name link is unlinked, not captioned', () => {
+    document.body.innerHTML = [
+        '<div class="cart-summary-products"><ul class="media-list"><li class="media">',
+        '  <a href="' + SURCHARGE_HREF + '"><i class="material-icons"></i></a>',
+        '  <span class="product-name"><a href="' + SURCHARGE_HREF + '">Payment terms fee</a></span>',
+        '</li></ul></div>'
+    ].join('\n');
+    window.twopayment = {
+        order_intent_url: ORDER_INTENT_URL,
+        ajax_token: 'test-token',
+        checkout_host: CHECKOUT_HOST,
+        surcharge_cart_line: true,
+        surcharge_line_label: 'Payment terms fee - 30 days',
+        surcharge_line_link_slug: SURCHARGE_SLUG
+    };
+
+    makeManager();
+
+    expect(document.querySelector('li.media').textContent.replace(/\s+/g, ' ').trim())
+        .toBe('Payment terms fee - 30 days');
+    expect(document.querySelector('i.material-icons')).not.toBeNull();
+    expect(document.querySelector('a[href*="' + SURCHARGE_SLUG + '"]')).toBeNull();
+});
+
+test('an image link carrying screen-reader text is still unwrapped, image intact', () => {
+    document.body.innerHTML = [
+        '<div class="cart-summary-products"><ul class="media-list"><li class="media">',
+        '  <div class="media-left"><a href="' + SURCHARGE_HREF + '">',
+        '    <img class="media-object" src="/img/p/en-default-small.jpg" alt="">',
+        '    <span class="sr-only">Payment terms fee</span>',
+        '  </a></div>',
+        '  <div class="media-body"><span class="product-name"><a href="' + SURCHARGE_HREF + '">Payment terms fee</a></span></div>',
+        '</li></ul></div>'
+    ].join('\n');
+    window.twopayment = {
+        order_intent_url: ORDER_INTENT_URL,
+        ajax_token: 'test-token',
+        checkout_host: CHECKOUT_HOST,
+        surcharge_cart_line: true,
+        surcharge_line_label: 'Payment terms fee - 30 days',
+        surcharge_line_link_slug: SURCHARGE_SLUG
+    };
+
+    makeManager();
+
+    expect(document.querySelector('li.media').textContent.match(/Payment terms fee - 30 days/g)).toHaveLength(1);
+    expect(document.querySelector('.media-left img')).not.toBeNull();
+    expect(document.querySelector('a[href*="' + SURCHARGE_SLUG + '"]')).toBeNull();
+});

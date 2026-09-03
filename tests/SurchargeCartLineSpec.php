@@ -45,6 +45,7 @@ final class SurchargeCartLineSpec
         self::testActionPresentCartMovesSurchargeToOwnRowBeforeShipping();
         self::testActionPresentCartNoOpsWhenSurchargeNotSelected();
         self::testActionPresentCartNoOpsWhenRowAbsentFromPresentedProducts();
+        self::testActionPresentCartSelfHealsOnExistingInstall();
     }
 
     /* ---- fixtures ---- */
@@ -963,5 +964,25 @@ final class SurchargeCartLineSpec
         $module->hookActionPresentCart(['presentedCart' => $presented]);
 
         TinyAssert::same(['products' => $products, 'subtotals' => $subtotals], $presented->getData());
+    }
+
+    /** install() runs once, so an existing install gets actionPresentCart only from the self-heal. */
+    private static function testActionPresentCartSelfHealsOnExistingInstall(): void
+    {
+        $cases = [
+            [[], 1, 'absent on an existing install - registered'],
+            [['actionPresentCart'], 0, 'already registered - not registered twice'],
+        ];
+
+        foreach ($cases as [$alreadyRegistered, $expectedCalls, $why]) {
+            $module = self::makeModule();
+            StubStore::$registeredHooks = $alreadyRegistered;
+            StubStore::$registerHookCalls = [];
+
+            $module->exposeEnsureRequiredHooksRegistered();
+
+            $calls = array_filter(StubStore::$registerHookCalls, static fn (string $hook): bool => $hook === 'actionPresentCart');
+            TinyAssert::count($expectedCalls, $calls, 'actionPresentCart self-heal: ' . $why);
+        }
     }
 }
