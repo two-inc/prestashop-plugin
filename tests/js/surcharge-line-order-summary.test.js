@@ -161,12 +161,8 @@ test('a syncSurchargeLine response label updates the line after a term change, s
         .toBe('Payment terms fee - 60 days');
 });
 
-/**
- * Core's checkout cart-summary line (classic theme
- * checkout/_partials/cart-summary-product-line.tpl) links the same product
- * twice: around its image in .media-left, and around its name in .media-body.
- * Labelling both printed the caption twice in one line - Doug, live checkout.
- */
+// Core's cart-summary line (checkout/_partials/cart-summary-product-line.tpl)
+// links the product twice: its image in .media-left, its name in .media-body.
 test('labels the name link only, so the caption appears once per summary line', () => {
     document.body.innerHTML = [
         '<div id="js-checkout-summary">',
@@ -198,9 +194,35 @@ test('labels the name link only, so the caption appears once per summary line', 
 
     const line = document.querySelector('li.media');
     expect(line.textContent.match(/Payment terms fee - 30 days/g)).toHaveLength(1);
-    expect(document.querySelector('.media-body span').textContent).toBe('Payment terms fee - 30 days');
+    expect(document.querySelector('.media-body .product-name > span').textContent).toBe('Payment terms fee - 30 days');
     expect(document.querySelector('.media-left').textContent.trim()).toBe('');
     expect(document.querySelector('a[href*="' + SURCHARGE_SLUG + '"]')).toBeNull();
     // The image survives its unwrapped link.
     expect(document.querySelector('.media-left img')).not.toBeNull();
+});
+
+test('an image link carrying screen-reader text is still unwrapped, image intact', () => {
+    document.body.innerHTML = [
+        '<div class="cart-summary-products"><ul class="media-list"><li class="media">',
+        '  <div class="media-left"><a href="' + SURCHARGE_HREF + '">',
+        '    <img class="media-object" src="/img/p/en-default-small.jpg" alt="">',
+        '    <span class="sr-only">Payment terms fee</span>',
+        '  </a></div>',
+        '  <div class="media-body"><span class="product-name"><a href="' + SURCHARGE_HREF + '">Payment terms fee</a></span></div>',
+        '</li></ul></div>'
+    ].join('\n');
+    window.twopayment = {
+        order_intent_url: ORDER_INTENT_URL,
+        ajax_token: 'test-token',
+        checkout_host: CHECKOUT_HOST,
+        surcharge_cart_line: true,
+        surcharge_line_label: 'Payment terms fee - 30 days',
+        surcharge_line_link_slug: SURCHARGE_SLUG
+    };
+
+    makeManager();
+
+    expect(document.querySelector('li.media').textContent.match(/Payment terms fee - 30 days/g)).toHaveLength(1);
+    expect(document.querySelector('.media-left img')).not.toBeNull();
+    expect(document.querySelector('a[href*="' + SURCHARGE_SLUG + '"]')).toBeNull();
 });

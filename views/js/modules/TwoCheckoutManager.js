@@ -657,10 +657,8 @@ class TwoCheckoutManager {
             return;
         }
         document.querySelectorAll('a[href*="' + slug + '"]').forEach((anchor) => {
-            if (anchor.textContent.trim() === '') {
-                // Core's cart-summary line links the product twice - once
-                // around its image, once around its name - so labelling both
-                // would print the fee caption twice in one line.
+            if (anchor.querySelector('img') || anchor.textContent.trim() === '') {
+                // Core links the product twice per line, image and name, so labelling both duplicates the caption.
                 anchor.replaceWith(...anchor.childNodes);
                 return;
             }
