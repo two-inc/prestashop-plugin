@@ -15143,9 +15143,9 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Header names this plugin sets itself, plus proxy-identity headers a
-     * merchant must not be able to forge: a row named like one of these would
-     * silently override what the store sends to the Two API.
+     * Reserved: what this plugin or curl sets itself, the RFC 7230 hop-by-hop headers that belong to
+     * the connection rather than the message, and credential/proxy-identity headers a merchant must
+     * not be able to forge.
      *
      * @return array<int, string>
      */
@@ -15161,6 +15161,16 @@ class Twopayment extends PaymentModule
             'x-vendor-name',
             'x-forwarded-for',
             'x-real-ip',
+            'connection',
+            'keep-alive',
+            'proxy-authenticate',
+            'proxy-authorization',
+            'te',
+            'trailer',
+            'transfer-encoding',
+            'upgrade',
+            'authorization',
+            'cookie',
         );
     }
 
