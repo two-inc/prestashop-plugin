@@ -504,10 +504,26 @@ class TwoSoleTrader {
         // Settled means "this container, for this country" - not the country
         // alone (TWO-25326 bug 9): a country-only check reports the answer as
         // settled after PrestaShop has replaced the container out from under it.
-        // Guarded on `container` truthy (TWO-40): with no container at all there
-        // is nothing to have settled INTO, so this must fall through to the
-        // in-memory/persisted-cache/fetch checks below every time.
-        if (container && country === this.renderedForCountry && this.isSettledFor(container)) {
+        // A page with NO container at all (TWO-40: the address-editor page)
+        // has nothing that can go stale that way, so it settles on the country
+        // alone once a REAL answer is on record for it (`country in
+        // availabilityByCountry`) and apply() ran with no container either -
+        // otherwise EVERY unrelated DOM mutation on that page (there is no
+        // `.two-sole-trader` for adoptReplacedContainer() to gate on) would
+        // re-run apply() -> startEagerTokenMint()/resyncSoleTraderChip()
+        // forever, relying on their own downstream guards to swallow the
+        // repeats rather than never re-triggering them at all.
+        //
+        // Requiring a RECORDED answer (not just `renderedForCountry` matching)
+        // matters for a declined response (TWO-40: `{success: false}` etc.):
+        // apply(country, false) stamps `renderedForCountry` on that path too,
+        // but records nothing in `availabilityByCountry` - see the comment on
+        // that branch below - specifically so a later trigger keeps re-asking
+        // rather than the decline "poisoning" the country forever.
+        if (country === this.renderedForCountry
+            && (container
+                ? this.isSettledFor(container)
+                : (!this.renderedContainer && country in this.availabilityByCountry))) {
             return;
         }
         if (country in this.availabilityByCountry) {
