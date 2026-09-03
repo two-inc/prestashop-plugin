@@ -3,8 +3,8 @@
 declare(strict_types=1);
 
 /**
- * ABN-490 - the Diagnostics custom request-header table that replaced the
- * single firewall-token field, plus the rate-limit controls it sits beside.
+ * The Diagnostics custom request-header table that replaced the single
+ * firewall-token field, plus the rate-limit controls it sits beside.
  *
  * The header list is one Configuration key holding JSON, rendered as an
  * HTML table because HelperForm has no repeatable-row field type. Two
