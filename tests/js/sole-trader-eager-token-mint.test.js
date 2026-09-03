@@ -1034,6 +1034,10 @@ describe('the minted tokens track the country the chip is shown for', () => {
             // No rescue mint, and the popup's pair is untouched.
             expect(mintCalls).toBe(2);
             expect(instance.tokens).toBe(mintedTokens);
+            // Declining the mint still ends that click's wait - the popup
+            // closing settles it. A waiter left set here would let the next
+            // eager mint act on tokens no click asked for.
+            expect(instance._mintHasWaiter).toBe(false);
         } finally {
             jest.useRealTimers();
         }
