@@ -159,7 +159,9 @@ class TwoSoleTrader {
         // The country startEagerTokenMint() has already minted for; see there.
         this._eagerMintCountry = null;
         // The autofill answer prefetchBuyer() is holding for the click that has
-        // not happened yet: `{ country, buyer }`, `buyer` null for "none".
+        // not happened yet: `{ buyer }`, `buyer` null for "none". Not
+        // country-scoped - the buyer identity behind the session cookie has
+        // nothing to do with which country the checkout form currently shows.
         this._heldBuyer = null;
         // The country prefetchBuyer() has already looked up for; see there.
         this._buyerPrefetchCountry = null;
@@ -887,9 +889,6 @@ class TwoSoleTrader {
         if (this._destroyed || this.isPrefetchingBuyer || this.isFetchingBuyer) {
             return;
         }
-        if (!this.tokensAreForCurrentCountry()) {
-            return;
-        }
         if (this.heldBuyerResult()) {
             return;
         }
@@ -926,10 +925,7 @@ class TwoSoleTrader {
                 if (self._destroyed || self._buyerAnswerEpoch !== epoch) {
                     return;
                 }
-                // Held under the country whose tokens authorised THIS lookup,
-                // not whatever the DOM says now - a country change while it
-                // was out re-mints, and this answer is not about that pair.
-                self.holdBuyerResult(buyer, country);
+                self.holdBuyerResult(buyer);
             })
             .catch(function () {
                 if (self._buyerAnswerEpoch !== epoch) {
@@ -957,12 +953,10 @@ class TwoSoleTrader {
 
     /**
      * @param {Object|null} buyer the autofill answer, null for "no registration"
-     * @param {string} [country] the country the lookup was authorised for,
-     *   defaulting to the current one for a lookup that has only just landed.
      */
-    holdBuyerResult(buyer, country) {
+    holdBuyerResult(buyer) {
         this._buyerAnswerEpoch += 1;
-        this._heldBuyer = { country: country || this.billingCountry(), buyer: buyer || null };
+        this._heldBuyer = { buyer: buyer || null };
     }
 
     /**
@@ -978,19 +972,13 @@ class TwoSoleTrader {
     }
 
     /**
-     * @returns {Object|null} the held autofill answer, or null when there is
-     *   none for the country the chip is currently shown for.
+     * @returns {Object|null} the held autofill answer, or null if none has
+     *   landed yet. Not country-scoped - the buyer identity behind the
+     *   session cookie has nothing to do with which country the checkout
+     *   form currently shows, so this persists across a country change.
      */
     heldBuyerResult() {
-        const held = this._heldBuyer;
-        if (!held || !this.tokensAreForCurrentCountry()) {
-            return null;
-        }
-        // Against the tokens' own country, not just the DOM's: the pair that
-        // would carry the enrolment has to be the pair this answer is about.
-        const authorised = (this.tokens && this.tokens.country) || this.billingCountry();
-
-        return held.country === authorised ? held : null;
+        return this._heldBuyer;
     }
 
     /**
@@ -1017,22 +1005,6 @@ class TwoSoleTrader {
         // bindPopupMessageListener() closes the equivalent gap on its own
         // trusted call path via `_pendingTrustedResume`.
         this.getCurrentBuyer();
-    }
-
-    /**
-     * @returns {boolean} whether the autofill/buyer-lookup answer minted
-     *   alongside `this.tokens` can be trusted for the country the chip is
-     *   being shown for now. Gates ONLY prefetchBuyer()/heldBuyerResult() -
-     *   the tokens themselves are not country-specific and are never
-     *   re-minted on a country change (see startEagerTokenMint()); this is
-     *   the held BUYER answer's own, separate country scoping.
-     */
-    tokensAreForCurrentCountry() {
-        if (!this.tokens) {
-            return false;
-        }
-        // A payload echoing no country back cannot be judged, so it is trusted.
-        return !this.tokens.country || this.tokens.country === this.billingCountry();
     }
 
     /**
@@ -1833,10 +1805,6 @@ class TwoSoleTrader {
         // applyBuyer(): a stale prompt/error appearing after the buyer has
         // moved on is confusing even where it is not a data-integrity risk.
         const generation = this._enrollGeneration;
-        // Captured before the request, for the same reason prefetchBuyer()
-        // captures it: a country change while this is out re-mints, and this
-        // answer is not about the new pair.
-        const authorisedCountry = (this.tokens && this.tokens.country) || this.billingCountry();
         const superseded = function () {
             return self._enrollGeneration !== generation;
         };
@@ -2024,7 +1992,7 @@ class TwoSoleTrader {
                 }
                 // Held too, so a later click on the same page decides from this
                 // answer synchronously instead of paying for its own lookup.
-                self.holdBuyerResult(buyer, authorisedCountry);
+                self.holdBuyerResult(buyer);
                 self.applyOrPrompt(buyer, generation, trustedIdentity);
             })
             .catch(function () {
