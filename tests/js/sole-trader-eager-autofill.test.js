@@ -493,34 +493,56 @@ describe('on the payment step, where the on-page prompt exists', () => {
         expect(settles).toBeGreaterThan(0);
     });
 
-    test('neither lookup holds an answer something falsified while it was out', async () => {
-        let resolveLookup;
+    test('the authenticated answer outranks a pre-click one still in flight', async () => {
         let lookups = 0;
-        stubFetch(() => {
+        let resolvePrefetch;
+        let resolveTrusted;
+        const calls = stubFetch(() => {
             lookups += 1;
-            // The mount's prefetch fails, so the click runs its own lookup.
             if (lookups === 1) {
-                return Promise.reject(new Error('autofill unreachable'));
+                return noRegistration();
             }
-            return new Promise((resolve) => { resolveLookup = resolve; });
+            if (lookups === 2) {
+                return new Promise((resolve) => { resolvePrefetch = resolve; });
+            }
+            return new Promise((resolve) => { resolveTrusted = resolve; });
         });
-        global.window.open = jest.fn(() => ({ closed: false }));
+        const openSpy = jest.fn(() => ({ closed: false }));
+        global.window.open = openSpy;
 
         const instance = build();
         await flushPromises();
 
         instance.startEnrollment();
-        await flushPromises();
-        expect(instance.isFetchingBuyer).toBe(true);
+        document.querySelector('.two-sole-trader__prompt').click();
+        expect(openSpy).toHaveBeenCalledTimes(1);
 
-        // Whatever falsifies the answer while a lookup is out - a signup popup
-        // opening is the live one - the answer that lands is about the world
-        // before it, so it is not held.
-        instance.clearHeldBuyerResult();
-        resolveLookup({ ok: true, json: () => Promise.resolve(registeredBuyer()) });
+        // Reopening search disowns that still-visible popup and re-arms the
+        // pre-click lookup; the buyer then comes back to the chip and
+        // completes the signup in the window that is still open.
+        instance.cancelEnrollment();
+        await flushPromises();
+        expect(calls.buyerLookups).toBe(2);
+        instance.startEnrollment();
+        window.dispatchEvent(new window.MessageEvent('message', {
+            data: 'ACCEPTED',
+            origin: 'https://signup.example.test'
+        }));
+        await flushPromises();
+        expect(calls.buyerLookups).toBe(3);
+
+        // The pre-click lookup answers first, from before the signup.
+        resolvePrefetch({ ok: false, status: 404 });
+        await flushPromises();
+        resolveTrusted({ ok: true, json: () => Promise.resolve(registeredBuyer()) });
         await flushPromises();
 
-        expect(instance._heldBuyer).toBeNull();
+        // The authenticated answer is the one held, so the next click
+        // autofills instead of reopening signup for a registered buyer.
+        expect(instance.heldBuyerResult().buyer).toEqual(registeredBuyer());
+        instance.cancelEnrollment();
+        instance.startEnrollment();
+        expect(openSpy).toHaveBeenCalledTimes(1);
     });
 
     test('a held answer is unreadable against a token pair it is not about', async () => {
