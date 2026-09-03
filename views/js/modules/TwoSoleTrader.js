@@ -863,6 +863,9 @@ class TwoSoleTrader {
         if (!this.tokensAreForCurrentCountry()) {
             return;
         }
+        if (this.heldBuyerResult()) {
+            return;
+        }
         const country = this.billingCountry();
         if (!country || this._buyerPrefetchCountry === country) {
             return;
@@ -1321,6 +1324,11 @@ class TwoSoleTrader {
                 // After the branches above have read it: this mint's waiter,
                 // if it had one, has been served or told it failed.
                 self._mintHasWaiter = false;
+                // An eager mint this request's own re-entry guard declined -
+                // a country change landing mid-flight - has no other trigger
+                // left, since the availability answer it hangs off is already
+                // settled for that country.
+                self.startEagerTokenMint();
             });
 
         return true;
@@ -1519,6 +1527,9 @@ class TwoSoleTrader {
                 // orphaning this method's own two guards exist to stop, and
                 // watchPopupUntilClosed() settles the click when it closes.
                 const popupOpen = !!(self._popup && !self._popup.closed);
+                // Same re-attempt as fetchTokens()'s own `.finally()`, for an
+                // eager mint this tick's re-entry guard declined.
+                self.startEagerTokenMint();
                 if (self._mintHasWaiter) {
                     // Cleared even where the mint is declined: `enrolling`
                     // also stays true, so a waiter left set would let the
@@ -1638,6 +1649,20 @@ class TwoSoleTrader {
     }
 
     /**
+     * @param {Object|null} buyer
+     * @returns {boolean} whether this answer is safe to auto-apply on a path
+     *   where nobody has authenticated anything - i.e. it is about the person
+     *   filling out this checkout, not a stranger whose Two session cookie
+     *   happens to be in this browser.
+     */
+    buyerMatchesCheckout(buyer) {
+        const entered = this.checkoutEmail().trim().toLowerCase();
+
+        return !!(buyer && buyer.email && entered
+            && String(buyer.email).toLowerCase() === entered);
+    }
+
+    /**
      * Act on an autofill answer: apply it, or ask the buyer to register. The
      * one place that decision is made, for a click deciding from a held answer
      * as much as for a lookup that has just landed.
@@ -1651,11 +1676,7 @@ class TwoSoleTrader {
         // just authenticated in the hosted signup popup, so `buyer` (if
         // present) IS them, whatever email PrestaShop's own checkout form
         // happens to hold. See getCurrentBuyer()'s JSDoc.
-        const entered = this.checkoutEmail().trim().toLowerCase();
-        const matches = trustedIdentity
-            ? !!buyer
-            : !!(buyer && buyer.email && entered
-                && String(buyer.email).toLowerCase() === entered);
+        const matches = trustedIdentity ? !!buyer : this.buyerMatchesCheckout(buyer);
         if (matches) {
             this.applyBuyer(buyer, generation);
 
@@ -1744,7 +1765,7 @@ class TwoSoleTrader {
         // Captured before the request, for the same reason prefetchBuyer()
         // captures it: a country change while this is out re-mints, and this
         // answer is not about the new pair.
-        const authorisedCountry = this.billingCountry();
+        const authorisedCountry = (this.tokens && this.tokens.country) || this.billingCountry();
         const superseded = function () {
             return self._enrollGeneration !== generation;
         };
@@ -2284,6 +2305,11 @@ class TwoSoleTrader {
                 self._popup = null;
                 self.stopPopupWatch();
                 self.notifyEnrollmentSettled();
+                // openPopup() dropped the held answer this popup falsified;
+                // fetch the new one now, so the buyer's NEXT click is as
+                // synchronous as their first. A no-op where an authenticated
+                // lookup has already answered - see prefetchBuyer().
+                self.startEagerTokenMint();
             }
         }, 500);
     }
@@ -2485,6 +2511,16 @@ class TwoSoleTrader {
             prompt.dataset.twoBound = '1';
             prompt.addEventListener('click', function (event) {
                 event.preventDefault();
+                const held = self.heldBuyerResult();
+                if (held && self.buyerMatchesCheckout(held.buyer)) {
+                    // The prefetch was still out when the chip was clicked, so
+                    // that click could only offer this prompt - and the answer
+                    // has landed since. Autofill rather than pushing a
+                    // registered buyer into hosted signup.
+                    self.applyOrPrompt(held.buyer, self._enrollGeneration, false);
+
+                    return;
+                }
                 self.openPopup();
             });
         }

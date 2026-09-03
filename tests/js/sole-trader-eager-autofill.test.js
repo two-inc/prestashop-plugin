@@ -95,6 +95,21 @@ function noRegistration() {
     return Promise.resolve({ ok: false, status: 404 });
 }
 
+/**
+ * The checkout's real billing-country control, which is what the module reads
+ * the country from - `config.billingCountry` is only its fallback.
+ */
+function selectCountry(iso) {
+    let select = document.querySelector("select[name='id_country']");
+    if (!select) {
+        const holder = document.createElement('div');
+        holder.innerHTML = "<select name='id_country'></select>";
+        document.body.appendChild(holder);
+        select = holder.querySelector('select');
+    }
+    select.innerHTML = '<option value="18" data-iso-code="' + iso + '" selected>Other</option>';
+}
+
 function promptShown() {
     const prompt = document.querySelector('.two-sole-trader__prompt');
 
@@ -244,6 +259,138 @@ describe('on the payment step, where the on-page prompt exists', () => {
 
         expect(calls.buyerLookups).toBe(2);
         expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+    });
+
+    test('the prompt click autofills an answer that landed since the chip click', async () => {
+        let resolveLookup;
+        const calls = stubFetch(() => new Promise((resolve) => { resolveLookup = resolve; }));
+        const openSpy = jest.fn(() => ({ closed: false }));
+        global.window.open = openSpy;
+
+        const instance = build();
+        await flushPromises();
+
+        // The answer is still out, so the chip click can only offer the
+        // prompt - and then it lands, with a registration.
+        instance.startEnrollment();
+        expect(promptShown()).toBe(true);
+        resolveLookup({ ok: true, json: () => Promise.resolve(registeredBuyer()) });
+        await flushPromises();
+
+        document.querySelector('.two-sole-trader__prompt').click();
+
+        // Autofilled from the click's own call stack: a buyer who IS registered
+        // must not be pushed into hosted signup.
+        expect(calls.saves).toHaveLength(1);
+        expect(openSpy).not.toHaveBeenCalled();
+    });
+
+    test('the next click after a popup closes is synchronous too', async () => {
+        // Fake timers from the start: the popup-close poll is a real
+        // setInterval, so it has to be armed under them to be advanceable.
+        jest.useFakeTimers();
+        try {
+            const popup = { closed: false };
+            const calls = stubFetch(noRegistration);
+            const openSpy = jest.fn(() => popup);
+            global.window.open = openSpy;
+
+            const instance = build();
+            await flushPromises();
+
+            instance.startEnrollment();
+            document.querySelector('.two-sole-trader__prompt').click();
+            expect(openSpy).toHaveBeenCalledTimes(1);
+            // Opening the popup drops the answer it falsified.
+            expect(instance.heldBuyerResult()).toBeNull();
+
+            // The buyer closes it without registering.
+            popup.closed = true;
+            jest.advanceTimersByTime(600);
+            await flushPromises();
+
+            // A fresh answer is fetched off the close, so the SECOND click
+            // decides synchronously rather than chaining a lookup into
+            // window.open().
+            expect(calls.buyerLookups).toBe(2);
+            expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+
+            instance.startEnrollment();
+            expect(promptShown()).toBe(true);
+            expect(calls.buyerLookups).toBe(2);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    test('a popup the buyer completed costs no second lookup when it closes', async () => {
+        jest.useFakeTimers();
+        try {
+            const popup = { closed: false };
+            let lookups = 0;
+            const calls = stubFetch(() => {
+                lookups += 1;
+                return lookups === 1 ? noRegistration() : buyerFound();
+            });
+            global.window.open = jest.fn(() => popup);
+
+            const instance = build();
+            await flushPromises();
+
+            instance.startEnrollment();
+            document.querySelector('.two-sole-trader__prompt').click();
+
+            // The buyer registers; the popup's completion message drives the
+            // authenticated lookup, which answers before the window closes.
+            window.dispatchEvent(new window.MessageEvent('message', {
+                data: 'ACCEPTED',
+                origin: 'https://signup.example.test'
+            }));
+            await flushPromises();
+            expect(calls.buyerLookups).toBe(2);
+            expect(instance.heldBuyerResult().buyer).toEqual(registeredBuyer());
+
+            popup.closed = true;
+            jest.advanceTimersByTime(600);
+            await flushPromises();
+
+            // Nothing left to ask: that answer is already held.
+            expect(calls.buyerLookups).toBe(2);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    test('an authenticated lookup files its answer under the tokens it was authorised by', async () => {
+        let lookups = 0;
+        const calls = stubFetch(() => {
+            lookups += 1;
+            return lookups === 1 ? noRegistration() : buyerFound();
+        });
+        global.window.open = jest.fn(() => ({ closed: false }));
+
+        const instance = build();
+        await flushPromises();
+
+        instance.startEnrollment();
+        document.querySelector('.two-sole-trader__prompt').click();
+
+        // The buyer edits the country while the popup is up. The tokens the
+        // popup - and the lookup its completion drives - are authorised by
+        // are still the GB pair.
+        selectCountry('SE');
+        expect(instance.billingCountry()).toBe('SE');
+        expect(instance.tokens.country).toBe('GB');
+
+        window.dispatchEvent(new window.MessageEvent('message', {
+            data: 'ACCEPTED',
+            origin: 'https://signup.example.test'
+        }));
+        await flushPromises();
+
+        expect(calls.buyerLookups).toBe(2);
+        expect(instance._heldBuyer.country).toBe('GB');
+        expect(instance.heldBuyerResult()).toBeNull();
     });
 
     test('a lookup answering after a country change is not filed under the new country', async () => {
@@ -421,6 +568,62 @@ describe('on the address-editor page, where there is no prompt to show', () => {
         await flushPromises();
 
         expect(instance.heldBuyerResult().buyer).toEqual(registeredBuyer());
+    });
+
+    test('a country change mid-mint still gets its own eager mint and answer', async () => {
+        let mintCalls = 0;
+        let resolveFirstMint;
+        const calls = { mints: [], buyerLookups: 0 };
+        global.window.fetch = (url, options) => {
+            const target = String(url);
+            if (target.includes('soleTraderAvailability')) {
+                return Promise.resolve({ json: () => Promise.resolve({ success: true, available: true }) });
+            }
+            if (target.includes('soleTraderTokens')) {
+                mintCalls += 1;
+                calls.mints.push(String((options && options.body) || ''));
+                const payload = {
+                    success: true,
+                    autofill_token: 'af-token-' + mintCalls,
+                    delegation_token: 'del-token-' + mintCalls,
+                    signup_url: 'https://signup.example.test/',
+                    country: mintCalls === 1 ? 'GB' : 'SE'
+                };
+                if (mintCalls === 1) {
+                    return new Promise((resolve) => {
+                        resolveFirstMint = () => resolve({ json: () => Promise.resolve(payload) });
+                    });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(payload) });
+            }
+            if (target.includes('/autofill/v1/buyer/current')) {
+                calls.buyerLookups += 1;
+                return buyerFound();
+            }
+            return Promise.resolve({ json: () => Promise.resolve({ success: true }) });
+        };
+        global.fetch = global.window.fetch;
+
+        const instance = build();
+        await flushPromises();
+        expect(mintCalls).toBe(1);
+
+        // The country changes while that first mint is still out, so its own
+        // eager mint is declined by the single-mint guard.
+        selectCountry('SE');
+        instance.availabilityByCountry.SE = true;
+        instance.apply('SE', true);
+        await flushPromises();
+        expect(mintCalls).toBe(1);
+
+        resolveFirstMint();
+        await flushPromises();
+        await flushPromises();
+        // Nothing else would ever trigger it - the availability answer for SE
+        // is already settled - so the mint that landed has to re-try it.
+        expect(mintCalls).toBe(2);
+        expect(calls.mints[1]).toContain('country=SE');
+        expect(instance.heldBuyerResult()).toEqual({ country: 'SE', buyer: registeredBuyer() });
     });
 
     test('a failed prefetch leaves the click to run its own lookup', async () => {

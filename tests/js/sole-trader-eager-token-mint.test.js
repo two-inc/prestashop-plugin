@@ -2,11 +2,11 @@
  * TWO-40 follow-up, Doug: the delegated auth tokens the sole-trader flow signs
  * against are minted when the component mounts and an eligible billing country
  * resolves, not on the buyer's first "I'm a sole trader" click. By the time
- * that click happens a token pair is already minted and refreshing, so the
- * click has only the autofill lookup between it and the signup popup.
+ * that click happens a token pair is already minted and refreshing.
  *
- * The 30-minute refresh cadence itself is covered by
- * sole-trader-token-refresh.test.js.
+ * The autofill answer those tokens fetch, and the click that decides from it,
+ * are covered by sole-trader-eager-autofill.test.js; the 30-minute refresh
+ * cadence by sole-trader-token-refresh.test.js.
  */
 
 'use strict';
@@ -204,7 +204,7 @@ describe('a server-rendered eligible answer mints on mount', () => {
         instance.destroy();
     });
 
-    test("the buyer's first click spends no mint - it goes straight to the autofill lookup", async () => {
+    test("the buyer's first click spends no mint of its own", async () => {
         const state = { calls: 0 };
         const calls = stubFetch(mintsSucceed(state));
 
@@ -956,10 +956,15 @@ describe('the minted tokens track the country the chip is shown for', () => {
             await flushPromises();
             await flushPromises();
 
-            // Nobody is waiting any more, so the tick's rescue must not spend
-            // an upstream mint on the abandoned click.
-            expect(mintCalls).toBe(2);
+            // Nobody is waiting any more, so the tick's rescue must not mint
+            // for the abandoned click. The mint that DOES follow is the eager
+            // one the buyer's new country needs - it takes no waiter, and is
+            // acted on by nothing.
+            expect(mintCalls).toBe(3);
+            expect(calls.mints[calls.mints.length - 1]).toContain('country=SE');
             expect(instance._mintHasWaiter).toBe(false);
+            expect(instance.enrolling).toBe(false);
+            expect(calls.buyerLookups).toBe(1);
         } finally {
             jest.useRealTimers();
         }
@@ -1035,9 +1040,25 @@ describe('the minted tokens track the country the chip is shown for', () => {
             expect(mintCalls).toBe(2);
             expect(instance.tokens).toBe(mintedTokens);
             // Declining the mint still ends that click's wait - the popup
-            // closing settles it. A waiter left set here would let the next
-            // eager mint act on tokens no click asked for.
+            // closing settles it. The behaviour that stands on: the next eager
+            // mint, once the popup is gone, must land silently rather than
+            // opening a second popup or running a lookup for that dead click.
             expect(instance._mintHasWaiter).toBe(false);
+
+            popup.closed = true;
+            instance._popup = null;
+            const openSpy = jest.fn(() => ({ closed: false }));
+            global.window.open = openSpy;
+            instance.apply('SE', true);
+            await flushPromises();
+            await flushPromises();
+
+            expect(mintCalls).toBe(3);
+            expect(openSpy).not.toHaveBeenCalled();
+            // The one lookup is that mint's own prefetch, with the enrolment
+            // prompt left down - nothing resumed the dead click.
+            expect(calls.buyerLookups).toBe(1);
+            expect(document.querySelector('.two-sole-trader__prompt').style.display).not.toBe('inline');
         } finally {
             jest.useRealTimers();
         }
