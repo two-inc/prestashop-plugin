@@ -504,7 +504,8 @@ $_MODULE['<{twopayment}prestashop>configuration_6d14f491c083e4d890d2f46fc03489ee
 $_MODULE['<{twopayment}prestashop>twopayment_00f5837a9f69d5fae46d9e6c54a2ac1b'] = 'Egendefinerte forespørselsheadere';
 $_MODULE['<{twopayment}prestashop>twopayment_df252b6fab3bf9b874f9a29c0ba717f6'] = 'Egendefinerte forespørselsheadere: "%s" er ikke et gyldig headernavn.';
 $_MODULE['<{twopayment}prestashop>twopayment_76804f50196af3554b45ffe2b385e035'] = 'Egendefinerte forespørselsheadere: fyll inn en verdi for headeren "%s", eller fjern raden.';
-$_MODULE['<{twopayment}prestashop>twopayment_ea65aa5021bece9110460101be1b0217'] = 'Egendefinerte forespørselsheadere: verdien for headeren "%s" kan ikke inneholde linjeskift.';
+$_MODULE['<{twopayment}prestashop>twopayment_9ef29a404bb330c3c7f0870326cc4a71'] = 'Egendefinerte forespørselsheadere: "%s" er reservert og kan ikke overstyres. Velg et annet headernavn.';
+$_MODULE['<{twopayment}prestashop>twopayment_f0e598c08b6640bf668c46c34f7ac11d'] = 'Egendefinerte forespørselsheadere: verdien for headeren "%s" kan bare inneholde skrivbare ASCII-tegn - ingen linjeskift, kontrolltegn eller ikke-ASCII-tekst.';
 $_MODULE['<{twopayment}prestashop>twopayment_0f122f13a02644362630f0fc33a3ab4c'] = 'Headernavn';
 $_MODULE['<{twopayment}prestashop>twopayment_689202409e48743b914713f96d93947c'] = 'Verdi';
 $_MODULE['<{twopayment}prestashop>twopayment_92f6bf9f0c21d0ce58d406b8b2782adf'] = 'Send også fra nettleseren';
