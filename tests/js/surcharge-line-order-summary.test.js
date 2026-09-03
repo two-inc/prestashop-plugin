@@ -259,6 +259,55 @@ test('each rendering of the cart on one page is captioned on its own markup', ()
     expect(document.querySelector('a[href*="' + SURCHARGE_SLUG + '"]')).toBeNull();
 });
 
+describe.each([
+    ['the name is wrapped in an inline element', '<span class="product-name"><a href="' + SURCHARGE_HREF + '"><span class="h6">Payment terms fee</span></a></span>'],
+    ['the name is wrapped inside a combined link', '<a href="' + SURCHARGE_HREF + '"><img src="/img/p/x.jpg" alt=""><span class="product-name"><bdi>Payment terms fee</bdi></span></a>'],
+    ['there is no name node at all, only an image link', '<div class="media-left"><a href="' + SURCHARGE_HREF + '"><img src="/img/p/x.jpg" alt=""></a></div>']
+])('a theme where %s', (scenario, markup) => {
+    test('leaves the line reading the caption and nothing else', () => {
+        document.body.innerHTML = '<div class="cart-summary-products"><ul class="media-list"><li class="media">' + markup + '</li></ul></div>';
+        window.twopayment = {
+            order_intent_url: ORDER_INTENT_URL,
+            ajax_token: 'test-token',
+            checkout_host: CHECKOUT_HOST,
+            surcharge_cart_line: true,
+            surcharge_line_label: 'Payment terms fee - 30 days',
+            surcharge_line_link_slug: SURCHARGE_SLUG
+        };
+
+        makeManager();
+
+        expect(document.querySelector('li.media').textContent.replace(/\s+/g, ' ').trim())
+            .toBe('Payment terms fee - 30 days');
+        expect(document.querySelector('a[href*="' + SURCHARGE_SLUG + '"]')).toBeNull();
+    });
+});
+
+test('a real product sharing the fee link\'s parent keeps its own name', () => {
+    // No li/tr/.media container to scope by, so the fee line must caption
+    // only its own markup rather than the nearest .product-name it can find.
+    document.body.innerHTML = [
+        '<div class="cart-summary-products">',
+        '  <span class="product-name">Cool Widget</span>',
+        '  <a href="' + SURCHARGE_HREF + '"><img src="/img/p/x.jpg" alt=""></a>',
+        '</div>'
+    ].join('\n');
+    window.twopayment = {
+        order_intent_url: ORDER_INTENT_URL,
+        ajax_token: 'test-token',
+        checkout_host: CHECKOUT_HOST,
+        surcharge_cart_line: true,
+        surcharge_line_label: 'Payment terms fee - 30 days',
+        surcharge_line_link_slug: SURCHARGE_SLUG
+    };
+
+    makeManager();
+
+    expect(document.querySelector('.product-name').textContent).toBe('Cool Widget');
+    expect(document.querySelector('.cart-summary-products').textContent).toContain('Payment terms fee - 30 days');
+    expect(document.querySelector('.cart-summary-products img')).not.toBeNull();
+});
+
 test('an icon-only link beside the name link is unlinked, not captioned', () => {
     document.body.innerHTML = [
         '<div class="cart-summary-products"><ul class="media-list"><li class="media">',
