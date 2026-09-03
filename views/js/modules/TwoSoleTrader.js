@@ -158,6 +158,14 @@ class TwoSoleTrader {
         this._tokenRefreshIntervalId = null;
         // The country startEagerTokenMint() has already minted for; see there.
         this._eagerMintCountry = null;
+        // The autofill answer prefetchBuyer() is holding for the click that has
+        // not happened yet: `{ country, buyer }`, `buyer` null for "none".
+        this._heldBuyer = null;
+        // The country prefetchBuyer() has already looked up for; see there.
+        this._buyerPrefetchCountry = null;
+        // Same shape as isFetchingBuyer, for the pre-click lookup - deliberately
+        // a separate flag: this one settles no click and blocks none.
+        this.isPrefetchingBuyer = false;
         // Whether a click is waiting on the mint in flight - the only thing
         // that may act on the tokens it lands. See fetchTokens().
         this._mintHasWaiter = false;
@@ -799,10 +807,7 @@ class TwoSoleTrader {
             return;
         }
         const country = this.billingCountry();
-        if (!country || this._eagerMintCountry === country) {
-            return;
-        }
-        if (this.tokensAreForCurrentCountry()) {
+        if (!country) {
             return;
         }
         if (!this.isAvailableForCurrentCountry()) {
@@ -819,12 +824,131 @@ class TwoSoleTrader {
         if (this.isFetchingBuyer) {
             return;
         }
+        // Tokens already in hand for this country: the pair the click needs is
+        // there, so what is left to do ahead of it is the autofill answer.
+        if (this.tokensAreForCurrentCountry()) {
+            this.prefetchBuyer();
+            return;
+        }
+        if (this._eagerMintCountry === country) {
+            return;
+        }
         // Marked as attempted only once a request is genuinely out - stamping a
         // mint fetchTokens() declined would leave this country with no tokens
         // and nothing left to ever ask again.
         if (this.fetchTokens(true)) {
             this._eagerMintCountry = country;
         }
+    }
+
+    /**
+     * Look the buyer's sole-trader registration up BEFORE the click, and hold
+     * the answer, so "I'm a sole trader" is a synchronous branch on state
+     * already known rather than a click that waits on a round trip. The signup
+     * popup for a buyer with no registration then opens inside the click's own
+     * call stack, which is what keeps it out of Safari's popup blocker.
+     *
+     * One attempt per country, and never while a click's own getCurrentBuyer()
+     * owns the answer. A failure holds nothing: the click falls back to its own
+     * lookup, exactly as before this prefetch existed.
+     */
+    prefetchBuyer() {
+        if (this._destroyed || this.isPrefetchingBuyer || this.isFetchingBuyer) {
+            return;
+        }
+        if (!this.tokensAreForCurrentCountry()) {
+            return;
+        }
+        const country = this.billingCountry();
+        if (!country || this._buyerPrefetchCountry === country) {
+            return;
+        }
+        const self = this;
+        // A full lookup landing while this one is out has the fresher answer.
+        const heldAtStart = this._heldBuyer;
+        let request;
+        try {
+            request = this.buyerLookupRequest();
+        } catch (e) {
+            return;
+        }
+        this._buyerPrefetchCountry = country;
+        this.isPrefetchingBuyer = true;
+        request
+            .then(function (response) {
+                if (response.ok) {
+                    return response.json();
+                }
+                if (response.status === 404) {
+                    return null;
+                }
+                throw new Error('autofill/v1/buyer/current failed');
+            })
+            .then(function (buyer) {
+                if (self._destroyed || self._heldBuyer !== heldAtStart) {
+                    return;
+                }
+                // Held under the country whose tokens authorised THIS lookup,
+                // not whatever the DOM says now: a country change while it was
+                // out re-mints, and this answer must not be read for the pair
+                // it was never authorised against.
+                self.holdBuyerResult(buyer, country);
+            })
+            .catch(function () {
+                // Silent by design - no click is waiting. Cleared so a later
+                // availability resolution can try again for this country.
+                self._buyerPrefetchCountry = null;
+            })
+            .finally(function () {
+                self.isPrefetchingBuyer = false;
+            });
+    }
+
+    /**
+     * @param {Object|null} buyer the autofill answer, null for "no registration"
+     * @param {string} [country] the country the lookup was authorised for,
+     *   defaulting to the current one for a lookup that has only just landed.
+     */
+    holdBuyerResult(buyer, country) {
+        this._heldBuyer = { country: country || this.billingCountry(), buyer: buyer || null };
+    }
+
+    /**
+     * @returns {Object|null} the held autofill answer, or null when there is
+     *   none for the country the chip is currently shown for.
+     */
+    heldBuyerResult() {
+        const held = this._heldBuyer;
+        if (!held || held.country !== this.billingCountry()) {
+            return null;
+        }
+        return held;
+    }
+
+    /**
+     * The click's autofill decision. Synchronous whenever the answer is already
+     * known - or is still out, which is treated as "none" rather than blocking
+     * the click behind a round trip it would lose its user gesture to. Only a
+     * flow with no prefetched answer at all (a failed prefetch, or a mint that
+     * only happened on the click itself) pays for its own lookup.
+     */
+    resolveAutofill() {
+        const held = this.heldBuyerResult();
+        if (held) {
+            this.applyOrPrompt(held.buyer, this._enrollGeneration, false);
+            return;
+        }
+        if (this.isPrefetchingBuyer) {
+            this.applyOrPrompt(null, this._enrollGeneration, false);
+            return;
+        }
+        // Known gap: if a lookup is already in flight, this silently no-ops
+        // on getCurrentBuyer()'s own guard with no notifyEnrollmentSettled()
+        // of its own, and this click's spinner is only resolved later,
+        // incidentally, by whichever lookup IS out finishing.
+        // bindPopupMessageListener() closes the equivalent gap on its own
+        // trusted call path via `_pendingTrustedResume`.
+        this.getCurrentBuyer();
     }
 
     /**
@@ -842,9 +966,10 @@ class TwoSoleTrader {
     }
 
     /**
-     * Start (or resume) sole-trader enrolment: mint tokens then autofill (or
-     * prompt the signup popup) once per page. Called directly by
-     * TwoCompanySearch.js's "I'm a sole trader" row.
+     * Start (or resume) sole-trader enrolment: autofill, or prompt the signup
+     * popup, from the tokens and autofill answer the mount already fetched -
+     * see prefetchBuyer(). Called directly by TwoCompanySearch.js's "I'm a
+     * sole trader" row.
      */
     startEnrollment() {
         this.enrolling = true;
@@ -856,13 +981,7 @@ class TwoSoleTrader {
             // whatever generation was active when these tokens were originally
             // minted no longer matters. See `_tokensGeneration`.
             this._tokensGeneration = this._enrollGeneration;
-            // Known gap: if a lookup is already in flight, this silently no-ops
-            // on getCurrentBuyer()'s own guard with no notifyEnrollmentSettled()
-            // of its own, and this click's spinner is only resolved later,
-            // incidentally, by whichever lookup IS out finishing.
-            // bindPopupMessageListener() closes the equivalent gap on its own
-            // trusted call path via `_pendingTrustedResume`.
-            this.getCurrentBuyer();
+            this.resolveAutofill();
         }
     }
 
@@ -910,7 +1029,7 @@ class TwoSoleTrader {
             this.openPopup({ autoselect: 'false' });
             return;
         }
-        this.getCurrentBuyer();
+        this.resolveAutofill();
     }
 
     /**
@@ -1167,6 +1286,9 @@ class TwoSoleTrader {
                         // click ever asked for. -1 because `_enrollGeneration`
                         // counts up from 0 and can never match it.
                         self._tokensGeneration = -1;
+                        // The other half of the pre-click work these tokens
+                        // exist to enable - see prefetchBuyer().
+                        self.prefetchBuyer();
                     }
                 } else {
                     self.tokens = null;
@@ -1472,6 +1594,71 @@ class TwoSoleTrader {
     }
 
     /**
+     * @returns {Promise} the autofill lookup, shared by the pre-click prefetch
+     *   and getCurrentBuyer(). Throws synchronously if `this.tokens` is absent.
+     */
+    buyerLookupRequest() {
+        // The one Two call that cannot be relayed server-side: it is resolved
+        // from the buyer's own Two session cookie, which exists only in this
+        // browser. So the merchant's browser-flagged headers have to travel
+        // with it.
+        const autofillHeaders = { 'two-delegated-authority-token': this.tokens.autofill_token };
+        const customHeaders = (window.twopayment && window.twopayment.custom_headers) || {};
+        Object.keys(customHeaders).forEach(function (name) {
+            autofillHeaders[name] = customHeaders[name];
+        });
+
+        return fetch(TwoSoleTrader.withTwoClientParams(this.config.checkoutHost + '/autofill/v1/buyer/current'), {
+            credentials: 'include',
+            headers: autofillHeaders
+        });
+    }
+
+    /**
+     * Act on an autofill answer: apply it, or ask the buyer to register. The
+     * one place that decision is made, for a click deciding from a held answer
+     * as much as for a lookup that has just landed.
+     *
+     * @param {Object|null} buyer
+     * @param {number} generation see applyBuyer()
+     * @param {boolean} trustedIdentity see getCurrentBuyer()
+     */
+    applyOrPrompt(buyer, generation, trustedIdentity) {
+        // `trustedIdentity` skips the email-match heuristic entirely: the buyer
+        // just authenticated in the hosted signup popup, so `buyer` (if
+        // present) IS them, whatever email PrestaShop's own checkout form
+        // happens to hold. See getCurrentBuyer()'s JSDoc.
+        const entered = this.checkoutEmail().trim().toLowerCase();
+        const matches = trustedIdentity
+            ? !!buyer
+            : !!(buyer && buyer.email && entered
+                && String(buyer.email).toLowerCase() === entered);
+        if (matches) {
+            this.applyBuyer(buyer, generation);
+
+            return;
+        }
+        if (this.container() && this.container().querySelector('.two-sole-trader__prompt')) {
+            this.showPrompt();
+            // No error, but nothing left for this click's own round trip to
+            // wait on - the flow now waits on the buyer clicking the on-page
+            // prompt, a separate user action.
+            this.notifyEnrollmentSettled();
+
+            return;
+        }
+        // TWO-40 follow-up: on the address-editor page there is no
+        // `.two-sole-trader` container at all (it is only rendered by the
+        // payment-step template, paymentinfo.tpl), so showPrompt()'s
+        // querySelector always comes back null and the buyer's chip click
+        // dead-ends silently. Payment-step keeps the two-click
+        // showPrompt()->openPopup() flow unchanged since its container/prompt
+        // element exists there. openPopup() itself notifies from both of its
+        // own branches (opened fine, or blocked) - see there.
+        this.openPopup();
+    }
+
+    /**
      * Autofill from the buyer's current Two sole-trader business.
      *
      * @param {boolean} [trustedIdentity] True only when this call follows a
@@ -1591,19 +1778,7 @@ class TwoSoleTrader {
         // exists to close.
         let request;
         try {
-            // The one Two call that cannot be relayed server-side: it is
-            // resolved from the buyer's own Two session cookie, which exists
-            // only in this browser. So the merchant's browser-flagged headers
-            // have to travel with it.
-            const autofillHeaders = { 'two-delegated-authority-token': this.tokens.autofill_token };
-            const customHeaders = (window.twopayment && window.twopayment.custom_headers) || {};
-            Object.keys(customHeaders).forEach(function (name) {
-                autofillHeaders[name] = customHeaders[name];
-            });
-            request = fetch(TwoSoleTrader.withTwoClientParams(this.config.checkoutHost + '/autofill/v1/buyer/current'), {
-                credentials: 'include',
-                headers: autofillHeaders
-            });
+            request = this.buyerLookupRequest();
         } catch (e) {
             this.isFetchingBuyer = false;
             this.showError();
@@ -1703,42 +1878,10 @@ class TwoSoleTrader {
                     }, 800);
                     return;
                 }
-                // `trustedIdentity` skips the email-match heuristic entirely:
-                // the buyer just authenticated in the hosted signup popup, so
-                // `buyer` (if present) IS them, whatever email PrestaShop's
-                // own checkout form happens to hold. See the JSDoc above.
-                const entered = self.checkoutEmail().trim().toLowerCase();
-                const matches = trustedIdentity
-                    ? !!buyer
-                    : !!(buyer && buyer.email && entered
-                        && String(buyer.email).toLowerCase() === entered);
-                if (matches) {
-                    self.applyBuyer(buyer, generation);
-                } else if (self.container() && self.container().querySelector('.two-sole-trader__prompt')) {
-                    self.showPrompt();
-                    // No error, but nothing left for this click's own round
-                    // trip to wait on - the flow now waits on the buyer
-                    // clicking the on-page prompt, a separate user action.
-                    self.notifyEnrollmentSettled();
-                } else {
-                    // TWO-40 follow-up: on the address-editor page there is no
-                    // `.two-sole-trader` container at all (it is only rendered
-                    // by the payment-step template, paymentinfo.tpl), so
-                    // showPrompt()'s querySelector always comes back null and
-                    // the buyer's chip click dead-ends silently - tokens get
-                    // minted, this lookup fires, and nothing else happens.
-                    // Empirically verified in real Chrome against staging
-                    // (chained fetch()->fetch()->window.open() off a real
-                    // click survives Chrome's transient-activation window
-                    // under normal latency) that opening the popup directly
-                    // here, still async off the original click, is not
-                    // blocked in practice. Payment-step keeps the two-click
-                    // showPrompt()->openPopup() flow unchanged since its
-                    // container/prompt element exists there. openPopup()
-                    // itself notifies from both of its own branches (opened
-                    // fine, or blocked) - see there.
-                    self.openPopup();
-                }
+                // Held too, so a later click on the same page decides from this
+                // answer synchronously instead of paying for its own lookup.
+                self.holdBuyerResult(buyer);
+                self.applyOrPrompt(buyer, generation, trustedIdentity);
             })
             .catch(function () {
                 if (superseded()) {

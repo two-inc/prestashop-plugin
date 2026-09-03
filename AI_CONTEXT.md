@@ -95,8 +95,15 @@ Reliable B2B invoice checkout via Two, with:
     no-match buyer lookup there calls `openPopup()` directly instead of the
     payment-step's two-click `showPrompt()`->`openPopup()` (TWO-40 follow-up).
     Tokens are minted, and the 30-minute refresh armed, as soon as an eligible
-    billing country resolves rather than on the buyer's first chip click, so
-    `window.open()` does not sit behind a mint inside the gesture. A landed
+    billing country resolves rather than on the buyer's first chip click, and
+    the autofill lookup runs off those tokens the moment they land, with its
+    answer held client-side - so the chip click is a synchronous branch on
+    state already known and `window.open()` never sits behind a round trip
+    inside the gesture. A held buyer prepopulates with no popup; a held "none",
+    or an answer still in flight, resolves inside the click's own call stack.
+    The answer is held under the country whose tokens authorised the lookup,
+    and a failed pre-click lookup holds nothing - the click then runs its own,
+    as it did before the prefetch existed. A landed
     mint is acted on only when `_mintHasWaiter` AND `enrolling` agree, neither
     being sufficient alone: `enrolling` stays true after a failed click and is
     cleared for a click still riding a mint, while the waiter outlives an

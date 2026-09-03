@@ -303,11 +303,16 @@ describe('popup URL (c)', () => {
             country: 'GB'
         };
 
-        instance.startReplacement();
-        await flushPromises();
+        const lookupsBeforeClick = buyerCurrentSpy.mock.calls.length;
 
-        expect(buyerCurrentSpy).not.toHaveBeenCalled();
+        instance.startReplacement();
+
+        // Asserted before any flush: the popup opens inside the click's own
+        // call stack and the click runs no lookup of its own. (Flushing first
+        // would let the mount's own prefetch land - see prefetchBuyer().)
+        expect(buyerCurrentSpy.mock.calls.length).toBe(lookupsBeforeClick);
         expect(openSpy).toHaveBeenCalledTimes(1);
+        await flushPromises();
         expect(String(openSpy.mock.calls[0][0])).toContain('autoselect=false');
 
         instance.destroy();

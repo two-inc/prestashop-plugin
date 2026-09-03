@@ -184,7 +184,7 @@ describe('a server-rendered eligible answer mints on mount', () => {
         }
     });
 
-    test('the tokens are minted but never acted on: no popup, no buyer lookup, no error', async () => {
+    test('the tokens are minted and the autofill answer prefetched, but neither acted on', async () => {
         const state = { calls: 0 };
         const calls = stubFetch(mintsSucceed(state));
         const openSpy = jest.fn(() => ({ closed: false }));
@@ -195,8 +195,9 @@ describe('a server-rendered eligible answer mints on mount', () => {
         await flushPromises();
 
         expect(calls.mints).toHaveLength(1);
+        expect(calls.buyerLookups).toBe(1);
+        expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
         expect(openSpy).not.toHaveBeenCalled();
-        expect(calls.buyerLookups).toBe(0);
         expect(errorShown()).toBe(false);
         expect(instance.enrolling).toBe(false);
 
@@ -302,10 +303,11 @@ describe('a server-rendered eligible answer mints on mount', () => {
         await flushPromises();
         await flushPromises();
 
-        // The tokens are kept for a later resume, but nothing acted on them:
-        // the click that was waiting has already been settled by the cancel.
+        // The tokens are kept for a later resume, and the autofill answer
+        // prefetched off them, but neither acted on: the click that was
+        // waiting has already been settled by the cancel.
         expect(instance.tokens.autofill_token).toBe('af-token-1');
-        expect(calls.buyerLookups).toBe(0);
+        expect(calls.buyerLookups).toBe(1);
         expect(openSpy).not.toHaveBeenCalled();
         expect(errorShown()).toBe(false);
 
@@ -346,7 +348,9 @@ describe('a server-rendered eligible answer mints on mount', () => {
         await flushPromises();
 
         expect(mintCalls).toBe(3);
-        expect(calls.buyerLookups).toBe(0);
+        // The prefetch off the new country's tokens, and nothing else - that
+        // click is not resumed, so no popup and no lookup of its own.
+        expect(calls.buyerLookups).toBe(1);
         expect(openSpy).not.toHaveBeenCalled();
 
         instance.destroy();
@@ -569,6 +573,8 @@ describe('the minted tokens track the country the chip is shown for', () => {
         const instance = build();
         await flushPromises();
         expect(instance.tokens.autofill_token).toBe('af-token-1');
+        // The mount's own prefetch, which the message must not add to.
+        expect(calls.buyerLookups).toBe(1);
 
         // A message from the signup origin, with no click ever made and no
         // popup ever opened.
@@ -579,7 +585,7 @@ describe('the minted tokens track the country the chip is shown for', () => {
         await flushPromises();
         await flushPromises();
 
-        expect(calls.buyerLookups).toBe(0);
+        expect(calls.buyerLookups).toBe(1);
         expect(instance.enrolling).toBe(false);
 
         window.dispatchEvent(new window.MessageEvent('message', {
@@ -664,11 +670,11 @@ describe('the minted tokens track the country the chip is shown for', () => {
         await flushPromises();
 
         // A real click stamps the tokens it is served as the current attempt;
-        // it is served by the mount's tokens, so it mints nothing itself.
+        // it is served by the mount's tokens AND the mount's held autofill
+        // answer, so it costs neither a mint nor a lookup of its own.
         instance.startEnrollment();
         await flushPromises();
-        const lookupsAfterClick = calls.buyerLookups;
-        expect(lookupsAfterClick).toBe(1);
+        expect(calls.buyerLookups).toBe(1);
         expect(calls.mints).toHaveLength(1);
 
         // A country change re-mints with nobody waiting, replacing those
@@ -678,6 +684,7 @@ describe('the minted tokens track the country the chip is shown for', () => {
         instance.apply('SE', true);
         await flushPromises();
         expect(instance.tokens.country).toBe('SE');
+        const lookupsBeforeMessage = calls.buyerLookups;
 
         window.dispatchEvent(new window.MessageEvent('message', {
             data: 'ACCEPTED',
@@ -686,7 +693,7 @@ describe('the minted tokens track the country the chip is shown for', () => {
         await flushPromises();
         await flushPromises();
 
-        expect(calls.buyerLookups).toBe(lookupsAfterClick);
+        expect(calls.buyerLookups).toBe(lookupsBeforeMessage);
     });
 
     test('a country change does not re-mint under a signup popup opened against the current tokens', async () => {
@@ -860,12 +867,16 @@ describe('the minted tokens track the country the chip is shown for', () => {
         // applyBuyer() does on a successful adoption, leaving the waiting
         // click's flag set but the flow no longer enrolling.
         instance.enrolling = false;
+        const lookupsBeforeMint = calls.buyerLookups;
 
         resolveClickMint({ json: () => Promise.resolve(tokenPayload('2', 'SE')) });
         await flushPromises();
         await flushPromises();
 
-        expect(calls.buyerLookups).toBe(0);
+        // The prefetch off the tokens that just landed, and nothing else: the
+        // completed enrolment's click is not resumed into a lookup or a popup.
+        expect(calls.buyerLookups).toBe(lookupsBeforeMint + 1);
+        expect(instance.heldBuyerResult()).toEqual({ country: 'SE', buyer: null });
         expect(openSpy).not.toHaveBeenCalled();
     });
 
@@ -874,18 +885,28 @@ describe('the minted tokens track the country the chip is shown for', () => {
         TwoSoleTrader = loadSoleTrader();
         const state = { calls: 0 };
         let resolveLookup;
+        let lookupCalls = 0;
         const calls = stubFetch(mintsSucceed(state), {
-            lookup: () => new Promise((resolve) => { resolveLookup = resolve; })
+            lookup: () => {
+                lookupCalls += 1;
+                // The mount's prefetch fails, so nothing is held and the click
+                // has to run its own lookup - which then hangs.
+                if (lookupCalls === 1) {
+                    return Promise.reject(new Error('autofill unreachable'));
+                }
+                return new Promise((resolve) => { resolveLookup = resolve; });
+            }
         });
 
         const instance = build();
         await flushPromises();
         expect(calls.mints).toHaveLength(1);
+        expect(instance.heldBuyerResult()).toBeNull();
 
         // The click's lookup is authorised by the GB tokens and is still out.
         instance.startEnrollment();
         await flushPromises();
-        expect(calls.buyerLookups).toBe(1);
+        expect(calls.buyerLookups).toBe(2);
         expect(instance.isFetchingBuyer).toBe(true);
 
         // A country change must not swap the tokens that lookup is running

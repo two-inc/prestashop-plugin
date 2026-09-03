@@ -471,6 +471,26 @@ is not persisted here", never to a dropped payment record.
   an email typed mid-mint, and a double click starting two mints. Mint when the option
   becomes available instead, which removes the async branch from the gesture entirely
   (`15de0f8`). See §15 for keeping those tokens alive afterwards.
+  - **On a platform that still HAS a silent-autofill pre-check, its ANSWER must
+    already exist when the chip is clicked too, not just the tokens.** Otherwise the
+    mint moves out of the gesture and the lookup takes its place, and `window.open()`
+    is still behind an async callback. Fire the lookup together with the mint, as soon
+    as the mint's tokens land, and HOLD the answer — a buyer object, or an explicit
+    "none" — so the click is a pure synchronous branch: a held buyer prepopulates with
+    no popup at all; a held "none" opens the popup (or, where the platform has an
+    on-page prompt element, shows that prompt) inside the click's own call stack; and an
+    answer still in flight is treated as "none" and opens synchronously rather than
+    making the click wait on it. Never block the click on the lookup — that is the
+    async gap the whole arrangement exists to remove. Hold the answer keyed to the
+    country whose tokens authorised the lookup, not to whatever the DOM says when it
+    lands: a country change mid-flight re-mints, and an answer must never be read
+    against a pair it was not authorised under. A failed pre-click lookup holds nothing
+    and stays silent — the click then falls back to running its own, exactly as before,
+    which keeps the prefetch a pure optimisation rather than a new failure mode. Where
+    the same lookup can also run for a real click (a post-signup authenticated lookup),
+    give it its own in-flight flag so the pre-click one blocks nothing, and let the
+    click-driven answer win: a pre-click answer landing late must not overwrite one an
+    authenticated lookup has already established.
   - **One mint per page, at render, is enough — tokens are country-scoped, not
     email-scoped** (WooCommerce `8e2355f`). Once §11 rule 1's email-driven path is gone
     there is no per-email trigger left to mint from, and none is needed: one set serves
