@@ -415,23 +415,23 @@ final class AdminFirewallRateLimitFieldsSpec
             array('x-vendor-NAME', 'the vendor identifier, in mixed casing'),
             array('X-Forwarded-For', 'proxy-supplied caller identity'),
             array('x-real-ip', 'proxy-supplied caller identity'),
-            array('Connection', 'the hop-by-hop header that governs connection reuse, not the message'),
-            array('connection', 'the connection-reuse header, lowercased'),
-            array('Keep-Alive', 'hop-by-hop connection tuning curl owns'),
-            array('KEEP-ALIVE', 'hop-by-hop connection tuning, uppercased'),
-            array('Proxy-Authenticate', 'a proxy authentication challenge, which belongs to the proxy hop'),
-            array('Proxy-Authorization', 'proxy credentials, which belong to the proxy hop'),
-            array('proxy-authorization', 'proxy credentials, lowercased'),
-            array('TE', 'the transfer-encoding negotiation curl owns'),
+            array('Connection', 'hop-by-hop connection control'),
+            array('connection', 'connection control, lowercased'),
+            array('Keep-Alive', 'hop-by-hop connection tuning'),
+            array('KEEP-ALIVE', 'connection tuning, uppercased'),
+            array('Proxy-Authenticate', 'a proxy-hop challenge'),
+            array('Proxy-Authorization', 'proxy-hop credentials'),
+            array('proxy-authorization', 'proxy-hop credentials, lowercased'),
+            array('TE', 'transfer-encoding negotiation'),
             array('te', 'transfer-encoding negotiation, lowercased'),
-            array('Trailer', 'the trailer declaration for a chunked body curl frames'),
-            array('Transfer-Encoding', 'the body framing - setting it by hand desynchronises the request'),
+            array('Trailer', 'the trailer declaration for a chunked body'),
+            array('Transfer-Encoding', 'the body framing curl owns'),
             array('transfer-ENCODING', 'body framing, in mixed casing'),
-            array('Upgrade', 'a protocol-switch request the connection, not the merchant, owns'),
-            array('Authorization', 'the request credential - the API key travels in X-API-Key, and this must not be forgeable'),
-            array('authorization', 'the request credential, lowercased'),
-            array('Cookie', 'caller-supplied session state a merchant must not be able to inject'),
-            array('COOKIE', 'caller-supplied session state, uppercased'),
+            array('Upgrade', 'a protocol switch on the connection'),
+            array('Authorization', 'a forgeable request credential'),
+            array('authorization', 'a request credential, lowercased'),
+            array('Cookie', 'forgeable caller-supplied state'),
+            array('COOKIE', 'caller-supplied state, uppercased'),
         );
 
         foreach ($cases as list($name, $description)) {
@@ -440,9 +440,12 @@ final class AdminFirewallRateLimitFieldsSpec
             Tools::setTestValue('two_custom_header_name', array($name));
             Tools::setTestValue('two_custom_header_value', array('anything'));
 
+            // The reserved rule specifically, not just "some error": every name here is also a
+            // well-formed token with a valid value, so a count-only assertion would stay green on
+            // a rejection from an unrelated rule.
             TinyAssert::true(
-                count(self::validate()) > 0,
-                'a row named "' . $name . '" must be refused - it would override ' . $description
+                strpos(implode("\n", self::validate()), 'is reserved') !== false,
+                'a row named "' . $name . '" must be refused as reserved - it carries ' . $description
             );
         }
     }
@@ -467,10 +470,7 @@ final class AdminFirewallRateLimitFieldsSpec
         }
     }
 
-    /**
-     * The list is the contract, so it is asserted whole: a name silently dropped from it reopens the
-     * override it was added to close, and no other test would go red.
-     */
+    /** Asserted whole - a name dropped from the list reddens no other test. */
     private static function testReservedNameListIsComplete(): void
     {
         $expected = array(

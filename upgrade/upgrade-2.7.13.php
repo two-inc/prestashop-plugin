@@ -10,8 +10,7 @@
  * than an unconditional create.
  *
  * Nothing else needs migrating: the new Configuration keys
- * (PS_TWO_FIREWALL_TOKEN, PS_TWO_FIREWALL_TOKEN_BROWSER,
- * PS_TWO_TRUSTED_PROXIES, PS_TWO_DISABLE_RATE_LIMIT) all read as their
+ * (PS_TWO_TRUSTED_PROXIES, PS_TWO_DISABLE_RATE_LIMIT) both read as their
  * secure/off default when the row is absent, so an upgraded shop with no
  * row behaves exactly as one that just ran install().
  *
