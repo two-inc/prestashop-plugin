@@ -319,6 +319,7 @@ $_MODULE['<{twopayment}prestashop>displayorderdetail_6328f1ab8572c5a83aea8dfdd0b
 $_MODULE['<{twopayment}prestashop>displayorderdetail_1139855f5319137d6e5eedcd9d3a5ccb'] = 'Descargar factura en PDF';
 $_MODULE['<{twopayment}prestashop>displayorderdetail_f535b1d8c6ee98d69daa1b6988d65bdc'] = 'Portal %s';
 $_MODULE['<{twopayment}prestashop>displayorderdetail_7acc91e0f8c538bdaf67113dce87520c'] = 'Gestiona tu cuenta %s';
+$_MODULE['<{twopayment}prestashop>paymentinfo_1c76cbfe21c6f44c1d1e59d54f3e4420'] = 'Empresa';
 $_MODULE['<{twopayment}prestashop>paymentinfo_5aef0c6f737f3b7048b5e399e9d843a5'] = 'Pagos empresariales simplificados';
 $_MODULE['<{twopayment}prestashop>paymentinfo_45c6314c990994e3b513337bcffd59f9'] = '¿Qué es %s?';
 $_MODULE['<{twopayment}prestashop>paymentinfo_ce788118f22dd76bda591a4dae15e622'] = '%s proporciona crédito comercial instantáneo para compras B2B. Compra ahora, paga después sin intereses ni comisiones.';
@@ -329,6 +330,8 @@ $_MODULE['<{twopayment}prestashop>paymentinfo_26615a6d6e63f2904432b8b425ee6e93']
 $_MODULE['<{twopayment}prestashop>paymentinfo_c1cf258d03ea6e7a7d9a004d3a017610'] = 'Elige la opción de Compra Ahora, Paga Después que mejor se adapte a ti';
 $_MODULE['<{twopayment}prestashop>paymentinfo_a002c8066738bc8f9d9394abdcef7ea8'] = 'Tu período de pago comienza cuando se cumple tu pedido';
 $_MODULE['<{twopayment}prestashop>paymentinfo_1ffcb4e0a351d5e143bec6362c0feaf8'] = 'El pago vence al final del mes actual más los días seleccionados desde que se cumple tu pedido';
+$_MODULE['<{twopayment}prestashop>paymentinfo_1b98fa92874f5fd75df8fdc59d92022a'] = 'Haz clic aquí para iniciar sesión o registrarte como autónomo con %s.';
+$_MODULE['<{twopayment}prestashop>paymentinfo_b55facd49248ec93ec53edc801dadb08'] = 'Se ha producido un error al configurar el pago como autónomo. Por favor, inténtalo de nuevo.';
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_269034f86f996679a6b9d9184df78485'] = 'Pago con %s';
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_7de46cb469a9606c3f20c512df2519f3'] = 'Plazos de la factura';
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_cdca48ec5dde79b84b395c0c557bb290'] = '%d días';
@@ -403,6 +406,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_b880d635ee26e267ab68784bb47a0ad1'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6c63214370d0302a32c914ebf6f30819'] = 'Introduce %d o más caracteres';
 $_MODULE['<{twopayment}prestashop>twopayment_070800fb9c7ae071aff6e63bded5c3c2'] = 'Buscar empresa';
 $_MODULE['<{twopayment}prestashop>twopayment_b96a0cd4ff2da7a7998fd293c6e2be24'] = 'Buscar una empresa';
+$_MODULE['<{twopayment}prestashop>twopayment_bcdcf1cfb578d4756265681317cb35e2'] = 'Buscar otra empresa';
+$_MODULE['<{twopayment}prestashop>twopayment_ab63d3168928b8331551047a81e5dd32'] = 'Selecciona tu país arriba para buscar tu empresa.';
 $_MODULE['<{twopayment}prestashop>twopayment_88d53497f4a92958c67c73a9f2f52df3'] = 'Límite';
 $_MODULE['<{twopayment}prestashop>twopayment_e1f3e840de378499e19505d283e4601d'] = 'El límite del recargo para el plazo de %d días no puede ser 0. Si no quieres cobrar nada en este plazo, establece el porcentaje y la cuota fija en 0 y deja el límite vacío.';
 $_MODULE['<{twopayment}prestashop>twopayment_128ce19a81ca82c86adfed35ed88578a'] = 'El límite se aplica a la totalidad de la cuota: el porcentaje y la cuota fija juntos, no solo el porcentaje. Déjalo vacío para no aplicar ningún límite.';
