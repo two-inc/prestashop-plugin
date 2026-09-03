@@ -163,6 +163,11 @@ class TwoSoleTrader {
         this._heldBuyer = null;
         // The country prefetchBuyer() has already looked up for; see there.
         this._buyerPrefetchCountry = null;
+        // When prefetchBuyer() may try again after a failure. Without it, a
+        // failing endpoint is re-asked once per availability application, and
+        // on a page with no enrolment container that is once per DOM mutation
+        // burst.
+        this._buyerPrefetchRetryAt = 0;
         // Bumped whenever the held answer is replaced or invalidated, so a
         // lookup that was already out when that happened cannot hold its own,
         // now-falsified answer on top. See clearHeldBuyerResult().
@@ -866,6 +871,9 @@ class TwoSoleTrader {
         if (this.heldBuyerResult()) {
             return;
         }
+        if (Date.now() < this._buyerPrefetchRetryAt) {
+            return;
+        }
         const country = this.billingCountry();
         if (!country || this._buyerPrefetchCountry === country) {
             return;
@@ -903,8 +911,10 @@ class TwoSoleTrader {
             })
             .catch(function () {
                 // Silent by design - no click is waiting. Cleared so a later
-                // availability resolution can try again for this country.
+                // availability resolution can try again for this country, but
+                // not before the cooldown.
                 self._buyerPrefetchCountry = null;
+                self._buyerPrefetchRetryAt = Date.now() + self.retryCooldownMs;
             })
             .finally(function () {
                 self.isPrefetchingBuyer = false;
@@ -939,10 +949,14 @@ class TwoSoleTrader {
      */
     heldBuyerResult() {
         const held = this._heldBuyer;
-        if (!held || held.country !== this.billingCountry()) {
+        if (!held || !this.tokensAreForCurrentCountry()) {
             return null;
         }
-        return held;
+        // Against the tokens' own country, not just the DOM's: the pair that
+        // would carry the enrolment has to be the pair this answer is about.
+        const authorised = (this.tokens && this.tokens.country) || this.billingCountry();
+
+        return held.country === authorised ? held : null;
     }
 
     /**
@@ -1267,7 +1281,17 @@ class TwoSoleTrader {
                     // check (and a resumed startEnrollment()'s own re-stamp)
                     // are what bring it current again, never this callback.
                     self.bindPopupMessageListener();
-                    if (self._mintHasWaiter && self.enrolling && self._enrollGeneration === generation) {
+                    const waiting = self._mintHasWaiter && self.enrolling;
+                    if (waiting && !self.tokensAreForCurrentCountry()) {
+                        // The buyer left this country while the mint was out.
+                        // Acting would authorise their enrolment against a
+                        // country they are no longer in - the invariant every
+                        // other entry point enforces. Settle the click and let
+                        // the `.finally()`'s eager mint re-mint for where they
+                        // are now; their next click is served by that pair.
+                        self._tokensGeneration = -1;
+                        self.notifyEnrollmentSettled(true);
+                    } else if (waiting && self._enrollGeneration === generation) {
                         // Ordinary case: nothing has cancelled since this
                         // mint was requested. Stamp with the CAPTURED
                         // generation, not the current one - if cancelEnrollment()
@@ -1275,7 +1299,7 @@ class TwoSoleTrader {
                         // acted on, the stamp must already read as stale.
                         self._tokensGeneration = generation;
                         self.afterTokensReady();
-                    } else if (self._mintHasWaiter && self.enrolling) {
+                    } else if (waiting) {
                         // TWO-40 round 5 (adversarial review finding, Han +
                         // Yoda independently): THIS mint's own generation is
                         // stale (cancelEnrollment() ran while it was out -
@@ -1814,6 +1838,10 @@ class TwoSoleTrader {
             // deferred settle in between would end the spinner in the middle
             // of the very round trip it is waiting on.
             self.flushDeferredSettle();
+            // Same re-attempt as fetchTokens()'s `.finally()`: eager work this
+            // lookup's own guard declined has no other trigger left.
+            self.startEagerTokenMint();
+
             return false;
         };
         // Same reasoning as fetchTokens()'s own try/catch around its
@@ -2511,12 +2539,16 @@ class TwoSoleTrader {
             prompt.dataset.twoBound = '1';
             prompt.addEventListener('click', function (event) {
                 event.preventDefault();
+                if (self.isWriteRoundTripOutstanding()) {
+                    return;
+                }
                 const held = self.heldBuyerResult();
                 if (held && self.buyerMatchesCheckout(held.buyer)) {
                     // The prefetch was still out when the chip was clicked, so
                     // that click could only offer this prompt - and the answer
                     // has landed since. Autofill rather than pushing a
                     // registered buyer into hosted signup.
+                    self.hidePrompt();
                     self.applyOrPrompt(held.buyer, self._enrollGeneration, false);
 
                     return;
