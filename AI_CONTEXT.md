@@ -96,9 +96,14 @@ Reliable B2B invoice checkout via Two, with:
     payment-step's two-click `showPrompt()`->`openPopup()` (TWO-40 follow-up).
     Tokens are minted, and the 30-minute refresh armed, as soon as an eligible
     billing country resolves rather than on the buyer's first chip click, so
-    `window.open()` does not sit behind a mint inside the gesture; that eager
-    mint is never acted on, since only a mint a click is waiting on may open a
-    popup or start a buyer lookup (TWO-40 follow-up).
+    `window.open()` does not sit behind a mint inside the gesture. Only a mint
+    a click is actually waiting on may be acted on (`_mintHasWaiter`, NOT
+    `enrolling`, which stays true after a failed click and is cleared for a
+    click still riding a mint) - so the eager mint, one overlapping a click
+    already served by existing tokens, and one whose click was abandoned
+    mid-flight all land silently. Tokens carry the country they were minted
+    for, and every entry point treats tokens for a country the buyer has left
+    as absent (TWO-40 follow-up).
     Minting posts the buyer's currently selected country, because the cart has
     no invoice address on that page - the server resolves invoice address ->
     posted country -> delivery address and refuses if none resolves, with the
