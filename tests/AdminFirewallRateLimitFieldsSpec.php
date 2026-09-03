@@ -408,6 +408,8 @@ final class AdminFirewallRateLimitFieldsSpec
             array('CONTENT-LENGTH', 'the body length curl sets on every request'),
             array('Accept', 'content negotiation'),
             array('accept-language', 'language negotiation'),
+            array('Accept-Encoding', 'response compression the plugin never asks curl to decode'),
+            array('accept-ENCODING', 'response compression negotiation, in mixed casing'),
             array('X-API-Key', 'the API credential, in the casing this plugin sends'),
             array('x-api-key', 'the API credential, lowercased'),
             array('X-Api-Key', 'the API credential, in mixed casing'),
@@ -428,6 +430,8 @@ final class AdminFirewallRateLimitFieldsSpec
             array('Transfer-Encoding', 'the body framing curl owns'),
             array('transfer-ENCODING', 'body framing, in mixed casing'),
             array('Upgrade', 'a protocol switch on the connection'),
+            array('Expect', 'a 100-continue handshake curl owns'),
+            array('EXPECT', 'a 100-continue handshake, uppercased'),
             array('Authorization', 'a forgeable request credential'),
             array('authorization', 'a request credential, lowercased'),
             array('Cookie', 'forgeable caller-supplied state'),
@@ -472,15 +476,16 @@ final class AdminFirewallRateLimitFieldsSpec
     private static function testReservedNameListIsComplete(): void
     {
         $expected = array(
-            'accept', 'accept-language', 'authorization', 'connection', 'content-length', 'content-type',
-            'cookie', 'host', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer',
-            'transfer-encoding', 'upgrade', 'x-api-key', 'x-forwarded-for', 'x-real-ip', 'x-vendor-name',
+            'accept', 'accept-encoding', 'accept-language', 'authorization', 'connection', 'content-length',
+            'content-type', 'cookie', 'expect', 'host', 'keep-alive', 'proxy-authenticate',
+            'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'x-api-key',
+            'x-forwarded-for', 'x-real-ip', 'x-vendor-name',
         );
 
         $actual = Twopayment::reservedTwoHeaderNames();
         sort($actual);
 
-        TinyAssert::same($expected, $actual, 'the reserved-name list must hold exactly these 19 names, lowercased');
+        TinyAssert::same($expected, $actual, 'the reserved-name list must hold exactly these 21 names, lowercased');
     }
 
     private static function testReservedRowsAreNeverSent(): void
