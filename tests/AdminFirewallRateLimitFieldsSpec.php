@@ -42,7 +42,10 @@ final class AdminFirewallRateLimitFieldsSpec
         self::testValidationRejectsMalformedHeaderName();
         self::testValidationRejectsValuelessRow();
         self::testValidationRejectsLineBreakInValue();
+        self::testValidationRejectsReservedHeaderNames();
+        self::testValidationRejectsNonPrintableValues();
         self::testValidationAcceptsWellFormedRows();
+        self::testReservedRowsAreNeverSent();
 
         self::testTrustedProxiesValidationRejectsMalformedEntry();
         self::testTrustedProxiesValidationRejectsZeroWidthCidr();
@@ -394,6 +397,76 @@ final class AdminFirewallRateLimitFieldsSpec
         Tools::setTestValue('two_custom_header_value', array("token\r\nX-Evil: 1"));
 
         TinyAssert::true(count(self::validate()) > 0, 'a value that could split the request must be refused');
+    }
+
+    private static function testValidationRejectsReservedHeaderNames(): void
+    {
+        $cases = array(
+            array('host', 'the Host header curl sets on every request'),
+            array('Content-Type', 'the content type the API payload declares'),
+            array('CONTENT-LENGTH', 'the body length curl sets on every request'),
+            array('Accept', 'content negotiation'),
+            array('accept-language', 'language negotiation'),
+            array('X-API-Key', 'the API credential, in the casing this plugin sends'),
+            array('x-api-key', 'the API credential, lowercased'),
+            array('X-Api-Key', 'the API credential, in mixed casing'),
+            array('X-Vendor-Name', 'the vendor identifier this plugin sends'),
+            array('x-vendor-NAME', 'the vendor identifier, in mixed casing'),
+            array('X-Forwarded-For', 'proxy-supplied caller identity'),
+            array('x-real-ip', 'proxy-supplied caller identity'),
+        );
+
+        foreach ($cases as list($name, $description)) {
+            self::reset();
+            Tools::setTestValue('two_custom_headers_submitted', '1');
+            Tools::setTestValue('two_custom_header_name', array($name));
+            Tools::setTestValue('two_custom_header_value', array('anything'));
+
+            TinyAssert::true(
+                count(self::validate()) > 0,
+                'a row named "' . $name . '" must be refused - it would override ' . $description
+            );
+        }
+    }
+
+    private static function testValidationRejectsNonPrintableValues(): void
+    {
+        $cases = array(
+            array("token\r\nX-Evil: 1", 'CRLF splits the request'),
+            array("token\nX-Evil: 1", 'a bare LF splits the request'),
+            array("token\0suffix", 'NUL truncates the value in C string handling'),
+            array("token\tsuffix", 'a tab is a control character'),
+            array('tokén', 'non-ASCII text is encoded ambiguously between store, curl and firewall'),
+        );
+
+        foreach ($cases as list($value, $description)) {
+            self::reset();
+            Tools::setTestValue('two_custom_headers_submitted', '1');
+            Tools::setTestValue('two_custom_header_name', array('X-WAF-TOKEN'));
+            Tools::setTestValue('two_custom_header_value', array($value));
+
+            TinyAssert::true(count(self::validate()) > 0, 'the value must be refused: ' . $description);
+        }
+    }
+
+    private static function testReservedRowsAreNeverSent(): void
+    {
+        self::reset();
+        self::storeHeaders(array(
+            array('name' => 'X-Api-Key', 'value' => 'merchant-key', 'send_from_browser' => true),
+            array('name' => 'X-Good', 'value' => 'good', 'send_from_browser' => true),
+        ));
+
+        TinyAssert::same(
+            array('X-Good:good'),
+            Twopayment::getTwoCustomHeaderLines(),
+            'a reserved row stored before the save-time check existed must still not be sent'
+        );
+        TinyAssert::same(
+            array('X-Good' => 'good'),
+            Twopayment::getTwoBrowserCustomHeaders(),
+            'nor may a reserved row reach the browser'
+        );
     }
 
     private static function testValidationAcceptsWellFormedRows(): void

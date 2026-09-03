@@ -504,7 +504,8 @@ $_MODULE['<{twopayment}prestashop>configuration_6d14f491c083e4d890d2f46fc03489ee
 $_MODULE['<{twopayment}prestashop>twopayment_00f5837a9f69d5fae46d9e6c54a2ac1b'] = 'Aangepaste request-headers';
 $_MODULE['<{twopayment}prestashop>twopayment_df252b6fab3bf9b874f9a29c0ba717f6'] = 'Aangepaste request-headers: "%s" is geen geldige headernaam.';
 $_MODULE['<{twopayment}prestashop>twopayment_76804f50196af3554b45ffe2b385e035'] = 'Aangepaste request-headers: vul een waarde in voor header "%s", of verwijder de rij.';
-$_MODULE['<{twopayment}prestashop>twopayment_ea65aa5021bece9110460101be1b0217'] = 'Aangepaste request-headers: de waarde voor header "%s" mag geen regeleinden bevatten.';
+$_MODULE['<{twopayment}prestashop>twopayment_9ef29a404bb330c3c7f0870326cc4a71'] = 'Aangepaste request-headers: "%s" is gereserveerd en kan niet worden overschreven. Kies een andere headernaam.';
+$_MODULE['<{twopayment}prestashop>twopayment_f0e598c08b6640bf668c46c34f7ac11d'] = 'Aangepaste request-headers: de waarde voor header "%s" mag alleen afdrukbare ASCII-tekens bevatten - geen regeleinden, stuurtekens of niet-ASCII-tekst.';
 $_MODULE['<{twopayment}prestashop>twopayment_0f122f13a02644362630f0fc33a3ab4c'] = 'Headernaam';
 $_MODULE['<{twopayment}prestashop>twopayment_689202409e48743b914713f96d93947c'] = 'Waarde';
 $_MODULE['<{twopayment}prestashop>twopayment_92f6bf9f0c21d0ce58d406b8b2782adf'] = 'Ook vanuit de browser verzenden';
