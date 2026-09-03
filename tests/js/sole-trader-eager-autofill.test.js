@@ -701,6 +701,90 @@ describe('on the payment step, where the on-page prompt exists', () => {
         expect(instance.heldBuyerResult()).toBeNull();
     });
 
+    test('a popup closing while the prefetch it falsified is out still re-arms', async () => {
+        jest.useFakeTimers();
+        try {
+            const popup = { closed: false };
+            let lookups = 0;
+            let resolveFirstLookup;
+            const calls = stubFetch(() => {
+                lookups += 1;
+                if (lookups === 1) {
+                    return new Promise((resolve) => { resolveFirstLookup = resolve; });
+                }
+                return noRegistration();
+            });
+            const openSpy = jest.fn(() => popup);
+            global.window.open = openSpy;
+
+            const instance = build();
+            await flushPromises();
+            expect(instance.isPrefetchingBuyer).toBe(true);
+
+            // The click rides "none" while that first lookup is still out, and
+            // the popup the prompt opens disowns it.
+            instance.startEnrollment();
+            document.querySelector('.two-sole-trader__prompt').click();
+            expect(openSpy).toHaveBeenCalledTimes(1);
+
+            // The popup closes BEFORE the disowned lookup lands, so the close
+            // trigger is pre-empted by the prefetch's own guard.
+            popup.closed = true;
+            jest.advanceTimersByTime(600);
+            await flushPromises();
+            expect(calls.buyerLookups).toBe(1);
+
+            resolveFirstLookup({ ok: true, json: () => Promise.resolve(registeredBuyer()) });
+            await flushPromises();
+
+            // Releasing that guard is the last chance to re-arm, so it has to.
+            expect(calls.buyerLookups).toBe(2);
+            expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    test('a disowned prefetch failure does not put the live state in a cooldown', async () => {
+        jest.useFakeTimers();
+        try {
+            const popup = { closed: false };
+            let lookups = 0;
+            let failFirstLookup;
+            const calls = stubFetch(() => {
+                lookups += 1;
+                if (lookups === 1) {
+                    return new Promise((resolve, reject) => {
+                        failFirstLookup = () => reject(new Error('autofill unreachable'));
+                    });
+                }
+                return noRegistration();
+            });
+            global.window.open = jest.fn(() => popup);
+
+            const instance = build();
+            await flushPromises();
+
+            instance.startEnrollment();
+            document.querySelector('.two-sole-trader__prompt').click();
+            failFirstLookup();
+            await flushPromises();
+
+            // The failure belongs to the answer the popup already disowned, so
+            // the fresh state it left behind is not in a cooldown.
+            expect(instance._buyerPrefetchRetryAt).toBe(0);
+
+            popup.closed = true;
+            jest.advanceTimersByTime(600);
+            await flushPromises();
+
+            expect(calls.buyerLookups).toBe(2);
+            expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     test('a popup the buyer completed costs no second lookup when it closes', async () => {
         jest.useFakeTimers();
         try {
