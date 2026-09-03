@@ -45,6 +45,7 @@ final class AdminFirewallRateLimitFieldsSpec
         self::testValidationRejectsReservedHeaderNames();
         self::testValidationRejectsNonPrintableValues();
         self::testValidationAcceptsWellFormedRows();
+        self::testReservedNameListIsComplete();
         self::testReservedRowsAreNeverSent();
 
         self::testTrustedProxiesValidationRejectsMalformedEntry();
@@ -414,6 +415,23 @@ final class AdminFirewallRateLimitFieldsSpec
             array('x-vendor-NAME', 'the vendor identifier, in mixed casing'),
             array('X-Forwarded-For', 'proxy-supplied caller identity'),
             array('x-real-ip', 'proxy-supplied caller identity'),
+            array('Connection', 'the hop-by-hop header that governs connection reuse, not the message'),
+            array('connection', 'the connection-reuse header, lowercased'),
+            array('Keep-Alive', 'hop-by-hop connection tuning curl owns'),
+            array('KEEP-ALIVE', 'hop-by-hop connection tuning, uppercased'),
+            array('Proxy-Authenticate', 'a proxy authentication challenge, which belongs to the proxy hop'),
+            array('Proxy-Authorization', 'proxy credentials, which belong to the proxy hop'),
+            array('proxy-authorization', 'proxy credentials, lowercased'),
+            array('TE', 'the transfer-encoding negotiation curl owns'),
+            array('te', 'transfer-encoding negotiation, lowercased'),
+            array('Trailer', 'the trailer declaration for a chunked body curl frames'),
+            array('Transfer-Encoding', 'the body framing - setting it by hand desynchronises the request'),
+            array('transfer-ENCODING', 'body framing, in mixed casing'),
+            array('Upgrade', 'a protocol-switch request the connection, not the merchant, owns'),
+            array('Authorization', 'the request credential - the API key travels in X-API-Key, and this must not be forgeable'),
+            array('authorization', 'the request credential, lowercased'),
+            array('Cookie', 'caller-supplied session state a merchant must not be able to inject'),
+            array('COOKIE', 'caller-supplied session state, uppercased'),
         );
 
         foreach ($cases as list($name, $description)) {
@@ -449,11 +467,30 @@ final class AdminFirewallRateLimitFieldsSpec
         }
     }
 
+    /**
+     * The list is the contract, so it is asserted whole: a name silently dropped from it reopens the
+     * override it was added to close, and no other test would go red.
+     */
+    private static function testReservedNameListIsComplete(): void
+    {
+        $expected = array(
+            'accept', 'accept-language', 'authorization', 'connection', 'content-length', 'content-type',
+            'cookie', 'host', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer',
+            'transfer-encoding', 'upgrade', 'x-api-key', 'x-forwarded-for', 'x-real-ip', 'x-vendor-name',
+        );
+
+        $actual = Twopayment::reservedTwoHeaderNames();
+        sort($actual);
+
+        TinyAssert::same($expected, $actual, 'the reserved-name list must hold exactly these 19 names, lowercased');
+    }
+
     private static function testReservedRowsAreNeverSent(): void
     {
         self::reset();
         self::storeHeaders(array(
             array('name' => 'X-Api-Key', 'value' => 'merchant-key', 'send_from_browser' => true),
+            array('name' => 'Transfer-Encoding', 'value' => 'chunked', 'send_from_browser' => true),
             array('name' => 'X-Good', 'value' => 'good', 'send_from_browser' => true),
         ));
 
