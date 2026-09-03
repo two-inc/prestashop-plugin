@@ -163,6 +163,10 @@ class TwoSoleTrader {
         this._heldBuyer = null;
         // The country prefetchBuyer() has already looked up for; see there.
         this._buyerPrefetchCountry = null;
+        // Bumped whenever the held answer is replaced or invalidated, so a
+        // lookup that was already out when that happened cannot hold its own,
+        // now-falsified answer on top. See clearHeldBuyerResult().
+        this._buyerAnswerEpoch = 0;
         // Same shape as isFetchingBuyer, for the pre-click lookup - deliberately
         // a separate flag: this one settles no click and blocks none.
         this.isPrefetchingBuyer = false;
@@ -864,8 +868,9 @@ class TwoSoleTrader {
             return;
         }
         const self = this;
-        // A full lookup landing while this one is out has the fresher answer.
-        const heldAtStart = this._heldBuyer;
+        // A full lookup landing while this one is out, or a signup popup
+        // opening, has the fresher answer.
+        const epoch = this._buyerAnswerEpoch;
         let request;
         try {
             request = this.buyerLookupRequest();
@@ -885,13 +890,12 @@ class TwoSoleTrader {
                 throw new Error('autofill/v1/buyer/current failed');
             })
             .then(function (buyer) {
-                if (self._destroyed || self._heldBuyer !== heldAtStart) {
+                if (self._destroyed || self._buyerAnswerEpoch !== epoch) {
                     return;
                 }
                 // Held under the country whose tokens authorised THIS lookup,
-                // not whatever the DOM says now: a country change while it was
-                // out re-mints, and this answer must not be read for the pair
-                // it was never authorised against.
+                // not whatever the DOM says now - a country change while it
+                // was out re-mints, and this answer is not about that pair.
                 self.holdBuyerResult(buyer, country);
             })
             .catch(function () {
@@ -910,7 +914,20 @@ class TwoSoleTrader {
      *   defaulting to the current one for a lookup that has only just landed.
      */
     holdBuyerResult(buyer, country) {
+        this._buyerAnswerEpoch += 1;
         this._heldBuyer = { country: country || this.billingCountry(), buyer: buyer || null };
+    }
+
+    /**
+     * Drop the held answer, and let a later availability resolution fetch a
+     * fresh one. For an event that FALSIFIES it rather than replacing it.
+     *
+     * @returns {void}
+     */
+    clearHeldBuyerResult() {
+        this._buyerAnswerEpoch += 1;
+        this._heldBuyer = null;
+        this._buyerPrefetchCountry = null;
     }
 
     /**
@@ -1502,9 +1519,15 @@ class TwoSoleTrader {
                 // orphaning this method's own two guards exist to stop, and
                 // watchPopupUntilClosed() settles the click when it closes.
                 const popupOpen = !!(self._popup && !self._popup.closed);
-                if (self._mintHasWaiter && !self._destroyed && !popupOpen) {
+                if (self._mintHasWaiter) {
+                    // Cleared even where the mint is declined: `enrolling`
+                    // also stays true, so a waiter left set would let the
+                    // NEXT eager mint pass the "a click is waiting" gate and
+                    // act on tokens nobody asked for.
                     self._mintHasWaiter = false;
-                    self.fetchTokens();
+                    if (!self._destroyed && !popupOpen) {
+                        self.fetchTokens();
+                    }
                 }
             });
     }
@@ -1718,6 +1741,10 @@ class TwoSoleTrader {
         // applyBuyer(): a stale prompt/error appearing after the buyer has
         // moved on is confusing even where it is not a data-integrity risk.
         const generation = this._enrollGeneration;
+        // Captured before the request, for the same reason prefetchBuyer()
+        // captures it: a country change while this is out re-mints, and this
+        // answer is not about the new pair.
+        const authorisedCountry = this.billingCountry();
         const superseded = function () {
             return self._enrollGeneration !== generation;
         };
@@ -1880,7 +1907,7 @@ class TwoSoleTrader {
                 }
                 // Held too, so a later click on the same page decides from this
                 // answer synchronously instead of paying for its own lookup.
-                self.holdBuyerResult(buyer);
+                self.holdBuyerResult(buyer, authorisedCountry);
                 self.applyOrPrompt(buyer, generation, trustedIdentity);
             })
             .catch(function () {
@@ -2229,6 +2256,9 @@ class TwoSoleTrader {
             // watchPopupUntilClosed() settles it once `popup.closed` is
             // actually true.
             this._popup = popup;
+            // The buyer is about to change the very thing the held answer
+            // describes, so it stops being an answer the moment this opens.
+            this.clearHeldBuyerResult();
             this.watchPopupUntilClosed();
         }
         return popup;

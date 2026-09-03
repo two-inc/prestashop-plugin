@@ -246,6 +246,79 @@ describe('on the payment step, where the on-page prompt exists', () => {
         expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
     });
 
+    test('a lookup answering after a country change is not filed under the new country', async () => {
+        let lookups = 0;
+        let resolveLookup;
+        stubFetch(() => {
+            lookups += 1;
+            // The mount's prefetch fails, so the click runs its own lookup -
+            // the one that is still out when the country changes.
+            if (lookups === 1) {
+                return Promise.reject(new Error('autofill unreachable'));
+            }
+            return new Promise((resolve) => { resolveLookup = resolve; });
+        });
+
+        const instance = build();
+        await flushPromises();
+
+        instance.startEnrollment();
+        await flushPromises();
+        expect(instance.isFetchingBuyer).toBe(true);
+
+        // Another eligible country: a real change, which bumps no generation
+        // of its own until the flow notices it.
+        instance.config.billingCountry = 'SE';
+        instance.availabilityByCountry.SE = true;
+
+        resolveLookup({ ok: true, json: () => Promise.resolve(registeredBuyer()) });
+        await flushPromises();
+
+        expect(instance._heldBuyer.country).toBe('GB');
+        expect(instance.heldBuyerResult()).toBeNull();
+    });
+
+    test('a held "none" does not outlive a signup popup the buyer completed', async () => {
+        let lookups = 0;
+        const calls = stubFetch(() => {
+            lookups += 1;
+            return lookups === 1 ? noRegistration() : buyerFound();
+        });
+        const openSpy = jest.fn(() => ({ closed: false }));
+        global.window.open = openSpy;
+
+        const instance = build();
+        await flushPromises();
+        expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+
+        // The click shows the prompt off that answer; the buyer takes it, and
+        // the popup opens.
+        instance.startEnrollment();
+        expect(promptShown()).toBe(true);
+        document.querySelector('.two-sole-trader__prompt').click();
+        expect(openSpy).toHaveBeenCalledTimes(1);
+
+        // The buyer registers, and the flow is abandoned while the popup is
+        // still open - the resumable case, where the completion message is
+        // dropped on the generation check.
+        instance.cancelEnrollment();
+        window.dispatchEvent(new window.MessageEvent('message', {
+            data: 'ACCEPTED',
+            origin: 'https://signup.example.test'
+        }));
+        await flushPromises();
+        expect(calls.saves).toHaveLength(0);
+
+        // Resuming must not re-prompt a buyer who is now registered: the held
+        // "none" the popup falsified is gone, so this click looks again.
+        instance.startEnrollment();
+        await flushPromises();
+        await flushPromises();
+
+        expect(calls.buyerLookups).toBe(2);
+        expect(calls.saves).toHaveLength(1);
+    });
+
     test('"select a different sole trader" pops up regardless of the held answer', async () => {
         const calls = stubFetch(buyerFound);
         const openSpy = jest.fn(() => ({ closed: false }));
@@ -304,12 +377,13 @@ describe('on the address-editor page, where there is no prompt to show', () => {
         expect(openSpy).toHaveBeenCalledTimes(1);
         expect(calls.buyerLookups).toBe(1);
 
-        // The answer landing afterwards is held for the next click, and does
-        // not autofill over, or re-pop on top of, the popup already open.
+        // The answer landing afterwards describes a registration the buyer is
+        // in the middle of changing, so it is dropped rather than held - and
+        // it neither autofills over nor re-pops on top of the open popup.
         resolveLookup({ ok: true, json: () => Promise.resolve(registeredBuyer()) });
         await flushPromises();
 
-        expect(instance.heldBuyerResult().buyer).toEqual(registeredBuyer());
+        expect(instance.heldBuyerResult()).toBeNull();
         expect(openSpy).toHaveBeenCalledTimes(1);
         expect(calls.saves).toHaveLength(0);
     });
