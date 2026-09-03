@@ -440,9 +440,7 @@ final class AdminFirewallRateLimitFieldsSpec
             Tools::setTestValue('two_custom_header_name', array($name));
             Tools::setTestValue('two_custom_header_value', array('anything'));
 
-            // The reserved rule specifically, not just "some error": every name here is also a
-            // well-formed token with a valid value, so a count-only assertion would stay green on
-            // a rejection from an unrelated rule.
+            // Every name here is well-formed, so count>0 would pass on a rejection from another rule.
             TinyAssert::true(
                 strpos(implode("\n", self::validate()), 'is reserved') !== false,
                 'a row named "' . $name . '" must be refused as reserved - it carries ' . $description
@@ -470,7 +468,7 @@ final class AdminFirewallRateLimitFieldsSpec
         }
     }
 
-    /** Asserted whole - a name dropped from the list reddens no other test. */
+    /** The cases above cover every name individually; only a whole-list assertion catches an added one. */
     private static function testReservedNameListIsComplete(): void
     {
         $expected = array(
