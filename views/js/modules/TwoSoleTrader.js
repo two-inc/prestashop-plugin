@@ -1824,6 +1824,10 @@ class TwoSoleTrader {
         // captures it: a country change while this is out re-mints, and this
         // answer is not about the new pair.
         const authorisedCountry = (this.tokens && this.tokens.country) || this.billingCountry();
+        // Same epoch capture prefetchBuyer() makes, for the same reason: an
+        // answer this lookup was already out for must not be held once
+        // something has falsified it.
+        const answerEpoch = this._buyerAnswerEpoch;
         const superseded = function () {
             return self._enrollGeneration !== generation;
         };
@@ -2009,9 +2013,12 @@ class TwoSoleTrader {
                     }, 800);
                     return;
                 }
-                // Held too, so a later click on the same page decides from this
-                // answer synchronously instead of paying for its own lookup.
-                self.holdBuyerResult(buyer, authorisedCountry);
+                if (self._buyerAnswerEpoch === answerEpoch) {
+                    // Held too, so a later click on the same page decides from
+                    // this answer synchronously instead of paying for its own
+                    // lookup.
+                    self.holdBuyerResult(buyer, authorisedCountry);
+                }
                 self.applyOrPrompt(buyer, generation, trustedIdentity);
             })
             .catch(function () {

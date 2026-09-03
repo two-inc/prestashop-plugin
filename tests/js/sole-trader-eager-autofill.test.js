@@ -493,6 +493,36 @@ describe('on the payment step, where the on-page prompt exists', () => {
         expect(settles).toBeGreaterThan(0);
     });
 
+    test('neither lookup holds an answer something falsified while it was out', async () => {
+        let resolveLookup;
+        let lookups = 0;
+        stubFetch(() => {
+            lookups += 1;
+            // The mount's prefetch fails, so the click runs its own lookup.
+            if (lookups === 1) {
+                return Promise.reject(new Error('autofill unreachable'));
+            }
+            return new Promise((resolve) => { resolveLookup = resolve; });
+        });
+        global.window.open = jest.fn(() => ({ closed: false }));
+
+        const instance = build();
+        await flushPromises();
+
+        instance.startEnrollment();
+        await flushPromises();
+        expect(instance.isFetchingBuyer).toBe(true);
+
+        // Whatever falsifies the answer while a lookup is out - a signup popup
+        // opening is the live one - the answer that lands is about the world
+        // before it, so it is not held.
+        instance.clearHeldBuyerResult();
+        resolveLookup({ ok: true, json: () => Promise.resolve(registeredBuyer()) });
+        await flushPromises();
+
+        expect(instance._heldBuyer).toBeNull();
+    });
+
     test('a held answer is unreadable against a token pair it is not about', async () => {
         stubFetch(buyerFound);
 
