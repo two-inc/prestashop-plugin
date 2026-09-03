@@ -323,7 +323,7 @@ describe('on the payment step, where the on-page prompt exists', () => {
         expect(openSpy).not.toHaveBeenCalled();
     });
 
-    test('a click whose lookup was declined still gets the new country minted', async () => {
+    test('a click whose lookup was declined by a country change still gets no re-mint once it settles', async () => {
         let lookups = 0;
         let resolveLookup;
         const calls = stubFetch(() => {
@@ -348,16 +348,15 @@ describe('on the payment step, where the on-page prompt exists', () => {
         instance.availabilityByCountry.SE = true;
         instance.apply('SE', true);
         await flushPromises();
-        // Declined: the mint would swap the pair that lookup is running on.
         expect(calls.mints).toBe(1);
 
         resolveLookup({ ok: false, status: 404 });
         await flushPromises();
         await flushPromises();
 
-        // Nothing else would trigger it - SE's availability is already
-        // settled - so the lookup settling has to re-attempt it.
-        expect(calls.mints).toBe(2);
+        // The token is not country-specific - held tokens are never
+        // re-minted just because the buyer moved country.
+        expect(calls.mints).toBe(1);
     });
 
     test('walking away from an open popup re-fetches the answer it dropped', async () => {
@@ -423,74 +422,6 @@ describe('on the payment step, where the on-page prompt exists', () => {
         } finally {
             jest.useRealTimers();
         }
-    });
-
-    test('a mint landing for a country the buyer has left is not acted on', async () => {
-        let settles = 0;
-        const onSettle = () => { settles += 1; };
-        document.addEventListener('two:sole-trader-flight-settled', onSettle);
-        settleListeners.push(onSettle);
-        let mintCalls = 0;
-        let resolveSecondMint;
-        const calls = { mints: [], buyerLookups: 0, saves: [] };
-        global.window.fetch = (url, options) => {
-            const target = String(url);
-            if (target.includes('soleTraderAvailability')) {
-                return Promise.resolve({ json: () => Promise.resolve({ success: true, available: true }) });
-            }
-            if (target.includes('soleTraderTokens')) {
-                mintCalls += 1;
-                const body = String((options && options.body) || '');
-                calls.mints.push(body);
-                const payload = {
-                    success: true,
-                    autofill_token: 'af-token-' + mintCalls,
-                    delegation_token: 'del-token-' + mintCalls,
-                    signup_url: 'https://signup.example.test/',
-                    country: body.includes('country=SE') ? 'SE' : 'GB'
-                };
-                if (mintCalls === 2) {
-                    return new Promise((resolve) => {
-                        resolveSecondMint = () => resolve({ json: () => Promise.resolve(payload) });
-                    });
-                }
-                return Promise.resolve({ json: () => Promise.resolve(payload) });
-            }
-            if (target.includes('/autofill/v1/buyer/current')) {
-                calls.buyerLookups += 1;
-                return buyerFound();
-            }
-            if (target.includes('saveCompany')) {
-                calls.saves.push(String((options && options.body) || ''));
-            }
-            return Promise.resolve({ json: () => Promise.resolve({ success: true }) });
-        };
-        global.fetch = global.window.fetch;
-
-        const instance = build();
-        await flushPromises();
-        expect(mintCalls).toBe(1);
-
-        // SE is picked, its mint goes out, and the buyer clicks while it is
-        // still in flight - so the click rides that mint.
-        selectCountry('SE');
-        instance.availabilityByCountry.SE = true;
-        instance.apply('SE', true);
-        await flushPromises();
-        expect(mintCalls).toBe(2);
-        instance.startEnrollment();
-
-        // Then they go back to GB before it lands.
-        selectCountry('GB');
-
-        resolveSecondMint();
-        await flushPromises();
-        await flushPromises();
-
-        // The SE pair must not carry a GB enrolment - nothing is written, and
-        // the click is settled rather than left spinning.
-        expect(calls.saves).toHaveLength(0);
-        expect(settles).toBeGreaterThan(0);
     });
 
     test('the authenticated answer outranks a pre-click one still in flight', async () => {
@@ -1124,7 +1055,7 @@ describe('on the address-editor page, where there is no prompt to show', () => {
         expect(instance.heldBuyerResult().buyer).toEqual(registeredBuyer());
     });
 
-    test('a country change mid-mint still gets its own eager mint and answer', async () => {
+    test('a country change mid-mint holds the tokens once they land - no second mint for the new country', async () => {
         let mintCalls = 0;
         let resolveFirstMint;
         const calls = { mints: [], buyerLookups: 0 };
@@ -1141,14 +1072,11 @@ describe('on the address-editor page, where there is no prompt to show', () => {
                     autofill_token: 'af-token-' + mintCalls,
                     delegation_token: 'del-token-' + mintCalls,
                     signup_url: 'https://signup.example.test/',
-                    country: mintCalls === 1 ? 'GB' : 'SE'
+                    country: 'GB'
                 };
-                if (mintCalls === 1) {
-                    return new Promise((resolve) => {
-                        resolveFirstMint = () => resolve({ json: () => Promise.resolve(payload) });
-                    });
-                }
-                return Promise.resolve({ json: () => Promise.resolve(payload) });
+                return new Promise((resolve) => {
+                    resolveFirstMint = () => resolve({ json: () => Promise.resolve(payload) });
+                });
             }
             if (target.includes('/autofill/v1/buyer/current')) {
                 calls.buyerLookups += 1;
@@ -1162,8 +1090,7 @@ describe('on the address-editor page, where there is no prompt to show', () => {
         await flushPromises();
         expect(mintCalls).toBe(1);
 
-        // The country changes while that first mint is still out, so its own
-        // eager mint is declined by the single-mint guard.
+        // The country changes while that first mint is still out.
         selectCountry('SE');
         instance.availabilityByCountry.SE = true;
         instance.apply('SE', true);
@@ -1173,11 +1100,11 @@ describe('on the address-editor page, where there is no prompt to show', () => {
         resolveFirstMint();
         await flushPromises();
         await flushPromises();
-        // Nothing else would ever trigger it - the availability answer for SE
-        // is already settled - so the mint that landed has to re-try it.
-        expect(mintCalls).toBe(2);
-        expect(calls.mints[1]).toContain('country=SE');
-        expect(instance.heldBuyerResult()).toEqual({ country: 'SE', buyer: registeredBuyer() });
+
+        // The token is not country-specific - once held, no second mint
+        // follows just because the buyer is now in a different country.
+        expect(mintCalls).toBe(1);
+        expect(instance.tokens.country).toBe('GB');
     });
 
     test('a failed prefetch leaves the click to run its own lookup', async () => {
