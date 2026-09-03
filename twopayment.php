@@ -461,6 +461,9 @@ class Twopayment extends PaymentModule
             'actionObjectOrderHistoryAddBefore',
             'actionFrontControllerInitAfter',
             'actionObjectOrderDetailAddBefore',
+            // Without this, an upgraded shop keeps rendering the hidden
+            // surcharge product as an ordinary cart-summary line item.
+            'actionPresentCart',
         );
 
         foreach ($required_hooks as $hook_name) {

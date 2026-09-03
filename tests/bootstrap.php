@@ -118,6 +118,10 @@ namespace {
          * @var array<string,object>
          */
         public static array $moduleInstances = [];
+        /** Hooks core already has the module registered against. */
+        public static array $registeredHooks = [];
+        /** Every registerHook() call, in order, duplicates included. */
+        public static array $registerHookCalls = [];
         public static array $cartTotals = [];
         public static array $cartShipping = [];
         public static array $cartRules = [];
@@ -371,6 +375,8 @@ namespace {
             self::$cartProducts = [];
             self::$cartMessages = [];
             self::$moduleInstances = [];
+            self::$registeredHooks = [];
+            self::$registerHookCalls = [];
             self::$cartTotals = [];
             self::$cartShipping = [];
             self::$cartRules = [];
@@ -538,6 +544,19 @@ namespace {
          */
         public function uninstall()
         {
+            return true;
+        }
+
+        public function isRegisteredInHook($hook): bool
+        {
+            return in_array((string) $hook, StubStore::$registeredHooks, true);
+        }
+
+        public function registerHook($hook)
+        {
+            StubStore::$registerHookCalls[] = (string) $hook;
+            StubStore::$registeredHooks[] = (string) $hook;
+
             return true;
         }
     }

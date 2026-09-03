@@ -45,6 +45,7 @@ final class SurchargeCartLineSpec
         self::testActionPresentCartMovesSurchargeToOwnRowBeforeShipping();
         self::testActionPresentCartNoOpsWhenSurchargeNotSelected();
         self::testActionPresentCartNoOpsWhenRowAbsentFromPresentedProducts();
+        self::testExistingInstallSelfHealsTheTotalsRowHook();
     }
 
     /* ---- fixtures ---- */
@@ -963,5 +964,33 @@ final class SurchargeCartLineSpec
         $module->hookActionPresentCart(['presentedCart' => $presented]);
 
         TinyAssert::same(['products' => $products, 'subtotals' => $subtotals], $presented->getData());
+    }
+
+    /**
+     * install() runs once, so a shop that predates the totals-row move only
+     * gets actionPresentCart from the constructor's self-heal - without it the
+     * fee keeps rendering as a cart-summary line item there for good.
+     */
+    private static function testExistingInstallSelfHealsTheTotalsRowHook(): void
+    {
+        $cases = [
+            [[], 1, 'absent on an existing install - registered'],
+            [['actionPresentCart'], 0, 'already registered - not registered twice'],
+        ];
+
+        foreach ($cases as [$alreadyRegistered, $expectedCalls, $why]) {
+            $module = self::makeModule();
+            StubStore::$registeredHooks = $alreadyRegistered;
+            StubStore::$registerHookCalls = [];
+
+            // The harness deliberately skips the real constructor, which is
+            // what runs the self-heal in production.
+            $selfHeal = new ReflectionMethod($module, 'ensureRequiredHooksRegistered');
+            $selfHeal->setAccessible(true);
+            $selfHeal->invoke($module);
+
+            $calls = array_filter(StubStore::$registerHookCalls, static fn (string $hook): bool => $hook === 'actionPresentCart');
+            TinyAssert::count($expectedCalls, $calls, 'actionPresentCart self-heal: ' . $why);
+        }
     }
 }
