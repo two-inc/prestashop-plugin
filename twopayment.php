@@ -15143,9 +15143,8 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Reserved: what this plugin or curl sets itself, the RFC 7230 hop-by-hop headers that belong to
-     * the connection rather than the message, and credential/proxy-identity headers a merchant must
-     * not be able to forge.
+     * Names a merchant row may not take: what the plugin or curl sets itself, the RFC 7230
+     * hop-by-hop headers, and credentials or caller identity that must not be forgeable.
      *
      * @return array<int, string>
      */
