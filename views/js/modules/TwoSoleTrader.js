@@ -163,6 +163,9 @@ class TwoSoleTrader {
         this._heldBuyer = null;
         // The country prefetchBuyer() has already looked up for; see there.
         this._buyerPrefetchCountry = null;
+        // Whether a signup popup this instance opened is still unaccounted
+        // for - see bindPopupMessageListener()'s generation gate.
+        this._signupPopupOpened = false;
         // When prefetchBuyer() may try again after a failure. Without it, a
         // failing endpoint is re-asked once per availability application, and
         // on a page with no enrolment container that is once per DOM mutation
@@ -1123,8 +1126,8 @@ class TwoSoleTrader {
             this._popup = null;
         }
         if (!this.enrolling) {
-            // The teardown above released the popup guard on this path too,
-            // so this path owes the same re-arm as the one below.
+            // Where the teardown above ran it released the popup guard, so
+            // this path owes the same re-arm as the one below.
             this.startEagerTokenMint();
 
             return;
@@ -2364,6 +2367,7 @@ class TwoSoleTrader {
             // watchPopupUntilClosed() settles it once `popup.closed` is
             // actually true.
             this._popup = popup;
+            this._signupPopupOpened = true;
             // The buyer is about to change the very thing the held answer
             // describes, so it stops being an answer the moment this opens.
             this.clearHeldBuyerResult();
@@ -2542,6 +2546,16 @@ class TwoSoleTrader {
             // finishing on its own nor a message arriving against tokens no
             // click has asked for can pass this check.
             if (self._enrollGeneration !== self._tokensGeneration) {
+                if (event.data === 'ACCEPTED' && self._signupPopupOpened) {
+                    // Not acted on here, but a signup this instance opened
+                    // has completed, so the held answer is falsified even
+                    // though this message is not this attempt's to act on.
+                    // Consumed, so a repeated message cannot re-ask on loop.
+                    self._signupPopupOpened = false;
+                    self.clearHeldBuyerResult();
+                    self.startEagerTokenMint();
+                }
+
                 return;
             }
             if (event.data !== 'ACCEPTED') {
@@ -2577,6 +2591,7 @@ class TwoSoleTrader {
             // `trustedIdentity = true`: this message IS the buyer completing
             // a real OTP verification in the hosted popup. The resulting
             // buyer lookup must not be re-gated on checkoutEmail() matching -
+            self._signupPopupOpened = false;
             // see getCurrentBuyer()'s JSDoc (live bug TWO-40, Doug
             // 2026-08-12: a buyer whose Two account email genuinely differs
             // from the order's checkout email got a successful OTP, then had

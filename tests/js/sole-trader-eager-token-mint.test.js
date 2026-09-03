@@ -577,7 +577,8 @@ describe('the minted tokens track the country the chip is shown for', () => {
         expect(calls.buyerLookups).toBe(1);
 
         // A message from the signup origin, with no click ever made and no
-        // popup ever opened.
+        // popup ever opened - so not even the re-fetch a completed signup of
+        // this instance's own would earn.
         window.dispatchEvent(new window.MessageEvent('message', {
             data: 'ACCEPTED',
             origin: 'https://signup.example.test'

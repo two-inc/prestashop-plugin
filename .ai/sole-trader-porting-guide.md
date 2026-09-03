@@ -519,6 +519,13 @@ is not persisted here", never to a dropped payment record.
       failure cooldown, declines the next attempt. A disowned lookup's failure must arm
       neither the cooldown nor the attempted-country marker - the state it would
       penalise is not the state it was asked about.
+    - **A signup completion the flow declines to ACT on still falsifies the held
+      answer.** A platform that gates the hosted popup's completion message on a
+      generation/attempt stamp (so a popup the buyer walked away from cannot overwrite
+      what they picked instead) must still drop and re-fetch the answer on that gated
+      path: the registration now exists whether or not this attempt is the one to use
+      it. Gate that on a popup THIS flow actually opened, and consume the signal, or a
+      repeated message re-asks on loop.
     - **A failed pre-click lookup needs a retry cooldown, not just a cleared marker.** On
       a page with no enrolment container the availability answer is re-applied on every
       DOM mutation burst, so "retry on the next availability resolution" is unbounded
