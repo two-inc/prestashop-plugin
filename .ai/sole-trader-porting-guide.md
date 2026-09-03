@@ -511,6 +511,14 @@ is not persisted here", never to a dropped payment record.
       re-issue that declines because the buyer has walked away leaves the re-fetch
       suppressed and nothing else to trigger it, which is the same regression by a
       longer route; every bail on those paths owes the re-fetch itself.
+    - **The rule that makes this terminate: recovery belongs wherever a guard is
+      RELEASED, not wherever an event happens.** Every semantic trigger ("the popup
+      closed", "the buyer cancelled") can be pre-empted by a single-flight guard that
+      drops AFTER the event, so the pre-click lookup's own release is the last chance to
+      re-arm and has to take it. It terminates on its own: an answer now held, or the
+      failure cooldown, declines the next attempt. A disowned lookup's failure must arm
+      neither the cooldown nor the attempted-country marker - the state it would
+      penalise is not the state it was asked about.
     - **A failed pre-click lookup needs a retry cooldown, not just a cleared marker.** On
       a page with no enrolment container the availability answer is re-applied on every
       DOM mutation burst, so "retry on the next availability resolution" is unbounded

@@ -910,6 +910,11 @@ class TwoSoleTrader {
                 self.holdBuyerResult(buyer, country);
             })
             .catch(function () {
+                if (self._buyerAnswerEpoch !== epoch) {
+                    // Disowned while it was out - this failure is nobody's,
+                    // and must not put the live state into a cooldown.
+                    return;
+                }
                 // Silent by design - no click is waiting. Cleared so a later
                 // availability resolution can try again for this country, but
                 // not before the cooldown.
@@ -918,6 +923,13 @@ class TwoSoleTrader {
             })
             .finally(function () {
                 self.isPrefetchingBuyer = false;
+                // Recovery belongs wherever a guard is RELEASED, not wherever
+                // something happens: this is the last guard to drop in any
+                // ordering where an event trigger was pre-empted by it - a
+                // popup closing while this lookup was still out. Terminates,
+                // because an answer now held, or the cooldown, declines the
+                // next attempt.
+                self.startEagerTokenMint();
             });
     }
 
@@ -2263,6 +2275,10 @@ class TwoSoleTrader {
      */
     openPopup(extraParams) {
         if (!this.tokens) {
+            // A failed re-mint can null these out with the prompt still on
+            // screen; showError() also settles the gesture (see there).
+            this.showError();
+
             return null;
         }
         // Round trip already handed off to a popup that is still open
