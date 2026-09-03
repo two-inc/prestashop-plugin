@@ -979,11 +979,7 @@ final class SurchargeCartLineSpec
             StubStore::$registeredHooks = $alreadyRegistered;
             StubStore::$registerHookCalls = [];
 
-            // The harness deliberately skips the real constructor, which is
-            // what runs the self-heal in production.
-            $selfHeal = new ReflectionMethod($module, 'ensureRequiredHooksRegistered');
-            $selfHeal->setAccessible(true);
-            $selfHeal->invoke($module);
+            $module->exposeEnsureRequiredHooksRegistered();
 
             $calls = array_filter(StubStore::$registerHookCalls, static fn (string $hook): bool => $hook === 'actionPresentCart');
             TinyAssert::count($expectedCalls, $calls, 'actionPresentCart self-heal: ' . $why);
