@@ -1123,6 +1123,10 @@ class TwoSoleTrader {
             this._popup = null;
         }
         if (!this.enrolling) {
+            // The teardown above released the popup guard on this path too,
+            // so this path owes the same re-arm as the one below.
+            this.startEagerTokenMint();
+
             return;
         }
         this.enrolling = false;
