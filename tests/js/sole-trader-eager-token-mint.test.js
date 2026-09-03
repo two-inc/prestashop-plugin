@@ -446,6 +446,43 @@ describe('a payment fragment that arrives after this instance was constructed', 
     });
 });
 
+describe('a containerless page settles instead of re-evaluating on every unrelated mutation', () => {
+    test('an available answer is applied once, not on every later DOM churn', async () => {
+        jest.useFakeTimers();
+        try {
+            // No `.two-sole-trader` at all - the address-editor page (TWO-40) -
+            // resolved instead via the network availability fetch.
+            TwoSoleTrader = loadSoleTrader();
+            const calls = stubFetch(mintsSucceed({ calls: 0 }), { value: true });
+
+            const instance = build();
+            await flushPromises();
+            expect(calls.mints).toHaveLength(1);
+            expect(calls.buyerLookups).toBe(1);
+
+            const applySpy = jest.spyOn(instance, 'apply');
+
+            // Unrelated churn elsewhere on the page - nothing to do with
+            // country or sole-trader, just what a busy checkout page does
+            // constantly. Without a settled short-circuit on a containerless
+            // page, EVERY burst re-runs apply() -> startEagerTokenMint()/
+            // resyncSoleTraderChip(), forever, relying only on the deeper
+            // per-request guards to swallow the resulting repeats.
+            for (let i = 0; i < 5; i += 1) {
+                document.body.appendChild(document.createElement('div'));
+                jest.advanceTimersByTime(150);
+                await flushPromises();
+            }
+
+            expect(applySpy).not.toHaveBeenCalled();
+            expect(calls.mints).toHaveLength(1);
+            expect(calls.buyerLookups).toBe(1);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+});
+
 describe('a buyer who cannot use the flow costs no mint', () => {
     test('a server-rendered business-only answer mints nothing', async () => {
         buildPaymentTileWithSoleTraderAnswer('0', 'GB');
