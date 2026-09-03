@@ -45,6 +45,7 @@ final class AdminFirewallRateLimitFieldsSpec
         self::testValidationRejectsReservedHeaderNames();
         self::testValidationRejectsNonPrintableValues();
         self::testValidationAcceptsWellFormedRows();
+        self::testReservedNameListIsComplete();
         self::testReservedRowsAreNeverSent();
 
         self::testTrustedProxiesValidationRejectsMalformedEntry();
@@ -414,6 +415,23 @@ final class AdminFirewallRateLimitFieldsSpec
             array('x-vendor-NAME', 'the vendor identifier, in mixed casing'),
             array('X-Forwarded-For', 'proxy-supplied caller identity'),
             array('x-real-ip', 'proxy-supplied caller identity'),
+            array('Connection', 'hop-by-hop connection control'),
+            array('connection', 'connection control, lowercased'),
+            array('Keep-Alive', 'hop-by-hop connection tuning'),
+            array('KEEP-ALIVE', 'connection tuning, uppercased'),
+            array('Proxy-Authenticate', 'a proxy-hop challenge'),
+            array('Proxy-Authorization', 'proxy-hop credentials'),
+            array('proxy-authorization', 'proxy-hop credentials, lowercased'),
+            array('TE', 'transfer-encoding negotiation'),
+            array('te', 'transfer-encoding negotiation, lowercased'),
+            array('Trailer', 'the trailer declaration for a chunked body'),
+            array('Transfer-Encoding', 'the body framing curl owns'),
+            array('transfer-ENCODING', 'body framing, in mixed casing'),
+            array('Upgrade', 'a protocol switch on the connection'),
+            array('Authorization', 'a forgeable request credential'),
+            array('authorization', 'a request credential, lowercased'),
+            array('Cookie', 'forgeable caller-supplied state'),
+            array('COOKIE', 'caller-supplied state, uppercased'),
         );
 
         foreach ($cases as list($name, $description)) {
@@ -422,9 +440,10 @@ final class AdminFirewallRateLimitFieldsSpec
             Tools::setTestValue('two_custom_header_name', array($name));
             Tools::setTestValue('two_custom_header_value', array('anything'));
 
+            // Every name here is well-formed, so count>0 would pass on a rejection from another rule.
             TinyAssert::true(
-                count(self::validate()) > 0,
-                'a row named "' . $name . '" must be refused - it would override ' . $description
+                strpos(implode("\n", self::validate()), 'is reserved') !== false,
+                'a row named "' . $name . '" must be refused as reserved - it carries ' . $description
             );
         }
     }
@@ -449,11 +468,27 @@ final class AdminFirewallRateLimitFieldsSpec
         }
     }
 
+    /** The cases above cover every name individually; only a whole-list assertion catches an added one. */
+    private static function testReservedNameListIsComplete(): void
+    {
+        $expected = array(
+            'accept', 'accept-language', 'authorization', 'connection', 'content-length', 'content-type',
+            'cookie', 'host', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer',
+            'transfer-encoding', 'upgrade', 'x-api-key', 'x-forwarded-for', 'x-real-ip', 'x-vendor-name',
+        );
+
+        $actual = Twopayment::reservedTwoHeaderNames();
+        sort($actual);
+
+        TinyAssert::same($expected, $actual, 'the reserved-name list must hold exactly these 19 names, lowercased');
+    }
+
     private static function testReservedRowsAreNeverSent(): void
     {
         self::reset();
         self::storeHeaders(array(
             array('name' => 'X-Api-Key', 'value' => 'merchant-key', 'send_from_browser' => true),
+            array('name' => 'Transfer-Encoding', 'value' => 'chunked', 'send_from_browser' => true),
             array('name' => 'X-Good', 'value' => 'good', 'send_from_browser' => true),
         ));
 
