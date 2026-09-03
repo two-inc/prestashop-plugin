@@ -491,6 +491,24 @@ is not persisted here", never to a dropped payment record.
     give it its own in-flight flag so the pre-click one blocks nothing, and let the
     click-driven answer win: a pre-click answer landing late must not overwrite one an
     authenticated lookup has already established.
+    - **Every entry point that can reach the popup has to consult the held answer, not
+      just the chip.** A platform with a two-step payment-step flow (chip click shows an
+      on-page prompt, prompt click opens the popup) has a second gesture, and an answer
+      that was still in flight at the chip click can land in the gap between them — a
+      prompt click that goes straight to `window.open()` then pushes a buyer who IS
+      registered into hosted signup and discards the registration.
+    - **A signup popup falsifies the held answer, so drop it when one opens and fetch a
+      fresh one when it closes.** Without the re-fetch only the FIRST click of the page
+      is synchronous and every later one is back in the shape this rule exists to
+      remove; without the drop, a buyer who has just registered gets re-prompted from a
+      stale "none". A close that follows a completed signup needs no fetch — the
+      authenticated lookup has already answered — so gate the re-fetch on there being
+      no held answer rather than on the close itself.
+    - **A mint declined by the single-mint guard has to be re-attempted when the mint in
+      flight lands.** A country change during the mount mint (or during a refresh tick)
+      is the live case: the availability answer the eager mint hangs off is already
+      settled for that country, so nothing else will ever trigger it again and that
+      page's clicks chain mint→lookup→popup for the rest of its life.
   - **One mint per page, at render, is enough — tokens are country-scoped, not
     email-scoped** (WooCommerce `8e2355f`). Once §11 rule 1's email-driven path is gone
     there is no per-email trigger left to mint from, and none is needed: one set serves
