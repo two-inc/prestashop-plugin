@@ -27,6 +27,15 @@ final class TwoSoleTraderTestHarness extends TwopaymentTestHarness
         }
         return false;
     }
+
+    // Same override DeployVersionInfoSpec's TwopaymentClientVersionNoShaHarness
+    // uses: a real checkout (CI) has a .git directory, so without this,
+    // getTwoClientVersion() appends '+<deployed-sha>' and client_v is
+    // environment-dependent.
+    protected function getTwoDeployedCommitHash($git_dir = null, $sidecar_file = null)
+    {
+        return null;
+    }
 }
 
 final class TwoSoleTraderSpec
@@ -327,13 +336,11 @@ final class TwoSoleTraderSpec
         $query = [];
         parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
         TinyAssert::same('PS', $query['client'] ?? null, 'delegation-mint URL must carry the shared client param');
-        // Prefix, not a full literal: CI checks out a real .git directory, so
-        // getTwoClientVersion() appends '+<deployed-sha>' there but not in a
-        // git-worktree checkout (this harness's environment). The harness's
-        // own $this->version ('2.4.0', set in bootstrap.php) is the part
-        // that's stable everywhere - not a call to getTwoClientVersion()
-        // again, which would just compare the method against itself.
-        TinyAssert::same(0, strpos((string) ($query['client_v'] ?? ''), '2.4.0'), 'delegation-mint URL must carry the shared client_v param');
+        // Literal, not a call to getTwoClientVersion() again - that would just
+        // compare the method against itself and pin nothing. Deterministic
+        // because TwoSoleTraderTestHarness overrides getTwoDeployedCommitHash()
+        // to null, same as DeployVersionInfoSpec's NoSha harness.
+        TinyAssert::same('2.4.0', $query['client_v'] ?? null, 'delegation-mint URL must carry the shared client_v param');
 
         $headersMethod = new ReflectionMethod('TwoSoleTrader', 'buildTokenMintHeaders');
         $headersMethod->setAccessible(true);
