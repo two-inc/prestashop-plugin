@@ -270,7 +270,7 @@ class Twopayment extends PaymentModule
     // stored when the merchant selected it.
     const CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP = 'PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP';
 
-    // JSON array of {name, value, send_from_browser} (ABN-490).
+    // JSON array of {name, value, send_from_browser}.
     const CONFIG_CUSTOM_HEADERS = 'PS_TWO_CUSTOM_HEADERS';
 
     // Constants for delivery dates
@@ -2520,7 +2520,7 @@ class Twopayment extends PaymentModule
                         'desc' => $this->l('Addresses of your own reverse proxies, load balancers or CDN egress, as IPs or CIDR ranges, separated by commas or new lines. These IP addresses will be exempt from rate limiting.'),
                     ),
                     // HelperForm has no repeatable-row field type, so the header
-                    // table is 'html' with add/remove in configuration.tpl (ABN-490).
+                    // table is 'html' with add/remove in configuration.tpl.
                     array(
                         'type' => 'html',
                         'label' => $this->l('Custom request headers'),
@@ -4582,7 +4582,7 @@ class Twopayment extends PaymentModule
         Media::addJsDef(array('twopayment' => array(
                 'search_empty_text' => $this->l('No result found'),
                 'checkout_host' => $this->getTwoCheckoutHostUrl(),
-                // Ticked rows only (ABN-490) - published to the buyer, so
+                // Ticked rows only - published to the buyer, so
                 // everything else stays server-side.
                 'custom_headers' => self::getTwoBrowserCustomHeaders(),
                 // TWO-25326 §7.1 (2026-08-03 ruling): this used to gate the
