@@ -966,11 +966,7 @@ final class SurchargeCartLineSpec
         TinyAssert::same(['products' => $products, 'subtotals' => $subtotals], $presented->getData());
     }
 
-    /**
-     * install() runs once, so a shop that predates the totals-row move only
-     * gets actionPresentCart from the constructor's self-heal - without it the
-     * fee keeps rendering as a cart-summary line item there for good.
-     */
+    /** install() runs once, so an existing install gets actionPresentCart only from the self-heal. */
     private static function testExistingInstallSelfHealsTheTotalsRowHook(): void
     {
         $cases = [
