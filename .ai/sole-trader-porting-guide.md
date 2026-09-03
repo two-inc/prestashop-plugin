@@ -507,7 +507,10 @@ is not persisted here", never to a dropped payment record.
       authenticated lookup has already answered — so gate the re-fetch on there being
       no held answer rather than on the close itself, and skip it wherever the lookup is
       already being re-issued (a read-after-write retry, a resumed lookup) or the two
-      race for the same answer.
+      race for the same answer - but only where that re-issue ACTUALLY happens. A
+      re-issue that declines because the buyer has walked away leaves the re-fetch
+      suppressed and nothing else to trigger it, which is the same regression by a
+      longer route; every bail on those paths owes the re-fetch itself.
     - **A failed pre-click lookup needs a retry cooldown, not just a cleared marker.** On
       a page with no enrolment container the availability answer is re-applied on every
       DOM mutation burst, so "retry on the next availability resolution" is unbounded
