@@ -1,9 +1,13 @@
 /**
  * TWO-40 follow-up, Doug: delegated auth tokens can expire server-side if a
  * buyer sits on checkout too long, breaking autofill and the sole-trader
- * flow. Pins the fixed behaviour: a 30-minute background re-mint, started
- * only once a real mint has actually succeeded, reusing fetchTokens()'s own
- * `isFetchingTokens` guard rather than a second, uncoordinated mint path.
+ * flow. Pins the fixed behaviour: a 30-minute background re-mint, armed by
+ * startEagerTokenMint() as soon as an eligible billing country resolves, and
+ * reusing fetchTokens()'s own `isFetchingTokens` guard rather than a second,
+ * uncoordinated mint path.
+ *
+ * The eager mint that arms it is covered by
+ * sole-trader-eager-token-mint.test.js.
  */
 
 'use strict';
@@ -68,7 +72,7 @@ afterEach(() => {
     global.window.localStorage.clear();
 });
 
-test('the refresh interval does not start before any mint has ever succeeded', () => {
+test('the refresh interval does not start while the billing country is unresolved', () => {
     jest.useFakeTimers();
     try {
         let mintCalls = 0;
@@ -77,12 +81,13 @@ test('the refresh interval does not start before any mint has ever succeeded', (
             return Promise.resolve({ json: () => Promise.resolve(tokenPayload('never-called')) });
         });
 
-        // Constructed but never enrolled - a buyer who has not touched the
-        // sole-trader flow has no tokens, so nothing should be scheduled.
-        const instance = build();
+        // No country at all resolves, so no eligible country ever does either:
+        // there is nothing for startEagerTokenMint() to mint against.
+        const instance = build({ billingCountry: '', shopCountry: '' });
         jest.advanceTimersByTime(60 * 60 * 1000);
 
         expect(mintCalls).toBe(0);
+        expect(instance._tokenRefreshIntervalId).toBeNull();
         instance.destroy();
     } finally {
         jest.useRealTimers();

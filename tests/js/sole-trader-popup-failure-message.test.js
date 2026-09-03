@@ -114,17 +114,20 @@ describe.each([
     [
         'a failure from the live popup',
         (instance) => post('FAILED', SIGNUP_ORIGIN, popup),
-        true
+        true,
+        0
     ],
     [
         'a failure whose sender window has already closed',
         (instance) => post('FAILED', SIGNUP_ORIGIN, null),
-        true
+        true,
+        0
     ],
     [
         'a failure attributable to a different window',
         (instance) => post('FAILED', SIGNUP_ORIGIN, { closed: false }),
-        false
+        false,
+        0
     ],
     [
         'a failure from an attempt the buyer has walked away from',
@@ -132,14 +135,19 @@ describe.each([
             instance.cancelEnrollment();
             post('FAILED', SIGNUP_ORIGIN, popup);
         },
-        false
+        false,
+        // Walking away re-fetches the pre-click autofill answer the popup
+        // dropped, so this row's own cancel costs one lookup - the FAILED
+        // message that follows it still costs none.
+        1
     ],
     [
         'a failure from an unrelated origin',
         (instance) => post('FAILED', 'https://evil.example.test', popup),
-        false
+        false,
+        0
     ]
-])('%s', (_label, act, expectError) => {
+])('%s', (_label, act, expectError, extraLookups) => {
     test(expectError ? 'surfaces an error' : 'is ignored', async () => {
         const instance = await enrolWithOpenPopup();
         const lookupsBefore = buyerLookupCalls;
@@ -150,7 +158,7 @@ describe.each([
 
         expect(errorShown()).toBe(expectError);
         // A failure never starts a buyer lookup, however it is classified.
-        expect(buyerLookupCalls).toBe(lookupsBefore);
+        expect(buyerLookupCalls).toBe(lookupsBefore + extraLookups);
         instance.destroy();
     });
 });
