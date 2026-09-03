@@ -27,6 +27,15 @@ final class TwoSoleTraderTestHarness extends TwopaymentTestHarness
         }
         return false;
     }
+
+    // Same override DeployVersionInfoSpec's TwopaymentClientVersionNoShaHarness
+    // uses: a real checkout (CI) has a .git directory, so without this,
+    // getTwoClientVersion() appends '+<deployed-sha>' and client_v is
+    // environment-dependent.
+    protected function getTwoDeployedCommitHash($git_dir = null, $sidecar_file = null)
+    {
+        return null;
+    }
 }
 
 final class TwoSoleTraderSpec
@@ -46,6 +55,7 @@ final class TwoSoleTraderSpec
             'testCookieCacheExpiresAfterTtl',
             'testFetchErrorIsNotCached',
             'testTokenMintReadsHeaderAndFailsClosed',
+            'testTokenMintRequestCarriesClientParamsAndVendorHeader',
             'testConfigureSslVerificationIsCallableFromOutsideTwopayment',
             'testSignupUrlFollowsEnvironment',
             'testSignupUrlHonoursCheckoutOverrideInDevMode',
@@ -306,6 +316,37 @@ final class TwoSoleTraderSpec
             return ['status' => 200, 'headers' => []];
         };
         TinyAssert::same(null, TwoSoleTrader::mintTokens($module));
+    }
+
+    /**
+     * The $transport seam above bypasses postCapturingHeaders()'s own URL and
+     * header assembly entirely, so it can't catch a regression there (the
+     * delegation-mint call used to build its URL with no query string and
+     * hand-roll its own headers, missing client/client_v and X-Vendor-Name).
+     * Exercise buildTokenMintUrl()/buildTokenMintHeaders() directly instead.
+     */
+    private static function testTokenMintRequestCarriesClientParamsAndVendorHeader(): void
+    {
+        $module = self::harness(['PS_TWO_VENDOR_NAME' => 'Shop A'], []);
+
+        $method = new ReflectionMethod('TwoSoleTrader', 'buildTokenMintUrl');
+        $method->setAccessible(true);
+        $url = $method->invoke(null, $module, '/registry/v1/delegation');
+
+        $query = [];
+        parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
+        TinyAssert::same('PS', $query['client'] ?? null, 'delegation-mint URL must carry the shared client param');
+        // Literal, not a call to getTwoClientVersion() again - that would just
+        // compare the method against itself and pin nothing. Deterministic
+        // because TwoSoleTraderTestHarness overrides getTwoDeployedCommitHash()
+        // to null, same as DeployVersionInfoSpec's NoSha harness.
+        TinyAssert::same('2.4.0', $query['client_v'] ?? null, 'delegation-mint URL must carry the shared client_v param');
+
+        $headersMethod = new ReflectionMethod('TwoSoleTrader', 'buildTokenMintHeaders');
+        $headersMethod->setAccessible(true);
+        $headers = $headersMethod->invoke(null, $module, '/registry/v1/delegation');
+        TinyAssert::true(in_array('X-API-Key:test-api-key', $headers, true), 'delegation-mint headers must carry X-API-Key');
+        TinyAssert::true(in_array('X-Vendor-Name:Shop A', $headers, true), 'delegation-mint headers must carry X-Vendor-Name');
     }
 
     /**

@@ -343,6 +343,36 @@ class TwoSoleTrader
     }
 
     /**
+     * Same client/client_v query string every other Two API call carries
+     * (Twopayment::getTwoClientParams()) - this call site used to build its
+     * URL with no query string at all.
+     *
+     * @param Twopayment $module
+     * @param string     $endpoint
+     *
+     * @return string
+     */
+    private static function buildTokenMintUrl($module, $endpoint)
+    {
+        return $module->getTwoCheckoutHostUrl() . $endpoint . '?' . http_build_query($module->getTwoClientParams());
+    }
+
+    /**
+     * Same shared header set every other Two API call carries (X-API-Key,
+     * X-Vendor-Name, custom headers) - this call site used to hand-roll its
+     * own, silently missing all three.
+     *
+     * @param Twopayment $module
+     * @param string     $endpoint
+     *
+     * @return string[]
+     */
+    private static function buildTokenMintHeaders($module, $endpoint)
+    {
+        return $module->getTwoRequestHeaders($endpoint);
+    }
+
+    /**
      * POST to the Two API capturing response headers (lower-cased keys).
      * Seam for tests: overridable transport via the static $transport hook.
      *
@@ -354,14 +384,10 @@ class TwoSoleTrader
             return call_user_func(self::$transport, $endpoint, $payload);
         }
 
-        $url = $module->getTwoCheckoutHostUrl() . $endpoint;
+        $url = self::buildTokenMintUrl($module, $endpoint);
         $responseHeaders = array();
 
-        $requestHeaders = array(
-            'Content-Type: application/json',
-            'X-API-Key: ' . Configuration::get('PS_TWO_MERCHANT_API_KEY'),
-        );
-        $requestHeaders = array_merge($requestHeaders, Twopayment::getTwoCustomHeaderLines());
+        $requestHeaders = self::buildTokenMintHeaders($module, $endpoint);
 
         $ch = curl_init();
         curl_setopt_array($ch, array(
