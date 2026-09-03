@@ -196,7 +196,7 @@ describe('a server-rendered eligible answer mints on mount', () => {
 
         expect(calls.mints).toHaveLength(1);
         expect(calls.buyerLookups).toBe(1);
-        expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+        expect(instance.heldBuyerResult()).toEqual({ buyer: null });
         expect(openSpy).not.toHaveBeenCalled();
         expect(errorShown()).toBe(false);
         expect(instance.enrolling).toBe(false);
@@ -797,7 +797,7 @@ describe('the minted tokens are held across a country change - not country-speci
         }
     });
 
-    test('a click after a country change reuses the held tokens for its own lookup, unblocked by an in-flight refresh tick', async () => {
+    test('a click after a country change decides from the held answer, unblocked by an in-flight refresh tick', async () => {
         jest.useFakeTimers();
         try {
             buildPaymentTileWithSoleTraderAnswer('1', 'GB');
@@ -817,6 +817,7 @@ describe('the minted tokens are held across a country change - not country-speci
             const instance = build();
             await flushPromises();
             expect(calls.mints).toHaveLength(1);
+            const lookupsAtMount = calls.buyerLookups;
 
             // The 30-minute tick fires and its POST is still out.
             jest.advanceTimersByTime(30 * 60 * 1000);
@@ -824,16 +825,16 @@ describe('the minted tokens are held across a country change - not country-speci
             expect(instance.isFetchingTokens).toBe(true);
 
             // The buyer changes country and clicks: the mount's held answer
-            // was fetched for GB, so the click runs its own lookup off the
-            // GB tokens already held - not blocked by the tick in flight,
-            // and minting nothing of its own.
+            // is not country-scoped, so the click decides from it directly -
+            // no new lookup, not blocked by the tick in flight, and minting
+            // nothing of its own.
             instance.config.billingCountry = 'SE';
             instance.availabilityByCountry.SE = true;
             instance.startEnrollment();
             await flushPromises();
 
             expect(mintCalls).toBe(2);
-            expect(calls.buyerLookups).toBe(2);
+            expect(calls.buyerLookups).toBe(lookupsAtMount);
             expect(settled).toHaveBeenCalledTimes(1);
             expect(instance.tokens.country).toBe('GB');
 
@@ -883,7 +884,7 @@ describe('the minted tokens are held across a country change - not country-speci
         // The prefetch off the tokens that just landed, and nothing else: the
         // completed enrolment's click is not resumed into a lookup or a popup.
         expect(calls.buyerLookups).toBe(lookupsBeforeMint + 1);
-        expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+        expect(instance.heldBuyerResult()).toEqual({ buyer: null });
         expect(openSpy).not.toHaveBeenCalled();
     });
 
@@ -930,7 +931,7 @@ describe('the minted tokens are held across a country change - not country-speci
         await flushPromises();
     });
 
-    test('a click abandoned after a country change is not rescued by that click\'s own lookup landing late', async () => {
+    test('a click after a country change still decides from the held answer - no re-mint, no new lookup', async () => {
         buildPaymentTileWithSoleTraderAnswer('1', 'GB');
         TwoSoleTrader = loadSoleTrader();
         const state = { calls: 0 };
@@ -941,20 +942,19 @@ describe('the minted tokens are held across a country change - not country-speci
         const instance = build();
         await flushPromises();
         expect(calls.mints).toHaveLength(1);
+        const lookupsAtMount = calls.buyerLookups;
 
-        // The buyer changes country and clicks - the held answer no longer
-        // counts for SE, so the click runs its own lookup off the tokens
-        // already held - then goes back to ordinary company search before
-        // it lands.
+        // The buyer changes country and clicks - the held answer is not
+        // country-scoped, so the click decides from it synchronously
+        // instead of running a fresh lookup.
         instance.config.billingCountry = 'SE';
         instance.availabilityByCountry.SE = true;
         instance.startEnrollment();
         instance.cancelEnrollment();
         await flushPromises();
 
-        // No re-mint at all - tokens are held regardless of country - and
-        // the abandoned click's own lookup is not acted on.
         expect(calls.mints).toHaveLength(1);
+        expect(calls.buyerLookups).toBe(lookupsAtMount);
         expect(instance.enrolling).toBe(false);
         expect(openSpy).not.toHaveBeenCalled();
     });

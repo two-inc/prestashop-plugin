@@ -151,7 +151,7 @@ describe('on the payment step, where the on-page prompt exists', () => {
 
         expect(calls.mints).toBe(1);
         expect(calls.buyerLookups).toBe(1);
-        expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: registeredBuyer() });
+        expect(instance.heldBuyerResult()).toEqual({ buyer: registeredBuyer() });
     });
 
     test('a held matching buyer is applied inside the click, with no popup', async () => {
@@ -182,7 +182,7 @@ describe('on the payment step, where the on-page prompt exists', () => {
 
         const instance = build();
         await flushPromises();
-        expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+        expect(instance.heldBuyerResult()).toEqual({ buyer: null });
 
         instance.startEnrollment();
 
@@ -194,25 +194,25 @@ describe('on the payment step, where the on-page prompt exists', () => {
         expect(openSpy).not.toHaveBeenCalled();
     });
 
-    test('a held answer for a country the buyer has left is not applied', async () => {
+    test('a held answer persists across a country change and is still applied', async () => {
         const calls = stubFetch(buyerFound, 'GB');
 
         const instance = build();
         await flushPromises();
         expect(instance.heldBuyerResult()).not.toBeNull();
 
-        // The mint for the new country is still out when the click lands, so
-        // there is no held answer and no tokens to decide from either.
+        // The buyer identity behind the session cookie has nothing to do
+        // with which country the checkout form now shows.
         instance.config.billingCountry = 'SE';
         instance.availabilityByCountry.SE = true;
-        expect(instance.heldBuyerResult()).toBeNull();
+        expect(instance.heldBuyerResult()).toEqual({ buyer: registeredBuyer() });
 
         instance.startEnrollment();
 
-        expect(calls.saves).toHaveLength(0);
+        expect(calls.saves).toHaveLength(1);
     });
 
-    test('an answer landing after a country change is held for the country it was authorised for', async () => {
+    test('an answer landing after a country change is still held and usable', async () => {
         let resolveLookup;
         stubFetch(() => new Promise((resolve) => { resolveLookup = resolve; }));
 
@@ -228,8 +228,8 @@ describe('on the payment step, where the on-page prompt exists', () => {
         resolveLookup({ ok: true, json: () => Promise.resolve(registeredBuyer()) });
         await flushPromises();
 
-        expect(instance._heldBuyer).toEqual({ country: 'GB', buyer: registeredBuyer() });
-        expect(instance.heldBuyerResult()).toBeNull();
+        expect(instance._heldBuyer).toEqual({ buyer: registeredBuyer() });
+        expect(instance.heldBuyerResult()).toEqual({ buyer: registeredBuyer() });
     });
 
     test('a repeated availability resolution for the same country does not look up again', async () => {
@@ -272,7 +272,7 @@ describe('on the payment step, where the on-page prompt exists', () => {
             await flushPromises();
 
             expect(calls.buyerLookups).toBe(2);
-            expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+            expect(instance.heldBuyerResult()).toEqual({ buyer: null });
         } finally {
             jest.useRealTimers();
         }
@@ -378,7 +378,7 @@ describe('on the payment step, where the on-page prompt exists', () => {
         await flushPromises();
 
         expect(calls.buyerLookups).toBe(2);
-        expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+        expect(instance.heldBuyerResult()).toEqual({ buyer: null });
 
         // So the next click is synchronous again.
         instance.startEnrollment();
@@ -414,7 +414,7 @@ describe('on the payment step, where the on-page prompt exists', () => {
             // decides synchronously rather than chaining a lookup into
             // window.open().
             expect(calls.buyerLookups).toBe(2);
-            expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+            expect(instance.heldBuyerResult()).toEqual({ buyer: null });
 
             instance.startEnrollment();
             expect(promptShown()).toBe(true);
@@ -476,7 +476,7 @@ describe('on the payment step, where the on-page prompt exists', () => {
         expect(openSpy).toHaveBeenCalledTimes(1);
     });
 
-    test('a held answer is unreadable against a token pair it is not about', async () => {
+    test('a held answer stays readable even if the tokens later echo a different country', async () => {
         stubFetch(buyerFound);
 
         const instance = build();
@@ -484,13 +484,11 @@ describe('on the payment step, where the on-page prompt exists', () => {
         expect(instance.heldBuyerResult()).not.toBeNull();
 
         // The server resolves the mint against the cart, so it can echo a
-        // country the posted one did not name - and then the tokens that would
-        // carry the enrolment are not the pair this answer is about.
+        // country the posted one did not name - the held answer is not
+        // scoped by country at all, so this has no bearing on it.
         instance.tokens = Object.assign({}, instance.tokens, { country: 'SE' });
 
-        expect(instance._heldBuyer.country).toBe('GB');
-        expect(instance.billingCountry()).toBe('GB');
-        expect(instance.heldBuyerResult()).toBeNull();
+        expect(instance.heldBuyerResult()).toEqual({ buyer: registeredBuyer() });
     });
 
     test('the read-after-write retry is not shadowed by a second lookup', async () => {
@@ -570,7 +568,7 @@ describe('on the payment step, where the on-page prompt exists', () => {
         await flushPromises();
 
         expect(calls.buyerLookups).toBe(3);
-        expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+        expect(instance.heldBuyerResult()).toEqual({ buyer: null });
     });
 
     test('abandoning inside the read-after-write wait still re-fetches the answer', async () => {
@@ -598,7 +596,7 @@ describe('on the payment step, where the on-page prompt exists', () => {
             await flushPromises();
 
             expect(calls.buyerLookups).toBe(3);
-            expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+            expect(instance.heldBuyerResult()).toEqual({ buyer: null });
         } finally {
             jest.useRealTimers();
         }
@@ -647,7 +645,7 @@ describe('on the payment step, where the on-page prompt exists', () => {
             await flushPromises();
 
             expect(calls.buyerLookups).toBe(3);
-            expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+            expect(instance.heldBuyerResult()).toEqual({ buyer: null });
         } finally {
             jest.useRealTimers();
         }
@@ -722,7 +720,7 @@ describe('on the payment step, where the on-page prompt exists', () => {
 
             // Releasing that guard is the last chance to re-arm, so it has to.
             expect(calls.buyerLookups).toBe(2);
-            expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+            expect(instance.heldBuyerResult()).toEqual({ buyer: null });
         } finally {
             jest.useRealTimers();
         }
@@ -762,7 +760,7 @@ describe('on the payment step, where the on-page prompt exists', () => {
             await flushPromises();
 
             expect(calls.buyerLookups).toBe(2);
-            expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+            expect(instance.heldBuyerResult()).toEqual({ buyer: null });
         } finally {
             jest.useRealTimers();
         }
@@ -792,7 +790,7 @@ describe('on the payment step, where the on-page prompt exists', () => {
         await flushPromises();
 
         expect(calls.buyerLookups).toBe(lookupsBeforePopup + 1);
-        expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+        expect(instance.heldBuyerResult()).toEqual({ buyer: null });
     });
 
     test('a popup the buyer completed costs no second lookup when it closes', async () => {
@@ -833,7 +831,7 @@ describe('on the payment step, where the on-page prompt exists', () => {
         }
     });
 
-    test('an authenticated lookup files its answer under the tokens it was authorised by', async () => {
+    test('an authenticated lookup lands a held answer usable regardless of a later country change', async () => {
         let lookups = 0;
         const calls = stubFetch(() => {
             lookups += 1;
@@ -847,9 +845,9 @@ describe('on the payment step, where the on-page prompt exists', () => {
         instance.startEnrollment();
         document.querySelector('.two-sole-trader__prompt').click();
 
-        // The buyer edits the country while the popup is up. The tokens the
-        // popup - and the lookup its completion drives - are authorised by
-        // are still the GB pair.
+        // The buyer edits the country while the popup is up - the tokens
+        // authorising the popup, and the lookup its completion drives, do
+        // not change with it.
         selectCountry('SE');
         expect(instance.billingCountry()).toBe('SE');
         expect(instance.tokens.country).toBe('GB');
@@ -861,11 +859,10 @@ describe('on the payment step, where the on-page prompt exists', () => {
         await flushPromises();
 
         expect(calls.buyerLookups).toBe(2);
-        expect(instance._heldBuyer.country).toBe('GB');
-        expect(instance.heldBuyerResult()).toBeNull();
+        expect(instance.heldBuyerResult()).toEqual({ buyer: registeredBuyer() });
     });
 
-    test('a lookup answering after a country change is not filed under the new country', async () => {
+    test('a lookup answering after a country change is still held and usable', async () => {
         let lookups = 0;
         let resolveLookup;
         stubFetch(() => {
@@ -893,8 +890,8 @@ describe('on the payment step, where the on-page prompt exists', () => {
         resolveLookup({ ok: true, json: () => Promise.resolve(registeredBuyer()) });
         await flushPromises();
 
-        expect(instance._heldBuyer.country).toBe('GB');
-        expect(instance.heldBuyerResult()).toBeNull();
+        expect(instance._heldBuyer).toEqual({ buyer: registeredBuyer() });
+        expect(instance.heldBuyerResult()).toEqual({ buyer: registeredBuyer() });
     });
 
     test('a held "none" does not outlive a signup popup the buyer completed', async () => {
@@ -908,7 +905,7 @@ describe('on the payment step, where the on-page prompt exists', () => {
 
         const instance = build();
         await flushPromises();
-        expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+        expect(instance.heldBuyerResult()).toEqual({ buyer: null });
 
         // The click shows the prompt off that answer; the buyer takes it, and
         // the popup opens.
@@ -984,7 +981,7 @@ describe('on the address-editor page, where there is no prompt to show', () => {
         const instance = build();
         await flushPromises();
         await flushPromises();
-        expect(instance.heldBuyerResult()).toEqual({ country: 'GB', buyer: null });
+        expect(instance.heldBuyerResult()).toEqual({ buyer: null });
 
         instance.startEnrollment();
 
