@@ -70,6 +70,8 @@ final class TwoSoleTraderSpec
             'testPaymentOptionStubRefusesASetterCoreDoesNotHave',
             'testAvailabilityEndpointPersistsTheRegistryAnswer',
             'testAvailabilityEndpointWritesNothingWhenTheTokenIsRejected',
+            'testMintAuthorizedAcrossTheThreeMerchantBuyerCountryStates',
+            'testMintAuthorizedNeverWidensARegistryRefusal',
         ];
         foreach ($tests as $test) {
             self::reset();
@@ -874,6 +876,53 @@ final class TwoSoleTraderSpec
                 return strpos($endpoint, '/registry/v1/supported-company-types/') === 0;
             })),
             'a tile with no billing country must not call the registry at all'
+        );
+    }
+
+    /**
+     * isMintAuthorized() (TWO-40, extended to sole-trader mint eligibility):
+     * the merchant's buyer-country field is THREE-state, not two - an ABSENT
+     * field must not be coerced into an empty allowlist before intersecting
+     * with the registry's answer, or an unrestricted merchant would mint for
+     * nobody. Registry says GB is sole-trader-eligible throughout; only the
+     * merchant state varies.
+     */
+    private static function testMintAuthorizedAcrossTheThreeMerchantBuyerCountryStates(): void
+    {
+        $cases = [
+            [null, true, 'ABSENT (no restriction at all) authorises a registry-eligible country'],
+            [[], false, 'PRESENT, EMPTY allowlist is a deliberate deny-all'],
+            [['GB'], true, 'PRESENT allowlist containing the country authorises it'],
+            [['NO', 'SE'], false, 'PRESENT allowlist NOT containing the country refuses it'],
+        ];
+        foreach ($cases as [$allowlist, $expected, $message]) {
+            self::reset();
+            Configuration::updateValue(
+                Twopayment::CONFIG_MERCHANT_BUYER_COUNTRIES,
+                $allowlist === null ? '' : json_encode($allowlist)
+            );
+            $module = self::harness(
+                [],
+                ['/registry/v1/supported-company-types/' => self::registryOk(['SOLE_TRADER'])]
+            );
+            TinyAssert::same($expected, TwoSoleTrader::isMintAuthorized($module, 'GB'), $message);
+        }
+    }
+
+    /**
+     * A permissive merchant record never overrides a business-only country -
+     * the registry's own refusal always stands, whatever the merchant gate says.
+     */
+    private static function testMintAuthorizedNeverWidensARegistryRefusal(): void
+    {
+        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_BUYER_COUNTRIES, '');
+        $module = self::harness(
+            [],
+            ['/registry/v1/supported-company-types/' => self::registryOk([])]
+        );
+        TinyAssert::false(
+            TwoSoleTrader::isMintAuthorized($module, 'NO'),
+            'an unrestricted merchant must not authorise a business-only country'
         );
     }
 }

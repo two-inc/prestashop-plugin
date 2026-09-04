@@ -72,8 +72,20 @@ class TwoSoleTrader {
             // Translated fallback for showStatus() when an enrolled buyer's
             // registration carries no displayable company name or number.
             statusLabel: '',
+            // Merchant-level buyer-country gate (TWO-40, extended to sole
+            // trader mint eligibility - see resolveMerchantCountryGate()).
+            // 'absent' matches Twopayment::BUYER_COUNTRIES_ABSENT, the
+            // correct default for a config that predates this key (no
+            // merchant-country restriction at all).
+            merchantBuyerCountriesState: 'absent',
+            merchantBuyerCountries: [],
             ...config
         };
+        // Resolved ONCE from config, not re-derived per country change
+        // (TWO-40 follow-up): a buyer-country allowlist is a merchant
+        // setting, not something that changes as the buyer edits the
+        // address form. See resolveMerchantCountryGate()/isMintGateOpenFor().
+        this._merchantCountryGate = this.resolveMerchantCountryGate();
         this.enrolling = false;
         // Bumped by cancelEnrollment() every time it is called, whatever
         // `enrolling` was. A getCurrentBuyer() call captures this before it
@@ -817,19 +829,76 @@ class TwoSoleTrader {
     }
 
     /**
+     * The merchant's buyer-country restriction, read once from config
+     * (TWO-40, extended to sole-trader mint eligibility) - never re-derived
+     * per country change, because it is a merchant SETTING, not something
+     * that changes as the buyer edits the address form.
+     *
+     * Mirrors Twopayment's three-state answer exactly (round-tripped through
+     * `merchant_buyer_countries_state`/`merchant_buyer_countries` -
+     * see twopayment.js): an ABSENT field must not be coerced into an empty
+     * allowlist before intersecting, or an unrestricted merchant (the
+     * common case - the field only exists behind an Unleash flag) would mint
+     * for nobody the moment that flag is off.
+     *
+     * @returns {{blocksAll: boolean, allowed: ?string[]}} `blocksAll` true
+     *   means the merchant record permits no country at all (the PRESENT,
+     *   EMPTY-array state) - not the same as `allowed` being null, which
+     *   means no restriction (the ABSENT state).
+     */
+    resolveMerchantCountryGate() {
+        const state = this.config.merchantBuyerCountriesState;
+        if (state === 'empty' || state === 'malformed') {
+            return { blocksAll: true, allowed: null };
+        }
+        if (state === 'allowlist') {
+            return { blocksAll: false, allowed: this.config.merchantBuyerCountries || [] };
+        }
+        // 'absent', or any unrecognised value from an older cached script -
+        // read as unrestricted rather than as a deny-all, for the same
+        // reason the state check above never treats a malformed value as
+        // a usable allowlist.
+        return { blocksAll: false, allowed: null };
+    }
+
+    /**
+     * Whether minting is authorised for `country`: the intersection of the
+     * merchant's buyer-country gate (resolved once, see
+     * resolveMerchantCountryGate()) and the registry's own per-country
+     * answer. Both must hold - a merchant allowlist never widens what the
+     * registry allows, and a permissive merchant record never overrides a
+     * business-only country.
+     *
+     * @param {string} country ISO-2, already uppercased
+     * @param {boolean} registryAvailable the registry's answer for `country`
+     * @returns {boolean}
+     */
+    isMintGateOpenFor(country, registryAvailable) {
+        if (this._merchantCountryGate.blocksAll) {
+            return false;
+        }
+        if (this._merchantCountryGate.allowed && this._merchantCountryGate.allowed.indexOf(country) === -1) {
+            return false;
+        }
+        return !!registryAvailable;
+    }
+
+    /**
      * Mint tokens as soon as an eligible billing country resolves - which is
      * also what arms the background refresh (see startTokenRefreshInterval())
      * - so the buyer's first "I'm a sole trader" click has only the autofill
      * lookup between it and the signup popup.
      *
-     * Gated on isAvailableForCurrentCountry(), the same answer that decides
-     * whether the chip is offered at all: a buyer who cannot use the flow
-     * costs no upstream mint. One attempt per country while no tokens are
-     * held yet, so a failure is not re-issued on every later availability
-     * resolution. The token is NOT country-specific: once held, it is
-     * reused across a country change, and only replaced on its own 30-min
-     * refresh schedule (refreshTokens()) - a country change alone must
-     * never trigger a re-mint.
+     * Gated on isMintGateOpenFor(), NOT on isAvailableForCurrentCountry()
+     * (TWO-40 follow-up): the chip-visibility answer and the mint gate look
+     * similar but must not share one resolver - a chip may legitimately show
+     * for a country the merchant's OWN buyer-country record excludes, and
+     * that must not authorise a mint. One attempt per country while no
+     * tokens are held yet, so a failure is not re-issued on every later
+     * availability resolution. The token is NOT country-specific: once
+     * held, it is reused across a country change, and only replaced on its
+     * own 30-min refresh schedule (refreshTokens()) - a country change alone
+     * must never trigger a re-mint.
      */
     startEagerTokenMint() {
         // An availability request outstanding at destroy() still resolves into
@@ -842,7 +911,7 @@ class TwoSoleTrader {
         if (!country) {
             return;
         }
-        if (!this.isAvailableForCurrentCountry()) {
+        if (!this.isMintGateOpenFor(country, this.availabilityByCountry[country])) {
             return;
         }
         // Re-minting under an open popup would orphan the tokens baked into
