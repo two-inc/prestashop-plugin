@@ -94,10 +94,11 @@ class TwoSoleTrader
 
     /**
      * Whether the Sole Trader toggle should be offered for a billing
-     * country. The registry's answer for that country is the ONLY gate -
-     * and it is also the security barrier the order-intent controller
-     * relies on before minting delegated-authority tokens, so it must
-     * stay the single source of truth here (TWO-25166).
+     * country. The registry's answer for that country is the ONLY gate
+     * (TWO-25166) - and it is a CHIP-VISIBILITY gate only, deliberately with
+     * no bearing on minting (TWO-40 follow-up): the token mint endpoint
+     * mints unconditionally once a country resolves, so this method has
+     * exactly one caller left, the chip.
      *
      * @param Twopayment $module
      * @param string $countryIso

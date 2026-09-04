@@ -10,8 +10,11 @@ require_once __DIR__ . '/../controllers/front/orderintent.php';
  * The precondition is a country resolver that prefers what the request POSTS -
  * the buyer's live in-page selection - and falls back to the cart's delivery
  * address only when no usable country was posted. The cart's INVOICE address is
- * not consulted at any tier. Minting still requires TwoSoleTrader::isAvailable()
- * to answer yes, server-side, for a country that actually resolved.
+ * not consulted at any tier. Minting is otherwise UNCONDITIONAL (TWO-40
+ * follow-up, Doug): once a country resolves at all, neither the registry's
+ * per-country answer nor a merchant buyer-country record has any bearing on
+ * whether minting proceeds - that authorisation belongs to the Two API these
+ * tokens are minted against.
  *
  * Driven through the controller's own action switch rather than by reading the
  * source: the thing under test is a removed guard, and a spec asserting the
@@ -41,8 +44,8 @@ final class SoleTraderTokenPreconditionSpec
             'testUnresolvableDeliveryAddressIsRefused',
             'testDeliveryAddressThatNoLongerLoadsIsRefused',
             'testNothingResolvableIsRefused',
-            'testResolvedButIneligibleCountryIsRefused',
-            'testPostedCountryCannotConjureAvailability',
+            'testResolvedButRegistryIneligibleCountryStillMints',
+            'testPostedCountryMintsRegardlessOfRegistryAnswer',
             'testInvalidAjaxTokenIsRefused',
             'testGetIsRefused',
         ];
@@ -254,31 +257,31 @@ final class SoleTraderTokenPreconditionSpec
         );
     }
 
-    private static function testResolvedButIneligibleCountryIsRefused(): void
+    private static function testResolvedButRegistryIneligibleCountryStillMints(): void
     {
         self::seedCart(null, self::ISO_DE);
 
         $emitted = self::mint([]);
 
-        TinyAssert::false($emitted['success'], 'an ineligible country must not mint');
-        TinyAssert::false(isset($emitted['delegation_token']));
+        TinyAssert::true($emitted['success'], 'a resolved country mints regardless of the registry answer');
+        TinyAssert::same('del-token', $emitted['delegation_token']);
     }
 
     /**
-     * The preferred tier is still gated: the posted country cannot be used to
-     * mint where the registry says the flow is unavailable.
+     * The preferred tier still just resolves a country - it is never checked
+     * against the registry, or anything else, server-side.
      */
-    private static function testPostedCountryCannotConjureAvailability(): void
+    private static function testPostedCountryMintsRegardlessOfRegistryAnswer(): void
     {
         self::seedCart(null, null);
 
         $emitted = self::mint(['country' => self::ISO_DE]);
 
-        TinyAssert::false(
+        TinyAssert::true(
             $emitted['success'],
-            'a posted country must still be checked against the registry, server-side'
+            'a resolved posted country mints unconditionally, server-side'
         );
-        TinyAssert::false(isset($emitted['autofill_token']));
+        TinyAssert::same('autofill-token', $emitted['autofill_token']);
     }
 
     private static function testInvalidAjaxTokenIsRefused(): void

@@ -817,15 +817,20 @@ class TwoSoleTrader {
     }
 
     /**
-     * Mint tokens as soon as an eligible billing country resolves - which is
-     * also what arms the background refresh (see startTokenRefreshInterval())
-     * - so the buyer's first "I'm a sole trader" click has only the autofill
-     * lookup between it and the signup popup.
+     * Mint tokens as soon as checkout is reached and a billing country
+     * resolves - unconditionally, with no eligibility check of any kind
+     * (TWO-40 follow-up, Doug: neither the registry's per-country answer nor
+     * a merchant buyer-country record has any bearing on whether minting is
+     * authorised - that decision belongs to the Two API these tokens are
+     * minted against, not to a client-side guess). This is also what arms
+     * the background refresh (see startTokenRefreshInterval()), so the
+     * buyer's first "I'm a sole trader" click has only the autofill lookup
+     * between it and the signup popup.
      *
-     * Gated on isAvailableForCurrentCountry(), the same answer that decides
-     * whether the chip is offered at all: a buyer who cannot use the flow
-     * costs no upstream mint. One attempt per country while no tokens are
-     * held yet, so a failure is not re-issued on every later availability
+     * Not gated on isAvailableForCurrentCountry() - that answer still drives
+     * the chip's OWN visibility (a separate, legitimately country-dependent
+     * concept), but has no bearing on minting. One attempt per country while
+     * no tokens are held yet, so a failure is not re-issued on every later
      * resolution. The token is NOT country-specific: once held, it is
      * reused across a country change, and only replaced on its own 30-min
      * refresh schedule (refreshTokens()) - a country change alone must
@@ -840,9 +845,6 @@ class TwoSoleTrader {
         }
         const country = this.billingCountry();
         if (!country) {
-            return;
-        }
-        if (!this.isAvailableForCurrentCountry()) {
             return;
         }
         // Re-minting under an open popup would orphan the tokens baked into
