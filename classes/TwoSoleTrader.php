@@ -95,9 +95,10 @@ class TwoSoleTrader
     /**
      * Whether the Sole Trader toggle should be offered for a billing
      * country. The registry's answer for that country is the ONLY gate
-     * (TWO-25166) - chip visibility stays country-selection-dependent by
-     * design, unlike the mint authorisation below, which ALSO requires the
-     * merchant's own buyer-country gate. @see isMintAuthorized().
+     * (TWO-25166) - and it is a CHIP-VISIBILITY gate only, deliberately with
+     * no bearing on minting (TWO-40 follow-up): the token mint endpoint
+     * mints unconditionally once a country resolves, so this method has
+     * exactly one caller left, the chip.
      *
      * @param Twopayment $module
      * @param string $countryIso
@@ -107,41 +108,6 @@ class TwoSoleTrader
     public static function isAvailable($module, $countryIso)
     {
         return in_array(self::SOLE_TRADER, self::getSupportedCompanyTypes($module, $countryIso), true);
-    }
-
-    /**
-     * Whether minting delegated-authority tokens for `countryIso` is
-     * actually authorised: the registry's per-country answer (isAvailable())
-     * intersected with the merchant's OWN buyer-country gate
-     * (Twopayment::getMerchantBuyerCountries(), TWO-40). This is the real
-     * security barrier for the mint endpoint - isAvailable() alone answers
-     * only "does the registry support this country", never "may THIS
-     * merchant transact with it".
-     *
-     * Three-state, not two: an ABSENT merchant record (the gating field only
-     * exists behind an Unleash flag) is unrestricted, a PRESENT-BUT-EMPTY one
-     * is a deliberate deny-all, and coercing the former into the latter
-     * would silently mint for zero merchants the moment that flag is off.
-     *
-     * @param Twopayment $module
-     * @param string $countryIso
-     *
-     * @return bool
-     */
-    public static function isMintAuthorized($module, $countryIso)
-    {
-        $state = $module->getTwoBuyerCountryRestrictionState();
-        if ($state === Twopayment::BUYER_COUNTRIES_EMPTY || $state === Twopayment::BUYER_COUNTRIES_MALFORMED) {
-            return false;
-        }
-        if ($state === Twopayment::BUYER_COUNTRIES_ALLOWLIST) {
-            $allowed = $module->getMerchantBuyerCountries();
-            if (!in_array($countryIso, (array) $allowed, true)) {
-                return false;
-            }
-        }
-
-        return self::isAvailable($module, $countryIso);
     }
 
     /**

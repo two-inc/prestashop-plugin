@@ -161,7 +161,10 @@ describe('the availability request is made once, not once per mutation', () => {
             await flushPromises();
         }
 
-        expect(fetchCalls).toHaveLength(1);
+        // One availability request only - the unconditional mint at
+        // construction is a separate call, outside what this debounce covers.
+        const availabilityCalls = fetchCalls.filter((url) => String(url).includes('soleTraderAvailability'));
+        expect(availabilityCalls).toHaveLength(1);
         instance.stopObserving();
     });
 

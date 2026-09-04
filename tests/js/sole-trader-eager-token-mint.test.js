@@ -356,20 +356,20 @@ describe('a server-rendered eligible answer mints on mount', () => {
         instance.destroy();
     });
 
-    test('an availability answer landing after destroy() mints nothing and arms nothing', async () => {
+    test('a mint still in flight when destroy() runs arms nothing when it lands', async () => {
         jest.useFakeTimers();
         try {
             const state = { calls: 0 };
             const calls = stubFetch(mintsSucceed(state));
 
-            // A container-less page, so the answer comes over the network and
-            // can still be in flight when the instance is torn down.
-            document.body.innerHTML = '';
+            // Unconditional minting fires synchronously at construction (a
+            // known billing country is all it needs) - destroy() lands while
+            // that mint's own promise is still out.
             const instance = build();
+            expect(calls.mints).toHaveLength(1);
             instance.destroy();
             await flushPromises();
 
-            expect(calls.mints).toHaveLength(0);
             expect(instance._tokenRefreshIntervalId).toBeNull();
             expect(jest.getTimerCount()).toBe(0);
         } finally {
@@ -379,11 +379,12 @@ describe('a server-rendered eligible answer mints on mount', () => {
 });
 
 describe('a payment fragment that arrives after this instance was constructed', () => {
-    test('mints and arms the refresh, rather than settling availability silently', async () => {
+    test('the eager mint at construction is not re-issued once the fragment lands', async () => {
         jest.useFakeTimers();
         try {
             // No container at construction - the address-editor page - and the
-            // availability request fails, so nothing is resolved or cached.
+            // availability request fails; irrelevant to minting, which is
+            // unconditional once a billing country is known (it is, via config).
             TwoSoleTrader = loadSoleTrader();
             let mintCalls = 0;
             const calls = stubFetch(() => {
@@ -392,11 +393,13 @@ describe('a payment fragment that arrives after this instance was constructed', 
             }, { fail: true });
 
             const instance = build();
+            expect(calls.mints).toHaveLength(1);
             await flushPromises();
-            expect(calls.mints).toHaveLength(0);
+            expect(instance._tokenRefreshIntervalId).not.toBeNull();
 
             // PrestaShop now renders the payment fragment, carrying the
-            // server's own "available" answer.
+            // server's own "available" answer - tokens are already held, so
+            // this is a no-op for minting.
             buildPaymentTileWithSoleTraderAnswer('1', 'GB');
             jest.advanceTimersByTime(150);
             await flushPromises();
@@ -404,7 +407,6 @@ describe('a payment fragment that arrives after this instance was constructed', 
 
             expect(instance.isAvailableForCurrentCountry()).toBe(true);
             expect(calls.mints).toHaveLength(1);
-            expect(instance._tokenRefreshIntervalId).not.toBeNull();
 
             jest.advanceTimersByTime(30 * 60 * 1000);
             await flushPromises();
@@ -414,7 +416,7 @@ describe('a payment fragment that arrives after this instance was constructed', 
         }
     });
 
-    test('a click-driven mint arms the refresh even with no eager mint before it', async () => {
+    test('a click-driven mint arms the refresh when no billing country was known at construction', async () => {
         jest.useFakeTimers();
         try {
             buildPaymentTileWithSoleTraderAnswer('0', 'GB');
@@ -425,8 +427,9 @@ describe('a payment fragment that arrives after this instance was constructed', 
                 return Promise.resolve({ json: () => Promise.resolve(tokenPayload(String(mintCalls))) });
             });
 
-            // Server says business-only, so nothing is minted eagerly.
-            const instance = build();
+            // Nothing to mint FOR yet - no billing country resolves at all -
+            // so there is no eager mint, regardless of eligibility.
+            const instance = build({ billingCountry: '' });
             await flushPromises();
             expect(calls.mints).toHaveLength(0);
             expect(instance._tokenRefreshIntervalId).toBeNull();
@@ -483,36 +486,38 @@ describe('a containerless page settles instead of re-evaluating on every unrelat
     });
 });
 
-describe('a buyer who cannot use the flow costs no mint', () => {
-    test('a server-rendered business-only answer mints nothing', async () => {
+describe('minting is unconditional - a business-only answer still mints, but never shows the chip', () => {
+    test('a server-rendered business-only answer still mints, though the chip stays hidden', async () => {
         buildPaymentTileWithSoleTraderAnswer('0', 'GB');
         TwoSoleTrader = loadSoleTrader();
         const state = { calls: 0 };
         const calls = stubFetch(mintsSucceed(state));
 
         const instance = build();
+        expect(calls.mints).toHaveLength(1);
         await flushPromises();
 
+        // isAvailableForCurrentCountry() is the CHIP's own answer, untouched
+        // by this - minting has no eligibility check of any kind.
         expect(instance.isAvailableForCurrentCountry()).toBe(false);
-        expect(calls.mints).toHaveLength(0);
-        expect(instance._tokenRefreshIntervalId).toBeNull();
+        expect(instance._tokenRefreshIntervalId).not.toBeNull();
 
         instance.destroy();
     });
 
-    test('a network answer of not-available mints nothing either', async () => {
+    test('a network answer of not-available still mints - the registry answer has no bearing on minting', async () => {
         buildPaymentTile();
         TwoSoleTrader = loadSoleTrader();
         const state = { calls: 0 };
         const calls = stubFetch(mintsSucceed(state), { value: false });
 
         const instance = build();
+        expect(calls.mints).toHaveLength(1);
         await flushPromises();
         await flushPromises();
 
         expect(calls.availability).toBe(1);
         expect(instance.isAvailableForCurrentCountry()).toBe(false);
-        expect(calls.mints).toHaveLength(0);
 
         instance.destroy();
     });
@@ -653,26 +658,25 @@ describe('the minted tokens are held across a country change - not country-speci
         expect(instance.tokens.country).toBe('GB');
     });
 
-    test('an availability answer for a country a click already minted for does not re-mint', async () => {
-        // Server-rendered "business only", so no eager mint runs at mount and
-        // the click's own mint is the only one, fully settled, before the
-        // availability answer below turns eligible.
+    test('a click and a later availability answer both settle on the SAME eagerly-minted tokens - no re-mint', async () => {
+        // Server-rendered "business only" - irrelevant to minting, which
+        // fires unconditionally at construction regardless of this answer.
         buildPaymentTileWithSoleTraderAnswer('0', 'GB');
         TwoSoleTrader = loadSoleTrader();
         const state = { calls: 0 };
         const calls = stubFetch(mintsSucceed(state));
 
         const instance = build();
+        expect(calls.mints).toHaveLength(1);
         await flushPromises();
-        expect(calls.mints).toHaveLength(0);
 
         instance.startEnrollment();
         await flushPromises();
         expect(calls.mints).toHaveLength(1);
         expect(instance.tokens.country).toBe('GB');
 
-        // GB now resolves eligible and reaches the eager path, which must
-        // recognise the click's tokens as already covering this country.
+        // GB now resolves eligible and reaches the eager path again, which
+        // must recognise the tokens already held as covering this country.
         instance.availabilityByCountry.GB = true;
         instance.apply('GB', true);
         await flushPromises();
@@ -848,9 +852,9 @@ describe('the minted tokens are held across a country change - not country-speci
     });
 
     test('a mint landing after its enrolment already completed is not acted on', async () => {
-        // Server-rendered "business only", so no eager mint runs at mount and
-        // the click's own mint is the only one in flight - unrelated to
-        // country, which stays GB throughout.
+        // Server-rendered "business only" - irrelevant to minting, which
+        // fires unconditionally at construction; the click below rides that
+        // same in-flight mint rather than starting a second one.
         buildPaymentTileWithSoleTraderAnswer('0', 'GB');
         TwoSoleTrader = loadSoleTrader();
         let mintCalls = 0;
@@ -863,8 +867,8 @@ describe('the minted tokens are held across a country change - not country-speci
         global.window.open = openSpy;
 
         const instance = build();
+        expect(mintCalls).toBe(1);
         await flushPromises();
-        expect(calls.mints).toHaveLength(0);
 
         instance.availabilityByCountry.GB = true;
         instance.apply('GB', true);

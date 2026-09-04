@@ -4657,15 +4657,6 @@ class Twopayment extends PaymentModule
                 // captured outside the billing country is withheld by
                 // getTwoBrowserCompanySelection() (TWO-40).
                 'sole_trader_country' => $this->getCheckoutBillingCountryIso(),
-                // Merchant-level buyer-country gate (TWO-40, extended to sole
-                // trader mint eligibility): the three-state
-                // supported_buyer_countries answer, read as-is rather than
-                // reduced to a boolean here, because the client-side gate
-                // must tell an unrestricted merchant apart from one gated to
-                // nothing without collapsing either into the other. See
-                // TwoSoleTrader.js's mint-gate resolution.
-                'merchant_buyer_countries_state' => $this->getTwoBuyerCountryRestrictionState(),
-                'merchant_buyer_countries' => $this->getMerchantBuyerCountries() ?: array(),
                 // The company the buyer already confirmed for THIS cart, or null
                 // (TWO-40). The browser's own record of a selection dies with the
                 // page, and the address step is a sequence of real document

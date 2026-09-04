@@ -376,7 +376,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_d34347a5f791b2cecfda204f7a0b575d'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d40f2c2b7a99b454ace5554f91e54c8c'] = 'Fast belopp och procent';
 $_MODULE['<{twopayment}prestashop>twopayment_e6be41d22edf30b30a6258b4a74b7759'] = '%s - BNPL för företag';
 $_MODULE['<{twopayment}prestashop>twopayment_d4b644ceb41c3a19d874ee330ac45f97'] = 'Ingen avrundning';
-$_MODULE['<{twopayment}prestashop>twopayment_d4b9d20386ac408371aff6df4162e437'] = 'Kassan för enskild firma är inte tillgänglig';
 $_MODULE['<{twopayment}prestashop>twopayment_08290beaf42eba17a07f4b66d78b74a3'] = 'Standardmappningar:';
 $_MODULE['<{twopayment}prestashop>twopayment_b534a3105100197bc84b8caa00926340'] = '%s: Fel vid betalningsbehandling';
 $_MODULE['<{twopayment}prestashop>twopayment_d74f5295cfbc83c79a5737ed01bc13d3'] = 'Tilläggsavgift per villkor';
