@@ -876,5 +876,4 @@ final class TwoSoleTraderSpec
             'a tile with no billing country must not call the registry at all'
         );
     }
-
 }
