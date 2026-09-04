@@ -89,6 +89,9 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             case 'companySearch':
                 $this->ajaxProcessCompanySearch();
                 break;
+            case 'companySearchSupportedCountries':
+                $this->ajaxProcessCompanySearchSupportedCountries();
+                break;
             case 'companyDetails':
                 $this->ajaxProcessCompanyDetails();
                 break;
@@ -803,6 +806,26 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             array(),
             'GET'
         ));
+    }
+
+    /**
+     * The full list of countries company search supports (TWO-25288 follow-up),
+     * for the "Registered Company" chip's country gate. `countries: null`
+     * means the lookup is unresolved (transient failure) - callers must fail
+     * open, not read it as an empty/unsupported list.
+     */
+    public function ajaxProcessCompanySearchSupportedCountries()
+    {
+        if (!$this->validateAjaxToken()) {
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Invalid token')]));
+            return;
+        }
+
+        $countries = TwoCompanySearchCountries::getSupportedCountriesOrNull($this->module);
+        $this->sendJsonResponse(json_encode([
+            'success' => true,
+            'countries' => $countries,
+        ]));
     }
 
     /**
